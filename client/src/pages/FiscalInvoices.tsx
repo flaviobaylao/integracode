@@ -23,6 +23,75 @@ import {
 } from 'lucide-react';
 import { generateDanfePdf } from '@/lib/danfe-generator';
 
+// ── CSC da NFC-e por certificado ────────────────────────────────────────────
+// O CSC e o segredo que assina o QR Code da NFC-e (modelo 65). Sem ele a venda
+// de balcao nao emite documento fiscal nenhum. Mora aqui, junto do certificado,
+// porque e a mesma unidade de credencial: um par por CNPJ emitente.
+//
+// O valor NUNCA volta do servidor — o GET responde so "configurado" e o ID do
+// CSC (que nao e segredo). Por isso o campo abre sempre em branco: ele serve
+// para GRAVAR, nunca para conferir o que ja esta la.
+function CscCertificado({ certId, cnpj }: { certId: string; cnpj: string }) {
+  const [aberto, setAberto] = useState(false);
+  const [csc, setCsc] = useState('');
+  const [idCsc, setIdCsc] = useState('');
+
+  const status = useQuery<{ configurado: boolean; idCsc: string }>({
+    queryKey: [`/api/digital-certificates/${certId}/csc`],
+  });
+
+  const salvar = useMutation({
+    mutationFn: () => apiRequest('PUT', `/api/digital-certificates/${certId}/csc`, { csc, idCsc }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/digital-certificates/${certId}/csc`] });
+      setCsc(''); setIdCsc(''); setAberto(false);
+      toast({ title: 'CSC salvo', description: `A NFC-e do CNPJ ${cnpj} ja pode ser emitida.` });
+    },
+    onError: (e: any) => toast({ title: 'Nao foi possivel salvar', description: String(e?.message || e), variant: 'destructive' }),
+  });
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" className="h-8" onClick={() => setAberto(true)}>
+        {status.data?.configurado ? (
+          <Badge className="bg-green-100 text-green-800 border-green-300">CSC {status.data.idCsc}</Badge>
+        ) : (
+          <Badge variant="secondary">Sem CSC</Badge>
+        )}
+      </Button>
+
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>CSC da NFC-e — {cnpj}</DialogTitle>
+            <DialogDescription>
+              Codigo de Seguranca do Contribuinte, emitido no portal da SEFAZ. E ele que assina
+              o QR Code da NFC-e. Guardamos o valor e nunca o exibimos de volta.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>ID do CSC</Label>
+              <Input value={idCsc} onChange={e => setIdCsc(e.target.value)} placeholder="1" inputMode="numeric" />
+            </div>
+            <div>
+              <Label>CSC (token)</Label>
+              <Input value={csc} onChange={e => setCsc(e.target.value)} placeholder="cole aqui o CSC da SEFAZ" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
+            <Button disabled={!csc || !idCsc || salvar.isPending} onClick={() => salvar.mutate()}>
+              {salvar.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+              Salvar CSC
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 interface FiscalInvoice {
   id: string;
   invoiceNumber: string;
@@ -1129,6 +1198,7 @@ export default function FiscalInvoices() {
                       <TableHead>Emissor</TableHead>
                       <TableHead>Validade</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>NFC-e</TableHead>
                       <TableHead className="w-16">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1155,6 +1225,9 @@ export default function FiscalInvoices() {
                           ) : (
                             <Badge variant="secondary">Inativo</Badge>
                           )}
+                        </TableCell>
+                        <TableCell>
+                          <CscCertificado certId={cert.id} cnpj={cert.cnpj} />
                         </TableCell>
                         <TableCell>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => { if (confirm('Tem certeza que deseja excluir este certificado?')) deleteCertMutation.mutate(cert.id); }}>
