@@ -157,7 +157,10 @@ async function clienteBalcao(): Promise<string | null> {
     }
 
     const { storage } = await import('./storage');
-    const novo = await storage.createCustomer({
+    const { aplicarLocalPadraoCanal } = await import('./canal-local-padrao');
+    // Cidade/UF padrao do canal (GOIÂNIA/GO). Sem UF o faturamento barra o card
+    // em "Cadastro incompleto: informe a UF" e a NF-e sai com CFOP errado.
+    const novo = await storage.createCustomer(aplicarLocalPadraoCanal({
       name: CLIENTE_BALCAO_NOME,
       customerType: 'pessoa_fisica',
       phone: '0000000000',
@@ -168,7 +171,7 @@ async function clienteBalcao(): Promise<string | null> {
       visitPeriodicity: cfg.periodicidade,
       virtualService: true,   // nao conta para meta de atendimento
       isActive: false,        // fica fora de rota e do radar de churn
-    } as any);
+    }) as any);
     console.log(`🆕 [LIO-PDV] Cliente do balcao criado: ${novo.id}`);
     return String(novo.id);
   } catch (e: any) {
