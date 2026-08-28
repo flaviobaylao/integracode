@@ -28,6 +28,8 @@ interface InventoryLot {
   lotNumber: string;
   quantity: string;
   minQuantity: string;
+  manufacturingDate: string | null;
+  expiryDate: string | null;
   isActive: boolean;
   notes: string | null;
   createdAt: string;
@@ -98,6 +100,8 @@ export default function Inventory() {
     lotNumber: '',
     quantity: '',
     minQuantity: '0',
+    manufacturingDate: '',
+    expiryDate: '',
     notes: '',
   });
 
@@ -181,6 +185,8 @@ export default function Inventory() {
       lotNumber: '',
       quantity: '',
       minQuantity: '0',
+      manufacturingDate: '',
+      expiryDate: '',
       notes: '',
     });
   };
@@ -234,6 +240,8 @@ export default function Inventory() {
       lotNumber: lot.lotNumber,
       quantity: lot.quantity,
       minQuantity: lot.minQuantity || '0',
+      manufacturingDate: (lot.manufacturingDate || '').slice(0, 10),
+      expiryDate: (lot.expiryDate || '').slice(0, 10),
       notes: lot.notes || '',
     });
     setShowEditDialog(true);
@@ -247,6 +255,8 @@ export default function Inventory() {
         lotNumber: formData.lotNumber,
         quantity: formData.quantity,
         minQuantity: formData.minQuantity,
+        manufacturingDate: formData.manufacturingDate || null,
+        expiryDate: formData.expiryDate || null,
         notes: formData.notes,
         isActive: editingLot.isActive,
       },
@@ -668,6 +678,27 @@ export default function Inventory() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Data de fabricação</Label>
+                <Input
+                  type="date"
+                  value={formData.manufacturingDate}
+                  onChange={(e) => setFormData({...formData, manufacturingDate: e.target.value})}
+                />
+              </div>
+              <div>
+                <Label>Validade</Label>
+                <Input
+                  type="date"
+                  value={formData.expiryDate}
+                  onChange={(e) => setFormData({...formData, expiryDate: e.target.value})}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground -mt-1">
+              Fabricação e validade vão no grupo &lt;rastro&gt; da NF-e. Sem elas, o lote sai apenas nas informações adicionais do item.
+            </p>
             <div>
               <Label>Observações</Label>
               <Textarea
@@ -735,6 +766,27 @@ export default function Inventory() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Data de fabricação</Label>
+                <Input
+                  type="date"
+                  value={formData.manufacturingDate}
+                  onChange={(e) => setFormData({...formData, manufacturingDate: e.target.value})}
+                />
+              </div>
+              <div>
+                <Label>Validade</Label>
+                <Input
+                  type="date"
+                  value={formData.expiryDate}
+                  onChange={(e) => setFormData({...formData, expiryDate: e.target.value})}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground -mt-1">
+              Fabricação e validade vão no grupo &lt;rastro&gt; da NF-e. Sem elas, o lote sai apenas nas informações adicionais do item.
+            </p>
             <div>
               <Label>Observações</Label>
               <Textarea
