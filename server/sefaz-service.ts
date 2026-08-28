@@ -1375,13 +1375,54 @@ function buildDocumento(
       };
     }
 
+    // ── RASTREABILIDADE DE LOTE ────────────────────────────────────────────────
+    // Fonte oficial: fiscal_invoice_items.lots (jsonb, gravado na baixa de estoque) e,
+    // como reforco, fiscal_invoice_items.lot_number. O fallback por regex sobre o nome do
+    // produto so continua aqui para NFs antigas, gravadas antes desta correcao.
+    let lotesItem: Array<{ lotNumber: string; quantity: number; manufacturingDate?: string | null; expiryDate?: string | null }> = [];
+    if (Array.isArray(item.lots) && item.lots.length > 0) {
+      lotesItem = item.lots
+        .filter((l: any) => l && l.lotNumber)
+        .map((l: any) => ({
+          lotNumber: String(l.lotNumber),
+          quantity: Number(l.quantity) || 0,
+          manufacturingDate: l.manufacturingDate || null,
+          expiryDate: l.expiryDate || null,
+        }));
+    } else if (item.lotNumber) {
+      const nums = String(item.lotNumber).split(',').map((s: string) => s.trim()).filter(Boolean);
+      const qTotal = Number(qty) || 0;
+      lotesItem = nums.map((n: string, i: number) => ({
+        lotNumber: n,
+        // Sem detalhamento por lote, distribui a quantidade no 1o lote (caso normal: 1 lote).
+        quantity: i === 0 ? qTotal : 0,
+        manufacturingDate: null,
+        expiryDate: null,
+      }));
+    }
+
     let lotInfo = '';
-    if (item.lotNumber) {
-      lotInfo = sanitizeStr(`Lote: ${item.lotNumber}`, 500);
+    if (lotesItem.length > 0) {
+      lotInfo = sanitizeStr(`Lote: ${lotesItem.map((l) => l.lotNumber).join(', ')}`, 500);
     } else {
       const lotMatch = (item.productName || '').match(/(?:\s*-\s*)?Lote:\s*(.+)$/i);
-      if (lotMatch) lotInfo = sanitizeStr(`Lote: ${lotMatch[1].trim()}`, 500);
+      if (lotMatch) {
+        lotInfo = sanitizeStr(`Lote: ${lotMatch[1].trim()}`, 500);
+        lotesItem = [{ lotNumber: lotMatch[1].trim(), quantity: Number(qty) || 0, manufacturingDate: null, expiryDate: null }];
+      }
     }
+
+    // Grupo <rastro> so pode ser emitido COMPLETO (nLote, qLote, dFab, dVal sao obrigatorios
+    // no leiaute). Lote sem data de fabricacao/validade cadastrada continua saindo em
+    // infAdProd, que e sempre preenchido acima.
+    const rastro = lotesItem
+      .filter((l) => l.manufacturingDate && l.expiryDate && (Number(l.quantity) || 0) > 0)
+      .map((l) => ({
+        nLote: sanitizeStr(l.lotNumber, 20),
+        qLote: (Number(l.quantity) || 0).toFixed(3),
+        dFab: String(l.manufacturingDate).slice(0, 10),
+        dVal: String(l.expiryDate).slice(0, 10),
+      }));
 
     const prodName = item.productName || 'Produto';
     const baseName = prodName.replace(/\s*[-–]\s*Lote:.*$/i, '').replace(/\s*Lote:.*$/i, '').trim() || prodName;
@@ -1410,6 +1451,7 @@ function buildDocumento(
         ...(item.cest ? { CEST: item.cest } : {}),
         ...(cBenef ? { cBenef } : {}),
         ...(descVal > 0 ? { vDesc: descVal.toFixed(2) } : {}),
+        ...(rastro.length > 0 ? { rastro } : {}),
       },
       imposto,
       ...(lotInfo ? { infAdProd: lotInfo } : {}),
