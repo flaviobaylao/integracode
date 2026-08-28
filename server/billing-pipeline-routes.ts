@@ -10,6 +10,7 @@ import { registrarBoleto, cancelarBoleto } from './bb-boleto-service';
 import { createImmediateCharge } from './bb-pix-service';
 import { cieloDiag } from './hotsite-card';
 import { db } from './db';
+import { ensureLoteColumns } from './ensure-lote-columns';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
 import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
@@ -1643,9 +1644,7 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (stage === 'faturado' && item.stage !== 'faturado') {
         const stockCheck = await validateStockForBilling(item);
         if (!stockCheck.valid) {
-          const shortageDetails = stockCheck.shortages.map(s =>
-            `• ${s.productName}: necessário ${s.required}, disponível ${s.available}`
-          ).join('\n');
+          const shortageDetails = formatarFaltasEstoque(stockCheck.shortages);
           console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} - estoque insuficiente`);
           return res.status(400).json({
             message: 'Faturamento bloqueado: estoque insuficiente',
@@ -1671,12 +1670,24 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
 
         let invoiceDraft: any = null;
-        let lotMap: Record<string, string[]> = {};
+        let lotMap: LotMap = {};
         try {
           lotMap = await deductStockForBilling(item, user);
           console.log(`📦 [BILLING-PIPELINE] Baixa de estoque realizada para item ${req.params.id}`);
         } catch (stockError: any) {
-          console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque:`, stockError.message);
+          // Estoque insuficiente na hora da baixa (ou qualquer falha nela) NAO pode virar NF.
+          // A baixa ja se estornou sozinha; aqui devolvemos o card para a etapa anterior.
+          console.error(`❌ [BILLING-PIPELINE] Faturamento abortado na baixa de estoque:`, stockError.message);
+          try {
+            await db.execute(sql`UPDATE billing_pipeline SET stage = ${item.stage}, updated_at = now() WHERE id = ${req.params.id}`);
+          } catch (revertErr: any) {
+            console.error(`❌ [BILLING-PIPELINE] Falha ao reverter a etapa do item ${req.params.id}:`, revertErr?.message);
+          }
+          return res.status(400).json({
+            message: 'Faturamento bloqueado: estoque insuficiente',
+            stockError: true,
+            details: stockError?.message || 'Falha na baixa de estoque.',
+          });
         }
 
         try {
@@ -2042,7 +2053,7 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
 
       const user = req.currentUser || req.user;
-      const results: Array<{ id: string; success: boolean; fiscalInvoiceId?: string; error?: string }> = [];
+      const results: Array<{ id: string; success: boolean; fiscalInvoiceId?: string; error?: string; stockError?: boolean; shortages?: StockShortage[] }> = [];
 
       for (const id of ids) {
         try {
@@ -2063,6 +2074,21 @@ export function registerBillingPipelineRoutes(app: Express) {
           let fiscalInvoiceId: string | undefined;
 
           if (stage === 'faturado' && item.stage !== 'faturado') {
+            // 🚫 TRAVA DE ESTOQUE — a mesma do faturamento individual. Antes o faturamento em
+            // lote pulava esta checagem inteira e faturava com estoque negativo.
+            const stockCheck = await validateStockForBilling(item);
+            if (!stockCheck.valid) {
+              console.log(`🚫 [BATCH] Faturamento bloqueado para item ${id} - estoque insuficiente`);
+              results.push({
+                id,
+                success: false,
+                stockError: true,
+                shortages: stockCheck.shortages,
+                error: `Faturamento bloqueado: estoque insuficiente.\n${formatarFaltasEstoque(stockCheck.shortages)}`,
+              });
+              continue;
+            }
+
             // Cadastro fiscal incompleto (sem UF/CEP) → não fatura este item.
             const fiscalCheck = await validateCustomerFiscalData(item);
             if (!fiscalCheck.valid) {
@@ -2077,11 +2103,20 @@ export function registerBillingPipelineRoutes(app: Express) {
               continue;
             }
             let invoiceDraft: any = null;
-            let lotMap: Record<string, string[]> = {};
+            let lotMap: LotMap = {};
             try {
               lotMap = await deductStockForBilling(item, user);
             } catch (stockError: any) {
-              console.error(`❌ [BATCH] Erro baixa estoque para ${id}:`, stockError.message);
+              // Sem baixa de estoque nao ha NF: devolve o card para a etapa anterior e
+              // reporta a falha deste item (os demais do lote seguem normalmente).
+              console.error(`❌ [BATCH] Faturamento abortado na baixa de estoque para ${id}:`, stockError.message);
+              try {
+                await db.execute(sql`UPDATE billing_pipeline SET stage = ${item.stage}, updated_at = now() WHERE id = ${id}`);
+              } catch (revertErr: any) {
+                console.error(`❌ [BATCH] Falha ao reverter a etapa do item ${id}:`, revertErr?.message);
+              }
+              results.push({ id, success: false, stockError: true, error: stockError?.message || 'Falha na baixa de estoque.' });
+              continue;
             }
 
             try {
@@ -2260,20 +2295,83 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 }
 
-async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: Array<{ productId: string; productName: string; required: number; available: number }> }> {
-  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
+// Resolve o produto do card do pipeline para um produto do cadastro. Cards vindos do Omie/
+// importacao frequentemente NAO trazem `id` interno — antes isso fazia a trava de estoque
+// pular o item em silencio. Agora tentamos codigo Omie e nome; se nao resolver, o
+// faturamento e BLOQUEADO (nao da para conferir estoque de um produto desconhecido).
+let __produtosCache: any[] | null = null;
+async function resolvePipelineProductId(product: any): Promise<string | null> {
+  if (product?.id) return product.id;
+
+  const omieCode = product?.omieCode || product?.omieCodigo || product?.codigo || product?.code || null;
+  if (omieCode) {
+    try {
+      const byCode = await storage.getProductByOmieCode(String(omieCode));
+      if (byCode?.id) return byCode.id;
+    } catch { /* segue para o nome */ }
+  }
+
+  const nome = String(product?.name || '').trim().toLowerCase();
+  if (!nome) return null;
+  try {
+    if (!__produtosCache) __produtosCache = await storage.getProducts();
+    const hit = __produtosCache.find((p: any) => String(p?.name || '').trim().toLowerCase() === nome);
+    return hit?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+export type StockShortage = {
+  productId: string | null;
+  productName: string;
+  required: number;
+  available: number;
+  reason: string;
+};
+
+// TRAVA DE ESTOQUE — regra: NAO existe faturamento com estoque negativo/insuficiente.
+// Estoque e SEMPRE por instancia (inventory_lots.instance_id). Qualquer situacao em que
+// nao seja possivel PROVAR que ha saldo (sem instancia, produto nao identificado, produto
+// sem lote cadastrado) e tratada como BLOQUEIO — nunca mais como "passa direto".
+export async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: StockShortage[] }> {
+  const products = item.products as Array<{ id?: string; name: string; quantity: number }> | null;
   if (!products || products.length === 0) return { valid: true, shortages: [] };
 
   const instanceId = item.omieInstanceId;
-  if (!instanceId) return { valid: true, shortages: [] };
+  if (!instanceId) {
+    return {
+      valid: false,
+      shortages: products.map((p) => ({
+        productId: p.id || null,
+        productName: p.name,
+        required: Number(p.quantity) || 0,
+        available: 0,
+        reason: 'Pedido sem instancia definida (omieInstanceId) — estoque e por instancia, nao ha como conferir saldo.',
+      })),
+    };
+  }
 
-  const shortages: Array<{ productId: string; productName: string; required: number; available: number }> = [];
+  const shortages: StockShortage[] = [];
 
   for (const product of products) {
-    if (!product.id) continue;
+    const required = Number(product.quantity) || 0;
+    if (required <= 0) continue;
+
+    const productId = await resolvePipelineProductId(product);
+    if (!productId) {
+      shortages.push({
+        productId: null,
+        productName: product.name,
+        required,
+        available: 0,
+        reason: 'Produto nao identificado no cadastro (sem id/codigo Omie/nome correspondente) — sem como conferir estoque.',
+      });
+      continue;
+    }
 
     const lots = await storage.getInventoryLots({
-      productId: product.id,
+      productId,
       instanceId,
       stockType: 'in_use',
       isActive: true,
@@ -2285,12 +2383,24 @@ async function validateStockForBilling(item: any): Promise<{ valid: boolean; sho
       if (qty > 0) totalAvailable += qty;
     }
 
-    if (totalAvailable < product.quantity) {
+    if (lots.length === 0) {
       shortages.push({
-        productId: product.id,
+        productId,
         productName: product.name,
-        required: product.quantity,
+        required,
+        available: 0,
+        reason: 'Produto sem lote cadastrado nesta instancia — todo item de NF precisa de lote.',
+      });
+      continue;
+    }
+
+    if (totalAvailable < required) {
+      shortages.push({
+        productId,
+        productName: product.name,
+        required,
         available: totalAvailable,
+        reason: 'Estoque insuficiente na instancia.',
       });
     }
   }
@@ -2298,34 +2408,100 @@ async function validateStockForBilling(item: any): Promise<{ valid: boolean; sho
   return { valid: shortages.length === 0, shortages };
 }
 
-async function deductStockForBilling(item: any, user: any): Promise<Record<string, string[]>> {
-  const lotMap: Record<string, string[]> = {};
-  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
+export function formatarFaltasEstoque(shortages: StockShortage[]): string {
+  return shortages
+    .map((s) => `• ${s.productName}: necessario ${s.required}, disponivel ${s.available} — ${s.reason}`)
+    .join('\n');
+}
+
+export type LotConsumo = {
+  lotId: string;
+  lotNumber: string;
+  quantity: number;
+  manufacturingDate: string | null;
+  expiryDate: string | null;
+};
+// Chave = indice do produto dentro de item.products (o mesmo array percorrido depois na
+// montagem dos itens da NF), para nao depender de `id` — que pode nao existir no card.
+export type LotMap = Record<string, { productId: string; lots: LotConsumo[] }>;
+
+export class EstoqueInsuficienteError extends Error {
+  constructor(public readonly detalhe: string) {
+    super(`Faturamento bloqueado: estoque insuficiente.\n${detalhe}`);
+    this.name = 'EstoqueInsuficienteError';
+  }
+}
+
+// Baixa de estoque do faturamento. Diferente da versao anterior, aqui:
+//  1) faltando saldo, LANCA erro (antes so logava e faturava assim mesmo);
+//  2) antes de lancar, DESFAZ tudo o que ja tinha sido baixado para este pedido;
+//  3) devolve o rastro completo (lote, quantidade, fabricacao, validade) para ir na NF.
+export async function deductStockForBilling(item: any, user: any): Promise<LotMap> {
+  await ensureLoteColumns();
+  const lotMap: LotMap = {};
+  const products = item.products as Array<{ id?: string; name: string; quantity: number }> | null;
   if (!products || products.length === 0) return lotMap;
 
   const instanceId = item.omieInstanceId;
   if (!instanceId) {
-    console.log(`⚠️ [STOCK] Item ${item.id} sem omieInstanceId, não é possível dar baixa no estoque`);
-    return lotMap;
+    throw new EstoqueInsuficienteError('Pedido sem instancia definida (omieInstanceId) — estoque e por instancia.');
   }
 
-  for (const product of products) {
-    if (!product.id) continue;
+  // Tudo que foi baixado nesta chamada, para poder desfazer se algum item falhar.
+  const aplicados: Array<{ lotId: string; productId: string; qty: number; lotNumber: string; productName: string }> = [];
+
+  const desfazer = async (motivo: string) => {
+    for (const ap of aplicados.reverse()) {
+      try {
+        const lote = await storage.getInventoryLot(ap.lotId);
+        const atual = parseFloat(lote?.quantity?.toString() || '0');
+        const volta = atual + ap.qty;
+        await storage.updateInventoryLot(ap.lotId, { quantity: volta.toFixed(4) });
+        await storage.createInventoryMovement({
+          lotId: ap.lotId,
+          productId: ap.productId,
+          instanceId,
+          movementType: 'cancel_reversal',
+          quantity: ap.qty.toFixed(4),
+          previousQuantity: atual.toFixed(4),
+          newQuantity: volta.toFixed(4),
+          sourceType: 'invoice',
+          sourceId: item.id,
+          lotNumber: ap.lotNumber,
+          notes: `Estorno da baixa — faturamento abortado: ${motivo}`,
+          createdBy: user?.email || null,
+        });
+      } catch (e: any) {
+        console.error(`❌ [STOCK] Falha ao estornar lote ${ap.lotId}:`, e?.message);
+      }
+    }
+  };
+
+  for (let idx = 0; idx < products.length; idx++) {
+    const product = products[idx];
+    const required = Number(product.quantity) || 0;
+    if (required <= 0) continue;
+
+    const productId = await resolvePipelineProductId(product);
+    if (!productId) {
+      await desfazer(`produto "${product.name}" nao identificado no cadastro`);
+      throw new EstoqueInsuficienteError(`• ${product.name}: produto nao identificado no cadastro — sem como conferir estoque nem informar lote.`);
+    }
 
     const lots = await storage.getInventoryLots({
-      productId: product.id,
+      productId,
       instanceId,
       stockType: 'in_use',
       isActive: true,
     });
 
     if (lots.length === 0) {
-      console.log(`⚠️ [STOCK] Produto ${product.name} (${product.id}) sem lotes disponíveis na instância ${instanceId}`);
-      continue;
+      await desfazer(`produto "${product.name}" sem lote na instancia`);
+      throw new EstoqueInsuficienteError(`• ${product.name}: sem lote cadastrado nesta instancia — todo item de NF precisa de lote.`);
     }
 
-    let remaining = product.quantity;
-    const consumedLots: string[] = [];
+    let remaining = required;
+    const consumedLots: LotConsumo[] = [];
 
     for (const lot of lots) {
       if (remaining <= 0) break;
@@ -2342,7 +2518,7 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
 
       await storage.createInventoryMovement({
         lotId: lot.id,
-        productId: product.id,
+        productId,
         instanceId,
         movementType: 'consume',
         quantity: deductQty.toFixed(4),
@@ -2355,21 +2531,27 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
         createdBy: user?.email || null,
       });
 
-      if (lot.lotNumber) {
-        consumedLots.push(lot.lotNumber);
-      }
+      aplicados.push({ lotId: lot.id, productId, qty: deductQty, lotNumber: lot.lotNumber, productName: product.name });
+
+      consumedLots.push({
+        lotId: lot.id,
+        lotNumber: lot.lotNumber,
+        quantity: deductQty,
+        manufacturingDate: (lot as any).manufacturingDate ? String((lot as any).manufacturingDate).slice(0, 10) : null,
+        expiryDate: (lot as any).expiryDate ? String((lot as any).expiryDate).slice(0, 10) : null,
+      });
 
       remaining -= deductQty;
       console.log(`📦 [STOCK] Baixa: ${deductQty} un de "${product.name}" do lote ${lot.lotNumber} (${currentQty} → ${newQty})`);
     }
 
-    if (consumedLots.length > 0) {
-      lotMap[product.id] = consumedLots;
+    if (remaining > 0.0001) {
+      const disponivel = required - remaining;
+      await desfazer(`estoque insuficiente de "${product.name}"`);
+      throw new EstoqueInsuficienteError(`• ${product.name}: necessario ${required}, disponivel ${disponivel} na instancia.`);
     }
 
-    if (remaining > 0) {
-      console.log(`⚠️ [STOCK] Estoque insuficiente: faltam ${remaining} un de "${product.name}" na instância ${instanceId}`);
-    }
+    lotMap[String(idx)] = { productId, lots: consumedLots };
   }
 
   return lotMap;
@@ -2391,7 +2573,7 @@ async function resolveCondicaoPagamento(item: any): Promise<{ effForma: string; 
   return { effForma, prazoDays, hasCadastro, custCond };
 }
 
-async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>, opts?: { skipEmit?: boolean }) {
+async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: LotMap, opts?: { skipEmit?: boolean }) {
   // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
   // ⚠️ CHAVE À PROVA DE COLISÃO: casa pelo sales_card_id COMPLETO. O ref textual do pedido
   //    (orderNumber = 'INT-<8 hex>') TRUNCA o UUID em 8 caracteres e COLIDE entre cartões distintos
@@ -2571,24 +2753,26 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
       const p = products[i];
       let productCode = `PROD-${i + 1}`;
       let itemNcm = NCM_SUCO_MISTO;
-      if (p.id) {
-        const productData = await storage.getProduct(p.id);
+      // RASTRO DE LOTE: sai da baixa de estoque (deductStockForBilling), pela POSICAO do
+      // produto no card — o `p.id` pode nao existir em cards vindos do Omie.
+      const rastro = lotMap?.[String(i)];
+      const productId = p.id || rastro?.productId || null;
+      if (productId) {
+        const productData = await storage.getProduct(productId);
         if (productData) {
           productCode = (productData as any).omieCode || (productData as any).omieCodigo || `PROD-${i + 1}`;
           itemNcm = ncmDoProduto((productData as any).ncm);
         }
       }
-      let productName = p.name;
-      if (lotMap && p.id && lotMap[p.id] && lotMap[p.id].length > 0) {
-        const lotNumbers = lotMap[p.id].join(', ');
-        productName = `${p.name} - Lote: ${lotNumbers}`;
-      }
+      const lotesDoItem = rastro?.lots || [];
       await storage.createFiscalInvoiceItem({
         invoiceId: invoice.id,
         itemNumber: i + 1,
-        productName,
+        // Nome do produto fica LIMPO — o lote agora e campo proprio do item (lotNumber/lots)
+        // e vai no grupo <rastro> do XML, nao mais concatenado no texto da descricao.
+        productName: p.name,
         productCode,
-        productId: p.id || null,
+        productId,
         ncm: itemNcm,
         cfop,
         unit: 'UN',
@@ -2598,7 +2782,10 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
         discount: '0',
         csosn: custCsosn,
         aliqIcms: custPcred,
-      });
+        lotNumber: lotesDoItem.length > 0 ? lotesDoItem.map((l) => l.lotNumber).join(', ') : null,
+        lotId: lotesDoItem.length > 0 ? lotesDoItem[0].lotId : null,
+        lots: lotesDoItem.length > 0 ? lotesDoItem : null,
+      } as any);
     }
   }
 
