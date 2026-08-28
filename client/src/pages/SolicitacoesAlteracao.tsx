@@ -253,6 +253,8 @@ export default function SolicitacoesAlteracao() {
 
   // Busca por cliente (aplica a Pendentes e Resolvidas).
   const [busca, setBusca] = useState("");
+  // Filtro por vendedor (quem solicitou; aplica a Pendentes e Resolvidas).
+  const [filtroVendedor, setFiltroVendedor] = useState("");
 
   if (!isAdmin) {
     return <div className="p-6 text-sm text-muted-foreground">Acesso restrito aos administradores.</div>;
@@ -263,12 +265,21 @@ export default function SolicitacoesAlteracao() {
   const sugestoes: any[] = sugData?.sugestoes || [];
   const totalPend = pending.length + sugestoes.length;
 
-  // Filtro de busca por nome do cliente (case-insensitive).
+  // Lista de vendedores para o filtro: quem abriu a solicitação (requestedByName)
+  // + origem/destino das sugestões de migração de carteira. Ordenada em pt-BR.
+  const vendedoresSet = new Set<string>();
+  for (const r of [...pending, ...resolved]) { if (r.requestedByName) vendedoresSet.add(r.requestedByName); }
+  for (const s of sugestoes) { if (s.from_name) vendedoresSet.add(s.from_name); if (s.to_name) vendedoresSet.add(s.to_name); }
+  const vendedores = Array.from(vendedoresSet).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  // Filtro de busca por nome do cliente (case-insensitive) + filtro por vendedor.
   const q = busca.trim().toLowerCase();
   const matchNome = (nome) => !q || String(nome || "").toLowerCase().includes(q);
-  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId));
-  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId));
-  const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id));
+  const matchVend = (nome?: string) => !filtroVendedor || String(nome || "") === filtroVendedor;
+  const matchVendSug = (s: any) => !filtroVendedor || s.from_name === filtroVendedor || s.to_name === filtroVendedor;
+  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName));
+  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName));
+  const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s));
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
@@ -278,13 +289,30 @@ export default function SolicitacoesAlteracao() {
         {totalPend > 0 && <Badge className="bg-indigo-600">{totalPend}</Badge>}
       </div>
 
-      <Input
-        placeholder="Buscar cliente..."
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-        className="max-w-sm"
-        data-testid="input-busca-cliente"
-      />
+      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+        <Input
+          placeholder="Buscar cliente..."
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          className="max-w-sm"
+          data-testid="input-busca-cliente"
+        />
+        <select
+          value={filtroVendedor}
+          onChange={(e) => setFiltroVendedor(e.target.value)}
+          className="border rounded-lg px-3 py-2 text-sm bg-white max-w-[220px]"
+          title="Filtrar por vendedor"
+          data-testid="select-filtro-vendedor"
+        >
+          <option value="">Todos os vendedores</option>
+          {vendedores.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+        {filtroVendedor && (
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => setFiltroVendedor("")}>
+            Limpar filtro
+          </Button>
+        )}
+      </div>
 
       <Tabs defaultValue="pendentes">
         <TabsList>
