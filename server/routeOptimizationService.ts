@@ -609,9 +609,13 @@ export async function registerCheckpoint(
   let isOffRoute = false;
   
   if (route && route.optimizedOrder) {
-    // Primeiro, verificar se está no optimizedOrder
-    const inOptimizedOrder = route.optimizedOrder.includes(customerId);
-    
+    // Primeiro, verificar se está no optimizedOrder.
+    // Lead entra na rota como parada "lead:{id}" (no optimizedOrder e/ou visitStops):
+    // reconhecer essa forma para NÃO marcar o check-in do lead como fora da rota.
+    const leadStopId = `lead:${customerId}`;
+    const _stops: any = (route as any).visitStops || {};
+    const inOptimizedOrder = route.optimizedOrder.includes(customerId) || route.optimizedOrder.includes(leadStopId) || !!_stops[leadStopId];
+
     if (!inOptimizedOrder) {
       // Se não está no optimizedOrder, verificar se há uma visita ativa (sales_card) para esse cliente
       // Isso cobre o caso de visitas adicionadas manualmente DEPOIS da rota ser gerada
