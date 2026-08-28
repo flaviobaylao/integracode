@@ -64,8 +64,20 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
     if (onDone) onDone();
   };
 
+  // GPS best-effort (nao bloqueia a acao se negado/indisponivel): usado para registrar
+  // a km do lead. Prorrogar/Nao Converter so contam km se estiver no raio do lead;
+  // Converter conta sempre que houver GPS. Sem GPS, a acao acontece mas nao gera km.
+  const getPos = (): Promise<{ latitude?: number; longitude?: number }> => new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve({});
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ latitude: p.coords.latitude, longitude: p.coords.longitude }),
+      () => resolve({}),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  });
+
   const prorrogarMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "prorrogar", data: novaData }),
+    mutationFn: async () => { const pos = await getPos(); return apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "prorrogar", data: novaData, ...pos }); },
     onSuccess: (r: any) => {
       toast({ title: "Retorno prorrogado", description: "Nova data de visita registrada." });
       setProrrogarOpen(false);
@@ -75,7 +87,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   });
 
   const naoConverterMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "nao_converter", motivo, observacao: obs }),
+    mutationFn: async () => { const pos = await getPos(); return apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "nao_converter", motivo, observacao: obs, ...pos }); },
     onSuccess: () => {
       toast({ title: "Lead finalizado", description: "Registrado como NÃO CONVERTIDO." });
       setNaoConverterOpen(false); setMotivo(""); setObs("");
@@ -85,23 +97,27 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   });
 
   const converterMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/leads/${leadId}/convert-to-customer`, {
-      name: cust.name,
-      customerType: cust.customerType || "pessoa_juridica",
-      cpf: cust.cpf || null,
-      cnpj: cust.cnpj || null,
-      companyName: cust.companyName || null,
-      phone: cust.phone,
-      email: cust.email || null,
-      address: cust.address,
-      city: cust.city || null,
-      state: cust.state || null,
-      zipCode: cust.zipCode || null,
-      neighborhood: cust.neighborhood || null,
-      sellerId: cust.assignedTo || sellerId,
-      weekdays: cust.weekdays || ["Seg"],
-      visitPeriodicity: cust.visitPeriodicity || "semanal",
-    }),
+    mutationFn: async () => {
+      const pos = await getPos();
+      return apiRequest("POST", `/api/leads/${leadId}/convert-to-customer`, {
+        name: cust.name,
+        customerType: cust.customerType || "pessoa_juridica",
+        cpf: cust.cpf || null,
+        cnpj: cust.cnpj || null,
+        companyName: cust.companyName || null,
+        phone: cust.phone,
+        email: cust.email || null,
+        address: cust.address,
+        city: cust.city || null,
+        state: cust.state || null,
+        zipCode: cust.zipCode || null,
+        neighborhood: cust.neighborhood || null,
+        sellerId: cust.assignedTo || sellerId,
+        weekdays: cust.weekdays || ["Seg"],
+        visitPeriodicity: cust.visitPeriodicity || "semanal",
+        ...pos,
+      });
+    },
     onSuccess: () => {
       toast({ title: "Convertido!", description: "Lead virou cliente ativo." });
       setConverterOpen(false); setCust({});
