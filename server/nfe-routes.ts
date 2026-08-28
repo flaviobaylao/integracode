@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { ensureLoteColumns } from "./ensure-lote-columns";
 import { insertFiscalScenarioSchema, insertFiscalInvoiceSchema, insertFiscalInvoiceItemSchema, insertDigitalCertificateSchema } from "@shared/schema";
 import multer from "multer";
 import { execSync } from "child_process";
@@ -741,42 +742,120 @@ export function registerNfeRoutes(app: Express) {
   // SEFAZ OPERATIONS
   // ============================================================================
 
+  // ORDEM OBRIGATORIA desta rota (antes era o inverso, e por isso saia NF sem estoque e sem lote):
+  //   1) confere saldo por INSTANCIA de todos os itens  -> 400 se faltar, nada e transmitido;
+  //   2) baixa o estoque e GRAVA O LOTE em cada item da NF;
+  //   3) so entao transmite a SEFAZ (o XML ja sai com o lote em <rastro>/infAdProd);
+  //   4) se a transmissao falhar, ESTORNA a baixa.
   app.post('/api/fiscal-invoices/:id/emit', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
+    const invoiceId = req.params.id;
+    const userId = req.user?.id || req.userId || null;
+    const { consumeStock, reverseStockConsumption } = await import('./inventory-routes.js');
+    const baixados: Array<{ productId: string; instanceId: string; quantity: number }> = [];
+
+    const estornarTudo = async (motivo: string) => {
+      for (const b of baixados.reverse()) {
+        try {
+          await reverseStockConsumption(b.productId, b.instanceId, b.quantity, 'invoice', invoiceId, userId);
+        } catch (e: any) {
+          console.error(`❌ [NFE] Falha ao estornar estoque de ${b.productId}:`, e?.message);
+        }
+      }
+      console.warn(`↩️ [NFE] Estoque estornado da NF ${invoiceId}: ${motivo}`);
+    };
+
     try {
-      const result = await sefazService.emitNfe(req.params.id);
+      await ensureLoteColumns();
+      const itensNf = await storage.getFiscalInvoiceItems(invoiceId);
+
+      // ── 1) TRAVA DE ESTOQUE (pre-checagem, antes de qualquer transmissao) ──────
+      const faltas: string[] = [];
+      const plano: Array<{ item: any; productId: string; instanceId: string; quantity: number }> = [];
+      for (const item of itensNf) {
+        const quantidade = parseFloat(item.quantity as any) || 0;
+        if (quantidade <= 0) continue;
+
+        if (!item.productId) {
+          faltas.push(`• ${item.productName}: item sem produto vinculado — sem como conferir estoque nem informar lote.`);
+          continue;
+        }
+        const product = await storage.getProduct(item.productId);
+        const instanceId = product?.omieInstanceId;
+        if (!instanceId) {
+          faltas.push(`• ${item.productName}: produto sem instancia definida — estoque e por instancia.`);
+          continue;
+        }
+        const lotes = await storage.getInventoryLots({ productId: item.productId, instanceId, stockType: 'in_use', isActive: true });
+        const bloqueados = await storage.getInventoryLots({ productId: item.productId, instanceId, stockType: 'blocked', isActive: true });
+        const disponivel = [...lotes, ...bloqueados].reduce((s, l) => s + Math.max(0, parseFloat(l.quantity?.toString() || '0')), 0);
+
+        if (lotes.length === 0) {
+          faltas.push(`• ${item.productName}: sem lote cadastrado nesta instancia — todo item de NF precisa de lote.`);
+          continue;
+        }
+        if (disponivel < quantidade) {
+          faltas.push(`• ${item.productName}: necessario ${quantidade}, disponivel ${disponivel} na instancia.`);
+          continue;
+        }
+        plano.push({ item, productId: item.productId, instanceId, quantity: quantidade });
+      }
+
+      if (faltas.length > 0) {
+        console.log(`🚫 [NFE] Emissao bloqueada para NF ${invoiceId} - estoque insuficiente`);
+        return res.status(400).json({
+          success: false,
+          stockError: true,
+          errorMessage: 'Emissao bloqueada: estoque insuficiente',
+          details: `Nao e possivel emitir a NF-e:\n${faltas.join('\n')}`,
+        });
+      }
+
+      // ── 2) BAIXA + GRAVACAO DO LOTE NO ITEM ───────────────────────────────────
+      for (const p of plano) {
+        const r = await consumeStock(p.productId, p.instanceId, p.quantity, 'invoice', invoiceId, userId);
+        if (!r.success) {
+          await estornarTudo(r.message || 'estoque insuficiente na baixa');
+          return res.status(400).json({
+            success: false,
+            stockError: true,
+            errorMessage: 'Emissao bloqueada: estoque insuficiente',
+            details: `• ${p.item.productName}: ${r.message || 'estoque insuficiente'}`,
+          });
+        }
+        baixados.push({ productId: p.productId, instanceId: p.instanceId, quantity: p.quantity });
+
+        const loteUsado = (await storage.getInventoryLots({ productId: p.productId, instanceId: p.instanceId, stockType: 'in_use', isActive: true }))
+          .find((l) => l.lotNumber === r.lotNumber);
+        await storage.updateFiscalInvoiceItem(p.item.id, {
+          lotNumber: r.lotNumber || null,
+          lotId: loteUsado?.id || null,
+          lots: r.lotNumber
+            ? [{
+                lotId: loteUsado?.id || null,
+                lotNumber: r.lotNumber,
+                quantity: p.quantity,
+                manufacturingDate: (loteUsado as any)?.manufacturingDate ? String((loteUsado as any).manufacturingDate).slice(0, 10) : null,
+                expiryDate: (loteUsado as any)?.expiryDate ? String((loteUsado as any).expiryDate).slice(0, 10) : null,
+              }]
+            : null,
+        } as any);
+      }
+
+      // ── 3) TRANSMISSAO ────────────────────────────────────────────────────────
+      const result = await sefazService.emitNfe(invoiceId);
 
       if (result.success) {
-        const invoice = await storage.getFiscalInvoice(req.params.id);
-        const items = await storage.getFiscalInvoiceItems(req.params.id);
-        const events = await storage.getFiscalInvoiceEvents(req.params.id);
-
-        // Consume stock for each item in the invoice
-        try {
-          const { consumeStock } = await import('./inventory-routes.js');
-          const userId = req.user?.id || req.userId || null;
-          for (const item of items) {
-            if (item.productId) {
-              const product = await storage.getProduct(item.productId);
-              const instanceId = product?.omieInstanceId || 'default';
-              await consumeStock(
-                item.productId,
-                instanceId,
-                parseFloat(item.quantity),
-                'invoice',
-                req.params.id,
-                userId,
-              );
-            }
-          }
-        } catch (stockErr: any) {
-          console.warn('⚠️ Erro ao consumir estoque após emissão NF-e:', stockErr.message);
-        }
-
+        const invoice = await storage.getFiscalInvoice(invoiceId);
+        const items = await storage.getFiscalInvoiceItems(invoiceId);
+        const events = await storage.getFiscalInvoiceEvents(invoiceId);
         res.json({ ...result, invoice: { ...invoice, items, events } });
       } else {
+        // ── 4) FALHOU: devolve o estoque ────────────────────────────────────────
+        await estornarTudo(result.errorMessage || 'rejeicao/falha na transmissao');
         res.status(400).json(result);
       }
     } catch (error: any) {
+      await estornarTudo(error?.message || 'erro inesperado');
       res.status(500).json({ success: false, errorMessage: error.message });
     }
   });
