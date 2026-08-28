@@ -21155,55 +21155,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 📅 Retornos de lead do dia entram na ROTA DO DIA como paradas de lead (sequência + mapa).
       // Idempotente e só para a data atual/futura (não altera rotas passadas). Só leads com coordenadas.
-      // REGRA DE CIDADE: na Rota do Dia o lead só entra se for da MESMA cidade dos clientes da rota
-      // (a Rota de Prospecção, tratada acima, mostra os leads do dia sem filtro de cidade).
+      // REGRA DE CIDADE: na Rota do Dia o lead só entra/fica se for da MESMA cidade dos clientes da
+      // rota (comparação SEM acento). A Rota de Prospecção (acima) mostra os leads do dia sem filtro
+      // de cidade. Reconcilia a cada GET: adiciona os da mesma cidade e remove os de outra cidade.
       try {
         const todayBR = getBrazilDateString();
         if (date >= todayBR) {
           const { db: _dbLR } = await import('./db');
+          const { customers: _custTbl, leads: _leadsTbl2 } = await import('../shared/schema');
+          const { inArray: _inArr } = await import('drizzle-orm');
+          // Normaliza cidade: remove acentos, espacos nas pontas e caixa (goiânia == goiania).
+          const _norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
           // Cidades da rota do dia = cidades dos clientes presenciais (optimizedOrder, sem os "lead:").
           const _custIds = Array.from(new Set(((route.optimizedOrder as string[]) || []).filter((s) => s && !String(s).startsWith('lead:'))));
           const _routeCities = new Set<string>();
           if (_custIds.length > 0) {
             try {
-              const { customers: _custTbl } = await import('../shared/schema');
-              const { inArray: _inArr } = await import('drizzle-orm');
               const _cc: any = await _dbLR.select({ city: _custTbl.city }).from(_custTbl).where(_inArr(_custTbl.id, _custIds));
-              for (const r of (_cc || [])) { const c = String((r as any).city || '').trim().toLowerCase(); if (c) _routeCities.add(c); }
-            } catch (_ce) { /* sem cidades -> nenhum lead injetado na Rota do Dia */ }
+              for (const r of (_cc || [])) { const c = _norm((r as any).city); if (c) _routeCities.add(c); }
+            } catch (_ce) { /* sem cidades da rota */ }
           }
-          const leadRet: any = await _dbLR.execute(sql`
-            SELECT id, city FROM leads
-            WHERE status = 'scheduled'
-              AND next_contact_date IS NOT NULL
-              AND (next_contact_date)::date <= ${date}::date
-              AND assigned_to = ${sellerId}
-              AND COALESCE(route_type, 'dia') <> 'prospeccao'
-              AND latitude IS NOT NULL AND longitude IS NOT NULL
-          `);
+
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
           const curStops: any = (route.visitStops as any) || {};
-          let addedLead = false;
-          for (const lr of (leadRet?.rows || [])) {
-            // Só injeta o lead na Rota do Dia se ele for da mesma cidade da rota.
-            const _lc = String((lr as any).city || '').trim().toLowerCase();
-            if (!_lc || !_routeCities.has(_lc)) continue;
-            const stopId = `lead:${lr.id}`;
-            if (!curOrder.includes(stopId) && !curStops[stopId]) {
-              curOrder.push(stopId);
-              curStops[stopId] = { entityType: 'lead', entityId: lr.id };
-              addedLead = true;
+
+          // Só aplica a regra de cidade quando conseguimos determinar a(s) cidade(s) da rota.
+          // Sem isso (ex.: clientes sem cidade cadastrada), não remove/adiciona nada, para nao esvaziar a rota.
+          if (_routeCities.size > 0) {
+            // Cidade de cada lead: candidatos (retornos agendados) + leads já presentes na rota.
+            const leadRet: any = await _dbLR.execute(sql`
+              SELECT id, city FROM leads
+              WHERE status = 'scheduled'
+                AND next_contact_date IS NOT NULL
+                AND (next_contact_date)::date <= ${date}::date
+                AND assigned_to = ${sellerId}
+                AND COALESCE(route_type, 'dia') <> 'prospeccao'
+                AND latitude IS NOT NULL AND longitude IS NOT NULL
+            `);
+            const _leadCityById: Record<string, string> = {};
+            const _candidates: { id: string; city: string }[] = [];
+            for (const lr of (leadRet?.rows || [])) { const id = String((lr as any).id); const c = _norm((lr as any).city); _candidates.push({ id, city: c }); _leadCityById[id] = c; }
+            const _existingLeadIds = curOrder.filter((s) => String(s).startsWith('lead:')).map((s) => String(s).slice(5));
+            const _missing = _existingLeadIds.filter((id) => !(id in _leadCityById));
+            if (_missing.length > 0) {
+              try {
+                const _lc2: any = await _dbLR.select({ id: _leadsTbl2.id, city: _leadsTbl2.city }).from(_leadsTbl2).where(_inArr(_leadsTbl2.id, _missing));
+                for (const r of (_lc2 || [])) _leadCityById[String((r as any).id)] = _norm((r as any).city);
+              } catch (_me) { /* mantem */ }
             }
-          }
-          if (addedLead) {
-            await storage.updateDailyRoute(route.id, { optimizedOrder: curOrder, visitStops: curStops, totalVisits: curOrder.length });
-            (route as any).optimizedOrder = curOrder;
-            (route as any).visitStops = curStops;
-            console.log(`📅 [LEAD-RETORNOS] Retornos de lead injetados na rota ${route.id} (agora ${curOrder.length} paradas)`);
+
+            let changed = false;
+            // 1) Mantém não-leads; entre os leads, remove os de OUTRA cidade (ou sem cidade conhecida).
+            const _kept: string[] = [];
+            for (const s of curOrder) {
+              if (!String(s).startsWith('lead:')) { _kept.push(s); continue; }
+              const id = String(s).slice(5);
+              const c = _leadCityById[id];
+              if (!!c && _routeCities.has(c)) { _kept.push(s); }
+              else { delete curStops[s]; changed = true; }
+            }
+            // 2) Adiciona os retornos da MESMA cidade que ainda não estão na rota.
+            for (const cand of _candidates) {
+              if (!cand.city || !_routeCities.has(cand.city)) continue;
+              const stopId = `lead:${cand.id}`;
+              if (!_kept.includes(stopId) && !curStops[stopId]) { _kept.push(stopId); curStops[stopId] = { entityType: 'lead', entityId: cand.id }; changed = true; }
+            }
+            if (changed) {
+              await storage.updateDailyRoute(route.id, { optimizedOrder: _kept, visitStops: curStops, totalVisits: _kept.length });
+              (route as any).optimizedOrder = _kept;
+              (route as any).visitStops = curStops;
+              console.log(`📅 [LEAD-CIDADE] Rota ${route.id}: leads reconciliados pela cidade (agora ${_kept.length} paradas)`);
+            }
           }
         }
       } catch (leadRetErr) {
-        console.warn('⚠️ [LEAD-RETORNOS] Falha ao injetar retornos de lead na rota:', leadRetErr);
+        console.warn('⚠️ [LEAD-RETORNOS] Falha ao reconciliar retornos de lead na rota:', leadRetErr);
       }
 
       // RECONCILIA presenciais da AGENDA que ficaram fora do optimizedOrder persistido (21/ago/2026).
