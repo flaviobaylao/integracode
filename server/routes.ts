@@ -27832,6 +27832,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // KM DO LEAD: cria o checkpoint (perna de km) da visita a um lead. Usado pelas
+  // acoes que registram a visita (Registrar/Converter = sem raio; Prorrogar/Nao
+  // converter = so contam se o vendedor esteve/deslocou ate a coordenada do lead,
+  // raio de 500m). O ponto do checkpoint e a COORDENADA DO LEAD (trajeto ate o lead).
+  // Injeta o lead como parada da rota (para o registerCheckpoint reconhecer on-rota),
+  // evita duplicar (1 check-in por lead/rota) e recalcula a km da rota.
+  async function ensureLeadKmCheckpoint(opts: { lead: any; sellerId: string; userLat: number; userLon: number; requireWithinRadius: boolean }): Promise<{ created: boolean; reason?: string; distance?: number | null }> {
+    const cOk = (la: number, lo: number) => isFinite(la) && isFinite(lo) && !(Math.abs(la) < 0.001 && Math.abs(lo) < 0.001) && Math.abs(la) <= 90 && Math.abs(lo) <= 180;
+    const { lead, sellerId, userLat, userLon, requireWithinRadius } = opts;
+    const leadLat = parseFloat(String(lead?.latitude));
+    const leadLon = parseFloat(String(lead?.longitude));
+    if (!cOk(leadLat, leadLon)) return { created: false, reason: 'lead_sem_coordenada' };
+    if (!cOk(userLat, userLon)) return { created: false, reason: 'sem_gps' };
+    // Distancia vendedor -> lead (Haversine, metros)
+    const R = 6371000, dLat = (leadLat - userLat) * Math.PI / 180, dLon = (leadLon - userLon) * Math.PI / 180;
+    const aa = Math.sin(dLat / 2) ** 2 + Math.cos(userLat * Math.PI / 180) * Math.cos(leadLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    const dist = R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+    if (requireWithinRadius && dist > 500) return { created: false, reason: 'fora_do_raio', distance: Math.round(dist) };
+    if (!sellerId) return { created: false, reason: 'sem_vendedor', distance: Math.round(dist) };
+    // Rota do dia (hoje BR) do vendedor
+    const today = dataCalendario(hojeBR());
+    const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, today);
+    if (!dailyRoute) return { created: false, reason: 'sem_rota', distance: Math.round(dist) };
+    // Injeta o lead como parada da rota (idempotente) para o checkpoint contar como on-rota
+    try {
+      const curOrder = Array.from(new Set(((dailyRoute as any).optimizedOrder as string[]) || []));
+      const curStops: any = ((dailyRoute as any).visitStops as any) || {};
+      const stopId = `lead:${lead.id}`;
+      if (!curOrder.includes(stopId) && !curStops[stopId]) {
+        curOrder.push(stopId); curStops[stopId] = { entityType: 'lead', entityId: lead.id };
+        await storage.updateDailyRoute(dailyRoute.id, { optimizedOrder: curOrder, visitStops: curStops, totalVisits: curOrder.length });
+      }
+    } catch (_e) { /* segue mesmo sem conseguir injetar */ }
+    // Dedup: 1 check-in por lead/rota
+    try {
+      const cps = await storage.getRouteCheckpoints(dailyRoute.id);
+      if ((cps || []).some((c: any) => c.checkpointType === 'check_in' && String(c.customerId) === String(lead.id))) {
+        return { created: false, reason: 'ja_registrado', distance: Math.round(dist) };
+      }
+    } catch (_e) { /* segue */ }
+    // Cria o checkpoint na COORDENADA DO LEAD (km = trajeto ate o lead) e recalcula a rota
+    const { registerCheckpoint } = await import('./routeOptimizationService');
+    await registerCheckpoint(storage, dailyRoute.id, `lead:${lead.id}`, lead.id, sellerId, 'check_in', leadLat, leadLon);
+    return { created: true, distance: Math.round(dist) };
+  }
+
   // Check-in em um lead (com foto obrigatória)
   app.post('/api/leads/:id/check-in', upload.single('photo'), async (req: any, res) => {
     console.log(`🚀 [CHECK-IN] POST /api/leads/${req.params.id}/check-in`);
@@ -27988,45 +28035,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         
-        // Registrar checkpoint na rota diária (para aparecer na listagem)
+        // Registra a perna de km do lead na rota. "Registrar" (check-in) conta
+        // sempre que houver GPS (sem raio). Usa a coordenada do lead como ponto,
+        // injeta o lead na rota e evita duplicar (1 check-in por lead/rota).
         let routeProgress = null;
         try {
           const sellerId = lead.assignedTo || user.id;
-          // Usar timezone do Brasil para garantir que encontramos a rota correta
-          const todayBrazil = dataCalendario(hojeBR());
-          const dailyRoute = await storage.getDailyRouteBySellerAndDate(sellerId, todayBrazil);
-          
-          if (dailyRoute) {
-            // Buscar o visitId correspondente ao lead na rota
-            const visits = dailyRoute.visits || [];
-            const leadVisit = visits.find((v: any) => 
-              v.visitType === 'lead' && (v.entityId === id || v.leadId === id || v.customerId === id)
-            );
-            
-            if (leadVisit) {
-              console.log(`📍 Registrando checkpoint de check-in para lead ${id} na rota ${dailyRoute.id}, visitId: ${leadVisit.id}`);
-              const { registerCheckpoint } = await import('./routeOptimizationService');
-              routeProgress = await registerCheckpoint(
-                storage,
-                dailyRoute.id,
-                leadVisit.id,  // visitId da rota
-                id,            // customerId = lead ID
-                sellerId,
-                'check_in',
-                userLat,
-                userLon,
-                photoUrl       // Passar URL da foto
-              );
-              console.log(`✅ Checkpoint de check-in registrado para lead`);
-            } else {
-              console.log(`⚠️ Lead ${id} não encontrado na rota diária do vendedor`);
-            }
-          } else {
-            console.log(`⚠️ Nenhuma rota diária encontrada para o vendedor ${sellerId}`);
-          }
+          const leadForKm = { ...lead, latitude: (leadCoordUpdate.latitude ?? lead.latitude), longitude: (leadCoordUpdate.longitude ?? lead.longitude) };
+          const kmRes = await ensureLeadKmCheckpoint({ lead: leadForKm, sellerId, userLat, userLon, requireWithinRadius: false });
+          routeProgress = kmRes.created ? { registered: true } : null;
+          console.log(`📍 [LEAD-KM] check-in lead ${id}: ${JSON.stringify(kmRes)}`);
         } catch (checkpointError: any) {
           console.error('❌ Erro ao registrar checkpoint de check-in:', checkpointError);
-          // Não falhar o check-in se checkpoint falhar
+          // Não falhar o check-in se o checkpoint falhar
         }
         
         console.log(`✅ Check-in realizado em lead ${lead.fantasyName} - Distância: ${Math.round(checkInDistance)}m, Foto salva`);
@@ -28165,13 +28186,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/leads/:id/convert-to-customer', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { name, customerType, cpf, cnpj, companyName, phone, email, address, city, state, zipCode, neighborhood, sellerId, weekdays, visitPeriodicity } = req.body;
-      
+      const { name, customerType, cpf, cnpj, companyName, phone, email, address, city, state, zipCode, neighborhood, sellerId, weekdays, visitPeriodicity, latitude, longitude } = req.body;
+
       // Buscar lead
       const lead = await storage.getLead(id);
       if (!lead) {
         return res.status(404).json({ message: 'Lead não encontrado' });
       }
+
+      // KM do lead: Converter conta sempre que houver GPS (sem raio). Faz antes de
+      // marcar o lead como convertido, para o lead ainda estar como parada da rota.
+      try {
+        const _sid = sellerId || lead.assignedTo || req.currentUser?.id || '';
+        const kmRes = await ensureLeadKmCheckpoint({ lead, sellerId: _sid, userLat: parseFloat(String(latitude)), userLon: parseFloat(String(longitude)), requireWithinRadius: false });
+        console.log(`📍 [LEAD-KM] converter lead ${id}: ${JSON.stringify(kmRes)}`);
+      } catch (_kmErr: any) { console.error('⚠️ [LEAD-KM] erro ao registrar km na conversao:', _kmErr?.message); }
 
       // Validar dados obrigatórios
       if (!name || !customerType || !phone || !address) {
@@ -28247,7 +28276,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.currentUser;
       const { id } = req.params;
-      const { acao, motivo, observacao } = req.body || {};
+      const { acao, motivo, observacao, latitude, longitude } = req.body || {};
 
       const lead = await storage.getLead(id);
       if (!lead) return res.status(404).json({ message: 'Lead não encontrado' });
@@ -28255,6 +28284,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Vendedor só age no lead atribuído a ele.
       if (['vendedor', 'telemarketing'].includes(user.role) && lead.assignedTo && lead.assignedTo !== user.id) {
         return res.status(403).json({ message: 'Acesso negado. Você só pode dar desfecho em leads atribuídos a você.' });
+      }
+
+      // KM do lead: Prorrogar e Não Converter só contam a perna se o vendedor
+      // esteve/deslocou até a coordenada do lead (raio de 500m). Feito antes de
+      // mudar o status, com o lead ainda como parada da rota.
+      if (acao === 'prorrogar' || acao === 'nao_converter') {
+        try {
+          const kmRes = await ensureLeadKmCheckpoint({ lead, sellerId: lead.assignedTo || user.id, userLat: parseFloat(String(latitude)), userLon: parseFloat(String(longitude)), requireWithinRadius: true });
+          console.log(`📍 [LEAD-KM] desfecho '${acao}' lead ${id}: ${JSON.stringify(kmRes)}`);
+        } catch (_kmErr: any) { console.error('⚠️ [LEAD-KM] erro ao registrar km no desfecho:', _kmErr?.message); }
       }
 
       if (acao === 'nao_converter') {
