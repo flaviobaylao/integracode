@@ -74,6 +74,47 @@ const FISCAL_LABELS: Record<string, string> = {
   denied: 'Denegada', draft: 'Rascunho', pending: 'Pendente',
 };
 
+// Nomes (resumidos) dos CFOPs mais comuns na operação. Chave sem pontuação —
+// o dado pode vir "5102" ou "1.202". Código fora da lista aparece sem nome.
+const CFOP_LABELS: Record<string, string> = {
+  '1201': 'Devolução de venda de produção do estabelecimento',
+  '1202': 'Devolução de venda de mercadoria de terceiros',
+  '1411': 'Devolução de venda com substituição tributária',
+  '1949': 'Outra entrada não especificada',
+  '2201': 'Devolução de venda de produção (interestadual)',
+  '2202': 'Devolução de venda de mercadoria de terceiros (interestadual)',
+  '2411': 'Devolução de venda com ST (interestadual)',
+  '5101': 'Venda de produção do estabelecimento',
+  '5102': 'Venda de mercadoria adquirida de terceiros',
+  '5151': 'Transferência de produção do estabelecimento',
+  '5152': 'Transferência de mercadoria adquirida',
+  '5401': 'Venda de produção com ST (substituto)',
+  '5403': 'Venda de mercadoria com ST (substituto)',
+  '5405': 'Venda de mercadoria com ST (substituído)',
+  '5409': 'Venda com ST (substituído)',
+  '5910': 'Remessa em bonificação, doação ou brinde',
+  '5911': 'Remessa de amostra grátis',
+  '5929': 'Saída de mercadoria acobertada por NFC-e/ECF',
+  '5949': 'Outra saída não especificada',
+  '6101': 'Venda de produção (interestadual)',
+  '6102': 'Venda de mercadoria de terceiros (interestadual)',
+  '6108': 'Venda a não contribuinte (interestadual)',
+  '6151': 'Transferência de produção (interestadual)',
+  '6152': 'Transferência de mercadoria (interestadual)',
+  '6401': 'Venda de produção com ST (interestadual)',
+  '6403': 'Venda com ST, substituto (interestadual)',
+  '6404': 'Venda com ST, imposto já retido (interestadual)',
+  '6409': 'Venda com ST, substituído (interestadual)',
+  '6910': 'Bonificação, doação ou brinde (interestadual)',
+  '6911': 'Remessa de amostra grátis (interestadual)',
+  '6929': 'Saída acobertada por NFC-e/ECF (interestadual)',
+  '6949': 'Outra saída não especificada (interestadual)',
+};
+const cfopName = (v: string | null | undefined) =>
+  v ? (CFOP_LABELS[String(v).replace(/\D/g, '')] || '') : '';
+const cfopFull = (v: string) =>
+  v === 'sem NF' ? 'sem NF' : (cfopName(v) ? `${v} — ${cfopName(v)}` : v);
+
 // Paleta categórica validada (CVD-safe na ordem fixa). A cor segue a ENTIDADE:
 // cada operação tem a sua e não muda quando um filtro esconde as demais.
 const PALETTE = ['#2563eb', '#ea580c', '#0d9488', '#7c3aed', '#ca8a04'];
@@ -235,7 +276,13 @@ export default function GestaoProdutos() {
   const customerOptions = useMemo(() => opts(rows.map((r) => r.customer_name)), [rows]);
   const opOptions = useMemo(() => opts(rows.map((r) => r.operation_type), OPERATION_LABELS), [rows]);
   const stageOptions = useMemo(() => opts(rows.map((r) => r.stage), STAGE_LABELS), [rows]);
-  const cfopOptions = useMemo(() => opts(rows.map((r) => r.cfop)), [rows]);
+  const cfopOptions = useMemo(() => {
+    const lista = Array.from(new Set(rows.map((r) => r.cfop).filter(Boolean) as string[]))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+      .map((v) => ({ value: v, label: cfopFull(v) }));
+    if (rows.some((r) => !r.cfop)) lista.push({ value: 'sem NF', label: 'sem NF — pedido ainda sem NF-e vinculada' });
+    return lista;
+  }, [rows]);
   const cityOptions = useMemo(() => opts(rows.map((r) => r.customer_city)), [rows]);
   const payOptions = useMemo(() => opts(rows.map((r) => r.payment_method), PAYMENT_LABELS), [rows]);
   const prodOptions = useMemo(() => opts(rows.map((r) => r.product_name)), [rows]);
@@ -250,28 +297,41 @@ export default function GestaoProdutos() {
     setPayFilter(new Set()); setProdFilter(new Set());
   };
 
+  // Chave de CFOP de uma linha: itens sem NF entram como 'sem NF' — assim o
+  // chip "sem NF" também é selecionável no filtro.
+  const cfopKeyOf = (r: ItemRow) => (r.cfop ? String(r.cfop) : 'sem NF');
+
+  const matches = (r: ItemRow, q: string, ignoreCfop: boolean) => {
+    if (instFilter.size && !instFilter.has(String(r.instance_name || ''))) return false;
+    if (sellerFilter.size && !sellerFilter.has(String(r.seller_name || ''))) return false;
+    if (customerFilter.size && !customerFilter.has(String(r.customer_name || ''))) return false;
+    if (opFilter.size && !opFilter.has(String(r.operation_type || ''))) return false;
+    if (stageFilter.size && !stageFilter.has(String(r.stage || ''))) return false;
+    if (!ignoreCfop && cfopFilter.size && !cfopFilter.has(cfopKeyOf(r))) return false;
+    if (cityFilter.size && !cityFilter.has(String(r.customer_city || ''))) return false;
+    if (payFilter.size && !payFilter.has(String(r.payment_method || ''))) return false;
+    if (prodFilter.size && !prodFilter.has(String(r.product_name || ''))) return false;
+    if (q) {
+      const hay = [
+        r.product_name, r.product_code, r.ncm, r.customer_name, r.seller_name,
+        r.instance_name, r.order_number, r.invoice_number, r.cfop, cfopName(r.cfop), r.customer_city,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (instFilter.size && !instFilter.has(String(r.instance_name || ''))) return false;
-      if (sellerFilter.size && !sellerFilter.has(String(r.seller_name || ''))) return false;
-      if (customerFilter.size && !customerFilter.has(String(r.customer_name || ''))) return false;
-      if (opFilter.size && !opFilter.has(String(r.operation_type || ''))) return false;
-      if (stageFilter.size && !stageFilter.has(String(r.stage || ''))) return false;
-      if (cfopFilter.size && !cfopFilter.has(String(r.cfop || ''))) return false;
-      if (cityFilter.size && !cityFilter.has(String(r.customer_city || ''))) return false;
-      if (payFilter.size && !payFilter.has(String(r.payment_method || ''))) return false;
-      if (prodFilter.size && !prodFilter.has(String(r.product_name || ''))) return false;
-      if (q) {
-        const hay = [
-          r.product_name, r.product_code, r.ncm, r.customer_name, r.seller_name,
-          r.instance_name, r.order_number, r.invoice_number, r.cfop, r.customer_city,
-        ].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
+    return rows.filter((r) => matches(r, q, false));
   }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cfopFilter, cityFilter, payFilter, prodFilter]);
+
+  // Base dos chips de CFOP: todos os filtros MENOS o próprio filtro de CFOP —
+  // senão, ao selecionar um chip, os demais sumiriam e a multi-seleção morre.
+  const filteredExceptCfop = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => matches(r, q, true));
+  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cityFilter, payFilter, prodFilter]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -326,7 +386,18 @@ export default function GestaoProdutos() {
   const byInstance = useMemo(() => aggBy((r) => String(r.instance_name || '—')), [filtered, metric]);
   const bySeller = useMemo(() => aggBy((r) => String(r.seller_name || '—')).slice(0, 8), [filtered, metric]);
   const byCustomer = useMemo(() => aggBy((r) => String(r.customer_name || '—')).slice(0, 8), [filtered, metric]);
-  const byCfop = useMemo(() => aggBy((r) => String(r.cfop || 'sem NF')), [filtered, metric]);
+  const byCfop = useMemo(() => {
+    const map = new Map<string, { valor: number; qtd: number }>();
+    for (const r of filteredExceptCfop) {
+      const k = cfopKeyOf(r);
+      const cur = map.get(k) || { valor: 0, qtd: 0 };
+      cur.valor += num(r.total_price); cur.qtd += num(r.quantity);
+      map.set(k, cur);
+    }
+    return Array.from(map.entries())
+      .map(([k, v]) => ({ key: k, name: k, ...v }))
+      .sort((a, b) => (metric === 'valor' ? b.valor - a.valor : b.qtd - a.qtd));
+  }, [filteredExceptCfop, metric]);
 
   // ── Agregação por produto (tabela + top 10) ──────────────────────────────
   const prodAgg = useMemo(() => {
@@ -422,14 +493,14 @@ export default function GestaoProdutos() {
 
   const exportDetalhado = () => downloadCsv(
     `produtos-comercializados-detalhado-${de}-a-${ate}.csv`,
-    ['Data', 'Produto', 'Código', 'NCM', 'Quantidade', 'Valor unit.', 'Valor total', 'Operação', 'Etapa', 'Cliente', 'Cidade', 'Vendedor', 'Instância', 'Pedido', 'NF', 'CFOP', 'Status fiscal', 'Pagamento'],
+    ['Data', 'Produto', 'Código', 'NCM', 'Quantidade', 'Valor unit.', 'Valor total', 'Operação', 'Etapa', 'Cliente', 'Cidade', 'Vendedor', 'Instância', 'Pedido', 'NF', 'CFOP', 'Nome do CFOP', 'Status fiscal', 'Pagamento'],
     filtered.map((r) => [
       fmtBucket(r.data), r.product_name, r.product_code || '', r.ncm || '',
       nBR(num(r.quantity)), nBR(num(r.unit_price)), nBR(num(r.total_price)),
       OPERATION_LABELS[String(r.operation_type || '')] || r.operation_type || '',
       STAGE_LABELS[r.stage] || r.stage,
       r.customer_name, r.customer_city || '', r.seller_name || '', r.instance_name || '',
-      r.order_number || '', r.invoice_number || '', r.cfop || '',
+      r.order_number || '', r.invoice_number || '', r.cfop || '', cfopName(r.cfop),
       FISCAL_LABELS[String(r.fiscal_status || '')] || r.fiscal_status || '',
       PAYMENT_LABELS[String(r.payment_method || '')] || r.payment_method || '',
     ]),
@@ -544,7 +615,7 @@ export default function GestaoProdutos() {
           <MultiSelectFilter label="Cliente" options={customerOptions} selected={customerFilter} onToggle={toggleInSet(setCustomerFilter)} onClear={() => setCustomerFilter(new Set())} testid="filtro-gp-cliente" searchable />
           <MultiSelectFilter label="Operação" options={opOptions} selected={opFilter} onToggle={toggleInSet(setOpFilter)} onClear={() => setOpFilter(new Set())} testid="filtro-gp-operacao" />
           <MultiSelectFilter label="Etapa" options={stageOptions} selected={stageFilter} onToggle={toggleInSet(setStageFilter)} onClear={() => setStageFilter(new Set())} testid="filtro-gp-etapa" />
-          <MultiSelectFilter label="CFOP" options={cfopOptions} selected={cfopFilter} onToggle={toggleInSet(setCfopFilter)} onClear={() => setCfopFilter(new Set())} testid="filtro-gp-cfop" />
+          <MultiSelectFilter label="CFOP" options={cfopOptions} selected={cfopFilter} onToggle={toggleInSet(setCfopFilter)} onClear={() => setCfopFilter(new Set())} testid="filtro-gp-cfop" searchable />
           <MultiSelectFilter label="Cidade" options={cityOptions} selected={cityFilter} onToggle={toggleInSet(setCityFilter)} onClear={() => setCityFilter(new Set())} testid="filtro-gp-cidade" searchable />
           <MultiSelectFilter label="Pagamento" options={payOptions} selected={payFilter} onToggle={toggleInSet(setPayFilter)} onClear={() => setPayFilter(new Set())} testid="filtro-gp-pagamento" />
           {activeFilters > 0 && (
@@ -685,16 +756,43 @@ export default function GestaoProdutos() {
               ))}
             </div>
 
-            {/* CFOPs presentes */}
-            {byCfop.length > 1 && (
-              <ChartCard title={`Por CFOP — ${metric === 'valor' ? 'valor' : 'quantidade'}`} subtitle="CFOP do cabeçalho da NF-e vinculada ao pedido; itens sem NF aparecem como 'sem NF'" className="mb-3">
+            {/* CFOPs presentes — chips clicáveis: selecionam/desmarcam o CFOP no filtro */}
+            {byCfop.length > 0 && (
+              <ChartCard title={`Por CFOP — ${metric === 'valor' ? 'valor' : 'quantidade'}`} subtitle="CFOP do cabeçalho da NF-e vinculada ao pedido; itens sem NF aparecem como 'sem NF'. Clique num CFOP para filtrar o relatório por ele (pode marcar vários)." className="mb-3">
                 <div className="flex flex-wrap gap-2">
-                  {byCfop.map((c) => (
-                    <div key={c.key} className="border dark:border-gray-700 rounded-md px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-gray-700/40">
-                      <span className="font-semibold text-gray-800 dark:text-gray-100">{c.name}</span>
-                      <span className="text-gray-500 ml-2">{fmtMetric(metric === 'valor' ? c.valor : c.qtd)}</span>
-                    </div>
-                  ))}
+                  {byCfop.map((c) => {
+                    const sel = cfopFilter.has(c.key);
+                    const nome = c.key === 'sem NF' ? 'pedido ainda sem NF-e vinculada' : cfopName(c.key);
+                    return (
+                      <button
+                        key={c.key}
+                        onClick={() => toggleInSet(setCfopFilter)(c.key)}
+                        title={sel ? 'Clique para desmarcar' : 'Clique para filtrar por este CFOP'}
+                        data-testid={`chip-cfop-${c.key.replace(/\D/g, '') || 'semnf'}`}
+                        className={`text-left border rounded-md px-2.5 py-1.5 text-xs transition-colors ${
+                          sel
+                            ? 'border-teal-600 bg-teal-50 dark:bg-teal-900/30 ring-1 ring-teal-500'
+                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/40 hover:border-teal-400'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={`font-semibold ${sel ? 'text-teal-800 dark:text-teal-200' : 'text-gray-800 dark:text-gray-100'}`}>{c.name}</span>
+                          <span className="text-gray-500">{fmtMetric(metric === 'valor' ? c.valor : c.qtd)}</span>
+                          {sel && <span className="text-teal-600 font-bold">✓</span>}
+                        </span>
+                        {nome && <span className="block text-[11px] text-gray-500 dark:text-gray-400 max-w-[260px]">{nome}</span>}
+                      </button>
+                    );
+                  })}
+                  {cfopFilter.size > 0 && (
+                    <button
+                      onClick={() => setCfopFilter(new Set())}
+                      className="border border-gray-200 dark:border-gray-700 rounded-md px-2.5 py-1.5 text-xs text-blue-600 hover:underline"
+                      data-testid="chip-cfop-limpar"
+                    >
+                      Limpar CFOPs ×
+                    </button>
+                  )}
                 </div>
               </ChartCard>
             )}
@@ -790,6 +888,7 @@ export default function GestaoProdutos() {
                 { title: 'Por vendedor', rows: detailAgg((r) => String(r.seller_name || '—')) },
                 { title: 'Por instância', rows: detailAgg((r) => String(r.instance_name || '—')) },
                 { title: 'Por operação', rows: detailAgg((r) => String(r.operation_type || '—'), OPERATION_LABELS) },
+                { title: 'Por CFOP', rows: detailAgg((r) => (r.cfop ? cfopFull(String(r.cfop)) : 'sem NF')) },
               ].map((sec) => (
                 <div key={sec.title}>
                   <p className="font-semibold mb-1">{sec.title}</p>
