@@ -5415,13 +5415,15 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         ) AS p
         LEFT JOIN customers c ON c.id = bp.customer_id
         LEFT JOIN products pr ON pr.id = p->>'id'
-        LEFT JOIN LATERAL (
-          SELECT f.cfop, f.status
+        LEFT JOIN (
+          -- 1 NF por sales_card (prefere a autorizada, depois a mais recente).
+          -- Sem LATERAL de propósito: fiscal_invoices não tem índice em
+          -- sales_card_id, e o LATERAL vira 1 varredura por linha (timeout).
+          SELECT DISTINCT ON (f.sales_card_id) f.sales_card_id, f.cfop, f.status
           FROM fiscal_invoices f
-          WHERE f.sales_card_id = bp.sales_card_id
-          ORDER BY (f.status IN ('authorized', 'autorizada')) DESC, f.created_at DESC
-          LIMIT 1
-        ) fi ON true
+          WHERE f.sales_card_id IS NOT NULL
+          ORDER BY f.sales_card_id, (f.status IN ('authorized', 'autorizada')) DESC, f.created_at DESC
+        ) fi ON fi.sales_card_id = bp.sales_card_id
         WHERE bp.created_at >= ${de}::date
           AND bp.created_at < (${ate}::date + 1)
           AND bp.stage::text NOT IN ('lixeira')
