@@ -36,7 +36,82 @@ const MOV_IN = new Set(['entrada', 'entrada_compra', 'devolucao']);
 const MOV_OUT = new Set(['saida', 'saida_producao', 'perda']);
 const MOV_TYPES = new Set(Array.from(MOV_IN).concat(Array.from(MOV_OUT)).concat(['ajuste']));
 
+// Estorno da finalização (Flavio 29/ago): reabrir ou excluir uma ordem JÁ
+// finalizada tem que desfazer TUDO que a finalização escreveu no estoque —
+// senão a próxima finalização baixa a matéria-prima duas vezes.
+// Idempotência: cada movimento estornado recebe o marcador '[estornado]' nas
+// notes, e o filtro ignora quem já tem o marcador. Reabrir → finalizar →
+// reabrir de novo funciona sem estornar duas vezes o mesmo movimento.
+const EST_MARK = '[estornado]';
+
+async function reverseFinalization(id: string, order: any, by: string) {
+  const undone: string[] = [];
+  const warnings: string[] = [];
+
+  // 1) Matéria-prima: desfaz consumo (saida_producao) e entrada de polpa produzida
+  const movs: any = await db.execute(sql`
+    SELECT * FROM raw_material_movements
+    WHERE production_order_id = ${id}
+      AND movement_type IN ('saida_producao', 'entrada')
+      AND COALESCE(notes, '') NOT LIKE ${'%' + EST_MARK + '%'}
+    ORDER BY created_at ASC`);
+  for (const mv of (movs.rows || [])) {
+    const rm: any = await db.execute(sql`SELECT * FROM raw_materials WHERE id = ${mv.raw_material_id} LIMIT 1`);
+    const mat = (rm.rows || [])[0];
+    if (!mat) { warnings.push(`material ${mv.raw_material_id} nao existe mais — movimento nao estornado`); continue; }
+    const qty = Number(mv.quantity) || 0;
+    const prevQty = Number(mat.quantity) || 0;
+    const isOut = String(mv.movement_type) === 'saida_producao';
+    const newQty = isOut ? prevQty + qty : prevQty - qty;
+    await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${mat.id}`);
+    await db.execute(sql`
+      INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
+      VALUES (gen_random_uuid()::varchar, ${mat.id}, ${isOut ? 'entrada' : 'saida'}, ${qty}, ${prevQty}, ${newQty}, ${id}, ${'Estorno da finalizacao da ordem ' + order.order_number + ' ' + EST_MARK}, ${by}, now(), ${mat.unit_cost})`);
+    await db.execute(sql`UPDATE raw_material_movements SET notes = COALESCE(notes, '') || ${' ' + EST_MARK} WHERE id = ${mv.id}`);
+    undone.push(`${mat.name}: ${isOut ? '+' : '-'}${qty}`);
+    if (newQty < 0) warnings.push(`estoque de ${mat.name} ficou negativo (${newQty}) apos o estorno`);
+  }
+
+  // 2) Produto acabado: desfaz a entrada do lote criado pela finalização
+  const inv: any = await db.execute(sql`
+    SELECT * FROM inventory_movements
+    WHERE source_type = 'order' AND source_id = ${id} AND movement_type = 'replenish'
+      AND COALESCE(notes, '') NOT LIKE ${'%' + EST_MARK + '%'}
+    ORDER BY created_at ASC`);
+  for (const mv of (inv.rows || [])) {
+    const lq: any = await db.execute(sql`SELECT * FROM inventory_lots WHERE id = ${mv.lot_id} LIMIT 1`);
+    const lot = (lq.rows || [])[0];
+    if (!lot) { warnings.push(`lote ${mv.lot_number} nao encontrado — entrada de produto acabado nao estornada`); continue; }
+    const qty = Number(mv.quantity) || 0;
+    const prevQty = Number(lot.quantity) || 0;
+    const newQty = prevQty - qty;
+    if (newQty < 0) warnings.push(`lote ${lot.lot_number} ja teve saida (restam ${prevQty} de ${qty}) — zerado e inativado`);
+    const finalQty = Math.max(0, newQty);
+    await db.execute(sql`
+      UPDATE inventory_lots SET quantity = ${String(finalQty)}, is_active = ${finalQty > 0},
+        notes = COALESCE(notes, '') || ${' | estornado pela reabertura da ' + order.order_number},
+        updated_at = now()
+      WHERE id = ${lot.id}`);
+    await db.execute(sql`
+      INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, quantity, previous_quantity, new_quantity, source_type, source_id, lot_number, notes, created_by, created_at)
+      VALUES (gen_random_uuid()::varchar, ${lot.id}, ${lot.product_id}, ${lot.instance_id}, 'cancel_reversal', ${String(qty)}, ${String(prevQty)}, ${String(finalQty)}, 'order', ${id}, ${lot.lot_number}, ${'Estorno da finalizacao da ordem ' + order.order_number + ' ' + EST_MARK}, ${by}, now())`);
+    await db.execute(sql`UPDATE inventory_movements SET notes = COALESCE(notes, '') || ${' ' + EST_MARK} WHERE id = ${mv.id}`);
+    undone.push(`lote ${lot.lot_number}: -${qty}`);
+  }
+
+  return { undone, warnings };
+}
+
+// Tira o rodapé "CMV: ..." que a finalização anexa em notes, para a ordem
+// reaberta não carregar o CMV da tentativa anterior.
+const stripCmvNote = (notes: any) => String(notes || '')
+  .split(' | ').filter((p) => !/^CMV:\s/.test(p.trim())).join(' | ').trim() || null;
+
 export function registerIndustriaRoutes(app: Express) {
+
+  // Ordem reaberta precisa lembrar o lote que gerou (para o estorno e para
+  // reexibir no formulário). A tabela vem do 1.0 e pode não ter a coluna.
+  db.execute(sql`ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS lot_number varchar`).catch(() => {});
 
   // ========================== MATÉRIA-PRIMA ==========================
 
@@ -298,11 +373,20 @@ export function registerIndustriaRoutes(app: Express) {
       const cur: any = await db.execute(sql`SELECT * FROM production_orders WHERE id = ${id} LIMIT 1`);
       const prev = (cur.rows || [])[0];
       if (!prev) return res.status(404).json({ error: 'ordem nao encontrada', id });
-      if (prev.status === 'finalizada') return res.status(400).json({ error: 'ordem finalizada nao pode ser excluida' });
+      // Ordem finalizada PODE ser excluida (Flavio 29/ago) — mas só depois de
+      // estornar o estoque que a finalização mexeu.
+      let estorno: any = null;
+      if (prev.status === 'finalizada') {
+        estorno = await reverseFinalization(id, prev, userOf(req as any));
+        console.log('🏭 [OP] estorno antes de excluir', prev.order_number, estorno.undone);
+      }
+      // Os movimentos apontam para a ordem que vai sumir — solta a FK/referência
+      // mas preserva o histórico de estoque (não se apaga movimentação).
+      await db.execute(sql`UPDATE raw_material_movements SET production_order_id = NULL, notes = COALESCE(notes, '') || ${' (ordem ' + prev.order_number + ' excluida)'} WHERE production_order_id = ${id}`);
       await db.execute(sql`DELETE FROM production_order_items WHERE production_order_id = ${id}`);
       await db.execute(sql`DELETE FROM production_orders WHERE id = ${id}`);
       console.log('🏭 [OP] excluida', prev.order_number);
-      res.json({ ok: true, deleted: { id, order_number: prev.order_number } });
+      res.json({ ok: true, deleted: { id, order_number: prev.order_number }, estorno, warnings: estorno?.warnings || [] });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
@@ -342,7 +426,11 @@ export function registerIndustriaRoutes(app: Express) {
         matRows.push({ req: m, mat });
       }
       const cmvUnit = produced > 0 ? totalCost / produced : 0;
-      const cmvNote = `CMV: R$ ${totalCost.toFixed(2)} (unit. R$ ${cmvUnit.toFixed(4)}) — lote ${lotNumber}, validade ${lotExpiry}`;
+      // validade em dd/mm/aaaa (o ISO cru no rodape confundia com a data
+      // formatada logo acima na mesma janela — Flavio 29/ago)
+      const lotExpiryBR = /^\d{4}-\d{2}-\d{2}$/.test(lotExpiry)
+        ? lotExpiry.split('-').reverse().join('/') : lotExpiry;
+      const cmvNote = `CMV: R$ ${totalCost.toFixed(2)} (unit. R$ ${cmvUnit.toFixed(4)}) — lote ${lotNumber}, validade ${lotExpiryBR}`;
       const notes = [str(b.notes, 800) || order.notes || '', cmvNote].filter(Boolean).join(' | ');
       // production_date é coluna DATE — resolve em JS (COALESCE com texto quebrava: bug 18/ago)
       const prodDate = str(b.production_date, 20)
@@ -361,6 +449,7 @@ export function registerIndustriaRoutes(app: Express) {
           ph = ${num(b.ph)},
           sensory_analysis = ${str(b.sensory_analysis, 30)},
           lot_expiry_date = ${lotExpiry},
+          lot_number = ${lotNumber},
           pasteurization_start_time = ${str(b.pasteurization_start_time, 10)},
           pasteurization_end_time = ${str(b.pasteurization_end_time, 10)},
           pasteurization_start_temp = ${num(b.pasteurization_start_temp)},
@@ -474,6 +563,39 @@ export function registerIndustriaRoutes(app: Express) {
 
       console.log('🏭 [OP] FINALIZADA', order.order_number, 'produzido', produced, 'lote', lotNumber, 'CMV', totalCost.toFixed(2), 'por', by);
       res.json({ ok: true, order: (up.rows || [])[0], cmv: { total: totalCost, unit: cmvUnit }, finished, warnings });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Reabertura (Flavio 29/ago): ordem finalizada volta para 'em_producao' para
+  // correção. Estorna TODO o estoque da finalização antes — matéria-prima
+  // consumida volta, lote de produto acabado é baixado — para que a nova
+  // finalização não baixe nada duas vezes. Mantém brix/pH/pasteurização e o
+  // lote/validade preenchidos, para o operador só corrigir o que errou.
+  app.post('/api/industria/production-orders/:id/reopen', async (req: any, res) => {
+    try {
+      const id = str(req.params.id, 60);
+      if (!id) return res.status(400).json({ error: 'id invalido' });
+      const cur: any = await db.execute(sql`SELECT * FROM production_orders WHERE id = ${id} LIMIT 1`);
+      const order = (cur.rows || [])[0];
+      if (!order) return res.status(404).json({ error: 'ordem nao encontrada', id });
+      if (order.status !== 'finalizada') return res.status(400).json({ error: 'so ordem finalizada pode ser reaberta', status: order.status });
+      const by = userOf(req);
+
+      const { undone, warnings } = await reverseFinalization(id, order, by);
+
+      // Claim atômico: só reabre quem ainda está finalizada (blinda clique duplo)
+      const up: any = await db.execute(sql`
+        UPDATE production_orders SET
+          status = 'em_producao',
+          end_date = NULL,
+          notes = ${stripCmvNote(order.notes)},
+          updated_at = now()
+        WHERE id = ${id} AND status = 'finalizada'
+        RETURNING *`);
+      if (!(up.rows || []).length) return res.status(400).json({ error: 'ordem ja foi reaberta — recarregue a lista' });
+
+      console.log('🏭 [OP] REABERTA', order.order_number, 'estorno:', undone, 'por', by);
+      res.json({ ok: true, order: (up.rows || [])[0], estorno: undone, warnings });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
