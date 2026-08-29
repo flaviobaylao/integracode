@@ -3431,6 +3431,15 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
   db.execute(sql`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS channel_phone varchar`).catch(() => {});
+  // Industria: quantidades aceitam fracao (polpa fecha em decimo de quilo).
+  // Sem isto, finalizar uma OP com 614,9 quebra: invalid input syntax for type integer.
+  db.execute(sql`ALTER TABLE production_orders      ALTER COLUMN quantity          TYPE numeric(14,3) USING quantity::numeric`).catch(() => {});
+  db.execute(sql`ALTER TABLE production_order_items ALTER COLUMN quantity_used     TYPE numeric(14,3) USING quantity_used::numeric`).catch(() => {});
+  db.execute(sql`ALTER TABLE raw_materials          ALTER COLUMN quantity          TYPE numeric(14,3) USING quantity::numeric`).catch(() => {});
+  db.execute(sql`ALTER TABLE raw_materials          ALTER COLUMN min_quantity      TYPE numeric(14,3) USING min_quantity::numeric`).catch(() => {});
+  db.execute(sql`ALTER TABLE raw_material_movements ALTER COLUMN quantity          TYPE numeric(14,3) USING quantity::numeric`).catch(() => {});
+  db.execute(sql`ALTER TABLE raw_material_movements ALTER COLUMN previous_quantity TYPE numeric(14,3) USING previous_quantity::numeric`).catch(() => {});
+  db.execute(sql`ALTER TABLE raw_material_movements ALTER COLUMN new_quantity      TYPE numeric(14,3) USING new_quantity::numeric`).catch(() => {});
   // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
