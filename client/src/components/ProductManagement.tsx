@@ -5,20 +5,40 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { RefreshCw, Images, X, Upload, Check, Pencil } from "lucide-react";
+import { RefreshCw, Images, X, Upload, Check, Pencil, FileText, Download, Trash2, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
+
+type FichaMeta = {
+  fileName: string;
+  fileSize: number;
+  extractStatus: string; // ok | sem_texto | falha
+  textLength: number;
+  updatedAt: string | null;
+};
+
+const formatFileSize = (bytes: number) =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 export default function ProductManagement() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [editingNcm, setEditingNcm] = useState<string | null>(null);
   const [ncmValue, setNcmValue] = useState("");
+  // Ficha técnica: qual produto está com upload em andamento (só um por vez).
+  const [uploadingFicha, setUploadingFicha] = useState<string | null>(null);
   
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ['/api/products'],
     retry: false,
   });
+  // Metadado das fichas técnicas (nome, tamanho, status da extração de texto).
+  // Query separada de propósito: o PDF em si NUNCA entra na listagem do catálogo.
+  const { data: fichas } = useQuery<Record<string, FichaMeta>>({
+    queryKey: ['/api/products/datasheets'],
+    retry: false,
+  });
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -52,6 +72,51 @@ export default function ProductManagement() {
       });
     },
   });
+
+  const deleteFichaMutation = useMutation({
+    mutationFn: async (productId: string) => {
+      const response = await fetch(`/api/products/${productId}/ficha-tecnica`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Erro ao remover ficha técnica');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products/datasheets'] });
+      toast({ title: "Ficha removida", description: "A ficha técnica foi excluída." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao remover", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleFichaUpload = async (productId: string, file: File) => {
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+      toast({ title: "Arquivo inválido", description: "A ficha técnica precisa ser um PDF.", variant: "destructive" });
+      return;
+    }
+    setUploadingFicha(productId);
+    try {
+      const formData = new FormData();
+      formData.append('ficha', file);
+      const response = await fetch(`/api/products/${productId}/ficha-tecnica`, { method: 'POST', body: formData });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.message || 'Erro ao enviar a ficha técnica');
+      queryClient.invalidateQueries({ queryKey: ['/api/products/datasheets'] });
+      // O PDF sem camada de texto (escaneado) é anexado do mesmo jeito, mas não
+      // alimenta a IA — o usuário precisa saber disso na hora, não depois.
+      toast({
+        title: data?.extractStatus === 'ok' ? "Ficha técnica anexada" : "Ficha anexada, sem texto legível",
+        description: data?.extractStatus === 'ok'
+          ? `Texto lido (${data.textLength} caracteres) e disponível para os agentes de IA.`
+          : "O PDF parece ser digitalizado (imagem). Ele fica disponível para download, mas a IA não consegue ler o conteúdo.",
+        variant: data?.extractStatus === 'ok' ? undefined : "destructive",
+      });
+    } catch (error: any) {
+      toast({ title: "Erro no upload", description: error.message, variant: "destructive" });
+    } finally {
+      setUploadingFicha(null);
+    }
+  };
 
   const updateNcmMutation = useMutation({
     mutationFn: async ({ productId, ncm }: { productId: string; ncm: string }) => {
@@ -367,6 +432,132 @@ export default function ProductManagement() {
                           <p className="text-xs text-blue-700">
                             <strong>Dica:</strong> A primeira imagem será usada como imagem principal do produto no hotsite.
                             As demais aparecerão na galeria de fotos.
+                          </p>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Ficha técnica (PDF) — anexo do produto e fonte dos agentes de IA */}
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        data-testid={`button-ficha-tecnica-${product.id}`}
+                      >
+                        <FileText className="mr-2 h-4 w-4" />
+                        {fichas?.[product.id] ? "Ficha Técnica ✓" : "Ficha Técnica"}
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-2xl">
+                      <DialogHeader>
+                        <DialogTitle>Ficha Técnica - {product.name}</DialogTitle>
+                      </DialogHeader>
+
+                      <div className="space-y-4">
+                        {fichas?.[product.id] ? (
+                          <div className="border rounded-lg p-4 space-y-3">
+                            <div className="flex items-start gap-3">
+                              <FileText className="h-8 w-8 text-red-500 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium truncate" title={fichas[product.id].fileName}>
+                                  {fichas[product.id].fileName}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {formatFileSize(fichas[product.id].fileSize)}
+                                  {fichas[product.id].updatedAt &&
+                                    ` · enviada em ${new Date(fichas[product.id].updatedAt as string).toLocaleDateString('pt-BR')}`}
+                                </p>
+                              </div>
+                            </div>
+
+                            {fichas[product.id].extractStatus === 'ok' ? (
+                              <div className="bg-green-50 border border-green-200 rounded p-3 text-xs text-green-800">
+                                <strong>Disponível para os agentes de IA.</strong> O texto da ficha
+                                ({fichas[product.id].textLength.toLocaleString('pt-BR')} caracteres) foi lido e é
+                                consultado quando o cliente pergunta composição, informação nutricional,
+                                validade ou qualquer detalhe técnico.
+                              </div>
+                            ) : (
+                              <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800 flex gap-2">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                <span>
+                                  <strong>A IA não consegue ler este PDF.</strong> Ele parece ser digitalizado
+                                  (imagem, sem camada de texto). O arquivo continua disponível para download e
+                                  para envio ao cliente. Para alimentar a IA, envie a versão em PDF de texto.
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="flex gap-2">
+                              <Button variant="outline" size="sm" asChild>
+                                <a href={`/api/products/${product.id}/ficha-tecnica`} target="_blank" rel="noreferrer">
+                                  <FileText className="mr-2 h-4 w-4" /> Visualizar
+                                </a>
+                              </Button>
+                              <Button variant="outline" size="sm" asChild>
+                                <a href={`/api/products/${product.id}/ficha-tecnica?download=1`}>
+                                  <Download className="mr-2 h-4 w-4" /> Baixar
+                                </a>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-red-600 hover:text-red-700"
+                                onClick={() => deleteFichaMutation.mutate(product.id)}
+                                disabled={deleteFichaMutation.isPending}
+                                data-testid={`button-delete-ficha-${product.id}`}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Remover
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-6 text-gray-500">
+                            <FileText className="h-12 w-12 mx-auto mb-2 opacity-40" />
+                            <p className="text-sm">Nenhuma ficha técnica anexada</p>
+                          </div>
+                        )}
+
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                          <input
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleFichaUpload(product.id, f);
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                            id={`ficha-upload-${product.id}`}
+                            disabled={uploadingFicha === product.id}
+                          />
+                          <label htmlFor={`ficha-upload-${product.id}`} className="cursor-pointer">
+                            {uploadingFicha === product.id ? (
+                              <div className="flex flex-col items-center">
+                                <RefreshCw className="h-10 w-10 text-gray-400 animate-spin mb-2" />
+                                <p className="text-sm text-gray-600">Enviando e lendo o PDF...</p>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center">
+                                <Upload className="h-10 w-10 text-gray-400 mb-2" />
+                                <p className="text-sm text-gray-600">
+                                  {fichas?.[product.id] ? "Clique para substituir a ficha" : "Clique para anexar a ficha técnica"}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-1">PDF até 15MB</p>
+                              </div>
+                            )}
+                          </label>
+                        </div>
+
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <p className="text-xs text-blue-700">
+                            <strong>Como a IA usa:</strong> o texto do PDF é lido no envio e fica disponível
+                            para todos os agentes do sistema. Quando o cliente perguntar sobre ingredientes,
+                            tabela nutricional, alergênicos, validade ou conservação, o agente responde
+                            com o que está escrito na ficha — e pode enviar o próprio PDF ao cliente.
+                            Cada produto tem uma ficha; enviar outra substitui a anterior.
                           </p>
                         </div>
                       </div>
