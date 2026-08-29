@@ -81,7 +81,8 @@ function KpiCard(props: { icon: any; titulo: string; valor: string; nota?: strin
  *  período, então ela nunca pode fazer parte da chave de comparação. */
 const baseNome = (r: string) => String(r || "").replace(/\s*\([\d.,]+\)\s*$/, "").trim();
 
-// ── Cidade: o cadastro tem "GOIANIA", "Goiânia", "goiania " para o mesmo lugar.
+// ── Cidade: o cadastro tem "GOIANIA", "Goiania", "Goiânia", "goiania " para o
+// mesmo lugar.
 // A grafia é padronizada aqui igual à aba Agenda — filtro e coluna têm que dizer
 // a mesma coisa, senão o usuário não confia em nenhum dos dois.
 /** Chave de agrupamento: sem acento, sem caixa, sem espaço sobrando. */
