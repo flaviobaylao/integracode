@@ -98,7 +98,7 @@ const tituloCidade = (s: any) =>
     .split(" ")
     .map((w, i) => (i > 0 && MINUSCULAS_CIDADE.has(w) ? w : w.charAt(0).toLocaleUpperCase("pt-BR") + w.slice(1)))
     .join(" ");
-/** Quantos acentos a grafia tem — entre as variações, a mais acentuada vence. */
+/** Quantos acentos a grafia tem: entre as variações, a mais acentuada vence. */
 const acentosCidade = (s: any) => (String(s || "").normalize("NFD").match(/[\u0300-\u036f]/g) || []).length;
 
 /** Rótulo dentro da fatia: só nas fatias com folga (>=6%), para não colidir. */
