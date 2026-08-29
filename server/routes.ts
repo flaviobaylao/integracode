@@ -27177,6 +27177,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
+        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27201,6 +27202,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
+        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27237,6 +27239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
+        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27267,6 +27270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
+        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27715,6 +27719,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if ('assignedTo' in fields) patch.assignedTo = fields.assignedTo || null;
         if (fields.status && ['pending', 'scheduled', 'visited', 'converted', 'discarded'].includes(fields.status)) patch.status = fields.status;
         if (fields.routeType && ['dia', 'prospeccao'].includes(fields.routeType)) patch.routeType = fields.routeType;
+        if (fields.periodicity && ['semanal', 'quinzenal', 'mensal'].includes(fields.periodicity)) patch.periodicity = fields.periodicity;
         if ('nextContactDate' in fields) {
           const v = fields.nextContactDate;
           if (!v) {
