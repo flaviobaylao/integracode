@@ -471,8 +471,24 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   y += 5;
 
   const col7 = contentWidth / 7;
-  drawField('BASE DE CÁLCULO DO ICMS', fmtCur(invoice.totalBaseIcms || '0'), margin, y, col7, 10);
-  drawField('VALOR DO ICMS', fmtCur(invoice.totalIcms || '0'), margin + col7, y, col7, 10);
+  // A tabela fiscal_invoices NÃO tem coluna total_base_icms (o emissor calcula a
+  // base por ITEM e persiste em fiscal_invoice_items.base_icms, mas o total nunca
+  // é gravado na nota) → a DANFE imprimia "BASE DE CÁLCULO DO ICMS 0,00" mesmo com
+  // ICMS destacado (ex.: NF 104090). Fallback: quando o total vier vazio/zerado,
+  // soma dos itens. Vale para VALOR DO ICMS também (robustez p/ notas antigas).
+  const _sumItems = (get: (it: DanfeInvoiceItem) => string | undefined): number =>
+    (invoice.items || []).reduce((acc, it) => {
+      const v = parseFloat((get(it) || '0').toString());
+      return acc + (isNaN(v) ? 0 : v);
+    }, 0);
+  const _totNum = (v?: string): number => {
+    const n = parseFloat((v || '0').toString());
+    return isNaN(n) ? 0 : n;
+  };
+  const baseIcmsTot = _totNum(invoice.totalBaseIcms) > 0 ? _totNum(invoice.totalBaseIcms) : _sumItems(it => it.baseIcms);
+  const icmsTot = _totNum(invoice.totalIcms) > 0 ? _totNum(invoice.totalIcms) : _sumItems(it => it.valorIcms);
+  drawField('BASE DE CÁLCULO DO ICMS', fmtCur(baseIcmsTot.toFixed(2)), margin, y, col7, 10);
+  drawField('VALOR DO ICMS', fmtCur(icmsTot.toFixed(2)), margin + col7, y, col7, 10);
   drawField('BASE DE CÁLC. ICMS S.T.', fmtCur(invoice.totalBaseIcmsSt || '0'), margin + col7 * 2, y, col7, 10);
   drawField('VALOR DO ICMS SUBST.', fmtCur(invoice.totalIcmsSt || '0'), margin + col7 * 3, y, col7, 10);
   drawField('VALOR IMP. IMPORTAÇÃO', '0,00', margin + col7 * 4, y, col7, 10);
