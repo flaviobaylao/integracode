@@ -217,7 +217,7 @@ const tooltipStyle = {
   boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
 } as const;
 
-type SortKey = 'product' | 'code' | 'qty' | 'value' | 'share' | 'orders' | 'customers' | 'avgPrice' | 'trocaQty';
+type SortKey = 'product' | 'code' | 'qty' | 'saidaDU' | 'value' | 'share' | 'orders' | 'customers' | 'avgPrice' | 'trocaQty';
 
 interface ProdAgg {
   key: string;
@@ -350,6 +350,19 @@ export default function GestaoProdutos() {
     return { orders: orders.size, customers: customers.size, products: products.size, qty, value, trocaQty, trocaValue };
   }, [filtered]);
 
+  // Dias úteis (seg–sex) do período De→Até, limitado a hoje — divisor da
+  // coluna "Saída D.U.". Feriados não entram na conta (simplificação).
+  const diasUteis = useMemo(() => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const fim = ate < hoje ? ate : hoje;
+    let n = 0;
+    for (let t = Date.parse(de + 'T12:00:00Z'); t <= Date.parse(fim + 'T12:00:00Z'); t += 86400000) {
+      const dow = new Date(t).getUTCDay();
+      if (dow >= 1 && dow <= 5) n++;
+    }
+    return Math.max(1, n);
+  }, [de, ate]);
+
   // ── Série temporal (dia até 62 dias de intervalo; acima disso, mês) ──────
   const byMonth = useMemo(() => {
     const span = Math.round((Date.parse(ate) - Date.parse(de)) / 86400000);
@@ -431,7 +444,7 @@ export default function GestaoProdutos() {
       switch (sortKey) {
         case 'product': return p.name.toLowerCase();
         case 'code': return String(p.code || '').toLowerCase();
-        case 'qty': return p.qty;
+        case 'qty': case 'saidaDU': return p.qty;
         case 'value': case 'share': return p.value;
         case 'orders': return p.orders.size;
         case 'customers': return p.customers.size;
@@ -482,9 +495,9 @@ export default function GestaoProdutos() {
 
   const exportProdutos = () => downloadCsv(
     `produtos-comercializados-${de}-a-${ate}.csv`,
-    ['Produto', 'Código', 'NCM', 'Quantidade', 'Valor', '% do valor', 'Pedidos', 'Clientes', 'Preço médio', 'Qtd em trocas', 'Valor em trocas'],
+    ['Produto', 'Código', 'NCM', 'Quantidade', `Saída por dia útil (${diasUteis} d.u.)`, 'Valor', '% do valor', 'Pedidos', 'Clientes', 'Preço médio', 'Qtd em trocas', 'Valor em trocas'],
     sortedProds.map((p) => [
-      p.name, p.code || '', p.ncm || '', nBR(p.qty), nBR(p.value),
+      p.name, p.code || '', p.ncm || '', nBR(p.qty), nBR(Math.round((p.qty / diasUteis) * 10) / 10), nBR(p.value),
       kpis.value > 0 ? nBR((p.value / kpis.value) * 100) : '0',
       p.orders.size, p.customers.size, nBR(p.qty > 0 ? p.value / p.qty : 0),
       nBR(p.trocaQty), nBR(p.trocaValue),
@@ -804,8 +817,10 @@ export default function GestaoProdutos() {
                   <tr>
                     <Th k="product">Produto</Th>
                     <Th k="code">Código</Th>
-                    <Th>NCM</Th>
                     <Th k="qty" className="text-right">Quantidade</Th>
+                    <Th k="saidaDU" className="text-right">
+                      <span title={`Quantidade ÷ dias úteis (seg–sex) do período: ${diasUteis} dia(s) útil(eis)`}>Saída D.U.</span>
+                    </Th>
                     <Th k="value" className="text-right">Valor</Th>
                     <Th k="share" className="text-right">% do valor</Th>
                     <Th k="orders" className="text-right">Pedidos</Th>
@@ -827,8 +842,10 @@ export default function GestaoProdutos() {
                     >
                       <td className="px-2 py-1.5 font-medium max-w-[280px]"><span className="block truncate" title={p.name}>{p.name}</span></td>
                       <td className="px-2 py-1.5 whitespace-nowrap text-gray-600 dark:text-gray-300">{p.code || '—'}</td>
-                      <td className="px-2 py-1.5 whitespace-nowrap text-gray-600 dark:text-gray-300">{p.ncm || '—'}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{fmtQtd(p.qty)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-teal-700 dark:text-teal-300" title={`${fmtQtd(p.qty)} un ÷ ${diasUteis} dia(s) útil(eis)`}>
+                        {(p.qty / diasUteis).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}
+                      </td>
                       <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtBRL(p.value)}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-gray-600 dark:text-gray-300">
                         {kpis.value > 0 ? `${((p.value / kpis.value) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : '—'}
