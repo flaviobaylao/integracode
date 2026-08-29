@@ -46,6 +46,7 @@ export default function LeadsManagement() {
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkNextContact, setBulkNextContact] = useState("");
   const [bulkRouteType, setBulkRouteType] = useState("");
+  const [bulkPeriodicity, setBulkPeriodicity] = useState("");
   const [bulkEnviarRota, setBulkEnviarRota] = useState(false);
   // Desfecho do lead (Converter / Não Convertido / Prorrogar)
   const [converterLead, setConverterLead] = useState<Lead | null>(null);
@@ -74,6 +75,7 @@ export default function LeadsManagement() {
     assignedTo: "",
     temperature: "" as "" | "cold" | "warm" | "hot" | "very_hot",
     nextContactDate: "",
+    periodicity: "semanal",
   });
   // Pick-list de cidade (combobox pesquisável) no formulário de lead.
   const [cityOpen, setCityOpen] = useState(false);
@@ -82,6 +84,7 @@ export default function LeadsManagement() {
   const [filterName, setFilterName] = useState("");
   const [filterSellerId, setFilterSellerId] = useState("");
   const [filterCity, setFilterCity] = useState("");
+  const [filterPeriodicity, setFilterPeriodicity] = useState("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterNextContactFrom, setFilterNextContactFrom] = useState("");
@@ -258,6 +261,7 @@ export default function LeadsManagement() {
       if (bulkStatus) fields.status = bulkStatus;
       if (bulkNextContact) fields.nextContactDate = bulkNextContact;
       if (bulkRouteType) fields.routeType = bulkRouteType;
+      if (bulkPeriodicity) fields.periodicity = bulkPeriodicity;
       if (bulkEnviarRota) { fields.status = 'scheduled'; fields.routeType = 'dia'; }
       return await apiRequest('POST', '/api/leads/bulk-update', { ids, fields });
     },
@@ -265,7 +269,7 @@ export default function LeadsManagement() {
       queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
       setShowBulkModal(false);
       setSelectedLeadIds(new Set());
-      setBulkAssignedTo(""); setBulkStatus(""); setBulkNextContact(""); setBulkRouteType(""); setBulkEnviarRota(false);
+      setBulkAssignedTo(""); setBulkStatus(""); setBulkNextContact(""); setBulkRouteType(""); setBulkPeriodicity(""); setBulkEnviarRota(false);
       toast({ title: "Leads atualizados", description: `${res?.updated ?? 0} lead(s) alterado(s) com sucesso.` });
     },
     onError: (error: any) => {
@@ -404,6 +408,7 @@ export default function LeadsManagement() {
       assignedTo: "",
       temperature: "",
       nextContactDate: "",
+      periodicity: "semanal",
     });
   };
 
@@ -524,6 +529,7 @@ export default function LeadsManagement() {
       assignedTo: lead.assignedTo || "",
       temperature: (lead.temperature || "") as "" | "cold" | "warm" | "hot" | "very_hot",
       nextContactDate: lead.nextContactDate ? diaCalendario(lead.nextContactDate as any) : "",
+      periodicity: (lead as any).periodicity || "semanal",
     });
   };
 
@@ -617,6 +623,11 @@ export default function LeadsManagement() {
         return false;
       }
 
+      // Filtro por periodicidade
+      if (filterPeriodicity && String(lead.periodicity || 'semanal') !== filterPeriodicity) {
+        return false;
+      }
+
       // Filtro por data de criação
       if (filterDateFrom || filterDateTo) {
         if (!lead.createdAt) return false;
@@ -649,7 +660,7 @@ export default function LeadsManagement() {
 
       return true;
     });
-  }, [leads, filterName, filterSellerId, filterCity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
+  }, [leads, filterName, filterSellerId, filterCity, filterPeriodicity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
   // Lista da tabela: exclui convertidos (que saem da lista e contam apenas nas caixas)
   const filteredLeads = useMemo(() => {
@@ -891,8 +902,22 @@ export default function LeadsManagement() {
                 onChange={(e) => setFilterNextContactTo(e.target.value)}
               />
             </div>
+            <div>
+              <Label htmlFor="filter-periodicity">Periodicidade</Label>
+              <Select value={filterPeriodicity || "all"} onValueChange={(val) => setFilterPeriodicity(val === "all" ? "" : val)}>
+                <SelectTrigger data-testid="select-filter-periodicity">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                  <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          {(filterName || filterSellerId || filterCity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
+          {(filterName || filterSellerId || filterCity || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -901,6 +926,7 @@ export default function LeadsManagement() {
                 setFilterName("");
                 setFilterSellerId("");
                 setFilterCity("");
+                setFilterPeriodicity("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
                 setFilterNextContactFrom("");
@@ -1383,6 +1409,24 @@ export default function LeadsManagement() {
               </Select>
             </div>
 
+            <div>
+              <Label htmlFor="periodicity">Periodicidade</Label>
+              <Select
+                value={formData.periodicity || "semanal"}
+                onValueChange={(value) => setFormData({ ...formData, periodicity: value })}
+              >
+                <SelectTrigger data-testid="select-periodicity">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                  <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">Padrão: Semanal. Não obrigatório — frequência de visita sugerida.</p>
+            </div>
+
             {editingLead && isAdmin && (
               <div>
                 <Label htmlFor="nextContactDate">Próximo Contato</Label>
@@ -1499,6 +1543,18 @@ export default function LeadsManagement() {
               </p>
             </div>
 
+            <div>
+              <Label>Periodicidade</Label>
+              <Select value={bulkPeriodicity} onValueChange={setBulkPeriodicity}>
+                <SelectTrigger data-testid="select-bulk-periodicity"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                  <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="flex items-start gap-2 pt-2 border-t mt-1">
               <Checkbox
                 id="bulk-enviar-rota"
@@ -1519,7 +1575,7 @@ export default function LeadsManagement() {
               <Button variant="outline" onClick={() => setShowBulkModal(false)} data-testid="button-bulk-cancel">Cancelar</Button>
               <Button
                 onClick={() => {
-                  if (!bulkAssignedTo && !bulkStatus && !bulkNextContact && !bulkRouteType && !bulkEnviarRota) {
+                  if (!bulkAssignedTo && !bulkStatus && !bulkNextContact && !bulkRouteType && !bulkPeriodicity && !bulkEnviarRota) {
                     toast({ title: "Nada para alterar", description: "Selecione ao menos um campo.", variant: "destructive" });
                     return;
                   }
