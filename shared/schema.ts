@@ -1705,7 +1705,10 @@ export const leads = pgTable("leads", {
   // Alocação do lead na rota: 'dia' = entra na rota do dia normal (retorno de lead);
   // 'prospeccao' = entra somente na rota de prospecção do vendedor (no dia do próximo contato).
   routeType: varchar("route_type").notNull().default('dia'),
-  
+
+  // Periodicidade de visita sugerida (não obrigatória; padrão 'semanal'). Aproveitada ao converter em cliente.
+  periodicity: varchar("periodicity").default('semanal'),
+
   // Informações de check-in/check-out
   lastCheckInAt: timestamp("last_check_in_at"),
   lastCheckOutAt: timestamp("last_check_out_at"),
