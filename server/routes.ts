@@ -2309,9 +2309,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         route: req.body.route || '', // Default vazio para route (campo deprecated)
         phone: req.body.phone || (req.body.isLead ? '' : ''), // Para leads, permitir vazio
         address: req.body.address || (req.body.isLead ? '' : ''), // Para leads, permitir vazio
-        serviceStartDate: req.body.serviceStartDate 
+        // 🗓️ Data de início: se não informada, usa a DATA DE CADASTRO (hoje) como padrão
+        // para clientes (não leads). Continua editável no cadastro do cliente.
+        serviceStartDate: req.body.serviceStartDate
           ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
-          : undefined,
+          : (req.body.isLead ? undefined : (() => { const _d = new Date(); _d.setUTCHours(0, 0, 0, 0); return _d; })()),
       };
       
       // 🔍 LOG 2: Dados após limpeza
@@ -9647,10 +9649,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
     } catch (error: any) {
       console.error('❌ Erro na geração manual de agenda:', error);
-      res.status(500).json({ 
+      res.status(500).json({
         error: 'Erro interno do servidor',
-        message: error.message 
+        message: error.message
       });
+    }
+  });
+
+  // 🗓️ BACKFILL DA DATA DE INÍCIO + REGENERAÇÃO DA AGENDA (pedido admin).
+  // 1) Define service_start_date = 2026-08-31 para clientes ATIVOS (não fornecedor, com vendedor)
+  //    que estão SEM data de início.
+  // 2) Roda o gerador oficial de agenda (respeita periodicidade + dia de rota; aditivo/idempotente,
+  //    não deleta nem duplica — cria a agenda futura de quem ainda não tem).
+  // Passe { "dryRun": true } para apenas CONTAR o impacto, sem gravar nada.
+  app.post('/api/visit-agenda/backfill-and-regenerate', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const anchor = '2026-08-31';
+
+      const missingRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM customers
+        WHERE is_active = true AND (is_supplier IS NOT TRUE)
+          AND seller_id IS NOT NULL AND service_start_date IS NULL`);
+      const semDataInicio = (missingRes.rows?.[0]?.n) ?? 0;
+
+      const semAgendaRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM customers c
+        WHERE c.is_active = true AND (c.is_supplier IS NOT TRUE) AND c.seller_id IS NOT NULL
+          AND c.weekdays IS NOT NULL AND c.weekdays NOT IN ('[]','null','')
+          AND NOT EXISTS (
+            SELECT 1 FROM visit_agenda va
+            WHERE va.customer_id = c.id AND va.visit_status = 'pending'
+              AND va.scheduled_date >= (now() AT TIME ZONE 'UTC')::date
+          )`);
+      const semAgendaFutura = (semAgendaRes.rows?.[0]?.n) ?? 0;
+
+      if (dryRun) {
+        return res.json({
+          dryRun: true,
+          anchor,
+          clientesSemDataInicio: semDataInicio,
+          clientesAtivosSemAgendaFutura: semAgendaFutura,
+          observacao: 'Nada foi gravado. Envie { "dryRun": false } (ou sem o campo) para aplicar.'
+        });
+      }
+
+      // 1) Backfill da data de início
+      const upd: any = await db.execute(sql`
+        UPDATE customers
+        SET service_start_date = ${anchor}::timestamp
+        WHERE is_active = true AND (is_supplier IS NOT TRUE)
+          AND seller_id IS NOT NULL AND service_start_date IS NULL`);
+      const datedCount = (upd.rowCount ?? semDataInicio);
+
+      // 2) Gerar agenda (oficial): respeita periodicidade + dia de rota
+      const result = await generateVisitAgenda();
+
+      console.log(`🗓️ [BACKFILL+REGEN] data de início em ${datedCount} clientes; agenda: ${result.generated} visitas / ${result.processed} processados`);
+      return res.json({
+        success: true,
+        message: `Data de início 31/08/2026 preenchida em ${datedCount} cliente(s); agenda gerada: ${result.generated} visita(s) para ${result.processed} cliente(s) processado(s).`,
+        datedCount,
+        agenda: result
+      });
+    } catch (error: any) {
+      console.error('❌ Erro no backfill-and-regenerate:', error);
+      res.status(500).json({ error: 'Erro interno do servidor', message: error.message });
     }
   });
 
@@ -21086,25 +21150,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (pIds.length > 0) {
             pLeads = await _dbP.select().from(_leadsTbl).where(_inArrayP(_leadsTbl.id, pIds));
           }
-          // Ordena por vizinho-mais-próximo a partir da casa do vendedor (rota curta no mapa).
-          const { calculateDistance: _cdP } = await import('./routeOptimizationService');
+          // 🧭 Ordem da rota de prospecção:
+          // 1) Se há ordem OTIMIZADA persistida (botão "Otimizar Rota" na prospecção), respeita essa ordem.
+          // 2) Senão, ordena por vizinho-mais-próximo a partir da casa do vendedor (padrão).
           const homeLat0 = parseFloat(route.startLatitude), homeLon0 = parseFloat(route.startLongitude);
-          const remaining = pLeads.slice();
-          const ordered: any[] = [];
-          let curLat: number | null = isNaN(homeLat0) ? null : homeLat0;
-          let curLon: number | null = isNaN(homeLon0) ? null : homeLon0;
-          while (remaining.length > 0) {
-            let bi = 0;
-            if (curLat != null && curLon != null) {
-              let bc = Infinity;
-              for (let i = 0; i < remaining.length; i++) {
-                const d = _cdP(curLat, curLon, parseFloat(remaining[i].latitude), parseFloat(remaining[i].longitude));
-                if (d < bc) { bc = d; bi = i; }
+          const leadById0 = new Map<string, any>(pLeads.map((l: any) => [String(l.id), l]));
+          const persistedOrder0: string[] = Array.isArray((route as any).optimizedOrder) ? (route as any).optimizedOrder : [];
+          const persistedLeadIds0 = persistedOrder0
+            .map((s: string) => (typeof s === 'string' && s.startsWith('lead:')) ? s.slice(5) : null)
+            .filter((id: string | null): id is string => !!id && leadById0.has(id));
+          let ordered: any[] = [];
+          if (persistedLeadIds0.length > 0) {
+            const used0 = new Set<string>();
+            for (const id of persistedLeadIds0) { ordered.push(leadById0.get(id)); used0.add(id); }
+            // leads novos (sem ordem persistida ainda) vão para o fim, preservando os já ordenados
+            for (const l of pLeads) { if (!used0.has(String(l.id))) ordered.push(l); }
+          } else {
+            const { calculateDistance: _cdP } = await import('./routeOptimizationService');
+            const remaining = pLeads.slice();
+            let curLat: number | null = isNaN(homeLat0) ? null : homeLat0;
+            let curLon: number | null = isNaN(homeLon0) ? null : homeLon0;
+            while (remaining.length > 0) {
+              let bi = 0;
+              if (curLat != null && curLon != null) {
+                let bc = Infinity;
+                for (let i = 0; i < remaining.length; i++) {
+                  const d = _cdP(curLat, curLon, parseFloat(remaining[i].latitude), parseFloat(remaining[i].longitude));
+                  if (d < bc) { bc = d; bi = i; }
+                }
               }
+              const nx = remaining.splice(bi, 1)[0];
+              ordered.push(nx);
+              curLat = parseFloat(nx.latitude); curLon = parseFloat(nx.longitude);
             }
-            const nx = remaining.splice(bi, 1)[0];
-            ordered.push(nx);
-            curLat = parseFloat(nx.latitude); curLon = parseFloat(nx.longitude);
           }
           const pVisits = ordered.map((lead: any) => ({
             id: `lead:${lead.id}`,
@@ -21194,53 +21272,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
           const curStops: any = (route.visitStops as any) || {};
 
-          // Só aplica a regra de cidade quando conseguimos determinar a(s) cidade(s) da rota.
-          // Sem isso (ex.: clientes sem cidade cadastrada), não remove/adiciona nada, para nao esvaziar a rota.
-          if (_routeCities.size > 0) {
-            // Cidade de cada lead: candidatos (retornos agendados) + leads já presentes na rota.
-            const leadRet: any = await _dbLR.execute(sql`
-              SELECT id, city FROM leads
-              WHERE status = 'scheduled'
-                AND next_contact_date IS NOT NULL
-                AND (next_contact_date)::date <= ${date}::date
-                AND assigned_to = ${sellerId}
-                AND COALESCE(route_type, 'dia') <> 'prospeccao'
-                AND latitude IS NOT NULL AND longitude IS NOT NULL
-            `);
-            const _leadCityById: Record<string, string> = {};
-            const _candidates: { id: string; city: string }[] = [];
-            for (const lr of (leadRet?.rows || [])) { const id = String((lr as any).id); const c = _norm((lr as any).city); _candidates.push({ id, city: c }); _leadCityById[id] = c; }
-            const _existingLeadIds = curOrder.filter((s) => String(s).startsWith('lead:')).map((s) => String(s).slice(5));
-            const _missing = _existingLeadIds.filter((id) => !(id in _leadCityById));
-            if (_missing.length > 0) {
-              try {
-                const _lc2: any = await _dbLR.select({ id: _leadsTbl2.id, city: _leadsTbl2.city }).from(_leadsTbl2).where(_inArr(_leadsTbl2.id, _missing));
-                for (const r of (_lc2 || [])) _leadCityById[String((r as any).id)] = _norm((r as any).city);
-              } catch (_me) { /* mantem */ }
-            }
+          // 🔁 Retornos VÁLIDOS para esta data (independe de cidade): scheduled, próximo contato
+          // <= data, do vendedor, NÃO prospecção, com coordenadas. É a regra de "quem pode estar hoje".
+          const leadRet: any = await _dbLR.execute(sql`
+            SELECT id, city FROM leads
+            WHERE status = 'scheduled'
+              AND next_contact_date IS NOT NULL
+              AND (next_contact_date)::date <= ${date}::date
+              AND assigned_to = ${sellerId}
+              AND COALESCE(route_type, 'dia') <> 'prospeccao'
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          `);
+          const _leadCityById: Record<string, string> = {};
+          const _candidates: { id: string; city: string }[] = [];
+          for (const lr of (leadRet?.rows || [])) { const id = String((lr as any).id); const c = _norm((lr as any).city); _candidates.push({ id, city: c }); _leadCityById[id] = c; }
+          const _candidateIds = new Set(_candidates.map((c) => c.id));
+          const _existingLeadIds = curOrder.filter((s) => String(s).startsWith('lead:')).map((s) => String(s).slice(5));
+          const _missing = _existingLeadIds.filter((id) => !(id in _leadCityById));
+          if (_missing.length > 0) {
+            try {
+              const _lc2: any = await _dbLR.select({ id: _leadsTbl2.id, city: _leadsTbl2.city }).from(_leadsTbl2).where(_inArr(_leadsTbl2.id, _missing));
+              for (const r of (_lc2 || [])) _leadCityById[String((r as any).id)] = _norm((r as any).city);
+            } catch (_me) { /* mantem */ }
+          }
 
-            let changed = false;
-            // 1) Mantém não-leads; entre os leads, remove os de OUTRA cidade (ou sem cidade conhecida).
-            const _kept: string[] = [];
-            for (const s of curOrder) {
-              if (!String(s).startsWith('lead:')) { _kept.push(s); continue; }
+          let changed = false;
+          // (A) SEMPRE remove leads "presos": os que NÃO são mais retorno válido para esta data —
+          // adiados para o FUTURO (next_contact_date > data), convertidos/descartados, virados
+          // prospecção, sem coordenadas ou de outro vendedor. (Correção 30/ago/2026: antes a remoção
+          // era só por CIDADE, então lead da mesma cidade remarcado p/ frente ficava preso na rota.)
+          let _kept: string[] = [];
+          for (const s of curOrder) {
+            if (!String(s).startsWith('lead:')) { _kept.push(s); continue; }
+            const id = String(s).slice(5);
+            if (_candidateIds.has(id)) { _kept.push(s); }
+            else { delete curStops[s]; changed = true; }
+          }
+          // (B) Regra de CIDADE (só quando dá para determinar as cidades da rota): remove candidatos de
+          // OUTRA cidade e adiciona os retornos da MESMA cidade que ainda não estão na rota.
+          if (_routeCities.size > 0) {
+            const _kept2: string[] = [];
+            for (const s of _kept) {
+              if (!String(s).startsWith('lead:')) { _kept2.push(s); continue; }
               const id = String(s).slice(5);
               const c = _leadCityById[id];
-              if (!!c && _routeCities.has(c)) { _kept.push(s); }
+              if (!!c && _routeCities.has(c)) { _kept2.push(s); }
               else { delete curStops[s]; changed = true; }
             }
-            // 2) Adiciona os retornos da MESMA cidade que ainda não estão na rota.
             for (const cand of _candidates) {
               if (!cand.city || !_routeCities.has(cand.city)) continue;
               const stopId = `lead:${cand.id}`;
-              if (!_kept.includes(stopId) && !curStops[stopId]) { _kept.push(stopId); curStops[stopId] = { entityType: 'lead', entityId: cand.id }; changed = true; }
+              if (!_kept2.includes(stopId) && !curStops[stopId]) { _kept2.push(stopId); curStops[stopId] = { entityType: 'lead', entityId: cand.id }; changed = true; }
             }
-            if (changed) {
-              await storage.updateDailyRoute(route.id, { optimizedOrder: _kept, visitStops: curStops, totalVisits: _kept.length });
-              (route as any).optimizedOrder = _kept;
-              (route as any).visitStops = curStops;
-              console.log(`📅 [LEAD-CIDADE] Rota ${route.id}: leads reconciliados pela cidade (agora ${_kept.length} paradas)`);
-            }
+            _kept = _kept2;
+          }
+          if (changed) {
+            await storage.updateDailyRoute(route.id, { optimizedOrder: _kept, visitStops: curStops, totalVisits: _kept.length });
+            (route as any).optimizedOrder = _kept;
+            (route as any).visitStops = curStops;
+            console.log(`📅 [LEAD-RECONCILE] Rota ${route.id}: leads reconciliados (agora ${_kept.length} paradas)`);
           }
         }
       } catch (leadRetErr) {
@@ -22321,6 +22411,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!seller?.homeLatitude || !seller?.homeLongitude) {
         return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
+      }
+
+      // 🧭 ROTA DE PROSPECÇÃO: os leads não ficam no optimizedOrder persistido (são montados
+      // on-the-fly no GET). Aqui otimizamos a ordem dos leads de prospecção do dia (OSRM) e
+      // PERSISTIMOS o optimizedOrder (paradas lead:{id}); o GET passa a respeitar essa ordem.
+      if ((route as any).routeMode === 'prospeccao') {
+        const dateStr = new Date(route.routeDate).toISOString().split('T')[0];
+        const pRows: any = await db.execute(sql`
+          SELECT id, fantasy_name, latitude, longitude, address
+          FROM leads
+          WHERE assigned_to = ${route.sellerId}
+            AND COALESCE(route_type, 'dia') = 'prospeccao'
+            AND status NOT IN ('converted', 'discarded')
+            AND next_contact_date IS NOT NULL
+            AND (next_contact_date)::date = ${dateStr}::date
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+        `);
+        const pLeads = (pRows?.rows || []) as any[];
+        if (pLeads.length === 0) {
+          return res.status(400).json({ message: 'Nenhum lead de prospecção com coordenadas para otimizar nesta data' });
+        }
+        const pPoints = pLeads.map((l: any) => ({
+          id: String(l.id),
+          latitude: parseFloat(l.latitude),
+          longitude: parseFloat(l.longitude),
+          customerName: l.fantasy_name || 'Lead',
+          customerAddress: l.address || ''
+        }));
+        const { optimizeRoute: optimizeRouteP } = await import('./routeOptimizationService');
+        const optP = await optimizeRouteP(seller.homeLatitude, seller.homeLongitude, pPoints);
+        const pOrder: string[] = [];
+        const pStops: { [stopId: string]: { entityType: 'customer' | 'lead'; entityId: string } } = {};
+        const pSeen = new Set<string>();
+        optP.orderedPoints.forEach((pt: any) => {
+          const stopId = `lead:${pt.id}`;
+          if (!pSeen.has(stopId)) {
+            pSeen.add(stopId);
+            pOrder.push(stopId);
+            pStops[stopId] = { entityType: 'lead', entityId: String(pt.id) };
+          }
+        });
+        await storage.updateDailyRoute(routeId, {
+          optimizedOrder: pOrder,
+          visitStops: pStops,
+          totalEstimatedDistance: optP.totalDistance.toString(),
+          totalVisits: pOrder.length
+        } as any);
+        console.log(`✅ Rota de PROSPECÇÃO ${routeId} otimizada: ${pOrder.length} leads, ${optP.totalDistance}km`);
+        return res.json({
+          success: true,
+          optimizedOrder: pOrder,
+          totalDistance: optP.totalDistance,
+          totalVisits: pOrder.length,
+          message: `Rota de prospecção otimizada! ${pOrder.length} leads, distância: ${optP.totalDistance}km`
+        });
       }
 
       // Resolver stops (customers + leads) usando helper
