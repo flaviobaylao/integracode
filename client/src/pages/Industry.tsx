@@ -28,7 +28,7 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
-  ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet,
+  ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -68,10 +68,19 @@ const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
 const n = (v: any): number => { const x = Number(String(v ?? '').replace(',', '.')); return isFinite(x) ? x : 0; };
 const fmtQty = (v: any) => n(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 const fmtBRL = (v: any) => n(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// BUG DE FUSO (Flavio 29/ago): production_date e lot_expiry_date sao colunas
+// DATE e chegam como 'YYYY-MM-DD'. new Date('2026-08-29') e lido pelo JS como
+// meia-noite UTC = 28/08 21h em Brasilia (UTC-3) -> a tela mostrava um dia A
+// MENOS que o banco (lista dizia 28/08 e o modal de edicao, que corta a string,
+// dizia 29/08; "Validade lote 27/12" x "validade 2026-12-28" do rodape do CMV).
+// Data pura e' dia de calendario, nao instante: formata sem passar por fuso.
 const fmtDate = (v: any) => {
   if (!v) return '-';
-  const d = new Date(String(v));
-  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('pt-BR');
+  const s = String(v);
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString('pt-BR');
 };
 const fmtDateTime = (v: any) => {
   if (!v) return '-';
@@ -487,11 +496,38 @@ function OrdensTab() {
     } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
   };
 
-  const removeOrder = async (o: any) => {
-    if (!window.confirm(`Excluir a ordem ${o.order_number} (${o.product_name})?`)) return;
+  // Reabrir ordem finalizada (Flavio 29/ago): o servidor ESTORNA o estoque da
+  // finalização antes de destravar — MP consumida volta, lote acabado é baixado.
+  const reopenOrder = async (o: any) => {
+    if (!window.confirm(
+      `Reabrir a ordem ${o.order_number} (${o.product_name})?\n\n` +
+      `O estoque da finalização será ESTORNADO: a matéria-prima consumida volta ao estoque e o lote de produto acabado gerado é baixado. ` +
+      `A ordem volta para "Em Produção" e precisará ser finalizada de novo.`
+    )) return;
     try {
-      await jfetch(`/api/industria/production-orders/${o.id}`, { method: 'DELETE' });
-      toast({ title: 'Ordem excluída', description: o.order_number });
+      const j = await jfetch(`/api/industria/production-orders/${o.id}/reopen`, { method: 'POST' });
+      toast({
+        title: `Ordem ${o.order_number} reaberta`,
+        description: (j.estorno || []).length ? `Estorno: ${(j.estorno || []).join(', ')}` : 'Sem movimentos de estoque a estornar',
+      });
+      for (const w of (j.warnings || [])) toast({ title: 'Atenção', description: String(w), variant: 'destructive' });
+      invalidate();
+    } catch (e: any) { toast({ title: 'Erro ao reabrir', description: String(e.message || e), variant: 'destructive' }); }
+  };
+
+  const removeOrder = async (o: any) => {
+    const fin = o.status === 'finalizada';
+    if (!window.confirm(
+      `Excluir a ordem ${o.order_number} (${o.product_name})?` +
+      (fin ? `\n\nEsta ordem está FINALIZADA: o estoque da finalização será estornado antes da exclusão (MP consumida volta, lote acabado é baixado). As movimentações ficam no histórico. Não dá para desfazer.` : '')
+    )) return;
+    try {
+      const j = await jfetch(`/api/industria/production-orders/${o.id}`, { method: 'DELETE' });
+      toast({
+        title: 'Ordem excluída',
+        description: o.order_number + ((j?.estorno?.undone || []).length ? ` — estorno: ${j.estorno.undone.join(', ')}` : ''),
+      });
+      for (const w of (j?.warnings || [])) toast({ title: 'Atenção', description: String(w), variant: 'destructive' });
       invalidate();
     } catch (e: any) { toast({ title: 'Erro ao excluir', description: String(e.message || e), variant: 'destructive' }); }
   };
@@ -610,6 +646,16 @@ function OrdensTab() {
                           <Pencil className="h-4 w-4 text-blue-500" />
                         </Button>
                         <Button variant="ghost" size="sm" title="Excluir" className="text-red-500 hover:text-red-600" onClick={() => removeOrder(o)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                    {o.status === 'finalizada' && (
+                      <>
+                        <Button variant="ghost" size="sm" title="Reabrir ordem (estorna o estoque da finalização)" onClick={() => reopenOrder(o)}>
+                          <RotateCcw className="h-4 w-4 text-amber-600" />
+                        </Button>
+                        <Button variant="ghost" size="sm" title="Excluir (estorna o estoque da finalização)" className="text-red-500 hover:text-red-600" onClick={() => removeOrder(o)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </>
@@ -825,11 +871,18 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
   const { materials } = useIndustriaAux();
   const [f, setF] = useState<any>({
     quantity_produced: String(order.quantity ?? ''),
-    lot_number: '', lot_expiry_date: '',
+    // Ordem reaberta já traz lote/validade/qualidade da finalização anterior —
+    // preenche para o operador só corrigir o que errou (Flavio 29/ago).
+    lot_number: order.lot_number || '',
+    lot_expiry_date: order.lot_expiry_date ? String(order.lot_expiry_date).slice(0, 10) : '',
     production_date: order.production_date ? String(order.production_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
-    brix_degree: '', ph: '', sensory_analysis: '',
-    pasteurization_start_time: '', pasteurization_end_time: '',
-    pasteurization_start_temp: '', pasteurization_end_temp: '',
+    brix_degree: order.brix_degree != null ? String(order.brix_degree) : '',
+    ph: order.ph != null ? String(order.ph) : '',
+    sensory_analysis: order.sensory_analysis || '',
+    pasteurization_start_time: order.pasteurization_start_time || '',
+    pasteurization_end_time: order.pasteurization_end_time || '',
+    pasteurization_start_temp: order.pasteurization_start_temp != null ? String(order.pasteurization_start_temp) : '',
+    pasteurization_end_temp: order.pasteurization_end_temp != null ? String(order.pasteurization_end_temp) : '',
     notes: '',
     materials: (order.items || []).map((it: any) => ({
       raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), lot_number: it.lot_number || '', unit: it.unit || '',
