@@ -144,6 +144,7 @@ export default function ClientsMap() {
   const [selectedDay, setSelectedDay] = useState<string>("all");
   const [selectedSeller, setSelectedSeller] = useState<string>("all");
   const [situacao, setSituacao] = useState<string>("ativos"); // ativos | inativados | perdidos
+  const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("all"); // all | semanal | quinzenal | mensal
 
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
@@ -193,6 +194,13 @@ export default function ClientsMap() {
   if (selectedSeller && selectedSeller !== "all") {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
       (c) => (c as any).sellerName === selectedSeller
+    );
+  }
+
+  // Aplicar filtro de periodicidade de visita (semanal | quinzenal | mensal)
+  if (selectedPeriodicity && selectedPeriodicity !== "all") {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) => String((c as any).visitPeriodicity || '').toLowerCase() === selectedPeriodicity
     );
   }
 
@@ -352,7 +360,21 @@ export default function ClientsMap() {
                 </SelectContent>
               </Select>
             </div>
-            {(searchTerm || (selectedDay && selectedDay !== "all") || (selectedSeller && selectedSeller !== "all") || situacao !== "ativos") && (
+            <div className="flex-1 min-w-[150px]">
+              <label className="text-sm font-medium mb-2 block">Periodicidade</label>
+              <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
+                <SelectTrigger data-testid="select-periodicity-map">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="semanal">Semanal</SelectItem>
+                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
+                  <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {(searchTerm || (selectedDay && selectedDay !== "all") || (selectedSeller && selectedSeller !== "all") || (selectedPeriodicity && selectedPeriodicity !== "all") || situacao !== "ativos") && (
               <Button
                 variant="outline"
                 size="sm"
@@ -360,6 +382,7 @@ export default function ClientsMap() {
                   setSearchTerm("");
                   setSelectedDay("all");
                   setSelectedSeller("all");
+                  setSelectedPeriodicity("all");
                   setSituacao("ativos");
                 }}
                 data-testid="button-clear-filters"
@@ -469,6 +492,11 @@ export default function ClientsMap() {
                           {(customer as any).sellerName && (
                             <p className="font-medium">
                               👤 Vendedor: {(customer as any).sellerName}
+                            </p>
+                          )}
+                          {(customer as any).visitPeriodicity && (
+                            <p className="font-medium">
+                              🔁 Periodicidade: {String((customer as any).visitPeriodicity).charAt(0).toUpperCase() + String((customer as any).visitPeriodicity).slice(1)}
                             </p>
                           )}
                         </div>
