@@ -63,6 +63,7 @@ export async function ensureLeadColumns(): Promise<void> {
   try {
     await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS route_type varchar NOT NULL DEFAULT 'dia'`));
     await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS city varchar`));
+    await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS periodicity varchar DEFAULT 'semanal'`));
     _doneLeadCols = true;
     console.log("✅ [SCHEMA] leads.route_type e leads.city garantidos (alteracao em massa e coluna Municipio voltam a funcionar).");
   } catch (e: any) {
