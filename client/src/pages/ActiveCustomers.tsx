@@ -222,7 +222,7 @@ export default function ActiveCustomers() {
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
-  const [selectedDayOfRoute, setSelectedDayOfRoute] = useState<string>("");
+  const [dayMulti, setDayMulti] = useState<string[]>([]);
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
@@ -230,7 +230,7 @@ export default function ActiveCustomers() {
   const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
   const [selectedPhone, setSelectedPhone] = useState<string>("");
   const [cityMulti, setCityMulti] = useState<string[]>([]);
-  const [selectedNeighborhood, setSelectedNeighborhood] = useState<string>("");
+  const [neighborhoodMulti, setNeighborhoodMulti] = useState<string[]>([]);
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | 'name' | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showCardModal, setShowCardModal] = useState(false);
@@ -939,8 +939,10 @@ export default function ActiveCustomers() {
         matchesSeller = sellerIds.includes(ac.customer.sellerId);
       }
       
-      // Filtro de dia de rota
-      const matchesDayOfRoute = !selectedDayOfRoute || (ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays).includes(selectedDayOfRoute) : false);
+      // Filtro de dia de rota (múltipla escolha): casa se QUALQUER dia selecionado
+      // estiver entre os dias de rota do cliente.
+      const custDays = ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays) : [];
+      const matchesDayOfRoute = dayMulti.length === 0 || custDays.some((d) => dayMulti.includes(d));
       
       // Filtro de periodicidade
       const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
@@ -962,7 +964,7 @@ export default function ActiveCustomers() {
       const matchesPhone = !phoneDigits || customerPhone.includes(phoneDigits);
       
       const matchesCity = cityMulti.length === 0 || cityMulti.includes(cityLabelOf(ac.customer?.city));
-      const matchesNeighborhood = !selectedNeighborhood || ac.customer?.neighborhood?.trim() === selectedNeighborhood;
+      const matchesNeighborhood = multiMatch(neighborhoodMulti, ac.customer?.neighborhood?.trim() || '');
       
       const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller(ac.customer?.sellerName || ac.customer?.sellerId));
       const ptDigits = (ac.document || '').replace(/\D/g, '');
@@ -1310,18 +1312,7 @@ export default function ActiveCustomers() {
               
               <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-active" />
 
-              <Select value={selectedDayOfRoute} onValueChange={setSelectedDayOfRoute}>
-                <SelectTrigger className="w-[100px] h-9" data-testid="select-day-filter">
-                  <SelectValue placeholder="Dia" />
-                </SelectTrigger>
-                <SelectContent>
-                  {daysOfRoute.map((day) => (
-                    <SelectItem key={day} value={day}>
-                      {day}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Dia" options={daysOfRoute} selected={dayMulti} onChange={setDayMulti} testId="filter-day-active" />
               
               <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
                 <SelectTrigger className="w-[100px] h-9" data-testid="select-virtual-filter">
@@ -1378,20 +1369,9 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
-              <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={(v) => { setCityMulti(v); setSelectedNeighborhood(""); }} testId="filter-city-active" />
+              <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={(v) => { setCityMulti(v); setNeighborhoodMulti([]); }} testId="filter-city-active" />
 
-              <Select value={selectedNeighborhood} onValueChange={setSelectedNeighborhood}>
-                <SelectTrigger className="w-[130px] h-9" data-testid="select-neighborhood-filter">
-                  <SelectValue placeholder="Bairro" />
-                </SelectTrigger>
-                <SelectContent>
-                  {neighborhoods.map((nb) => (
-                    <SelectItem key={nb} value={nb}>
-                      {nb}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Bairro" options={neighborhoods} selected={neighborhoodMulti} onChange={setNeighborhoodMulti} testId="filter-neighborhood-active" />
 
               <div className="relative">
                 <Phone className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -1418,14 +1398,14 @@ export default function ActiveCustomers() {
                 onClick={() => {
                   setSearchTerm("");
                   setSelectedSeller("");
-                  setSelectedDayOfRoute("");
+                  setDayMulti([]);
                   setSelectedVirtualType("");
                   setSelectedPeriodicity("");
                   setSelectedDate("");
                   setSelectedPositivation("");
                   setSelectedPhone("");
                   setCityMulti([]);
-                  setSelectedNeighborhood("");
+                  setNeighborhoodMulti([]);
                   setSelectedPersonType("");
                   setSelectedCustomerIds(new Set());
                 }}
@@ -1456,7 +1436,7 @@ export default function ActiveCustomers() {
                   🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedCustomerIds.size})`}
                 </Button>
               )}
-              {(searchTerm || selectedSeller || selectedDayOfRoute || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || cityMulti.length > 0 || selectedNeighborhood) && (
+              {(searchTerm || selectedSeller || dayMulti.length > 0 || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
@@ -1640,7 +1620,7 @@ export default function ActiveCustomers() {
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
-                            {searchTerm || selectedSeller || selectedPhone || cityMulti.length > 0 || selectedNeighborhood ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
+                            {searchTerm || selectedSeller || selectedPhone || cityMulti.length > 0 || neighborhoodMulti.length > 0 ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
                       ) : (
