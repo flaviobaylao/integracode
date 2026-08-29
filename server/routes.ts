@@ -1703,11 +1703,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           latitude: parseFloat(String(c.latitude)), longitude: parseFloat(String(c.longitude)),
           weekdays: pw.join(', '), isActive: sit === 'ativo', visitDay: pw.length ? pw[0] : 'Seg',
           customerId: c.id, sellerId: sid, sellerName: sid ? (sellerMap.get(String(sid)) || null) : null, situacao: sit,
+          visitPeriodicity: c.visit_periodicity ?? null,
         };
       };
       if (situacao === 'inativados') {
         const sellerMap = await buildSellerMap();
-        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, seller_id FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0`);
+        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, visit_periodicity, seller_id FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
@@ -1731,7 +1732,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             WHERE doc IS NOT NULL AND length(doc) >= 11
             GROUP BY doc
           )
-          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.seller_id
+          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id
           FROM customers c
           JOIN buys b ON b.doc = NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'')
           WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
@@ -1817,7 +1818,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             customerId: c.id,
             sellerId: c.sellerId || null,
             sellerName: c.sellerId ? sellerMap.get(c.sellerId) : null,
-            situacao: 'ativo'
+            situacao: 'ativo',
+            visitPeriodicity: c.visitPeriodicity ?? null
           };
         });
       
@@ -27177,7 +27179,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
-        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27202,7 +27203,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
-        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27239,7 +27239,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
-        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27270,7 +27269,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
-        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27719,7 +27717,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if ('assignedTo' in fields) patch.assignedTo = fields.assignedTo || null;
         if (fields.status && ['pending', 'scheduled', 'visited', 'converted', 'discarded'].includes(fields.status)) patch.status = fields.status;
         if (fields.routeType && ['dia', 'prospeccao'].includes(fields.routeType)) patch.routeType = fields.routeType;
-        if (fields.periodicity && ['semanal', 'quinzenal', 'mensal'].includes(fields.periodicity)) patch.periodicity = fields.periodicity;
         if ('nextContactDate' in fields) {
           const v = fields.nextContactDate;
           if (!v) {
