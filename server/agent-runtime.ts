@@ -1,7 +1,8 @@
 // Runtime dos Agentes de IA do ChatCenter (Honest Sucos / INTEGRA 2.0).
 // SEGURANÇA: só responde conforme system_settings 'agents_runtime_mode' (off|test|on).
 // Chama Anthropic via fetch puro (sem dependência). Requer ANTHROPIC_API_KEY.
-// FERRAMENTAS (tool-use): transferir_humano, buscar_boleto, consultar_debitos, consultar_produto.
+// FERRAMENTAS (tool-use): transferir_humano, buscar_boleto, consultar_debitos, consultar_produto,
+//                          consultar_ficha_tecnica.
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
@@ -43,6 +44,7 @@ const TOOL_DEFS: any[] = [
   { name: 'consultar_pedido', description: 'Le o pedido do cliente e devolve tudo sobre ele: numero, data, situacao, valor, forma de pagamento, previsao de entrega, nota fiscal e a LISTA DE PRODUTOS com quantidades. Use SEMPRE que o cliente perguntar qualquer coisa sobre "esse pedido" / "meu pedido" — o que veio, quando chega, quanto ficou, por que travou. NAO peca CPF/CNPJ nem diga que nao ha pedido nesta conversa: consulte primeiro.', input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'numero do pedido, apenas se o cliente citar um especifico' } }, required: [] } },
   { name: 'segunda_via', description: 'Envia a 2ª via de TODOS os títulos vencidos em aberto do cliente: um PIX copia-e-cola por título, com número, vencimento e valor, mais o total. Use SEMPRE que o cliente pedir 2ª via, boleto, chave PIX, "como pago" ou responder pedindo a via de um aviso de pedido. Você JÁ sabe quem é o cliente pela conversa — NÃO peça CPF/CNPJ.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ, apenas se o cliente informar espontaneamente' } }, required: [] } },
   { name: 'consultar_produto', description: 'Consulta preço e disponibilidade de um produto pelo nome/termo.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome ou parte do nome do produto' } }, required: ['termo'] } },
+  { name: 'consultar_ficha_tecnica', description: 'Le a FICHA TECNICA oficial do produto (o PDF que a equipe anexou no catalogo) e devolve o conteudo dela em texto, mais o link do PDF. Use SEMPRE que o cliente perguntar composicao, ingredientes, informacao nutricional, calorias, acucar, conservante, corante, alergenico, gluten, lactose, se e vegano, validade, prazo de consumo, modo de conservacao, rendimento, embalagem, peso, registro/MAPA ou qualquer detalhe tecnico do produto. NAO responda esse tipo de pergunta de cabeca: consulte a ficha e responda SO com o que estiver escrita nela. Se o produto nao tiver ficha anexada, diga que vai confirmar com a equipe — nunca invente numero de rotulo. Pode buscar tambem por atributo (ex.: "sem acucar") quando o cliente nao citar o produto pelo nome.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome do produto, ou o atributo procurado quando o cliente nao citar o produto' } }, required: ['termo'] } },
 ];
 
 // Ferramenta EXTRA (só habilitada no canal Instagram): registra um pedido no pipeline de faturamento.
@@ -298,7 +300,8 @@ export async function limparPausa(conversationId?: string): Promise<number> {
   } catch { return 0; }
 }
 
-async function execTool(name: string, input: any, ctx: any): Promise<string> {
+// exportada para o harness de teste conseguir chamar uma ferramenta isolada.
+export async function execTool(name: string, input: any, ctx: any): Promise<string> {
   try {
     if (name === 'transferir_humano') {
       if (ctx?.conversationId) {
@@ -353,12 +356,16 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
       const _stop = new Set(['de','da','do','com','e','a','o','os','as','para','por','sabor','ml','l','un','und']);
     const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const _tokens = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
-    const _all: any = await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock FROM products WHERE is_active=true ORDER BY name`);
+    const _comFicha = await temTabelaFichas();
+    const _all: any = _comFicha
+      ? await db.execute(sql`SELECT p.name, p.price, p.retail_price, p.resale_goiania_price, p.stock, (d.product_id IS NOT NULL) AS tem_ficha FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id WHERE p.is_active=true ORDER BY p.name`)
+      : await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock, false AS tem_ficha FROM products WHERE is_active=true ORDER BY name`);
     const _rows0 = (_all.rows || []).filter((p: any) => { const n = _norm(p.name); return _tokens.length ? _tokens.every((t: string) => n.includes(t)) : n.includes(_norm(termo)); }).slice(0, 8);
     const r: any = { rows: _rows0 };
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
-      return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}`).join(' | ');
+      return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}${p.tem_ficha ? '; TEM ficha tecnica (use consultar_ficha_tecnica para composicao/nutricional/validade)' : ''}`).join(' | ');
     }
+    if (name === 'consultar_ficha_tecnica') return await consultarFichaTecnica(input || {});
     if (name === 'consultar_pedido') return await consultarPedido(input || {}, ctx);
     if (name === 'segunda_via') return await segundaVia(input || {}, ctx);
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
@@ -366,6 +373,83 @@ async function execTool(name: string, input: any, ctx: any): Promise<string> {
     if (name === 'gerar_link_pagamento') return await gerarLinkPagamento(input || {}, ctx);
     return 'Ferramenta desconhecida.';
   } catch (e: any) { return 'Erro ao executar ferramenta: ' + (e?.message || String(e)).slice(0, 120); }
+}
+
+// A tabela de fichas e criada no boot (product-datasheet-routes). Enquanto ela nao
+// existir — deploy novo, banco de dev — o JOIN derrubaria o consultar_produto, que
+// funciona ha meses. Entao se checa uma vez e se guarda o resultado.
+let _fichasTabelaOk: boolean | null = null;
+async function temTabelaFichas(): Promise<boolean> {
+  if (_fichasTabelaOk !== null) return _fichasTabelaOk;
+  try {
+    const r: any = await db.execute(sql`SELECT to_regclass('public.product_datasheets') AS t`);
+    _fichasTabelaOk = !!r.rows?.[0]?.t;
+  } catch { _fichasTabelaOk = false; }
+  return _fichasTabelaOk;
+}
+
+// Le a ficha tecnica (PDF) anexada ao produto no catalogo e devolve o texto extraido
+// para o agente responder composicao/nutricional/validade com a fonte oficial.
+// Duas buscas, nessa ordem: (1) por nome do produto, do jeito que o consultar_produto
+// casa; (2) se nada casar pelo nome, por ATRIBUTO dentro do texto da ficha — o cliente
+// pergunta "qual e sem acucar?" sem citar produto nenhum.
+// Nunca resume nem interpreta aqui: devolve o texto cru e deixa a leitura com o modelo.
+async function consultarFichaTecnica(input: any): Promise<string> {
+  const termo = String(input?.termo || '').trim();
+  if (!termo) return 'Informe o nome do produto ou o que voce quer saber.';
+  const stop = new Set(['de','da','do','com','e','a','o','os','as','para','por','sabor','ml','l','un','und']);
+  const norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const tokens = norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !stop.has(t));
+
+  if (!(await temTabelaFichas())) {
+    return 'Nenhuma ficha tecnica cadastrada ainda. NAO invente dados de rotulo — diga ao cliente que vai confirmar com a equipe.';
+  }
+  const all: any = await db.execute(sql`
+    SELECT p.id, p.name, d.file_name, d.extract_status, d.extracted_text
+    FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id
+    WHERE p.is_active = true ORDER BY p.name`);
+  const rows: any[] = all.rows || [];
+  if (!rows.length) return 'Catalogo vazio.';
+
+  let achados = rows.filter((p: any) => {
+    const n = norm(p.name);
+    return tokens.length ? tokens.every((t: string) => n.includes(t)) : n.includes(norm(termo));
+  });
+
+  let porAtributo = false;
+  if (!achados.length) {
+    porAtributo = true;
+    achados = rows.filter((p: any) => {
+      if (!p.extracted_text) return false;
+      const t = norm(p.extracted_text);
+      return tokens.length ? tokens.every((k: string) => t.includes(k)) : t.includes(norm(termo));
+    });
+    if (!achados.length) {
+      return `Nao encontrei produto nem ficha tecnica com "${termo}". Confirme o nome do produto com o cliente (use consultar_produto) ou diga que vai checar com a equipe.`;
+    }
+  }
+
+  const comFicha = achados.filter((p: any) => p.extracted_text || p.file_name);
+  if (!comFicha.length) {
+    const nomes = achados.slice(0, 5).map((p: any) => p.name).join(', ');
+    return `Sem ficha tecnica anexada para: ${nomes}. NAO invente dados de rotulo — diga ao cliente que vai confirmar essa informacao com a equipe.`;
+  }
+
+  // Uma ficha inteira ja e bastante texto; com varias o prompt estoura sem ganho.
+  const limite = comFicha.length === 1 ? 12000 : 4000;
+  const partes = comFicha.slice(0, 3).map((p: any) => {
+    const link = `${APP_URL}/api/public/products/${p.id}/ficha-tecnica`;
+    if (!p.extracted_text) {
+      return `### ${p.name}\nFicha anexada (${p.file_name}), mas o PDF nao tem texto legivel (provavelmente digitalizado). Envie o link ao cliente e nao afirme nada sobre o conteudo: ${link}`;
+    }
+    return `### ${p.name}\nPDF para enviar ao cliente: ${link}\nCONTEUDO DA FICHA TECNICA:\n${String(p.extracted_text).slice(0, limite)}`;
+  });
+
+  const cabecalho = porAtributo
+    ? `Nenhum produto casou pelo nome; estas fichas mencionam "${termo}":`
+    : 'Ficha tecnica oficial (responda SO com o que estiver escrito abaixo):';
+  const sobra = comFicha.length > 3 ? `\n\n(+${comFicha.length - 3} outros produtos tambem casaram — peca ao cliente para especificar.)` : '';
+  return `${cabecalho}\n\n${partes.join('\n\n')}${sobra}`;
 }
 
 // Registra um pedido no pipeline de faturamento (PENDENTE; confirmação humana antes de faturar).
