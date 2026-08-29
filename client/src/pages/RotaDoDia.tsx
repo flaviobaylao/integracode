@@ -1641,35 +1641,42 @@ export default function RotaDoDia() {
             </CardContent>
           </Card>
 
+          {/* Km rodada (real/executada): hoje, semana e mês. Card próprio, SEMPRE visível
+              (inclusive para o vendedor e mesmo quando não há coordenada de casa / mapa). */}
+          <Card className="mb-6">
+            <CardContent className="py-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-gray-700 dark:text-gray-300 mr-1">Quilometragem rodada:</span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada no dia selecionado" data-testid="km-dia">
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">📍</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km hoje</span>
+                    <span className="text-sm font-bold text-green-700 dark:text-green-300">{fmtKm(kmData?.dia)}</span>
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada acumulada na semana (desde segunda)" data-testid="km-semana">
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 text-xs">📆</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km semana</span>
+                    <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{fmtKm(kmData?.semana)}</span>
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada acumulada no mês" data-testid="km-mes">
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 text-xs">🗓️</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km mês</span>
+                    <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{fmtKm(kmData?.mes)}</span>
+                  </span>
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
           {route.sellerHome && (
             <Card className="mb-6">
               <CardHeader>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <CardTitle>Mapa da Rota</CardTitle>
-                  {/* Km rodada (real/executada): hoje, semana e mês acumulados até a data selecionada. */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada no dia selecionado" data-testid="km-dia">
-                      <span className="grid place-items-center w-6 h-6 rounded-full bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">📍</span>
-                      <span className="flex flex-col leading-tight">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km hoje</span>
-                        <span className="text-sm font-bold text-green-700 dark:text-green-300">{fmtKm(kmData?.dia)}</span>
-                      </span>
-                    </span>
-                    <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada acumulada na semana (desde segunda)" data-testid="km-semana">
-                      <span className="grid place-items-center w-6 h-6 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 text-xs">📆</span>
-                      <span className="flex flex-col leading-tight">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km semana</span>
-                        <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{fmtKm(kmData?.semana)}</span>
-                      </span>
-                    </span>
-                    <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada acumulada no mês" data-testid="km-mes">
-                      <span className="grid place-items-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 text-xs">🗓️</span>
-                      <span className="flex flex-col leading-tight">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km mês</span>
-                        <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{fmtKm(kmData?.mes)}</span>
-                      </span>
-                    </span>
-                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
