@@ -97,7 +97,7 @@ export default function CustomerManagement() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [weekdayFilter, setWeekdayFilter] = useState('all');
+  const [dayMulti, setDayMulti] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState('all');
   const [sellerFilter, setSellerFilter] = useState('all');
   const { sellerOptions, resolveSeller } = useActiveSellers();
@@ -110,7 +110,7 @@ export default function CustomerManagement() {
   const [selectedPeriodicity, setSelectedPeriodicity] = useState('');
   const [selectedPersonType, setSelectedPersonType] = useState('');
   const [cityMulti, setCityMulti] = useState<string[]>([]);
-  const [selectedNeighborhood, setSelectedNeighborhood] = useState('');
+  const [neighborhoodMulti, setNeighborhoodMulti] = useState<string[]>([]);
   const [selectedCoords, setSelectedCoords] = useState(''); // "", "com", "sem"
   const [phoneFilter, setPhoneFilter] = useState('');
   const { toast } = useToast();
@@ -344,18 +344,15 @@ export default function CustomerManagement() {
                          normalizedDocument.includes(normalizedSearchTerm) ||
                          normalizedPhone.includes(normalizedSearchTerm);
     
-    // Filtro por dia da semana
+    // Filtro por dia da semana (múltipla escolha): casa se QUALQUER dia selecionado
+    // estiver entre os dias de rota do cliente. "(Sem dia)" casa quem não tem dia.
     let matchesWeekday = true;
-    if (weekdayFilter !== 'all') {
-      try {
-        const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
-        matchesWeekday = weekdayFilter === '__vazio__'
-          ? normalizedWeekdays.length === 0   // "Vazio": clientes sem nenhum dia de rota registrado
-          : normalizedWeekdays.includes(weekdayFilter);
-      } catch {
-        // Se os dias não parsearem, trata como vazio (sem registro válido).
-        matchesWeekday = weekdayFilter === '__vazio__';
-      }
+    if (dayMulti.length > 0) {
+      let normalizedWeekdays: string[] = [];
+      try { normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]'); } catch { normalizedWeekdays = []; }
+      const wantVazio = dayMulti.includes('(Sem dia)');
+      const dayCodes = dayMulti.filter((d) => d !== '(Sem dia)');
+      matchesWeekday = (wantVazio && normalizedWeekdays.length === 0) || dayCodes.some((d) => normalizedWeekdays.includes(d));
     }
     
     const matchesStatus = statusFilter === 'all' ||
@@ -396,7 +393,7 @@ export default function CustomerManagement() {
     const personType = (customer as any).customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
     const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
     const matchesCity = cityMulti.length === 0 || cityMulti.includes(cityLabelOf(customer.city));
-    const matchesNeighborhood = !selectedNeighborhood || String(customer.neighborhood || '').trim() === selectedNeighborhood;
+    const matchesNeighborhood = multiMatch(neighborhoodMulti, String(customer.neighborhood || '').trim());
     const matchesPhone = !phoneFilter || String(customer.phone || '').replace(/\D/g, '').includes(phoneFilter.replace(/\D/g, ''));
     const hasCoords = !!(customer.latitude && customer.longitude);
     const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
@@ -564,22 +561,7 @@ export default function CustomerManagement() {
 
             <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />
 
-            <Select value={weekdayFilter} onValueChange={setWeekdayFilter}>
-              <SelectTrigger className="w-[100px] h-9" data-testid="select-weekday-filter">
-                <SelectValue placeholder="Dia" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os dias</SelectItem>
-                <SelectItem value="__vazio__">Vazio (sem dia)</SelectItem>
-                <SelectItem value="Seg">Segunda-feira</SelectItem>
-                <SelectItem value="Ter">Terça-feira</SelectItem>
-                <SelectItem value="Qua">Quarta-feira</SelectItem>
-                <SelectItem value="Qui">Quinta-feira</SelectItem>
-                <SelectItem value="Sex">Sexta-feira</SelectItem>
-                <SelectItem value="Sab">Sábado</SelectItem>
-                <SelectItem value="Dom">Domingo</SelectItem>
-              </SelectContent>
-            </Select>
+            <MultiSelect label="Dia" options={['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom', '(Sem dia)']} selected={dayMulti} onChange={setDayMulti} testId="filter-weekday-customers" />
 
             <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
               <SelectTrigger className="w-[100px] h-9" data-testid="select-virtual-filter">
@@ -635,16 +617,9 @@ export default function CustomerManagement() {
               </SelectContent>
             </Select>
 
-            <MultiSelect label="Cidade" options={cities as string[]} selected={cityMulti} onChange={(v) => { setCityMulti(v); setSelectedNeighborhood(''); }} testId="filter-city-customers" />
+            <MultiSelect label="Cidade" options={cities as string[]} selected={cityMulti} onChange={(v) => { setCityMulti(v); setNeighborhoodMulti([]); }} testId="filter-city-customers" />
 
-            <Select value={selectedNeighborhood} onValueChange={setSelectedNeighborhood}>
-              <SelectTrigger className="w-[130px] h-9" data-testid="select-neighborhood-filter">
-                <SelectValue placeholder="Bairro" />
-              </SelectTrigger>
-              <SelectContent>
-                {neighborhoods.map((nb: any) => (<SelectItem key={nb} value={nb}>{nb}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            <MultiSelect label="Bairro" options={neighborhoods as string[]} selected={neighborhoodMulti} onChange={setNeighborhoodMulti} testId="filter-neighborhood-customers" />
 
             <div className="relative">
               <Phone className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
