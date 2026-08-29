@@ -19,6 +19,7 @@ import { registerPaymentLink } from "./payment-link";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { registerChangeRequestsRoutes } from "./change-requests-routes";
+import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
@@ -359,6 +360,8 @@ run();
   // index.html do SPA ("Failed to parse JSON response"). Re-registrado. (29/jul/2026)
   registerChangeRequestsRoutes(app);
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
+  // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
+  try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
 
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
   (async () => {
