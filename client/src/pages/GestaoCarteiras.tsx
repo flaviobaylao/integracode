@@ -81,6 +81,25 @@ function KpiCard(props: { icon: any; titulo: string; valor: string; nota?: strin
  *  período, então ela nunca pode fazer parte da chave de comparação. */
 const baseNome = (r: string) => String(r || "").replace(/\s*\([\d.,]+\)\s*$/, "").trim();
 
+// ── Cidade: o cadastro tem "GOIANIA", "Goiânia", "goiania " para o mesmo lugar.
+// A grafia é padronizada aqui igual à aba Agenda — filtro e coluna têm que dizer
+// a mesma coisa, senão o usuário não confia em nenhum dos dois.
+/** Chave de agrupamento: sem acento, sem caixa, sem espaço sobrando. */
+const chaveCidade = (s: any) =>
+  String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+/** Preposições ficam em minúscula: "Aparecida de Goiânia", não "De". */
+const MINUSCULAS_CIDADE = new Set(["de", "da", "do", "das", "dos", "e", "d'"]);
+const tituloCidade = (s: any) =>
+  String(s || "")
+    .toLocaleLowerCase("pt-BR")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((w, i) => (i > 0 && MINUSCULAS_CIDADE.has(w) ? w : w.charAt(0).toLocaleUpperCase("pt-BR") + w.slice(1)))
+    .join(" ");
+/** Quantos acentos a grafia tem — entre as variações, a mais acentuada vence. */
+const acentosCidade = (s: any) => (String(s || "").normalize("NFD").match(/[\u0300-\u036f]/g) || []).length;
+
 /** Rótulo dentro da fatia: só nas fatias com folga (>=6%), para não colidir. */
 const rotuloFatia = (p: any) => (p.percent >= 0.06 ? `${(p.percent * 100).toFixed(0)}%` : "");
 
@@ -229,7 +248,7 @@ export default function GestaoCarteiras() {
   });
   const anotacoesPorChave = useMemo(() => {
     const m = new Map<string, Anotacao[]>();
-    for (const a of anotacoes || []) {
+    for (const a of Array.isArray(anotacoes) ? anotacoes : []) {
       const k = String(a?.chave || "");
       if (!k) continue;
       const lista = m.get(k);
@@ -300,13 +319,53 @@ export default function GestaoCarteiras() {
       ? ` na carteira de ${Array.from(nomesSel)[0]}`
       : ` nas ${nomesSel.size} carteiras selecionadas`;
 
+  // Filtro de CIDADE: múltipla escolha, vazio = todas. Recorta a carteira
+  // inteira, igual ao filtro de vendedor e ao PJ/PF.
+  const [cidades, setCidades] = useState<string[]>([]);
+  /** Grafia canônica: entre as variações do cadastro vence a mais acentuada. */
+  const cidadePadrao = useMemo(() => {
+    const melhor = new Map<string, string>();
+    for (const c of todos) {
+      const bruta = String(c.cidade || "").trim();
+      if (!bruta) continue;
+      const k = chaveCidade(bruta);
+      const atual = melhor.get(k);
+      if (!atual || acentosCidade(bruta) > acentosCidade(atual)) melhor.set(k, bruta);
+    }
+    const m = new Map<string, string>();
+    for (const [k, bruta] of melhor) m.set(k, tituloCidade(bruta));
+    return (x: any) => { const k = chaveCidade(x); return k ? m.get(k) || tituloCidade(x) : ""; };
+  }, [todos]);
+  const opcoesCidade = useMemo(() => {
+    const base = filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos;
+    return Array.from(new Set(base.map((c) => cidadePadrao(c.cidade) || "(sem cidade)")))
+      .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [todos, nomesSel, filtrarVend, cidadePadrao]);
+  // Cidade que sumiu da base (troquei de vendedor) não pode seguir filtrando escondida.
+  useEffect(() => {
+    setCidades((sel) => sel.filter((c) => opcoesCidade.includes(c)));
+  }, [opcoesCidade]);
+
   const filtrarTipo = tipoPessoa !== "";
-  const filtrando = filtrarVend || filtrarTipo;
+  const filtrarCidade = cidades.length > 0;
+  const filtrando = filtrarVend || filtrarTipo || filtrarCidade;
   const clientes = useMemo(() => {
     let out = filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos;
     if (filtrarTipo) out = out.filter((c) => c.tipo === tipoPessoa);
+    if (filtrarCidade) {
+      const sel = new Set(cidades);
+      out = out.filter((c) => sel.has(cidadePadrao(c.cidade) || "(sem cidade)"));
+    }
     return out;
-  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa]);
+  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa, filtrarCidade, cidades, cidadePadrao]);
+
+  /** Complemento de frase quando há cidade escolhida. */
+  const rotuloCidade = !filtrarCidade
+    ? ""
+    : cidades.length === 1
+      ? ` em ${cidades[0]}`
+      : ` em ${cidades.length} cidades`;
+
 
   // A classe (A+/A-/.../D-) vem pronta do servidor em cada cliente: a letra e o
   // nivel de faturamento (ticket medio) e o sinal e a positivacao de pagamento.
@@ -545,7 +604,7 @@ export default function GestaoCarteiras() {
       if (!alvo) return true;
       return (
         c.nome.toLocaleLowerCase("pt-BR").includes(alvo) ||
-        (c.cidade || "").toLocaleLowerCase("pt-BR").includes(alvo) ||
+        cidadePadrao(c.cidade).toLocaleLowerCase("pt-BR").includes(alvo) ||
         (c.vendedor || "").toLocaleLowerCase("pt-BR").includes(alvo) ||
         (alvoDoc.length >= 3 && (c.doc || "").includes(alvoDoc))
       );
@@ -604,7 +663,7 @@ export default function GestaoCarteiras() {
       listaFiltrada
         .map((c, i) => ({
           "#": i + 1, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: c.tipo,
-          Classe: c.classe || "", Vendedor: c.vendedor, Cidade: c.cidade, Segmento: c.segmento,
+          Classe: c.classe || "", Vendedor: c.vendedor, Cidade: cidadePadrao(c.cidade), Segmento: c.segmento,
           "Faturamento no período": Number(c.total.toFixed(2)),
           "Média ponderada/mês": Number(c.mediaPonderada.toFixed(2)),
           "Média simples/mês": Number(c.mediaSimples.toFixed(2)),
@@ -698,6 +757,16 @@ export default function GestaoCarteiras() {
                 testId="select-vendedor"
               />
             )}
+          </div>
+          {/* Cidade: múltipla escolha, vazio = todas. Mesmo alcance do vendedor. */}
+          <div className="pt-[21px]">
+            <MultiSelect
+              label="Cidade"
+              options={opcoesCidade}
+              selected={cidades}
+              onChange={setCidades}
+              testId="select-cidade"
+            />
           </div>
           {/* Recorte PJ / PF da carteira inteira: vale para KPIs, ABC, faixas e listas. */}
           <div>
@@ -919,7 +988,7 @@ export default function GestaoCarteiras() {
                                 />
                                 {c.nome}
                                 <span className="block text-xs text-muted-foreground">
-                                  {c.vendedor}{c.cidade ? ` · ${c.cidade}` : ""}
+                                  {c.vendedor}{c.cidade ? ` · ${cidadePadrao(c.cidade)}` : ""}
                                   {balde === "debito" && c.situacao !== "ativo" ? ` · ${c.situacao}` : ""}
                                 </span>
                               </TableCell>
@@ -1372,7 +1441,7 @@ export default function GestaoCarteiras() {
                               data-testid={`tag-perdido-${i}`}
                             >perdido</span>
                           ) : null}
-                          {c.cidade ? <span className="block text-xs text-muted-foreground">{c.cidade}</span> : null}
+                          {c.cidade ? <span className="block text-xs text-muted-foreground">{cidadePadrao(c.cidade)}</span> : null}
                         </TableCell>
                         {/* Data de conquista + idas e vindas: azul para entrada e
                             volta (cadastro/reativação), vermelho para inativação. */}
@@ -1445,7 +1514,7 @@ export default function GestaoCarteiras() {
                   Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
                   {classeSel !== "todas" ? ` da classe ${classeSel}` : ""}
                   {sinalSel !== "todos" ? (sinalSel === "+" ? " que pagam em dia" : " que atrasam ou estão devendo") : ""}
-                  {rotuloCarteira} · {BRL0(totalFiltrado)} no período
+                  {rotuloCarteira}{rotuloCidade} · {BRL0(totalFiltrado)} no período
                   {debitoFiltrado > 0 ? <> · <span className="text-destructive font-medium">{BRL0(debitoFiltrado)} de débito vencido</span></> : " · sem débito vencido"}.
                   {d?.clientesTruncado ? " Base limitada aos 2.000 maiores." : ""}
                 </p>
