@@ -369,6 +369,19 @@ export const NETWORK_ERROR_CODE = 'NETWORK_ERROR';
 // larga e mantém o dhEmi coerente com o dia em que a nota é de fato autorizada.
 export const STALE_EMISSION_MS = 12 * 60 * 60 * 1000;
 
+// NFC-e nao tem essa folga. Ela e documento de BALCAO: a SEFAZ espera que a nota
+// seja transmitida praticamente junto com a venda, e recusa com a Rejeicao 704
+// ("NFC-e ou NF-e com DANFE Simplificado Tipo 2 com Data-Hora de emissao
+// atrasada") um dhEmi de poucos minutos atras. Foi o que aconteceu na segunda
+// tentativa da NFC-e n. 1: a primeira transmissao redatou a nota (ela era de
+// ontem), a segunda veio 11 minutos depois e o limite de 12 h nao disparou —
+// entao ela reenviou o dhEmi ja vencido.
+//
+// Dois minutos cobrem a ida e volta da SEFAZ com sobra e mantem o dhEmi colado no
+// instante da autorizacao. Redatar e legitimo: nota nao autorizada nao tem
+// existencia fiscal.
+export const STALE_EMISSION_NFCE_MS = 2 * 60 * 1000;
+
 export function isTransientNetworkError(err: any): boolean {
   const code = String(err?.code || '');
   const msg = String(err?.message || err || '');
@@ -1692,7 +1705,11 @@ function buildDocumento(
             if (!ehCartao && !ehPix) return {};
 
             const pag: any = (invoice as any).pagamentoCartao || {};
-            const cAut = onlyDigits(String(pag.autorizacao || '')) || String(pag.autorizacao || '').trim();
+            // cAut e ALFANUMERICO (ate 20 caracteres). Passar onlyDigits aqui
+            // destruia o codigo: a autorizacao "EMPV0E" da Cielo virava "0", e a
+            // nota ia para a SEFAZ afirmando que a transacao fora autorizada sob
+            // o codigo zero. So o CNPJ e numerico.
+            const cAut = sanitizeStr(String(pag.autorizacao || '').trim(), 20);
             const cnpjCred = onlyDigits(String(pag.cnpjCredenciadora || ''));
             const tBand = String(pag.bandeira || '').trim();
 
@@ -2120,7 +2137,12 @@ export class SefazService {
       try {
         const emiAtual = invoice?.emissionDate ? new Date(invoice.emissionDate as any) : null;
         const idadeMs = emiAtual && !isNaN(emiAtual.getTime()) ? Date.now() - emiAtual.getTime() : Infinity;
-        if (idadeMs > STALE_EMISSION_MS) {
+        // O limite depende do MODELO: a NF-e 55 tolera 30 dias (usamos 12 h de
+        // folga), a NFC-e recusa alguns minutos. Ver STALE_EMISSION_NFCE_MS.
+        const limiteIdadeMs = ((invoice as any)?.invoiceModel === '65')
+          ? STALE_EMISSION_NFCE_MS
+          : STALE_EMISSION_MS;
+        if (idadeMs > limiteIdadeMs) {
           // INSTANTE -> UTC real. Era nowBrazil(), que gravava hora de parede BR e
           // deslocava dhEmi e AAMM da chave em 3h. Ver shared/tempo.ts.
           const novaEmissao = agora();
