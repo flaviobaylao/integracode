@@ -1921,6 +1921,15 @@ export class SefazService {
       // pagamento, nao do documento fiscal. Duplicar levaria os dois a divergirem —
       // e numa auditoria a pergunta "qual dos dois esta certo?" nao tem resposta boa.
       // A fonte e uma so: o retorno da maquininha.
+      //
+      // GUARDADO NUMA VARIAVEL, NAO SO PENDURADO NA NOTA. Entre este ponto e a
+      // montagem do XML o objeto `invoice` e RECARREGADO do banco mais de uma vez
+      // (alias de CNPJ, auto-preenchimento de documento, redata da emissao) — e
+      // cada recarga descarta qualquer campo pendurado. Foi assim que a primeira
+      // NFC-e autorizada saiu com tpIntegra=2: a redata do dhEmi recarregou a nota
+      // e levou junto os dados do cartao. A variavel sobrevive as recargas; a
+      // nota e re-carimbada logo antes de montar o XML.
+      let pagamentoCartao: any = null;
       try {
         if (invoice.salesCardId) {
           const p: any = await db.execute(sql`SELECT card_brand, authorization_code, cielo_code, forma_pagamento
@@ -1928,7 +1937,7 @@ export class SefazService {
             ORDER BY paid_at DESC LIMIT 1`);
           const row = ((p.rows || p) as any[])[0];
           if (row) {
-            (invoice as any).pagamentoCartao = {
+            pagamentoCartao = {
               cnpjCredenciadora: CNPJ_CIELO,
               bandeira: codigoBandeira(row.card_brand),
               // A autorizacao e o que amarra a nota a transacao no extrato da
@@ -2182,6 +2191,10 @@ export class SefazService {
       // Duplicatas espelhadas nos titulos do Contas a Receber ligados a esta NF (boleto = titulo).
       const duplicatasNf = await loadDuplicatasDaNf(invoice.id, parseFloat(invoice.totalInvoice?.toString() || '0'));
       if (duplicatasNf) console.log(`[SEFAZ] <cobr> espelhado em ${duplicatasNf.length} titulo(s): ${duplicatasNf.map(d => d.dVenc + '=' + d.vDup.toFixed(2)).join(', ')}`);
+      // Re-carimba os dados do cartao AQUI, depois de todas as recargas de
+      // `invoice`, para o grupo card (YA04) chegar completo ao XML. Ver a coleta
+      // logo apos o carregamento do certificado.
+      if (pagamentoCartao) (invoice as any).pagamentoCartao = pagamentoCartao;
       const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq, duplicatasNf);
       const isNFCe = modelo === '65';
 
