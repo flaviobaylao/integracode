@@ -677,7 +677,7 @@ export default function LeadsManagement() {
   const { sortKey, sortDir, toggleSort, sortRows } = useTableSort();
   const sortedLeads = sortRows(filteredLeads, (lead: any, key: string) => {
     switch (key) {
-      case 'temp': return lead.temperature || '';
+      case 'temp': return (!!(lead as any).lastCheckInAt || lead.status === 'visited' || !!lastServiceLogs[lead.id]) ? 1 : 0;
       case 'name': return lead.fantasyName || '';
       case 'contact': return lead.contact || '';
       case 'phone': return lead.phone || '';
@@ -982,7 +982,7 @@ export default function LeadsManagement() {
                       <Checkbox checked={allLeadsSelected} onCheckedChange={toggleSelectAllLeads} aria-label="Selecionar todos" />
                     </th>
                   )}
-                  <SortableTh label="Temp." colKey="temp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Estágio" colKey="temp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Nome" colKey="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Contato" colKey="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Telefone" colKey="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
@@ -1024,14 +1024,15 @@ export default function LeadsManagement() {
                         </td>
                       )}
                       <td className="py-3 px-4">
-                        {lead.temperature ? (
-                          <div
-                            className={`w-4 h-4 rounded-full ${descartado ? 'bg-gray-300' : temperatureColors[lead.temperature]}`}
-                            title={temperatureLabels[lead.temperature]}
-                          />
-                        ) : (
-                          <div className="w-4 h-4 rounded-full bg-gray-300" title="Sem temperatura" />
-                        )}
+                        {(() => {
+                          const visitado = !!(lead as any).lastCheckInAt || lead.status === 'visited' || !!lastServiceLogs[lead.id];
+                          return (
+                            <div
+                              className={`w-4 h-4 rounded-full ${descartado ? 'bg-gray-300' : (visitado ? 'bg-green-500' : 'bg-red-500')}`}
+                              title={descartado ? 'Descartado' : (visitado ? 'Visitado' : 'Não visitado')}
+                            />
+                          );
+                        })()}
                       </td>
                       <td className={`py-3 px-4 font-medium ${descartado ? 'text-gray-400 dark:text-gray-500' : ''}`}>
                         <span className="inline-flex items-center gap-1.5">
