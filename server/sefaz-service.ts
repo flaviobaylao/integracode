@@ -25,6 +25,34 @@ import zlib from 'zlib';
 // Formas de pagamento liquidadas NO ATO: indPag=0 e XML SEM bloco <cobr>/<dup>.
 // Inclui as variantes de cartao vindas do hotsite ('card'), do link de pagamento do
 // vendedor e da maquininha LIO - nesses casos o pedido ja chega PAGO.
+// ─── Credenciadora e bandeiras (grupo card / YA04 da NFC-e) ──────────────────
+//
+// CNPJ da CIELO S.A., a credenciadora da maquininha do balcao. O campo YA05 quer
+// o CNPJ de quem CREDENCIA o estabelecimento — nao o banco emissor do cartao do
+// cliente. Se um dia a Honest trocar de adquirente, este valor muda junto.
+const CNPJ_CIELO = '01027058000191';
+
+// Tabela tBand do MOC. A maquininha devolve o nome da bandeira ("VISA"); a SEFAZ
+// quer o codigo. O que nao estiver mapeado vira 99 (Outros), que e valido — bem
+// melhor que arriscar um codigo errado ou derrubar a emissao por uma bandeira nova.
+const BANDEIRAS: Record<string, string> = {
+  VISA: '01', VISAELECTRON: '01',
+  MASTERCARD: '02', MASTER: '02', MAESTRO: '02',
+  AMEX: '03', AMERICANEXPRESS: '03',
+  SOROCRED: '04',
+  DINERS: '05', DINERSCLUB: '05',
+  ELO: '06',
+  HIPERCARD: '07', HIPER: '07',
+  AURA: '08',
+  CABAL: '09',
+};
+
+function codigoBandeira(nome: unknown): string {
+  const chave = String(nome || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (!chave) return '';
+  return BANDEIRAS[chave] || '99';
+}
+
 const PAID_AT_ONCE = new Set([
   'a_vista', 'dinheiro', 'pix',
   'cartao', 'cartao_credito', 'card', 'credit_card',
@@ -1630,6 +1658,54 @@ function buildDocumento(
             const isOther = !['sem_pagamento','a_vista','dinheiro','pix','cartao','cartao_credito','card','credit_card','cartao_debito','debit_card','boleto','a_prazo','transferencia','deposito','transfer','cheque'].includes(pm);
             return isOther ? { xPag: sanitizeStr(String(pm).slice(0, 60), 60) } : {};
           })()),
+
+          // ── GRUPO card (YA04) — obrigatorio quando o pagamento e por cartao ──
+          //
+          // SEFAZ-GO devolveu Rejeicao 391 ("Nao informados os dados do cartao de
+          // credito / debito nas Formas de Pagamento") na PRIMEIRA NFC-e do balcao.
+          // O grupo <card> e exigido para tPag 03 (credito), 04 (debito) e 17 (Pix).
+          // Nao e capricho do estado: e a contrapartida tecnica da IN 1.608/2025-GSE,
+          // que manda vincular toda transacao de pagamento eletronico ao documento
+          // fiscal. Sem este grupo a venda de balcao simplesmente nao emite.
+          //
+          // tpIntegra diz a VERDADE sobre a arquitetura, e a verdade importa:
+          //   1 = pagamento integrado ao sistema de automacao. E o nosso caso — o PDV
+          //       roda DENTRO da L400, manda o valor para a Cielo e recebe de volta
+          //       NSU, autorizacao e bandeira. Exige CNPJ da credenciadora, bandeira
+          //       e codigo de autorizacao.
+          //   2 = pagamento nao integrado (POS separado, operador digita o valor na
+          //       maquininha). Dispensa os demais campos.
+          //
+          // Quando falta qualquer um dos tres dados, caimos para tpIntegra=2 em vez de
+          // inventar valor: declarar integracao e nao entregar os campos e rejeicao na
+          // certa, e preencher CNPJ/bandeira "no chute" e informacao falsa em documento
+          // fiscal. Melhor uma declaracao mais pobre e verdadeira que uma rica e errada.
+          //
+          // SO PARA NFC-e por enquanto. A NF-e 55 do hotsite tambem paga com cartao e
+          // um dia vai esbarrar na 391, mas hoje ela emite; mexer nela junto seria
+          // arriscar 938 notas que funcionam para consertar uma que nao existe ainda.
+          ...((() => {
+            if (!isNFCe) return {};
+            const pm = String(invoice.paymentMethod || '').trim().toLowerCase();
+            const ehCartao = ['cartao', 'cartao_credito', 'card', 'credit_card', 'cartao_debito', 'debit_card'].includes(pm);
+            const ehPix = pm === 'pix';
+            if (!ehCartao && !ehPix) return {};
+
+            const pag: any = (invoice as any).pagamentoCartao || {};
+            const cAut = onlyDigits(String(pag.autorizacao || '')) || String(pag.autorizacao || '').trim();
+            const cnpjCred = onlyDigits(String(pag.cnpjCredenciadora || ''));
+            const tBand = String(pag.bandeira || '').trim();
+
+            // Pix nao tem bandeira. Declaramos nao integrado: o codigo do Pix nao e
+            // "autorizacao de cartao", e forcar o grupo completo aqui seria afirmar o
+            // que a norma nao pediu.
+            if (ehPix) return { card: { tpIntegra: '2' } };
+
+            if (cAut && cnpjCred.length === 14 && tBand) {
+              return { card: { tpIntegra: '1', CNPJ: cnpjCred, tBand, cAut: sanitizeStr(cAut, 20) } };
+            }
+            return { card: { tpIntegra: '2' } };
+          })()),
         },
       ],
       ...(isNFCe ? { vTroco: '0.00' } : {}),
@@ -1817,6 +1893,40 @@ export class SefazService {
       }
 
       const crt = crtForCnpj(issuerCnpj);
+
+      // ── DADOS DO CARTAO PARA O GRUPO card (YA04) ───────────────────────────
+      //
+      // A nota fiscal nao guarda NSU, autorizacao nem bandeira — mas a maquininha
+      // guardou tudo em lio_pedidos quando a Cielo aprovou. Buscamos aqui, pelo
+      // sales_card_id, e penduramos no objeto da nota para o montador do XML usar.
+      //
+      // Fica fora de fiscal_invoices de proposito: sao dados da TRANSACAO de
+      // pagamento, nao do documento fiscal. Duplicar levaria os dois a divergirem —
+      // e numa auditoria a pergunta "qual dos dois esta certo?" nao tem resposta boa.
+      // A fonte e uma so: o retorno da maquininha.
+      try {
+        if (invoice.salesCardId) {
+          const p: any = await db.execute(sql`SELECT card_brand, authorization_code, cielo_code, forma_pagamento
+            FROM lio_pedidos WHERE sales_card_id = ${invoice.salesCardId} AND liquidado = true
+            ORDER BY paid_at DESC LIMIT 1`);
+          const row = ((p.rows || p) as any[])[0];
+          if (row) {
+            (invoice as any).pagamentoCartao = {
+              cnpjCredenciadora: CNPJ_CIELO,
+              bandeira: codigoBandeira(row.card_brand),
+              // A autorizacao e o que amarra a nota a transacao no extrato da
+              // credenciadora. Sem ela nao ha vinculo e o grupo cai para "nao
+              // integrado". O NSU serve de reserva porque tambem identifica a
+              // transacao de forma unica no dia.
+              autorizacao: row.authorization_code || row.cielo_code || '',
+            };
+          }
+        }
+      } catch (e: any) {
+        // Sem os dados, o XML sai com tpIntegra=2. Nota emitida vale mais que nota
+        // perfeita que nao sai — e o log deixa o rastro para investigar depois.
+        console.warn(`[SEFAZ] ⚠️ Nao foi possivel ler os dados do cartao de ${invoiceId}: ${e?.message || e}`);
+      }
 
       // ── Carrega certificado ────────────────────────────────────────────────
       let certData: { pem: string; key: string; password: string; csc?: string; idCsc?: string } | null = null;
