@@ -206,6 +206,13 @@ export default function LeadsManagement() {
     },
   });
 
+  // Alteração inline da data de próximo contato direto na tabela (admin).
+  const nextContactInlineMut = useMutation({
+    mutationFn: async ({ id, date }: { id: string; date: string }) => apiRequest('PATCH', `/api/leads/${id}`, { nextContactDate: date || null }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/leads'] }); },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Não foi possível alterar a data", variant: "destructive" }),
+  });
+
   // Enviar o lead para a rota do vendedor obedecendo a data de próximo contato.
   const enviarRotaMutation = useMutation({
     mutationFn: async ({ id, date }: { id: string; date: string }) => {
@@ -1089,11 +1096,32 @@ export default function LeadsManagement() {
                           </div>
                         ) : '—'}
                       </td>
-                      <td className="py-3 px-4 text-xs whitespace-nowrap">
-                        {(lead as any).nextContactDate ? (
-                          <span className={`font-medium ${descartado ? 'text-gray-400' : (diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600' : 'text-green-600')}`}>
-                            {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
-                          </span>
+                      <td className="py-3 px-4 text-xs whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        {isAdmin ? (
+                          <div className="flex flex-col gap-0.5">
+                            <input
+                              type="date"
+                              value={(lead as any).nextContactDate ? diaCalendario((lead as any).nextContactDate) : ''}
+                              onChange={(e) => nextContactInlineMut.mutate({ id: lead.id, date: e.target.value })}
+                              className={`text-xs border rounded px-1.5 py-1 bg-transparent cursor-pointer ${descartado ? 'text-gray-400 border-gray-300' : ((lead as any).nextContactDate && diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600 border-red-300' : 'text-green-700 border-green-300')}`}
+                              title="Alterar data do próximo contato"
+                              data-testid={`input-next-contact-inline-${lead.id}`}
+                            />
+                            {(lead as any).nextContactDate && (
+                              <span className="text-[11px] text-muted-foreground capitalize">
+                                {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEEE', { locale: ptBR })}
+                              </span>
+                            )}
+                          </div>
+                        ) : (lead as any).nextContactDate ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className={`font-medium ${descartado ? 'text-gray-400' : (diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600' : 'text-green-600')}`}>
+                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground capitalize">
+                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEEE', { locale: ptBR })}
+                            </span>
+                          </div>
                         ) : '—'}
                       </td>
                       {canAct && (
