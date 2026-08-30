@@ -21204,11 +21204,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Sem isso (ex.: clientes sem cidade cadastrada), não remove/adiciona nada, para nao esvaziar a rota.
           if (_routeCities.size > 0) {
             // Cidade de cada lead: candidatos (retornos agendados) + leads já presentes na rota.
+            // Somente os leads com retorno agendado para ESTE dia (=). NÃO puxa atrasados:
+            // um lead entra na rota apenas no dia agendado; se passou, não vira "retorno atrasado".
             const leadRet: any = await _dbLR.execute(sql`
               SELECT id, city FROM leads
               WHERE status = 'scheduled'
                 AND next_contact_date IS NOT NULL
-                AND (next_contact_date)::date <= ${date}::date
+                AND (next_contact_date)::date = ${date}::date
                 AND assigned_to = ${sellerId}
                 AND COALESCE(route_type, 'dia') <> 'prospeccao'
                 AND latitude IS NOT NULL AND longitude IS NOT NULL
@@ -21226,13 +21228,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             let changed = false;
-            // 1) Mantém não-leads; entre os leads, remove os de OUTRA cidade (ou sem cidade conhecida).
+            // Leads que DEVEM aparecer hoje: apenas os com retorno agendado para ESTE dia.
+            // (Sem retornos atrasados — se o lead não entrou no dia agendado, sai da rota.)
+            const _todayLeadIds = new Set(_candidates.map((x) => x.id));
+            // 1) Mantém não-leads; entre os leads, mantém só os do DIA e da MESMA cidade.
+            //    Remove os de outra cidade, sem cidade conhecida, OU que não são do dia (atrasados).
             const _kept: string[] = [];
             for (const s of curOrder) {
               if (!String(s).startsWith('lead:')) { _kept.push(s); continue; }
               const id = String(s).slice(5);
               const c = _leadCityById[id];
-              if (!!c && _routeCities.has(c)) { _kept.push(s); }
+              if (_todayLeadIds.has(id) && !!c && _routeCities.has(c)) { _kept.push(s); }
               else { delete curStops[s]; changed = true; }
             }
             // 2) Adiciona os retornos da MESMA cidade que ainda não estão na rota.
