@@ -157,22 +157,61 @@ async function generateVisitsForCustomer(customer: any): Promise<number> {
 
 // Regenera a agenda FUTURA de um cliente ancorada na Data de Início do Fornecimento.
 // Usada quando o serviceStartDate muda (ex.: edição em massa): apaga as visitas
-// futuras ainda PENDENTES (preserva o que já passou / foi realizado) e gera de novo
-// a partir da nova data — a geração já respeita o serviceStartDate como âncora.
+// futuras ainda PENDENTES (preserva o que já passou / foi realizado) e gera 4 novas
+// ocorrências a partir da nova data. Usa o núcleo calculateNextVisitDate (mesmo motor
+// da regeneração de telemarketing), que já respeita o serviceStartDate como âncora.
+// Retorna a quantidade de visitas criadas (0 = nada gerado).
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
+  const { calculateNextVisitDate } = await import('../shared/visitSchedule');
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
   if (!rows.length) return 0;
-  const customer: any = rows[0];
-  const today = dataCalendario(hojeBR());
-  today.setHours(0, 0, 0, 0);
+  const c: any = rows[0];
+  let weekdays: any;
+  try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { return 0; }
+  if (!Array.isArray(weekdays) || weekdays.length === 0) return 0;
+  const periodicity = c.visitPeriodicity || 'semanal';
+  const serviceStart = c.serviceStartDate ? new Date(c.serviceStartDate) : undefined;
+
+  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
   // Remove só visitas futuras ainda pendentes (não toca em visitas passadas/realizadas)
   await db.delete(visitAgenda).where(and(
     eq(visitAgenda.customerId, customerId),
     eq(visitAgenda.visitStatus, 'pending'),
     gte(visitAgenda.scheduledDate, today),
   ));
-  // Sem visitas futuras -> generateVisitsForCustomer gera ancorado no serviceStartDate
-  return await generateVisitsForCustomer(customer);
+
+  // Calcula 4 próximas datas ancoradas no início do fornecimento
+  let dates: Date[] = [];
+  try {
+    const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today, serviceStartDate: serviceStart }).nextDate;
+    dates.push(first);
+    let last = first;
+    for (let i = 0; i < 3; i++) {
+      const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last, serviceStartDate: serviceStart }).nextDate;
+      dates.push(nx); last = nx;
+    }
+  } catch { return 0; }
+
+  const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+  let created = 0;
+  for (const dt of dates) {
+    const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0); // meio-dia UTC evita virar o dia no fuso BRT
+    await db.insert(visitAgenda).values({
+      customerId: c.id,
+      sellerId: c.sellerId,
+      scheduledDate: ds,
+      routeDay: days[ds.getUTCDay()],
+      recurrenceType: periodicity,
+      isVirtual: c.virtualService || false,
+      visitStatus: 'pending',
+      customerName: c.fantasyName || c.name,
+      customerLatitude: c.latitude || null,
+      customerLongitude: c.longitude || null,
+      customerAddress: c.address || null,
+    }).onConflictDoNothing();
+    created++;
+  }
+  return created;
 }
 
 // Função LEGACY para gerar visitas (apenas para clientes sem weekdays configurados)
