@@ -2254,12 +2254,24 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 }
 
+// Instancias que NAO controlam estoque por lote no Integra: o faturamento por elas nao e
+// bloqueado por falta de saldo e nao gera baixa de lote. Hoje so a SERV (PURO SERVICOS),
+// que fatura mercadoria sem manter inventario proprio no modulo de estoque.
+// ATENCAO: incluir uma instancia aqui DESLIGA a trava de estoque para TODAS as notas dela.
+const INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE = new Set(['SERV']);
+
 async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: Array<{ productId: string; productName: string; required: number; available: number }> }> {
   const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
   if (!products || products.length === 0) return { valid: true, shortages: [] };
 
   const instanceId = item.omieInstanceId;
   if (!instanceId) return { valid: true, shortages: [] };
+
+  const _instSemEstoque = String(item.omieInstanceName || '').toUpperCase().trim();
+  if (INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE.has(_instSemEstoque)) {
+    console.log(`📦 [STOCK] Instancia ${_instSemEstoque} nao controla estoque - validacao dispensada (item ${item.id})`);
+    return { valid: true, shortages: [] };
+  }
 
   const shortages: Array<{ productId: string; productName: string; required: number; available: number }> = [];
 
@@ -2300,6 +2312,12 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
   const instanceId = item.omieInstanceId;
   if (!instanceId) {
     console.log(`⚠️ [STOCK] Item ${item.id} sem omieInstanceId, não é possível dar baixa no estoque`);
+    return lotMap;
+  }
+
+  const _instSemEstoqueBaixa = String(item.omieInstanceName || '').toUpperCase().trim();
+  if (INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE.has(_instSemEstoqueBaixa)) {
+    console.log(`📦 [STOCK] Instancia ${_instSemEstoqueBaixa} nao controla estoque - baixa dispensada (item ${item.id})`);
     return lotMap;
   }
 
