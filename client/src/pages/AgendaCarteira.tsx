@@ -14,6 +14,7 @@
 // faz mudanca de periodicidade ou de dia aparecer na hora.
 // -----------------------------------------------------------------------------
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -179,22 +180,8 @@ export default function AgendaCarteira() {
 
   // Grafia canônica de cada cidade: entre as variações do cadastro, ganha a que
   // tem mais acento (é a que carrega mais informação) e ela vai para Title Case.
-  const cidadePadrao = useMemo(() => {
-    const melhor = new Map<string, string>();
-    for (const i of todos) {
-      const bruta = String(i.cidade || "").trim();
-      if (!bruta) continue;
-      const k = chaveCidade(bruta);
-      const atual = melhor.get(k);
-      if (!atual || acentos(bruta) > acentos(atual)) melhor.set(k, bruta);
-    }
-    const m = new Map<string, string>();
-    for (const [k, bruta] of Array.from(melhor.entries())) m.set(k, tituloCidade(bruta));
-    return (c: any) => {
-      const k = chaveCidade(c);
-      return k ? m.get(k) || tituloCidade(c) : "";
-    };
-  }, [todos]);
+  // Cidade PADRONIZADA (nomenclatura unica): mapeia p/ o nome oficial GO/DF.
+  const cidadePadrao = cidadeCanonica;
 
   // Rótulos de cada coluna filtrável — as mesmas palavras que aparecem na tabela.
   const rotuloTipo = (i: Item) => (i.tipo === "lead" ? "Lead" : "Cliente");

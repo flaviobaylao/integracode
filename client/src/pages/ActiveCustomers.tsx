@@ -1,4 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { useState, useRef, useEffect, Fragment } from "react";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
@@ -863,24 +864,10 @@ export default function ActiveCustomers() {
 
   // Padroniza nomes de cidade: agrupa variações (acento, caixa, sufixo " (UF)")
   // sob um único rótulo, escolhendo a melhor grafia existente entre as variações.
-  const cityKey = (c?: string | null) =>
-    String(c || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase()
-      .replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+/g, " ").trim();
-  const { cities, cityLabelOf } = (() => {
-    const best = new Map<string, string>();
-    const score = (s: string) => (/[a-z]/.test(s) ? 2 : 0) + (/[À-ÿ]/.test(s) ? 1 : 0) + (s.includes("(") ? -3 : 0);
-    for (const ac of activeCustomers) {
-      const raw = ac.customer?.city?.trim();
-      if (!raw) continue;
-      const k = cityKey(raw);
-      if (!k) continue;
-      const cur = best.get(k);
-      if (!cur || score(raw) > score(cur) || (score(raw) === score(cur) && raw.length < cur.length)) best.set(k, raw);
-    }
-    const cityLabelOf = (c?: string | null) => best.get(cityKey(c)) || (c ? String(c).trim() : "");
-    const cities = Array.from(new Set(Array.from(best.values()))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    return { cities, cityLabelOf };
-  })();
+  // Cidade PADRONIZADA (nomenclatura unica em todo o Integra): mapeia p/ o nome oficial GO/DF.
+  const cityLabelOf = (c?: string | null) => cidadeCanonica(c);
+  const cities = Array.from(new Set(activeCustomers.map(ac => cidadeCanonica(ac.customer?.city)).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
   const neighborhoods = Array.from(
     new Set(

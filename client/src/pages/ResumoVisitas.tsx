@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
@@ -173,7 +174,7 @@ export default function ResumoVisitas() {
     return situacaoPorDoc.get(d) === "perdido" ? "Perdido" : "Ativo";
   }, [situacaoPorDoc]);
 
-  const cities = useMemo(() => Array.from(new Set(rows.map((r) => r.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [rows]);
+  const cities = useMemo(() => Array.from(new Set(rows.map((r) => cidadeCanonica(r.city)).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")), [rows]);
   const freqs = useMemo(() => Array.from(new Set(rows.map((r) => r.periodicity).filter(Boolean))).sort(), [rows]);
   // PJ / PF / Não identificado — na ordem fixa, só as opções que existem nos dados.
   const tipos = useMemo(() => {
@@ -195,7 +196,7 @@ export default function ResumoVisitas() {
     const q = norm(search);
     return rows.filter((r) => {
       if (!multiMatch(sellerMulti, r.sellerName || "")) return false;
-      if (!multiMatch(cityMulti, r.city || "")) return false;
+      if (!multiMatch(cityMulti, cidadeCanonica(r.city))) return false;
       if (!multiMatch(tipoMulti, r.tipoPessoa || "Não identificado")) return false;
       if (freq && r.periodicity !== freq) return false;
       if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;

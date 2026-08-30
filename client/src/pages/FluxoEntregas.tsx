@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -241,7 +242,7 @@ export default function FluxoEntregas() {
     return STAGE_ORDER.filter((s) => present.has(s)).map((v) => ({ value: v, label: STAGE_LABELS[v] || v }));
   }, [items]);
   const sellerOptions = useMemo(() => opts(items.map((i) => i.sellerName)), [items]);
-  const cityOptions = useMemo(() => opts(items.map((i) => i.customerCity)), [items]);
+  const cityOptions = useMemo(() => opts(items.map((i) => cidadeCanonica(i.customerCity))), [items]);
   const driverOptions = useMemo(() => opts(items.map((i) => i.deliveryDriverName)), [items]);
   const opOptions = useMemo(() => opts(items.map((i) => i.operationType), OPERATION_LABELS), [items]);
   const payOptions = useMemo(() => opts(items.map((i) => i.paymentMethod), PAYMENT_LABELS), [items]);
@@ -264,7 +265,7 @@ export default function FluxoEntregas() {
     return items.filter((i) => {
       if (stageFilter.size && !stageFilter.has(i.stage)) return false;
       if (sellerFilter.size && !sellerFilter.has(String(i.sellerName || ''))) return false;
-      if (cityFilter.size && !cityFilter.has(String(i.customerCity || ''))) return false;
+      if (cityFilter.size && !cityFilter.has(cidadeCanonica(i.customerCity))) return false;
       if (driverFilter.size && !driverFilter.has(String(i.deliveryDriverName || ''))) return false;
       if (opFilter.size && !opFilter.has(String(i.operationType || ''))) return false;
       if (payFilter.size && !payFilter.has(String(i.paymentMethod || ''))) return false;

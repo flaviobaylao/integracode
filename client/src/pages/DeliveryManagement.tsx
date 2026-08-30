@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -588,9 +589,8 @@ export default function DeliveryManagement() {
     if (!orders) return [];
     const cities = new Set<string>();
     orders.forEach(order => {
-      if (order.customerCity) {
-        cities.add(order.customerCity);
-      }
+      const _cc = cidadeCanonica(order.customerCity);
+      if (_cc) cities.add(_cc);
     });
     return Array.from(cities).sort();
   }, [orders]);
@@ -606,7 +606,7 @@ export default function DeliveryManagement() {
         (order.id?.toLowerCase() || '').includes(searchTerm.toLowerCase());
       
       // Se nenhuma cidade selecionada, mostrar todas; caso contrário, filtrar
-      const matchesCity = selectedCities.size === 0 || (order.customerCity && selectedCities.has(order.customerCity));
+      const matchesCity = selectedCities.size === 0 || selectedCities.has(cidadeCanonica(order.customerCity));
 
       // Filtro com/sem coordenadas do cliente do pedido
       const hasCoords = !!(order.customerLatitude && order.customerLongitude && Number(order.customerLatitude) !== 0 && Number(order.customerLongitude) !== 0);

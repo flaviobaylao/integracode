@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -324,19 +325,8 @@ export default function GestaoCarteiras() {
   // inteira, igual ao filtro de vendedor e ao PJ/PF.
   const [cidades, setCidades] = useState<string[]>([]);
   /** Grafia canônica: entre as variações do cadastro vence a mais acentuada. */
-  const cidadePadrao = useMemo(() => {
-    const melhor = new Map<string, string>();
-    for (const c of todos) {
-      const bruta = String(c.cidade || "").trim();
-      if (!bruta) continue;
-      const k = chaveCidade(bruta);
-      const atual = melhor.get(k);
-      if (!atual || acentosCidade(bruta) > acentosCidade(atual)) melhor.set(k, bruta);
-    }
-    const m = new Map<string, string>();
-    for (const [k, bruta] of Array.from(melhor.entries())) m.set(k, tituloCidade(bruta));
-    return (x: any) => { const k = chaveCidade(x); return k ? m.get(k) || tituloCidade(x) : ""; };
-  }, [todos]);
+  // Cidade PADRONIZADA (nomenclatura unica): mapeia p/ o nome oficial GO/DF.
+  const cidadePadrao = cidadeCanonica;
   const opcoesCidade = useMemo(() => {
     const base = filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos;
     return Array.from(new Set(base.map((c) => cidadePadrao(c.cidade) || "(sem cidade)")))

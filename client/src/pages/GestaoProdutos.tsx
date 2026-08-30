@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -283,7 +284,7 @@ export default function GestaoProdutos() {
     if (rows.some((r) => !r.cfop)) lista.push({ value: 'sem NF', label: 'sem NF — pedido ainda sem NF-e vinculada' });
     return lista;
   }, [rows]);
-  const cityOptions = useMemo(() => opts(rows.map((r) => r.customer_city)), [rows]);
+  const cityOptions = useMemo(() => opts(rows.map((r) => cidadeCanonica(r.customer_city))), [rows]);
   const payOptions = useMemo(() => opts(rows.map((r) => r.payment_method), PAYMENT_LABELS), [rows]);
   const prodOptions = useMemo(() => opts(rows.map((r) => r.product_name)), [rows]);
 
@@ -308,7 +309,7 @@ export default function GestaoProdutos() {
     if (opFilter.size && !opFilter.has(String(r.operation_type || ''))) return false;
     if (stageFilter.size && !stageFilter.has(String(r.stage || ''))) return false;
     if (!ignoreCfop && cfopFilter.size && !cfopFilter.has(cfopKeyOf(r))) return false;
-    if (cityFilter.size && !cityFilter.has(String(r.customer_city || ''))) return false;
+    if (cityFilter.size && !cityFilter.has(cidadeCanonica(r.customer_city))) return false;
     if (payFilter.size && !payFilter.has(String(r.payment_method || ''))) return false;
     if (prodFilter.size && !prodFilter.has(String(r.product_name || ''))) return false;
     if (q) {
