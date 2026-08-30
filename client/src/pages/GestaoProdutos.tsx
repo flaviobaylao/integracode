@@ -218,7 +218,19 @@ const tooltipStyle = {
   boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
 } as const;
 
-type SortKey = 'product' | 'code' | 'qty' | 'saidaDU' | 'value' | 'share' | 'orders' | 'customers' | 'avgPrice' | 'trocaQty';
+type SortKey = 'product' | 'code' | 'qty' | 'saidaDU' | 'stock' | 'value' | 'share' | 'orders' | 'customers' | 'avgPrice' | 'trocaQty';
+
+interface EstoqueRow {
+  product_id: string;
+  product_name: string;
+  product_code: string | null;
+  instance_id: string | null;
+  instance_name: string;
+  stock: string | number;
+}
+
+// Chave de casamento produto↔estoque: nome sem caixa/espaços sobrando.
+const normProd = (s: string) => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 
 interface ProdAgg {
   key: string;
@@ -259,10 +271,45 @@ export default function GestaoProdutos() {
   const [detailProduct, setDetailProduct] = useState<string | null>(null);
 
   const url = `/api/gestao/produtos-comercializados?de=${de}&ate=${ate}`;
-  const { data, isLoading, isFetching, refetch } = useQuery<{ de: string; ate: string; itens: ItemRow[] }>({
+  const [stockInst, setStockInst] = useState('todas');
+  const { data, isLoading, isFetching, refetch } = useQuery<{ de: string; ate: string; itens: ItemRow[]; estoque?: EstoqueRow[] }>({
     queryKey: [url],
   });
   const rows = data?.itens || [];
+  const estoqueRows = data?.estoque || [];
+
+  // Índice de estoque por produto (nome normalizado) → total e por instância.
+  const estoqueIdx = useMemo(() => {
+    const idx = new Map<string, { total: number; porInst: Map<string, number> }>();
+    for (const e of estoqueRows) {
+      const k = normProd(e.product_name);
+      let rec = idx.get(k);
+      if (!rec) { rec = { total: 0, porInst: new Map() }; idx.set(k, rec); }
+      const s = num(e.stock);
+      rec.total += s;
+      rec.porInst.set(e.instance_name, (rec.porInst.get(e.instance_name) || 0) + s);
+    }
+    return idx;
+  }, [estoqueRows]);
+
+  const stockInstOptions = useMemo(
+    () => Array.from(new Set(estoqueRows.map((e) => e.instance_name).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [estoqueRows],
+  );
+
+  // Estoque exibido para um produto, conforme o seletor (todas = soma).
+  const stockOf = (name: string): number | null => {
+    const rec = estoqueIdx.get(normProd(name));
+    if (!rec) return null;
+    if (stockInst === 'todas') return rec.total;
+    return rec.porInst.has(stockInst) ? (rec.porInst.get(stockInst) as number) : null;
+  };
+  const stockTitle = (name: string): string => {
+    const rec = estoqueIdx.get(normProd(name));
+    if (!rec) return 'Produto sem cadastro de estoque';
+    return Array.from(rec.porInst.entries()).map(([i, s]) => `${i}: ${fmtQtd(s)}`).join(' · ');
+  };
 
   const toggleInSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (v: string) =>
     setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
@@ -446,6 +493,7 @@ export default function GestaoProdutos() {
         case 'product': return p.name.toLowerCase();
         case 'code': return String(p.code || '').toLowerCase();
         case 'qty': case 'saidaDU': return p.qty;
+        case 'stock': { const s = stockOf(p.name); return s == null ? -1 : s; }
         case 'value': case 'share': return p.value;
         case 'orders': return p.orders.size;
         case 'customers': return p.customers.size;
@@ -458,7 +506,7 @@ export default function GestaoProdutos() {
       if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
       return String(va).localeCompare(String(vb), 'pt-BR') * dir;
     });
-  }, [prodAgg, sortKey, sortDir]);
+  }, [prodAgg, sortKey, sortDir, stockInst, estoqueIdx]);
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -496,9 +544,10 @@ export default function GestaoProdutos() {
 
   const exportProdutos = () => downloadCsv(
     `produtos-comercializados-${de}-a-${ate}.csv`,
-    ['Produto', 'Código', 'NCM', 'Quantidade', `Saída por dia útil (${diasUteis} d.u.)`, 'Valor', '% do valor', 'Pedidos', 'Clientes', 'Preço médio', 'Qtd em trocas', 'Valor em trocas'],
+    ['Produto', 'Código', 'NCM', 'Quantidade', `Saída por dia útil (${diasUteis} d.u.)`, `Estoque (${stockInst === 'todas' ? 'todas as instâncias' : stockInst})`, 'Valor', '% do valor', 'Pedidos', 'Clientes', 'Preço médio', 'Qtd em trocas', 'Valor em trocas'],
     sortedProds.map((p) => [
-      p.name, p.code || '', p.ncm || '', nBR(p.qty), nBR(Math.round((p.qty / diasUteis) * 10) / 10), nBR(p.value),
+      p.name, p.code || '', p.ncm || '', nBR(p.qty), nBR(Math.round((p.qty / diasUteis) * 10) / 10),
+      (() => { const s = stockOf(p.name); return s == null ? '' : nBR(s); })(), nBR(p.value),
       kpis.value > 0 ? nBR((p.value / kpis.value) * 100) : '0',
       p.orders.size, p.customers.size, nBR(p.qty > 0 ? p.value / p.qty : 0),
       nBR(p.trocaQty), nBR(p.trocaValue),
@@ -812,6 +861,20 @@ export default function GestaoProdutos() {
             )}
 
             {/* Tabela por produto */}
+            {estoqueRows.length > 0 && (
+              <div className="flex justify-end items-center gap-2 mb-1 text-xs text-gray-600 dark:text-gray-300">
+                <span>Coluna Estoque mostra o saldo de:</span>
+                <select
+                  value={stockInst}
+                  onChange={(e) => setStockInst(e.target.value)}
+                  className="h-8 border rounded-md px-2 text-xs bg-white dark:bg-gray-800 dark:border-gray-600"
+                  data-testid="select-estoque-instancia"
+                >
+                  <option value="todas">Todas as instâncias (soma)</option>
+                  {stockInstOptions.map((i) => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </div>
+            )}
             <div className="border rounded-lg bg-white dark:bg-gray-800 overflow-auto max-h-[560px]">
               <table className="w-full text-xs" data-testid="tabela-produtos-comercializados">
                 <thead className="sticky top-0 z-10 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 shadow-sm">
@@ -821,6 +884,11 @@ export default function GestaoProdutos() {
                     <Th k="qty" className="text-right">Quantidade</Th>
                     <Th k="saidaDU" className="text-right">
                       <span title={`Quantidade ÷ dias úteis (seg–sex) do período: ${diasUteis} dia(s) útil(eis)`}>Saída D.U.</span>
+                    </Th>
+                    <Th k="stock" className="text-right">
+                      <span title={stockInst === 'todas' ? 'Saldo atual somado de todas as instâncias (products.stock)' : `Saldo atual na instância ${stockInst}`}>
+                        Estoque{stockInst !== 'todas' ? ` (${stockInst})` : ''}
+                      </span>
                     </Th>
                     <Th k="value" className="text-right">Valor</Th>
                     <Th k="share" className="text-right">% do valor</Th>
@@ -832,7 +900,7 @@ export default function GestaoProdutos() {
                 </thead>
                 <tbody>
                   {sortedProds.length === 0 && (
-                    <tr><td colSpan={10} className="text-center text-gray-500 py-8">Nenhum item para os filtros aplicados.</td></tr>
+                    <tr><td colSpan={11} className="text-center text-gray-500 py-8">Nenhum item para os filtros aplicados.</td></tr>
                   )}
                   {sortedProds.map((p) => (
                     <tr
@@ -846,6 +914,11 @@ export default function GestaoProdutos() {
                       <td className="px-2 py-1.5 text-right tabular-nums">{fmtQtd(p.qty)}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-teal-700 dark:text-teal-300" title={`${fmtQtd(p.qty)} un ÷ ${diasUteis} dia(s) útil(eis)`}>
                         {(p.qty / diasUteis).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums" title={stockTitle(p.name)}>
+                        {(() => { const s = stockOf(p.name); return s == null
+                          ? <span className="text-gray-400">—</span>
+                          : <span className={s <= 0 ? 'text-red-600 font-medium' : 'text-gray-800 dark:text-gray-100'}>{fmtQtd(s)}</span>; })()}
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtBRL(p.value)}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-gray-600 dark:text-gray-300">
