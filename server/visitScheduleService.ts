@@ -155,6 +155,26 @@ async function generateVisitsForCustomer(customer: any): Promise<number> {
   return generatedCount;
 }
 
+// Regenera a agenda FUTURA de um cliente ancorada na Data de Início do Fornecimento.
+// Usada quando o serviceStartDate muda (ex.: edição em massa): apaga as visitas
+// futuras ainda PENDENTES (preserva o que já passou / foi realizado) e gera de novo
+// a partir da nova data — a geração já respeita o serviceStartDate como âncora.
+export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
+  const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
+  if (!rows.length) return 0;
+  const customer: any = rows[0];
+  const today = dataCalendario(hojeBR());
+  today.setHours(0, 0, 0, 0);
+  // Remove só visitas futuras ainda pendentes (não toca em visitas passadas/realizadas)
+  await db.delete(visitAgenda).where(and(
+    eq(visitAgenda.customerId, customerId),
+    eq(visitAgenda.visitStatus, 'pending'),
+    gte(visitAgenda.scheduledDate, today),
+  ));
+  // Sem visitas futuras -> generateVisitsForCustomer gera ancorado no serviceStartDate
+  return await generateVisitsForCustomer(customer);
+}
+
 // Função LEGACY para gerar visitas (apenas para clientes sem weekdays configurados)
 async function generateVisitsForCustomerLegacy(customer: any): Promise<number> {
   let generatedCount = 0;
