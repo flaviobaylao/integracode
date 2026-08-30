@@ -27324,6 +27324,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
+        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27348,6 +27349,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
+        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27384,6 +27386,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
+        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27414,6 +27417,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
+        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27439,6 +27443,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       
+      // 🗺️ Dia de rota da região: para cada lead, o dia da semana (0=Dom..6=Sáb) em que o
+      // vendedor atende a região do lead (cliente ativo mais próximo). null quando indefinido.
+      try {
+        const _sids = Array.from(new Set(leadsData.map((l: any) => l.assignedTo).filter(Boolean)));
+        const _custMap: Record<string, any[]> = {};
+        for (const _sid of _sids) { try { _custMap[String(_sid)] = await __sellerCustomers(String(_sid)); } catch { _custMap[String(_sid)] = []; } }
+        for (const l of leadsData as any[]) {
+          l.routeWeekday = l.assignedTo ? __regionTargetWeekday(_custMap[String(l.assignedTo)] || [], Number(l.latitude), Number(l.longitude)) : null;
+        }
+      } catch (_e) { /* best-effort: dia de rota é complementar */ }
+
       console.log('📋 [LEADS] Retornando', leadsData.length, 'leads');
       res.json(leadsData);
     } catch (error: any) {
@@ -27862,6 +27877,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if ('assignedTo' in fields) patch.assignedTo = fields.assignedTo || null;
         if (fields.status && ['pending', 'scheduled', 'visited', 'converted', 'discarded'].includes(fields.status)) patch.status = fields.status;
         if (fields.routeType && ['dia', 'prospeccao'].includes(fields.routeType)) patch.routeType = fields.routeType;
+        if (fields.periodicity && ['semanal', 'quinzenal', 'mensal'].includes(fields.periodicity)) patch.periodicity = fields.periodicity;
         if ('nextContactDate' in fields) {
           const v = fields.nextContactDate;
           if (!v) {
