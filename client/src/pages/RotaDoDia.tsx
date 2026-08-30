@@ -23,7 +23,6 @@ import { ptBR } from "date-fns/locale";
 import type { DailyRouteResponse } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
-import LeadReturnsPanel from "@/components/LeadReturnsPanel";
 import LeadActions from "@/components/LeadActions";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
@@ -2298,10 +2297,8 @@ export default function RotaDoDia() {
                   </div>
                 )}
 
-                {/* Retornos de lead (revisita +15 dias) - dentro do box das visitas presenciais */}
-                {selectedSellerId && selectedDate && (
-                  <LeadReturnsPanel sellerId={selectedSellerId} date={selectedDate} excludeIds={routeLeadIds} />
-                )}
+                {/* Painel "Retornos de Lead" removido da Rota do Dia: não deve haver retornos
+                    de leads atrasados. O lead aparece somente como parada no dia agendado dele. */}
 
                 {(() => {
                   if (allVirtualVisits.length === 0) return null;
