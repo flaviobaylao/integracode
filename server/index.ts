@@ -5441,19 +5441,22 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           AND bp.stage::text NOT IN ('lixeira')
       `);
 
-      // Estoque atual por produto e por instância (products.stock — o mesmo
-      // saldo que o import do Omie atualiza). O cliente soma "todas" ou mostra
-      // uma instância só, conforme o seletor da coluna Estoque.
+      // Estoque atual por produto e por instância. Fonte-verdade =
+      // inventory_lots (a mesma da Gestão de Estoque): soma dos lotes ATIVOS
+      // "in_use" por produto+instância (products.stock está zerado em produção
+      // — não serve). O cliente soma "todas" ou mostra uma instância só.
       let estoque: any[] = [];
       try {
         const est: any = await db.execute(sql`
           SELECT p.id AS product_id, p.name AS product_name, p.omie_code AS product_code,
-                 p.omie_instance_id AS instance_id,
-                 COALESCE(oi.display_name, oi.name, p.omie_instance_id, '—') AS instance_name,
-                 COALESCE(p.stock, 0) AS stock
-          FROM products p
-          LEFT JOIN omie_instances oi ON oi.id = p.omie_instance_id
-          WHERE p.is_active = true
+                 l.instance_id AS instance_id,
+                 COALESCE(oi.display_name, oi.name, l.instance_id, '—') AS instance_name,
+                 COALESCE(SUM(l.quantity), 0) AS stock
+          FROM inventory_lots l
+          JOIN products p ON p.id = l.product_id
+          LEFT JOIN omie_instances oi ON oi.id = l.instance_id
+          WHERE l.is_active = true AND l.stock_type = 'in_use'
+          GROUP BY p.id, p.name, p.omie_code, l.instance_id, oi.display_name, oi.name
         `);
         estoque = est.rows || [];
       } catch { /* estoque é enriquecimento — nunca derruba o relatório */ }
