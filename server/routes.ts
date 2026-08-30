@@ -9,7 +9,7 @@ import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, 
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
 import { requirePermission } from "./delegations-routes";
 import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId, cacheBankAccountsForAllInstances, cleanupOmieCredentials } from "./omieIntegration";
-import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange } from "./visitScheduleService";
+import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange, regenerateCustomerAgenda } from "./visitScheduleService";
 import { logCustomerChanges, getCustomerChangeHistory } from "./customerAudit";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
@@ -3591,17 +3591,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (Object.keys(patch).length === 0) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
       const __bulkUser = req.currentUser;
       const __bulkActor = { id: __bulkUser?.id, name: [__bulkUser?.firstName, __bulkUser?.lastName].filter(Boolean).join(' ').trim() || __bulkUser?.email };
-      let updated = 0; const errors: string[] = [];
+      // Mudou a Data de Início do Fornecimento? Então as próximas visitas precisam
+      // ser REGENERADAS ancoradas na nova data (senão a agenda antiga continua valendo).
+      const __regenAgenda = patch.serviceStartDate !== undefined;
+      let updated = 0; let agendaRegenerada = 0; const errors: string[] = [];
       for (const id of ids) {
         try {
           const __b = await storage.getCustomer(String(id)).catch(() => null);
           await storage.updateCustomer(String(id), patch); updated++;
           // 📜 Histórico de alterações (edição em massa / rezoneamento)
           try { await logCustomerChanges({ customerId: String(id), before: __b, changes: patch, actor: __bulkActor, source: 'bulk' }); } catch (_e) {}
+          // 🔁 Regenera as próximas visitas a partir da nova Data de Início do Fornecimento.
+          if (__regenAgenda) {
+            try { const n = await regenerateCustomerAgenda(String(id)); if (n > 0) agendaRegenerada++; }
+            catch (e: any) { console.warn('[BULK-UPDATE] regen agenda falhou para', String(id).slice(0, 8), e?.message); }
+          }
         }
         catch (e: any) { if (errors.length < 8) errors.push(String(id).slice(0, 8) + ": " + String(e?.message || e).slice(0, 60)); }
       }
-      res.json({ ok: true, updated, total: ids.length, campos: Object.keys(patch), errors });
+      res.json({ ok: true, updated, total: ids.length, campos: Object.keys(patch), agendaRegenerada, errors });
     } catch (error: any) {
       console.error("Error bulk updating customers:", error);
       res.status(500).json({ message: "Falha na edição em massa: " + String(error?.message || error) });
