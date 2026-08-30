@@ -1,4 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useState, useMemo, Fragment } from "react";
 import { parseISO } from "date-fns";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
@@ -313,23 +314,8 @@ export default function CustomerManagement() {
 
   // Padroniza nomes de cidade: agrupa variações (acento, caixa, sufixo " (UF)")
   // sob um único rótulo, escolhendo a melhor grafia existente entre as variações.
-  const cityKey = (c?: string | null) =>
-    String(c || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
-      .replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+/g, ' ').trim();
-  const cityBest = (() => {
-    const best = new Map<string, string>();
-    const score = (s: string) => (/[a-z]/.test(s) ? 2 : 0) + (/[À-ÿ]/.test(s) ? 1 : 0) + (s.includes('(') ? -3 : 0);
-    for (const c of (customers || [])) {
-      const raw = String((c as any).city || '').trim();
-      if (!raw) continue;
-      const k = cityKey(raw);
-      if (!k) continue;
-      const cur = best.get(k);
-      if (!cur || score(raw) > score(cur) || (score(raw) === score(cur) && raw.length < cur.length)) best.set(k, raw);
-    }
-    return best;
-  })();
-  const cityLabelOf = (c?: string | null) => cityBest.get(cityKey(c)) || (c ? String(c).trim() : '');
+  // Cidade PADRONIZADA (nomenclatura unica em todo o Integra): mapeia p/ o nome oficial GO/DF.
+  const cityLabelOf = (c?: string | null) => cidadeCanonica(c);
 
   const filteredCustomers = customers?.filter((customer: any) => {
     const documentSearch = customer.cpf || customer.cnpj || customer.document || '';
@@ -408,7 +394,7 @@ export default function CustomerManagement() {
     ...(Array.from(new Set((customers || []).map((c: any) => c.segmentoPrincipal).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b))) as string[]),
     ...((customers || []).some((c: any) => !c.segmentoPrincipal) ? ['(Sem segmento)'] : []),
   ];
-  const cities = Array.from(new Set(Array.from(cityBest.values()))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
+  const cities = Array.from(new Set((customers || []).map((c: any) => cidadeCanonica((c as any).city)).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
   const neighborhoods = Array.from(new Set((customers || []).filter((c: any) => cityMulti.length === 0 || cityMulti.includes(cityLabelOf(c.city))).map((c: any) => String(c.neighborhood || '').trim()).filter(Boolean))).sort((a: any, b: any) => String(a).localeCompare(String(b), 'pt-BR'));
 
   const formatCurrency = (value: number) => {

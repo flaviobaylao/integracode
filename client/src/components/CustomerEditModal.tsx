@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { CidadePicker } from "@/components/CidadePicker";
 import ParticularidadesField from "@/components/ParticularidadesField";
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { useMutation, useQuery } from "@/lib/queryClient";
@@ -667,12 +668,10 @@ export default function CustomerEditModal({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <Label htmlFor="city">Cidade</Label>
-              <Input
-                id="city"
-                name="city"
+              <CidadePicker
                 value={formData.city}
-                onChange={handleChange}
-                data-testid="input-customer-city"
+                onChange={(c) => setFormData((prev: any) => ({ ...prev, city: c, state: c === 'Brasília' ? 'DF' : 'GO' }))}
+                testId="input-customer-city"
               />
             </div>
             <div>

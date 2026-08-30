@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { CidadePicker } from "@/components/CidadePicker";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import ParticularidadesField from "@/components/ParticularidadesField";
 import { sortSellersByType } from "@/lib/sellerOrder";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
@@ -402,7 +404,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       form.setValue('fantasyName', data.nomeFantasia);
       form.setValue('name', data.nomeFantasia || data.razaoSocial);
       form.setValue('address', data.endereco);
-      form.setValue('city', data.cidade);
+      form.setValue('city', cidadeCanonica(data.cidade));
       form.setValue('state', data.estado);
       form.setValue('zipCode', data.cep);
       
@@ -952,7 +954,15 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                       <FormItem>
                         <FormLabel>Cidade</FormLabel>
                         <FormControl>
-                          <Input {...field} value={field.value || ''} placeholder="Nome da cidade" />
+                          <CidadePicker
+                            value={field.value || ''}
+                            onChange={(c) => {
+                              field.onChange(c);
+                              // Estado segue a cidade da base GO/DF (Brasília = DF; demais = GO).
+                              form.setValue('state', c === 'Brasília' ? 'DF' : 'GO');
+                            }}
+                            testId="input-customer-city"
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
