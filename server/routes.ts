@@ -27456,6 +27456,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
+        neighborhood: leads.neighborhood,
+        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27480,6 +27482,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
+        neighborhood: row.neighborhood || null,
+        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27516,6 +27520,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: leads.createdByName,
         assignedTo: leads.assignedTo,
         city: leads.city,
+        neighborhood: leads.neighborhood,
+        periodicity: leads.periodicity,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -27546,6 +27552,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdByName: row.createdByName || '',
         assignedTo: row.assignedTo || null,
         city: row.city || null,
+        neighborhood: row.neighborhood || null,
+        periodicity: row.periodicity || 'semanal',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -27995,6 +28003,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if ('assignedTo' in fields) patch.assignedTo = fields.assignedTo || null;
         if (fields.status && ['pending', 'scheduled', 'visited', 'converted', 'discarded'].includes(fields.status)) patch.status = fields.status;
         if (fields.routeType && ['dia', 'prospeccao'].includes(fields.routeType)) patch.routeType = fields.routeType;
+        if (fields.periodicity && ['semanal', 'quinzenal', 'mensal'].includes(fields.periodicity)) patch.periodicity = fields.periodicity;
         if ('nextContactDate' in fields) {
           const v = fields.nextContactDate;
           if (!v) {
@@ -28061,6 +28070,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro ao preencher municipio dos leads:', error);
       return res.status(500).json({ message: 'Erro ao preencher município dos leads', error: error?.message });
+    }
+  });
+
+  // 🏘️ Preenche o Bairro (neighborhood) dos leads via geocode reverso das coordenadas. Admin.
+  app.post('/api/admin/leads/preencher-bairro', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { reverseGeocodeNeighborhood, geocodeThrottleMs } = await import('./geocode-provider');
+      const limit = Math.min(Math.max(Number(req.body?.limite) || 40, 1), 100);
+      const pend: any = await db.execute(sql`
+        SELECT id, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
+        FROM leads
+        WHERE (neighborhood IS NULL OR neighborhood = '')
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY created_at ASC
+        LIMIT ${limit}
+      `);
+      const rows = (pend?.rows || []) as any[];
+      let atualizados = 0;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (const r of rows) {
+        try {
+          const bairro = await reverseGeocodeNeighborhood(r.lat, r.lng);
+          if (bairro) {
+            await db.execute(sql`UPDATE leads SET neighborhood = ${bairro}, updated_at = NOW() WHERE id = ${r.id}`);
+            atualizados++;
+          }
+        } catch (_e) { /* segue para o proximo */ }
+        await wait(geocodeThrottleMs());
+      }
+      const restRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM leads
+        WHERE (neighborhood IS NULL OR neighborhood = '') AND latitude IS NOT NULL AND longitude IS NOT NULL
+      `);
+      const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
+      console.log(`🏘️ [LEADS-BAIRRO] processados ${rows.length}, atualizados ${atualizados}, restam ${restantes} por ${req.currentUser?.email}`);
+      return res.json({ ok: true, processados: rows.length, atualizados, restantes });
+    } catch (error: any) {
+      console.error('Erro ao preencher bairro dos leads:', error);
+      return res.status(500).json({ message: 'Erro ao preencher bairro dos leads', error: error?.message });
     }
   });
 
