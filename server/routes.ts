@@ -3616,6 +3616,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🏙️ Padroniza o campo CIDADE de TODOS os cadastros conforme a pick-list (nomes oficiais GO/DF).
+  // dryRun=true: só reporta (não grava) e devolve a lista completa de cadastros com cidade VAZIA.
+  // dryRun=false: grava a cidade canônica em quem está diferente (cidade vazia é ignorada).
+  app.post('/api/admin/customers/normalize-cities', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { cidadeCanonica } = await import('../shared/cidadePadrao');
+      const { customers } = await import('../shared/schema');
+      const dryRun = req.body?.dryRun === true;
+      const all = await storage.getAllCustomers();
+      const vazios: any[] = [];
+      const toUpdate: { id: string; from: string; to: string }[] = [];
+      let jaOk = 0;
+      for (const c of all) {
+        const atual = String((c as any).city || '').trim();
+        if (!atual) {
+          vazios.push({ id: c.id, nome: (c as any).fantasyName || (c as any).name || '', documento: (c as any).cnpj || (c as any).cpf || '', ativo: (c as any).isActive !== false, isLead: (c as any).isLead === true });
+          continue;
+        }
+        const canon = cidadeCanonica(atual);
+        if (canon && canon !== atual) toUpdate.push({ id: String(c.id), from: atual, to: canon });
+        else jaOk++;
+      }
+      let updated = 0; const errors: string[] = [];
+      if (!dryRun) {
+        for (const u of toUpdate) {
+          try { await db.update(customers).set({ city: u.to, updatedAt: agora() } as any).where(eq(customers.id, u.id)); updated++; }
+          catch (e: any) { if (errors.length < 8) errors.push(String(u.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 50)); }
+        }
+      }
+      res.json({
+        dryRun,
+        totalCadastros: all.length,
+        cidadeVazia: vazios.length,
+        jaPadronizados: jaOk,
+        aPadronizar: toUpdate.length,
+        atualizados: updated,
+        vazios,
+        exemplos: toUpdate.slice(0, 50),
+        errors,
+      });
+    } catch (error: any) {
+      console.error('Error normalizing customer cities:', error);
+      res.status(500).json({ message: 'Falha ao padronizar cidades: ' + String(error?.message || error) });
+    }
+  });
+
   // 🚫 Inativação em massa — EXCLUSIVA do Admin (só o Admin inativa). Mesma semântica da individual:
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
   app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
