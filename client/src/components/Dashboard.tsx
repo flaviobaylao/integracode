@@ -211,7 +211,7 @@ export default function Dashboard() {
   // ==== Comparativo diario (seg-sab) por semana do mes vigente ====
   const pad2 = (n: number) => (n < 10 ? "0" + n : "" + n);
   const isoOf = (d: Date) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
-  const WD_ABBR = ["seg", "ter", "qua", "qui", "sex", "s\u00e1b"];
+  const WD_ABBR = ["seg", "ter", "qua", "qui", "sex", "s\u00e1b", "dom"];
   const nfmt = (v: number) => Number(v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
   const monthWeeks = useMemo(() => {
     const parts = bounds.today.split("-");
@@ -225,7 +225,7 @@ export default function Dashboard() {
     const cur = new Date(monday);
     while (cur <= lastDate && weeks.length < 6) {
       const days: any[] = [];
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 7; i++) {
         const d = new Date(cur); d.setDate(cur.getDate() + i);
         days.push({ iso: isoOf(d), inMonth: d.getMonth() === M - 1, dayNum: d.getDate() });
       }
@@ -273,7 +273,7 @@ export default function Dashboard() {
     return arr;
   }, [sellerDaily, sortKey, sortDir]);
   const grandTotals = useMemo(() => {
-    const weeks = monthWeeks.map(() => ({ dayVals: [0, 0, 0, 0, 0, 0], total: 0 }));
+    const weeks = monthWeeks.map(() => ({ dayVals: [0, 0, 0, 0, 0, 0, 0], total: 0 }));
     let mensal = 0;
     for (const r of sellerDaily) {
       r.weeks.forEach((wk: any, wi: number) => {
@@ -486,7 +486,7 @@ export default function Dashboard() {
         </div>
         <div className="text-right pr-6">
           <div className="text-3xl font-bold text-indigo-800 whitespace-nowrap">{brl(projTotal)}</div>
-          <div className="text-[11px] font-medium text-indigo-500 whitespace-nowrap" title="Projeção linear: realizado dividido pelos dias úteis (seg-sex) já decorridos, multiplicado pelo total de dias úteis do mês.">Linear (dias úteis seg-sex): {brl(projLinear)}</div>
+          <div className="text-[11px] font-medium text-indigo-500 whitespace-nowrap" title="Projeção linear: realizado do mês (incluindo domingos) dividido pelos dias úteis (seg-sex) já decorridos, multiplicado pelo total de dias úteis do mês.">Linear (dias úteis seg-sex): {brl(projLinear)}</div>
         </div>
       </div>
 
@@ -504,11 +504,11 @@ export default function Dashboard() {
                 <tr className="border-b text-gray-500">
                   <th rowSpan={2} className="py-1 pr-3 pl-1 font-medium text-left sticky left-0 top-0 z-20 bg-white"><button type="button" onClick={() => toggleSort("sellerName")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar A-Z / Z-A">Vendedor{sortArrow("sellerName")}</button></th>
                   {monthWeeks.map((wk: any, i: number) => (
-                    <th key={i} colSpan={7} className="py-1 px-2 font-semibold text-center border-l bg-gray-50 sticky top-0 z-10">Semana {i + 1}{wk.label ? " (" + wk.label + ")" : ""}</th>
+                    <th key={i} colSpan={8} className="py-1 px-2 font-semibold text-center border-l bg-gray-50 sticky top-0 z-10">Semana {i + 1}{wk.label ? " (" + wk.label + ")" : ""}</th>
                   ))}
                   <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-white"><div className="inline-flex items-center gap-1 justify-end"><button type="button" onClick={() => toggleSort("fatMes")} className="inline-flex items-center gap-1 hover:text-gray-700" title="Ordenar">Total Mensal{sortArrow("fatMes")}</button><InfoDot text="Faturamento efetivo já realizado no mês: NF-e de venda autorizada (faturada), já excluindo pedidos bloqueados, cancelamentos, devoluções, trocas, transferências, remessas, bonificações e amostras." /></div></th>
                   <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-indigo-50 text-indigo-700"><div className="inline-flex items-center gap-1 justify-end">Projeção histórico de vendas<InfoDot text="Realizado + previsão por cliente da carteira: para cada cliente calculamos a periodicidade de compra, o dia da semana mais frequente e o ticket médio (ponderados por recência) dos últimos ~3 meses, e somamos os pedidos previstos até o fim do mês." /></div></th>
-                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-sky-50 text-sky-700"><div className="inline-flex items-center gap-1 justify-end">Projeção Linear do Mês<InfoDot text="Projeção linear pelo ritmo dos dias úteis (seg-sex): realizado dividido pelos dias úteis já decorridos no mês, multiplicado pelo total de dias úteis do mês." /></div></th>
+                  <th rowSpan={2} className="py-1 px-2 font-medium text-right border-l sticky top-0 z-10 bg-sky-50 text-sky-700"><div className="inline-flex items-center gap-1 justify-end">Projeção Linear do Mês<InfoDot text="Projeção linear pelo ritmo dos dias úteis (seg-sex): realizado do mês (incluindo domingos) dividido pelos dias úteis já decorridos, multiplicado pelo total de dias úteis do mês." /></div></th>
                 </tr>
                 <tr className="border-b text-gray-400">
                   {monthWeeks.flatMap((wk: any, i: number) => [
@@ -538,7 +538,7 @@ export default function Dashboard() {
                   </tr>
                 ))}
                 {sortedSellerDaily.length === 0 && (
-                  <tr><td colSpan={monthWeeks.length * 7 + 4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
+                  <tr><td colSpan={monthWeeks.length * 8 + 4} className="py-6 text-center text-gray-400">Sem vendedores com faturamento no mes.</td></tr>
                 )}
               </tbody>
               <tfoot>
@@ -560,7 +560,7 @@ export default function Dashboard() {
               </tfoot>
             </table>
           </div>
-          <div className="text-[10px] text-gray-400 mt-2">Faturamento diario (seg a sab) por semana do mes vigente. Domingos nao entram no comparativo. Colunas de dia em R$ sem centavos; subtotais e mensal em R$.</div>
+          <div className="text-[10px] text-gray-400 mt-2">Faturamento diario (seg a dom) por semana do mes vigente, domingos inclusos. Colunas de dia em R$ sem centavos; subtotais e mensal em R$. A projecao linear usa o realizado do mes inteiro (com domingos) sobre a contagem de dias uteis seg-sex.</div>
         </CardContent>
       </Card>
 
