@@ -1639,6 +1639,7 @@ export function registerBillingPipelineRoutes(app: Express) {
 
       let invoiceNumber = item.invoiceNumber;
       let fiscalInvoiceId: string | null = null;
+      let balcaoConcluido = false;
 
       if (stage === 'faturado' && item.stage !== 'faturado') {
         const stockCheck = await validateStockForBilling(item);
@@ -1699,10 +1700,19 @@ export function registerBillingPipelineRoutes(app: Express) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao criar conta a receber:`, recError.message);
         }
 
-        if (invoiceDraft) await transmitirNfeAuto(invoiceDraft);
+        if (invoiceDraft) balcaoConcluido = (await transmitirNfeAuto(invoiceDraft)).balcaoConcluido;
       }
 
-      const updateData: any = { stage, stageHistory: history };
+      // BALCAO: quando a NFC-e e autorizada, o hook ja moveu o pedido para
+      // "Entregue" (venda de balcao termina na autorizacao — ver
+      // concluirBalcaoAposAutorizacao). Sem refletir isso aqui, o update abaixo
+      // regravaria "faturado" por cima e desfaria a conclusao — foi o que
+      // aconteceu com a NFC-e n. 3. O historico local tambem recebe a etapa, senao
+      // este update sobrescreveria o stage_history que o hook acabou de gravar.
+      if (balcaoConcluido) {
+        history.push({ stage: 'entregue', changedAt: paredeBR(agora()), changedBy: 'nfce-balcao' });
+      }
+      const updateData: any = { stage: balcaoConcluido ? 'entregue' : stage, stageHistory: history };
       if (invoiceNumber) updateData.invoiceNumber = invoiceNumber;
 
       // "Faturar em" (scheduled_billing_date): ao mover o pedido para "Agendado" pela tela,
@@ -2055,6 +2065,7 @@ export function registerBillingPipelineRoutes(app: Express) {
 
           let invoiceNumber = item.invoiceNumber;
           let fiscalInvoiceId: string | undefined;
+          let balcaoConcluido = false;
 
           if (stage === 'faturado' && item.stage !== 'faturado') {
             // Cadastro fiscal incompleto (sem UF/CEP) → não fatura este item.
@@ -2095,10 +2106,19 @@ export function registerBillingPipelineRoutes(app: Express) {
             }
 
             // Titulos criados -> transmite a NF com <cobr> espelhado nos titulos/boletos.
-            if (invoiceDraft) await transmitirNfeAuto(invoiceDraft);
+            if (invoiceDraft) balcaoConcluido = (await transmitirNfeAuto(invoiceDraft)).balcaoConcluido;
           }
 
-          const updateData: any = { stage, stageHistory: history };
+              // BALCAO: quando a NFC-e e autorizada, o hook ja moveu o pedido para
+              // "Entregue" (venda de balcao termina na autorizacao — ver
+              // concluirBalcaoAposAutorizacao). Sem refletir isso aqui, o update abaixo
+              // regravaria "faturado" por cima e desfaria a conclusao — foi o que
+              // aconteceu com a NFC-e n. 3. O historico local tambem recebe a etapa, senao
+              // este update sobrescreveria o stage_history que o hook acabou de gravar.
+          if (balcaoConcluido) {
+            history.push({ stage: 'entregue', changedAt: paredeBR(agora()), changedBy: 'nfce-balcao' });
+          }
+          const updateData: any = { stage: balcaoConcluido ? 'entregue' : stage, stageHistory: history };
           if (invoiceNumber) updateData.invoiceNumber = invoiceNumber;
 
           await storage.updateBillingPipelineItem(id, updateData);
@@ -2710,7 +2730,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
  * (a nota autorizada). Se falhar, o card fica em Faturado e alguem move a mao —
  * chato, mas nao perde nem dinheiro nem documento.
  */
-export async function concluirBalcaoAposAutorizacao(invoiceId: string): Promise<void> {
+export async function concluirBalcaoAposAutorizacao(invoiceId: string): Promise<boolean> {
   try {
     const r: any = await db.execute(sql`
       SELECT bp.id AS pipeline_id, bp.stage, bp.stage_history, sc.id AS card_id, sc.source, sc.completed_date, sc.created_at
@@ -2720,9 +2740,9 @@ export async function concluirBalcaoAposAutorizacao(invoiceId: string): Promise<
        WHERE fi.id = ${invoiceId} AND fi.status = 'authorized'
        LIMIT 1`);
     const row = ((r.rows || r) as any[])[0];
-    if (!row) return;
-    if (String(row.source || '').toLowerCase() !== 'balcao') return;
-    if (String(row.stage) === 'entregue') return; // ja concluido
+    if (!row) return false;
+    if (String(row.source || '').toLowerCase() !== 'balcao') return false;
+    if (String(row.stage) === 'entregue') return true; // ja concluido
 
     let historico: any[] = [];
     try {
@@ -2744,24 +2764,27 @@ export async function concluirBalcaoAposAutorizacao(invoiceId: string): Promise<
       WHERE id = ${row.card_id} AND status <> 'cancelled'`);
 
     console.log(`🧾 [BALCAO] NFC-e autorizada — card ${row.card_id} concluido (${row.stage} → entregue).`);
+    return true;
   } catch (e: any) {
     console.warn('[BALCAO] nao foi possivel concluir o card apos a NFC-e (fica em Faturado):', e?.message || e);
+    return false;
   }
 }
 
-export async function transmitirNfeAuto(invoice: any, invEnv?: string): Promise<void> {
+export async function transmitirNfeAuto(invoice: any, invEnv?: string): Promise<{ autorizada: boolean; balcaoConcluido: boolean }> {
   try {
     const { sefazService } = await import('./sefaz-service.js');
     const emitRes = await sefazService.emitNfe(invoice.id);
     if (emitRes?.success) {
       console.log(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} AUTORIZADA automaticamente (${invEnv || invoice.environment || ''})`);
-      await concluirBalcaoAposAutorizacao(invoice.id);
+      return { autorizada: true, balcaoConcluido: await concluirBalcaoAposAutorizacao(invoice.id) };
     } else {
       console.warn(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} nao autorizada (fica em rascunho): ${emitRes?.errorCode || ''} ${emitRes?.errorMessage || ''}`);
     }
   } catch (e: any) {
     console.warn(`[NFE-AUTO] erro ao transmitir NF-e #${invoice.invoiceNumber} (fica em rascunho):`, e?.message);
   }
+  return { autorizada: false, balcaoConcluido: false };
 }
 
 
