@@ -10037,6 +10037,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   })();
 
+  // ===================================================================================
+  // MIGRAÇÃO ONE-SHOT (guardada em system_settings), roda no boot em background, idempotente:
+  // RE-SYNC das ROTAS PRESENCIAIS conforme os ajustes ATUAIS de dia de rota + periodicidade + data de início.
+  //   (1) weekdays: Dom -> Seg (dedupe) nos clientes presenciais (regra: sem visita em domingo);
+  //   (2) preenche data de início (created_at::date; fallback hoje) em quem está sem;
+  //   (3) regenera a agenda FUTURA pendente (regenerateCustomerAgenda) refletindo weekdays/periodicidade/início;
+  //   (4) rede de segurança: remove qualquer visita pendente futura caída em domingo.
+  // Escopo: clientes ATIVOS, não fornecedores, não leads, com weekdays válido, cujo vendedor NÃO é telemarketing.
+  // Nunca derruba o boot (try/catch) e não é awaitada (não bloqueia o start).
+  (async () => {
+    const MIGR_KEY = 'migr_resync_presencial_v1';
+    try {
+      const already: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${MIGR_KEY} LIMIT 1`);
+      if ((already?.rows || []).length > 0) return;
+
+      // Conjunto de vendedores telemarketing (excluídos — têm regeneração própria de virtuais).
+      const tmRes: any = await db.execute(sql`SELECT id FROM users WHERE role = 'telemarketing'`);
+      const tmIds = new Set((tmRes.rows || []).map((r: any) => String(r.id)));
+
+      // (1) Dom -> Seg (dedupe) nos presenciais elegíveis que contêm domingo no dia de rota.
+      const domRows: any = await db.execute(sql`
+        SELECT id, weekdays, seller_id FROM customers
+        WHERE is_active = true AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND seller_id IS NOT NULL AND weekdays ILIKE '%dom%'`);
+      let domFixed = 0;
+      for (const r of (domRows.rows || [])) {
+        if (tmIds.has(String(r.seller_id))) continue;
+        let codes: string[];
+        try { codes = typeof r.weekdays === 'string' ? JSON.parse(r.weekdays) : (r.weekdays || []); } catch { continue; }
+        if (!Array.isArray(codes) || !codes.includes('Dom')) continue;
+        const mapped = Array.from(new Set(codes.map((d: string) => (d === 'Dom' ? 'Seg' : d))));
+        await db.execute(sql`UPDATE customers SET weekdays = ${JSON.stringify(mapped)} WHERE id = ${r.id}`);
+        domFixed++;
+      }
+
+      // (2) Backfill da data de início (created_at::date; fallback hoje) nos elegíveis sem data.
+      const bf: any = await db.execute(sql`
+        UPDATE customers SET service_start_date = COALESCE(created_at, now())::date
+        WHERE is_active = true AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND seller_id IS NOT NULL AND service_start_date IS NULL
+          AND weekdays IS NOT NULL AND weekdays NOT IN ('[]','null','')`);
+      const dated = bf.rowCount ?? 0;
+
+      // Marca 'done' ANTES do laço pesado (evita repetição em reboot/corrida entre instâncias).
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
+      console.log(`🔄 [RESYNC-PRESENCIAL] início: domFixed=${domFixed}, datasPreenchidas=${dated} — regenerando agenda...`);
+
+      // (3) Regenera a agenda de cada cliente presencial elegível (respeita config ATUAL).
+      const elig: any = await db.execute(sql`
+        SELECT id, seller_id FROM customers
+        WHERE is_active = true AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND seller_id IS NOT NULL
+          AND weekdays IS NOT NULL AND weekdays NOT IN ('[]','null','')`);
+      let regen = 0, regenErr = 0;
+      for (const r of (elig.rows || [])) {
+        if (tmIds.has(String(r.seller_id))) continue;
+        try { const n = await regenerateCustomerAgenda(String(r.id)); if (n > 0) regen++; }
+        catch (e: any) { regenErr++; }
+      }
+
+      // (4) Rede de segurança: remove qualquer pendência futura caída em domingo.
+      await db.execute(sql`
+        DELETE FROM visit_agenda
+        WHERE visit_status = 'pending' AND EXTRACT(DOW FROM scheduled_date) = 0
+          AND scheduled_date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '1 day')`);
+
+      console.log(`✅ [RESYNC-PRESENCIAL] concluído: domFixed=${domFixed}, datasPreenchidas=${dated}, clientesRegenerados=${regen}, erros=${regenErr}`);
+    } catch (e: any) {
+      console.error('[RESYNC-PRESENCIAL] falha (não marcada; tentará no próximo boot se a chave não gravou):', e?.message);
+    }
+  })();
+
   app.post('/api/telemarketing/regenerate-schedule', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
       // Opcional: body.sellerIds = [ ... ] regenera SÓ esses vendedores (escopo). Sem isso, todos.
