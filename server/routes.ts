@@ -21579,6 +21579,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('[AGENDA-RECONCILE] Falha ao reconciliar presenciais da agenda:', reconErr);
       }
 
+      // 🧹 AUTO-CORREÇÃO DA ROTA (self-heal): remove do optimizedOrder os PRESENCIAIS que NÃO
+      // têm visita na AGENDA daquele dia (ex.: cliente cujo dia de rota mudou de Seg->Qua e ficou
+      // preso na rota antiga de segunda). Preserva LEADS, virtuais e adições MANUAIS. Só data atual/futura.
+      // Confere agenda por (customer_id + data) sem travar no seller (respeita delegação de carteira).
+      try {
+        const todayBRprune = getBrazilDateString();
+        if (date >= todayBRprune) {
+          const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
+          const curStops: any = (route.visitStops as any) || {};
+          // Coleta os ids de clientes presenciais presentes na ordem.
+          const custIds: string[] = [];
+          const stopMeta: { stop: string; etype: string; eid: string }[] = [];
+          for (const stop of curOrder) {
+            let etype = 'customer'; let eid = String(stop);
+            if (String(stop).includes(':')) {
+              const m = curStops[stop];
+              if (m) { etype = m.entityType; eid = String(m.entityId); }
+              else { etype = String(stop).startsWith('lead:') ? 'lead' : 'customer'; eid = String(stop).split(':')[1] || String(stop); }
+            }
+            stopMeta.push({ stop, etype, eid });
+            if (etype === 'customer' && eid) custIds.push(eid);
+          }
+          if (custIds.length > 0) {
+            // Clientes com visita NA AGENDA nesse dia (qualquer status/seller).
+            const agRows: any = await db.execute(sql`
+              SELECT DISTINCT customer_id FROM visit_agenda
+              WHERE DATE(scheduled_date) = ${date}
+                AND customer_id = ANY(string_to_array(${custIds.join(',')}, ','))`);
+            const agendaDateIds = new Set<string>((agRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
+            // Adições manuais do dia (sempre permanecem).
+            const manRows: any = await db.execute(sql`
+              SELECT DISTINCT customer_id FROM sales_cards
+              WHERE seller_id = ${sellerId} AND source = 'manual_route_addition' AND DATE(scheduled_date) = ${date}`);
+            const manualIds = new Set<string>((manRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
+            const keep: string[] = []; let removed = 0;
+            for (const sm of stopMeta) {
+              if (sm.etype === 'customer' && !agendaDateIds.has(sm.eid) && !manualIds.has(sm.eid)) {
+                removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
+              }
+              keep.push(sm.stop);
+            }
+            if (removed > 0) {
+              await storage.updateDailyRoute(route.id, { optimizedOrder: keep, visitStops: curStops, totalVisits: keep.length });
+              (route as any).optimizedOrder = keep;
+              (route as any).visitStops = curStops;
+              console.log(`🧹 [AGENDA-PRUNE] removidos ${removed} presencial(is) sem agenda do dia na rota ${route.id}`);
+            }
+          }
+        }
+      } catch (pruneErr) {
+        console.warn('[AGENDA-PRUNE] Falha ao podar presenciais sem agenda (não crítico):', (pruneErr as any)?.message);
+      }
+
       // NOVA ARQUITETURA COM VISITSTOPS: Resolver stops (customers + leads)
       console.log(`🔍 [DEBUG] Resolvendo stops (customers + leads) para ${date}`);
       
