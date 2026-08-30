@@ -334,7 +334,7 @@ export default function GestaoCarteiras() {
       if (!atual || acentosCidade(bruta) > acentosCidade(atual)) melhor.set(k, bruta);
     }
     const m = new Map<string, string>();
-    for (const [k, bruta] of melhor) m.set(k, tituloCidade(bruta));
+    for (const [k, bruta] of Array.from(melhor.entries())) m.set(k, tituloCidade(bruta));
     return (x: any) => { const k = chaveCidade(x); return k ? m.get(k) || tituloCidade(x) : ""; };
   }, [todos]);
   const opcoesCidade = useMemo(() => {

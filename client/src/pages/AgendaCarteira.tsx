@@ -84,6 +84,11 @@ const tituloCidade = (s: any) =>
 /** Quantos caracteres acentuados a grafia tem — a mais acentuada é a melhor. */
 const acentos = (s: any) => (String(s || "").normalize("NFD").match(/[\u0300-\u036f]/g) || []).length;
 
+/** Os três baldes de cada semana. LEAD tem coluna própria: ele é presencial,
+ *  mas é prospecção — misturar com cliente escondia quanto da rota é lead. */
+const BALDES = ["presencial", "virtual", "leads"] as const;
+const ROTULO_BALDE: Record<string, string> = { presencial: "Presencial", virtual: "Virtual", leads: "Leads" };
+
 const dataBR = (s: any) => {
   const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : "—";
@@ -152,7 +157,10 @@ export default function AgendaCarteira() {
     };
   }, [semanas]);
 
-  // Tabela dinâmica: contagem de clientes distintos por semana × dia × canal.
+  /** Lead vai para a coluna de leads; o resto, pelo canal do cadastro. */
+  const baldeDe = (i: Item) => (i.tipo === "lead" ? "leads" : i.canal);
+
+  // Tabela dinâmica: contagem de atendimentos por semana × dia × balde.
   const pivo = useMemo(() => {
     const m = new Map<string, number>();
     for (const it of base) {
@@ -160,7 +168,7 @@ export default function AgendaCarteira() {
         const s = semanaDaData(dt);
         const d = diaDaData(dt);
         if (!s || !d) continue;
-        const k = `${s}|${d}|${it.canal}`;
+        const k = `${s}|${d}|${baldeDe(it)}`;
         m.set(k, (m.get(k) || 0) + 1);
       }
     }
@@ -181,7 +189,7 @@ export default function AgendaCarteira() {
       if (!atual || acentos(bruta) > acentos(atual)) melhor.set(k, bruta);
     }
     const m = new Map<string, string>();
-    for (const [k, bruta] of melhor) m.set(k, tituloCidade(bruta));
+    for (const [k, bruta] of Array.from(melhor.entries())) m.set(k, tituloCidade(bruta));
     return (c: any) => {
       const k = chaveCidade(c);
       return k ? m.get(k) || tituloCidade(c) : "";
@@ -227,7 +235,7 @@ export default function AgendaCarteira() {
     let l = base;
     if (celula) {
       l = l.filter(
-        (i) => i.canal === celula.c && i.datas.some((dt) => semanaDaData(dt) === celula.s && diaDaData(dt) === celula.d),
+        (i) => baldeDe(i) === celula.c && i.datas.some((dt) => semanaDaData(dt) === celula.s && diaDaData(dt) === celula.d),
       );
     }
     if (fTipo.length) l = l.filter((i) => fTipo.includes(rotuloTipo(i)));
@@ -284,9 +292,9 @@ export default function AgendaCarteira() {
 
   const exportar = () => {
     const quadro: Record<string, any>[] = [];
-    for (const canal of ["presencial", "virtual"]) {
+    for (const canal of BALDES) {
       for (const dia of DIAS) {
-        const linha: Record<string, any> = { Canal: canal === "presencial" ? "PRESENCIAL" : "VIRTUAL", Dia: dia.curto };
+        const linha: Record<string, any> = { Canal: ROTULO_BALDE[canal].toUpperCase(), Dia: dia.curto };
         for (const s of semanas) linha[`${rotuloSemana(s)} (${s.rotulo})`] = conta(s.i, dia.n, canal);
         quadro.push(linha);
       }
@@ -318,7 +326,7 @@ export default function AgendaCarteira() {
 
   const semanaPorI = (i: number) => semanas.find((s) => s.i === i);
   const rotuloCelula = celula
-    ? `${(() => { const sm = semanaPorI(celula.s); return sm ? `${rotuloSemana(sm)} (${sm.rotulo})` : `semana ${celula.s}`; })()} · ${DIAS.find((d) => d.n === celula.d)?.longo} · ${celula.c === "virtual" ? "virtual" : "presencial"}`
+    ? `${(() => { const sm = semanaPorI(celula.s); return sm ? `${rotuloSemana(sm)} (${sm.rotulo})` : `semana ${celula.s}`; })()} · ${DIAS.find((d) => d.n === celula.d)?.longo} · ${(ROTULO_BALDE[celula.c] || celula.c).toLowerCase()}`
     : "";
 
   return (
@@ -391,8 +399,10 @@ export default function AgendaCarteira() {
                       nunca teve visita concluída entra pela primeira data válida da janela.
                     </p>
                     <p>
-                      <b>Leads são sempre presenciais</b> e entram pela data de próximo contato. Cliente marcado como
-                      atendimento virtual no cadastro conta em VIRTUAL; o resto, em PRESENCIAL.
+                      <b>LEADS têm coluna própria.</b> Eles são sempre presenciais e entram pela data de próximo
+                      contato — mas são prospecção, não carteira, então saem da coluna PRESENCIAL para não esconder
+                      quanto da rota da semana é lead. Cliente marcado como atendimento virtual no cadastro conta em
+                      VIRTUAL; o resto, em PRESENCIAL.
                     </p>
                     <p className="text-muted-foreground text-xs">
                       Quem atende em mais de um dia da semana aparece em todos eles na semana visitada. O número conta
@@ -411,7 +421,7 @@ export default function AgendaCarteira() {
                       {semanas.map((s) => (
                         <th
                           key={s.i}
-                          colSpan={2}
+                          colSpan={3}
                           data-semana-atual={s.atual ? "1" : undefined}
                           className={`px-2 py-2 text-center font-semibold border-l whitespace-nowrap ${
                             s.atual ? "bg-blue-100 text-blue-900" : s.passada ? "text-muted-foreground" : ""
@@ -426,8 +436,14 @@ export default function AgendaCarteira() {
                       <th className="px-3 py-1 sticky left-0 bg-muted/40 z-10"></th>
                       {semanas.map((s) => (
                         <Fragment key={s.i}>
-                          <th className={`px-2 py-1 text-center border-l ${s.atual ? "bg-blue-50" : ""}`}>Presencial</th>
-                          <th className={`px-2 py-1 text-center ${s.atual ? "bg-blue-50" : ""}`}>Virtual</th>
+                          {BALDES.map((b) => (
+                            <th
+                              key={b}
+                              className={`px-2 py-1 text-center ${b === "presencial" ? "border-l" : ""} ${s.atual ? "bg-blue-50" : ""} ${b === "leads" ? "text-amber-700" : ""}`}
+                            >
+                              {ROTULO_BALDE[b]}
+                            </th>
+                          ))}
                         </Fragment>
                       ))}
                     </tr>
@@ -439,7 +455,7 @@ export default function AgendaCarteira() {
                           {dia.curto} <span className="text-muted-foreground text-xs">{dia.longo}</span>
                         </td>
                         {semanas.map((s) =>
-                          (["presencial", "virtual"] as const).map((canal) => {
+                          BALDES.map((canal) => {
                             const v = conta(s.i, dia.n, canal);
                             const ativa = celula && celula.s === s.i && celula.d === dia.n && celula.c === canal;
                             return (
@@ -475,8 +491,11 @@ export default function AgendaCarteira() {
                       <td className="px-3 py-2 sticky left-0 bg-muted/50 z-10">Total</td>
                       {semanas.map((s) => (
                         <Fragment key={s.i}>
-                          <td className="px-2 py-2 text-center border-l">{totalSemana(s.i, "presencial") || "—"}</td>
-                          <td className="px-2 py-2 text-center">{totalSemana(s.i, "virtual") || "—"}</td>
+                          {BALDES.map((b) => (
+                            <td key={b} className={`px-2 py-2 text-center ${b === "presencial" ? "border-l" : ""} ${b === "leads" ? "text-amber-700" : ""}`}>
+                              {totalSemana(s.i, b) || "—"}
+                            </td>
+                          ))}
                         </Fragment>
                       ))}
                     </tr>
