@@ -1684,7 +1684,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           // transmitida — assim o <cobr> (fatura/duplicatas) sai espelhado nos titulos/boletos.
           invoiceDraft = await createInvoiceFromPipelineItem(item, user, lotMap, { skipEmit: true });
           if (invoiceDraft) {
-            invoiceNumber = `NF-${invoiceDraft.invoiceNumber}`;
+            invoiceNumber = `${invoiceDraft.invoiceModel === '65' ? 'NFC-' : 'NF-'}${invoiceDraft.invoiceNumber}`;
             fiscalInvoiceId = invoiceDraft.id;
             console.log(`📄 [BILLING-PIPELINE] NF-e #${invoiceDraft.invoiceNumber} criada automaticamente para item ${req.params.id}`);
           }
@@ -2081,7 +2081,7 @@ export function registerBillingPipelineRoutes(app: Express) {
             try {
               invoiceDraft = await createInvoiceFromPipelineItem(item, user, lotMap, { skipEmit: true });
               if (invoiceDraft) {
-                invoiceNumber = `NF-${invoiceDraft.invoiceNumber}`;
+                invoiceNumber = `${invoiceDraft.invoiceModel === '65' ? 'NFC-' : 'NF-'}${invoiceDraft.invoiceNumber}`;
                 fiscalInvoiceId = invoiceDraft.id;
               }
             } catch (invoiceError: any) {
@@ -2674,19 +2674,88 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   // o faturamento (a NF fica em rascunho e pode ser transmitida manualmente pelo botao Transmitir).
   if (!opts?.skipEmit) await transmitirNfeAuto(invoice, invEnv);
 
-  return invoice;
+  // O modelo viaja junto para quem rotula o pedido no pipeline. Sem isto a NFC-e
+  // n. 1 apareceria como "NF-1" ao lado das NF-e da serie 1 — dois documentos
+  // diferentes com o mesmo rotulo e numeracoes independentes, exatamente o tipo de
+  // ambiguidade que faz alguem procurar a nota errada numa conferencia.
+  return Object.assign(invoice as any, { invoiceModel: modeloDoc });
 }
 
 // Transmite a NF-e a SEFAZ (auto-emissao). Separado de createInvoiceFromPipelineItem para
 // que o faturamento possa criar os TITULOS antes de transmitir: o <cobr> (fatura/duplicatas)
 // da NF e espelhado nos titulos (ver loadDuplicatasDaNf em sefaz-service). Falha nao bloqueia
 // o faturamento (a NF fica em rascunho e pode ser transmitida pelo botao Transmitir).
+/**
+ * VENDA DE BALCAO TERMINA NA AUTORIZACAO DA NFC-e.
+ *
+ * O pipeline foi desenhado para venda com ENTREGA: fatura, imprime, separa, sobe
+ * na rota, entrega. A venda de balcao nao tem nada disso — o cliente pagou na
+ * maquininha e saiu da loja com o suco na mao. Deixar o card parado em "Faturado"
+ * criaria uma fila de pedidos que ninguem vai entregar, e o operador teria que
+ * arrastar cada um a mao ate "Entregue" — trabalho manual para registrar algo que
+ * ja aconteceu antes mesmo de a nota existir.
+ *
+ * Entao, assim que a NFC-e e AUTORIZADA, o card vai direto para "Entregue" e o
+ * sales_card vira 'completed'.
+ *
+ * SO APOS A AUTORIZACAO, nunca antes: enquanto a SEFAZ nao respondeu, a venda nao
+ * tem documento fiscal e precisa continuar visivel para quem cuida do faturamento.
+ * Um card em "Entregue" com a nota rejeitada seria uma venda esquecida sem nota.
+ *
+ * SO PARA BALCAO (source = 'balcao'). Venda de rota autorizada continua seguindo o
+ * caminho inteiro — la a entrega e um evento futuro e real, que alguem precisa
+ * confirmar.
+ *
+ * Idempotente e nunca lanca: e um passo de conveniencia depois do ato que importa
+ * (a nota autorizada). Se falhar, o card fica em Faturado e alguem move a mao —
+ * chato, mas nao perde nem dinheiro nem documento.
+ */
+export async function concluirBalcaoAposAutorizacao(invoiceId: string): Promise<void> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT bp.id AS pipeline_id, bp.stage, bp.stage_history, sc.id AS card_id, sc.source, sc.completed_date, sc.created_at
+        FROM fiscal_invoices fi
+        JOIN sales_cards sc ON sc.id = fi.sales_card_id
+        JOIN billing_pipeline bp ON bp.sales_card_id = sc.id
+       WHERE fi.id = ${invoiceId} AND fi.status = 'authorized'
+       LIMIT 1`);
+    const row = ((r.rows || r) as any[])[0];
+    if (!row) return;
+    if (String(row.source || '').toLowerCase() !== 'balcao') return;
+    if (String(row.stage) === 'entregue') return; // ja concluido
+
+    let historico: any[] = [];
+    try {
+      historico = Array.isArray(row.stage_history) ? row.stage_history
+        : JSON.parse(String(row.stage_history || '[]'));
+    } catch { historico = []; }
+    historico.push({ stage: 'entregue', changedAt: paredeBR(agora()), changedBy: 'nfce-balcao' });
+
+    await db.execute(sql`UPDATE billing_pipeline
+        SET stage = 'entregue', stage_history = ${JSON.stringify(historico)}::jsonb, updated_at = now()
+      WHERE id = ${row.pipeline_id}`);
+
+    // A data de conclusao e a da VENDA, nao a de agora: o card ja existia e o
+    // dinheiro entrou quando o cliente passou o cartao. Datar com "agora" jogaria
+    // a venda para o dia da emissao nos relatorios.
+    const concluidoEm = row.completed_date || row.created_at || new Date();
+    await db.execute(sql`UPDATE sales_cards
+        SET status = 'completed', completed_date = ${concluidoEm}, updated_at = now()
+      WHERE id = ${row.card_id} AND status <> 'cancelled'`);
+
+    console.log(`🧾 [BALCAO] NFC-e autorizada — card ${row.card_id} concluido (${row.stage} → entregue).`);
+  } catch (e: any) {
+    console.warn('[BALCAO] nao foi possivel concluir o card apos a NFC-e (fica em Faturado):', e?.message || e);
+  }
+}
+
 export async function transmitirNfeAuto(invoice: any, invEnv?: string): Promise<void> {
   try {
     const { sefazService } = await import('./sefaz-service.js');
     const emitRes = await sefazService.emitNfe(invoice.id);
     if (emitRes?.success) {
       console.log(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} AUTORIZADA automaticamente (${invEnv || invoice.environment || ''})`);
+      await concluirBalcaoAposAutorizacao(invoice.id);
     } else {
       console.warn(`[NFE-AUTO] NF-e #${invoice.invoiceNumber} nao autorizada (fica em rascunho): ${emitRes?.errorCode || ''} ${emitRes?.errorMessage || ''}`);
     }

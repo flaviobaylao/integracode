@@ -819,6 +819,16 @@ export function registerNfeRoutes(app: Express) {
           console.warn('⚠️ Erro ao consumir estoque após emissão NF-e:', stockErr.message);
         }
 
+        // Venda de balcao acaba aqui: com a NFC-e autorizada, o card vai para
+        // "Entregue" — o cliente ja saiu da loja com o produto. Ver a funcao para
+        // o porque de so acontecer DEPOIS da autorizacao.
+        try {
+          const { concluirBalcaoAposAutorizacao } = await import('./billing-pipeline-routes.js');
+          await concluirBalcaoAposAutorizacao(req.params.id);
+        } catch (balcaoErr: any) {
+          console.warn('⚠️ Erro ao concluir card de balcao apos a NFC-e:', balcaoErr?.message);
+        }
+
         res.json({ ...result, invoice: { ...invoice, items, events } });
       } else {
         res.status(400).json(result);
