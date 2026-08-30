@@ -5441,7 +5441,24 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           AND bp.stage::text NOT IN ('lixeira')
       `);
 
-      res.json({ de, ate, itens: result.rows || [] });
+      // Estoque atual por produto e por instância (products.stock — o mesmo
+      // saldo que o import do Omie atualiza). O cliente soma "todas" ou mostra
+      // uma instância só, conforme o seletor da coluna Estoque.
+      let estoque: any[] = [];
+      try {
+        const est: any = await db.execute(sql`
+          SELECT p.id AS product_id, p.name AS product_name, p.omie_code AS product_code,
+                 p.omie_instance_id AS instance_id,
+                 COALESCE(oi.display_name, oi.name, p.omie_instance_id, '—') AS instance_name,
+                 COALESCE(p.stock, 0) AS stock
+          FROM products p
+          LEFT JOIN omie_instances oi ON oi.id = p.omie_instance_id
+          WHERE p.is_active = true
+        `);
+        estoque = est.rows || [];
+      } catch { /* estoque é enriquecimento — nunca derruba o relatório */ }
+
+      res.json({ de, ate, itens: result.rows || [], estoque });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
