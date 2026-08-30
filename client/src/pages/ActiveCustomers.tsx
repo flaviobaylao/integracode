@@ -1018,11 +1018,12 @@ export default function ActiveCustomers() {
       if (bulkWeekdays.length) fields.weekdays = bulkWeekdays;
       if (bulkStartDate) fields.serviceStartDate = bulkStartDate;
       if (bulkVirtualType) fields.virtualService = bulkVirtualType === 'virtual';
-      let updated = 0;
+      let updated = 0; let agendaRegen = 0;
       if (Object.keys(fields).length > 0) {
         const r: any = await apiRequest('POST', '/api/customers/bulk-update', { ids, fields });
         const j = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
         updated = j.updated ?? 0;
+        agendaRegen = j.agendaRegenerada ?? 0;
       }
       // Flag "Atualizar coordenadas": geocodifica SOMENTE os clientes selecionados (segundo plano).
       let geocodeCount = 0;
@@ -1031,11 +1032,12 @@ export default function ActiveCustomers() {
         const gj = await (g?.json ? g.json() : Promise.resolve({})).catch(() => ({}));
         geocodeCount = gj.candidates ?? ids.length;
       }
-      return { updated, geocoded: bulkGeocode, geocodeCount, hadFields: Object.keys(fields).length > 0 };
+      return { updated, agendaRegen, geocoded: bulkGeocode, geocodeCount, hadFields: Object.keys(fields).length > 0 };
     },
     onSuccess: (res: any) => {
       const parts: string[] = [];
       if (res.hadFields) parts.push(`${res.updated ?? 0} de ${selectedCustomerIds.size} cliente(s) alterado(s)`);
+      if (res.agendaRegen > 0) parts.push(`agenda de ${res.agendaRegen} cliente(s) regenerada a partir da nova Data de Início`);
       if (res.geocoded) parts.push(`coordenadas de ${res.geocodeCount} cliente(s) sendo buscadas em segundo plano`);
       toast({ title: "Concluído", description: parts.join(' · ') || 'Nada para alterar.' });
       setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType(""); setBulkGeocode(false);
