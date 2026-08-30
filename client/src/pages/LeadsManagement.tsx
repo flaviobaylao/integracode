@@ -685,6 +685,7 @@ export default function LeadsManagement() {
       case 'status': return lead.status || '';
       case 'lastService': return lastServiceLogs[lead.id] && lastServiceLogs[lead.id].date ? new Date(lastServiceLogs[lead.id].date).getTime() : 0;
       case 'nextContact': return lead.nextContactDate ? new Date(lead.nextContactDate).getTime() : 0;
+      case 'routeDay': return (typeof lead.routeWeekday === 'number' && lead.routeWeekday >= 0) ? lead.routeWeekday : -1;
       case 'created': return lead.createdAt ? new Date(lead.createdAt).getTime() : 0;
       default: return '';
     }
@@ -992,13 +993,14 @@ export default function LeadsManagement() {
                   <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <SortableTh label="Dia de Rota" colKey="routeDay" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   {canAct && <th className="text-right py-3 px-4 font-semibold sticky top-0 right-0 z-20 bg-white dark:bg-gray-950">Ações</th>}
                 </tr>
               </thead>
               <tbody>
                 {displayLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={(canAct ? 11 : 10) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
+                    <td colSpan={(canAct ? 12 : 11) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -1110,6 +1112,13 @@ export default function LeadsManagement() {
                               {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
                             </span>
                           </div>
+                        ) : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">
+                        {typeof (lead as any).routeWeekday === 'number' && (lead as any).routeWeekday >= 0 ? (
+                          <span className="font-medium text-indigo-600 dark:text-indigo-400" title="Dia de rota do vendedor na região deste lead (cliente ativo mais próximo)">
+                            {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][(lead as any).routeWeekday]}
+                          </span>
                         ) : '—'}
                       </td>
                       {canAct && (
