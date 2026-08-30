@@ -124,10 +124,15 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
       ? [[homeLocation.latitude, homeLocation.longitude]]
       : [];
 
-    // Adicionar marcadores para cada visita na ordem otimizada
-    optimizedOrder.forEach((visitId, index) => {
+    // Adicionar marcadores para cada visita na ordem otimizada.
+    // Numeração SEQUENCIAL apenas das paradas realmente plotadas (presenciais + leads), para casar
+    // 1:1 com a numeração da lista "Visitas Presenciais". NÃO conta virtuais nem entradas órfãs do
+    // optimizedOrder (ids que não resolvem para uma visita). (Correção 30/ago/2026)
+    let seq = 0;
+    optimizedOrder.forEach((visitId) => {
       const visit = visits.find(v => v.id === visitId);
       if (!visit || !visit.customerLatitude || !visit.customerLongitude) return;
+      seq++;
 
       const lat = parseFloat(visit.customerLatitude);
       const lon = parseFloat(visit.customerLongitude);
@@ -158,7 +163,7 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
       const visitIconHtml = renderToStaticMarkup(
         <div className={`${color} rounded-full shadow-lg flex items-center justify-center`}
              style={{ width: '32px', height: '32px' }}>
-          <span className="text-white font-bold text-sm">{index + 1}</span>
+          <span className="text-white font-bold text-sm">{seq}</span>
         </div>
       );
 
@@ -179,7 +184,7 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
       L.marker([lat, lon], { icon: visitIcon })
         .addTo(map)
         .bindPopup(`
-          <strong>${index + 1}. ${visit.customerName}</strong>${isLead ? ' <em>(Lead)</em>' : ''}<br>
+          <strong>${seq}. ${visit.customerName}</strong>${isLead ? ' <em>(Lead)</em>' : ''}<br>
           Status: ${statusText}
         `);
     });
