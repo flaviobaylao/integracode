@@ -991,7 +991,6 @@ export default function LeadsManagement() {
                   <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
-                  <SortableTh label="Último Atendimento" colKey="lastService" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   {canAct && <th className="text-right py-3 px-4 font-semibold sticky top-0 right-0 z-20 bg-white dark:bg-gray-950">Ações</th>}
                 </tr>
@@ -999,7 +998,7 @@ export default function LeadsManagement() {
               <tbody>
                 {displayLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={(canAct ? 12 : 11) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
+                    <td colSpan={(canAct ? 11 : 10) + (isAdmin ? 1 : 0)} className="text-center py-8 text-gray-500">
                       Nenhum lead encontrado com os filtros aplicados
                     </td>
                   </tr>
@@ -1084,18 +1083,6 @@ export default function LeadsManagement() {
                       <td className="py-3 px-4 text-xs whitespace-nowrap">
                         {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
                       </td>
-                      <td className="py-3 px-4 text-xs">
-                        {lastServiceLogs[lead.id] ? (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-medium">
-                              {formatInTimeZone(new Date(lastServiceLogs[lead.id].date), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR })}
-                            </span>
-                            <span className="text-gray-500 dark:text-gray-400 truncate max-w-[120px]" title={lastServiceLogs[lead.id].attendant}>
-                              {lastServiceLogs[lead.id].attendant}
-                            </span>
-                          </div>
-                        ) : '—'}
-                      </td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {isAdmin ? (
                           <div className="flex flex-col gap-0.5">
@@ -1109,7 +1096,7 @@ export default function LeadsManagement() {
                             />
                             {(lead as any).nextContactDate && (
                               <span className="text-[11px] text-muted-foreground capitalize">
-                                {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEEE', { locale: ptBR })}
+                                {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
                               </span>
                             )}
                           </div>
@@ -1119,7 +1106,7 @@ export default function LeadsManagement() {
                               {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
                             </span>
                             <span className="text-[11px] text-muted-foreground capitalize">
-                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEEE', { locale: ptBR })}
+                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
                             </span>
                           </div>
                         ) : '—'}
