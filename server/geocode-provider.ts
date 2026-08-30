@@ -164,3 +164,50 @@ export async function reverseGeocodeCity(lat: number | string, lon: number | str
     return null;
   }
 }
+
+/**
+ * Geocodificação REVERSA: coordenada -> BAIRRO. Google (sublocality_level_1 / sublocality /
+ * neighborhood) quando há chave; senão Nominatim reverse (suburb/neighbourhood/city_district).
+ * Devolve null quando não encontra. Nunca lança (retorna null em erro).
+ */
+export async function reverseGeocodeNeighborhood(lat: number | string, lon: number | string): Promise<string | null> {
+  const la = String(lat ?? "").trim();
+  const lo = String(lon ?? "").trim();
+  if (!la || !lo) return null;
+  try {
+    if (geocodeProvider() === "google") {
+      const url =
+        "https://maps.googleapis.com/maps/api/geocode/json" +
+        `?latlng=${encodeURIComponent(la + "," + lo)}` +
+        "&language=pt-BR" +
+        `&key=${encodeURIComponent(GOOGLE_KEY())}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!resp.ok) return null;
+      const j: any = await resp.json();
+      if (String(j?.status || "") !== "OK") return null;
+      const prefer = ["sublocality_level_1", "sublocality", "neighborhood"];
+      for (const t of prefer) {
+        for (const r of (j.results || [])) {
+          const comps: any[] = Array.isArray(r.address_components) ? r.address_components : [];
+          const c = comps.find((x) => Array.isArray(x?.types) && x.types.includes(t));
+          if (c?.long_name) return String(c.long_name).trim();
+        }
+      }
+      return null;
+    }
+    const url =
+      "https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&zoom=18" +
+      `&lat=${encodeURIComponent(la)}&lon=${encodeURIComponent(lo)}`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "INTEGRA2.0-geocode/1.0 (flaviobaylao@gmail.com)" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return null;
+    const j: any = await resp.json();
+    const a = j?.address || {};
+    const bairro = String(a.suburb || a.neighbourhood || a.city_district || a.quarter || a.residential || "").trim();
+    return bairro || null;
+  } catch {
+    return null;
+  }
+}
