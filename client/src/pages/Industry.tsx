@@ -1229,8 +1229,16 @@ function EstoqueTab() {
     queryKey: ['/api/inventory/summary'],
     queryFn: () => jfetch('/api/inventory/summary'),
   });
-  const lots: any[] = data?.lots || [];
+  // A aba de Estoque de Produto Acabado mostra APENAS a instancia SERV (decisao 30/08/2026).
+  // Os cards do topo tambem sao recalculados sobre esse recorte, para nao misturar instancias.
+  const INSTANCIA_ESTOQUE_ACABADO = 'SERV';
+  const lots: any[] = (data?.lots || []).filter(
+    (l: any) => String(l.instance?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_ACABADO
+  );
   const negativos = lots.filter((l) => n(l.quantity) < 0).length;
+  const totalProducts = new Set(lots.map((l: any) => l.productId)).size;
+  const totalInUse = lots.filter((l: any) => l.stockType === 'in_use').reduce((acc: number, l: any) => acc + n(l.quantity), 0);
+  const totalBlocked = lots.filter((l: any) => l.stockType !== 'in_use').reduce((acc: number, l: any) => acc + n(l.quantity), 0);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return lots;
@@ -1243,15 +1251,15 @@ function EstoqueTab() {
       <div key={`inv-cards-${lots.length}`} className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-emerald-100 rounded-lg"><Package className="h-5 w-5 text-emerald-600" /></div>
-          <div><p className="text-2xl font-bold">{data?.totalProducts ?? 0}</p><p className="text-xs text-gray-500">Produtos</p></div>
+          <div><p className="text-2xl font-bold">{totalProducts}</p><p className="text-xs text-gray-500">Produtos</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-green-100 rounded-lg"><CheckCircle2 className="h-5 w-5 text-green-600" /></div>
-          <div><p className="text-2xl font-bold">{fmtQty(data?.totalInUse ?? 0)}</p><p className="text-xs text-gray-500">Em Uso</p></div>
+          <div><p className="text-2xl font-bold">{fmtQty(totalInUse)}</p><p className="text-xs text-gray-500">Em Uso</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-orange-100 rounded-lg"><Package className="h-5 w-5 text-orange-600" /></div>
-          <div><p className="text-2xl font-bold">{fmtQty(data?.totalBlocked ?? 0)}</p><p className="text-xs text-gray-500">Bloqueado</p></div>
+          <div><p className="text-2xl font-bold">{fmtQty(totalBlocked)}</p><p className="text-xs text-gray-500">Bloqueado</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-red-100 rounded-lg"><AlertTriangle className="h-5 w-5 text-red-600" /></div>
