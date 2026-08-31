@@ -2197,7 +2197,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('⚠️ Erro ao atualizar cards do cliente:', updateError.message);
         // Não falhar a atualização do cliente por causa disso
       }
-      
+
+      // 🗓️ REGENERA A AGENDA DE VISITAS quando muda VENDEDOR / DIA DE ROTA / PERIODICIDADE / DATA DE INÍCIO.
+      // A Rota do Dia lê a agenda; sem isto, o botão "Atualizar" não refletia a mudança do cadastro.
+      // Cobre presenciais e virtuais (regenerateCustomerAgenda respeita virtualService). Leads usam
+      // next_contact_date (reconciliados direto da tabela leads) e fornecedores não geram agenda.
+      try {
+        const _b: any = __auditBefore || {};
+        const _a: any = updatedCustomer || {};
+        const _wd = (x: any) => { try { return JSON.stringify(typeof x === 'string' ? JSON.parse(x) : (x || [])); } catch { return String(x || ''); } };
+        const _ts = (x: any) => { const d = x ? new Date(x).getTime() : 0; return isNaN(d) ? 0 : d; };
+        const _mudou =
+          _wd(_b.weekdays) !== _wd(_a.weekdays) ||
+          String(_b.visitPeriodicity || '') !== String(_a.visitPeriodicity || '') ||
+          String(_b.sellerId || '') !== String(_a.sellerId || '') ||
+          _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
+        const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
+        if (_mudou && _elegivel) {
+          const _n = await regenerateCustomerAgenda(String(id));
+          console.log(`🗓️ [CUSTOMER-UPDATE] Agenda regenerada (${_n} visita(s)) após mudança de vendedor/dia/periodicidade/início do cliente ${id}`);
+        }
+      } catch (_regenErr: any) {
+        console.warn('⚠️ [CUSTOMER-UPDATE] Falha ao regenerar agenda (não crítico):', _regenErr?.message);
+      }
+
       res.json(updatedCustomer);
     } catch (error: any) {
       console.error("❌ [CUSTOMER-UPDATE] Error:", error);
@@ -2877,7 +2900,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         exclusiveVehicle: customer.exclusiveVehicle,
         vehicleTypes: customer.vehicleTypes
       });
-      
+
+      // 🗓️ REGENERA A AGENDA DE VISITAS quando muda VENDEDOR / DIA DE ROTA / PERIODICIDADE / DATA DE INÍCIO.
+      // (mesma regra do PATCH) — para o "Atualizar" da Rota do Dia refletir a mudança do cadastro.
+      try {
+        const _b: any = __auditBeforePut || {};
+        const _a: any = customer || {};
+        const _wd = (x: any) => { try { return JSON.stringify(typeof x === 'string' ? JSON.parse(x) : (x || [])); } catch { return String(x || ''); } };
+        const _ts = (x: any) => { const d = x ? new Date(x).getTime() : 0; return isNaN(d) ? 0 : d; };
+        const _mudou =
+          _wd(_b.weekdays) !== _wd(_a.weekdays) ||
+          String(_b.visitPeriodicity || '') !== String(_a.visitPeriodicity || '') ||
+          String(_b.sellerId || '') !== String(_a.sellerId || '') ||
+          _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
+        const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
+        if (_mudou && _elegivel) {
+          const _n = await regenerateCustomerAgenda(String(id));
+          console.log(`🗓️ [CUSTOMER-UPDATE-PUT] Agenda regenerada (${_n} visita(s)) após mudança de vendedor/dia/periodicidade/início do cliente ${id}`);
+        }
+      } catch (_regenErr: any) {
+        console.warn('⚠️ [CUSTOMER-UPDATE-PUT] Falha ao regenerar agenda (não crítico):', _regenErr?.message);
+      }
+
       res.json(customer);
     } catch (error) {
       console.error("Error updating customer:", error);
