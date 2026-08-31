@@ -22,6 +22,7 @@ import {
   Star, StarOff, Store
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { hojeBR, diasUteisEntre } from '@shared/tempo';
 
 interface BillingPipelineItem {
   id: string;
@@ -97,6 +98,53 @@ const RETURNED_FISCAL = ['returned', 'devolvida', 'devolvido'];
 
 // Etapas cujos cards podem virar entrega (mesma origem usada por getPendingDeliveries no servidor)
 const ROUTABLE_STAGES = new Set(['impresso', 'aguardando_rota', 'aguardando_rota_bsb']);
+
+/* ---------------------- MARCADOR DE ATRASO NA ENTREGA ----------------------
+   Da etapa "Faturado" ate ANTES de "Entregue", o card mostra a data em que foi
+   faturado e a cor do tempo que ele ja passou parado, contado em DIAS UTEIS
+   (fim de semana e feriado nacional nao contam — shared/tempo.ts):
+     0 ou 1 dia util  -> verde     2 dias uteis -> amarelo
+     3 dias uteis     -> vermelho  acima de 3   -> roxo
+   Fora dessas etapas (pedido, a faturar, entregue, lixeira...) nao aparece. */
+const DELAY_STAGES = new Set([
+  'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb',
+  'outras_cidades', 'aguardando_rota', 'em_rota',
+]);
+
+const DELAY_LEVELS = [
+  { max: 1, cls: 'border-green-400 text-green-800 bg-green-50', label: 'no prazo' },
+  { max: 2, cls: 'border-yellow-400 text-yellow-800 bg-yellow-50', label: 'atencao' },
+  { max: 3, cls: 'border-red-400 text-red-800 bg-red-50', label: 'atrasado' },
+  { max: Infinity, cls: 'border-purple-500 text-purple-800 bg-purple-100', label: 'atraso critico' },
+] as const;
+
+/** Dia ('YYYY-MM-DD') em que o pedido entrou em "Faturado".
+ *  Usa a ULTIMA passagem por 'faturado' no historico de etapas; se o card nao
+ *  tiver historico (importados antigos), cai para a data de criacao. */
+function faturadoEm(item: BillingPipelineItem): string | null {
+  const hist = Array.isArray(item.stageHistory) ? item.stageHistory : [];
+  for (let i = hist.length - 1; i >= 0; i--) {
+    if (hist[i]?.stage === 'faturado' && hist[i]?.changedAt) {
+      return String(hist[i].changedAt).slice(0, 10);
+    }
+  }
+  return item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) : null;
+}
+
+/** Marcador de atraso do card, ou null quando a etapa nao pede marcador. */
+function delayMarker(item: BillingPipelineItem, stageKey: string) {
+  if (!DELAY_STAGES.has(String(stageKey))) return null;
+  const dia = faturadoEm(item);
+  if (!dia) return null;
+  const diasUteis = diasUteisEntre(dia, hojeBR());
+  const nivel = DELAY_LEVELS.find(n => diasUteis <= n.max)!;
+  return {
+    dia,
+    diasUteis,
+    cls: nivel.cls,
+    title: `Faturado em ${dia.split('-').reverse().join('/')} — ${diasUteis} dia(s) util(eis) sem entregar (${nivel.label})`,
+  };
+}
 
 // Etapas em que faz sentido marcar prioridade de entrega (o pedido ainda vai ser roteirizado)
 const STAGES_PRIORIZAVEIS = new Set(['aguardando_rota', 'aguardando_rota_bsb', 'impresso', 'bsb']);
@@ -1916,6 +1964,21 @@ function KanbanCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
+          {(() => {
+            const m = delayMarker(item, stage.key);
+            if (!m) return null;
+            return (
+              <Badge
+                variant="outline"
+                className={`text-[10px] font-semibold ${m.cls}`}
+                title={m.title}
+                data-testid={`atraso-entrega-${item.id}`}
+              >
+                <Calendar className="h-2.5 w-2.5 mr-0.5" />
+                {m.dia.split('-').reverse().join('/')} · {m.diasUteis}du
+              </Badge>
+            );
+          })()}
           {item.isPriority && (
             <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 bg-amber-50 font-semibold" title="Entra primeiro na roteirização">
               <Star className="h-2.5 w-2.5 mr-0.5" fill="currentColor" />
