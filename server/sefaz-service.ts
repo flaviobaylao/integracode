@@ -1469,7 +1469,7 @@ function buildDocumento(
         ...(descVal > 0 ? { vDesc: descVal.toFixed(2) } : {}),
       },
       imposto,
-      ...(lotInfo ? { infAdProd: lotInfo } : {}),
+      ...(lotInfo ? { infAdProd: lotInfo } : {}), ...(!isNFCe && invoice.finNFe === '4' && invoice.referencedAccessKey ? { DFeReferenciado: { chaveAcesso: String(invoice.referencedAccessKey).replace(/\D/g, ''), nItem: String((item as any).itemNumber || idx + 1) } } : {}),
     };
 
     return det;
