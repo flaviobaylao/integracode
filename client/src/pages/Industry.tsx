@@ -1229,9 +1229,9 @@ function EstoqueTab() {
     queryKey: ['/api/inventory/summary'],
     queryFn: () => jfetch('/api/inventory/summary'),
   });
-  // A aba de Estoque de Produto Acabado mostra APENAS a instancia SERV (decisao 30/08/2026).
+  // A aba de Estoque de Produto Acabado mostra APENAS a instancia IND, a fabrica (31/08/2026).
   // Os cards do topo tambem sao recalculados sobre esse recorte, para nao misturar instancias.
-  const INSTANCIA_ESTOQUE_ACABADO = 'SERV';
+  const INSTANCIA_ESTOQUE_ACABADO = 'IND';
   const lots: any[] = (data?.lots || []).filter(
     (l: any) => String(l.instance?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_ACABADO
   );
