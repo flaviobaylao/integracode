@@ -1746,24 +1746,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
       }
-      // 🎯 Buscar clientes ativos COM coordenadas do customers table
-      const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
-      
-      if (active.length === 0) {
-        return res.json([]);
-      }
-      
-      const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
-      if (customerIds.length === 0) {
-        return res.json([]);
-      }
-      
-      // Buscar clientes com coordenadas
+      // 🎯 MAPA = CARTEIRA do cadastro (customers.is_active) com coordenadas, com a MESMA ELEGIBILIDADE
+      // da Rota do Dia: mantém quem NÃO está na lista "Clientes Ativos" (não importado) e quem tem
+      // membership ATIVA; exclui quem foi DESATIVADO na lista. Antes o mapa EXIGIA estar na lista
+      // (active_customers), escondendo clientes ativos da carteira. Fornecedor e lead nunca aparecem.
       const customersData = await db.select().from(customers).where(
         and(
-          inArray(customers.id, customerIds),
+          eq(customers.isActive, true),
+          sql`(${customers.isSupplier} IS NOT TRUE)`,
+          sql`(${customers.isLead} IS NOT TRUE)`,
           isNotNull(customers.latitude),
-          isNotNull(customers.longitude)
+          isNotNull(customers.longitude),
+          sql`(
+            NOT EXISTS (
+              SELECT 1 FROM active_customers ac
+              WHERE ac.customer_id = ${customers.id}
+                 OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g'))
+            )
+            OR EXISTS (
+              SELECT 1 FROM active_customers ac
+              WHERE ac.is_active = true
+                AND (ac.customer_id = ${customers.id}
+                  OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g')))
+            )
+          )`
         )
       );
       
@@ -2197,7 +2203,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('⚠️ Erro ao atualizar cards do cliente:', updateError.message);
         // Não falhar a atualização do cliente por causa disso
       }
-      
+
+      // 🗓️ REGENERA A AGENDA DE VISITAS quando muda VENDEDOR / DIA DE ROTA / PERIODICIDADE / DATA DE INÍCIO.
+      // A Rota do Dia lê a agenda; sem isto, o botão "Atualizar" não refletia a mudança do cadastro.
+      // Cobre presenciais e virtuais (regenerateCustomerAgenda respeita virtualService). Leads usam
+      // next_contact_date (reconciliados direto da tabela leads) e fornecedores não geram agenda.
+      try {
+        const _b: any = __auditBefore || {};
+        const _a: any = updatedCustomer || {};
+        const _wd = (x: any) => { try { return JSON.stringify(typeof x === 'string' ? JSON.parse(x) : (x || [])); } catch { return String(x || ''); } };
+        const _ts = (x: any) => { const d = x ? new Date(x).getTime() : 0; return isNaN(d) ? 0 : d; };
+        const _mudou =
+          _wd(_b.weekdays) !== _wd(_a.weekdays) ||
+          String(_b.visitPeriodicity || '') !== String(_a.visitPeriodicity || '') ||
+          String(_b.sellerId || '') !== String(_a.sellerId || '') ||
+          _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
+        const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
+        if (_mudou && _elegivel) {
+          const _n = await regenerateCustomerAgenda(String(id));
+          console.log(`🗓️ [CUSTOMER-UPDATE] Agenda regenerada (${_n} visita(s)) após mudança de vendedor/dia/periodicidade/início do cliente ${id}`);
+        }
+      } catch (_regenErr: any) {
+        console.warn('⚠️ [CUSTOMER-UPDATE] Falha ao regenerar agenda (não crítico):', _regenErr?.message);
+      }
+
       res.json(updatedCustomer);
     } catch (error: any) {
       console.error("❌ [CUSTOMER-UPDATE] Error:", error);
@@ -2877,7 +2906,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         exclusiveVehicle: customer.exclusiveVehicle,
         vehicleTypes: customer.vehicleTypes
       });
-      
+
+      // 🗓️ REGENERA A AGENDA DE VISITAS quando muda VENDEDOR / DIA DE ROTA / PERIODICIDADE / DATA DE INÍCIO.
+      // (mesma regra do PATCH) — para o "Atualizar" da Rota do Dia refletir a mudança do cadastro.
+      try {
+        const _b: any = __auditBeforePut || {};
+        const _a: any = customer || {};
+        const _wd = (x: any) => { try { return JSON.stringify(typeof x === 'string' ? JSON.parse(x) : (x || [])); } catch { return String(x || ''); } };
+        const _ts = (x: any) => { const d = x ? new Date(x).getTime() : 0; return isNaN(d) ? 0 : d; };
+        const _mudou =
+          _wd(_b.weekdays) !== _wd(_a.weekdays) ||
+          String(_b.visitPeriodicity || '') !== String(_a.visitPeriodicity || '') ||
+          String(_b.sellerId || '') !== String(_a.sellerId || '') ||
+          _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
+        const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
+        if (_mudou && _elegivel) {
+          const _n = await regenerateCustomerAgenda(String(id));
+          console.log(`🗓️ [CUSTOMER-UPDATE-PUT] Agenda regenerada (${_n} visita(s)) após mudança de vendedor/dia/periodicidade/início do cliente ${id}`);
+        }
+      } catch (_regenErr: any) {
+        console.warn('⚠️ [CUSTOMER-UPDATE-PUT] Falha ao regenerar agenda (não crítico):', _regenErr?.message);
+      }
+
       res.json(customer);
     } catch (error) {
       console.error("Error updating customer:", error);
@@ -10118,6 +10168,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`✅ [RESYNC-PRESENCIAL] concluído: domFixed=${domFixed}, datasPreenchidas=${dated}, clientesRegenerados=${regen}, erros=${regenErr}`);
     } catch (e: any) {
       console.error('[RESYNC-PRESENCIAL] falha (não marcada; tentará no próximo boot se a chave não gravou):', e?.message);
+    }
+  })();
+
+  // ===================================================================================
+  // MIGRAÇÃO ONE-SHOT: remove a agenda de visitas (periodicidade) que foi criada por engano
+  // para registros isLead. Leads aparecem só pela DATA do próximo contato — nunca por agenda.
+  // Só apaga PENDENTES futuras (>= hoje); não toca em passado/concluídas. Idempotente via chave.
+  // ===================================================================================
+  (async () => {
+    const MIGR_KEY = 'migr_purge_lead_agenda_v1';
+    try {
+      const already: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${MIGR_KEY} LIMIT 1`);
+      if ((already?.rows || []).length > 0) return;
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
+      const del: any = await db.execute(sql`
+        DELETE FROM visit_agenda
+        WHERE visit_status = 'pending'
+          AND scheduled_date >= (now() AT TIME ZONE 'UTC')::date
+          AND customer_id IN (SELECT id FROM customers WHERE is_lead = true)`);
+      console.log(`🧹 [PURGE-LEAD-AGENDA] Removidas ${del?.rowCount ?? '?'} visita(s) de agenda indevidas de leads.`);
+    } catch (e: any) {
+      console.error('[PURGE-LEAD-AGENDA] falha:', e?.message);
     }
   })();
 
@@ -21594,7 +21666,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 🧹 AUTO-CORREÇÃO DA ROTA (self-heal): remove do optimizedOrder os PRESENCIAIS que NÃO
       // têm visita na AGENDA daquele dia (ex.: cliente cujo dia de rota mudou de Seg->Qua e ficou
       // preso na rota antiga de segunda). Preserva LEADS, virtuais e adições MANUAIS. Só data atual/futura.
-      // Confere agenda por (customer_id + data) sem travar no seller (respeita delegação de carteira).
+      // Mantém um presencial só se ele for da CARTEIRA deste vendedor (customers.seller_id) E tiver
+      // visita na agenda do dia — igual ao getCustomersForDate. Delegação reatribui seller_id ao
+      // delegado, então isto a respeita. Assim um cliente que trocou de carteira/dia some da rota antiga.
       try {
         // Import local ALIASADO do db: o handler declara `const { db }` mais abaixo (bloco-escopo),
         // então o `db` do módulo fica em TDZ aqui — usamos _dbPrune para evitar o erro.
@@ -21623,6 +21697,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               WHERE DATE(scheduled_date) = ${date}
                 AND customer_id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const agendaDateIds = new Set<string>((agRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
+            // Dono ATUAL da carteira (customers.seller_id). A delegação de carteira reatribui
+            // customers.seller_id ao delegado, então isto respeita delegação: o cliente só é
+            // "desta rota" se seu dono atual for o vendedor da rota (igual ao getCustomersForDate).
+            const ownRows: any = await _dbPrune.execute(sql`
+              SELECT id, seller_id, is_lead FROM customers
+              WHERE id = ANY(string_to_array(${custIds.join(',')}, ','))`);
+            const ownerOf = new Map<string, string | null>();
+            const leadOf = new Map<string, boolean>();
+            (ownRows?.rows || []).forEach((r: any) => { ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null); leadOf.set(String(r.id), r.is_lead === true); });
             // Adições manuais do dia (sempre permanecem).
             const manRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM sales_cards
@@ -21630,8 +21713,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const manualIds = new Set<string>((manRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
             const keep: string[] = []; let removed = 0;
             for (const sm of stopMeta) {
-              if (sm.etype === 'customer' && !agendaDateIds.has(sm.eid) && !manualIds.has(sm.eid)) {
-                removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
+              if (sm.etype === 'customer') {
+                const ehLead = leadOf.get(sm.eid) === true;
+                const naCarteira = ownerOf.get(sm.eid) === String(sellerId);
+                const temAgenda = agendaDateIds.has(sm.eid);
+                const manual = manualIds.has(sm.eid);
+                // 🚫 Registro isLead NÃO é presencial: some da rota (só aparece pela data do próximo
+                // contato, via reconcile de leads). Mantém só se: adição MANUAL, OU (não é lead E é da
+                // carteira deste vendedor E tem visita na agenda do dia).
+                if (!manual && (ehLead || !(naCarteira && temAgenda))) {
+                  removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
+                }
               }
               keep.push(sm.stop);
             }
