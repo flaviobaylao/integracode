@@ -123,26 +123,6 @@ export default function SalesCards() {
     },
   });
 
-  const duplicateCardMutation = useMutation({
-    mutationFn: async ({ id, newDate }: { id: string; newDate: string }) => {
-      await apiRequest('POST', `/api/sales-cards/${id}/duplicate`, { newDate });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      toast({
-        title: "Sucesso",
-        description: "Card duplicado com sucesso!",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "Erro",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   const sendToOmieMutation = useMutation({
     mutationFn: async (cardId: string) => {
       await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`);
@@ -626,21 +606,6 @@ export default function SalesCards() {
                   
                   {card.status === 'completed' && (
                     <div className="flex items-center space-x-2">
-                      <Button
-                        variant="outline"
-                        className="flex-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const nextWeek = new Date();
-                          nextWeek.setDate(nextWeek.getDate() + 7);
-                          duplicateCardMutation.mutate({
-                            id: card.id,
-                            newDate: nextWeek.toISOString()
-                          });
-                        }}
-                      >
-                        <i className="fas fa-copy mr-2"></i>Duplicar
-                      </Button>
                       {(!card.omieOrderId || card.omieOrderId === null || card.omieOrderId === '') && (
                         <Button
                           className="bg-orange-500 hover:bg-orange-600 text-white"
