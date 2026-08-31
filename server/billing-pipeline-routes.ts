@@ -2522,6 +2522,22 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
 
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
 
+  // [DESCONTO NA NF] O saleValue do card ja vem LIQUIDO (desconto abatido), mas os itens
+  // (products[].totalPrice) sao BRUTOS. Gravar totalProducts = saleValue fazia o <ICMSTot>/vProd
+  // do XML ficar diferente do somatorio de <det>/<prod>/<vProd> -> SEFAZ rejeita
+  // "Total do Produto / Servico difere do somatorio dos itens" (531) sempre que ha desconto.
+  // Correto: totalProducts = BRUTO, totalDiscount = diferenca, totalInvoice = LIQUIDO (vNF),
+  // e o desconto rateado por item (vDesc de cada det) para fechar tambem a validacao 533.
+  const _prodsForTotals = (item.products as Array<{ totalPrice: number }> | null) || [];
+  const grossProducts = _prodsForTotals.reduce((s, p) => s + (parseFloat(String(p?.totalPrice ?? 0)) || 0), 0);
+  // Se nao ha itens (ou o bruto nao supera o liquido) mantem o comportamento antigo: sem desconto.
+  const hasGross = grossProducts > 0 && grossProducts >= totalValue;
+  const productsTotal = hasGross ? +grossProducts.toFixed(2) : totalValue;
+  const discountTotal = hasGross ? +(grossProducts - totalValue).toFixed(2) : 0;
+  if (discountTotal > 0) {
+    console.log(`[NFE-DESC] Pedido ${item.orderNumber || item.salesCardId}: bruto ${productsTotal.toFixed(2)} - desconto ${discountTotal.toFixed(2)} = liquido ${totalValue.toFixed(2)}`);
+  }
+
   // Ambiente de emissao POR CNPJ EMITENTE (system_settings fiscal_env_<instanceId>).
   // ANTES estava fixo 'homologacao' -> NF do pipeline saia SEM VALOR FISCAL mesmo com o CNPJ em producao.
   // Resolve a instancia pelo omieInstanceId do item ou, se vazio, pelo CNPJ do emitente
@@ -2590,7 +2606,8 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     natureOfOperation,
     cfop,
     fiscalScenarioId,
-    totalProducts: totalValue.toFixed(2),
+    totalProducts: productsTotal.toFixed(2),
+    totalDiscount: discountTotal.toFixed(2),
     totalInvoice: totalValue.toFixed(2),
     // Forma de pagamento EFETIVA (cadastro do cliente sobrepoe a venda) — a mesma dos titulos/boleto.
     // EXCECAO (25/ago/2026): pedido PRE-PAGO na loja (hotsite/Google Pay/link/maquininha) ja esta
@@ -2645,9 +2662,20 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   }
 
   const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
+  // [DESCONTO NA NF] rateio proporcional do desconto entre os itens; o residuo de centavos vai
+  // no ultimo item para que a soma dos vDesc feche exatamente com o vDesc do <ICMSTot>.
+  let _descAcum = 0;
   if (products && products.length > 0) {
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
+      let itemDiscount = 0;
+      if (discountTotal > 0) {
+        itemDiscount = (i === products.length - 1)
+          ? +(discountTotal - _descAcum).toFixed(2)
+          : +(discountTotal * ((parseFloat(String(p.totalPrice ?? 0)) || 0) / grossProducts)).toFixed(2);
+        if (itemDiscount < 0) itemDiscount = 0;
+        _descAcum = +(_descAcum + itemDiscount).toFixed(2);
+      }
       let productCode = `PROD-${i + 1}`;
       let itemNcm = NCM_SUCO_MISTO;
       if (p.id) {
@@ -2674,7 +2702,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
         quantity: p.quantity.toString(),
         unitPrice: p.unitPrice.toString(),
         totalPrice: p.totalPrice.toString(),
-        discount: '0',
+        discount: itemDiscount.toFixed(2),
         csosn: custCsosn,
         aliqIcms: custPcred,
       });
