@@ -10153,6 +10153,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   })();
 
+  // ===================================================================================
+  // MIGRAÇÃO ONE-SHOT: remove a agenda de visitas (periodicidade) que foi criada por engano
+  // para registros isLead. Leads aparecem só pela DATA do próximo contato — nunca por agenda.
+  // Só apaga PENDENTES futuras (>= hoje); não toca em passado/concluídas. Idempotente via chave.
+  // ===================================================================================
+  (async () => {
+    const MIGR_KEY = 'migr_purge_lead_agenda_v1';
+    try {
+      const already: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${MIGR_KEY} LIMIT 1`);
+      if ((already?.rows || []).length > 0) return;
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
+      const del: any = await db.execute(sql`
+        DELETE FROM visit_agenda
+        WHERE visit_status = 'pending'
+          AND scheduled_date >= (now() AT TIME ZONE 'UTC')::date
+          AND customer_id IN (SELECT id FROM customers WHERE is_lead = true)`);
+      console.log(`🧹 [PURGE-LEAD-AGENDA] Removidas ${del?.rowCount ?? '?'} visita(s) de agenda indevidas de leads.`);
+    } catch (e: any) {
+      console.error('[PURGE-LEAD-AGENDA] falha:', e?.message);
+    }
+  })();
+
   app.post('/api/telemarketing/regenerate-schedule', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
       // Opcional: body.sellerIds = [ ... ] regenera SÓ esses vendedores (escopo). Sem isso, todos.
@@ -21661,10 +21683,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // customers.seller_id ao delegado, então isto respeita delegação: o cliente só é
             // "desta rota" se seu dono atual for o vendedor da rota (igual ao getCustomersForDate).
             const ownRows: any = await _dbPrune.execute(sql`
-              SELECT id, seller_id FROM customers
+              SELECT id, seller_id, is_lead FROM customers
               WHERE id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const ownerOf = new Map<string, string | null>();
-            (ownRows?.rows || []).forEach((r: any) => ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null));
+            const leadOf = new Map<string, boolean>();
+            (ownRows?.rows || []).forEach((r: any) => { ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null); leadOf.set(String(r.id), r.is_lead === true); });
             // Adições manuais do dia (sempre permanecem).
             const manRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM sales_cards
@@ -21673,11 +21696,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const keep: string[] = []; let removed = 0;
             for (const sm of stopMeta) {
               if (sm.etype === 'customer') {
+                const ehLead = leadOf.get(sm.eid) === true;
                 const naCarteira = ownerOf.get(sm.eid) === String(sellerId);
                 const temAgenda = agendaDateIds.has(sm.eid);
                 const manual = manualIds.has(sm.eid);
-                // Mantém só se: adição manual, OU (é da carteira deste vendedor E tem visita na agenda do dia).
-                if (!manual && !(naCarteira && temAgenda)) {
+                // 🚫 Registro isLead NÃO é presencial: some da rota (só aparece pela data do próximo
+                // contato, via reconcile de leads). Mantém só se: adição MANUAL, OU (não é lead E é da
+                // carteira deste vendedor E tem visita na agenda do dia).
+                if (!manual && (ehLead || !(naCarteira && temAgenda))) {
                   removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
                 }
               }

@@ -1261,6 +1261,9 @@ export class DatabaseStorage implements IStorage {
           // fazendo o cliente aparecer na rota antes de começar a ser atendido. (31/jul/2026)
           sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`,
           sql`(${customers.isSupplier} IS NOT TRUE)`,
+          // 🚫 LEADS não entram na rota como cliente presencial — só aparecem pela DATA do próximo
+          // contato (reconcile de leads). Um registro isLead com agenda de periodicidade vazava aqui.
+          sql`(${customers.isLead} IS NOT TRUE)`,
           isNotNull(customers.latitude),
           isNotNull(customers.longitude)
         )

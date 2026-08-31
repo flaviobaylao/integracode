@@ -166,6 +166,8 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
   if (!rows.length) return 0;
   const c: any = rows[0];
+  // 🚫 LEADS não geram agenda por periodicidade — aparecem só pela DATA do próximo contato.
+  if (c.isLead === true) return 0;
   let weekdays: any;
   try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { return 0; }
   if (!Array.isArray(weekdays) || weekdays.length === 0) return 0;
@@ -337,6 +339,7 @@ export async function generateVisitAgenda(): Promise<{ processed: number; genera
         and(
           eq(customers.isActive, true),
           sql`(${customers.isSupplier} IS NOT TRUE)`, // fornecedor nao gera agenda de visitas
+          sql`(${customers.isLead} IS NOT TRUE)`, // 🚫 lead nao gera agenda de periodicidade
           isNotNull(customers.serviceStartDate),
           isNotNull(customers.sellerId)
         )
