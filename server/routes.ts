@@ -21582,7 +21582,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 🧹 AUTO-CORREÇÃO DA ROTA (self-heal): remove do optimizedOrder os PRESENCIAIS que NÃO
       // têm visita na AGENDA daquele dia (ex.: cliente cujo dia de rota mudou de Seg->Qua e ficou
       // preso na rota antiga de segunda). Preserva LEADS, virtuais e adições MANUAIS. Só data atual/futura.
-      // Confere agenda por (customer_id + data) sem travar no seller (respeita delegação de carteira).
+      // Mantém um presencial só se ele for da CARTEIRA deste vendedor (customers.seller_id) E tiver
+      // visita na agenda do dia — igual ao getCustomersForDate. Delegação reatribui seller_id ao
+      // delegado, então isto a respeita. Assim um cliente que trocou de carteira/dia some da rota antiga.
       try {
         // Import local ALIASADO do db: o handler declara `const { db }` mais abaixo (bloco-escopo),
         // então o `db` do módulo fica em TDZ aqui — usamos _dbPrune para evitar o erro.
@@ -21611,6 +21613,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               WHERE DATE(scheduled_date) = ${date}
                 AND customer_id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const agendaDateIds = new Set<string>((agRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
+            // Dono ATUAL da carteira (customers.seller_id). A delegação de carteira reatribui
+            // customers.seller_id ao delegado, então isto respeita delegação: o cliente só é
+            // "desta rota" se seu dono atual for o vendedor da rota (igual ao getCustomersForDate).
+            const ownRows: any = await _dbPrune.execute(sql`
+              SELECT id, seller_id FROM customers
+              WHERE id = ANY(string_to_array(${custIds.join(',')}, ','))`);
+            const ownerOf = new Map<string, string | null>();
+            (ownRows?.rows || []).forEach((r: any) => ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null));
             // Adições manuais do dia (sempre permanecem).
             const manRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM sales_cards
@@ -21618,8 +21628,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const manualIds = new Set<string>((manRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
             const keep: string[] = []; let removed = 0;
             for (const sm of stopMeta) {
-              if (sm.etype === 'customer' && !agendaDateIds.has(sm.eid) && !manualIds.has(sm.eid)) {
-                removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
+              if (sm.etype === 'customer') {
+                const naCarteira = ownerOf.get(sm.eid) === String(sellerId);
+                const temAgenda = agendaDateIds.has(sm.eid);
+                const manual = manualIds.has(sm.eid);
+                // Mantém só se: adição manual, OU (é da carteira deste vendedor E tem visita na agenda do dia).
+                if (!manual && !(naCarteira && temAgenda)) {
+                  removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
+                }
               }
               keep.push(sm.stop);
             }
