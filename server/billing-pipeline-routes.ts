@@ -2204,6 +2204,33 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       } catch (e: any) { console.warn('[RETRY-NFE] falha ao atualizar destinatário (segue):', e?.message); }
 
+      // [DESCONTO NA NF] NFs criadas ANTES da correcao gravaram totalProducts = valor LIQUIDO
+      // enquanto os itens ficaram BRUTOS e com discount '0' -> a SEFAZ rejeita
+      // "Total do Produto / Servico difere do somatorio dos itens" (531) e o botao Re-tentar
+      // so retransmitia a MESMA nota errada. Aqui os totais sao recalculados a partir dos itens
+      // antes de retransmitir. Idempotente: se ja estiver coerente, nao mexe em nada.
+      try {
+        const nfItems: any[] = await storage.getFiscalInvoiceItems(nf.id);
+        const nfFull2: any = await storage.getFiscalInvoice(nf.id);
+        if (nfItems && nfItems.length > 0 && nfFull2) {
+          const gross = +nfItems.reduce((s, it) => s + (parseFloat(String(it.totalPrice ?? 0)) || 0), 0).toFixed(2);
+          const liq = parseFloat(String(nfFull2.totalInvoice ?? 0)) || 0;
+          if (gross > 0 && liq > 0 && gross - liq >= 0.01) {
+            const desc = +(gross - liq).toFixed(2);
+            await storage.updateFiscalInvoice(nf.id, { totalProducts: gross.toFixed(2), totalDiscount: desc.toFixed(2) } as any);
+            let acc = 0;
+            for (let i = 0; i < nfItems.length; i++) {
+              const v = (i === nfItems.length - 1)
+                ? +(desc - acc).toFixed(2)
+                : +(desc * ((parseFloat(String(nfItems[i].totalPrice ?? 0)) || 0) / gross)).toFixed(2);
+              acc = +(acc + v).toFixed(2);
+              await storage.updateFiscalInvoiceItem(nfItems[i].id, { discount: v.toFixed(2) } as any);
+            }
+            console.log(`[RETRY-NFE][DESC] NF ${nf.id}: totais corrigidos - bruto ${gross.toFixed(2)}, desconto ${desc.toFixed(2)}, liquido ${liq.toFixed(2)}`);
+          }
+        }
+      } catch (e: any) { console.warn('[RETRY-NFE][DESC] falha ao recalcular totais (segue):', e?.message); }
+
       // Re-transmite a MESMA NF (draft/rejected).
       const emitRes: any = await sefazService.emitNfe(nf.id);
       if (emitRes?.success) return res.json({ success: true });
