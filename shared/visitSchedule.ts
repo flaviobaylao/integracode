@@ -129,8 +129,10 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   // data e uma "última visita" anterior ao início é ignorada (o ciclo recomeça no início).
   const startAnchor = input.serviceStartDate ? new Date(input.serviceStartDate) : null;
   if (startAnchor) startAnchor.setHours(0, 0, 0, 0);
+  let baseMovedToStart = false;
   if (startAnchor && startAnchor.getTime() > baseDate.getTime()) {
     baseDate = new Date(startAnchor);
+    baseMovedToStart = true; // início FUTURO do fornecimento — a 1ª visita parte da data de início
   }
   let effectiveLast = lastCompletedDate;
   if (startAnchor && effectiveLast) {
@@ -142,6 +144,15 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
   // Ex.: dia de rota terça → sempre a 1ª terça de cada mês (07/07 → 04/08 → 01/09 → 06/10).
   if (periodicity === 'mensal') {
     if (!effectiveLast) {
+      // 🗓️ INÍCIO FUTURO DO FORNECIMENTO: a 1ª visita é a 1ª ocorrência do DIA DE ROTA a partir da
+      // data de início — NÃO pula o mês do início. Ex.: início 22/09 (terça) → 1ª visita 22/09
+      // (antes ia para 06/10 porque a 1ª terça do mês, 01/09, era anterior ao início). As visitas
+      // seguintes continuam na regra mensal (1º dia de rota do mês seguinte).
+      if (baseMovedToStart) {
+        const firstFromStart = findNextWeekday(baseDate, targetWeekdays);
+        firstFromStart.setHours(8, 0, 0, 0);
+        return { nextDate: firstFromStart, interval: intervalDays, reason: 'next_weekday' };
+      }
       // Sem última visita: 1º dia-alvo do mês de referência; se já passou, do mês seguinte.
       let cand = firstTargetWeekdayOfMonth(baseDate.getFullYear(), baseDate.getMonth(), targetWeekdays);
       if (!cand || cand < baseDate) {
