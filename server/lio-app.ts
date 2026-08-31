@@ -230,7 +230,7 @@ function formaFinanceira(forma?: string, statusCode?: string, installments?: num
  * do Link de Pagamento. Nao existe um segundo caminho de faturamento so para o
  * balcao.
  */
-async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ liquidado: boolean; motivo?: string }> {
+async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ liquidado: boolean; motivo?: string; danfe?: any }> {
   await ensureSchema();
 
   const claim: any = await db.execute(sql`UPDATE lio_pedidos SET
@@ -328,17 +328,27 @@ async function liquidarPedidoApp(id: string, d: RetornoPagamentoApp): Promise<{ 
       WHERE id = ${salesCardId}`);
   } catch { /* nota e cosmetica, nunca bloqueia a baixa */ }
 
+  // FATURA AGORA, COM O CLIENTE AINDA NO BALCAO.
+  //
+  // Venda presencial exige documento fiscal entregue no ato. Antes esta venda so
+  // era colocada no pipeline e ficava esperando alguem clicar em Faturar — o
+  // cliente ia embora sem nota, o que a legislacao nao admite. faturarVendaBalcao
+  // faz o caminho inteiro (pipeline, estoque, NFC-e, titulo ja quitado,
+  // transmissao) e devolve o que a maquininha precisa para imprimir o DANFE.
+  //
+  // NAO DERRUBA A VENDA SE FALHAR: o dinheiro entrou antes disto rodar. O erro
+  // fica gravado no pedido e a rede de seguranca do pipeline recupera. Pior
+  // desfecho aceitavel e nota atrasada; nunca venda perdida.
+  let danfe: any = null;
   try {
-    const { reconcilePendingOrders } = await import('./billing-pipeline-routes');
-    const rr = await reconcilePendingOrders({ apply: true, minAgeMinutes: 0, cardIds: [salesCardId] });
-    console.log(`🚀 [LIO-APP] Pedido ${id} enviado ao pipeline (recovered=${rr?.recovered}).`);
+    const { faturarVendaBalcao } = await import('./billing-pipeline-routes');
+    danfe = await faturarVendaBalcao(salesCardId);
+    console.log(`🚀 [LIO-APP] Pedido ${id} faturado no balcao (NFC-e ${danfe?.numero ?? 'nao autorizada'}).`);
   } catch (e: any) {
-    // Dinheiro ja entrou. Marca o erro e deixa o cron do pipeline recuperar —
-    // nao tenta de novo aqui para nao duplicar lancamento.
     await db.execute(sql`UPDATE lio_pedidos SET error = ${String(e?.message || e)}, updated_at = now() WHERE id = ${id}`);
-    console.warn(`⚠️ [LIO-APP] Pago, mas envio ao pipeline falhou (${id}):`, e?.message || e);
+    console.warn(`⚠️ [LIO-APP] Pago, mas o faturamento automatico falhou (${id}):`, e?.message || e);
   }
-  return { liquidado: true };
+  return { liquidado: true, danfe };
 }
 
 // ---------------------------------------------------------------------------

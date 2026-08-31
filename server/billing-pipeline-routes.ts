@@ -2730,6 +2730,157 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
  * (a nota autorizada). Se falhar, o card fica em Faturado e alguem move a mao —
  * chato, mas nao perde nem dinheiro nem documento.
  */
+/**
+ * FATURA A VENDA DE BALCAO NA HORA, ENQUANTO O CLIENTE AINDA ESTA NO CAIXA.
+ *
+ * Venda presencial exige documento fiscal ENTREGUE ao consumidor no ato. Nao da
+ * para o cliente sair da loja e a nota ser emitida horas depois, quando alguem
+ * lembrar de clicar em Faturar — e era isso que acontecia: a venda esperava a
+ * rede de seguranca (reconcilePendingOrders) coloca-la no pipeline, e a NFC-e so
+ * saia por acao humana.
+ *
+ * Este e o mesmo caminho de faturamento de sempre, apenas disparado sozinho:
+ * pipeline -> baixa de estoque -> NFC-e -> titulo (ja quitado) -> transmissao.
+ * Nao existe um segundo caminho de faturamento no sistema, e nao e aqui que ele
+ * vai nascer.
+ *
+ * NUNCA LANCA. O dinheiro JA entrou na maquininha antes desta funcao rodar. Se
+ * qualquer etapa falhar, a venda continua registrada e paga, e o pedido fica no
+ * pipeline para tratamento humano — o pior desfecho aceitavel e "nota atrasada",
+ * jamais "venda perdida".
+ *
+ * Devolve o que a maquininha precisa para imprimir o DANFE NFC-e, ou null quando
+ * a nota nao chegou a ser autorizada.
+ */
+export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (maquininha)'): Promise<any | null> {
+  try {
+    const card: any = await storage.getSalesCard(salesCardId);
+    if (!card) return null;
+
+    // 1) Coloca no pipeline. skipDebtCheck porque o CONSUMIDOR BALCAO nunca tem
+    //    debito (e um cliente sintetico) e a venda ja esta paga — nao ha o que
+    //    bloquear. skipHistoryGuard porque a trava de 48h existe contra
+    //    reimportacao de historico do Omie, e esta venda acabou de acontecer.
+    let item: any = null;
+    const existente: any = await db.execute(sql`SELECT id FROM billing_pipeline WHERE sales_card_id = ${salesCardId} LIMIT 1`);
+    const linha = ((existente.rows || existente) as any[])[0];
+    if (linha) {
+      item = await storage.getBillingPipelineItem(String(linha.id));
+    } else {
+      item = await autoSendToBillingPipeline(
+        { ...card, status: 'completed', completedDate: card.completedDate || card.createdAt || new Date() },
+        quem,
+        { skipDebtCheck: true, skipHistoryGuard: true },
+      );
+    }
+    if (!item) {
+      console.warn(`[BALCAO] venda ${salesCardId} nao entrou no pipeline; NFC-e nao emitida.`);
+      return null;
+    }
+    if (String(item.stage) === 'faturado' || String(item.stage) === 'entregue') {
+      return await danfeNfceDoCard(salesCardId); // idempotente: ja faturado
+    }
+
+    // 2) Claim atomico — mesma trava do faturamento manual. Duas chamadas
+    //    concorrentes (reenvio do app, dedo duplo) nao emitem duas notas.
+    const claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now()
+      WHERE id = ${item.id} AND stage <> 'faturado' AND stage <> 'entregue'`);
+    if (((claim?.rowCount ?? claim?.rowsAffected ?? 0) as number) !== 1) {
+      return await danfeNfceDoCard(salesCardId);
+    }
+
+    let lotMap: Record<string, string[]> = {};
+    try { lotMap = await deductStockForBilling(item, { email: quem }); }
+    catch (e: any) { console.warn('[BALCAO] baixa de estoque falhou (segue):', e?.message); }
+
+    let invoiceDraft: any = null;
+    try {
+      // skipEmit: a nota nasce em rascunho, o titulo e criado e SO ENTAO ela e
+      // transmitida — mesma ordem do faturamento manual.
+      invoiceDraft = await createInvoiceFromPipelineItem(item, { email: quem }, lotMap, { skipEmit: true });
+    } catch (e: any) {
+      console.error('[BALCAO] nao foi possivel criar a NFC-e:', e?.message || e);
+    }
+
+    try { await createReceivableFromPipelineItem(item, invoiceDraft?.id || null, { email: quem }); }
+    catch (e: any) { console.warn('[BALCAO] titulo do financeiro falhou (segue):', e?.message); }
+
+    let concluido = false;
+    if (invoiceDraft) concluido = (await transmitirNfeAuto(invoiceDraft)).balcaoConcluido;
+
+    const rotulo = invoiceDraft
+      ? `${invoiceDraft.invoiceModel === '65' ? 'NFC-' : 'NF-'}${invoiceDraft.invoiceNumber}`
+      : null;
+    const historico = Array.isArray(item.stageHistory) ? [...item.stageHistory] : [];
+    historico.push({ stage: 'faturado', changedAt: paredeBR(agora()), changedBy: quem });
+    if (concluido) historico.push({ stage: 'entregue', changedAt: paredeBR(agora()), changedBy: 'nfce-balcao' });
+    await storage.updateBillingPipelineItem(item.id, {
+      stage: concluido ? 'entregue' : 'faturado',
+      stageHistory: historico,
+      ...(rotulo ? { invoiceNumber: rotulo } : {}),
+    } as any);
+
+    return await danfeNfceDoCard(salesCardId);
+  } catch (e: any) {
+    console.error('[BALCAO] faturamento automatico falhou (venda segue paga e registrada):', e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * Dados do DANFE NFC-e para a maquininha imprimir.
+ *
+ * O QR Code e a URL de consulta NAO tem coluna propria: eles ja vem prontos e
+ * ASSINADOS dentro do XML autorizado, no grupo infNFeSupl. Extrair de la e a
+ * unica fonte que nao pode divergir do que a SEFAZ recebeu — copiar para uma
+ * coluna criaria um segundo lugar onde o QR pode estar errado, e um QR errado no
+ * cupom e um documento que o consumidor nao consegue consultar.
+ *
+ * Devolve null enquanto a nota nao estiver autorizada: sem autorizacao nao ha
+ * DANFE, e imprimir um cupom com chave de nota rejeitada seria pior que nao
+ * imprimir nada.
+ */
+export async function danfeNfceDoCard(salesCardId: string): Promise<any | null> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT invoice_number, series, access_key, protocol_number, authorization_date,
+             emission_date, xml_autorizacao, total_invoice, issuer_name, issuer_cnpj,
+             issuer_address, issuer_city, issuer_uf
+        FROM fiscal_invoices
+       WHERE sales_card_id = ${salesCardId} AND status = 'authorized'
+         AND COALESCE(invoice_model, '55') = '65'
+       ORDER BY created_at DESC LIMIT 1`);
+    const nf = ((r.rows || r) as any[])[0];
+    if (!nf) return null;
+
+    const xml = String(nf.xml_autorizacao || '');
+    const qr = /<qrCode>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/qrCode>/.exec(xml);
+    const url = /<urlChave>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/urlChave>/.exec(xml);
+
+    return {
+      numero: nf.invoice_number,
+      serie: nf.series,
+      chave: String(nf.access_key || ''),
+      protocolo: String(nf.protocol_number || ''),
+      autorizadaEm: nf.authorization_date,
+      emitidaEm: nf.emission_date,
+      total: nf.total_invoice,
+      qrCode: qr ? qr[1].trim() : null,
+      urlConsulta: url ? url[1].trim() : null,
+      emitente: {
+        nome: nf.issuer_name,
+        cnpj: nf.issuer_cnpj,
+        endereco: nf.issuer_address,
+        cidade: nf.issuer_city,
+        uf: nf.issuer_uf,
+      },
+    };
+  } catch (e: any) {
+    console.warn('[BALCAO] nao foi possivel montar o DANFE da NFC-e:', e?.message || e);
+    return null;
+  }
+}
+
 export async function concluirBalcaoAposAutorizacao(invoiceId: string): Promise<boolean> {
   try {
     const r: any = await db.execute(sql`
@@ -3074,7 +3225,17 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   if (fiscalInvoiceId) {
     try { const nf = await storage.getFiscalInvoice(fiscalInvoiceId); if (nf && nf.invoiceNumber != null) nfNum = nf.invoiceNumber; } catch {}
   }
-  if (nfNum != null) titleNumber = `NF-${nfNum}`;
+  // Rotulo por MODELO: a NFC-e tem numeracao propria (serie 65, comecou do 1) e
+  // chamar as duas de "NF-" faria o titulo do balcao n. 1 colidir visualmente com
+  // a NF-e n. 1 da serie 1 na conferencia do financeiro.
+  let nfModelo = '55';
+  if (fiscalInvoiceId) {
+    try {
+      const m: any = await db.execute(sql`SELECT COALESCE(invoice_model,'55') AS m FROM fiscal_invoices WHERE id = ${fiscalInvoiceId} LIMIT 1`);
+      nfModelo = String(((m.rows || m) as any[])[0]?.m || '55');
+    } catch { /* banco sem a coluna: segue como 55 */ }
+  }
+  if (nfNum != null) titleNumber = `${nfModelo === '65' ? 'NFC-' : 'NF-'}${nfNum}`;
   else if (item.invoiceNumber) titleNumber = String(item.invoiceNumber);
   else titleNumber = `TIT-${item.salesCardId?.substring(0, 8)}`;
 
@@ -3163,8 +3324,12 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
         amount: totalValue.toFixed(2),
         paymentMethod: (paidMethod === 'pix' ? 'pix' : 'cartao') as any,
         financialAccountId: null,
-        reference: 'Pagamento na loja (hotsite)',
-        notes: `Baixa automatica - pedido pago online (${paidMethod === 'pix' ? 'PIX' : 'cartao'}) na loja/hotsite. Faturamento gerou o titulo ja quitado.`,
+        // A ORIGEM PRECISA SER VERDADEIRA. Dizer "hotsite" numa venda de balcao
+        // manda quem concilia procurar o dinheiro no extrato errado: a venda da
+        // maquininha cai no repasse da Cielo do balcao, nao no da loja online.
+        reference: item.source === 'balcao' ? 'Pagamento na maquininha (balcao)' : 'Pagamento na loja (hotsite)',
+        notes: `Baixa automatica - pedido pago ${item.source === 'balcao' ? 'na maquininha do balcao' : 'online na loja/hotsite'}`
+             + ` (${paidMethod === 'pix' ? 'PIX' : 'cartao'}). Faturamento gerou o titulo ja quitado.`,
         createdBy: user?.email || 'sistema (loja)',
       } as any);
       await storage.updateReceivable(receivable.id, { amountPaid: totalValue.toFixed(2), status: 'recebida' as any });
