@@ -373,10 +373,20 @@ export default function BillingPipeline() {
 
   const { data: rawItems = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
+    // Board de operação: atualiza sozinho para que pedidos recém-colocados
+    // (ex.: vendedor concluindo venda) apareçam sem precisar recarregar a tela.
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
 
   const { data: blockedOrders = [] } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
 
   // Mapas para resolver SEMPRE o Nome Fantasia no card (independe do que veio gravado em customer_name —
