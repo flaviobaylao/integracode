@@ -228,3 +228,75 @@ export function sqlParedeBRComVirada(col: string): string {
     + ` THEN (${col} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`
     + ` ELSE ${col} END)`;
 }
+
+/* ==================== DIAS UTEIS (feriados nacionais BR) ==================== */
+
+/** Domingo de Pascoa do ano, como 'MM-DD' (algoritmo de Meeus/Jones/Butcher). */
+function pascoaMMDD(ano: number): { mes: number; dia: number } {
+  const a = ano % 19, b = Math.floor(ano / 100), c = ano % 100;
+  const d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return { mes, dia };
+}
+
+/** Feriados NACIONAIS fixos, 'MM-DD'. (20/11 = Consciencia Negra, nacional desde 2024.) */
+const FERIADOS_FIXOS_MMDD = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'];
+
+/** Conjunto de feriados nacionais ('YYYY-MM-DD') de um ano: fixos + moveis
+ *  derivados da Pascoa (Carnaval seg/ter, Sexta-feira Santa, Corpus Christi).
+ *  Calculado, nao tabelado — nao vence com a virada do ano. */
+const _feriadosCache = new Map<number, Set<string>>();
+export function feriadosNacionaisBR(ano: number): Set<string> {
+  const cache = _feriadosCache.get(ano);
+  if (cache) return cache;
+  const p = pascoaMMDD(ano);
+  const pascoa = Date.UTC(ano, p.mes - 1, p.dia);
+  const desloca = (dias: number) => new Date(pascoa + dias * 86400000).toISOString().slice(0, 10);
+  const set = new Set<string>([
+    ...FERIADOS_FIXOS_MMDD.map((md) => `${ano}-${md}`),
+    desloca(-48), // Carnaval (segunda)
+    desloca(-47), // Carnaval (terca)
+    desloca(-2),  // Sexta-feira Santa
+    desloca(60),  // Corpus Christi
+  ]);
+  _feriadosCache.set(ano, set);
+  return set;
+}
+
+/** true se 'YYYY-MM-DD' e feriado nacional brasileiro. */
+export function ehFeriadoBR(dia: string): boolean {
+  const d = String(dia).slice(0, 10);
+  return feriadosNacionaisBR(Number(d.slice(0, 4))).has(d);
+}
+
+/** true se 'YYYY-MM-DD' e dia util no Brasil (nao e sabado, domingo nem feriado nacional). */
+export function ehDiaUtilBR(dia: string): boolean {
+  const d = String(dia).slice(0, 10);
+  const dow = new Date(`${d}T00:00:00Z`).getUTCDay(); // 0=dom 6=sab
+  if (dow === 0 || dow === 6) return false;
+  return !ehFeriadoBR(d);
+}
+
+/** Quantos DIAS UTEIS se passaram de `de` ate `ate` (ambos 'YYYY-MM-DD').
+ *  Conta o dia final quando util e NAO conta o inicial: mesmo dia = 0,
+ *  proximo dia util = 1. Datas futuras devolvem 0. Teto de 400 dias. */
+export function diasUteisEntre(de: string, ate: string): number {
+  const ini = String(de).slice(0, 10);
+  const fim = String(ate).slice(0, 10);
+  if (!ini || !fim || fim <= ini) return 0;
+  let n = 0;
+  const cur = new Date(`${ini}T00:00:00Z`);
+  const alvo = Date.parse(`${fim}T00:00:00Z`);
+  let guarda = 0;
+  while (cur.getTime() < alvo && guarda++ < 400) {
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    if (ehDiaUtilBR(cur.toISOString().slice(0, 10))) n++;
+  }
+  return n;
+}
