@@ -21768,24 +21768,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // cliente aparecer antes de começar a ser atendido. Este guard vale inclusive para
             // rotas JÁ PERSISTIDAS, sem precisar regerar. (31/jul/2026)
             sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${new Date(`${date}T23:59:59.999Z`)})`,
-            // 🛡️ CLIENTES ATIVOS (fonte da verdade): o cliente desativado em "Clientes Ativos"
-            // (active_customers.is_active=false) NÃO entra na rota, mesmo que customers.isActive
-            // tenha ficado dessincronizado em true. Mantém quem NÃO está na lista (não importado)
-            // e quem tem membership ATIVA; exclui só quem está na lista e sem nenhuma linha ativa.
-            // Casa por customer_id OU por documento normalizado (active_customers.document = só dígitos).
-            sql`(
-              NOT EXISTS (
-                SELECT 1 FROM active_customers ac
-                WHERE ac.customer_id = ${customers.id}
-                   OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g'))
-              )
-              OR EXISTS (
-                SELECT 1 FROM active_customers ac
-                WHERE ac.is_active = true
-                  AND (ac.customer_id = ${customers.id}
-                    OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g')))
-              )
-            )`
+            // 🎯 CARTEIRA DO CADASTRO como fonte da verdade (em vez de active_customers): a Rota do Dia
+            // mostra o cliente ATIVO no cadastro (customers.is_active) da carteira do vendedor. A lista
+            // active_customers estava DESSINCRONIZADA e escondia clientes ativos da rota, mesmo com
+            // omieStatus='ativo' e visita agendada no dia. Fornecedor e lead nunca entram como presencial.
+            sql`(${customers.isSupplier} IS NOT TRUE)`,
+            sql`(${customers.isLead} IS NOT TRUE)`
           ));
 
         const inactiveCount = customerIds.length - customersData.length;
