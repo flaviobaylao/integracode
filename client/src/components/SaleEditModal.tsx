@@ -297,31 +297,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     },
   });
 
-  const duplicateCardMutation = useMutation({
-    mutationFn: async (cardId: string) => {
-      const today = new Date();
-      return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
-        newDate: today.toISOString().split('T')[0]
-      });
-    },
-    onSuccess: (duplicatedCard: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      toast({
-        title: "Pedido aberto para conferência",
-        description: "Copiamos os produtos e quantidades do pedido anterior. Confira, edite se precisar e envie.",
-        duration: 5000,
-      });
-      onClose();
-    },
-    onError: (error) => {
-      toast({
-        title: "Erro ao Duplicar",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   // Gerenciar seleção de produtos via checkbox
   const handleProductToggle = (productId: string, checked: boolean) => {
     if (checked) {
@@ -688,24 +663,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       title: "Funcionalidade",
       description: "Modal de não venda será implementado.",
     });
-  };
-
-  const handleDuplicateLastOrder = async () => {
-    if (!card?.id) {
-      toast({
-        title: "Erro",
-        description: "Card não encontrado",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      duplicateCardMutation.mutate(card.id);
-    } finally {
-      setIsSubmitting(false);
-    }
   };
 
   const captureLocation = () => {
@@ -1793,23 +1750,6 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
           
           {/* Botões de Ação - Salvar e Finalizar */}
           <div className="border-t pt-4 space-y-3">
-            {/* Botão Duplicar Último Pedido */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <p className="text-sm text-blue-800 mb-2">
-                📋 <strong>Duplicar Pedido:</strong> Cria um novo card com os mesmos produtos para amanhã.
-              </p>
-              <Button 
-                variant="outline" 
-                onClick={handleDuplicateLastOrder}
-                disabled={isSubmitting}
-                className="w-full bg-blue-100 hover:bg-blue-200 border-blue-300 text-blue-800"
-                data-testid="button-duplicate-last-order"
-              >
-                <Package className="h-4 w-4 mr-2" />
-                Duplicar Último Pedido
-              </Button>
-            </div>
-
             {/* Botão Salvar e Sair (sem finalizar) */}
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
               <p className="text-sm text-yellow-800 mb-2">
