@@ -1746,22 +1746,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
       }
-      // 🎯 Buscar clientes ativos COM coordenadas do customers table
-      const active = await db.select().from(activeCustomers).where(eq(activeCustomers.isActive, true));
-      
-      if (active.length === 0) {
-        return res.json([]);
-      }
-      
-      const customerIds = active.map(ac => ac.customerId).filter((id) => id != null) as string[];
-      if (customerIds.length === 0) {
-        return res.json([]);
-      }
-      
-      // Buscar clientes com coordenadas
+      // 🎯 MAPA DE CLIENTES = CARTEIRA COMPLETA. Antes o mapa só mostrava clientes presentes na
+      // tabela active_customers, que estava DESSINCRONIZADA da carteira (customers.seller_id) — assim
+      // muitos clientes ATIVOS do cadastro ficavam de fora do mapa. Agora lê direto de customers:
+      // todos os ATIVOS do cadastro (is_active=true) com coordenadas, exceto fornecedores e leads.
+      // (As situações 'inativados' e 'perdidos' acima já liam de customers direto — fica consistente.)
       const customersData = await db.select().from(customers).where(
         and(
-          inArray(customers.id, customerIds),
+          eq(customers.isActive, true),
+          sql`(${customers.isSupplier} IS NOT TRUE)`,
+          sql`(${customers.isLead} IS NOT TRUE)`,
           isNotNull(customers.latitude),
           isNotNull(customers.longitude)
         )
