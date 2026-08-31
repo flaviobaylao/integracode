@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
-import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre, fmtCalendarioBR } from '@shared/tempo';
+import { agora, diaMaisBR, componentesBR, diaCalendario, diasEntre, fmtCalendarioBR } from '@shared/tempo';
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -210,39 +210,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     },
   });
 
-  const duplicateCardMutation = useMutation({
-    mutationFn: async (cardId: string) => {
-      // Dia de HOJE no Brasil. Antes saia de nowBrazil().toISOString(), que reaplica o
-      // fuso do navegador sobre um Date ja deslocado. Ver shared/tempo.ts.
-      return await apiRequest('POST', `/api/sales-cards/${cardId}/duplicate`, {
-        newDate: hojeBR()
-      });
-    },
-    onSuccess: (duplicatedCard: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
-      toast({
-        title: "Pedido aberto para conferência",
-        description: "Copiamos os produtos e quantidades do pedido anterior. Confira, edite se precisar e envie.",
-        duration: 5000,
-      });
-      onClose();
-      // Abrir o novo card para edição
-      if (onStartSale && duplicatedCard) {
-        setTimeout(() => {
-          onStartSale(duplicatedCard);
-        }, 300);
-      }
-    },
-    onError: (error) => {
-      toast({
-        title: "Erro ao Duplicar",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   // Mutation para alternar tipo de atendimento
   const toggleServiceTypeMutation = useMutation({
     mutationFn: async ({ customerId, virtualService }: { customerId: string, virtualService: boolean }) => {
@@ -319,20 +286,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         variant: "destructive",
       });
     }
-  };
-
-  // Função para duplicar pedido
-  const handleDuplicateLastOrder = () => {
-    if (!card?.id) {
-      toast({
-        title: "Erro",
-        description: "Card não encontrado",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    duplicateCardMutation.mutate(card.id);
   };
 
   // 💬 Criar conversa no chat do Integra em vez de abrir WhatsApp
@@ -802,17 +755,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                 Não Venda
               </Button>
             )}
-            {card.status === 'completed' && (
-              <Button
-                onClick={handleDuplicateLastOrder}
-                variant="outline"
-                className="w-full border-blue-600 text-blue-600 hover:bg-blue-50"
-                data-testid="button-duplicate-completed-order"
-              >
-                <Package className="h-4 w-4 mr-2" />
-                Duplicar Pedido
-              </Button>
-            )}
           </div>
         )}
 
@@ -997,14 +939,6 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               >
                 <Ban className="h-4 w-4 mr-2" />
                 Não Venda
-              </Button>
-              <Button
-                onClick={handleDuplicateLastOrder}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                data-testid="button-duplicate-last-order"
-              >
-                <Package className="h-4 w-4 mr-2" />
-                Duplicar Pedido
               </Button>
             </div>
           </div>
