@@ -60,7 +60,6 @@ import {
   ShoppingCart,
   Loader2,
   MessageCircle,
-  Copy,
   Send,
   RefreshCw,
   History
@@ -2225,37 +2224,6 @@ export default function ActiveCustomers() {
             )}
 
             <DialogFooter className="flex gap-2">
-              {lastOrderData && (
-                <Button 
-                  className="bg-purple-600 hover:bg-purple-700"
-                  onClick={async () => {
-                    if (!lastOrderCustomerId || !lastOrderData) return;
-                    try {
-                      const response = await fetch('/api/sales-cards/duplicate-from-order', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify({
-                          customerId: lastOrderCustomerId,
-                          products: lastOrderData.products || [],
-                          paymentMethod: lastOrderData.payment_method,
-                          orderType: lastOrderData.order_type
-                        })
-                      });
-                      if (!response.ok) throw new Error('Erro ao duplicar pedido');
-                      const newCard = await response.json();
-                      toast({ title: "Sucesso", description: "Pedido duplicado com sucesso! Abrindo card de vendas..." });
-                      setShowLastOrderModal(false);
-                      handleRowClick(lastOrderCustomerId);
-                    } catch (error) {
-                      toast({ variant: "destructive", title: "Erro", description: "Não foi possível duplicar o pedido." });
-                    }
-                  }}
-                >
-                  <Copy className="h-4 w-4 mr-2" />
-                  Duplicar Pedido
-                </Button>
-              )}
               <Button variant="outline" onClick={() => setShowLastOrderModal(false)}>
                 Fechar
               </Button>
