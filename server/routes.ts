@@ -21584,6 +21584,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // preso na rota antiga de segunda). Preserva LEADS, virtuais e adições MANUAIS. Só data atual/futura.
       // Confere agenda por (customer_id + data) sem travar no seller (respeita delegação de carteira).
       try {
+        // Import local ALIASADO do db: o handler declara `const { db }` mais abaixo (bloco-escopo),
+        // então o `db` do módulo fica em TDZ aqui — usamos _dbPrune para evitar o erro.
+        const { db: _dbPrune } = await import('./db');
         const todayBRprune = getBrazilDateString();
         if (date >= todayBRprune) {
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
@@ -21603,13 +21606,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           if (custIds.length > 0) {
             // Clientes com visita NA AGENDA nesse dia (qualquer status/seller).
-            const agRows: any = await db.execute(sql`
+            const agRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM visit_agenda
               WHERE DATE(scheduled_date) = ${date}
                 AND customer_id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const agendaDateIds = new Set<string>((agRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
             // Adições manuais do dia (sempre permanecem).
-            const manRows: any = await db.execute(sql`
+            const manRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM sales_cards
               WHERE seller_id = ${sellerId} AND source = 'manual_route_addition' AND DATE(scheduled_date) = ${date}`);
             const manualIds = new Set<string>((manRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
