@@ -33,6 +33,7 @@ export default function HotsitePricing() {
         description: "Preços atualizados com sucesso.",
       });
       setEditedProducts({});
+      setTextoDigitado({});
     },
     onError: (error: any) => {
       toast({
@@ -43,13 +44,35 @@ export default function HotsitePricing() {
     },
   });
 
+  // ── PRECO DIGITADO: aceita VIRGULA ──────────────────────────────────────
+  //
+  // Os campos eram <input type="number">. Num navegador em portugues, digitar
+  // "10,90" ali costuma devolver string VAZIA — o navegador considera o valor
+  // invalido e nao o entrega ao React. Resultado: a pessoa digitava o preco do
+  // jeito que se escreve preco no Brasil, o campo silenciosamente virava nada, e
+  // o Salvar gravava null. Nenhum aviso, nenhum erro: o preco simplesmente nao
+  // existia depois. Foi o que manteve cinco produtos sem atacado por meses.
+  //
+  // Agora o campo e texto livre e a conversao acontece aqui, aceitando os dois
+  // separadores. Guardamos tambem o TEXTO CRU para o campo continuar mostrando o
+  // que a pessoa digitou enquanto ela digita — sem isso, apagar o ultimo digito
+  // de "5,4" faria o valor pular sozinho na tela.
+  const [textoDigitado, setTextoDigitado] = useState<Record<string, string>>({});
+
+  const paraNumero = (valor: string): number | null => {
+    const limpo = valor.trim().replace(/\s/g, '').replace(',', '.');
+    if (limpo === '') return null;
+    const n = Number(limpo);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+
   const handlePriceChange = (productId: string, field: keyof Product, value: string) => {
-    const numValue = value === '' ? null : parseFloat(value);
+    setTextoDigitado(prev => ({ ...prev, [`${productId}:${String(field)}`]: value }));
     setEditedProducts(prev => ({
       ...prev,
       [productId]: {
         ...(prev[productId] || {}),
-        [field]: numValue,
+        [field]: paraNumero(value),
       },
     }));
   };
@@ -68,6 +91,25 @@ export default function HotsitePricing() {
     const edits = editedProducts[productId];
     if (!edits) return;
 
+    // TEXTO INVALIDO NAO APAGA PRECO. paraNumero() devolve null tanto para campo
+    // vazio (apagar o preco DE PROPOSITO) quanto para lixo digitado ("12a"). Sem
+    // esta checagem os dois casos gravariam null, e um erro de digitacao zeraria
+    // silenciosamente um preco de venda — o mesmo tipo de falha silenciosa que
+    // deixou cinco produtos sem atacado. Aqui o vazio continua valendo como
+    // "limpar", e so o lixo e barrado.
+    const invalidos = Object.entries(textoDigitado)
+      .filter(([chave, valor]) => chave.startsWith(`${productId}:`) && valor.trim() !== '' && paraNumero(valor) === null)
+      .map(([chave]) => chave.split(':')[1]);
+
+    if (invalidos.length) {
+      toast({
+        title: 'Preço inválido',
+        description: `Confira o valor digitado. Use apenas números, com vírgula ou ponto — por exemplo 10,90.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     updateProductMutation.mutate({
       id: productId,
       data: edits,
@@ -77,6 +119,13 @@ export default function HotsitePricing() {
   const formatPrice = (value: number | string | null | undefined): string => {
     if (value === null || value === undefined) return '';
     return value.toString();
+  };
+
+  /** Mostra o que a pessoa digitou (inclusive "5," a meio caminho) e, fora de
+   *  edicao, o valor gravado. */
+  const valorCampo = (productId: string, field: keyof Product, gravado: number | string | null | undefined): string => {
+    const cru = textoDigitado[`${productId}:${String(field)}`];
+    return cru !== undefined ? cru : formatPrice(gravado);
   };
 
   const hasEdits = (productId: string) => {
@@ -186,11 +235,10 @@ export default function HotsitePricing() {
                       Varejo
                     </label>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formatPrice(displayRetail)}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valorCampo(product.id, 'retailPrice', displayRetail)}
                       onChange={(e) => handlePriceChange(product.id, 'retailPrice', e.target.value)}
                       data-testid={`input-retail-${product.id}`}
                       className="text-right"
@@ -205,11 +253,10 @@ export default function HotsitePricing() {
                       Atacado
                     </label>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formatPrice(displayWholesale)}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valorCampo(product.id, 'wholesalePrice', displayWholesale)}
                       onChange={(e) => handlePriceChange(product.id, 'wholesalePrice', e.target.value)}
                       data-testid={`input-wholesale-${product.id}`}
                       className="text-right"
@@ -224,11 +271,10 @@ export default function HotsitePricing() {
                       Goiânia
                     </label>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formatPrice(displayGoiania)}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valorCampo(product.id, 'resaleGoianiaPrice', displayGoiania)}
                       onChange={(e) => handlePriceChange(product.id, 'resaleGoianiaPrice', e.target.value)}
                       data-testid={`input-goiania-${product.id}`}
                       className="text-right"
@@ -243,11 +289,10 @@ export default function HotsitePricing() {
                       Interior GO
                     </label>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formatPrice(displayInterior)}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valorCampo(product.id, 'resaleInteriorPrice', displayInterior)}
                       onChange={(e) => handlePriceChange(product.id, 'resaleInteriorPrice', e.target.value)}
                       data-testid={`input-interior-${product.id}`}
                       className="text-right"
@@ -262,11 +307,10 @@ export default function HotsitePricing() {
                       Brasília/DF
                     </label>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={formatPrice(displayBrasilia)}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valorCampo(product.id, 'resaleBrasiliaPrice', displayBrasilia)}
                       onChange={(e) => handlePriceChange(product.id, 'resaleBrasiliaPrice', e.target.value)}
                       data-testid={`input-brasilia-${product.id}`}
                       className="text-right"
