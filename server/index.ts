@@ -48,6 +48,7 @@ import { registerRepescagemRoutes } from './repescagem-routes';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
+import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
@@ -3430,6 +3431,12 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Modulo Industria completo (materia-prima, movimentacoes, ordens de producao,
   // finalizacao com qualidade/CMV e integracao com inventory_lots) — 18/ago/2026
   try { registerIndustriaRoutes(app); } catch (e) { console.error('[industria routes]', e); }
+
+  // Anexos de especificacao tecnica da materia-prima (laudos, fichas do
+  // fornecedor, certificados) — 01/set/2026. Registrado DEPOIS do modulo
+  // Industria; as rotas nao colidem (/raw-materials/attachments/summary,
+  // /raw-materials/:id/attachments, /raw-material-attachments/:attId).
+  try { registerRawMaterialAttachmentRoutes(app); } catch (e) { console.error('[mp-anexos]', e); }
 
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
