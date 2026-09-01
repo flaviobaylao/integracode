@@ -394,6 +394,11 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     const d = new Date(today); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0];
   })();
 
+  // Travas manuais: valem só para o dia vigente. Zera as de dias anteriores.
+  await resetStaleLocks(today);
+  // Uma linha travada HOJE não sofre redistribuição automática (reatribuição/rebalanceamento).
+  const isLockedToday = (a: any) => !!a?.locked && a?.lockedDate === today;
+
   const skipCands: SkipCiclo[] = [];
   const candidates = await computeRedCandidates({ startDate, endDate }, skipCands);
   const candidateByCustomerId = new Map(candidates.map(c => [c.customerId, c]));
@@ -554,6 +559,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // carteira de telemarketing. (30/jul/2026)
   for (const a of pendingNow) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
+    if (isLockedToday(a)) continue;               // trava manual do dia: não reatribui
     const ownerTmId = ownerTelemarketingId(a.customerId);
     if (!ownerTmId) continue;                     // dono não é telemarketing → regra não se aplica
     if (a.assignedUserId === ownerTmId) continue; // já está com o dono
@@ -648,6 +654,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // por mudanca de rota) para evitar churn diario.
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
+    if (isLockedToday(a)) continue;                   // trava manual do dia: não promove
     if (!internalSet.has(a.assignedUserId)) continue; // so mexe em quem esta no telemarketing
     if (!isExternalPortfolio(a.customerId)) continue;
     const ownerId = coordById.get(a.customerId)?.sellerId || null;
@@ -681,6 +688,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // 4) Reatribuir os pendentes cujo atendente foi desabilitado
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
+    if (isLockedToday(a)) continue;                 // trava manual do dia: mantém o atendente escolhido
     if (enabledSet.has(a.assignedUserId)) continue; // atribuicao ainda valida
     const target = chooseTarget(a.customerId);
     if (!target) {
@@ -738,7 +746,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       if (!max.id || !min.id || max.v - min.v <= 1) break;
       // Só move clientes SEM dono de telemarketing (externos/sem dono). Cliente de carteira de
       // telemarketing fica preso ao próprio dono — o rebalanceamento nunca cruza carteira.
-      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId));
+      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId) && !isLockedToday(a));
       if (!toMove) break;
       await db.update(repescagemAssignments).set({
         assignedUserId: min.id,
@@ -963,12 +971,13 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     return { skipped: true, reason: 'dia já sorteado', drawDate, existing: existing.length };
   }
   if (existing.length > 0 && opts.force) {
-    // Refaz apenas o que ainda não foi atendido (não apaga 'completed').
-    await db.delete(repescagemAssignments).where(and(
-      eq(repescagemAssignments.drawDate, drawDate),
-      isNotNull(repescagemAssignments.phase),
-      inArray(repescagemAssignments.status, ['in_route', 'returned', 'pending'] as any),
-    ));
+    await ensureRepescagemLockCol();
+    // Refaz apenas o que ainda não foi atendido (não apaga 'completed') e PRESERVA as
+    // alocações TRAVADAS manualmente para o dia vigente (locked + locked_date = drawDate).
+    await db.execute(sql`DELETE FROM repescagem_assignments
+      WHERE draw_date = ${drawDate} AND phase IS NOT NULL
+        AND status IN ('in_route','returned','pending')
+        AND NOT (locked = true AND locked_date = ${drawDate})`);
   }
 
   // Atendentes habilitados, separados por função.
@@ -1013,6 +1022,18 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   // ---- Fase A: externos (perimetro 2 km, teto EXTERNAL_MAX_PER_SELLER, PRIORIDADE do proprio vendedor) ----
   // Somente clientes de carteira de vendedor externo entram aqui; o resto vai p/ telemarketing (Fase B).
   const extLoad = new Map<string, number>(externalSellers.map(id => [id, 0]));
+  // Alocações TRAVADAS que sobreviveram ao force-delete: o cliente já está alocado (não
+  // re-sorteia) e o atendente já ocupou uma vaga (conta no teto/carga da redistribuição).
+  const preTeleLoad = new Map<string, number>();
+  try {
+    const lockedSurvivors: any = await db.execute(sql`SELECT customer_id, assigned_user_id FROM repescagem_assignments
+      WHERE draw_date = ${drawDate} AND status = 'in_route' AND locked = true AND locked_date = ${drawDate}`);
+    for (const r of (lockedSurvivors.rows || []) as any[]) {
+      allocated.add(r.customer_id);
+      if (extLoad.has(r.assigned_user_id)) extLoad.set(r.assigned_user_id, (extLoad.get(r.assigned_user_id) || 0) + 1);
+      else preTeleLoad.set(r.assigned_user_id, (preTeleLoad.get(r.assigned_user_id) || 0) + 1);
+    }
+  } catch (e) { console.error('[runDailyDraw] lockedSurvivors:', (e as any)?.message); }
   const anchorsBySeller = new Map<string, Array<{ lat: number; lng: number }>>();
   for (const sellerId of externalSellers) {
     anchorsBySeller.set(sellerId, await repGetRouteAnchors(sellerId, drawDate));
@@ -1055,7 +1076,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     .filter((c: any) => !allocated.has(c.customerId))
     .sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
   if (telemarketers.length > 0) {
-    const load = new Map<string, number>(telemarketers.map(id => [id, 0]));
+    const load = new Map<string, number>(telemarketers.map(id => [id, preTeleLoad.get(id) || 0]));
     for (const c of remaining) {
       let best: string | null = null; let bestScore = Infinity;
       for (const t of telemarketers) {
@@ -1145,6 +1166,25 @@ async function ensureRepescagemOrderCol(): Promise<void> {
   if (__ensuredOrderCol) return;
   await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS closed_by_order boolean NOT NULL DEFAULT false"));
   __ensuredOrderCol = true;
+}
+
+// Coluna locked_date: dia (YYYY-MM-DD) a que a trava manual se aplica. A trava só vale
+// para o dia vigente (destrava automática na virada do dia).
+let __ensuredLockCol = false;
+async function ensureRepescagemLockCol(): Promise<void> {
+  if (__ensuredLockCol) return;
+  await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false"));
+  await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked_date varchar"));
+  __ensuredLockCol = true;
+}
+
+// Zera travas de dias anteriores (destrava automática na virada do dia). Idempotente.
+async function resetStaleLocks(today: string): Promise<void> {
+  try {
+    await ensureRepescagemLockCol();
+    await db.execute(sql`UPDATE repescagem_assignments SET locked = false, updated_at = now()
+      WHERE locked = true AND (locked_date IS NULL OR locked_date <> ${today})`);
+  } catch (e) { console.error('[resetStaleLocks]', (e as any)?.message); }
 }
 
 async function closeAndExpireRepescagem(date: string): Promise<any> {
@@ -1287,6 +1327,99 @@ export function registerRepescagemRoutes(app: Express, opts: {
       res.json(result);
     } catch (e: any) {
       console.error('POST /api/repescagem/draw', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Redistribuição manual (admin) — botão "Atualizar". Dispara TODAS as regras de novo,
+  // olhando os atendentes habilitados, PRESERVANDO as linhas travadas do dia; ajusta a
+  // lista (pending) e a rota do dia (in_route via sorteio).
+  app.post('/api/repescagem/redistribute', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const today = brTodayStr();
+      await resetStaleLocks(today);
+      const draw = await runDailyDraw({ drawDate: today, force: true });
+      await reconcileAssignments((req as any).currentUser?.id);
+      res.json({ ok: true, drawDate: today, draw });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/redistribute', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Reatribuir manualmente o atendente de uma alocação (admin). Aceita QUALQUER atendente
+  // habilitado (override) e TRAVA a linha no dia para a redistribuição não reverter.
+  app.post('/api/repescagem/assignments/:id/reassign', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const toUserId = String(req.body?.toUserId || '').trim();
+      if (!toUserId) return res.status(400).json({ message: 'toUserId obrigatório' });
+      const today = brTodayStr();
+      await ensureRepescagemLockCol();
+      const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
+      const a = rows[0];
+      // Valida: atendente habilitado, elegível (vendedor/telemarketing) e não excluído.
+      const enabled = await db.select().from(repescagemAttendants)
+        .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
+      const urows = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, toUserId));
+      const role = urows[0]?.role;
+      if (enabled.length === 0 || REPESCAGEM_EXCLUDED_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
+        return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
+      }
+      const phase = role === 'vendedor' ? 'external' : 'telemarketing';
+      // Atualiza a linha (pending) escolhida + TRAVA no dia.
+      await db.update(repescagemAssignments).set({
+        assignedUserId: toUserId, phase, locked: true, lockedDate: today, assignedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, id));
+      // Propaga p/ a rota do dia (in_route do MESMO cliente hoje), mantendo consistência.
+      await db.execute(sql`UPDATE repescagem_assignments
+        SET assigned_user_id = ${toUserId}, phase = ${phase}, locked = true, locked_date = ${today}, updated_at = now()
+        WHERE customer_id = ${a.customerId} AND status = 'in_route' AND draw_date = ${today}`);
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId,
+        action: 'reassigned', reason: 'Troca manual pelo admin (linha travada no dia)',
+      });
+      res.json({ ok: true, assignmentId: id, assignedUserId: toUserId, phase, locked: true });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/assignments/:id/reassign', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Travar / destravar UMA linha (admin). A trava vale só para o dia vigente.
+  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const locked = req.body?.locked === true || String(req.body?.locked) === 'true';
+      const today = brTodayStr();
+      await ensureRepescagemLockCol();
+      const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, id));
+      if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
+      const a = rows[0];
+      // Aplica em todas as linhas do MESMO cliente hoje (pending + in_route), p/ UI e rota baterem.
+      await db.execute(sql`UPDATE repescagem_assignments
+        SET locked = ${locked}, locked_date = ${locked ? today : null}, updated_at = now()
+        WHERE customer_id = ${a.customerId} AND (status = 'pending' OR (status = 'in_route' AND draw_date = ${today}))`);
+      res.json({ ok: true, assignmentId: id, locked });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/assignments/:id/lock', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Travar / destravar TODAS as linhas do dia (admin) — cadeado do cabeçalho.
+  app.post('/api/repescagem/assignments/lock-all', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const locked = req.body?.locked === true || String(req.body?.locked) === 'true';
+      const today = brTodayStr();
+      await ensureRepescagemLockCol();
+      const upd: any = await db.execute(sql`UPDATE repescagem_assignments
+        SET locked = ${locked}, locked_date = ${locked ? today : null}, updated_at = now()
+        WHERE status = 'pending' OR (status = 'in_route' AND draw_date = ${today})`);
+      res.json({ ok: true, locked, affected: (upd?.rowCount ?? null) });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/assignments/lock-all', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
@@ -1696,6 +1829,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           assignedUserName: userNameById.get(p.assignedUserId) || p.assignedUserId,
           assignedAt: p.assignedAt,
           unassigned: false,
+          locked: !!(p as any).locked && (p as any).lockedDate === today,
         };
       });
 
@@ -1751,6 +1885,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
             assignedUserName: '',
             assignedAt: '' as any,
             unassigned: true,
+            locked: false,
           });
         }
       }
