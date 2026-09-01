@@ -1,7 +1,7 @@
 // Integra 2.0 Service Worker
 // Estratégia: Cache-first para assets, Network-first para API, offline fallback para navegação
 
-const CACHE_VERSION = 'v24';
+const CACHE_VERSION = 'v25';
 const SHELL_CACHE  = `integra-shell-${CACHE_VERSION}`;
 const API_CACHE    = `integra-api-${CACHE_VERSION}`;
 const ALL_CACHES   = [SHELL_CACHE, API_CACHE];
