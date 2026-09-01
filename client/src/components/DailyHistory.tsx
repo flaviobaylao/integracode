@@ -64,9 +64,19 @@ export default function DailyHistory() {
   }, [snaps, curMonth]);
 
   const [sel, setSel] = useState<string>("");
+  const [chartSeller, setChartSeller] = useState<string>("__all__");
   const monthSel = sel && months.includes(sel) ? sel : (months[0] || "");
 
   const weeks = useMemo(() => (monthSel ? buildWeeks(monthSel) : []), [monthSel]);
+
+  // Dias do mes (em ordem) para o grafico de linha.
+  const monthDays = useMemo(() => {
+    const out: { iso: string; dom: number; dow: number }[] = [];
+    for (const wk of weeks) for (const d of wk.days) if (d.inMonth) {
+      out.push({ iso: d.iso, dom: d.dom, dow: new Date(d.iso + "T12:00:00Z").getUTCDay() });
+    }
+    return out;
+  }, [weeks]);
 
   // seller -> iso -> valor  (do mes selecionado)
   const { sellers, valMap, dayTot, mesTot } = useMemo(() => {
@@ -185,6 +195,64 @@ export default function DailyHistory() {
           </table>
         </div>
         <div className="text-[11px] text-gray-400 mt-2">Colunas de dia em R$ sem centavos; subtotais semanais e total mensal em R$. Dias fora do mês aparecem em cinza. Somente valores realizados (sem projeções).</div>
+
+        {(() => {
+          const chartSel = chartSeller !== "__all__" && !sellers.includes(chartSeller) ? "__all__" : chartSeller;
+          const vals = monthDays.map((d) => chartSel === "__all__" ? (dayTot.get(d.iso) || 0) : (valMap.get(chartSel)?.get(d.iso) || 0));
+          const N = monthDays.length;
+          const step = 34, mLeft = 48, mRight = 16, top = 14, bottom = 30;
+          const H = 210, plotTop = top, plotBottom = H - bottom, plotH = plotBottom - plotTop;
+          const W = mLeft + N * step + mRight;
+          const maxV = Math.max(1, ...vals);
+          const x = (i: number) => mLeft + i * step + step / 2;
+          const y = (v: number) => plotTop + plotH * (1 - v / maxV);
+          const kf = (n: number) => (Math.abs(n) >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(".", ",") + "k" : String(Math.round(n)));
+          const pts = vals.map((v, i) => x(i) + "," + y(v)).join(" ");
+          const totalScope = vals.reduce((a, b) => a + b, 0);
+          const gy = [0, 0.25, 0.5, 0.75, 1];
+          const MM = monthSel.slice(5);
+          return (
+            <div className="mt-4 border-t pt-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                <div className="text-sm font-semibold text-gray-700">Faturamento diário — {chartSel === "__all__" ? "Todos os vendedores" : chartSel} <span className="text-gray-400 font-normal">({brl(totalScope)})</span></div>
+                <label className="text-sm text-gray-600 flex items-center gap-2">Vendedor:
+                  <select className="border rounded px-2 py-1 text-sm" value={chartSel} onChange={(e) => setChartSeller(e.target.value)}>
+                    <option value="__all__">Todos</option>
+                    {sellers.map((sName) => (<option key={sName} value={sName}>{sName}</option>))}
+                  </select>
+                </label>
+              </div>
+              <div className="overflow-x-auto">
+                <svg width={W} height={H} className="block" style={{ minWidth: W }}>
+                  {gy.map((g, i) => (
+                    <g key={"g" + i}>
+                      <line x1={mLeft} x2={W - mRight} y1={plotTop + plotH * (1 - g)} y2={plotTop + plotH * (1 - g)} stroke="#eef2f7" />
+                      <text x={mLeft - 6} y={plotTop + plotH * (1 - g) + 3} textAnchor="end" fontSize="9" fill="#9ca3af">{kf(maxV * g)}</text>
+                    </g>
+                  ))}
+                  {monthDays.map((d, i) => (d.dow === 0 || d.dow === 6) ? (
+                    <rect key={"we" + i} x={mLeft + i * step} y={plotTop} width={step} height={plotH} fill="#f8fafc" />
+                  ) : null)}
+                  {monthDays.map((d, i) => d.dow === 1 && i > 0 ? (
+                    <line key={"wk" + i} x1={mLeft + i * step} x2={mLeft + i * step} y1={plotTop} y2={plotBottom} stroke="#e5e7eb" strokeDasharray="3 3" />
+                  ) : null)}
+                  <line x1={mLeft} x2={W - mRight} y1={plotBottom} y2={plotBottom} stroke="#cbd5e1" />
+                  <polyline points={pts} fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                  {vals.map((v, i) => (
+                    <g key={"pt" + i}>
+                      <circle cx={x(i)} cy={y(v)} r="2.6" fill="#fff" stroke="#4f46e5" strokeWidth="1.5" />
+                      <title>{monthDays[i].dom + "/" + MM + " (" + DOWLBL[(monthDays[i].dow + 6) % 7] + ") — " + brl(v)}</title>
+                    </g>
+                  ))}
+                  {monthDays.map((d, i) => (
+                    <text key={"xl" + i} x={x(i)} y={plotBottom + 13} textAnchor="middle" fontSize="9" fill={(d.dow === 0 || d.dow === 6) ? "#cbd5e1" : "#6b7280"}>{d.dom}</text>
+                  ))}
+                </svg>
+              </div>
+              <div className="text-[11px] text-gray-400 mt-1">Linha do faturamento efetivo por dia do mês; fins de semana em cinza, semanas separadas por tracejado. Passe o mouse nos pontos para ver o valor.</div>
+            </div>
+          );
+        })()}
       </CardContent>
     </Card>
   );
