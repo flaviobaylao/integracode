@@ -732,6 +732,51 @@ export default function RotaDoDia() {
     });
   };
 
+  // ATUALIZAR COLETIVO (admin): reorganiza a rota do dia de TODOS os vendedores para a data
+  // selecionada. Cada GET do backend faz o self-heal — reaplica a elegibilidade por cadastro
+  // (dia de rota, periodicidade, carteira/vendedor), tira inativos e leads fora de carteira,
+  // reconcilia com a agenda de visitas — e PERSISTE a nova ordem. É o mesmo efeito do botão
+  // "Atualizar" individual, só que varrendo todos os vendedores ativos de uma vez.
+  const [reorgAll, setReorgAll] = useState<{ running: boolean; done: number; total: number }>({ running: false, done: 0, total: 0 });
+  const handleReorganizeAll = async () => {
+    try {
+      const sResp = await fetch('/api/sellers/active', { credentials: 'include' });
+      const sellers: any = sResp.ok ? await sResp.json() : [];
+      const list: any[] = Array.isArray(sellers) ? sellers : [];
+      if (!list.length) {
+        toast({ title: "Nenhum vendedor ativo", description: "Não há vendedores para reorganizar.", variant: "destructive" });
+        return;
+      }
+      setReorgAll({ running: true, done: 0, total: list.length });
+      let ok = 0, fail = 0, totalVisitas = 0;
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        try {
+          const r = await fetch(`/api/daily-routes/${s.id}/date/${selectedDate}`, { credentials: 'include' });
+          if (!r.ok) throw new Error(String(r.status));
+          const resp: any = await r.json();
+          const tv = resp?.route?.totalVisits ?? (Array.isArray(resp?.route?.optimizedOrder) ? resp.route.optimizedOrder.length : 0);
+          totalVisitas += (tv || 0);
+          ok++;
+        } catch (e) {
+          fail++;
+        }
+        setReorgAll({ running: true, done: i + 1, total: list.length });
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      await refetch();
+      const dataBr = selectedDate.split('-').reverse().join('/');
+      toast({
+        title: "Rotas reorganizadas",
+        description: `${ok} vendedor(es) atualizados${fail ? `, ${fail} com erro` : ''} — ${totalVisitas} visitas no total (${dataBr}).`,
+      });
+    } catch (e: any) {
+      toast({ title: "Erro ao reorganizar", description: e?.message || "Falha ao reorganizar as rotas.", variant: "destructive" });
+    } finally {
+      setReorgAll({ running: false, done: 0, total: 0 });
+    }
+  };
+
   const filteredCustomers = useMemo(() => {
     if (!customers || !customerSearchQuery) return customers || [];
     
@@ -1307,6 +1352,20 @@ export default function RotaDoDia() {
             >
               <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
               {isFetching ? 'Atualizando...' : 'Atualizar'}
+            </Button>
+          )}
+          {isAdmin && (
+            <Button
+              onClick={handleReorganizeAll}
+              disabled={reorgAll.running || isFetching}
+              variant="default"
+              size="sm"
+              className="flex items-center gap-2"
+              data-testid="button-refresh-all-routes"
+              title="Reorganiza a rota do dia de TODOS os vendedores para a data selecionada, conforme o cadastro (dia de rota, periodicidade, carteira). Tira inativos e clientes fora da carteira. Não mexe em quem foi adicionado manualmente."
+            >
+              <RefreshCw className={`h-4 w-4 ${reorgAll.running ? 'animate-spin' : ''}`} />
+              {reorgAll.running ? `Atualizando ${reorgAll.done}/${reorgAll.total}...` : 'Atualizar Todas'}
             </Button>
           )}
         </div>
