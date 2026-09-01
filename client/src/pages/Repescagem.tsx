@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Loader2, Search, AlertTriangle, RefreshCw, Calendar, Headphones,
-  Users as UsersIcon, History, BarChart3, UserCheck,
+  Users as UsersIcon, History, BarChart3, UserCheck, Lock, LockOpen,
 } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { Button } from '@/components/ui/button';
@@ -47,6 +47,7 @@ type Assignment = {
   assignedUserName: string;
   assignedAt: string;
   unassigned?: boolean;
+  locked?: boolean;
 };
 
 type HistoryEntry = {
@@ -90,6 +91,7 @@ export default function Repescagem() {
 
   const [searchCustomer, setSearchCustomer] = useState('');
   const [filterAttendant, setFilterAttendant] = useState('all');
+  const [filterSeller, setFilterSeller] = useState('all');
   const [filterCity, setFilterCity] = useState('all');
   const [filterNeighborhood, setFilterNeighborhood] = useState('all');
   const [filterPeriodicity, setFilterPeriodicity] = useState('all');
@@ -138,6 +140,45 @@ export default function Repescagem() {
     },
   });
 
+  // Invalida tudo que depende da distribuição (lista + rota do dia + rotas).
+  const invalidateDistribution = () => {
+    queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/repescagem/attendants'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+  };
+
+  // Botão "Atualizar" (admin): dispara todas as regras de novo, olhando os habilitados,
+  // preservando as linhas travadas do dia, e ajusta a rota do dia.
+  const redistribute = useMutation({
+    mutationFn: async () => apiRequest('POST', '/api/repescagem/redistribute', {}),
+    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Repescagem atualizada', description: 'Distribuição refeita entre os atendentes habilitados (linhas travadas preservadas).' }); },
+    onError: (e: any) => toast({ title: 'Erro ao atualizar', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
+  });
+
+  // Trocar o atendente de uma linha (admin) — trava a linha automaticamente.
+  const reassign = useMutation({
+    mutationFn: async ({ assignmentId, toUserId }: { assignmentId: string; toUserId: string }) =>
+      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/reassign`, { toUserId }),
+    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Atendente alterado', description: 'A linha foi travada para não sofrer redistribuição no dia.' }); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao reatribuir', variant: 'destructive' }),
+  });
+
+  // Travar / destravar uma linha (admin).
+  const toggleLock = useMutation({
+    mutationFn: async ({ assignmentId, locked }: { assignmentId: string; locked: boolean }) =>
+      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked }),
+    onSuccess: () => { invalidateDistribution(); refetch(); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao travar', variant: 'destructive' }),
+  });
+
+  // Travar / destravar TODAS as linhas do dia (admin) — cadeado do cabeçalho.
+  const toggleLockAll = useMutation({
+    mutationFn: async (locked: boolean) => apiRequest('POST', '/api/repescagem/assignments/lock-all', { locked }),
+    onSuccess: (_d, locked) => { invalidateDistribution(); refetch(); toast({ title: locked ? 'Tudo travado' : 'Tudo destravado', description: locked ? 'Nenhuma linha será redistribuída hoje.' : 'As linhas voltam a ser redistribuídas.' }); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao travar todos', variant: 'destructive' }),
+  });
+
   const cityOptions = useMemo(() => {
     const set = new Set<string>();
     for (const a of assignments) if (a.customerCity?.trim()) set.add(a.customerCity.trim());
@@ -154,6 +195,17 @@ export default function Repescagem() {
     return Array.from(set).sort((x, y) => x.localeCompare(y, 'pt-BR'));
   }, [assignments, filterCity]);
 
+  // Opções de Vendedor (dono da carteira) presentes na lista.
+  const sellerOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of assignments) {
+      if (a.sellerId && a.sellerName) map.set(a.sellerId, a.sellerName);
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((x, y) => x.name.localeCompare(y.name, 'pt-BR'));
+  }, [assignments]);
+
   const filteredAssignments = useMemo(() => {
     let f = assignments;
     if (searchCustomer.trim()) {
@@ -166,6 +218,9 @@ export default function Repescagem() {
     }
     if (filterAttendant !== 'all') {
       f = f.filter(a => a.assignedUserId === filterAttendant);
+    }
+    if (filterSeller !== 'all') {
+      f = f.filter(a => (a.sellerId || '') === filterSeller);
     }
     if (filterCity !== 'all') {
       f = f.filter(a => (a.customerCity?.trim() || '') === filterCity);
@@ -180,7 +235,7 @@ export default function Repescagem() {
       f = f.filter(a => filterAssignStatus === 'unassigned' ? a.unassigned : !a.unassigned);
     }
     return f;
-  }, [assignments, searchCustomer, filterAttendant, filterCity, filterNeighborhood, filterPeriodicity, filterAssignStatus]);
+  }, [assignments, searchCustomer, filterAttendant, filterSeller, filterCity, filterNeighborhood, filterPeriodicity, filterAssignStatus]);
 
   // Ordenação A-Z / Z-A por coluna. Clique alterna asc -> desc; nova coluna começa asc.
   const toggleSort = (key: string) => {
@@ -241,16 +296,19 @@ export default function Repescagem() {
             Clientes cuja última visita agendada não foi efetuada — distribuição automática entre atendentes habilitados
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          data-testid="button-refresh"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isFetching ? 'animate-spin' : ''}`} />
-          Atualizar
-        </Button>
+        {isAdmin && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => redistribute.mutate()}
+            disabled={redistribute.isPending || isFetching}
+            data-testid="button-refresh"
+            title="Redistribui a repescagem entre os atendentes habilitados (preserva as linhas travadas) e ajusta a rota do dia"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${(redistribute.isPending || isFetching) ? 'animate-spin' : ''}`} />
+            {redistribute.isPending ? 'Atualizando...' : 'Atualizar'}
+          </Button>
+        )}
       </div>
 
       {/* Painel de habilitação + atendentes */}
@@ -381,6 +439,18 @@ export default function Repescagem() {
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Vendedor</Label>
+              <Select value={filterSeller} onValueChange={setFilterSeller}>
+                <SelectTrigger data-testid="select-seller"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os vendedores</SelectItem>
+                  {sellerOptions.map(s => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Situação</Label>
               <Select value={filterAssignStatus} onValueChange={setFilterAssignStatus}>
                 <SelectTrigger data-testid="select-assign-status"><SelectValue /></SelectTrigger>
@@ -401,7 +471,7 @@ export default function Repescagem() {
                 </span>
               ))}
             </div>
-            {(searchCustomer || filterAttendant !== 'all' || filterCity !== 'all' || filterNeighborhood !== 'all' || filterPeriodicity !== 'all' || filterAssignStatus !== 'all') && (
+            {(searchCustomer || filterAttendant !== 'all' || filterSeller !== 'all' || filterCity !== 'all' || filterNeighborhood !== 'all' || filterPeriodicity !== 'all' || filterAssignStatus !== 'all') && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -409,6 +479,7 @@ export default function Repescagem() {
                 onClick={() => {
                   setSearchCustomer('');
                   setFilterAttendant('all');
+                  setFilterSeller('all');
                   setFilterCity('all');
                   setFilterNeighborhood('all');
                   setFilterPeriodicity('all');
@@ -526,7 +597,26 @@ export default function Repescagem() {
                       <span className="inline-flex items-center justify-center gap-1">Há quantos dias <span className={`text-[10px] leading-none ${sortKey === 'dias' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('dias')}</span></span>
                     </th>
                     <th onClick={() => toggleSort('atendente')} title="Ordenar A-Z" className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
-                      <span className="inline-flex items-center justify-center gap-1">Atendente <span className={`text-[10px] leading-none ${sortKey === 'atendente' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('atendente')}</span></span>
+                      <span className="inline-flex items-center justify-center gap-1">
+                        Atendente
+                        <span className={`text-[10px] leading-none ${sortKey === 'atendente' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('atendente')}</span>
+                        {isAdmin && (() => {
+                          const lockable = filteredAssignments.filter(a => !a.unassigned && a.assignmentId);
+                          const allLocked = lockable.length > 0 && lockable.every(a => a.locked);
+                          return (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); toggleLockAll.mutate(!allLocked); }}
+                              disabled={toggleLockAll.isPending}
+                              title={allLocked ? 'Destravar todas as linhas' : 'Travar todas as linhas (não sofrem redistribuição hoje)'}
+                              className="ml-1 text-gray-500 hover:text-orange-600"
+                              data-testid="button-lock-all"
+                            >
+                              {allLocked ? <Lock className="h-3.5 w-3.5 text-orange-600" /> : <LockOpen className="h-3.5 w-3.5" />}
+                            </button>
+                          );
+                        })()}
+                      </span>
                     </th>
                     <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Ações</th>
                   </tr>
@@ -571,13 +661,41 @@ export default function Repescagem() {
                         </span>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        {a.unassigned ? (
+                        {a.unassigned || !a.assignmentId ? (
                           <Badge className="bg-gray-100 text-gray-700 border border-gray-300" data-testid={`badge-assigned-${a.customerId}`}>
                             Não atribuído
                           </Badge>
+                        ) : isAdmin ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <Select
+                              value={a.assignedUserId}
+                              onValueChange={(v) => { if (v && v !== a.assignedUserId) reassign.mutate({ assignmentId: a.assignmentId, toUserId: v }); }}
+                            >
+                              <SelectTrigger className="h-7 text-xs w-[150px]" data-testid={`select-assignee-${a.customerId}`}><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {!enabledAttendants.some(e => e.userId === a.assignedUserId) && (
+                                  <SelectItem value={a.assignedUserId}>{a.assignedUserName}</SelectItem>
+                                )}
+                                {enabledAttendants.map(e => (
+                                  <SelectItem key={e.userId} value={e.userId}>{e.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <button
+                              type="button"
+                              onClick={() => toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked })}
+                              disabled={toggleLock.isPending}
+                              title={a.locked ? 'Travado hoje — clique para destravar' : 'Destravado — clique para travar (não sofre redistribuição hoje)'}
+                              className={a.locked ? 'text-orange-600' : 'text-gray-400 hover:text-orange-600'}
+                              data-testid={`button-lock-${a.customerId}`}
+                            >
+                              {a.locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+                            </button>
+                          </div>
                         ) : (
                           <Badge className="bg-sky-100 text-sky-800 border border-sky-300" data-testid={`badge-assigned-${a.customerId}`}>
                             {a.assignedUserName}
+                            {a.locked && <Lock className="inline h-3 w-3 ml-1 text-orange-600" />}
                           </Badge>
                         )}
                       </td>
