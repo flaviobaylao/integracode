@@ -1680,6 +1680,18 @@ export function registerBillingPipelineRoutes(app: Express) {
           console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque:`, stockError.message);
         }
 
+        // TRANSFERENCIA ENTRE FILIAIS: fechar o ciclo dando ENTRADA na filial de
+        // destino. Ate aqui isso era feito na mao (os lotes com obs. "Remanejamento
+        // GYN -> IND" sao disso), e o que se perdia na digitacao era justamente o
+        // CMV — a filial recebia mercadoria sem custo e o estoque dela deixava de
+        // valer alguma coisa. Falha aqui nao desfaz o faturamento: a NF ja saiu e a
+        // baixa ja aconteceu; o erro fica no log e a entrada pode ser refeita.
+        try {
+          await mirrorTransferToDestination(item, user);
+        } catch (mirrorError: any) {
+          console.error(`❌ [BILLING-PIPELINE] Erro na entrada espelho da transferencia:`, mirrorError.message);
+        }
+
         try {
           // skipEmit: a NF e criada em rascunho, os TITULOS sao gerados e SO ENTAO a NF e
           // transmitida — assim o <cobr> (fatura/duplicatas) sai espelhado nos titulos/boletos.
@@ -2351,7 +2363,108 @@ async function validateStockForBilling(item: any): Promise<{ valid: boolean; sho
   return { valid: shortages.length === 0, shortages };
 }
 
-async function deductStockForBilling(item: any, user: any): Promise<Record<string, string[]>> {
+// ===========================================================================
+// TRANSFERENCIA ENTRE FILIAIS — entrada espelho no destino
+//
+// Cria na filial de destino um lote com o MESMO numero de lote e o MESMO CMV do
+// lote que saiu da origem. Mesmo numero porque e a mesma mercadoria fisica: a
+// rastreabilidade so serve se um recall conseguir seguir o lote pelas duas filiais.
+// Mesmo CMV porque o custo de producao nao muda ao atravessar a rua — e sem ele a
+// filial venderia sem saber a propria margem.
+//
+// Idempotente por lote: se ja existe lote ativo com aquele numero, aquele produto e
+// aquele destino, SOMA nele em vez de criar um segundo. Duas transferencias do mesmo
+// lote em dias diferentes tem de convergir num saldo so.
+// ===========================================================================
+// exportada para o harness server/__tests__/harness-mirror.ts
+export async function mirrorTransferToDestination(item: any, user: any): Promise<void> {
+  if (String(item?.operationType || '').toLowerCase() !== 'transferencia') return;
+
+  const products = (item.products as any[]) || [];
+  const quem = user?.email || 'system';
+
+  for (const p of products) {
+    const destinoId = p?.transferToInstanceId;
+    if (!destinoId || !p?.id) continue;
+
+    const qty = Number(p.quantity) || 0;
+    if (qty <= 0) continue;
+
+    const lotNumber = String(p.lotNumber || '').trim();
+    if (!lotNumber) {
+      console.warn(`⚠️ [TRANSFER] item ${item.id}: linha ${p.name} sem numero de lote — entrada no destino ignorada`);
+      continue;
+    }
+
+    const existentes = await storage.getInventoryLots({
+      productId: p.id,
+      instanceId: destinoId,
+      stockType: 'in_use',
+      isActive: true,
+    });
+    const mesmoLote = existentes.find((l: any) => String(l.lotNumber).trim() === lotNumber);
+
+    const unitCost = p.cmvUnit != null ? Number(p.cmvUnit).toFixed(4) : null;
+
+    if (mesmoLote) {
+      const prev = parseFloat(mesmoLote.quantity?.toString() || '0');
+      const novo = prev + qty;
+      await storage.updateInventoryLot(mesmoLote.id, {
+        quantity: novo.toFixed(4),
+        // So preenche o custo se o lote de destino ainda nao tiver um. Sobrescrever
+        // apagaria a media de uma remessa anterior com preco diferente.
+        ...(unitCost && !mesmoLote.unitCost ? { unitCost } : {}),
+      } as any);
+      await storage.createInventoryMovement({
+        lotId: mesmoLote.id,
+        productId: p.id,
+        instanceId: destinoId,
+        movementType: 'replenish',
+        quantity: qty.toFixed(4),
+        previousQuantity: prev.toFixed(4),
+        newQuantity: novo.toFixed(4),
+        sourceType: 'invoice',
+        sourceId: item.id,
+        lotNumber,
+        notes: `Entrada por transferencia ${item.orderNumber || item.id} (${item.omieInstanceName || 'origem'} -> ${p.transferToInstanceName || 'destino'})`,
+        createdBy: quem,
+      } as any);
+      console.log(`🔁 [TRANSFER] ${lotNumber}: +${qty} no lote existente de ${p.transferToInstanceName || destinoId}`);
+      continue;
+    }
+
+    const novoLote = await storage.createInventoryLot({
+      productId: p.id,
+      instanceId: destinoId,
+      stockType: 'in_use',
+      lotNumber,
+      quantity: qty.toFixed(4),
+      minQuantity: '0',
+      unitCost,
+      totalCost: unitCost ? (Number(unitCost) * qty).toFixed(2) : null,
+      productionOrderId: p.productionOrderId || null,
+      notes: `Recebido por transferencia ${item.orderNumber || item.id} de ${item.omieInstanceName || 'origem'}`,
+    } as any);
+    await storage.createInventoryMovement({
+      lotId: novoLote.id,
+      productId: p.id,
+      instanceId: destinoId,
+      movementType: 'replenish',
+      quantity: qty.toFixed(4),
+      previousQuantity: '0',
+      newQuantity: qty.toFixed(4),
+      sourceType: 'invoice',
+      sourceId: item.id,
+      lotNumber,
+      notes: `Entrada por transferencia ${item.orderNumber || item.id} (${item.omieInstanceName || 'origem'} -> ${p.transferToInstanceName || 'destino'})`,
+      createdBy: quem,
+    } as any);
+    console.log(`🔁 [TRANSFER] ${lotNumber}: lote criado em ${p.transferToInstanceName || destinoId} com ${qty} un. a CMV ${unitCost || 'n/d'}`);
+  }
+}
+
+// exportada para o harness server/__tests__/harness-lotexato.ts
+export async function deductStockForBilling(item: any, user: any): Promise<Record<string, string[]>> {
   const lotMap: Record<string, string[]> = {};
   const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
   if (!products || products.length === 0) return lotMap;
@@ -2368,15 +2481,29 @@ async function deductStockForBilling(item: any, user: any): Promise<Record<strin
     return lotMap;
   }
 
-  for (const product of products) {
+  for (const product of products as any[]) {
     if (!product.id) continue;
 
-    const lots = await storage.getInventoryLots({
+    let lots = await storage.getInventoryLots({
       productId: product.id,
       instanceId,
       stockType: 'in_use',
       isActive: true,
     });
+
+    // LOTE EXATO (pedido de transferencia entre filiais): a linha foi precificada
+    // pelo CMV de UM lote especifico, entao a baixa tem de sair desse lote. Deixar o
+    // FIFO escolher outro faria a NF sair com um lote diferente do cobrado — e o CMV
+    // da filial de destino nasceria errado. O lote pedido vai para a frente da fila;
+    // o resto da fila continua atras, como rede de seguranca se o saldo nao bastar.
+    if (product.lotId) {
+      const escolhido = lots.find((l: any) => l.id === product.lotId);
+      if (escolhido) {
+        lots = [escolhido, ...lots.filter((l: any) => l.id !== product.lotId)];
+      } else {
+        console.warn(`⚠️ [STOCK] Lote ${product.lotNumber || product.lotId} pedido na transferencia nao esta mais disponivel — caindo no FIFO`);
+      }
+    }
 
     if (lots.length === 0) {
       console.log(`⚠️ [STOCK] Produto ${product.name} (${product.id}) sem lotes disponíveis na instância ${instanceId}`);
