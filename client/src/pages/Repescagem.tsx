@@ -164,6 +164,14 @@ export default function Repescagem() {
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao reatribuir', variant: 'destructive' }),
   });
 
+  // Atribuir um cliente SEM atendente (admin) — cria a alocação e trava no dia.
+  const assign = useMutation({
+    mutationFn: async ({ customerId, toUserId, lastRedDate }: { customerId: string; toUserId: string; lastRedDate: string }) =>
+      apiRequest('POST', '/api/repescagem/assign', { customerId, toUserId, lastRedDate }),
+    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Cliente atribuído', description: 'A linha foi travada para não sofrer redistribuição no dia.' }); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao atribuir', variant: 'destructive' }),
+  });
+
   // Travar / destravar uma linha (admin).
   const toggleLock = useMutation({
     mutationFn: async ({ assignmentId, locked }: { assignmentId: string; locked: boolean }) =>
@@ -662,9 +670,23 @@ export default function Repescagem() {
                       </td>
                       <td className="px-3 py-2 text-center">
                         {a.unassigned || !a.assignmentId ? (
-                          <Badge className="bg-gray-100 text-gray-700 border border-gray-300" data-testid={`badge-assigned-${a.customerId}`}>
-                            Não atribuído
-                          </Badge>
+                          isAdmin ? (
+                            <Select
+                              value={undefined}
+                              onValueChange={(v) => { if (v) assign.mutate({ customerId: a.customerId, toUserId: v, lastRedDate: a.lastRedDate }); }}
+                            >
+                              <SelectTrigger className="h-7 text-xs w-[150px]" data-testid={`select-assignee-${a.customerId}`}><SelectValue placeholder="Atribuir..." /></SelectTrigger>
+                              <SelectContent>
+                                {enabledAttendants.map(e => (
+                                  <SelectItem key={e.userId} value={e.userId}>{e.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Badge className="bg-gray-100 text-gray-700 border border-gray-300" data-testid={`badge-assigned-${a.customerId}`}>
+                              Não atribuído
+                            </Badge>
+                          )
                         ) : isAdmin ? (
                           <div className="flex items-center justify-center gap-1">
                             <Select
