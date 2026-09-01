@@ -171,6 +171,51 @@ async function ensurePurchaseInvoicesTable() {
   }
 }
 
+// ANEXO DO DANFE NA CONTA A PAGAR — gera o PDF a partir do XML da compra e grava
+// em payable_attachments (kind 'danfe'), a mesma tabela que Contas a Pagar usa.
+// Idempotente: se a conta ja tem um anexo 'danfe', nao duplica. Nunca lanca —
+// devolve o motivo, para que criar a conta a pagar nunca quebre por causa do anexo.
+type ResultadoAnexo = "anexado" | "ja_tinha" | "sem_xml" | "sem_conta" | "erro";
+export async function anexarDanfeNoPayable(invoice: any, payableId: string | null, by: string | null): Promise<ResultadoAnexo> {
+  try {
+    if (!payableId) return "sem_conta";
+    if (!invoice?.xmlContent) return "sem_xml";
+    const ja: any = await db.execute(sql`SELECT id FROM payable_attachments WHERE payable_id = ${payableId} AND kind = 'danfe' LIMIT 1`);
+    if (((ja as any).rows || ja || [])[0]) return "ja_tinha";
+    const { montarDanfeCompraPdf, nomeArquivoDanfeCompra } = await import("./danfe-compra");
+    const pdf = montarDanfeCompraPdf(invoice);
+    if (!pdf) return "sem_xml";
+    const nome = nomeArquivoDanfeCompra(invoice);
+    const b64 = pdf.toString("base64");
+    await db.execute(sql`INSERT INTO payable_attachments (id, payable_id, kind, file_name, mime_type, size_bytes, content_base64, created_by, created_at)
+      VALUES (gen_random_uuid(), ${payableId}, 'danfe', ${nome}, 'application/pdf', ${pdf.length}, ${b64}, ${by}, now())`);
+    console.log(`📎 [PURCHASES] DANFE anexado na conta a pagar ${payableId} (NF ${invoice.invoiceNumber}).`);
+    return "anexado";
+  } catch (e: any) {
+    console.warn(`⚠️ [PURCHASES] Nao consegui anexar o DANFE na conta ${payableId}: ${e?.message || e}`);
+    return "erro";
+  }
+}
+
+// Todas as contas a pagar geradas por uma compra: a vinculada (payable_id) e as
+// demais parcelas, que nascem com titulo "NF-<numero> (i/n)" e mesmo fornecedor.
+async function payablesDaCompra(invoice: any): Promise<string[]> {
+  const ids = new Set<string>();
+  if (invoice?.payableId) ids.add(String(invoice.payableId));
+  try {
+    const num = String(invoice?.invoiceNumber || "").trim();
+    const doc = String(invoice?.supplierDocument || "").replace(/\D/g, "");
+    if (num && doc) {
+      const r: any = await db.execute(sql`SELECT id FROM payables
+        WHERE source = 'radar'
+          AND regexp_replace(COALESCE(supplier_document, ''), '\\D', '', 'g') = ${doc}
+          AND (title_number = ${"NF-" + num} OR title_number LIKE ${"NF-" + num + " (%"})`);
+      for (const row of ((r as any).rows || r || [])) ids.add(String(row.id));
+    }
+  } catch { /* o payable_id sozinho ja resolve o caso normal */ }
+  return Array.from(ids);
+}
+
 let __radarRunning = false;
 // Executa o Radar de Compras (Distribuição DFe da SEFAZ) para todas as instâncias ativas.
 // Reutilizável pelo endpoint manual E pelo agendador automático (sem HTTP/auth).
@@ -394,6 +439,59 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  // ANEXAR O DANFE MANUALMENTE numa compra que JA tem conta a pagar (as notas
+  // vinculadas antes deste recurso existir nao receberam o anexo automatico).
+  // Idempotente e sem efeito financeiro: so grava o PDF em payable_attachments.
+  app.post("/api/purchases/:id/attach-danfe", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "Nota fiscal não encontrada" });
+      if (!invoice.xmlContent) return res.status(409).json({ error: 'Esta nota ainda não tem XML. Use "Baixar XML (SEFAZ)" antes de anexar o DANFE.' });
+      const alvos = await payablesDaCompra(invoice);
+      if (alvos.length === 0) return res.status(409).json({ error: "Esta compra ainda não tem conta a pagar. Crie a conta a pagar primeiro." });
+      const by = (req as any).currentUser?.id || (req as any).currentUser?.email || null;
+      let anexados = 0, jaTinham = 0, erros = 0;
+      for (const pid of alvos) {
+        const r = await anexarDanfeNoPayable(invoice, pid, by);
+        if (r === "anexado") anexados++;
+        else if (r === "ja_tinha") jaTinham++;
+        else erros++;
+      }
+      res.json({ ok: erros === 0, contas: alvos.length, anexados, jaTinham, erros });
+    } catch (err: any) {
+      console.error("[PURCHASES] Attach DANFE error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // MESMA COISA EM LOTE — varre as compras vinculadas/pagas com XML e anexa o
+  // DANFE nas contas a pagar que ainda nao tem. Pula as que ja tem (idempotente).
+  app.post("/api/purchases/attach-danfe-bulk", authenticateUser, requireRole(["admin", "coordinator"]), async (req: any, res) => {
+    try {
+      const by = (req as any).currentUser?.id || (req as any).currentUser?.email || null;
+      const notas = await db.select().from(purchaseInvoices)
+        .where(and(or(eq(purchaseInvoices.status, "linked"), eq(purchaseInvoices.status, "paid")), sql`xml_content IS NOT NULL`, sql`payable_id IS NOT NULL`));
+      let anexados = 0, jaTinham = 0, erros = 0, notasTocadas = 0;
+      const falhas: any[] = [];
+      for (const inv of notas) {
+        const alvos = await payablesDaCompra(inv);
+        let mudou = false;
+        for (const pid of alvos) {
+          const r = await anexarDanfeNoPayable(inv, pid, by);
+          if (r === "anexado") { anexados++; mudou = true; }
+          else if (r === "ja_tinha") jaTinham++;
+          else { erros++; falhas.push({ nf: inv.invoiceNumber, fornecedor: inv.supplierName, motivo: r }); }
+        }
+        if (mudou) notasTocadas++;
+      }
+      console.log(`📎 [PURCHASES] Anexo em lote: ${anexados} anexados, ${jaTinham} ja tinham, ${erros} erros (${notas.length} notas).`);
+      res.json({ ok: true, notas: notas.length, notasTocadas, anexados, jaTinham, erros, falhas: falhas.slice(0, 20) });
+    } catch (err: any) {
+      console.error("[PURCHASES] Bulk attach DANFE error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/purchases/:id/xml", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
     try {
       const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
@@ -526,21 +624,7 @@ export function registerPurchaseRoutes(app: Express) {
       // payable_attachments (kind 'danfe'), a mesma tabela que Contas a Pagar
       // usa. Nunca derruba a criacao da conta: se o XML faltar ou o PDF falhar,
       // so registra no log (o botao DANFE na tela continua disponivel).
-      const anexarDanfe = async (payableId: string) => {
-        try {
-          if (!invoice.xmlContent || !payableId) return;
-          const { montarDanfeCompraPdf, nomeArquivoDanfeCompra } = await import("./danfe-compra");
-          const pdf = montarDanfeCompraPdf(invoice);
-          if (!pdf) return;
-          const nome = nomeArquivoDanfeCompra(invoice as any);
-          const b64 = pdf.toString("base64");
-          await db.execute(sql`INSERT INTO payable_attachments (id, payable_id, kind, file_name, mime_type, size_bytes, content_base64, created_by, created_at)
-            VALUES (gen_random_uuid(), ${payableId}, 'danfe', ${nome}, 'application/pdf', ${pdf.length}, ${b64}, ${by}, now())`);
-          console.log(`📎 [PURCHASES] DANFE anexado na conta a pagar ${payableId} (NF ${invoice.invoiceNumber}).`);
-        } catch (e: any) {
-          console.warn(`⚠️ [PURCHASES] Nao consegui anexar o DANFE na conta ${payableId}: ${e?.message || e}`);
-        }
-      };
+      const anexarDanfe = (payableId: string) => anexarDanfeNoPayable(invoice, payableId, by);
 
       // PARCELAMENTO: se vier uma lista de parcelas, cria UMA conta a pagar por parcela (cada
       // uma com seu vencimento e valor). Sem parcelas, cria uma unica (comportamento antigo).
