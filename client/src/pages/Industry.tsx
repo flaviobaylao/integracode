@@ -607,6 +607,7 @@ function OrdensTab() {
   // Seleção de ordens p/ relatório de matérias-primas (requisição de MP)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reportOpen, setReportOpen] = useState(false);
+  const [opReportOpen, setOpReportOpen] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['/api/industria/production-orders'],
@@ -723,6 +724,10 @@ function OrdensTab() {
           title="Relatório agregado das matérias-primas das ordens selecionadas">
           <Printer className="h-4 w-4 mr-1" /> Relatório de MP ({selected.size})
         </Button>
+        <Button variant="outline" size="sm" disabled={selected.size === 0} onClick={() => setOpReportOpen(true)}
+          title="Relatório produtivo completo das ordens selecionadas">
+          <ClipboardList className="h-4 w-4 mr-1" /> Relatório de OP ({selected.size})
+        </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOrderDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Nova Ordem
         </Button>
@@ -827,6 +832,12 @@ function OrdensTab() {
         <MateriaisReportDialog
           orders={orders.filter((o) => selected.has(o.id))}
           onClose={() => setReportOpen(false)}
+        />
+      )}
+      {opReportOpen && (
+        <OrdensReportDialog
+          orders={orders.filter((o) => selected.has(o.id))}
+          onClose={() => setOpReportOpen(false)}
         />
       )}
     </div>
@@ -1356,6 +1367,224 @@ ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} mater
               </p>
             )}
           </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+          <Button variant="outline" onClick={doExcel}><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel</Button>
+          <Button onClick={doPrint} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Printer className="h-4 w-4 mr-1" /> Imprimir
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// RELATÓRIO DE OP — relatório produtivo completo das ordens selecionadas
+// Traz ficha de produção de cada OP (dados, análise, pasteurização, insumos
+// com lote e custo, CMV) + consolidado. Versão impressa e Excel.
+// ===========================================================================
+function OrdensReportDialog({ orders, onClose }: any) {
+  const { materials } = useIndustriaAux();
+
+  const data = useMemo(() => {
+    const list = orders.map((o: any) => {
+      const items = (o.items || []).map((it: any) => {
+        const mat = materials.find((m: any) => String(m.id) === String(it.raw_material_id));
+        const qty = n(it.quantity_used);
+        const cost = mat ? n(mat.unit_cost) : 0;
+        return {
+          name: mat?.name || it.raw_material_name || '?',
+          unit: it.unit || mat?.unit || '',
+          qty,
+          lot: it.lot_number || '',
+          cost,
+          total: qty * cost,
+        };
+      }).sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+      const cmvTotal = items.reduce((s: number, i: any) => s + i.total, 0);
+      const planejada = n(o.quantity);
+      const produzida = o.quantity_produced != null ? n(o.quantity_produced) : (o.status === 'finalizada' ? planejada : 0);
+      const base = produzida > 0 ? produzida : planejada;
+      return {
+        o,
+        items,
+        cmvTotal,
+        cmvUnit: base > 0 ? cmvTotal / base : 0,
+        planejada,
+        produzida,
+        rendimento: planejada > 0 && produzida > 0 ? (produzida / planejada) * 100 : null,
+      };
+    });
+    const tot = {
+      ordens: list.length,
+      planejada: list.reduce((s: number, r: any) => s + r.planejada, 0),
+      produzida: list.reduce((s: number, r: any) => s + r.produzida, 0),
+      cmv: list.reduce((s: number, r: any) => s + r.cmvTotal, 0),
+      finalizadas: list.filter((r: any) => r.o.status === 'finalizada').length,
+      emProducao: list.filter((r: any) => r.o.status === 'em_producao').length,
+      planejadas: list.filter((r: any) => r.o.status === 'planejada').length,
+    };
+    return { list, tot };
+  }, [orders, materials]);
+
+  const stLabel = (s: string) => (ORDER_STATUS[s]?.label || s || '-');
+  const sensLabel = (s: any) => (s === 'nao_conforme' ? 'Não Conforme' : s === 'conforme' ? 'Conforme' : '-');
+
+  const doExcel = () => {
+    const rows: any[] = [];
+    for (const r of data.list) {
+      const o = r.o;
+      const baseCols = {
+        'Ordem': o.order_number,
+        'Produto': o.product_name,
+        'Status': stLabel(o.status),
+        'Instância': o.instance_name || '',
+        'Data Produção': fmtDate(o.production_date || o.created_at),
+        'Início': fmtDateTime(o.start_date),
+        'Fim': fmtDateTime(o.end_date),
+        'Criada por': o.created_by || '',
+        'Qtd Planejada': +r.planejada.toFixed(3),
+        'Qtd Produzida': +r.produzida.toFixed(3),
+        'Rendimento (%)': r.rendimento == null ? '' : +r.rendimento.toFixed(1),
+        'Lote Produzido': o.lot_number || '',
+        'Validade Lote': fmtDate(o.lot_expiry_date),
+        'Brix': o.brix_degree ?? '',
+        'pH': o.ph ?? '',
+        'Sensorial': sensLabel(o.sensory_analysis),
+        'Pasteurização Início': o.pasteurization_start_time || '',
+        'Pasteurização Fim': o.pasteurization_end_time || '',
+        'Temp. Mín (°C)': o.pasteurization_start_temp ?? '',
+        'Temp. Máx (°C)': o.pasteurization_end_temp ?? '',
+        'CMV Total (R$)': +r.cmvTotal.toFixed(2),
+        'CMV Unitário (R$)': +r.cmvUnit.toFixed(4),
+        'Observações': o.notes || '',
+      };
+      if (r.items.length === 0) {
+        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Lote MP': '', 'Custo Unit. (R$)': '', 'Custo Total (R$)': '' });
+      } else {
+        for (const it of r.items) {
+          rows.push({
+            ...baseCols,
+            'Material': it.name,
+            'Un.': it.unit,
+            'Qtd Consumida': +it.qty.toFixed(3),
+            'Lote MP': it.lot,
+            'Custo Unit. (R$)': +it.cost.toFixed(4),
+            'Custo Total (R$)': +it.total.toFixed(2),
+          });
+        }
+      }
+    }
+    exportToExcel(rows, `relatorio-op-${new Date().toISOString().slice(0, 10)}`);
+  };
+
+  const doPrint = () => {
+    const hoje = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const fichas = data.list.map((r: any) => {
+      const o = r.o;
+      const analise = (o.brix_degree != null || o.ph != null || o.sensory_analysis || o.pasteurization_start_time || o.pasteurization_end_time)
+        ? `<table class="kv"><tbody>
+<tr><th>Grau Brix</th><td>${esc(o.brix_degree ?? '-')}</td><th>pH</th><td>${esc(o.ph ?? '-')}</td><th>Análise sensorial</th><td>${esc(sensLabel(o.sensory_analysis))}</td></tr>
+<tr><th>Pasteurização</th><td colspan="5">${esc(o.pasteurization_start_time || '-')} → ${esc(o.pasteurization_end_time || '-')} · ${esc(o.pasteurization_start_temp ?? '-')}°C a ${esc(o.pasteurization_end_temp ?? '-')}°C</td></tr>
+</tbody></table>`
+        : '<p class="vazio">Sem dados de análise/pasteurização registrados.</p>';
+      return `<div class="op">
+<h3>${esc(o.order_number)} — ${esc(o.product_name)} <span class="badge">${esc(stLabel(o.status))}</span></h3>
+<table class="kv"><tbody>
+<tr><th>Instância</th><td>${esc(o.instance_name || '-')}</td><th>Data de produção</th><td>${fmtDate(o.production_date || o.created_at)}</td><th>Criada por</th><td>${esc(o.created_by || '-')}</td></tr>
+<tr><th>Início</th><td>${fmtDateTime(o.start_date)}</td><th>Fim</th><td>${fmtDateTime(o.end_date)}</td><th>Lote produzido</th><td>${esc(o.lot_number || '-')} (val. ${fmtDate(o.lot_expiry_date)})</td></tr>
+<tr><th>Qtd planejada</th><td>${fmtQty(r.planejada)}</td><th>Qtd produzida</th><td>${r.produzida ? fmtQty(r.produzida) : '-'}</td><th>Rendimento</th><td>${r.rendimento == null ? '-' : r.rendimento.toFixed(1) + '%'}</td></tr>
+</tbody></table>
+<p class="sec">Análise do produto acabado</p>
+${analise}
+<p class="sec">Matéria-prima consumida</p>
+<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Qtd</th><th>Lote MP</th><th class="num">Custo Unit.</th><th class="num">Custo Total</th></tr></thead>
+<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td>${esc(it.lot || '-')}</td><td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td></tr>`).join('') : '<tr><td colspan="6">Sem insumos cadastrados</td></tr>'}</tbody>
+<tfoot><tr><td colspan="5">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot></table>
+${o.notes ? `<p class="obs"><b>Observações:</b> ${esc(o.notes)}</p>` : ''}
+</div>`;
+    }).join('');
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Produção</title>
+<style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:normal;margin:2px 0 0}
+h3{font-size:14px;margin:0 0 6px}.cab{display:flex;align-items:center;gap:16px;border-bottom:2px solid #16a34a;padding-bottom:10px;margin-bottom:12px}.cab img{height:58px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}th,td{border:1px solid #bbb;padding:5px 7px;text-align:left}th{background:#f0f0f0}
+td.num,th.num{text-align:right}tfoot td{font-weight:bold;background:#fafafa}
+table.kv th{width:12%;background:#f7f7f7}table.kv td{width:21%}
+.op{border:1px solid #ddd;border-radius:6px;padding:10px 12px;margin-bottom:14px;page-break-inside:avoid}
+.badge{font-size:11px;font-weight:normal;border:1px solid #999;border-radius:10px;padding:1px 8px;margin-left:6px}
+.sec{font-size:12px;font-weight:bold;margin:10px 0 2px}.vazio{font-size:12px;color:#777;margin:2px 0}
+.obs{font-size:12px;margin-top:6px;white-space:pre-wrap}
+.resumo td,.resumo th{font-size:12px}
+.assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
+<div class="cab"><img src="${window.location.origin}/honest-logo.png" alt="Honest"><div>
+<h1>Relatório de Produção — Ordens de Produção</h1>
+<h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
+</div></div>
+<table class="resumo"><thead><tr><th>Ordens</th><th>Planejadas</th><th>Em produção</th><th>Finalizadas</th><th class="num">Qtd planejada</th><th class="num">Qtd produzida</th><th class="num">CMV total</th></tr></thead>
+<tbody><tr><td>${data.tot.ordens}</td><td>${data.tot.planejadas}</td><td>${data.tot.emProducao}</td><td>${data.tot.finalizadas}</td><td class="num">${fmtQty(data.tot.planejada)}</td><td class="num">${fmtQty(data.tot.produzida)}</td><td class="num">${fmtBRL(data.tot.cmv)}</td></tr></tbody></table>
+${fichas}
+<div class="assin"><div>Produção</div><div>Qualidade</div><div>Data / Hora</div></div>
+<script>window.onload=function(){window.print()}</script></body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { alert('Libere pop-ups para imprimir o relatório.'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Relatório de Produção — {orders.length} ordem(ns)</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">Ordens</p><p className="font-bold">{data.tot.ordens}</p></div>
+            <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">Qtd planejada</p><p className="font-bold">{fmtQty(data.tot.planejada)}</p></div>
+            <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">Qtd produzida</p><p className="font-bold">{fmtQty(data.tot.produzida)}</p></div>
+            <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">CMV total</p><p className="font-bold">{fmtBRL(data.tot.cmv)}</p></div>
+          </div>
+          <div className="border rounded-lg overflow-auto max-h-[55vh]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ordem</TableHead>
+                  <TableHead>Produto</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Planejada</TableHead>
+                  <TableHead className="text-right">Produzida</TableHead>
+                  <TableHead className="text-right">Rend.</TableHead>
+                  <TableHead>Lote</TableHead>
+                  <TableHead>Brix / pH</TableHead>
+                  <TableHead className="text-right">CMV</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.list.map((r: any) => (
+                  <TableRow key={r.o.id}>
+                    <TableCell className="font-mono text-xs">{r.o.order_number}</TableCell>
+                    <TableCell className="font-medium">{r.o.product_name}</TableCell>
+                    <TableCell className="text-xs">{stLabel(r.o.status)}</TableCell>
+                    <TableCell className="text-right">{fmtQty(r.planejada)}</TableCell>
+                    <TableCell className="text-right">{r.produzida ? fmtQty(r.produzida) : '-'}</TableCell>
+                    <TableCell className="text-right text-xs">{r.rendimento == null ? '-' : `${r.rendimento.toFixed(1)}%`}</TableCell>
+                    <TableCell className="text-xs">{r.o.lot_number || '-'}</TableCell>
+                    <TableCell className="text-xs">{(r.o.brix_degree ?? '-') + ' / ' + (r.o.ph ?? '-')}</TableCell>
+                    <TableCell className="text-right">{fmtBRL(r.cmvTotal)}</TableCell>
+                  </TableRow>
+                ))}
+                {data.list.length === 0 && (
+                  <TableRow><TableCell colSpan={9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <p className="text-xs text-gray-500">
+            A versão impressa traz a ficha completa de cada ordem: datas, responsável, lote e validade, análise (Brix, pH, sensorial),
+            pasteurização, matéria-prima consumida com lote e custo, CMV total e unitário.
+          </p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Fechar</Button>
