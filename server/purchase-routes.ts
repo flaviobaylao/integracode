@@ -165,6 +165,23 @@ async function ensurePurchaseInvoicesTable() {
         UNIQUE(seller_id, month, year)
       )
     `);
+    // ANEXOS DA COMPRA — arquivos guardados no banco (base64), como em
+    // payable_attachments: no Railway o disco e efemero.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS purchase_attachments (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        purchase_id varchar NOT NULL,
+        kind varchar NOT NULL DEFAULT 'outro',
+        file_name varchar NOT NULL,
+        mime_type varchar,
+        size_bytes integer,
+        content_base64 text NOT NULL,
+        payable_attachment_id varchar,
+        created_by varchar,
+        created_at timestamp DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_purchase_attachments_purchase ON purchase_attachments (purchase_id)`);
     console.log("✅ purchase_invoices table ensured");
   } catch (err: any) {
     console.error("⚠️ Error ensuring purchase_invoices table:", err.message);
@@ -436,6 +453,94 @@ export function registerPurchaseRoutes(app: Express) {
     } catch (err: any) {
       console.error("[PURCHASES] DANFE error:", err.message);
       res.status(500).json({ error: "Falha ao gerar o DANFE: " + err.message });
+    }
+  });
+
+  // ===== ANEXOS DA COMPRA (arquivos livres: boleto, comprovante, DANFE do
+  // fornecedor, pedido, e-mail...). Ficam na NF de compra e, quando ela ja tem
+  // conta a pagar, uma copia vai junto para payable_attachments, para o pessoal
+  // do Financeiro ver o mesmo documento sem procurar em duas telas. =====
+  const TIPOS_ANEXO = ["danfe", "xml", "boleto", "comprovante", "pedido", "outro"];
+
+  app.get("/api/purchases/:id/attachments", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT id, kind, file_name, mime_type, size_bytes, created_by, created_at
+        FROM purchase_attachments WHERE purchase_id = ${req.params.id} ORDER BY created_at ASC`);
+      res.json((r as any).rows || r || []);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/purchases/:id/attachments", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const { kind, fileName, mimeType, base64 } = req.body || {};
+      if (!fileName || !base64) return res.status(400).json({ error: "fileName e base64 são obrigatórios" });
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "Nota fiscal não encontrada" });
+
+      const clean = String(base64).replace(/^data:[^;]+;base64,/, "");
+      const size = Math.floor(clean.length * 3 / 4);
+      if (size > 15 * 1024 * 1024) return res.status(413).json({ error: "Arquivo muito grande (limite 15MB)." });
+      const k = TIPOS_ANEXO.includes(String(kind)) ? String(kind) : "outro";
+      const by = (req as any).currentUser?.id || (req as any).currentUser?.email || null;
+      const nome = String(fileName).slice(0, 180);
+      const mime = mimeType || null;
+
+      // Copia para a conta a pagar (quando existe), com os tipos que aquela tela
+      // entende ('danfe' | 'boleto' | 'outro').
+      let payableAttId: string | null = null;
+      const alvos = await payablesDaCompra(invoice);
+      if (alvos.length > 0) {
+        const kPay = k === "danfe" || k === "boleto" ? k : "outro";
+        for (const pid of alvos) {
+          try {
+            const rp: any = await db.execute(sql`INSERT INTO payable_attachments (id, payable_id, kind, file_name, mime_type, size_bytes, content_base64, created_by, created_at)
+              VALUES (gen_random_uuid(), ${pid}, ${kPay}, ${nome}, ${mime}, ${size}, ${clean}, ${by}, now()) RETURNING id`);
+            if (!payableAttId) payableAttId = ((rp as any).rows || rp || [])[0]?.id || null;
+          } catch (e: any) {
+            console.warn(`⚠️ [PURCHASES] Anexo nao copiado para a conta ${pid}: ${e?.message || e}`);
+          }
+        }
+      }
+
+      const r: any = await db.execute(sql`INSERT INTO purchase_attachments (id, purchase_id, kind, file_name, mime_type, size_bytes, content_base64, payable_attachment_id, created_by, created_at)
+        VALUES (gen_random_uuid(), ${req.params.id}, ${k}, ${nome}, ${mime}, ${size}, ${clean}, ${payableAttId}, ${by}, now())
+        RETURNING id, kind, file_name, mime_type, size_bytes, created_at`);
+      const row = ((r as any).rows || r || [])[0] || {};
+      res.status(201).json({ ...row, copiadoParaContaAPagar: alvos.length > 0, contas: alvos.length });
+    } catch (err: any) {
+      console.error("[PURCHASES] Upload anexo error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/purchases/attachments/:attId/download", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT file_name, mime_type, content_base64 FROM purchase_attachments WHERE id = ${req.params.attId} LIMIT 1`);
+      const row = ((r as any).rows || r || [])[0];
+      if (!row) return res.status(404).json({ error: "Anexo não encontrado" });
+      const buf = Buffer.from(String(row.content_base64), "base64");
+      res.setHeader("Content-Type", row.mime_type || "application/octet-stream");
+      res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename="${encodeURIComponent(row.file_name || "anexo")}"`);
+      res.send(buf);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Remove o anexo da compra E a copia que foi para a conta a pagar.
+  app.delete("/api/purchases/attachments/:attId", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT payable_attachment_id FROM purchase_attachments WHERE id = ${req.params.attId} LIMIT 1`);
+      const row = ((r as any).rows || r || [])[0];
+      if (row?.payable_attachment_id) {
+        await db.execute(sql`DELETE FROM payable_attachments WHERE id = ${row.payable_attachment_id}`).catch(() => {});
+      }
+      await db.execute(sql`DELETE FROM purchase_attachments WHERE id = ${req.params.attId}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
