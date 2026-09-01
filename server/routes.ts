@@ -76,6 +76,7 @@ import fs from 'fs';
 import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
 import { objectStorageClient } from './replit_integrations/object_storage/objectStorage';
+import { naoEFantasma } from "./ghost-receivables";
 
 // 🔌 DESLIGAMENTO DO OMIE NO CADASTRO DE CLIENTES (o 2.0 vira o dono do cadastro).
 // Controla APENAS a sincronização de CADASTRO de cliente com o Omie — as duas direções:
@@ -24254,21 +24255,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // no badge da Rota (o R$ 0,00 que o vendedor via mesmo com o cliente devendo).
         // Régua "vencida" idêntica ao bloqueio + piso de R$50 por cliente.
         const debtsResult = await db.execute(sql`
-          SELECT customer_id AS cid,
-                 REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') AS ndoc,
-                 (amount - COALESCE(amount_paid, 0)) AS saldo
-          FROM receivables
-          WHERE deleted_at IS NULL
-            AND (amount - COALESCE(amount_paid, 0)) > 0
-            AND COALESCE(import_origin, '') <> 'omie_historico'
+          SELECT r.customer_id AS cid,
+                 REGEXP_REPLACE(COALESCE(r.customer_document,''), '[^0-9]', '', 'g') AS ndoc,
+                 (r.amount - COALESCE(r.amount_paid, 0)) AS saldo
+          FROM receivables r
+          WHERE r.deleted_at IS NULL
+            AND (r.amount - COALESCE(r.amount_paid, 0)) > 0
+            AND COALESCE(r.import_origin, '') <> 'omie_historico'
             AND (
-              status IN ('a_vencer', 'vencida')
-              AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+              r.status IN ('a_vencer', 'vencida')
+              AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
             )
+            -- Duplicata de reparo de orfaos nao e divida: ver ghost-receivables.ts
+            AND ${naoEFantasma('r')}
             AND (
-              customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+              r.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
               ${documents.length > 0
-                ? sql`OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))`
+                ? sql`OR REGEXP_REPLACE(COALESCE(r.customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documents.join(',')}, ','))`
                 : sql``}
             )
         `);
