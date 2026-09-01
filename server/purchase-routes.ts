@@ -371,6 +371,43 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  // ===== DANFE / XML DA NOTA DE COMPRA =====
+  // A nota importada guarda o XML completo; aqui ele vira o DANFE em PDF (mesmo
+  // desenho das notas de venda) e tambem pode ser baixado como XML.
+  app.get("/api/purchases/:id/danfe", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "Nota fiscal não encontrada" });
+      if (!invoice.xmlContent) {
+        return res.status(409).json({ error: 'Esta nota ainda não tem XML. Use "Baixar XML (SEFAZ)" antes de gerar o DANFE.' });
+      }
+      const { montarDanfeCompraPdf, nomeArquivoDanfeCompra } = await import("./danfe-compra");
+      const pdf = montarDanfeCompraPdf(invoice);
+      if (!pdf) return res.status(409).json({ error: "Não foi possível gerar o DANFE (XML ausente)." });
+      const nome = nomeArquivoDanfeCompra(invoice as any);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename="${nome}"`);
+      res.send(pdf);
+    } catch (err: any) {
+      console.error("[PURCHASES] DANFE error:", err.message);
+      res.status(500).json({ error: "Falha ao gerar o DANFE: " + err.message });
+    }
+  });
+
+  app.get("/api/purchases/:id/xml", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "Nota fiscal não encontrada" });
+      if (!invoice.xmlContent) return res.status(409).json({ error: "Esta nota ainda não tem XML." });
+      const base = String(invoice.accessKey || invoice.invoiceNumber || "nfe-compra").replace(/[^A-Za-z0-9_-]/g, "");
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${base}.xml"`);
+      res.send(invoice.xmlContent);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/purchases/import-xml", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
     try {
       const { xmlContent, omieInstanceId } = req.body;
@@ -485,6 +522,26 @@ export function registerPurchaseRoutes(app: Express) {
       const by = (req as any).currentUser?.id || (req as any).currentUser?.email || null;
       const baseDesc = description || `Compra NF ${invoice.invoiceNumber} - ${invoice.supplierName}`;
 
+      // ANEXO DO DANFE — a conta a pagar nasce ja com o DANFE da compra em
+      // payable_attachments (kind 'danfe'), a mesma tabela que Contas a Pagar
+      // usa. Nunca derruba a criacao da conta: se o XML faltar ou o PDF falhar,
+      // so registra no log (o botao DANFE na tela continua disponivel).
+      const anexarDanfe = async (payableId: string) => {
+        try {
+          if (!invoice.xmlContent || !payableId) return;
+          const { montarDanfeCompraPdf, nomeArquivoDanfeCompra } = await import("./danfe-compra");
+          const pdf = montarDanfeCompraPdf(invoice);
+          if (!pdf) return;
+          const nome = nomeArquivoDanfeCompra(invoice as any);
+          const b64 = pdf.toString("base64");
+          await db.execute(sql`INSERT INTO payable_attachments (id, payable_id, kind, file_name, mime_type, size_bytes, content_base64, created_by, created_at)
+            VALUES (gen_random_uuid(), ${payableId}, 'danfe', ${nome}, 'application/pdf', ${pdf.length}, ${b64}, ${by}, now())`);
+          console.log(`📎 [PURCHASES] DANFE anexado na conta a pagar ${payableId} (NF ${invoice.invoiceNumber}).`);
+        } catch (e: any) {
+          console.warn(`⚠️ [PURCHASES] Nao consegui anexar o DANFE na conta ${payableId}: ${e?.message || e}`);
+        }
+      };
+
       // PARCELAMENTO: se vier uma lista de parcelas, cria UMA conta a pagar por parcela (cada
       // uma com seu vencimento e valor). Sem parcelas, cria uma unica (comportamento antigo).
       const parc = Array.isArray(installments) ? installments.filter((p: any) => p && p.dueDate && Number(p.amount) > 0) : [];
@@ -510,6 +567,7 @@ export function registerPurchaseRoutes(app: Express) {
             createdBy: by,
           }).returning();
           created.push(pay);
+          await anexarDanfe(pay.id);
         }
         const [updatedInvoiceP] = await db.update(purchaseInvoices)
           .set({ payableId: created[0].id, status: "linked", updatedAt: agora() })
@@ -537,6 +595,8 @@ export function registerPurchaseRoutes(app: Express) {
         omieInstanceId: invoice.omieInstanceId || null,
         createdBy: by,
       }).returning();
+
+      await anexarDanfe(payable.id);
 
       const [updatedInvoice] = await db.update(purchaseInvoices)
         .set({
