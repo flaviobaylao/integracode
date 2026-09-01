@@ -2724,6 +2724,9 @@ export const repescagemAssignments = pgTable("repescagem_assignments", {
   routeStopId: varchar("route_stop_id"),
   // Parada travada no dia: não pode ser movida/removida por otimização ou vendedor.
   locked: boolean("locked").notNull().default(false),
+  // Dia (YYYY-MM-DD, BR) a que a trava se aplica. A trava só vale para o dia vigente;
+  // na virada do dia ela é ignorada/limpa (destrava automática).
+  lockedDate: varchar("locked_date"),
 });
 
 export const repescagemAssignmentHistory = pgTable("repescagem_assignment_history", {
