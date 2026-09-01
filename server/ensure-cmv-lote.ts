@@ -17,7 +17,7 @@ import { sql } from "drizzle-orm";
  *
  * Idempotente: roda no boot, so cria o que falta e so preenche linha com custo nulo.
  */
-export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?: number; error?: string }> {
+export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?: number; repaired?: number; error?: string }> {
   try {
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(14,4)`);
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS total_cost NUMERIC(14,2)`);
@@ -48,6 +48,14 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
     // CMV dos lotes antigos — exatamente o que estas colunas existem para evitar.
     // Lotes cujo movimento nao registrou custo ficam NULL de proposito: a tela
     // mostra "—" em vez de um zero que parece custo real.
+    // ⚠️ SO O ULTIMO MOVIMENTO DE CADA MATERIA-PRIMA (bug pego em producao, 01/set).
+    // A 1a versao somava TODOS os 'saida_producao' da ordem. Ordem reaberta e
+    // refinalizada — ou vitima do bug de consumo duplo de 18/ago — acumula varios
+    // conjuntos de movimentos, e a soma cega dobrava o CMV: a OP-00017 saiu com
+    // R$ 8,2667/un contra os R$ 4,1334 que a propria finalizacao registrou, e a
+    // OP-00008 (30 movimentos, com estorno) ficou 5x. Uma refinalizacao REESCREVE o
+    // consumo daquele material; as tentativas anteriores sao historico de erro, nao
+    // custo. Com DISTINCT ON, os 8 lotes com CMV batem com o rodape das ordens.
     const fill: any = await db.execute(sql`
       UPDATE inventory_lots l
          SET total_cost = c.total,
@@ -55,8 +63,13 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
         FROM production_orders po
         JOIN (
           SELECT production_order_id, SUM(quantity * COALESCE(unit_cost, 0)) AS total
-            FROM raw_material_movements
-           WHERE movement_type = 'saida_producao' AND production_order_id IS NOT NULL
+            FROM (
+              SELECT DISTINCT ON (production_order_id, raw_material_id)
+                     production_order_id, raw_material_id, quantity, unit_cost
+                FROM raw_material_movements
+               WHERE movement_type = 'saida_producao' AND production_order_id IS NOT NULL
+               ORDER BY production_order_id, raw_material_id, created_at DESC
+            ) ult
            GROUP BY production_order_id
           HAVING SUM(COALESCE(unit_cost, 0)) > 0
         ) c ON c.production_order_id = po.id
@@ -64,9 +77,48 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
          AND l.unit_cost IS NULL
       RETURNING l.id`);
 
+    // Reparo unico dos lotes que a 1a versao ja gravou inflados. Roda so uma vez
+    // (marca em system_settings) para nunca sobrescrever uma correcao manual futura.
+    let repaired = 0;
+    try {
+      const marca: any = await db.execute(
+        sql`SELECT 1 FROM system_settings WHERE key = 'cmv_lote_repair_ultimo_movimento' LIMIT 1`);
+      if (!(marca.rows || []).length) {
+        const rep: any = await db.execute(sql`
+          UPDATE inventory_lots l
+             SET total_cost = c.total,
+                 unit_cost  = CASE WHEN po.quantity > 0 THEN c.total / po.quantity ELSE NULL END
+            FROM production_orders po
+            JOIN (
+              SELECT production_order_id, SUM(quantity * COALESCE(unit_cost, 0)) AS total
+                FROM (
+                  SELECT DISTINCT ON (production_order_id, raw_material_id)
+                         production_order_id, raw_material_id, quantity, unit_cost
+                    FROM raw_material_movements
+                   WHERE movement_type = 'saida_producao' AND production_order_id IS NOT NULL
+                   ORDER BY production_order_id, raw_material_id, created_at DESC
+                ) ult
+               GROUP BY production_order_id
+              HAVING SUM(COALESCE(unit_cost, 0)) > 0
+            ) c ON c.production_order_id = po.id
+           WHERE l.production_order_id = po.id
+             AND l.unit_cost IS DISTINCT FROM (CASE WHEN po.quantity > 0 THEN c.total / po.quantity ELSE NULL END)
+          RETURNING l.id`);
+        repaired = (rep.rows || []).length;
+        await db.execute(sql`
+          INSERT INTO system_settings (key, value, description, updated_by)
+          VALUES ('cmv_lote_repair_ultimo_movimento', ${String(repaired)},
+                  'Reparo unico do CMV de lotes de ordens reabertas/refinalizadas (01/set/2026)', 'system')
+          ON CONFLICT (key) DO NOTHING`);
+      }
+    } catch (e: any) {
+      console.warn('⚠️ [CMV-LOTE] reparo unico nao aplicado:', e?.message || e);
+    }
+
     const backfilled = (fill.rows || []).length;
-    console.log(`✅ [CMV-LOTE] colunas ok — vinculados ${(link.rows || []).length} lote(s) a ordens, CMV preenchido em ${backfilled}`);
-    return { ok: true, backfilled };
+    console.log(`✅ [CMV-LOTE] colunas ok — vinculados ${(link.rows || []).length} lote(s) a ordens, `
+      + `CMV preenchido em ${backfilled}, reparados ${repaired}`);
+    return { ok: true, backfilled, repaired };
   } catch (e: any) {
     console.warn('⚠️ [CMV-LOTE] ensureCmvLoteColumns falhou:', e?.message || e);
     return { ok: false, error: String(e?.message || e) };
