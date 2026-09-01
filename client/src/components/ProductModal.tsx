@@ -26,6 +26,14 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
     omieCode: '',
     omieCodigo: '',
     omieCodigoProduto: '',
+    // Campos OPCIONAIS: NCM e as tabelas de preco. Nascem vazios de proposito —
+    // o produto pode ser cadastrado so com nome/preco/estoque e completado depois.
+    ncm: '',
+    retailPrice: '',
+    wholesalePrice: '',
+    resaleGoianiaPrice: '',
+    resaleInteriorPrice: '',
+    resaleBrasiliaPrice: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { toast } = useToast();
@@ -42,6 +50,12 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         omieCode: editingProduct.omieCode || '',
         omieCodigo: editingProduct.omieCodigo || '',
         omieCodigoProduto: editingProduct.omieCodigoProduto || '',
+        ncm: editingProduct.ncm || '',
+        retailPrice: editingProduct.retailPrice || '',
+        wholesalePrice: editingProduct.wholesalePrice || '',
+        resaleGoianiaPrice: editingProduct.resaleGoianiaPrice || '',
+        resaleInteriorPrice: editingProduct.resaleInteriorPrice || '',
+        resaleBrasiliaPrice: editingProduct.resaleBrasiliaPrice || '',
       });
     } else {
       setFormData({
@@ -53,6 +67,12 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         omieCode: '',
         omieCodigo: '',
         omieCodigoProduto: '',
+        ncm: '',
+        retailPrice: '',
+        wholesalePrice: '',
+        resaleGoianiaPrice: '',
+        resaleInteriorPrice: '',
+        resaleBrasiliaPrice: '',
       });
     }
     setErrors({});
@@ -99,6 +119,15 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         omieCode: formData.omieCode || undefined,
         omieCodigo: formData.omieCodigo || undefined,
         omieCodigoProduto: formData.omieCodigoProduto || undefined,
+        // OPCIONAIS: campo vazio vira undefined (nao vai no payload) em vez de ''
+        // — string vazia quebraria o decimal do banco e derrubaria o cadastro
+        // inteiro por causa de um campo que o usuario deliberadamente deixou em branco.
+        ncm: formData.ncm.trim() || undefined,
+        retailPrice: formData.retailPrice !== '' ? parseFloat(formData.retailPrice) : undefined,
+        wholesalePrice: formData.wholesalePrice !== '' ? parseFloat(formData.wholesalePrice) : undefined,
+        resaleGoianiaPrice: formData.resaleGoianiaPrice !== '' ? parseFloat(formData.resaleGoianiaPrice) : undefined,
+        resaleInteriorPrice: formData.resaleInteriorPrice !== '' ? parseFloat(formData.resaleInteriorPrice) : undefined,
+        resaleBrasiliaPrice: formData.resaleBrasiliaPrice !== '' ? parseFloat(formData.resaleBrasiliaPrice) : undefined,
       };
 
       const validatedData = insertProductSchema.parse(dataToValidate);
@@ -118,7 +147,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {editingProduct ? 'Editar Produto' : 'Novo Produto'}
@@ -180,6 +209,93 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
             </div>
           </div>
           
+          <div className="border-t border-gray-200 pt-4">
+            <h3 className="text-sm font-semibold mb-3">Fiscal e tabelas de preço (opcional)</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Pode deixar em branco e preencher depois — nada aqui impede salvar o produto.
+              Sem NCM, a NF-e do produto será recusada até que ele seja informado.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="ncm">NCM</Label>
+                <Input
+                  id="ncm"
+                  value={formData.ncm}
+                  onChange={(e) => setFormData(prev => ({ ...prev, ncm: e.target.value.replace(/[^0-9.]/g, '').slice(0, 10) }))}
+                  placeholder="Ex: 2009.90.00"
+                  maxLength={10}
+                  data-testid="input-ncm"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="retailPrice">Varejo (R$)</Label>
+                  <Input
+                    id="retailPrice"
+                    type="number"
+                    step="0.01"
+                    value={formData.retailPrice}
+                    onChange={(e) => setFormData(prev => ({ ...prev, retailPrice: e.target.value }))}
+                    placeholder="0,00"
+                    data-testid="input-retail-price"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="wholesalePrice">Atacado (R$)</Label>
+                  <Input
+                    id="wholesalePrice"
+                    type="number"
+                    step="0.01"
+                    value={formData.wholesalePrice}
+                    onChange={(e) => setFormData(prev => ({ ...prev, wholesalePrice: e.target.value }))}
+                    placeholder="0,00"
+                    data-testid="input-wholesale-price"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <Label htmlFor="resaleGoianiaPrice" className="text-xs">Revenda GYN</Label>
+                  <Input
+                    id="resaleGoianiaPrice"
+                    type="number"
+                    step="0.01"
+                    value={formData.resaleGoianiaPrice}
+                    onChange={(e) => setFormData(prev => ({ ...prev, resaleGoianiaPrice: e.target.value }))}
+                    placeholder="0,00"
+                    data-testid="input-resale-goiania-price"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="resaleInteriorPrice" className="text-xs">Revenda Interior</Label>
+                  <Input
+                    id="resaleInteriorPrice"
+                    type="number"
+                    step="0.01"
+                    value={formData.resaleInteriorPrice}
+                    onChange={(e) => setFormData(prev => ({ ...prev, resaleInteriorPrice: e.target.value }))}
+                    placeholder="0,00"
+                    data-testid="input-resale-interior-price"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="resaleBrasiliaPrice" className="text-xs">Revenda BSB</Label>
+                  <Input
+                    id="resaleBrasiliaPrice"
+                    type="number"
+                    step="0.01"
+                    value={formData.resaleBrasiliaPrice}
+                    onChange={(e) => setFormData(prev => ({ ...prev, resaleBrasiliaPrice: e.target.value }))}
+                    placeholder="0,00"
+                    data-testid="input-resale-brasilia-price"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="border-t border-gray-200 pt-4">
             <h3 className="text-sm font-semibold mb-3">Códigos do Omie (opcional)</h3>
             <div className="space-y-3">
