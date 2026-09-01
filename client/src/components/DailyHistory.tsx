@@ -211,6 +211,14 @@ export default function DailyHistory() {
           const totalScope = vals.reduce((a, b) => a + b, 0);
           const gy = [0, 0.25, 0.5, 0.75, 1];
           const MM = monthSel.slice(5);
+          const _n = vals.length;
+          let _sx = 0, _sy = 0, _sxx = 0, _sxy = 0;
+          for (let _i = 0; _i < _n; _i++) { _sx += _i; _sy += vals[_i]; _sxx += _i * _i; _sxy += _i * vals[_i]; }
+          const _den = _n * _sxx - _sx * _sx;
+          const _slope = _den !== 0 ? (_n * _sxy - _sx * _sy) / _den : 0;
+          const _int = _n ? (_sy - _slope * _sx) / _n : 0;
+          const _cl = (vv: number) => Math.max(0, Math.min(maxV, vv));
+          const _t0 = _cl(_int), _t1 = _cl(_int + _slope * (_n - 1));
           return (
             <div className="mt-4 border-t pt-3">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
@@ -238,6 +246,9 @@ export default function DailyHistory() {
                   ) : null)}
                   <line x1={mLeft} x2={W - mRight} y1={plotBottom} y2={plotBottom} stroke="#cbd5e1" />
                   <polyline points={pts} fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                  {_n >= 2 ? (<line x1={x(0)} y1={y(_t0)} x2={x(_n - 1)} y2={y(_t1)} stroke="#f59e0b" strokeWidth="1.6" strokeDasharray="6 4" />) : null}
+                  <line x1={mLeft + 6} x2={mLeft + 22} y1={10} y2={10} stroke="#f59e0b" strokeWidth="1.6" strokeDasharray="6 4" />
+                  <text x={mLeft + 26} y={13} fontSize="9" fill="#b45309">{"tend\u00eancia (regress\u00e3o linear)"}</text>
                   {vals.map((v, i) => (
                     <g key={"pt" + i}>
                       <circle cx={x(i)} cy={y(v)} r="2.6" fill="#fff" stroke="#4f46e5" strokeWidth="1.5" />
