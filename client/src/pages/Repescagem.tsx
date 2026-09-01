@@ -94,6 +94,9 @@ export default function Repescagem() {
   const [filterNeighborhood, setFilterNeighborhood] = useState('all');
   const [filterPeriodicity, setFilterPeriodicity] = useState('all');
   const [filterAssignStatus, setFilterAssignStatus] = useState('all');
+  // Ordenacao A-Z / Z-A por coluna (clique no cabecalho).
+  const [sortKey, setSortKey] = useState<string>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [serviceLogTarget, setServiceLogTarget] = useState<{ id: string; name: string } | null>(null);
   const [historyCustomer, setHistoryCustomer] = useState<{ id: string; name: string } | null>(null);
 
@@ -178,6 +181,40 @@ export default function Repescagem() {
     }
     return f;
   }, [assignments, searchCustomer, filterAttendant, filterCity, filterNeighborhood, filterPeriodicity, filterAssignStatus]);
+
+  // Ordenação A-Z / Z-A por coluna. Clique alterna asc -> desc; nova coluna começa asc.
+  const toggleSort = (key: string) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const sortIndicator = (key: string) => (sortKey !== key ? '↕' : sortDir === 'asc' ? '↑' : '↓');
+
+  const sortedAssignments = useMemo(() => {
+    if (!sortKey) return filteredAssignments;
+    const val = (a: any): string | number => {
+      switch (sortKey) {
+        case 'cliente': return (a.customerName || '').toLowerCase();
+        case 'cidade': return (a.customerCity || '').toLowerCase();
+        case 'bairro': return (a.customerNeighborhood || '').toLowerCase();
+        case 'uf': return (a.customerUf || '').toLowerCase();
+        case 'vendedor': return (a.sellerName || '').toLowerCase();
+        case 'periodicidade': return String(PERIODICITY_LABELS[a.periodicity] || a.periodicity || '').toLowerCase();
+        case 'ultimaVisita': return a.lastRedDate || '';
+        case 'dias': return typeof a.daysSince === 'number' ? a.daysSince : -1;
+        case 'atendente': return (a.unassigned ? 'não atribuído' : (a.assignedUserName || '')).toLowerCase();
+        default: return '';
+      }
+    };
+    const arr = [...filteredAssignments];
+    arr.sort((a, b) => {
+      const va = val(a), vb = val(b);
+      let cmp: number;
+      if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+      else cmp = String(va).localeCompare(String(vb), 'pt-BR', { sensitivity: 'base', numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [filteredAssignments, sortKey, sortDir]);
 
   // Distribuição visual por atendente para a lista filtrada
   const distribution = useMemo(() => {
@@ -464,22 +501,38 @@ export default function Repescagem() {
               <table className="min-w-full text-sm">
                 <thead className="sticky top-0 z-20">
                   <tr className="bg-gray-50 dark:bg-gray-800 border-b shadow-sm">
-                    <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Cliente</th>
-                    <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Cidade</th>
-                    <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Bairro</th>
-                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">UF</th>
-                    <th className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800">Vendedor</th>
-                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Periodicidade</th>
-                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">
-                      <Calendar className="inline h-3.5 w-3.5 mr-1" />Última Visita
+                    <th onClick={() => toggleSort('cliente')} title="Ordenar A-Z" className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center gap-1">Cliente <span className={`text-[10px] leading-none ${sortKey === 'cliente' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('cliente')}</span></span>
                     </th>
-                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Há quantos dias</th>
-                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Atendente</th>
+                    <th onClick={() => toggleSort('cidade')} title="Ordenar A-Z" className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center gap-1">Cidade <span className={`text-[10px] leading-none ${sortKey === 'cidade' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('cidade')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('bairro')} title="Ordenar A-Z" className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center gap-1">Bairro <span className={`text-[10px] leading-none ${sortKey === 'bairro' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('bairro')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('uf')} title="Ordenar A-Z" className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center justify-center gap-1">UF <span className={`text-[10px] leading-none ${sortKey === 'uf' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('uf')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('vendedor')} title="Ordenar A-Z" className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center gap-1">Vendedor <span className={`text-[10px] leading-none ${sortKey === 'vendedor' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('vendedor')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('periodicidade')} title="Ordenar A-Z" className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center justify-center gap-1">Periodicidade <span className={`text-[10px] leading-none ${sortKey === 'periodicidade' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('periodicidade')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('ultimaVisita')} title="Ordenar por data" className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center justify-center gap-1"><Calendar className="inline h-3.5 w-3.5 mr-0.5" />Última Visita <span className={`text-[10px] leading-none ${sortKey === 'ultimaVisita' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('ultimaVisita')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('dias')} title="Ordenar por dias" className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center justify-center gap-1">Há quantos dias <span className={`text-[10px] leading-none ${sortKey === 'dias' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('dias')}</span></span>
+                    </th>
+                    <th onClick={() => toggleSort('atendente')} title="Ordenar A-Z" className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <span className="inline-flex items-center justify-center gap-1">Atendente <span className={`text-[10px] leading-none ${sortKey === 'atendente' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('atendente')}</span></span>
+                    </th>
                     <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAssignments.map((a) => (
+                  {sortedAssignments.map((a) => (
                     <tr
                       key={a.assignmentId}
                       className="border-t hover:bg-orange-50/30"
