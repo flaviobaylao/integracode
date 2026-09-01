@@ -115,6 +115,10 @@ type Extrato = {
     atrasoMedioDias: number | null;
     notasCanceladas: number;
     baixasEstimadas: number;
+    titulosFantasma?: number;
+    valorFantasma?: number;
+    duplicadasComBaixa?: number;
+    valorDuplicadasComBaixa?: number;
   };
   linhas: Linha[];
   totalLinhas: number;
@@ -554,6 +558,19 @@ export default function ExtratoCliente() {
                 <div className="mt-3 text-[11px] text-amber-700 dark:text-amber-300">
                   ⚠ {r?.baixasEstimadas} baixa(s) vieram do histórico importado sem data de pagamento — foram lançadas na data
                   de vencimento e aparecem marcadas como <em>data estimada</em>.
+                </div>
+              ) : null}
+              {(r?.titulosFantasma || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.titulosFantasma} título(s) duplicado(s) de {fmtBRL(r?.valorFantasma)} foram <strong>ignorados</strong>: a
+                  mesma NF já tem título ligado à nota fiscal, e estes nasceram depois, sem NF-e e sem pedido — nem aparecem na
+                  lista nem entram nas somas.
+                </div>
+              ) : null}
+              {(r?.duplicadasComBaixa || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-red-700 dark:text-red-300">
+                  ⚠ {r?.duplicadasComBaixa} título(s) com cara de duplicata <strong>têm baixa</strong> ({fmtBRL(r?.valorDuplicadasComBaixa)}
+                  {" "}recebidos) e por isso continuam na lista. Confira se houve recebimento em duplicidade.
                 </div>
               ) : null}
             </CardContent>
