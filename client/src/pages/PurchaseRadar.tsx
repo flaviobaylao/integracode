@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Radar, Upload, FileText, Package, DollarSign, Search,
   Filter, Eye, Tag, Truck, CheckCircle2, XCircle,
-  ArrowRight, BarChart3, AlertCircle, RefreshCw, Trash2, Plus
+  ArrowRight, BarChart3, AlertCircle, RefreshCw, Trash2, Plus, Download
 } from "lucide-react";
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -734,6 +734,39 @@ export default function PurchaseRadar() {
                   <p className="font-mono text-xs break-all">{selectedInvoice.accessKey}</p>
                 </div>
               )}
+
+              {/* DANFE da compra — gerado do XML guardado na importacao. */}
+              {(() => { const temXml = !!selectedInvoice.xmlContent || ["imported", "classified", "linked", "paid"].includes(selectedInvoice.status); return (
+              <div className="rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-sm">
+                    <span className="text-xs text-muted-foreground">Documento da nota:</span>{" "}
+                    {temXml ? (
+                      <span className="font-medium text-emerald-700">DANFE disponível</span>
+                    ) : (
+                      <span className="font-medium text-amber-700">sem XML — baixe o XML na SEFAZ para gerar o DANFE</span>
+                    )}
+                  </div>
+                  {temXml && (
+                    <div className="flex gap-2 flex-wrap">
+                      <Button size="sm" variant="outline" onClick={() => window.open(`/api/purchases/${selectedInvoice.id}/danfe`, "_blank")}>
+                        <FileText className="h-4 w-4 mr-1" /> Ver DANFE
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => window.open(`/api/purchases/${selectedInvoice.id}/danfe?download=1`, "_blank")}>
+                        <Download className="h-4 w-4 mr-1" /> Baixar PDF
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => window.open(`/api/purchases/${selectedInvoice.id}/xml`, "_blank")}>
+                        <Download className="h-4 w-4 mr-1" /> XML
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {temXml && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    O DANFE é anexado automaticamente à conta a pagar quando ela for criada a partir desta compra.
+                  </p>
+                )}
+              </div> ); })()}
 
               <div className="rounded-lg border p-3 bg-muted/30">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
