@@ -1,0 +1,3508 @@
+import { useState, useMemo, useRef, useEffect } from "react";
+import { compareSellersByType } from "@/lib/sellerOrder";
+import { getBrazilDateISO } from '@/lib/brazilTimezone';
+import { useQuery, useMutation } from "@/lib/queryClient";
+import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { VirtualServiceSummary } from "@/components/VirtualServiceSummary";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
+import { useAuth } from "@/hooks/useAuth";
+import { useLocation } from "wouter";
+import { formatInTimeZone } from "date-fns-tz";
+import { ptBR } from "date-fns/locale";
+import type { DailyRouteResponse } from "@shared/schema";
+import OmieInstanceBadge from "@/components/OmieInstanceBadge";
+import RouteMap from "@/components/RouteMap";
+import LeadActions from "@/components/LeadActions";
+import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
+import SaleEditModal from "@/components/SaleEditModal";
+import NoSaleModal from "@/components/NoSaleModal";
+import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
+import { ChangeRequestControl, useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
+import type { SalesCardWithRelations } from "@shared/schema";
+import EditablePhoneField from "@/components/EditablePhoneField";
+
+// Vendedores/canais ocultados do seletor de Vendedor da Rota do Dia (por id).
+// (HOTSITE, INSTAGRAM, Fabio H. e Lorenna Pina.)
+const HIDDEN_ROUTE_SELLER_IDS = new Set<string>([
+  'a0903a77-a217-4989-8e0c-7d9ca2ac36cf', // HOTSITE
+  'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
+  'omie-vendor-4253571754',               // Fabio H
+  'omie-vendor-4324270246',               // Lorenna Pina
+]);
+
+// Ocultados por PREFIXO DE NOME (não são rota de vendedor). "Honest 3" é o canal de
+// Fornecedores/Clientes Internos/Colaboradores — não deve aparecer no seletor da Rota do Dia.
+// Precisos o suficiente para NÃO afetar "Honest 1" e "Honest 2".
+const HIDDEN_ROUTE_SELLER_NAME_PREFIXES = ['honest 3'];
+
+const isHiddenRouteSeller = (s: any): boolean => {
+  if (HIDDEN_ROUTE_SELLER_IDS.has(s.id)) return true;
+  const nm = `${s.firstName || ''} ${s.lastName || ''}`.trim().toLowerCase().replace(/\s+/g, ' ');
+  return HIDDEN_ROUTE_SELLER_NAME_PREFIXES.some(p => nm.startsWith(p));
+};
+
+// Funções auxiliares para formatar dados de agendamento
+function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
+  if (!weekdaysJson) return '';
+  
+  try {
+    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    const days = safeParseWeekdays(weekdaysJson);
+    if (!Array.isArray(days) || days.length === 0) return '';
+    
+    const dayMap: Record<string, string> = {
+      'Seg': 'Seg',
+      'Ter': 'Ter',
+      'Qua': 'Qua',
+      'Qui': 'Qui',
+      'Sex': 'Sex',
+      'Sab': 'Sáb',
+      'Dom': 'Dom'
+    };
+    
+    return days.map(d => dayMap[d] || d).join(', ');
+  } catch (e) {
+    return '';
+  }
+}
+
+function formatPeriodicity(periodicity: string | null | undefined): string {
+  if (!periodicity) return '';
+  
+  const periodicityMap: Record<string, string> = {
+    'semanal': 'Semanal',
+    'quinzenal': 'Quinzenal',
+    'mensal': 'Mensal'
+  };
+  
+  return periodicityMap[periodicity] || periodicity;
+}
+
+export default function RotaDoDia() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const delegMarks = useCustomerMarks();
+  const navigate = useLocation()[1];
+  
+  const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
+  const isVendedor = user?.role === 'vendedor';
+  const isTelemarketing = user?.role === 'telemarketing';
+  // Cobertura temporaria: Robson cobre as carteiras de Maria E. e Natalia B. em 17/07/2026 (06h-18h BRT).
+  const COVERAGE_GRANT = {
+    granteeId: 'omie-vendor-4077616122', // Robson
+    startMs: new Date('2026-07-17T06:00:00-03:00').getTime(),
+    endMs: new Date('2026-07-17T18:00:00-03:00').getTime(),
+    sellers: [
+      { id: 'omie-vendor-4077616122', firstName: 'Robson', lastName: '(minha carteira)', role: 'telemarketing', isActive: true },
+      { id: 'omie-vendor-4323360115', firstName: 'Maria', lastName: 'E.', role: 'telemarketing', isActive: true },
+      { id: 'omie-vendor-4317814615', firstName: 'Natalia', lastName: 'B.', role: 'telemarketing', isActive: true },
+    ],
+  };
+  const coverageActive = !!user && user.id === COVERAGE_GRANT.granteeId && Date.now() >= COVERAGE_GRANT.startMs && Date.now() <= COVERAGE_GRANT.endMs;
+  // Administradores autorizados a EDITAR/ADICIONAR/REMOVER check-in e check-out (ajuste do sistema).
+  const CHECKIN_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
+  const isCheckinAdmin = CHECKIN_ADMINS.includes((user?.email || '').toLowerCase().trim());
+  
+  // Bloquear motoristas de acessar Rota do Dia
+  if (user && (user.role as string) === 'motorista') {
+    return (
+      <div className="p-6 text-center">
+        <h1 className="text-2xl font-bold mb-4">Acesso Negado</h1>
+        <p className="text-gray-600 mb-4">Motoristas devem usar a "Rota de Entrega"</p>
+        <button 
+          onClick={() => navigate('/rota-entrega')}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+        >
+          Ir para Rota de Entrega
+        </button>
+      </div>
+    );
+  }
+  const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
+  const [selectedSellerId, setSelectedSellerId] = useState(isAdmin ? '' : user?.id || '');
+  const [selectedCard, setSelectedCard] = useState<any>(null);
+  const [showCardModal, setShowCardModal] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isNoSaleModalOpen, setIsNoSaleModalOpen] = useState(false);
+  const [loadingCardId, setLoadingCardId] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [showAddVisitModal, setShowAddVisitModal] = useState(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [addVisitTab, setAddVisitTab] = useState<'customer' | 'lead'>('customer');
+  const [leadSearchQuery, setLeadSearchQuery] = useState('');
+  const [selectedLead, setSelectedLead] = useState<any>(null);
+  const [showLeadCheckInModal, setShowLeadCheckInModal] = useState(false);
+  const [leadCheckInPhoto, setLeadCheckInPhoto] = useState<File | null>(null);
+  const [leadCheckInPhotoUrl, setLeadCheckInPhotoUrl] = useState<string | null>(null);
+  const [checkInCoords, setCheckInCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [leadCheckInNotes, setLeadCheckInNotes] = useState('');
+  
+  // Estado para modal de atendimento virtual
+  const [virtualServiceCustomer, setVirtualServiceCustomer] = useState<{ id: string; name: string } | null>(null);
+  // Ajuste admin de check-in/out
+  const [adminEditVisit, setAdminEditVisit] = useState<any>(null);
+  const [adminCheckInTime, setAdminCheckInTime] = useState('');
+  const [adminCheckOutTime, setAdminCheckOutTime] = useState('');
+  const [adminSaving, setAdminSaving] = useState(false);
+  // Sessão de "atendimento completo" assumida por um adm: usada para detectar alterações EFETIVAS (diff) e só então marcar o card.
+  const [adminActingCustomerId, setAdminActingCustomerId] = useState<string | null>(null);
+  const adminSnapshotRef = useRef<any>(null);
+
+  // Busca e filtro das Visitas Presenciais
+  const [presentialSearch, setPresentialSearch] = useState('');
+  const [presentialFilter, setPresentialFilter] = useState<'todos' | 'atendidos' | 'pendentes'>('todos');
+
+  // Expandir/recolher dos cards de visita (padrao: TODOS recolhidos — so o nome).
+  // Guardamos o conjunto de cards EXPANDIDOS; quem nao esta no set fica recolhido.
+  const [presExpanded, setPresExpanded] = useState<Set<string>>(new Set());
+  const [virtExpanded, setVirtExpanded] = useState<Set<string>>(new Set());
+  const [repExpanded, setRepExpanded] = useState<Set<string>>(new Set());
+
+  // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
+  const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
+  const [virtualActionCustomer, setVirtualActionCustomer] = useState<{ id: string; name: string } | null>(null);
+
+  // Ocultar/mostrar o box "Mapa da Rota" (preferência persistida por navegador)
+  const [showMap, setShowMap] = useState<boolean>(() => {
+    try { return localStorage.getItem('honest_rota_show_map') !== '0'; } catch { return true; }
+  });
+  const toggleMap = () => setShowMap(prev => {
+    const next = !prev;
+    try { localStorage.setItem('honest_rota_show_map', next ? '1' : '0'); } catch {}
+    return next;
+  });
+
+  const { data: sellers } = useQuery<any[]>({
+    queryKey: ['/api/users'],
+    enabled: isAdmin && !!user,
+  });
+
+  const { data: customers } = useQuery<any[]>({
+    queryKey: ['/api/customers', { sellerId: selectedSellerId }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedSellerId) {
+        params.append('sellerId', selectedSellerId);
+      }
+      const res = await fetch(`/api/customers?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to fetch customers');
+      return res.json();
+    },
+    enabled: (isAdmin || isVendedor || isTelemarketing) && showAddVisitModal && addVisitTab === 'customer' && !!selectedSellerId,
+  });
+
+  const { data: leads } = useQuery<any[]>({
+    queryKey: ['/api/leads', { sellerId: selectedSellerId }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedSellerId) {
+        params.append('sellerId', selectedSellerId);
+      }
+      const res = await fetch(`/api/leads?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to fetch leads');
+      return res.json();
+    },
+    enabled: (isAdmin || isVendedor || isTelemarketing) && showAddVisitModal && addVisitTab === 'lead' && !!selectedSellerId,
+  });
+
+  const { data: response, isLoading, refetch, isFetching } = useQuery<DailyRouteResponse>({
+    queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate],
+    enabled: !!selectedSellerId && !!selectedDate,
+    refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
+  });
+
+  // Repescagem2 (Fase 3): camada de repescagem sobreposta na rota do dia.
+  // Decisao do cliente sobre a visita de hoje (resposta ao aviso do WhatsApp).
+  const { data: rotaDecisoes } = useQuery<any>({
+    queryKey: ['/api/rota-do-dia/decisoes', selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/rota-do-dia/decisoes?date=${selectedDate}`, { credentials: 'include' });
+      return r.ok ? r.json() : { itens: {} };
+    },
+    refetchInterval: 60000,
+  });
+  const decisaoDoCliente = (customerId?: string) =>
+    (customerId && rotaDecisoes?.itens) ? rotaDecisoes.itens[String(customerId)] : null;
+
+  const { data: repescagemOverlay = [] } = useQuery<any[]>({
+    queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/repescagem/route-overlay?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
+    refetchInterval: 30000,
+  });
+
+  // Km rodada (real/executada) acumulada do vendedor: dia, semana e mês (até a data selecionada).
+  const { data: kmData } = useQuery<{ dia: number; semana: number; mes: number }>({
+    queryKey: ['/api/daily-routes', selectedSellerId, 'km-cumulative', selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/daily-routes/${selectedSellerId}/km-cumulative?date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return { dia: 0, semana: 0, mes: 0 };
+      return r.json();
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
+    refetchInterval: 30000,
+  });
+  // FECHAMENTO (Fase 4): bloqueio da rota de hoje se um dia anterior nao foi fechado.
+  const { data: bloqueioRota } = useQuery<any>({
+    queryKey: ['/api/vendedor/fechamento/bloqueio', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/vendedor/fechamento/bloqueio?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return { blocked: false };
+      return r.json();
+    },
+    enabled: !isAdmin && !!selectedSellerId && !!selectedDate,
+  });
+  // FECHAMENTO (Fase 5): status do fechamento do dia — habilita o botão "Fechar o dia" direto na Rota do Dia.
+  const { data: fechamentoStatus } = useQuery<any>({
+    queryKey: ['/api/vendedor/fechamento/status', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/vendedor/fechamento/status?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) return { closed: false };
+      return r.json();
+    },
+    enabled: (isVendedor || isTelemarketing) && !!selectedSellerId && !!selectedDate,
+  });
+  const fmtKm = (n: number | undefined) => `${(Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`;
+
+  const returnRepescagemMutation = useMutation({
+    mutationFn: async (assignmentId: string) => apiRequest('POST', `/api/repescagem/route-overlay/${assignmentId}/return`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate] });
+      toast({ title: 'Removido', description: 'Cliente devolvido à repescagem.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao remover', variant: 'destructive' }),
+  });
+
+  // Buscar pedidos do dia e débitos para os clientes da rota
+  interface CustomerInfoResponse {
+    orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
+    debts: Record<string, number>;
+    periodicity?: Record<string, string>;
+    lastOrders?: Record<string, { date: string; value: number }>;
+    phones?: Record<string, string>;
+    trocasBloqueadas?: Record<string, boolean>;
+  }
+  
+  const routeId = response?.route?.id;
+  const routeCustomerIds = useMemo(() => {
+    const vs = (response?.route?.visits || []) as any[];
+    const ids = vs.map(v => v.customerId || v.entityId).filter(Boolean);
+    // Inclui os clientes de repescagem para que o customer-info (periodicidade,
+    // último faturamento, débitos) também cubra os cards de repescagem.
+    const repIds = (Array.isArray(repescagemOverlay) ? repescagemOverlay : []).map((r: any) => r.customerId).filter(Boolean);
+    return Array.from(new Set([...ids, ...repIds]));
+  }, [response?.route?.visits, repescagemOverlay]);
+  const { data: customerInfo, refetch: refetchCustomerInfo, isFetching: isFetchingCustomerInfo } = useQuery<CustomerInfoResponse>({
+    queryKey: ['/api/daily-routes', routeId, 'customer-info', selectedDate, routeCustomerIds.length],
+    queryFn: async () => {
+      const idsParam = routeCustomerIds.length ? `&customerIds=${encodeURIComponent(routeCustomerIds.join(','))}` : '';
+      const res = await fetch(`/api/daily-routes/${routeId}/customer-info?date=${selectedDate}${idsParam}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to fetch customer info');
+      return res.json();
+    },
+    enabled: !!routeId && !!selectedDate,
+    staleTime: 60000, // Cache por 1 minuto
+  });
+
+  // Query para contagem de atendimentos virtuais por vendedor na data
+  interface VirtualServiceData {
+    count: number;
+    attendedCustomerIds: string[];
+    noSaleCustomerIds: string[];
+  }
+  const { data: virtualServiceData } = useQuery<VirtualServiceData>({
+    queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate, routeCustomerIds.length],
+    queryFn: async () => {
+      const idsParam = routeCustomerIds.length ? `&customerIds=${encodeURIComponent(routeCustomerIds.join(','))}` : '';
+      const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}${idsParam}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) return { count: 0, attendedCustomerIds: [], noSaleCustomerIds: [] };
+      const data = await res.json();
+      return { count: data.count || 0, attendedCustomerIds: data.attendedCustomerIds || [], noSaleCustomerIds: data.noSaleCustomerIds || [] };
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
+  });
+  const virtualServiceCount = virtualServiceData?.count || 0;
+  const attendedCustomerIds = useMemo(() => new Set(virtualServiceData?.attendedCustomerIds || []), [virtualServiceData?.attendedCustomerIds]);
+  const noSaleCustomerIds = useMemo(() => new Set(virtualServiceData?.noSaleCustomerIds || []), [virtualServiceData?.noSaleCustomerIds]);
+
+  // "Atendimento em andamento" (WhatsApp aberto) — marcação local por dia (localStorage).
+  // Some automaticamente quando o cliente vira atendido (Registrar Atendimento) ou tem pedido do dia (Registrar Pedido).
+  const emAndamentoKey = `honest_atend_andamento_${selectedDate || getBrazilDateISO()}`;
+  const [emAndamentoIds, setEmAndamentoIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(emAndamentoKey);
+      setEmAndamentoIds(new Set(raw ? JSON.parse(raw) : []));
+    } catch { setEmAndamentoIds(new Set()); }
+  }, [emAndamentoKey]);
+  const markEmAndamento = (customerId: string) => {
+    setEmAndamentoIds(prev => {
+      if (prev.has(customerId)) return prev;
+      const next = new Set(prev); next.add(customerId);
+      try { localStorage.setItem(emAndamentoKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+  const openWhatsappCentral = async (customerId?: string, phoneHint?: string) => {
+    let phone = phoneHint;
+    if (!phone && customerId) {
+      try {
+        const c = await fetch(`/api/customers/${customerId}`, { credentials: 'include' }).then(r => r.json());
+        phone = c?.phone || c?.customerPhone;
+      } catch {}
+    }
+    const digits = String(phone || '').replace(/\D/g, '');
+    window.open(digits ? `/telemarketing/atendimento?phone=${digits}` : `/telemarketing/atendimento`, 'honest-central-atendimento');
+    if (customerId) markEmAndamento(customerId);
+    if (!digits) {
+      toast({ title: 'Cliente sem telefone cadastrado', description: 'Abri a Central de Atendimento; localize o cliente pela busca.' });
+    }
+  };
+  // Finaliza o "em andamento" quando o cliente foi atendido ou tem pedido do dia.
+  useEffect(() => {
+    setEmAndamentoIds(prev => {
+      if (prev.size === 0) return prev;
+      const orders = customerInfo?.orders || {};
+      let changed = false; const next = new Set(prev);
+      prev.forEach(id => {
+        if (attendedCustomerIds.has(id) || (orders[id] && orders[id].length > 0)) { next.delete(id); changed = true; }
+      });
+      if (!changed) return prev;
+      try { localStorage.setItem(emAndamentoKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, [attendedCustomerIds, customerInfo, emAndamentoKey]);
+
+  // Clientes com visita no dia SEM coordenada (ficam fora da rota otimizada)
+  interface MissingCoordsData { count: number; customers: { id: string; name: string; city: string | null }[] }
+  const { data: missingCoords } = useQuery<MissingCoordsData>({
+    queryKey: ['/api/admin/routes/missing-coords', selectedSellerId, selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/routes/missing-coords?sellerId=${selectedSellerId}&date=${selectedDate}`, { credentials: 'include' });
+      if (!res.ok) return { count: 0, customers: [] };
+      return res.json();
+    },
+    enabled: !!selectedSellerId && !!selectedDate,
+    staleTime: 60000,
+  });
+
+  const generateFromPlannedVisitsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedSellerId || !selectedDate) throw new Error('Vendedor e data são obrigatórios');
+      return apiRequest('POST', '/api/daily-routes/from-planned-visits', {
+        sellerId: selectedSellerId,
+        date: selectedDate
+      });
+    },
+    onSuccess: (data) => {
+      if (data.totalVisits === 0) {
+        toast({ title: "Aviso", description: "Nenhuma visita planejada para esta data" });
+      } else {
+        toast({ title: "Sucesso", description: `Rota gerada com ${data.totalVisits} visitas planejadas` });
+      }
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Falha ao gerar rota", variant: "destructive" });
+    }
+  });
+
+  const generateRouteMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/daily-routes/generate', {
+        sellerId: selectedSellerId,
+        date: selectedDate,
+        allowEmpty: true
+      });
+      
+      return response;
+    },
+    onSuccess: (data) => {
+      if (data.regenerated) {
+        toast({
+          title: "Rota atualizada com sucesso!",
+          description: `Rota regenerada com ${data.totalVisits || 0} visitas.`,
+        });
+      } else {
+        toast({
+          title: "Rota gerada com sucesso!",
+          description: `Rota criada com ${data.totalVisits || 0} visitas.`,
+        });
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao gerar rota",
+        description: error.message || "Ocorreu um erro ao gerar a rota",
+      });
+    },
+  });
+
+  // 🧭 Alterna Rota do Dia ↔ Rota de Prospecção (somente admin) para o vendedor+data atual.
+  const toggleRouteModeMutation = useMutation({
+    mutationFn: async (mode: string) => {
+      return await apiRequest('POST', '/api/daily-routes/route-mode', {
+        sellerId: selectedSellerId,
+        date: selectedDate,
+        mode,
+      });
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: data?.mode === 'prospeccao' ? 'Rota de Prospecção ativada' : 'Rota do Dia ativada',
+        description: data?.mode === 'prospeccao'
+          ? 'Neste dia a rota exibe somente os leads de prospecção (próximo contato = a data).'
+          : 'A rota deste dia voltou ao normal (clientes ativos + leads do dia).',
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+    },
+    onError: (error: any) => {
+      toast({ variant: 'destructive', title: 'Erro ao alternar a rota', description: error.message || 'Tente novamente.' });
+    },
+  });
+
+  const createEmptyRouteMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/daily-routes/create-empty', {
+        sellerId: selectedSellerId,
+        date: selectedDate
+      });
+      
+      return response;
+    },
+    onSuccess: async (data) => {
+      toast({
+        title: "Rota vazia criada!",
+        description: "Agora você pode adicionar clientes manualmente.",
+      });
+      
+      await queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      await refetch();  // Força atualização imediata da UI
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao criar rota vazia",
+        description: error.message || "Ocorreu um erro ao criar a rota vazia",
+      });
+    },
+  });
+
+  const deleteVisitMutation = useMutation({
+    mutationFn: async ({ routeId, customerId }: { routeId: string; customerId: string }) => {
+      return await apiRequest('DELETE', `/api/daily-routes/${routeId}/visits/${customerId}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita removida",
+        description: "A visita foi removida da rota com sucesso",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao remover visita",
+        description: error.message || "Ocorreu um erro ao remover a visita",
+      });
+    },
+  });
+
+  const addVisitMutation = useMutation({
+    mutationFn: async ({ routeId, customerId }: { routeId: string; customerId: string }) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/visits`, { customerId });
+    },
+    onSuccess: (data) => {
+      const customerName = data?.customer?.name || 'Cliente';
+      toast({
+        title: "Visita adicionada",
+        description: `${customerName} adicionado a rota com sucesso`,
+      });
+      setShowAddVisitModal(false);
+      setCustomerSearchQuery('');
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao adicionar visita",
+        description: error.message || "Ocorreu um erro ao adicionar a visita",
+      });
+    },
+  });
+
+  const addLeadMutation = useMutation({
+    mutationFn: async ({ routeId, leadId }: { routeId: string; leadId: string }) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/leads`, { leadId });
+    },
+    onSuccess: (data) => {
+      const leadName = data?.lead?.name || 'Lead';
+      toast({
+        title: "Lead adicionado",
+        description: `${leadName} adicionado à rota com sucesso`,
+      });
+      setShowAddVisitModal(false);
+      setLeadSearchQuery('');
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao adicionar lead",
+        description: error.message || "Ocorreu um erro ao adicionar o lead",
+      });
+    },
+  });
+
+  const deleteRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('DELETE', `/api/daily-routes/${routeId}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Rota limpa com sucesso!",
+        description: "Você pode gerar uma nova rota agora",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao limpar rota",
+        description: error.message || "Ocorreu um erro ao limpar a rota",
+      });
+    },
+  });
+
+  const optimizeRouteMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/optimize`);
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Rota otimizada!",
+        description: data.message || "A rota foi otimizada com sucesso",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao otimizar rota",
+        description: error.message || "Ocorreu um erro ao otimizar a rota",
+      });
+    },
+  });
+
+  const markLunchBreakMutation = useMutation({
+    mutationFn: async (routeId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/${routeId}/lunch-break`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Horário de almoço marcado",
+        description: "O horário de almoço foi registrado com sucesso",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao marcar horário de almoço",
+        description: error.message || "Ocorreu um erro ao marcar o horário de almoço",
+      });
+    },
+  });
+
+  const leadCheckInMutation = useMutation({
+    mutationFn: async ({ leadId, latitude, longitude, photo }: { leadId: string; latitude: number; longitude: number; photo?: File }) => {
+      const formData = new FormData();
+      formData.append('latitude', latitude.toString());
+      formData.append('longitude', longitude.toString());
+      if (photo) {
+        formData.append('photo', photo);
+      }
+      if (leadCheckInNotes) {
+        formData.append('notes', leadCheckInNotes);
+      }
+
+      return await apiRequestMultipart('POST', `/api/leads/${leadId}/check-in`, formData);
+    },
+    onSuccess: () => {
+      setLeadCheckInPhoto(null);
+      setLeadCheckInPhotoUrl(null);
+      setCheckInCoords(null);
+      setLeadCheckInNotes('');
+      toast({
+        title: "✓ Check-in realizado",
+        description: "Check-in no lead realizado com sucesso",
+      });
+      closeModals();
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      console.error('❌ Check-in error:', error);
+      toast({
+        variant: "destructive",
+        title: "Erro ao fazer check-in",
+        description: error.message || "Ocorreu um erro ao fazer check-in no lead. Tente novamente.",
+      });
+    },
+  });
+
+  const validateVisitMutation = useMutation({
+    mutationFn: async (checkpointId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/validate`, {});
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita validada!",
+        description: "A distância desta visita foi incluída na rota executada.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao validar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rejectVisitMutation = useMutation({
+    mutationFn: async (checkpointId: string) => {
+      return await apiRequest('POST', `/api/daily-routes/checkpoints/${checkpointId}/cancel`, {});
+    },
+    onSuccess: () => {
+      toast({
+        title: "Visita rejeitada",
+        description: "Esta visita não será contabilizada na rota executada.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao rejeitar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleManualRefresh = async () => {
+    // Antes de reconciliar a rota, regenera a agenda do vendedor conforme o CADASTRO ATUAL
+    // (dia de rota + periodicidade). Assim, mudanças de cadastro feitas em lote — que não passaram
+    // pela edição individual — passam a refletir na rota e no mapa. O self-heal do GET (logo abaixo,
+    // no refetch) então tira/inclui os clientes certos. Falha aqui não bloqueia o refresh.
+    try {
+      if (selectedSellerId) {
+        await fetch(`/api/sellers/${selectedSellerId}/regenerate-agenda`, { method: 'POST', credentials: 'include' });
+      }
+    } catch (e) { /* não crítico */ }
+    await refetch();
+    toast({
+      title: "Rota atualizada",
+      description: "Rota e agenda sincronizadas com o cadastro.",
+    });
+  };
+
+  // ATUALIZAR COLETIVO (admin): reorganiza a rota do dia de TODOS os vendedores para a data
+  // selecionada. Cada GET do backend faz o self-heal — reaplica a elegibilidade por cadastro
+  // (dia de rota, periodicidade, carteira/vendedor), tira inativos e leads fora de carteira,
+  // reconcilia com a agenda de visitas — e PERSISTE a nova ordem. É o mesmo efeito do botão
+  // "Atualizar" individual, só que varrendo todos os vendedores ativos de uma vez.
+  const [reorgAll, setReorgAll] = useState<{ running: boolean; done: number; total: number }>({ running: false, done: 0, total: 0 });
+  const handleReorganizeAll = async () => {
+    try {
+      const sResp = await fetch('/api/sellers/active', { credentials: 'include' });
+      const sellers: any = sResp.ok ? await sResp.json() : [];
+      const list: any[] = Array.isArray(sellers) ? sellers : [];
+      if (!list.length) {
+        toast({ title: "Nenhum vendedor ativo", description: "Não há vendedores para reorganizar.", variant: "destructive" });
+        return;
+      }
+      setReorgAll({ running: true, done: 0, total: list.length });
+      let ok = 0, fail = 0, totalVisitas = 0;
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        try {
+          // 1) Regenera a agenda do vendedor conforme o cadastro atual (dia de rota + periodicidade).
+          try { await fetch(`/api/sellers/${s.id}/regenerate-agenda`, { method: 'POST', credentials: 'include' }); } catch (e) { /* não crítico */ }
+          // 2) GET da rota: o self-heal reconcilia a membership com a agenda já corrigida e persiste.
+          const r = await fetch(`/api/daily-routes/${s.id}/date/${selectedDate}`, { credentials: 'include' });
+          if (!r.ok) throw new Error(String(r.status));
+          const resp: any = await r.json();
+          const tv = resp?.route?.totalVisits ?? (Array.isArray(resp?.route?.optimizedOrder) ? resp.route.optimizedOrder.length : 0);
+          totalVisitas += (tv || 0);
+          ok++;
+        } catch (e) {
+          fail++;
+        }
+        setReorgAll({ running: true, done: i + 1, total: list.length });
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      await refetch();
+      const dataBr = selectedDate.split('-').reverse().join('/');
+      toast({
+        title: "Rotas reorganizadas",
+        description: `${ok} vendedor(es) atualizados${fail ? `, ${fail} com erro` : ''} — ${totalVisitas} visitas no total (${dataBr}).`,
+      });
+    } catch (e: any) {
+      toast({ title: "Erro ao reorganizar", description: e?.message || "Falha ao reorganizar as rotas.", variant: "destructive" });
+    } finally {
+      setReorgAll({ running: false, done: 0, total: 0 });
+    }
+  };
+
+  const filteredCustomers = useMemo(() => {
+    if (!customers || !customerSearchQuery) return customers || [];
+    
+    const query = customerSearchQuery.toLowerCase().trim();
+    const queryClean = query.replace(/\D/g, '');
+    
+    return customers.filter((customer: any) => {
+      // Busca em todos os campos de nome
+      const fantasyName = customer.fantasyName?.toLowerCase() || '';
+      const name = customer.name?.toLowerCase() || '';
+      const companyName = customer.companyName?.toLowerCase() || '';
+      
+      // Pesquisa por nome fantasia, razão social ou nome da empresa
+      if (fantasyName.includes(query) || name.includes(query) || companyName.includes(query)) {
+        return true;
+      }
+      
+      // Pesquisa por CNPJ/CPF apenas se a query contém números
+      if (queryClean.length > 0) {
+        const cnpj = customer.cnpj?.replace(/\D/g, '') || '';
+        const cpf = customer.cpf?.replace(/\D/g, '') || '';
+        
+        if (cnpj.includes(queryClean) || cpf.includes(queryClean)) {
+          return true;
+        }
+      }
+      
+      return false;
+    });
+  }, [customers, customerSearchQuery]);
+
+  const route = response?.route;
+  const adminAdjustments: Record<string, any> = (route as any)?.adminAdjustments || {};
+
+  // Abrir o diálogo de ajuste admin de check-in/out para uma visita
+  const openAdminEdit = (visit: any, checkInCp: any, checkOutCp: any) => {
+    setAdminEditVisit({ visit, checkInCp, checkOutCp });
+    setAdminCheckInTime(checkInCp ? formatInTimeZone(checkInCp.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : '');
+    setAdminCheckOutTime(checkOutCp ? formatInTimeZone(checkOutCp.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : '');
+  };
+
+  const invalidateRoute = () => queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
+
+  // Salvar ajustes: compara o que existia com o que o admin digitou e chama editar/adicionar/remover
+  const saveAdminCheckpoints = async () => {
+    if (!adminEditVisit || !route?.id) return;
+    const { visit, checkInCp, checkOutCp } = adminEditVisit;
+    const rid = route.id;
+    const applyField = async (cp: any, newTime: string, type: 'check_in' | 'check_out') => {
+      const t = (newTime || '').trim();
+      if (cp && !t) {
+        await apiRequest('DELETE', `/api/daily-routes/checkpoints/${cp.id}/admin`);
+      } else if (cp && t) {
+        const cur = formatInTimeZone(cp.checkpointTime, 'America/Sao_Paulo', 'HH:mm');
+        if (cur !== t) await apiRequest('PATCH', `/api/daily-routes/checkpoints/${cp.id}/admin-edit`, { time: t });
+      } else if (!cp && t) {
+        await apiRequest('POST', `/api/daily-routes/${rid}/checkpoints/admin-add`, { customerId: visit.customerId, checkpointType: type, time: t });
+      }
+    };
+    try {
+      setAdminSaving(true);
+      await applyField(checkInCp, adminCheckInTime, 'check_in');
+      await applyField(checkOutCp, adminCheckOutTime, 'check_out');
+      toast({ title: 'Check-in/out ajustado', description: 'As alterações foram salvas (card marcado como ajuste Adm).' });
+      setAdminEditVisit(null);
+      invalidateRoute();
+    } catch (e: any) {
+      toast({ title: 'Erro ao ajustar', description: e?.message || 'Falha ao salvar o ajuste.', variant: 'destructive' });
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
+  // "Fotografa" o estado COMPLETO da visita (check-in/out + pedidos + campos do card) para depois
+  // detectar QUALQUER alteração efetiva feita pelo admin durante o atendimento assumido.
+  const buildFullSnapshot = (customerId: string, card: any, routeObj: any, custInfo: any) => {
+    const cps = (routeObj?.checkpoints || []).filter((cp: any) => cp.customerId === customerId);
+    const ci = cps.find((cp: any) => cp.checkpointType === 'check_in');
+    const co = cps.find((cp: any) => cp.checkpointType === 'check_out');
+    const ords = (customerId && custInfo?.orders?.[customerId]) || [];
+    const prods = Array.isArray(card?.products) ? card.products : [];
+    return {
+      checkIn: ci?.checkpointTime ? formatInTimeZone(ci.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : null,
+      checkOut: co?.checkpointTime ? formatInTimeZone(co.checkpointTime, 'America/Sao_Paulo', 'HH:mm') : null,
+      orderCount: ords.length,
+      orderValue: ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0),
+      productsSig: JSON.stringify(prods.map((p: any) => [String(p.id ?? p.name ?? ''), Number(p.quantity) || 0])),
+      productCount: prods.length,
+      saleValue: Number(card?.saleValue || 0),
+      paymentMethod: String(card?.paymentMethod || ''),
+      operationType: String(card?.operationType || ''),
+      notes: String(card?.notes || ''),
+      routeDay: String(card?.routeDay || ''),
+      recurrenceType: String(card?.recurrenceType || ''),
+    };
+  };
+
+  // Busca o card do cliente na data selecionada (para fotografar os campos do pedido).
+  const fetchCardForSnapshot = async (customerId: string): Promise<any> => {
+    try {
+      const r = await fetch(`/api/customers/${customerId}/sales-card/${selectedDate}`, { credentials: 'include' });
+      return r.ok ? await r.json() : null;
+    } catch { return null; }
+  };
+
+  // Abrir o ATENDIMENTO COMPLETO como Adm: fotografa o estado ANTES e abre a tela de atendimento.
+  // Ao FECHAR (closeModals), comparamos antes/depois e registramos CADA alteração -> card fica ROXO.
+  const openFullAttendanceAsAdmin = async () => {
+    if (!adminEditVisit || !route?.id) return;
+    const visit = adminEditVisit.visit;
+    const cid = visit.customerId || visit.entityId;
+    try {
+      setAdminSaving(true);
+      const card = await fetchCardForSnapshot(cid);
+      adminSnapshotRef.current = buildFullSnapshot(cid, card, route, customerInfo);
+      setAdminActingCustomerId(cid);
+      setAdminEditVisit(null);
+      // Abre a mesma tela de atendimento do vendedor (check-in, check-out, registrar pedido, não venda)
+      await handleVisitClick(cid, false);
+    } catch (e: any) {
+      toast({ title: 'Erro ao abrir atendimento', description: e?.message || 'Falha ao assumir o atendimento.', variant: 'destructive' });
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
+  // Campos comparados para detectar TODAS as alterações do admin (de -> para) no atendimento assumido.
+  const ADMIN_DIFF_FIELDS: Array<{ key: string; label: string; fmt?: (v: any) => string }> = [
+    { key: 'checkIn', label: 'Check-in' },
+    { key: 'checkOut', label: 'Check-out' },
+    { key: 'productCount', label: 'Produtos', fmt: (v: any) => `${Number(v) || 0} item(ns)` },
+    { key: 'saleValue', label: 'Valor', fmt: (v: any) => `R$ ${Number(v || 0).toFixed(2)}` },
+    { key: 'paymentMethod', label: 'Forma de pagamento' },
+    { key: 'operationType', label: 'Tipo de operação' },
+    { key: 'notes', label: 'Observações' },
+    { key: 'routeDay', label: 'Dia de rota' },
+    { key: 'recurrenceType', label: 'Periodicidade' },
+  ];
+
+  // Ao encerrar o atendimento assumido: refaz o fetch de rota/pedidos/card, compara com a foto e
+  // registra CADA alteração efetiva como histórico do Adm. Só então o card fica ROXO.
+  const finalizeAdminSession = async (cid: string, before: any, routeId: string) => {
+    if (!cid || !before || !routeId) return;
+    try {
+      const [routeRes, ciRes, freshCard] = await Promise.all([
+        refetch(),
+        refetchCustomerInfo(),
+        fetchCardForSnapshot(cid),
+      ]);
+      const freshRoute = (routeRes as any)?.data?.route || route;
+      const freshCI = (ciRes as any)?.data || customerInfo;
+      const after = buildFullSnapshot(cid, freshCard, freshRoute, freshCI);
+      const diffs: Array<{ field: string; from: any; to: any }> = [];
+      // PEDIDO (billing pipeline) — sinal mais confiável de venda registrada pelo adm.
+      const orderChanged = (before.orderCount !== after.orderCount)
+        || (Number(before.orderValue || 0).toFixed(2) !== Number(after.orderValue || 0).toFixed(2));
+      if (orderChanged) {
+        const fmtOrd = (s: any) => `${s.orderCount || 0} pedido(s) / R$ ${Number(s.orderValue || 0).toFixed(2)}`;
+        diffs.push({ field: 'Pedido', from: fmtOrd(before), to: fmtOrd(after) });
+      }
+      for (const f of ADMIN_DIFF_FIELDS) {
+        // Se já houve pedido, não duplicar "Produtos"/"Valor" (fazem parte da mesma venda).
+        if (orderChanged && (f.key === 'productCount' || f.key === 'saleValue')) continue;
+        const b = (before as any)[f.key];
+        const a = (after as any)[f.key];
+        if (String(b ?? '') !== String(a ?? '')) {
+          diffs.push({ field: f.label, from: f.fmt ? f.fmt(b) : (b ?? '—'), to: f.fmt ? f.fmt(a) : (a ?? '—') });
+        }
+      }
+      // Troca de itens sem mudar a contagem (ex.: trocar um produto por outro) fora de um pedido novo.
+      if (!orderChanged && before?.productsSig !== after?.productsSig && !diffs.some(d => d.field === 'Produtos')) {
+        diffs.push({ field: 'Produtos', from: `${before?.productCount ?? 0} item(ns)`, to: `${after?.productCount ?? 0} item(ns)` });
+      }
+      for (const d of diffs) {
+        try {
+          await apiRequest('POST', `/api/daily-routes/${routeId}/checkpoints/admin-record`, { customerId: cid, field: d.field, from: String(d.from), to: String(d.to) });
+        } catch { /* não impedir o fluxo por falha ao registrar */ }
+      }
+      if (diffs.length > 0) invalidateRoute();
+    } catch { /* silencioso */ }
+  };
+
+  const virtualVisitsCount = useMemo(() => {
+    if (!route?.visits) return 0;
+    return (route.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual').length;
+  }, [route?.visits]);
+
+  // Concluídas VIRTUAIS = SOMENTE clientes virtuais da rota com ATENDIMENTO virtual registrado (service log).
+  // Antes usava virtualServiceCount (contagem bruta de service-logs), que incluía atendimentos de clientes
+  // presenciais e inflava as "concluídas virtuais" (ex.: 16 em vez de 4). Restringe aos virtuais da rota.
+  // (Não usar "tem pedido" como critério: um pedido sem atendimento virtual registrado não é uma concluída virtual.)
+  const virtualConcludedIds = useMemo(() => {
+    const s = new Set<string>();
+    (route?.visits || []).forEach((v: any) => {
+      if (!(v.isVirtual || v.visitType === 'virtual')) return;
+      const cid = v.customerId;
+      if (!cid) return;
+      if (attendedCustomerIds.has(cid)) s.add(String(cid));
+    });
+    return s;
+  }, [route?.visits, attendedCustomerIds]);
+
+  // Métricas de PEDIDOS.
+  // REGRA: qualquer PEDIDO do dia (NF emitida + venda) de um cliente que ESTÁ NA ROTA
+  // conta como registro/atendimento na rota — mesmo SEM check-in ou atendimento registrado.
+  // Visitas com Pedidos  = clientes da rota (presenciais + virtuais) com pedido do dia
+  // Valor Visitas c/ Ped = soma do saleValue desses pedidos
+  // Visitas Sem Pedido   = concluídas (check-in OU pedido) que ficaram SEM pedido
+  const orderStats = useMemo(() => {
+    // Clientes que estão na rota (presenciais + virtuais)
+    const routeCids = new Set<string>();
+    (route?.visits || []).forEach((v: any) => { if (v.customerId) routeCids.add(String(v.customerId)); });
+
+    // Concluídas = check-in feito OU atendimento virtual realizado...
+    const concluidas = new Set<string>();
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in' && cp.customerId) concluidas.add(String(cp.customerId)); });
+    virtualConcludedIds.forEach((id) => concluidas.add(id));
+
+    let comPedidos = 0;
+    let valor = 0;
+    // ...e QUALQUER cliente da rota com pedido do dia (o pedido é o registro na rota).
+    routeCids.forEach((cid: string) => {
+      const ords = (customerInfo?.orders?.[cid]) || [];
+      if (ords.length > 0) {
+        comPedidos++;
+        valor += ords.reduce((s: number, o: any) => s + (Number(o.saleValue) || 0), 0);
+        concluidas.add(cid);
+      }
+    });
+
+    // Sem Pedido = concluídas (check-in ou pedido) sem nenhum pedido do dia.
+    let semPedido = 0;
+    concluidas.forEach((cid: string) => {
+      const ords = (customerInfo?.orders?.[cid]) || [];
+      if (ords.length === 0) semPedido++;
+    });
+
+    return { comPedidos, semPedido, valor, totalConcluidas: concluidas.size };
+  }, [route?.visits, route?.checkpoints, customerInfo, virtualConcludedIds]);
+
+  // Visitas presenciais (exclui virtuais)
+  const presentialVisits = useMemo(
+    () => (route?.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual'),
+    [route?.visits]
+  );
+  // IDs dos leads que já estão na rota (paradas de lead) — usados para não duplicar
+  // esses leads no painel "Retornos de Lead" (eles já têm botões no card da rota).
+  const routeLeadIds = useMemo(
+    () => presentialVisits
+      .filter((v: any) => v.visitType === 'lead')
+      .map((v: any) => String(v.entityId || v.leadId || v.customerId))
+      .filter(Boolean),
+    [presentialVisits]
+  );
+  // Clientes com CHECK-IN realizado = "Atendidos" (concluídos); demais = "Pendentes".
+  // (Check-out desligado: a visita conta como atendida/concluída ao fazer o check-in.)
+  const checkedOutCustomerIds = useMemo(() => {
+    const s = new Set<string>();
+    (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in') s.add(cp.customerId); });
+    return s;
+  }, [route?.checkpoints]);
+  // Aplica busca por cliente + filtro Atendidos/Pendentes
+  const filteredPresentialVisits = useMemo(() => {
+    const q = presentialSearch.trim().toLowerCase();
+    return presentialVisits.filter((v: any) => {
+      if (q && !((v.customerName || '').toLowerCase().includes(q))) return false;
+      const atendido = checkedOutCustomerIds.has(v.customerId);
+      if (presentialFilter === 'atendidos') return atendido;
+      if (presentialFilter === 'pendentes') return !atendido;
+      return true;
+    });
+  }, [presentialVisits, checkedOutCustomerIds, presentialSearch, presentialFilter]);
+
+  // Atendimentos virtuais (apenas virtuais)
+  const allVirtualVisits = useMemo(
+    () => (route?.visits || []).filter((v: any) => v.isVirtual || v.visitType === 'virtual'),
+    [route?.visits]
+  );
+  // "Atendido" no virtual = tem atendimento registrado OU pedido no dia.
+  const virtualAttendedIds = useMemo(() => {
+    const s = new Set<string>();
+    allVirtualVisits.forEach((v: any) => {
+      const cid = v.customerId;
+      if (!cid) return;
+      const hasOrder = !!(customerInfo?.orders?.[cid]?.length);
+      if (attendedCustomerIds.has(cid) || hasOrder) s.add(cid);
+    });
+    return s;
+  }, [allVirtualVisits, attendedCustomerIds, customerInfo]);
+  // O MESMO filtro do dia (busca + Atendidos/Pendentes) abrange também os virtuais.
+  const filteredVirtualVisits = useMemo(() => {
+    const q = presentialSearch.trim().toLowerCase();
+    return allVirtualVisits.filter((v: any) => {
+      if (q && !((v.customerName || '').toLowerCase().includes(q))) return false;
+      const atendido = virtualAttendedIds.has(v.customerId);
+      if (presentialFilter === 'atendidos') return atendido;
+      if (presentialFilter === 'pendentes') return !atendido;
+      return true;
+    });
+  }, [allVirtualVisits, virtualAttendedIds, presentialSearch, presentialFilter]);
+
+  // A repescagem segue o MESMO comportamento das ações da rota que presencial/virtual:
+  // busca por cliente + filtro Atendidos/Pendentes. "Atendido" = atendimento registrado
+  // (service log) OU pedido no dia — igual ao virtual. (30/jul/2026)
+  const filteredRepescagem = useMemo(() => {
+    const q = presentialSearch.trim().toLowerCase();
+    const list = Array.isArray(repescagemOverlay) ? repescagemOverlay : [];
+    return list.filter((r: any) => {
+      if (q && !((r.customerName || '').toLowerCase().includes(q))) return false;
+      const atendido = attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length);
+      if (presentialFilter === 'atendidos') return atendido;
+      if (presentialFilter === 'pendentes') return !atendido;
+      return true;
+    });
+  }, [repescagemOverlay, presentialSearch, presentialFilter, attendedCustomerIds, customerInfo]);
+
+  // 📋 Solicitar Alteração: chaves de todos os cards visíveis → 1 query de estados por página.
+  const changeRequestKeys = useMemo(() => {
+    const ks: string[] = [];
+    for (const v of (filteredPresentialVisits || [])) {
+      const isLead = (v as any).visitType === 'lead';
+      const id = isLead ? ((v as any).entityId || (v as any).leadId || (v as any).customerId) : (v as any).customerId;
+      if (id) ks.push(crKey(isLead ? 'lead' : 'customer', String(id)));
+    }
+    for (const v of (filteredVirtualVisits || [])) { if ((v as any).customerId) ks.push(crKey('customer', String((v as any).customerId))); }
+    for (const r of (filteredRepescagem || [])) { if ((r as any).assignmentId) ks.push(crKey('repescagem', String((r as any).assignmentId))); }
+    return ks;
+  }, [filteredPresentialVisits, filteredVirtualVisits, filteredRepescagem]);
+  const changeRequestStates = useChangeRequestStates(changeRequestKeys, selectedDate);
+
+  // 📋 Solicitar Alteração — regras de UI:
+  //  - Efetuadas: card cinza/inativo, não clicável e FORA da contagem de clientes da rota (mas visível).
+  //  - Botão de nova solicitação bloqueado quando já há check-in, atendimento virtual ou venda no dia.
+  //  - EXCEÇÃO (30/jul/2026): solicitação APENAS de modalidade (Presencial↔Virtual) NÃO trava o
+  //    card — ele segue ATIVO/clicável e na contagem, pois o cliente continua sendo atendido
+  //    (só muda o canal). As demais alterações mantêm a regra de recolher/travar quando Efetuada.
+  const crEfetuadaByKey = (key: string) => {
+    const s = changeRequestStates[key];
+    return s?.status === 'efetuadas' && !isModalidadeOnlyRequest(s);
+  };
+  const hasCheckinOrSale = (cid?: string | null) => {
+    if (!cid) return false;
+    const c = String(cid);
+    return checkedOutCustomerIds.has(c) || attendedCustomerIds.has(c) || !!(customerInfo?.orders?.[c]?.length);
+  };
+  // Uma visita presencial (ou lead) está "Efetuada" quando sua solicitação foi concluída.
+  const isVisitEfetuada = (v: any) => {
+    const isLead = (v as any).visitType === 'lead';
+    const id = isLead ? ((v as any).entityId || (v as any).leadId || (v as any).customerId) : (v as any).customerId;
+    return crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(id)));
+  };
+  const presentialActiveCount = filteredPresentialVisits.filter((v: any) => !isVisitEfetuada(v)).length;
+  // 🔎 Com busca ou filtro (Atendidos/Pendentes) ativo, os cards "Efetuada" NÃO aparecem
+  // (só Parciais/Rejeitadas e cards normais). Sem filtro, o card Efetuada aparece colapsado.
+  const rotaFilterAtivo = presentialSearch.trim().length > 0 || presentialFilter !== 'todos';
+  const visiblePresentialVisits = rotaFilterAtivo ? filteredPresentialVisits.filter((v: any) => !isVisitEfetuada(v)) : filteredPresentialVisits;
+  const visibleVirtualVisits = rotaFilterAtivo ? filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))) : filteredVirtualVisits;
+  // Numeração exibida no card: cards Efetuados ficam SEM número; os demais renumeram em sequência (1,2,3…).
+  const presCardNumbers: (number | null)[] = (() => {
+    let n = 0;
+    return visiblePresentialVisits.map((v: any) => (isVisitEfetuada(v) ? null : ++n));
+  })();
+  const virtCardNumbers: (number | null)[] = (() => {
+    let n = 0;
+    return visibleVirtualVisits.map((v: any) => (crEfetuadaByKey(crKey('customer', String((v as any).customerId))) ? null : ++n));
+  })();
+  // Chave estavel de cada card (para o mapa de expandido/recolhido).
+  const presCardKey = (v: any) => String(v?.id || v?.customerId || v?.entityId || '');
+  const virtCardKey = (v: any) => String(v?.id || v?.customerId || '');
+  const togglePresCard = (k: string) => setPresExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggleVirtCard = (k: string) => setVirtExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const expandAllPres = () => setPresExpanded(new Set(visiblePresentialVisits.map((v: any) => presCardKey(v))));
+  const collapseAllPres = () => setPresExpanded(new Set());
+  const expandAllVirt = () => setVirtExpanded(new Set(visibleVirtualVisits.map((v: any) => virtCardKey(v))));
+  const collapseAllVirt = () => setVirtExpanded(new Set());
+  const repCardKey = (r: any) => String(r?.assignmentId || '');
+  const toggleRepCard = (k: string) => setRepExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const expandAllRep = () => setRepExpanded(new Set(filteredRepescagem.map((r: any) => repCardKey(r))));
+  const collapseAllRep = () => setRepExpanded(new Set());
+
+  const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
+  const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
+  // ↩️ Solicitações REJEITADAS entre os cards da rota — para ciência do vendedor.
+  const rejeitadasCount = Object.values(changeRequestStates).filter((s: any) => s?.status === 'rejeitadas').length;
+
+  const currentSeller = (isAdmin ? sellers : (coverageActive ? COVERAGE_GRANT.sellers : undefined))?.find(s => s.id === selectedSellerId);
+
+  const routeMetrics = useMemo(() => {
+    if (!route || !route.sellerHome) return { plannedDistance: 0, executedDistance: 0, averageVisitTime: 0 };
+
+    const plannedCoords: Array<{ lat: number; lng: number }> = [];
+    const executedCoords: Array<{ lat: number; lng: number }> = [];
+
+    plannedCoords.push({
+      lat: route.sellerHome.latitude,
+      lng: route.sellerHome.longitude
+    });
+
+    route.optimizedOrder?.forEach(customerId => {
+      const visit = route.visits?.find(v => v.customerId === customerId);
+      if (visit && visit.customerLatitude && visit.customerLongitude) {
+        plannedCoords.push({
+          lat: parseFloat(String(visit.customerLatitude)),
+          lng: parseFloat(String(visit.customerLongitude))
+        });
+      }
+    });
+
+    plannedCoords.push({
+      lat: route.sellerHome.latitude,
+      lng: route.sellerHome.longitude
+    });
+
+    if (route.checkpoints && route.checkpoints.length > 0) {
+      const checkIns = route.checkpoints
+        .filter(cp => cp.checkpointType === 'check_in' && cp.latitude && cp.longitude)
+        .sort((a, b) => new Date(a.checkpointTime).getTime() - new Date(b.checkpointTime).getTime());
+      
+      checkIns.forEach(cp => {
+        executedCoords.push({
+          lat: parseFloat(cp.latitude),
+          lng: parseFloat(cp.longitude)
+        });
+      });
+    }
+
+    // Usar tempo médio calculado pelo backend (apenas visitas completas com check-in E check-out)
+    const averageVisitTime = route.progress?.averageVisitTime ?? 0;
+
+    return {
+      plannedDistance: calculateRouteDistance(plannedCoords),
+      executedDistance: Number(route.totalActualDistance ?? 0),
+      averageVisitTime
+    };
+  }, [route]);
+
+  const handleVisitClick = async (entityId: string, isLead: boolean = false) => {
+    try {
+      setLoadingCardId(entityId);
+      
+      if (isLead) {
+        // Para leads, buscar dados do lead
+        const response = await fetch(`/api/leads/${entityId}`, {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Falha ao buscar lead');
+        }
+        
+        const lead = await response.json();
+        setSelectedLead(lead);
+        setShowLeadCheckInModal(true);
+      } else {
+        // Para clientes normais, buscar sales card
+        const response = await fetch(`/api/customers/${entityId}/sales-card/${selectedDate}`, {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Falha ao buscar card de vendas');
+        }
+        
+        const card = await response.json();
+        setSelectedCard(card);
+        setShowCardModal(true);
+      }
+    } catch (error) {
+      console.error('Erro ao abrir card de vendas:', error);
+      toast({
+        variant: "destructive",
+        title: "Erro ao abrir card",
+        description: "Não foi possível carregar os detalhes desta visita."
+      });
+    } finally {
+      setLoadingCardId(null);
+    }
+  };
+
+  const handlePhotoClick = (photoUrl: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedPhoto(photoUrl);
+    setShowPhotoModal(true);
+  };
+
+  const handleEditSale = (card: SalesCardWithRelations) => {
+    setSelectedCard(card);
+    setShowCardModal(false);
+    setIsEditModalOpen(true);
+  };
+
+  const handleNoSale = (card: SalesCardWithRelations) => {
+    setSelectedCard(card);
+    setShowCardModal(false);
+    setIsNoSaleModalOpen(true);
+  };
+
+  const closeModals = () => {
+    // Captura a sessão de atendimento assumida pelo adm ANTES de limpar, para comparar antes/depois.
+    const actingCid = adminActingCustomerId;
+    const beforeSnap = adminSnapshotRef.current;
+    const rid = route?.id;
+    setShowCardModal(false);
+    setIsEditModalOpen(false);
+    setIsNoSaleModalOpen(false);
+    setSelectedCard(null);
+    setShowLeadCheckInModal(false);
+    setSelectedLead(null);
+    setLeadCheckInPhoto(null);
+    setLeadCheckInPhotoUrl(null);
+    setCheckInCoords(null);
+    setLeadCheckInNotes('');
+    // Encerra a sessão e, se o adm alterou algo, registra CADA alteração (card fica roxo + histórico).
+    setAdminActingCustomerId(null);
+    adminSnapshotRef.current = null;
+    if (actingCid && beforeSnap && rid) {
+      void finalizeAdminSession(actingCid, beforeSnap, rid);
+    }
+  };
+
+  // FECHAMENTO (Fase 4): tela de bloqueio — só para o próprio vendedor/telemarketing.
+  if (!isAdmin && bloqueioRota?.blocked && bloqueioRota?.pendingDate) {
+    const pd = String(bloqueioRota.pendingDate);
+    const pdBR = pd.split('-').reverse().join('/');
+    return (
+      <div className="p-4 md:p-6 max-w-2xl mx-auto">
+        <div className="mt-6 bg-white dark:bg-gray-800 border rounded-2xl shadow-sm p-8 text-center">
+          <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-4 text-3xl">🔒</div>
+          <h2 className="text-xl font-bold text-gray-800 dark:text-white">Feche a rota anterior primeiro</h2>
+          <p className="text-gray-600 dark:text-gray-300 mt-2">Sua rota está bloqueada porque a rota de <b>{pdBR}</b> não foi fechada.</p>
+          <button onClick={() => navigate('/fechar-rota?date=' + pd)} className="mt-6 w-full bg-green-600 hover:bg-green-700 text-white rounded-xl py-3 font-bold">Fechar rota de {pdBR}</button>
+          <p className="text-xs text-gray-400 mt-3">Se precisar, peça liberação ao seu gestor.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 sm:p-6 max-w-7xl mx-auto overflow-x-auto">
+      <div className="mb-6 flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+            <Route className="h-6 w-6 sm:h-8 sm:w-8 text-green-600" />
+            Rota do Dia
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-2">
+            Visualize e gerencie suas visitas programadas
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && selectedSellerId && (
+            <Button
+              onClick={() => toggleRouteModeMutation.mutate(((response?.route as any)?.routeMode === 'prospeccao') ? 'dia' : 'prospeccao')}
+              disabled={toggleRouteModeMutation.isPending}
+              variant="outline"
+              size="sm"
+              className={`flex items-center gap-2 ${((response?.route as any)?.routeMode === 'prospeccao') ? 'border-amber-500 text-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950' : ''}`}
+              data-testid="button-toggle-route-mode"
+              title="Alterna entre Rota do Dia e Rota de Prospecção para este vendedor neste dia (somente admin)"
+            >
+              <Target className="h-4 w-4" />
+              {((response?.route as any)?.routeMode === 'prospeccao') ? 'Rota de Prospecção' : 'Rota do Dia'}
+            </Button>
+          )}
+          {selectedSellerId && (
+            <Button
+              onClick={handleManualRefresh}
+              disabled={isFetching}
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-2"
+              data-testid="button-refresh-route"
+            >
+              <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+              {isFetching ? 'Atualizando...' : 'Atualizar'}
+            </Button>
+          )}
+          {isAdmin && (
+            <Button
+              onClick={handleReorganizeAll}
+              disabled={reorgAll.running || isFetching}
+              variant="default"
+              size="sm"
+              className="flex items-center gap-2"
+              data-testid="button-refresh-all-routes"
+              title="Reorganiza a rota do dia de TODOS os vendedores para a data selecionada, conforme o cadastro (dia de rota, periodicidade, carteira). Tira inativos e clientes fora da carteira. Não mexe em quem foi adicionado manualmente."
+            >
+              <RefreshCw className={`h-4 w-4 ${reorgAll.running ? 'animate-spin' : ''}`} />
+              {reorgAll.running ? `Atualizando ${reorgAll.done}/${reorgAll.total}...` : 'Atualizar Todas'}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* FECHAMENTO (Fase 5): botão "Fechar o dia" direto na Rota do Dia (vendedor/telemarketing) */}
+      {(isVendedor || isTelemarketing) && (
+        fechamentoStatus?.closed ? (
+          <div className="mb-6 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 text-green-700 dark:text-green-300 font-bold"><CheckCircle className="h-5 w-5" /> Dia fechado{fechamentoStatus?.closure?.closedAt ? ` às ${String(fechamentoStatus.closure.closedAt).slice(11, 16)}` : ''}</div>
+            <button onClick={() => navigate('/fechar-rota?date=' + selectedDate)} className="text-sm font-semibold text-green-700 dark:text-green-300 underline">Ver fechamento</button>
+          </div>
+        ) : (
+          <button
+            onClick={() => navigate('/fechar-rota?date=' + selectedDate)}
+            className="mb-6 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-xl py-4 font-bold text-lg shadow-lg shadow-green-600/20 transition"
+          >
+            <CheckCircle className="h-5 w-5" /> Fechar o dia
+          </button>
+        )
+      )}
+
+      {/* 🎨 Legenda das cores dos cards */}
+      <div className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3">
+        <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Legenda das cores</p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-700 dark:text-gray-300">
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-gray-300 bg-gray-100 dark:bg-gray-700"></span>Aguardando (sem check-in)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-in realizado)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-red-300 bg-red-100 dark:bg-red-900"></span>Check-in fora do local (&gt;100m)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border-2 border-purple-800 bg-purple-200 dark:bg-purple-900"></span>Ação do Adm</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e]"></span>Repescagem</span>
+          <span className="flex items-center gap-1.5"><span className="text-[10px] font-semibold text-amber-700 border border-amber-300 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded-full whitespace-nowrap">sob delegação</span>Cliente em delegação temporária de carteira (volta ao titular quando a delegação encerra)</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <Card>
+          <CardContent className="pt-6">
+            <label className="text-sm font-medium mb-2 block">
+              <Calendar className="inline h-4 w-4 mr-2" />
+              Data da Rota
+            </label>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="w-full p-2 border rounded-md dark:bg-gray-800 dark:border-gray-700"
+              data-testid="input-route-date"
+            />
+          </CardContent>
+        </Card>
+
+        {(isAdmin || coverageActive) && (
+          <Card>
+            <CardContent className="pt-6">
+              <label className="text-sm font-medium mb-2 block">
+                <User className="inline h-4 w-4 mr-2" />
+                Vendedor
+              </label>
+              <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
+                <SelectTrigger data-testid="select-seller">
+                  <SelectValue placeholder="Selecione um vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(isAdmin ? (sellers || []).filter(s => s.isActive && (s.role === 'vendedor' || s.role === 'telemarketing') && !isHiddenRouteSeller(s)).sort(compareSellersByType) : COVERAGE_GRANT.sellers).map((seller) => (
+                    <SelectItem key={seller.id} value={seller.id}>
+                      {seller.firstName} {seller.lastName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {!!missingCoords && missingCoords.count > 0 && (
+        <div className="mb-6 p-4 rounded-md border border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200 text-sm" data-testid="banner-missing-coords">
+          <strong>{missingCoords.count} cliente(s) da agenda deste dia SEM coordenada</strong> — ficam fora da rota otimizada. Atualize o cadastro (lat/long): {missingCoords.customers.map((c) => c.name).join(', ')}
+        </div>
+      )}
+
+      {!selectedSellerId ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <User className="h-16 w-16 mx-auto text-gray-400 mb-4" />
+            <p className="text-gray-600 dark:text-gray-400">
+              Selecione um vendedor para visualizar a rota
+            </p>
+          </CardContent>
+        </Card>
+      ) : isLoading ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+            <p className="text-gray-600 dark:text-gray-400">Carregando rota...</p>
+          </CardContent>
+        </Card>
+      ) : !route ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <AlertCircle className="h-16 w-16 mx-auto text-yellow-500 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Nenhuma rota encontrada</h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Não há visitas programadas para esta data
+            </p>
+            {isAdmin && (
+              <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
+                <Button 
+                  variant="default" 
+                  data-testid="button-generate-route"
+                  onClick={() => generateRouteMutation.mutate()}
+                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || generateFromPlannedVisitsMutation.isPending || !selectedSellerId}
+                >
+                  {generateRouteMutation.isPending ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Gerando...
+                    </>
+                  ) : (
+                    <>
+                      <Route className="mr-2 h-4 w-4" />
+                      Gerar Rota
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  data-testid="button-create-empty-route"
+                  onClick={() => createEmptyRouteMutation.mutate()}
+                  disabled={generateRouteMutation.isPending || createEmptyRouteMutation.isPending || generateFromPlannedVisitsMutation.isPending || !selectedSellerId}
+                >
+                  {createEmptyRouteMutation.isPending ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Criando...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Criar Rota Vazia
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between flex-wrap gap-3">
+                <span>
+                  {formatInTimeZone(new Date(selectedDate + 'T12:00:00.000Z'), 'America/Sao_Paulo', "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isAdmin && route?.id && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => deleteRouteMutation.mutate(route.id)}
+                      disabled={deleteRouteMutation.isPending}
+                      data-testid="button-clear-route"
+                      className="border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950"
+                    >
+                      {deleteRouteMutation.isPending ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Limpando...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Limpar Rota
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  <Badge variant={route.routeStatus === 'completed' ? 'default' : 'secondary'}>
+                    {route.routeStatus === 'completed' ? 'Concluída' : 'Em andamento'}
+                  </Badge>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                // Presenciais: conta as visitas presenciais REAIS do dia (exclui virtuais).
+                // Antes usava route.totalVisits, que contava também clientes virtuais que vazam
+                // para o optimizedOrder — inflando o total (ex.: telemarketing mostrava presenciais).
+                // 📋 Cards com alteração "Efetuada" saem da contagem da rota (mas continuam visíveis).
+                const presActiveVisits = presentialVisits.filter((v: any) => !isVisitEfetuada(v));
+                const presTotal = presActiveVisits.length;
+                // Concluídas = clientes presenciais distintos com CHECK-IN feito (check-out desligado)
+                const presConcl = presActiveVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
+                const presPend = Math.max(0, presTotal - presConcl);
+                const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
+                // Virtuais (também excluindo os Efetuados)
+                const virtActiveVisits = allVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId))));
+                const virtTotal = virtActiveVisits.length;
+                const virtConcl = virtActiveVisits.filter((v: any) => virtualConcludedIds.has(String((v as any).customerId))).length;
+                const virtPend = Math.max(0, virtTotal - virtConcl);
+                const virtPct = virtTotal > 0 ? Math.round((virtConcl / virtTotal) * 100) : 0;
+                return (
+              <div className="space-y-5">
+                {/* Linha 1 — Visitas Presenciais */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Visitas Presenciais</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                        <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Total de Visitas</p>
+                        <p className="text-2xl font-bold" data-testid="pres-total">{presTotal}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                        <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Concluídas</p>
+                        <p className="text-2xl font-bold" data-testid="pres-concluidas">{presConcl}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
+                        <Clock className="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
+                        <p className="text-2xl font-bold" data-testid="pres-pendentes">{presPend}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-lime-100 dark:bg-lime-900 rounded-lg">
+                        <Target className="h-6 w-6 text-lime-600 dark:text-lime-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">% Atendimento</p>
+                        <p className="text-2xl font-bold" data-testid="attendance-percentage">{presPct}%</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Linha 2 — Atendimentos Virtuais */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Atendimentos Virtuais</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-cyan-100 dark:bg-cyan-900 rounded-lg">
+                        <FileText className="h-6 w-6 text-cyan-600 dark:text-cyan-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Total de Atendimentos</p>
+                        <p className="text-2xl font-bold" data-testid="virt-total">{virtTotal}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                        <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Concluídas</p>
+                        <p className="text-2xl font-bold" data-testid="virt-concluidas">{virtConcl}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
+                        <Clock className="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Pendentes</p>
+                        <p className="text-2xl font-bold" data-testid="virt-pendentes">{virtPend}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-lime-100 dark:bg-lime-900 rounded-lg">
+                        <Target className="h-6 w-6 text-lime-600 dark:text-lime-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">% Atendimento</p>
+                        <p className="text-2xl font-bold" data-testid="virt-percentage">{virtPct}%</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Linha 3 — Pedidos (sobre as Concluídas: presenciais realizadas + atend. virtuais realizados) */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Pedidos das Concluídas (Presenciais + Virtuais)</p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-emerald-100 dark:bg-emerald-900 rounded-lg">
+                        <ShoppingCart className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Visitas com Pedidos</p>
+                        <p className="text-2xl font-bold" data-testid="visits-with-orders">{orderStats.comPedidos}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                        <DollarSign className="h-6 w-6 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Valor Visitas com Pedidos</p>
+                        <p className="text-xl font-bold" data-testid="orders-value">
+                          R$ {orderStats.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                        <MapPin className="h-6 w-6 text-orange-600 dark:text-orange-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Visitas Sem Pedido</p>
+                        <p className="text-2xl font-bold" data-testid="visits-without-orders">{orderStats.semPedido}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+          {/* Km rodada (real/executada): hoje, semana e mês. Card próprio, SEMPRE visível
+              (inclusive para o vendedor e mesmo quando não há coordenada de casa / mapa). */}
+          <Card className="mb-6">
+            <CardContent className="py-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-gray-700 dark:text-gray-300 mr-1">Quilometragem rodada:</span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada no dia selecionado" data-testid="km-dia">
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">📍</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km hoje</span>
+                    <span className="text-sm font-bold text-green-700 dark:text-green-300">{fmtKm(kmData?.dia)}</span>
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada acumulada na semana (desde segunda)" data-testid="km-semana">
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 text-xs">📆</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km semana</span>
+                    <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{fmtKm(kmData?.semana)}</span>
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 whitespace-nowrap" title="Km rodada acumulada no mês" data-testid="km-mes">
+                  <span className="grid place-items-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 text-xs">🗓️</span>
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Km mês</span>
+                    <span className="text-sm font-bold text-blue-700 dark:text-blue-300">{fmtKm(kmData?.mes)}</span>
+                  </span>
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {route.sellerHome && (
+            <Card className="mb-6">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <CardTitle>Mapa da Rota</CardTitle>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleMap}
+                    className="text-muted-foreground"
+                    data-testid="button-toggle-map"
+                    title={showMap ? 'Ocultar mapa' : 'Mostrar mapa'}
+                  >
+                    {showMap ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                    {showMap ? 'Ocultar' : 'Mostrar'}
+                  </Button>
+                </div>
+              </CardHeader>
+              {showMap && (
+              <CardContent>
+                <RouteMap
+                  homeLocation={route.sellerHome}
+                  visits={((route.visits || []).filter((v: any) => !v.isVirtual && v.visitType !== 'virtual')).map(visit => ({
+                    ...visit,
+                    customerLatitude: visit.customerLatitude != null ? String(visit.customerLatitude) : null,
+                    customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
+                  }))}
+                  virtualVisits={[]}
+                  repescagemPoints={(Array.isArray(repescagemOverlay) ? repescagemOverlay : []).map((r: any) => ({
+                    id: r.assignmentId,
+                    customerName: r.customerName,
+                    latitude: r.latitude != null ? String(r.latitude) : null,
+                    longitude: r.longitude != null ? String(r.longitude) : null,
+                  }))}
+                  optimizedOrder={route.optimizedOrder || []}
+                  checkpoints={route.checkpoints || []}
+                />
+              </CardContent>
+              )}
+            </Card>
+          )}
+
+          {/* Empty Route State - Show Button to Add Visits */}
+          {route.visits?.length === 0 && (isAdmin || isVendedor || isTelemarketing) && (
+            <Card className="mb-6 border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/20">
+              <CardContent className="py-8 text-center">
+                <div className="flex flex-col items-center gap-4">
+                  <Target className="h-12 w-12 text-blue-600 dark:text-blue-400" />
+                  <div>
+                    <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-1">Rota Vazia</h3>
+                    <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
+                      Clique no botão abaixo para adicionar clientes/leads a esta rota
+                    </p>
+                  </div>
+                  <Button
+                    variant="default"
+                    onClick={() => setShowAddVisitModal(true)}
+                    className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800"
+                    data-testid="button-add-visits-to-empty-route"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Adicionar Visitas à Rota
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <CardTitle className="whitespace-nowrap">
+                  Visitas Presenciais ({presentialActiveCount}{presentialActiveCount !== presentialVisits.length ? ` de ${presentialVisits.length}` : ''})
+                </CardTitle>
+                {/* Busca por cliente + filtro Atendidos/Pendentes */}
+                <div className="flex flex-1 flex-wrap items-center gap-2 lg:justify-center">
+                  <div className="relative w-full sm:max-w-xs">
+                    <Input
+                      placeholder="Buscar cliente..."
+                      value={presentialSearch}
+                      onChange={(e) => setPresentialSearch(e.target.value)}
+                      className="h-9 w-full pr-8"
+                      data-testid="input-presential-search"
+                    />
+                    {presentialSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setPresentialSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                        title="Limpar busca"
+                        aria-label="Limpar busca"
+                        data-testid="button-clear-presential-search"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                  <Select value={presentialFilter} onValueChange={(v) => setPresentialFilter(v as 'todos' | 'atendidos' | 'pendentes')}>
+                    <SelectTrigger className="h-9 w-[150px]" data-testid="select-presential-filter">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos</SelectItem>
+                      <SelectItem value="atendidos">Atendidos</SelectItem>
+                      <SelectItem value="pendentes">Pendentes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={expandAllPres}
+                    className="flex items-center gap-1"
+                    data-testid="button-expand-all-presential"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                    Expandir Tudo
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={collapseAllPres}
+                    className="flex items-center gap-1"
+                    data-testid="button-collapse-all-presential"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                    Recolher Tudo
+                  </Button>
+                </div>
+                {(isAdmin || isVendedor || isTelemarketing) && route.id && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => refetchCustomerInfo()}
+                      disabled={isFetchingCustomerInfo}
+                      className="flex items-center gap-2"
+                      data-testid="button-refresh-debts"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isFetchingCustomerInfo ? 'animate-spin' : ''}`} />
+                      {isFetchingCustomerInfo ? 'Atualizando...' : 'Atualizar Débitos'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowAddVisitModal(true)}
+                      className="flex items-center gap-2"
+                      data-testid="button-add-visit"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Adicionar Visita
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => optimizeRouteMutation.mutate(route.id)}
+                      disabled={optimizeRouteMutation.isPending || presentialVisits.length === 0}
+                      title={presentialVisits.length === 0 ? 'Não há visitas presenciais para otimizar nesta rota' : 'Otimizar a ordem das visitas presenciais'}
+                      className="flex items-center gap-2"
+                      data-testid="button-optimize-route"
+                    >
+                      <Zap className="h-4 w-4" />
+                      {optimizeRouteMutation.isPending ? 'Otimizando...' : 'Otimizar Rota'}
+                    </Button>
+                  </div>
+                )}
+                {/* ↩️ Contagem de solicitações REJEITADAS (destaque) + dica ao vendedor */}
+                {rejeitadasCount > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap" data-testid="rejeitadas-aviso">
+                    <Badge variant="outline" className="gap-1 bg-red-100 text-red-800 border-red-300 font-semibold">
+                      <XCircle className="h-3.5 w-3.5" />
+                      {rejeitadasCount} {rejeitadasCount === 1 ? 'solicitação rejeitada' : 'solicitações rejeitadas'}
+                    </Badge>
+                    <span
+                      className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-300 cursor-help"
+                      title="Clique na tag 'Rejeitadas' no card para ver o motivo e reenviar a solicitação ao admin."
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                      Clique na tag do card para ver o motivo e reenviar.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {visiblePresentialVisits.map((visit: any, index: number) => {
+                  const checkInCheckpoint = route.checkpoints?.find(
+                    cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_in'
+                  );
+                  const checkOutCheckpoint = route.checkpoints?.find(
+                    cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_out'
+                  );
+
+                  const customerLat = parseFloat(String(visit.customerLatitude || 0));
+                  const customerLng = parseFloat(String(visit.customerLongitude || 0));
+
+                  let checkInDistance = null;
+                  let checkOutDistance = null;
+                  let checkInOffsite = false;
+                  let checkOutOffsite = false;
+
+                  if (checkInCheckpoint && checkInCheckpoint.latitude && checkInCheckpoint.longitude && customerLat && customerLng) {
+                    checkInDistance = calculateDistance(
+                      customerLat,
+                      customerLng,
+                      parseFloat(checkInCheckpoint.latitude),
+                      parseFloat(checkInCheckpoint.longitude)
+                    );
+                    checkInOffsite = checkInDistance > 100;
+                  }
+
+                  if (checkOutCheckpoint && checkOutCheckpoint.latitude && checkOutCheckpoint.longitude && customerLat && customerLng) {
+                    checkOutDistance = calculateDistance(
+                      customerLat,
+                      customerLng,
+                      parseFloat(checkOutCheckpoint.latitude),
+                      parseFloat(checkOutCheckpoint.longitude)
+                    );
+                    checkOutOffsite = checkOutDistance > 100;
+                  }
+
+                  const hasOffsite = checkInOffsite || checkOutOffsite;
+                  // Check-out desligado: a visita fica CONCLUÍDA (verde) já no check-in.
+                  const isCompleted = !!checkInCheckpoint;
+                  const isInProgress = false;
+                  const isLead = (visit as any).visitType === 'lead';
+                  // Estado do desfecho do lead — mesma lógica de "atendido" dos clientes presenciais.
+                  const leadStatus = (visit as any).leadStatus;
+                  const leadNextDay = (visit as any).leadNextContactDate ? String((visit as any).leadNextContactDate).slice(0, 10) : null;
+                  const leadReason = (visit as any).leadNonConversionReason;
+                  const leadConverted = isLead && leadStatus === 'converted';
+                  const leadDiscarded = isLead && leadStatus === 'discarded';
+                  const leadPostponed = isLead && leadStatus === 'scheduled' && !!leadNextDay && leadNextDay > selectedDate;
+                  const leadDone = leadConverted || leadDiscarded || leadPostponed;
+
+                  let statusColor = 'text-gray-600 dark:text-gray-400';
+                  let borderColor = 'border-gray-200 dark:border-gray-700';
+
+                  if (isLead) {
+                    if (leadDone) {
+                      // Lead ATENDIDO (converteu / não converteu / prorrogou) → card VERDE, como cliente presencial.
+                      statusColor = 'text-green-700 dark:text-green-300';
+                      borderColor = 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950';
+                    } else if (hasOffsite) {
+                      statusColor = 'text-red-600 dark:text-red-400';
+                      borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
+                    } else {
+                      // Lead PENDENTE de atendimento → AMARELO OURO.
+                      statusColor = 'text-amber-600 dark:text-amber-400';
+                      borderColor = 'border-amber-500 dark:border-amber-700';
+                    }
+                  } else if (hasOffsite) {
+                    statusColor = 'text-red-600 dark:text-red-400';
+                    borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
+                  } else if (isCompleted) {
+                    statusColor = 'text-green-600 dark:text-green-400';
+                    borderColor = 'border-green-200 dark:border-green-800';
+                  } else if (isInProgress) {
+                    statusColor = 'text-blue-600 dark:text-blue-400';
+                    borderColor = 'border-blue-200 dark:border-blue-800';
+                  }
+
+                  // 🟣 Ajuste feito por administrador tem prioridade visual — SÓ quando houve alteração EFETIVA (histórico não vazio).
+                  const adminMark = adminAdjustments[visit.customerId];
+                  const adminChanges: any[] = (adminMark && Array.isArray(adminMark.changes)) ? adminMark.changes : [];
+                  const hasAdminChange = adminChanges.length > 0;
+                  if (hasAdminChange) {
+                    statusColor = 'text-purple-900 dark:text-purple-200';
+                    borderColor = 'border-2 border-purple-800 dark:border-purple-400 bg-purple-200 dark:bg-purple-900 ring-1 ring-purple-800 dark:ring-purple-500';
+                  }
+
+                  // 📋 Alteração Efetuada → card cinza/inativo, não clicável e fora da contagem.
+                  const crEntId = isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId;
+                  const crEfetuada = crEfetuadaByKey(crKey(isLead ? 'lead' : 'customer', String(crEntId)));
+                  // Card sendo aberto (busca do sales-card em andamento): mostra spinner e
+                  // bloqueia novos toques ate abrir — evita "clicar varias vezes".
+                  const cardBusy = loadingCardId != null && loadingCardId === (isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId));
+
+                  const cardKey = presCardKey(visit);
+                  const isExpanded = presExpanded.has(cardKey);
+
+                  return (
+                    <div
+                      key={visit.id || visit.customerId || index}
+                      className={`p-3 border rounded-lg transition-all ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : `hover:shadow-md ${borderColor}`}`}
+                      data-testid={`visit-${visit.customerId || visit.id}`}
+                    >
+                      {crEfetuada ? (
+                        <div className="flex items-center justify-between gap-3">
+                          <p className={`font-semibold ${statusColor} flex items-center gap-1 min-w-0`}>
+                            {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />}
+                            <span className="truncate">{visit.customerName}</span>
+                          </p>
+                          <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <ChangeRequestControl
+                              disabled
+                              entityType={isLead ? 'lead' : 'customer'}
+                              entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
+                              customerId={visit.customerId}
+                              entityName={visit.customerName}
+                              sellerId={selectedSellerId}
+                              state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                      <>
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                        <div
+                          className={`flex items-start gap-3 flex-1 min-w-0 ${crEfetuada ? 'cursor-default' : 'cursor-pointer'} ${cardBusy ? 'opacity-60 pointer-events-none' : ''}`}
+                          onClick={crEfetuada ? undefined : () => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
+                        >
+                          <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
+                            crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
+                          }`}>
+                            {crEfetuada ? '' : (cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : presCardNumbers[index])}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
+                                {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
+                                {visit.customerName}
+                              </p>
+                              {isExpanded && (<>
+                              <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
+                              {(() => {
+                                const dec = decisaoDoCliente(visit.customerId);
+                                if (!dec) return null;
+                                const cor = dec.decisao === 'confirmado'
+                                  ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400'
+                                  : dec.decisao === 'remarcar'
+                                    ? 'border-sky-500 text-sky-700 dark:text-sky-400'
+                                    : 'border-rose-500 text-rose-700 dark:text-rose-400';
+                                return (
+                                  <Badge variant="outline" className={`text-xs ${cor}`}
+                                    title={`Resposta do cliente ao aviso de visita${dec.hora ? ' as ' + dec.hora : ''}`}
+                                    data-testid={`badge-rota-decisao-${visit.customerId}`}>
+                                    {dec.decisao === 'confirmado' ? '✅ ' : dec.decisao === 'remarcar' ? '📅 ' : '⚠️ '}{dec.rotulo}
+                                  </Badge>
+                                );
+                              })()}
+                              <OmieInstanceBadge instanceId={(visit as any).omieInstanceId} />
+                              {isLead && (
+                                <Badge variant="outline" className="text-xs border-amber-500 text-amber-700 dark:text-amber-400">
+                                  Lead
+                                </Badge>
+                              )}
+                              {/* TAG do desfecho do lead (card verde de atendido) */}
+                              {leadConverted && (
+                                <Badge className="text-xs bg-green-600 hover:bg-green-600 text-white">Conversão</Badge>
+                              )}
+                              {leadDiscarded && (
+                                <Badge className="text-xs bg-red-600 hover:bg-red-600 text-white">Não Convertido{leadReason ? `: ${leadReason}` : ''}</Badge>
+                              )}
+                              {leadPostponed && (
+                                <Badge className="text-xs bg-amber-500 hover:bg-amber-500 text-white">Prorrogado para {leadNextDay ? leadNextDay.split('-').reverse().join('/') : ''}</Badge>
+                              )}
+                              {/* 🟣 Tag de ajuste administrativo (só quando houve alteração efetiva) */}
+                              {hasAdminChange && (
+                                <Badge variant="outline" className="text-xs border-purple-700 text-purple-900 bg-purple-100 dark:text-purple-200 dark:bg-purple-900 dark:border-purple-400" data-testid={`adm-tag-${visit.customerId}`}>
+                                  Adm - {adminMark.by}
+                                </Badge>
+                              )}
+                              {/* Botão "Ajustar" movido para a linha de ícones de ação (à direita). */}
+                              {/* Mostrar pedidos do dia */}
+                              {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
+                                <Badge 
+                                  key={orderIdx}
+                                  variant="default" 
+                                  className="text-xs bg-green-600 hover:bg-green-700"
+                                  data-testid={`order-badge-${visit.customerId}-${orderIdx}`}
+                                >
+                                  <ShoppingCart className="h-3 w-3 mr-1" />
+                                  {order.omieOrderId || order.cardNumber || 'Pedido'}
+                                  {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
+                                </Badge>
+                              ))}
+                              {/* 🔒 TROCA BLOQUEADA: card de troca do cliente bloqueado no pipeline.
+                                  Fica ao lado do pedido do dia, avisando o vendedor na Rota. */}
+                              {visit.customerId && customerInfo?.trocasBloqueadas?.[visit.customerId] && (
+                                <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`troca-bloqueada-badge-${visit.customerId}`}>
+                                  <AlertCircle className="h-3 w-3 mr-1" />
+                                  Troca bloqueada
+                                </Badge>
+                              )}
+                              {/* Mostrar débito vencido */}
+                              {visit.customerId && customerInfo?.debts[visit.customerId] && customerInfo.debts[visit.customerId] > 0 && (
+                                <Badge 
+                                  variant="destructive" 
+                                  className="text-xs"
+                                  data-testid={`debt-badge-${visit.customerId}`}
+                                >
+                                  <DollarSign className="h-3 w-3 mr-1" />
+                                  R$ {customerInfo.debts[visit.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                </Badge>
+                              )}
+                              {checkInCheckpoint && checkInCheckpoint.photoUrl && (
+                                <Camera
+                                  className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors"
+                                  data-testid={`camera-icon-${visit.customerId}`}
+                                  onClick={(e) => handlePhotoClick(checkInCheckpoint.photoUrl!, e)}
+                                />
+                              )}
+                              </>)}
+                            </div>
+
+                            {isExpanded && (<>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
+                              <MapPin className="h-3 w-3" />
+                              {visit.customerAddress || 'Endereço não informado'}
+                            </p>
+
+                            {visit.customerId && (
+                              <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
+                                🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || '') || '—'}
+                                {' • '}
+                                🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
+                                {' • '}
+                                💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </p>
+                            )}
+
+                            {/* 🟣 Histórico de alterações do administrador (de → para) */}
+                            {hasAdminChange && (
+                              <div className="mb-2 rounded-md border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/40 p-2" data-testid={`adm-history-${visit.customerId}`}>
+                                <p className="text-[11px] font-semibold text-purple-800 dark:text-purple-300 mb-1 flex items-center gap-1">
+                                  <Clock className="h-3 w-3" /> Histórico de alterações (Adm)
+                                </p>
+                                <ul className="space-y-0.5">
+                                  {adminChanges.map((ch: any, ci: number) => (
+                                    <li key={ci} className="text-[11px] text-purple-900 dark:text-purple-200">
+                                      <span className="font-medium">{ch.field}:</span>{' '}
+                                      <span className="line-through opacity-70">{ch.from ?? '—'}</span>
+                                      {' → '}
+                                      <span className="font-semibold">{ch.to ?? '—'}</span>
+                                      <span className="text-purple-500 dark:text-purple-400"> · {ch.by}{ch.at ? ` · ${formatInTimeZone(ch.at, 'America/Sao_Paulo', 'dd/MM HH:mm')}` : ''}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {!isLead && ((visit as any).weekdays || (visit as any).visitPeriodicity) && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-2 font-medium">
+                                <Calendar className="h-3 w-3" />
+                                {formatWeekdaysLocal((visit as any).weekdays)}
+                                {(visit as any).weekdays && (visit as any).visitPeriodicity && ' • '}
+                                {formatPeriodicity((visit as any).visitPeriodicity)}
+                              </p>
+                            )}
+
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-1 gap-2 text-xs">
+                                <div>
+                                  <span className="text-gray-500">Check-in: </span>
+                                  {checkInCheckpoint ? (
+                                    <div>
+                                      <span className={`font-medium ${checkInOffsite ? 'text-red-600' : statusColor}`} data-testid={`checkin-time-${visit.customerId}`}>
+                                        {formatInTimeZone(checkInCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                        {checkInOffsite && ` ⚠️ ${formatDistance(checkInDistance!)}`}
+                                      </span>
+                                      {checkInCheckpoint.latitude && checkInCheckpoint.longitude && (
+                                        <div className="text-gray-400 text-xs mt-1">
+                                          <div>Lat: {parseFloat(checkInCheckpoint.latitude.toString()).toFixed(6)}</div>
+                                          <div>Lon: {parseFloat(checkInCheckpoint.longitude.toString()).toFixed(6)}</div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-400">—</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Observação/Comentário do Lead */}
+                              {isLead && (visit as any).observation && (
+                                <div className="border-l-2 border-amber-400 pl-2 py-1 text-xs text-gray-600 dark:text-gray-400 bg-amber-50 dark:bg-amber-950/20 rounded px-2">
+                                  <span className="font-semibold text-amber-700 dark:text-amber-300">Comentário: </span>
+                                  {(visit as any).observation}
+                                </div>
+                              )}
+
+                              {/* Ações do Lead (Converter / Não converter / Prorrogar) — só enquanto NÃO atendido */}
+                              {isLead && !leadDone && (
+                                <div onClick={(e) => e.stopPropagation()}>
+                                  <LeadActions
+                                    leadId={visit.entityId || visit.leadId || visit.customerId}
+                                    leadName={visit.customerName}
+                                    sellerId={selectedSellerId}
+                                    date={selectedDate}
+                                    onDone={() => refetch()}
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            {hasOffsite && (
+                              <div className="mt-2 text-xs text-red-600 dark:text-red-400 font-medium">
+                                ⚠️ {checkInOffsite && 'Check-in fora do local'}{checkInOffsite && checkOutOffsite && ' | '}{checkOutOffsite && 'Check-out fora do local'}
+                              </div>
+                            )}
+                            </>)}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 flex-wrap justify-end shrink-0">
+                          {/* Botao Expandir/Recolher card */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                            onClick={(e) => { e.stopPropagation(); togglePresCard(cardKey); }}
+                            title={isExpanded ? 'Recolher' : 'Expandir'}
+                            aria-label={isExpanded ? 'Recolher' : 'Expandir'}
+                            data-testid={`toggle-presential-${visit.customerId || visit.id}`}
+                          >
+                            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </Button>
+                          {/* 📋 Solicitar Alteração — no mobile fica ABAIXO dos ícones (linha própria); no desktop, inline. */}
+                          <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0">
+                          <ChangeRequestControl
+                            disabled={hasCheckinOrSale(visit.customerId)}
+                            entityType={isLead ? 'lead' : 'customer'}
+                            entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
+                            customerId={visit.customerId}
+                            entityName={visit.customerName}
+                            sellerId={selectedSellerId}
+                            state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                          />
+                          </div>
+                          {/* ✏️ Ajustar / assumir atendimento (Adm) — ícone junto às demais ações */}
+                          {isCheckinAdmin && !isLead && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-purple-700 hover:text-purple-800 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-950"
+                              onClick={(e) => { e.stopPropagation(); openAdminEdit(visit, checkInCheckpoint, checkOutCheckpoint); }}
+                              title="Ajustar / assumir atendimento (Adm)"
+                              data-testid={`admin-edit-checkin-${visit.customerId}`}
+                            >
+                              <Clock className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {/* Botão Atendimento Virtual (apenas para clientes, não leads) */}
+                          {!isLead && visit.customerId && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setVirtualServiceCustomer({ 
+                                  id: visit.customerId, 
+                                  name: visit.customerName 
+                                });
+                              }}
+                              data-testid={`button-virtual-service-${visit.customerId}`}
+                              title="Registrar Atendimento Virtual"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          )}
+                          
+                          {/* Botão Waze */}
+                          {visit.customerLatitude && visit.customerLongitude && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(`https://waze.com/ul?ll=${visit.customerLatitude},${visit.customerLongitude}&navigate=yes`, '_blank');
+                              }}
+                              data-testid={`button-waze-${visit.customerId}`}
+                              title="Abrir no Waze"
+                            >
+                              <Navigation className="h-4 w-4" />
+                            </Button>
+                          )}
+                          
+                          {/* Botão Deletar — leads: SOMENTE admin; clientes: admin e vendedor/telemarketing */}
+                          {(isLead ? isAdmin : (isAdmin || isVendedor || isTelemarketing)) && route.id && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(`Deseja realmente remover ${visit.customerName} desta rota?`)) {
+                                  deleteVisitMutation.mutate({ routeId: route.id, customerId: visit.customerId || visit.entityId });
+                                }
+                              }}
+                              disabled={deleteVisitMutation.isPending}
+                              data-testid={`button-delete-visit-${visit.customerId}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* ➕ Rodapé: visita adicionada manualmente à rota */}
+                      {(visit as any).addedManually && (
+                        <div
+                          className="mt-2 pt-2 border-t border-dashed border-gray-300 dark:border-gray-600 text-[11px] text-gray-500 dark:text-gray-400 flex items-center gap-1"
+                          data-testid={`manual-added-${visit.customerId}`}
+                        >
+                          <Plus className="h-3 w-3" />
+                          Adicionado manualmente
+                        </div>
+                      )}
+                      </>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {visiblePresentialVisits.length === 0 && presentialVisits.length > 0 && (
+                  <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="presential-empty">
+                    Nenhuma visita corresponde à busca/filtro.
+                  </div>
+                )}
+
+                {/* Painel "Retornos de Lead" removido da Rota do Dia: não deve haver retornos
+                    de leads atrasados. O lead aparece somente como parada no dia agendado dele. */}
+
+                {(() => {
+                  if (allVirtualVisits.length === 0) return null;
+
+                  return (
+                    <div className="my-6 border-t-2 border-blue-300 dark:border-blue-700 pt-4">
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                        <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                          <Phone className="h-5 w-5" />
+                          Atendimentos Virtuais ({virtualActiveCount}{virtualActiveCount !== allVirtualVisits.length ? ` de ${allVirtualVisits.length}` : ''})
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={expandAllVirt}
+                            className="flex items-center gap-1"
+                            data-testid="button-expand-all-virtual"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                            Expandir Tudo
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={collapseAllVirt}
+                            className="flex items-center gap-1"
+                            data-testid="button-collapse-all-virtual"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                            Recolher Tudo
+                          </Button>
+                        </div>
+                      </div>
+                      {visibleVirtualVisits.length === 0 && (
+                        <div className="text-center py-6 text-sm text-gray-500 dark:text-gray-400" data-testid="virtual-empty">
+                          Nenhum atendimento virtual corresponde à busca/filtro.
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        {visibleVirtualVisits.map((visit, index) => {
+                          const isAttended = visit.customerId && attendedCustomerIds.has(visit.customerId);
+                          const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
+                          const isEmAndamento = !!(visit.customerId && emAndamentoIds.has(visit.customerId) && !isAttended && !hasOrderToday);
+                          const isFinalized = !!(isAttended || hasOrderToday);
+                          const isNaoVenda = !!(visit.customerId && isAttended && !hasOrderToday);
+                          const crEfetuada = crEfetuadaByKey(crKey('customer', String(visit.customerId)));
+                          const vCardKey = virtCardKey(visit);
+                          const vExpanded = virtExpanded.has(vCardKey);
+                          return (
+                          <div
+                            key={visit.id || visit.customerId}
+                            className={`p-3 border rounded-lg transition-all ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700 cursor-default' : `hover:shadow-md cursor-pointer ${
+                              isFinalized
+                                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                                : isEmAndamento
+                                ? 'border-yellow-400 dark:border-yellow-600 bg-yellow-50 dark:bg-yellow-950'
+                                : 'border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-950'
+                            }`}`}
+                            data-testid={`virtual-visit-${visit.customerId}`}
+                            onClick={crEfetuada ? undefined : () => {
+                              if (visit.customerId) {
+                                setVirtualActionCustomer({
+                                  id: visit.customerId,
+                                  name: visit.customerName
+                                });
+                                setShowVirtualActionModal(true);
+                              }
+                            }}
+                          >
+                            {crEfetuada ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2 min-w-0">
+                                  <Phone className="h-4 w-4 shrink-0" />
+                                  <span className="truncate">{visit.customerName}</span>
+                                </p>
+                                <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <ChangeRequestControl
+                                    disabled
+                                    entityType="customer"
+                                    entityId={String(visit.customerId)}
+                                    customerId={visit.customerId}
+                                    entityName={visit.customerName}
+                                    sellerId={selectedSellerId}
+                                    state={changeRequestStates[crKey('customer', String(visit.customerId))]}
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                              <div className="flex items-start gap-3 flex-1 min-w-0">
+                                <div className={`flex-shrink-0 w-6 h-6 rounded-full text-white flex items-center justify-center text-xs font-semibold ${crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : isFinalized ? 'bg-green-500' : isEmAndamento ? 'bg-yellow-500' : 'bg-blue-500'}`}>
+                                  {crEfetuada ? '' : virtCardNumbers[index]}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                                      <Phone className="h-4 w-4" />
+                                      {visit.customerName}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); const n = visit.customerName || ''; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(n); toast({ title: 'Nome copiado', description: n }); } }}
+                                        title="Copiar nome fantasia"
+                                        aria-label="Copiar nome fantasia"
+                                        className="shrink-0 text-gray-400 opacity-50 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                                        data-testid={`copy-fantasy-virtual-${visit.customerId}`}
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                      </button>
+                                    </p>
+                                    {vExpanded && (<>
+                                    <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
+                                    {/* Mostrar pedidos do dia */}
+                                    {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
+                                      <Badge 
+                                        key={orderIdx}
+                                        variant="default" 
+                                        className="text-xs bg-green-600 hover:bg-green-700"
+                                        data-testid={`virtual-order-badge-${visit.customerId}-${orderIdx}`}
+                                      >
+                                        <ShoppingCart className="h-3 w-3 mr-1" />
+                                        {order.omieOrderId || order.cardNumber || 'Pedido'}
+                                        {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
+                                      </Badge>
+                                    ))}
+                                    {/* 🔒 TROCA BLOQUEADA (virtual): mesmo aviso no card virtual. */}
+                                    {visit.customerId && customerInfo?.trocasBloqueadas?.[visit.customerId] && (
+                                      <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`virtual-troca-bloqueada-badge-${visit.customerId}`}>
+                                        <AlertCircle className="h-3 w-3 mr-1" />
+                                        Troca bloqueada
+                                      </Badge>
+                                    )}
+                                    {/* Mostrar débito vencido */}
+                                    {visit.customerId && customerInfo?.debts[visit.customerId] && customerInfo.debts[visit.customerId] > 0 && (
+                                      <Badge 
+                                        variant="destructive" 
+                                        className="text-xs"
+                                        data-testid={`virtual-debt-badge-${visit.customerId}`}
+                                      >
+                                        <DollarSign className="h-3 w-3 mr-1" />
+                                        R$ {customerInfo.debts[visit.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      </Badge>
+                                    )}
+                                    {isEmAndamento && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-yellow-500 text-yellow-700 bg-yellow-100 dark:text-yellow-300 dark:bg-yellow-900"
+                                        data-testid={`virtual-inprogress-badge-${visit.customerId}`}
+                                      >
+                                        <Clock className="h-3 w-3 mr-1" />
+                                        Atendimento em andamento
+                                      </Badge>
+                                    )}
+                                    {isFinalized && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-green-500 text-green-700 bg-green-100 dark:text-green-300 dark:bg-green-900"
+                                        data-testid={`virtual-finalized-badge-${visit.customerId}`}
+                                      >
+                                        <CheckCircle className="h-3 w-3 mr-1" />
+                                        Atendimento Finalizado
+                                      </Badge>
+                                    )}
+                                    {isNaoVenda && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-red-500 text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900"
+                                        data-testid={`virtual-naovenda-badge-${visit.customerId}`}
+                                      >
+                                        <X className="h-3 w-3 mr-1" />
+                                        Não Venda
+                                      </Badge>
+                                    )}
+                                    {hasOrderToday && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-xs border-blue-500 text-blue-700 bg-blue-100 dark:text-blue-300 dark:bg-blue-900"
+                                        data-testid={`virtual-pedido-badge-${visit.customerId}`}
+                                      >
+                                        <ShoppingCart className="h-3 w-3 mr-1" />
+                                        Pedido Registrado
+                                      </Badge>
+                                    )}
+                                    </>)}
+                                  </div>
+                                  {vExpanded && (<>
+                                  {visit.customerAddress && (
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                      📍 {visit.customerAddress}
+                                    </p>
+                                  )}
+                                  {(customerInfo?.phones?.[visit.customerId] || (visit as any).phone || (visit as any).customerPhone) && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                      📱 {customerInfo?.phones?.[visit.customerId] || (visit as any).phone || (visit as any).customerPhone}
+                                    </p>
+                                  )}
+                                  {visit.customerId && (
+                                    <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                      🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
+                                      {' • '}
+                                      🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
+                                      {' • '}
+                                      💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </p>
+                                  )}
+                                  </>)}
+                                </div>
+                              </div>
+                              {/* Botões de ação para visitas virtuais */}
+                              <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
+                                {/* Botao Expandir/Recolher card */}
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                                  onClick={(e) => { e.stopPropagation(); toggleVirtCard(vCardKey); }}
+                                  title={vExpanded ? 'Recolher' : 'Expandir'}
+                                  aria-label={vExpanded ? 'Recolher' : 'Expandir'}
+                                  data-testid={`toggle-virtual-${visit.customerId || visit.id}`}
+                                >
+                                  {vExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                </Button>
+                                {/* Botão WhatsApp → Central de Atendimento (apenas Admin e Telemarketing ativo) */}
+                                {visit.customerId && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openWhatsappCentral(visit.customerId!, (visit as any).phone);
+                                    }}
+                                    title="Abrir WhatsApp na Central de Atendimento"
+                                    data-testid={`button-whatsapp-virtual-${visit.customerId}`}
+                                  >
+                                    <MessageCircle className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {/* Botão de Registro de Atendimento Virtual */}
+                                {visit.customerId && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setVirtualServiceCustomer({ 
+                                        id: visit.customerId!, 
+                                        name: visit.customerName 
+                                      });
+                                    }}
+                                    title="Registrar Atendimento Virtual"
+                                    data-testid={`button-virtual-service-virtual-${visit.customerId}`}
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {/* Botão Excluir card (apenas Administradores) */}
+                                {visit.customerId && isAdmin && route.id && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirm(`Deseja realmente excluir ${visit.customerName} desta rota?`)) {
+                                        deleteVisitMutation.mutate({ routeId: route.id, customerId: visit.customerId! });
+                                      }
+                                    }}
+                                    disabled={deleteVisitMutation.isPending}
+                                    title="Excluir card"
+                                    data-testid={`button-delete-virtual-${visit.customerId}`}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {/* 📋 Solicitar Alteração — no mobile fica ABAIXO dos ícones; no desktop, inline. */}
+                                {visit.customerId && (
+                                  <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0">
+                                  <ChangeRequestControl
+                                    disabled={hasCheckinOrSale(visit.customerId)}
+                                    entityType="customer"
+                                    entityId={String(visit.customerId)}
+                                    customerId={visit.customerId}
+                                    entityName={visit.customerName}
+                                    sellerId={selectedSellerId}
+                                    state={changeRequestStates[crKey('customer', String(visit.customerId))]}
+                                  />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            )}
+                          </div>
+                        );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {route.checkpoints && (() => {
+                  const offsiteCheckIns = route.checkpoints.filter(
+                    cp => cp.checkpointType === 'check_in' && cp.isOffRoute === true
+                  );
+
+                  if (offsiteCheckIns.length === 0) return null;
+
+                  return (
+                    <>
+                      <div className="my-4 border-t-2 border-orange-300 dark:border-orange-700 pt-4">
+                        <h3 className="text-sm font-semibold text-orange-600 dark:text-orange-400 mb-2 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4" />
+                          Check-ins Fora da Rota Planejada ({offsiteCheckIns.length})
+                        </h3>
+                      </div>
+
+                      {offsiteCheckIns.map((checkpoint, index) => {
+                        const validationStatus = checkpoint.validationStatus || 'pending';
+                        const isValidated = validationStatus === 'validated';
+                        const isCancelled = validationStatus === 'cancelled';
+                        const isPending = validationStatus === 'pending';
+                        
+                        return (
+                          <div
+                            key={checkpoint.id}
+                            className={`p-3 border rounded-lg ${
+                              isValidated 
+                                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950' 
+                                : isCancelled
+                                ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950'
+                                : 'border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950'
+                            }`}
+                            data-testid={`offsite-visit-${checkpoint.id}`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
+                                isValidated 
+                                  ? 'bg-green-600' 
+                                  : isCancelled
+                                  ? 'bg-red-600'
+                                  : 'bg-orange-600'
+                              }`}>
+                                {isValidated ? '✓' : isCancelled ? '✗' : '!'}
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <p className={`font-semibold ${
+                                    isValidated 
+                                      ? 'text-green-600 dark:text-green-400' 
+                                      : isCancelled
+                                      ? 'text-red-600 dark:text-red-400'
+                                      : 'text-orange-600 dark:text-orange-400'
+                                  }`}>
+                                    {checkpoint.customerName || 'Cliente não identificado'}
+                                  </p>
+                                  {checkpoint.photoUrl && (
+                                    <Camera 
+                                      className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors" 
+                                      onClick={(e) => handlePhotoClick(checkpoint.photoUrl!, e)}
+                                    />
+                                  )}
+                                  {isValidated && (
+                                    <Badge variant="default" className="bg-green-600 text-white">
+                                      Validada
+                                    </Badge>
+                                  )}
+                                  {isCancelled && (
+                                    <Badge variant="destructive">
+                                      Rejeitada
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                                  Check-in realizado fora da rota programada
+                                </p>
+                                <div className="text-xs mb-2">
+                                  <span className="text-gray-500">Horário: </span>
+                                  <span className={`font-medium ${
+                                    isValidated 
+                                      ? 'text-green-600 dark:text-green-400' 
+                                      : isCancelled
+                                      ? 'text-red-600 dark:text-red-400'
+                                      : 'text-orange-600 dark:text-orange-400'
+                                  }`}>
+                                    {formatInTimeZone(checkpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
+                                  </span>
+                                </div>
+                                
+                                {/* Botões de validação (apenas admin e status pending) */}
+                                {isAdmin && isPending && (
+                                  <div className="flex gap-2 mt-2">
+                                    <Button
+                                      size="sm"
+                                      variant="default"
+                                      className="bg-green-600 hover:bg-green-700 text-white"
+                                      onClick={() => validateVisitMutation.mutate(checkpoint.id)}
+                                      disabled={validateVisitMutation.isPending || rejectVisitMutation.isPending}
+                                      data-testid={`button-validate-${checkpoint.id}`}
+                                    >
+                                      {validateVisitMutation.isPending ? (
+                                        <Clock className="h-4 w-4 mr-1 animate-spin" />
+                                      ) : (
+                                        <CheckCircle className="h-4 w-4 mr-1" />
+                                      )}
+                                      {validateVisitMutation.isPending ? 'Validando...' : 'Validar'}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() => rejectVisitMutation.mutate(checkpoint.id)}
+                                      disabled={validateVisitMutation.isPending || rejectVisitMutation.isPending}
+                                      data-testid={`button-reject-${checkpoint.id}`}
+                                    >
+                                      {rejectVisitMutation.isPending ? (
+                                        <Clock className="h-4 w-4 mr-1 animate-spin" />
+                                      ) : (
+                                        <X className="h-4 w-4 mr-1" />
+                                      )}
+                                      {rejectVisitMutation.isPending ? 'Rejeitando...' : 'Rejeitar'}
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Repescagem2 (Fase 3): clientes de repescagem sorteados para o dia.
+              Box BEGE (distinto do amarelo/ouro de lead) + tag "Repescagem". Paradas
+              travadas: ficam fora da rota otimizada, então não são movidas/removidas
+              pela otimização nem pela auto-regeneração. Só admin pode remover. */}
+          {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
+            <Card className="border-[#d6c7a1]">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
+                    Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
+                  </CardTitle>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={expandAllRep}
+                      className="flex items-center gap-1"
+                      data-testid="button-expand-all-repescagem"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                      Expandir Tudo
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={collapseAllRep}
+                      className="flex items-center gap-1"
+                      data-testid="button-collapse-all-repescagem"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                      Recolher Tudo
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {filteredRepescagem.map((r: any) => {
+                  const repKey = String(r.assignmentId);
+                  const repIsExpanded = repExpanded.has(repKey);
+                  return (
+                  <div
+                    key={r.assignmentId}
+                    className={`flex items-start justify-between p-2 rounded-lg border ${
+                      crEfetuadaByKey(crKey('repescagem', String(r.assignmentId)))
+                        ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
+                        : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
+                          // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
+                          // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
+                          // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
+                          ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                          : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
+                    }`}
+                    data-testid={`card-repescagem-${r.customerId}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                        <span className="font-medium truncate">{r.customerName}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); const n = r.customerName || ''; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(n); toast({ title: 'Nome copiado', description: n }); } }}
+                          title="Copiar nome fantasia"
+                          aria-label="Copiar nome fantasia"
+                          className="shrink-0 text-gray-400 opacity-50 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                          data-testid={`copy-fantasy-${r.customerId}`}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                        {repIsExpanded && (<>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                          {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
+                        </span>
+                        {typeof r.repescagemCount === 'number' && r.repescagemCount > 0 && (
+                          <span
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#9a3b3b] text-white"
+                            title={`Este cliente caiu em repescagem ${r.repescagemCount}x nos últimos ${r.repescagemWindowMonths} meses`}
+                            data-testid={`repescagem-count-${r.customerId}`}
+                          >
+                            {r.repescagemCount}x em repescagem ({r.repescagemWindowMonths}m)
+                          </span>
+                        )}
+                        {r.customerId && customerInfo?.orders?.[r.customerId]?.map((order: any, orderIdx: number) => (
+                          <Badge key={orderIdx} variant="default" className="text-xs bg-green-600 hover:bg-green-700">
+                            <ShoppingCart className="h-3 w-3 mr-1" />
+                            {order.omieOrderId || order.cardNumber || 'Pedido'}
+                            {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
+                          </Badge>
+                        ))}
+                        {r.customerId && customerInfo?.trocasBloqueadas?.[r.customerId] && (
+                          <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`repescagem-troca-bloqueada-badge-${r.customerId}`}>
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Troca bloqueada
+                          </Badge>
+                        )}
+                        {r.customerId && customerInfo?.debts?.[r.customerId] && customerInfo.debts[r.customerId] > 0 && (
+                          <Badge variant="destructive" className="text-xs">
+                            <DollarSign className="h-3 w-3 mr-1" />
+                            R$ {customerInfo.debts[r.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </Badge>
+                        )}
+                        </>)}
+                      </div>
+                      {repIsExpanded && (<>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
+                        <MapPin className="h-3 w-3" />
+                        {r.address || 'Endereço não informado'}
+                      </p>
+                      {(customerInfo?.phones?.[r.customerId] || (r as any).phone) && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-1">
+                          <Phone className="h-3 w-3" />
+                          {customerInfo?.phones?.[r.customerId] || (r as any).phone}
+                        </p>
+                      )}
+                      {r.customerId && (
+                        <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
+                          🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
+                          {' • '}
+                          🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
+                          {' • '}
+                          💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      )}
+                      {((r.weekdays && r.weekdays.length) || r.visitPeriodicity) && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-1 font-medium">
+                          <Calendar className="h-3 w-3" />
+                          {formatWeekdaysLocal(r.weekdays)}
+                          {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
+                          {formatPeriodicity(r.visitPeriodicity)}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
+                      </p>
+                      </>)}
+                    </div>
+                    <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
+                      {/* Botao Expandir/Recolher card */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        onClick={(e) => { e.stopPropagation(); toggleRepCard(repKey); }}
+                        title={repIsExpanded ? 'Recolher' : 'Expandir'}
+                        aria-label={repIsExpanded ? 'Recolher' : 'Expandir'}
+                        data-testid={`toggle-repescagem-${r.customerId || r.assignmentId}`}
+                      >
+                        {repIsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                      {/* Botões só para repescagem que caiu no telemarketing */}
+                      {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
+                          onClick={(e) => { e.stopPropagation(); openWhatsappCentral(r.customerId, r.phone); }}
+                          title="Abrir WhatsApp na Central de Atendimento"
+                          data-testid={`button-repescagem-central-${r.customerId}`}
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.customerId && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+                          onClick={(e) => { e.stopPropagation(); setVirtualServiceCustomer({ id: r.customerId, name: r.customerName }); }}
+                          title="Registrar Pedido/Atendimento"
+                          data-testid={`button-repescagem-registro-${r.customerId}`}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.latitude && r.longitude && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                          onClick={(e) => { e.stopPropagation(); window.open(`https://waze.com/ul?ll=${r.latitude},${r.longitude}&navigate=yes`, '_blank'); }}
+                          title="Abrir no Waze"
+                          data-testid={`button-repescagem-waze-${r.customerId}`}
+                        >
+                          <Navigation className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Remover ${r.customerName} da repescagem de hoje? O cliente volta para o bolo (novo sorteio).`)) {
+                              returnRepescagemMutation.mutate(r.assignmentId);
+                            }
+                          }}
+                          disabled={returnRepescagemMutation.isPending}
+                          title="Remover da repescagem (volta ao bolo)"
+                          data-testid={`button-repescagem-remove-${r.customerId}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {/* 📋 Solicitar Alteração — no mobile fica ABAIXO dos ícones; no desktop, inline. */}
+                      <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0">
+                      <ChangeRequestControl
+                        disabled={hasCheckinOrSale(r.customerId)}
+                        entityType="repescagem"
+                        entityId={String(r.assignmentId)}
+                        customerId={r.customerId}
+                        entityName={r.customerName}
+                        sellerId={selectedSellerId}
+                        state={changeRequestStates[crKey('repescagem', String(r.assignmentId))]}
+                      />
+                      </div>
+                    </div>
+                  </div>
+                  );
+                })}
+                {filteredRepescagem.length === 0 && repescagemOverlay.length > 0 && (
+                  <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400" data-testid="repescagem-empty">
+                    Nenhum cliente de repescagem corresponde à busca.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+
+      {showCardModal && selectedCard && (
+        <SalesCardDetailsModal
+          isOpen={showCardModal}
+          onClose={closeModals}
+          card={selectedCard}
+          onStartSale={handleEditSale}
+          onStartNoSale={handleNoSale}
+          customerDebt={(() => { const cid = selectedCard?.customerId || selectedCard?.customer?.id; return cid ? Number(customerInfo?.debts?.[cid] || 0) : 0; })()}
+        />
+      )}
+
+      {isEditModalOpen && selectedCard && (
+        <SaleEditModal
+          isOpen={isEditModalOpen}
+          onClose={closeModals}
+          card={selectedCard}
+        />
+      )}
+
+      {isNoSaleModalOpen && selectedCard && (
+        <NoSaleModal
+          isOpen={isNoSaleModalOpen}
+          onClose={closeModals}
+          card={selectedCard}
+        />
+      )}
+
+      <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Foto do Check-in</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            {selectedPhoto && (
+              <img
+                src={selectedPhoto}
+                alt="Foto do check-in"
+                className="w-full h-auto rounded-lg"
+                data-testid="checkin-photo"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 🟣 Ajuste ADMIN de check-in/check-out */}
+      <Dialog open={!!adminEditVisit} onOpenChange={(open) => { if (!open) setAdminEditVisit(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-800 dark:text-purple-300">
+              <Clock className="h-5 w-5" /> Atendimento / Ajuste (Adm)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {adminEditVisit?.visit?.customerName}
+            </p>
+
+            <div className="rounded-lg border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/40 p-3 space-y-2">
+              <p className="text-xs text-gray-600 dark:text-gray-300">
+                Assumir o atendimento como administrador — abre a tela completa (check-in, check-out, registrar pedido, não venda). O card fica <strong>roxo escuro</strong> com a tag "Adm - {(user?.email || '').toLowerCase()}".
+              </p>
+              <Button className="w-full bg-purple-800 hover:bg-purple-900 text-white" onClick={openFullAttendanceAsAdmin} disabled={adminSaving} data-testid="admin-open-full-attendance">
+                <FileText className="h-4 w-4 mr-2" /> Abrir atendimento completo
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Ou apenas ajuste os horários (HH:mm). Deixe em branco para <strong>remover</strong> o check-in/out. Também marca o card como ação do Adm.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Check-in</label>
+                <Input type="time" value={adminCheckInTime} onChange={(e) => setAdminCheckInTime(e.target.value)} data-testid="admin-input-checkin" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Check-out</label>
+                <Input type="time" value={adminCheckOutTime} onChange={(e) => setAdminCheckOutTime(e.target.value)} data-testid="admin-input-checkout" />
+              </div>
+            </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setAdminEditVisit(null)} disabled={adminSaving}>Cancelar</Button>
+              <Button className="bg-purple-700 hover:bg-purple-800 text-white" onClick={saveAdminCheckpoints} disabled={adminSaving} data-testid="admin-save-checkpoints">
+                {adminSaving ? 'Salvando...' : 'Salvar ajuste de horário'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {showLeadCheckInModal && selectedLead && (
+        <Dialog open={showLeadCheckInModal} onOpenChange={closeModals}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Check-in em {selectedLead.fantasyName}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {/* Localização */}
+              <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium">📍 Localização</label>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (!navigator.geolocation) {
+                        toast({
+                          variant: "destructive",
+                          title: "Erro",
+                          description: "Seu dispositivo não suporta geolocalização"
+                        });
+                        return;
+                      }
+                      const onGeoOk = (position: GeolocationPosition) => {
+                        setCheckInCoords({
+                          lat: position.coords.latitude,
+                          lng: position.coords.longitude
+                        });
+                        toast({
+                          title: "Localização capturada",
+                          description: `Lat: ${position.coords.latitude.toFixed(6)}, Lng: ${position.coords.longitude.toFixed(6)}`
+                        });
+                      };
+                      const onGeoErr = (err: any) => {
+                        const code = err?.code;
+                        const description = code === 1
+                          ? 'Permissão de localização negada. Ative o GPS e permita o acesso à localização deste site.'
+                          : code === 3
+                          ? 'Tempo esgotado ao obter a localização. Verifique se o GPS está ligado e tente novamente.'
+                          : 'Localização indisponível. Verifique se o GPS está ligado (de preferência próximo a uma janela).';
+                        toast({ variant: "destructive", title: "Erro", description });
+                      };
+                      // 1a tentativa alta precisao; fallback baixa precisao (funciona em ambiente fechado)
+                      navigator.geolocation.getCurrentPosition(
+                        onGeoOk,
+                        () => navigator.geolocation.getCurrentPosition(onGeoOk, onGeoErr, { enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 }),
+                        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
+                      );
+                    }}
+                    data-testid="button-capture-location"
+                  >
+                    Capturar Localização
+                  </Button>
+                </div>
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  {checkInCoords ? (
+                    <div className="space-y-1">
+                      <p>✓ Lat: {checkInCoords.lat.toFixed(6)}</p>
+                      <p>✓ Lng: {checkInCoords.lng.toFixed(6)}</p>
+                    </div>
+                  ) : (
+                    <p className="text-red-600 dark:text-red-400">Não capturada</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Foto */}
+              <div>
+                <label className="block text-sm font-medium mb-2">📷 Foto (obrigatória)</label>
+                {leadCheckInPhotoUrl ? (
+                  <div className="relative">
+                    <img 
+                      src={leadCheckInPhotoUrl} 
+                      alt="Preview" 
+                      className="w-full h-32 object-cover rounded-lg mb-2"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setLeadCheckInPhoto(null);
+                        setLeadCheckInPhotoUrl(null);
+                      }}
+                      className="w-full"
+                    >
+                      Trocar Foto
+                    </Button>
+                  </div>
+                ) : (
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setLeadCheckInPhoto(file);
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          setLeadCheckInPhotoUrl(event.target?.result as string);
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    data-testid="input-lead-checkin-photo"
+                  />
+                )}
+              </div>
+
+              {/* Observações */}
+              <div>
+                <label className="block text-sm font-medium mb-2">📝 Observações</label>
+                <textarea
+                  placeholder="Relatar o ocorrido na visita (opcional)"
+                  value={leadCheckInNotes}
+                  onChange={(e) => setLeadCheckInNotes(e.target.value)}
+                  className="w-full h-20 p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm"
+                  data-testid="textarea-lead-notes"
+                />
+              </div>
+
+              {/* Botão Submit */}
+              <Button
+                onClick={() => {
+                  if (!checkInCoords) {
+                    toast({
+                      variant: "destructive",
+                      title: "Localização obrigatória",
+                      description: "Clique em 'Capturar Localização' primeiro"
+                    });
+                    return;
+                  }
+                  if (!leadCheckInPhoto) {
+                    toast({
+                      variant: "destructive",
+                      title: "Foto obrigatória",
+                      description: "Escolha uma foto para fazer check-in"
+                    });
+                    return;
+                  }
+                  leadCheckInMutation.mutate({
+                    leadId: selectedLead.id,
+                    latitude: checkInCoords.lat,
+                    longitude: checkInCoords.lng,
+                    photo: leadCheckInPhoto
+                  });
+                }}
+                disabled={leadCheckInMutation.isPending || !checkInCoords || !leadCheckInPhoto}
+                className="w-full"
+                data-testid="button-lead-checkin-submit"
+              >
+                {leadCheckInMutation.isPending ? 'Realizando check-in...' : '✓ Fazer Check-in'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <Dialog open={showAddVisitModal} onOpenChange={(open) => {
+        setShowAddVisitModal(open);
+        if (!open) {
+          setCustomerSearchQuery('');
+          setLeadSearchQuery('');
+          setAddVisitTab('customer');
+        }
+      }}>
+        <DialogContent className="max-w-2xl z-[9999]">
+          <DialogHeader>
+            <DialogTitle>Adicionar à Rota</DialogTitle>
+          </DialogHeader>
+          <Tabs value={addVisitTab} onValueChange={(value) => setAddVisitTab(value as 'customer' | 'lead')}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="customer" data-testid="tab-customers">Clientes</TabsTrigger>
+              <TabsTrigger value="lead" data-testid="tab-leads">Leads</TabsTrigger>
+            </TabsList>
+            <TabsContent value="customer" className="space-y-4">
+              <div>
+                <Input
+                  placeholder="Buscar cliente por nome ou CNPJ/CPF..."
+                  value={customerSearchQuery}
+                  onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                  data-testid="input-customer-search"
+                />
+              </div>
+              <div className="max-h-96 overflow-y-auto border rounded-lg">
+                {filteredCustomers && filteredCustomers.length > 0 ? (
+                  filteredCustomers.map((customer: any) => (
+                    <div
+                      key={customer.id}
+                      className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                        addVisitMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                      onClick={() => {
+                        if (route?.id && !addVisitMutation.isPending) {
+                          addVisitMutation.mutate({ routeId: route.id, customerId: customer.id });
+                        }
+                      }}
+                      data-testid={`customer-option-${customer.id}`}
+                    >
+                      <div className="font-medium">{customer.fantasyName || customer.name}</div>
+                      <div className="text-sm text-gray-500">{customer.cnpj || customer.cpf}</div>
+                      <div className="text-xs text-gray-400">{customer.address}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-gray-500">
+                    {customerSearchQuery ? 'Nenhum cliente encontrado' : 'Digite para buscar clientes'}
+                  </div>
+                )}
+              </div>
+              {addVisitMutation.isPending && (
+                <div className="text-center text-sm text-gray-500">Adicionando cliente à rota...</div>
+              )}
+            </TabsContent>
+            <TabsContent value="lead" className="space-y-4">
+              <div>
+                <Input
+                  placeholder="Buscar lead por nome..."
+                  value={leadSearchQuery}
+                  onChange={(e) => setLeadSearchQuery(e.target.value)}
+                  data-testid="input-lead-search"
+                />
+              </div>
+              <div className="max-h-96 overflow-y-auto border rounded-lg">
+                {leads && leads.length > 0 ? (
+                  leads.filter((lead: any) => {
+                    if (!leadSearchQuery) return true;
+                    const query = leadSearchQuery.toLowerCase();
+                    return lead.fantasyName?.toLowerCase().includes(query);
+                  }).map((lead: any) => (
+                    <div
+                      key={lead.id}
+                      className={`p-3 border-b last:border-b-0 hover:bg-purple-50 dark:hover:bg-purple-950 ${
+                        addLeadMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                      onClick={() => {
+                        if (route?.id && !addLeadMutation.isPending) {
+                          addLeadMutation.mutate({ routeId: route.id, leadId: lead.id });
+                        }
+                      }}
+                      data-testid={`lead-option-${lead.id}`}
+                    >
+                      <div className="font-medium flex items-center gap-2">
+                        <Target className="h-4 w-4 text-purple-600" />
+                        {lead.fantasyName}
+                      </div>
+                      {lead.contact && <div className="text-sm text-gray-500">{lead.contact}</div>}
+                      {lead.phone && (
+                        <div className="text-xs" onClick={(e) => e.stopPropagation()}>
+                          <EditablePhoneField 
+                            customerId={lead.id}
+                            phone={lead.phone}
+                          />
+                        </div>
+                      )}
+                      <div className="text-xs text-purple-600 mt-1">
+                        Status: {lead.status === 'pending' ? 'Pendente' : lead.status}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-gray-500">
+                    {leadSearchQuery ? 'Nenhum lead encontrado' : 'Nenhum lead disponível'}
+                  </div>
+                )}
+              </div>
+              {addLeadMutation.isPending && (
+                <div className="text-center text-sm text-gray-500">Adicionando lead à rota...</div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Ações para Cliente Virtual */}
+      <Dialog open={showVirtualActionModal} onOpenChange={setShowVirtualActionModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Phone className="h-5 w-5 text-blue-600" />
+              Cliente Virtual
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-muted-foreground mb-4">
+              Cliente: <span className="font-semibold text-foreground">{virtualActionCustomer?.name}</span>
+            </p>
+            {virtualActionCustomer && (
+              <VirtualServiceSummary
+                customerId={virtualActionCustomer.id}
+                date={selectedDate || getBrazilDateISO()}
+                orderValue={customerInfo?.orders?.[virtualActionCustomer.id]?.[0]?.saleValue != null
+                  ? Number(customerInfo.orders[virtualActionCustomer.id][0].saleValue)
+                  : null}
+              />
+            )}
+            <div className="flex flex-col gap-3">
+              <Button
+                variant="outline"
+                className="w-full justify-start h-12 text-left"
+                onClick={() => {
+                  if (virtualActionCustomer) {
+                    setVirtualServiceCustomer(virtualActionCustomer);
+                  }
+                  setShowVirtualActionModal(false);
+                }}
+                data-testid="btn-virtual-register-service"
+              >
+                <FileText className="h-5 w-5 mr-3 text-blue-600" />
+                <div>
+                  <div className="font-medium">Registrar Atendimento</div>
+                  <div className="text-xs text-muted-foreground">Registrar log de atendimento virtual</div>
+                </div>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start h-12 text-left"
+                onClick={async () => {
+                  if (virtualActionCustomer) {
+                    setLoadingCardId(virtualActionCustomer.id);
+                    setShowVirtualActionModal(false);
+                    try {
+                      const dateToUse = selectedDate || getBrazilDateISO();
+                      const response = await fetch(`/api/customers/${virtualActionCustomer.id}/sales-card/${dateToUse}`, {
+                        credentials: 'include'
+                      });
+                      if (!response.ok) {
+                        throw new Error(`Falha ao buscar card de vendas: ${response.status}`);
+                      }
+                      const card = await response.json();
+                      if (card && card.id) {
+                        setSelectedCard(card);
+                        setShowCardModal(true);
+                      } else {
+                        toast({
+                          variant: "destructive",
+                          title: "Erro",
+                          description: "Não foi possível encontrar o card de venda para este cliente",
+                        });
+                      }
+                    } catch (error) {
+                      toast({
+                        variant: "destructive",
+                        title: "Erro",
+                        description: error instanceof Error ? error.message : "Erro ao buscar card de venda",
+                      });
+                    } finally {
+                      setLoadingCardId(null);
+                    }
+                  }
+                }}
+                data-testid="btn-virtual-register-order"
+              >
+                <ShoppingCart className="h-5 w-5 mr-3 text-green-600" />
+                <div>
+                  <div className="font-medium">Registrar Pedido</div>
+                  <div className="text-xs text-muted-foreground">Abrir card de venda para registro de pedido</div>
+                </div>
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Atendimento Virtual */}
+      {virtualServiceCustomer && (
+        <VirtualServiceLogModal
+          open={!!virtualServiceCustomer}
+          onClose={() => setVirtualServiceCustomer(null)}
+          customerId={virtualServiceCustomer.id}
+          customerName={virtualServiceCustomer.name}
+          entityType="customer"
+          defaultServiceType="venda"
+          serviceDate={selectedDate || getBrazilDateISO()}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate] });
+          }}
+        />
+      )}
+    </div>
+  );
+}
