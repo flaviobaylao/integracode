@@ -186,6 +186,7 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
+import { naoEFantasma } from "./ghost-receivables";
 
 export interface IStorage {
   getAgentDetailedStats(): Promise<Array<{ 
@@ -5476,23 +5477,25 @@ export class DatabaseStorage implements IStorage {
     // DATA, não o flag: 'vencida' com vencimento repostergado p/ hoje/futuro NÃO é débito
     // vivo (não bloqueia). Só em aberto (amount - amount_paid > 0).
     const result: any = await db.execute(sql`
-      SELECT MAX(customer_name) AS client_name,
-             SUM(amount - COALESCE(amount_paid, 0)) AS saldo,
-             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_dias,
+      SELECT MAX(r.customer_name) AS client_name,
+             SUM(r.amount - COALESCE(r.amount_paid, 0)) AS saldo,
+             MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (r.due_date)::date)) AS max_dias,
              COUNT(*)::int AS n
-      FROM receivables
-      WHERE deleted_at IS NULL
-        AND (amount - COALESCE(amount_paid, 0)) > 0
+      FROM receivables r
+      WHERE r.deleted_at IS NULL
+        AND (r.amount - COALESCE(r.amount_paid, 0)) > 0
+        -- Duplicata de reparo de orfaos nao bloqueia venda: ver ghost-receivables.ts
+        AND ${naoEFantasma('r')}
         -- Títulos HISTÓRICOS da migração Omie (import_origin='omie_historico') NÃO são
         -- dívida viva para fins de bloqueio de crédito — são dados migrados (tratados como
         -- conciliados). Sem esta exclusão, uma dívida de 2020-2025 importada travaria uma
         -- venda atual (bloqueio indevido). Só entram no cálculo os recebíveis correntes.
-        AND COALESCE(import_origin, '') <> 'omie_historico'
+        AND COALESCE(r.import_origin, '') <> 'omie_historico'
         AND (
-          status IN ('a_vencer', 'vencida')
-          AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+          r.status IN ('a_vencer', 'vencida')
+          AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
         )
-        AND regexp_replace(COALESCE(customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
+        AND regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
     const n = Number(row.n || 0);
     const saldoNum = Number(row.saldo || 0);
