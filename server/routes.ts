@@ -3766,6 +3766,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔎 AUDITORIA (somente leitura): por que um cadastro "ativo" não aparece em Clientes Ativos.
+  // A lista de Clientes Ativos (storage.getCustomers) filtra APENAS por omie_status = 'ativo'.
+  // Já o botão Inativar/Reativar e a Gestão de Clientes usam customers.is_active.
+  // Quando os dois campos divergem, o cadastro some da lista (ou aparece indevidamente).
+  app.get('/api/admin/customers/audit-clientes-ativos', authenticateUser, requireRole(['admin']), async (_req: any, res) => {
+    try {
+      const all = await storage.getAllCustomers();
+      const norm = (s: any) => String(s == null ? '' : s);
+      const doc = (c: any) => c.cnpj || c.cpf || c.document || '';
+      const nome = (c: any) => c.fantasyName || c.name || '';
+      const pick = (c: any) => ({
+        id: c.id,
+        nome: nome(c),
+        documento: doc(c),
+        isActive: (c as any).isActive,
+        omieStatus: (c as any).omieStatus,
+        isLead: (c as any).isLead === true,
+        sellerId: (c as any).sellerId || null,
+        city: (c as any).city || '',
+      });
+
+      // Distribuição de omie_status (bruto, para revelar casing/espaços/nulos)
+      const distStatus: Record<string, number> = {};
+      for (const c of all) {
+        const k = (c as any).omieStatus === null || (c as any).omieStatus === undefined
+          ? '(null)'
+          : ((c as any).omieStatus === '' ? '(vazio)' : JSON.stringify((c as any).omieStatus));
+        distStatus[k] = (distStatus[k] || 0) + 1;
+      }
+
+      const aparece = (c: any) => (c as any).omieStatus === 'ativo'; // regra EXATA usada por getCustomers
+
+      // PROBLEMA PRINCIPAL: ativo no sistema (is_active=true) mas NÃO aparece em Clientes Ativos
+      const ativoNaoAparece = all.filter((c: any) => (c as any).isActive === true && !aparece(c));
+      // Recorte do anterior sem leads (clientes reais)
+      const ativoNaoApareceClientes = ativoNaoAparece.filter((c: any) => (c as any).isLead !== true);
+      const ativoNaoApareceLeads = ativoNaoAparece.filter((c: any) => (c as any).isLead === true);
+
+      // PROBLEMA INVERSO: inativo (is_active=false) mas AINDA aparece em Clientes Ativos
+      const inativoAparece = all.filter((c: any) => (c as any).isActive === false && aparece(c));
+
+      // Subcategorias do problema principal (causa provável)
+      const causaStatusNulo = ativoNaoApareceClientes.filter((c: any) => (c as any).omieStatus == null || (c as any).omieStatus === '');
+      const causaStatusInativo = ativoNaoApareceClientes.filter((c: any) => String((c as any).omieStatus).trim().toLowerCase() === 'inativo');
+      const causaCasingEspaco = ativoNaoApareceClientes.filter((c: any) => {
+        const s = (c as any).omieStatus;
+        return s != null && s !== '' && s !== 'ativo' && String(s).trim().toLowerCase() === 'ativo';
+      });
+      const causaOutro = ativoNaoApareceClientes.filter((c: any) =>
+        !(( c as any).omieStatus == null || (c as any).omieStatus === '') &&
+        String((c as any).omieStatus).trim().toLowerCase() !== 'inativo' &&
+        String((c as any).omieStatus).trim().toLowerCase() !== 'ativo'
+      );
+
+      res.json({
+        totalCadastros: all.length,
+        aparecemEmClientesAtivos: all.filter(aparece).length,
+        distribuicaoOmieStatus: distStatus,
+        problemaPrincipal: {
+          descricao: "is_active=true porém omie_status != 'ativo' (ativo no sistema, mas fora de Clientes Ativos)",
+          total: ativoNaoAparece.length,
+          clientes: ativoNaoApareceClientes.length,
+          leads: ativoNaoApareceLeads.length,
+          porCausa: {
+            omieStatusInativo: causaStatusInativo.length,
+            omieStatusNuloOuVazio: causaStatusNulo.length,
+            omieStatusCasingOuEspaco: causaCasingEspaco.length,
+            omieStatusOutroValor: causaOutro.length,
+          },
+        },
+        problemaInverso: {
+          descricao: "is_active=false porém omie_status='ativo' (inativado no sistema, mas ainda aparece em Clientes Ativos)",
+          total: inativoAparece.length,
+        },
+        listas: {
+          ativoNaoApareceClientes: ativoNaoApareceClientes.map(pick),
+          ativoNaoApareceLeads: ativoNaoApareceLeads.map(pick),
+          inativoAparece: inativoAparece.map(pick),
+        },
+      });
+    } catch (error: any) {
+      console.error('Error auditing clientes-ativos:', error);
+      res.status(500).json({ message: 'Falha na auditoria: ' + String(error?.message || error) });
+    }
+  });
+
   // 🚫 Inativação em massa — EXCLUSIVA do Admin (só o Admin inativa). Mesma semântica da individual:
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
   app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
