@@ -532,9 +532,9 @@ export default function Repescagem() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedAssignments.map((a) => (
+                  {sortedAssignments.map((a, idx) => (
                     <tr
-                      key={a.assignmentId}
+                      key={`${a.assignmentId || a.customerId || 'row'}-${idx}`}
                       className="border-t hover:bg-orange-50/30"
                       data-testid={`row-repescagem-${a.customerId}`}
                     >
