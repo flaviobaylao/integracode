@@ -2,6 +2,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { sendUmblerTalkText } from './chat-routes';
 import { storage } from './storage';
+import { sqlIdsFantasmas } from "./ghost-receivables";
 
 // Alerta diário (dias úteis, 08:30 BRT): débitos VENCIDOS por carteira.
 // FONTE = aba Contas a Receber (storage.getReceivables({status:'vencida'})): traz o
@@ -83,9 +84,16 @@ export async function enviarAlertaDebitosVencidos(apply: boolean, opts?: { toOve
   try {
     for (const x of rowsOf(await db.execute(sql`SELECT id FROM receivables WHERE COALESCE(import_origin, '') = 'omie_historico'`))) idsHistorico.add(String(x.id));
   } catch { /* coluna ausente: nada a excluir */ }
+  // TITULO FANTASMA (duplicata de reparo de orfaos) nao vira cobranca: ver
+  // ghost-receivables.ts / Titulo_Fantasma_NF102004_CausaRaiz_2026-08-04.md.
+  const idsFantasma = new Set<string>();
+  try {
+    for (const x of rowsOf(await db.execute(sqlIdsFantasmas()))) idsFantasma.add(String(x.id));
+  } catch (e: any) { console.warn('[DEBITOS-ALERT] filtro de titulo fantasma indisponivel:', e?.message); }
   const recs = recsAll.filter((r) => String(r.status) === 'vencida'
     && (Number(r.amount || 0) - Number(r.amountPaid || 0)) > 0.005
-    && !idsHistorico.has(String(r.id)));
+    && !idsHistorico.has(String(r.id))
+    && !idsFantasma.has(String(r.id)));
 
   // 2) Cadastro de clientes (carteira/vendedor + cidade)
   const cs = rowsOf(await db.execute(sql`SELECT id, name, city, cnpj, cpf, seller_id FROM customers`));
