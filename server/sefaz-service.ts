@@ -1504,7 +1504,7 @@ function buildDocumento(
       ...(!isNFCe && invoice.operationType !== 'entrada' ? { dhSaiEnt } : {}),
       tpNF: invoice.operationType === 'entrada' ? '0' : '1',
       idDest: isNFCe ? '1' : derivedIdDest,
-      cMunFG: invoice.issuerCityCode || '5208707', ...(!isNFCe && invoice.referencedAccessKey ? { NFref: { refNFe: String(invoice.referencedAccessKey).replace(/\D/g, '') } } : {}),
+      cMunFG: invoice.issuerCityCode || '5208707', ...(!isNFCe && invoice.referencedAccessKey && invoice.finNFe !== '4' ? { NFref: { refNFe: String(invoice.referencedAccessKey).replace(/\D/g, '') } } : {}),
       tpImp: isNFCe ? '4' : '1',
       tpEmis: '1',
       cDV: '0',
