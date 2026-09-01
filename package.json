@@ -92,7 +92,7 @@
     "jsbarcode": "^3.12.3",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.18.0",
-    "node-nfe-nfce": "^1.0.113",
+    "node-nfe-nfce": "^1.0.120",
     "node-telegram-bot-api": "^0.66.0",
     "nodemailer": "^6.10.1",
     "openai": "^6.9.0",
