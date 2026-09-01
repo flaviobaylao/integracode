@@ -245,7 +245,7 @@ export default function DailyHistory() {
                     </g>
                   ))}
                   {monthDays.map((d, i) => (
-                    <text key={"xl" + i} x={x(i)} y={plotBottom + 13} textAnchor="middle" fontSize="9" fill={(d.dow === 0 || d.dow === 6) ? "#cbd5e1" : "#6b7280"}>{d.dom}</text>
+                    <text key={"xl" + i} x={x(i)} y={plotBottom + 13} textAnchor="middle" fontSize="9" fill={(d.dow === 0 || d.dow === 6) ? "#cbd5e1" : "#6b7280"}>{DOWLBL[(d.dow + 6) % 7]}</text>
                   ))}
                 </svg>
               </div>
