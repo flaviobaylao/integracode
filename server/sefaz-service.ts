@@ -1,9 +1,4 @@
-import {
-  carregaCertificadoBase64,
-  emitir,
-  statusServico,
-  cancelar,
-} from 'node-nfe-nfce';
+import nfeLib from 'node-nfe-nfce';
 
 import { storage } from './storage';
 import { db } from './db';
@@ -21,6 +16,17 @@ import os from 'os';
 import path from 'path';
 import https from 'https';
 import zlib from 'zlib';
+
+// node-nfe-nfce mudou a superficie publica na 1.0.120: os use-cases sairam de
+// named exports na raiz e passaram para os namespaces `certificado` e `nf`.
+// A 1.0.120 e a primeira que emite o grupo DFeReferenciado por item (NT
+// 2025.002-RTC), obrigatorio na NF-e de devolucao. O shim abaixo aceita as
+// duas formas para que um rollback de versao nao derrube o boot.
+const _nfe: any = (nfeLib as any) ?? {};
+const carregaCertificadoBase64: any = _nfe.certificado?.carregaCertificadoBase64 ?? _nfe.carregaCertificadoBase64;
+const emitir: any = _nfe.nf?.emitir ?? _nfe.emitir;
+const statusServico: any = _nfe.nf?.statusServico ?? _nfe.statusServico;
+const cancelar: any = _nfe.nf?.cancelar ?? _nfe.cancelar;
 
 // Formas de pagamento liquidadas NO ATO: indPag=0 e XML SEM bloco <cobr>/<dup>.
 // Inclui as variantes de cartao vindas do hotsite ('card'), do link de pagamento do
@@ -3569,7 +3575,18 @@ export async function manifestarCiencia(params: {
 
   let signXmlX509: any;
   try {
-    const sx: any = await import('node-nfe-nfce/lib/domain/use-cases/signature/sign-xml-x509.js');
+    // 1.0.120 moveu o assinador de lib/domain/use-cases/signature para lib/infra/signature.
+    // Os caminhos ficam em variaveis de proposito: com string literal o bundler tenta
+    // resolver os dois no build e quebra no que nao existir na versao instalada.
+    const signerPaths = [
+      'node-nfe-nfce/lib/infra/signature/sign-xml-x509.js',
+      'node-nfe-nfce/lib/domain/use-cases/signature/sign-xml-x509.js',
+    ];
+    let sx: any;
+    for (const sp of signerPaths) {
+      try { sx = await import(/* @vite-ignore */ sp); break; } catch { /* proxima */ }
+    }
+    if (!sx) throw new Error('modulo do assinador nao encontrado');
     signXmlX509 = sx.signXmlX509 || (sx.default && sx.default.signXmlX509);
     if (!signXmlX509) throw new Error('signXmlX509 indisponível');
   } catch (e: any) {
