@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Radar, Upload, FileText, Package, DollarSign, Search,
   Filter, Eye, Tag, Truck, CheckCircle2, XCircle,
-  ArrowRight, BarChart3, AlertCircle, RefreshCw, Trash2, Plus, Download
+  ArrowRight, BarChart3, AlertCircle, RefreshCw, Trash2, Plus, Download, Paperclip
 } from "lucide-react";
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -279,6 +279,32 @@ export default function PurchaseRadar() {
     },
   });
 
+  // ANEXAR DANFE MANUALMENTE — para compras que ja viraram conta a pagar antes
+  // deste recurso existir. Nao mexe em valor/vencimento: so grava o PDF no anexo.
+  const attachDanfe = useMutation({
+    mutationFn: async (id: string) => await apiRequest("POST", `/api/purchases/${id}/attach-danfe`, {}),
+    onSuccess: (d: any) => {
+      toast({
+        title: d?.anexados > 0 ? "DANFE anexado na conta a pagar" : "Nada a anexar",
+        description: d?.anexados > 0
+          ? `${d.anexados} conta(s) atualizada(s)${d.jaTinham ? ` · ${d.jaTinham} já tinham` : ""}.`
+          : "A conta a pagar desta compra já tinha o DANFE anexado.",
+      });
+    },
+    onError: (err: any) => toast({ title: "Erro ao anexar DANFE", description: err.message, variant: "destructive" }),
+  });
+
+  const attachDanfeBulk = useMutation({
+    mutationFn: async () => await apiRequest("POST", "/api/purchases/attach-danfe-bulk", {}),
+    onSuccess: (d: any) => {
+      toast({
+        title: "Anexo em lote concluído",
+        description: `${d?.anexados || 0} DANFE(s) anexado(s) em ${d?.notasTocadas || 0} nota(s) · ${d?.jaTinham || 0} já tinham${d?.erros ? ` · ${d.erros} com erro` : ""}.`,
+      });
+    },
+    onError: (err: any) => toast({ title: "Erro no anexo em lote", description: err.message, variant: "destructive" }),
+  });
+
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -303,6 +329,18 @@ export default function PurchaseRadar() {
           <p className="text-sm text-muted-foreground mt-1">
             Importação, classificação e controle de notas fiscais de entrada
           </p>
+        </div>
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => attachDanfeBulk.mutate()}
+            disabled={attachDanfeBulk.isPending}
+            title="Gera o DANFE (do XML) e anexa nas contas a pagar das compras vinculadas que ainda estão sem anexo"
+          >
+            <Paperclip className="h-4 w-4 mr-1" />
+            {attachDanfeBulk.isPending ? "Anexando..." : "Anexar DANFEs nas contas a pagar"}
+          </Button>
         </div>
       </div>
 
@@ -758,6 +796,18 @@ export default function PurchaseRadar() {
                       <Button size="sm" variant="outline" onClick={() => window.open(`/api/purchases/${selectedInvoice.id}/xml`, "_blank")}>
                         <Download className="h-4 w-4 mr-1" /> XML
                       </Button>
+                      {selectedInvoice.payableId && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => attachDanfe.mutate(selectedInvoice.id)}
+                          disabled={attachDanfe.isPending}
+                          title="Anexa o DANFE na conta a pagar desta compra (não altera valor nem vencimento)"
+                        >
+                          <Paperclip className="h-4 w-4 mr-1" />
+                          {attachDanfe.isPending ? "Anexando..." : "Anexar na conta a pagar"}
+                        </Button>
+                      )}
                     </div>
                   )}
                 </div>
