@@ -63,6 +63,7 @@ export default function PurchaseRadar() {
   const [chaveInput, setChaveInput] = useState("");
   const [chaveInstance, setChaveInstance] = useState("");
   const [radarResult, setRadarResult] = useState<any>(null);
+  const [uploadKind, setUploadKind] = useState("boleto");
 
   const [classifyData, setClassifyData] = useState({ chartAccountId: "", isStockPurchase: false, notes: "" });
   const [payableData, setPayableData] = useState({ dueDate: "", financialAccountId: "", paymentMethod: "boleto", description: "" });
@@ -281,6 +282,46 @@ export default function PurchaseRadar() {
 
   // ANEXAR DANFE MANUALMENTE — para compras que ja viraram conta a pagar antes
   // deste recurso existir. Nao mexe em valor/vencimento: so grava o PDF no anexo.
+  // ===== ANEXOS DA COMPRA (arquivos livres) =====
+  const { data: purchaseFiles = [], refetch: refetchFiles } = useQuery<any[]>({
+    queryKey: ["/api/purchases/attachments", selectedInvoice?.id],
+    queryFn: async () => {
+      if (!selectedInvoice?.id) return [];
+      const res = await fetch(`/api/purchases/${selectedInvoice.id}/attachments`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!selectedInvoice?.id && showDetail,
+  });
+
+  const uploadFile = useMutation({
+    mutationFn: async ({ id, file, kind }: { id: string; file: File; kind: string }) => {
+      const base64: string = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || "").split(",")[1] || "");
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      return await apiRequest("POST", `/api/purchases/${id}/attachments`, {
+        kind, fileName: file.name, mimeType: file.type || null, base64,
+      });
+    },
+    onSuccess: (d: any) => {
+      toast({
+        title: "Arquivo anexado",
+        description: d?.copiadoParaContaAPagar ? "Também foi copiado para a conta a pagar desta compra." : "Guardado na NF de compra.",
+      });
+      refetchFiles();
+    },
+    onError: (err: any) => toast({ title: "Erro ao anexar", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteFile = useMutation({
+    mutationFn: async (attId: string) => await apiRequest("DELETE", `/api/purchases/attachments/${attId}`),
+    onSuccess: () => { toast({ title: "Anexo removido" }); refetchFiles(); },
+    onError: (err: any) => toast({ title: "Erro ao remover", description: err.message, variant: "destructive" }),
+  });
+
   const attachDanfe = useMutation({
     mutationFn: async (id: string) => await apiRequest("POST", `/api/purchases/${id}/attach-danfe`, {}),
     onSuccess: (d: any) => {
@@ -817,6 +858,73 @@ export default function PurchaseRadar() {
                   </p>
                 )}
               </div> ); })()}
+
+              {/* ANEXOS DA COMPRA — qualquer arquivo (boleto, comprovante, o
+                  DANFE em PDF que o fornecedor mandou, XML, pedido...). Quando a
+                  compra ja tem conta a pagar, a copia vai junto para o Financeiro. */}
+              <div className="rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                  <Label className="text-xs text-muted-foreground">Anexos da compra ({purchaseFiles.length})</Label>
+                  <div className="flex items-center gap-2">
+                    <Select value={uploadKind} onValueChange={setUploadKind}>
+                      <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="boleto">Boleto</SelectItem>
+                        <SelectItem value="comprovante">Comprovante</SelectItem>
+                        <SelectItem value="danfe">DANFE</SelectItem>
+                        <SelectItem value="xml">XML</SelectItem>
+                        <SelectItem value="pedido">Pedido</SelectItem>
+                        <SelectItem value="outro">Outro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <input
+                      id="purchase-file-input"
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        files.forEach((f) => uploadFile.mutate({ id: selectedInvoice.id, file: f, kind: uploadKind }));
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button size="sm" variant="outline" disabled={uploadFile.isPending}
+                      onClick={() => document.getElementById("purchase-file-input")?.click()}>
+                      <Upload className="h-4 w-4 mr-1" /> {uploadFile.isPending ? "Enviando..." : "Anexar arquivo"}
+                    </Button>
+                  </div>
+                </div>
+                {purchaseFiles.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nenhum arquivo anexado. Limite de 15MB por arquivo.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {purchaseFiles.map((f: any) => (
+                      <div key={f.id} className="flex items-center justify-between gap-2 text-sm border rounded px-2 py-1">
+                        <div className="min-w-0">
+                          <span className="font-medium truncate block">{f.file_name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {f.kind} · {Math.max(1, Math.round((f.size_bytes || 0) / 1024))} KB · {formatDate(f.created_at)}
+                          </span>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <Button size="sm" variant="ghost" title="Abrir"
+                            onClick={() => window.open(`/api/purchases/attachments/${f.id}/download`, "_blank")}>
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" title="Baixar"
+                            onClick={() => window.open(`/api/purchases/attachments/${f.id}/download?download=1`, "_blank")}>
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" title="Remover" className="text-red-600"
+                            onClick={() => deleteFile.mutate(f.id)} disabled={deleteFile.isPending}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="rounded-lg border p-3 bg-muted/30">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
