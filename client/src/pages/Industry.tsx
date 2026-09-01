@@ -74,18 +74,40 @@ const fmtBRL = (v: any) => n(v).toLocaleString('pt-BR', { style: 'currency', cur
 // MENOS que o banco (lista dizia 28/08 e o modal de edicao, que corta a string,
 // dizia 29/08; "Validade lote 27/12" x "validade 2026-12-28" do rodape do CMV).
 // Data pura e' dia de calendario, nao instante: formata sem passar por fuso.
+// Mesma regra de instante usada em fmtDateTime, declarada aqui porque fmtDate
+// tambem recebe created_at (datetime sem fuso) como fallback de production_date.
+const asInstantFallback = (v: any) => {
+  const s = String(v).trim();
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(s)) return new Date(s);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(:\d{2})?)(\.\d+)?$/);
+  return m ? new Date(`${m[1]}T${m[2]}${m[4] || ''}Z`) : new Date(s);
+};
 const fmtDate = (v: any) => {
   if (!v) return '-';
   const s = String(v);
   const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? s : d.toLocaleDateString('pt-BR');
+  const d = asInstantFallback(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 };
+// INSTANTE (start_date/end_date/created_at das OPs e movimentacoes): o banco grava com
+// now() do Postgres, que roda em UTC, e a coluna nao carrega fuso ("2026-08-31 16:14:44").
+// new Date() lia essa string como hora LOCAL e a tela mostrava 16:14 para uma OP finalizada
+// as 13:14 de Brasilia -- 3h adiantada (Flavio, 31/ago). Aqui a string sem fuso e tratada
+// como UTC (sufixo Z) e formatada em America/Sao_Paulo, a hora oficial do Brasil.
+const asInstant = (v: any) => {
+  const s = String(v).trim();
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(s)) return new Date(s);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(:\d{2})?)(\.\d+)?$/);
+  return m ? new Date(`${m[1]}T${m[2]}${m[4] || ''}Z`) : new Date(s);
+};
+const BR_TZ = { timeZone: 'America/Sao_Paulo' } as const;
 const fmtDateTime = (v: any) => {
   if (!v) return '-';
-  const d = new Date(String(v));
-  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const d = asInstant(v);
+  return isNaN(d.getTime())
+    ? String(v)
+    : d.toLocaleDateString('pt-BR', BR_TZ) + ' ' + d.toLocaleTimeString('pt-BR', { ...BR_TZ, hour: '2-digit', minute: '2-digit' });
 };
 const jfetch = async (url: string, opts: any = {}) => {
   const r = await fetch(url, { credentials: 'include', headers: opts.body ? { 'Content-Type': 'application/json' } : undefined, ...opts });
