@@ -1370,7 +1370,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               SELECT 1 FROM visit_agenda va
               WHERE va.customer_id = c.id AND va.visit_status = 'pending'
                 AND va.scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
-                AND va.recurrence_type IS DISTINCT FROM COALESCE(c.visit_periodicity, 'semanal')
+                AND va.recurrence_type::text IS DISTINCT FROM COALESCE(c.visit_periodicity::text, 'semanal')
             )
             OR NOT EXISTS (
               SELECT 1 FROM visit_agenda va
