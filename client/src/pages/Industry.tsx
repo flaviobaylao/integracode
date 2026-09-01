@@ -157,7 +157,11 @@ function MateriaPrimaTab() {
       ...c,
       count: list.length,
       qty: list.reduce((s, m) => s + n(m.quantity), 0),
-      value: list.reduce((s, m) => s + n(m.quantity) * n(m.unit_cost), 0),
+      // NAO chamar de 'value': o spread ...c traz value = a chave da categoria
+      // ('polpa', 'fruta', ...), que e o que o onClick manda para o filtro. Se o
+      // total em R$ sobrescrever essa chave, o card filtra por um numero e a
+      // lista volta vazia.
+      totalValue: list.reduce((s, m) => s + n(m.quantity) * n(m.unit_cost), 0),
       low: list.filter((m) => n(m.min_quantity) > 0 && n(m.quantity) < n(m.min_quantity)).length,
     };
   }), [materials]);
@@ -212,7 +216,7 @@ function MateriaPrimaTab() {
               <CardContent className="p-3 text-center">
                 <p className="text-xs text-gray-500">{c.label}</p>
                 <p className="text-xl font-bold">{c.count}</p>
-                <p className="text-[10px] text-gray-400">{fmtQty(c.qty)} un · {fmtBRL(c.value)}</p>
+                <p className="text-[10px] text-gray-400">{fmtQty(c.qty)} un · {fmtBRL(c.totalValue)}</p>
                 {c.low > 0 && <Badge className="mt-1 bg-red-500 text-white hover:bg-red-500 text-[10px]">{c.low} baixo</Badge>}
               </CardContent>
             </Card>
