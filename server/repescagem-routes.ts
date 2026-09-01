@@ -1387,6 +1387,53 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
+  // Atribuir manualmente um candidato SEM atribuição (admin) — cria a alocação (pending)
+  // com o atendente escolhido e TRAVA no dia. Aceita qualquer atendente habilitado.
+  app.post('/api/repescagem/assign', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const customerId = String(req.body?.customerId || '').trim();
+      const toUserId = String(req.body?.toUserId || '').trim();
+      const lastRedDate = String(req.body?.lastRedDate || '').trim() || brTodayStr();
+      if (!customerId || !toUserId) return res.status(400).json({ message: 'customerId e toUserId obrigatórios' });
+      const today = brTodayStr();
+      await ensureRepescagemLockCol();
+      const enabled = await db.select().from(repescagemAttendants)
+        .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
+      const urows = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, toUserId));
+      const role = urows[0]?.role;
+      if (enabled.length === 0 || REPESCAGEM_EXCLUDED_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
+        return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
+      }
+      const phase = role === 'vendedor' ? 'external' : 'telemarketing';
+      const carteira = await db.select({ sellerId: customers.sellerId }).from(customers).where(eq(customers.id, customerId));
+      const carteiraSellerId = carteira[0]?.sellerId || null;
+      // Reaproveita um pending existente do cliente (se houver); senão cria.
+      const existing = await db.select().from(repescagemAssignments)
+        .where(and(eq(repescagemAssignments.customerId, customerId), eq(repescagemAssignments.status, 'pending')));
+      let assignmentId: string;
+      if (existing.length > 0) {
+        assignmentId = existing[0].id;
+        await db.update(repescagemAssignments).set({
+          assignedUserId: toUserId, phase, locked: true, lockedDate: today, assignedAt: new Date(), updatedAt: new Date(),
+        }).where(eq(repescagemAssignments.id, assignmentId));
+      } else {
+        const ins = await db.insert(repescagemAssignments).values({
+          customerId, lastRedDate, assignedUserId: toUserId, status: 'pending', phase,
+          carteiraSellerId, locked: true, lockedDate: today,
+        }).returning();
+        assignmentId = ins[0].id;
+      }
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId, customerId, fromUserId: null, toUserId,
+        action: 'assigned', reason: 'Atribuição manual pelo admin (linha travada no dia)',
+      });
+      res.json({ ok: true, assignmentId, assignedUserId: toUserId, phase, locked: true });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/assign', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
   // Travar / destravar UMA linha (admin). A trava vale só para o dia vigente.
   app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
