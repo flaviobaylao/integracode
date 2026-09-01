@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { RefreshCw, Images, X, Upload, Check, Pencil, FileText, Download, Trash2, AlertTriangle } from "lucide-react";
+import { RefreshCw, Images, X, Upload, Check, Pencil, FileText, Download, Trash2, AlertTriangle, Plus } from "lucide-react";
+import ProductModal from "@/components/ProductModal";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
 
@@ -27,6 +28,13 @@ export default function ProductManagement() {
   const [ncmValue, setNcmValue] = useState("");
   // Ficha técnica: qual produto está com upload em andamento (só um por vez).
   const [uploadingFicha, setUploadingFicha] = useState<string | null>(null);
+  // CADASTRO DE PRODUTO: o ProductModal ja existia e fazia POST /api/products,
+  // mas nao era usado por nenhuma tela desde que o botao de sincronizar o Omie
+  // saiu (26/ago/2026) — na pratica o catalogo ficou sem NENHUMA porta de
+  // entrada pela interface. Aqui ele volta a ser aberto: "Novo Produto" no
+  // cabecalho e o lapis de editar em cada card.
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   
   const { data: products, isLoading } = useQuery<Product[]>({
     queryKey: ['/api/products'],
@@ -203,6 +211,13 @@ export default function ProductManagement() {
         <h2 className="text-2xl font-bold text-gray-800">Catálogo de Produtos</h2>
         <div className="flex gap-2">
           <Button
+            onClick={() => { setEditingProduct(null); setModalOpen(true); }}
+            data-testid="button-novo-produto"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Novo Produto
+          </Button>
+          <Button
             variant="outline"
             onClick={() => {
               window.location.hash = '#omie-integration';
@@ -330,6 +345,16 @@ export default function ProductManagement() {
                       </div>
                     )}
                   </div>
+
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => { setEditingProduct(product); setModalOpen(true); }}
+                    data-testid={`button-edit-product-${product.id}`}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Editar Produto
+                  </Button>
 
                   {/* Botão de gerenciar imagens */}
                   <Dialog>
@@ -579,12 +604,18 @@ export default function ProductManagement() {
         <div className="flex items-center">
           <i className="fas fa-info-circle text-blue-500 mr-2"></i>
           <p className="text-sm text-blue-700">
-            <strong>Importante:</strong> Todos os produtos são importados automaticamente do Omie ERP. 
-            Para adicionar novos produtos, cadastre-os primeiro no sistema Omie e depois use a função de importação.
-            As imagens devem ser adicionadas aqui no Sistema Integra para aparecerem no hotsite.
+            <strong>Importante:</strong> O catálogo é mantido aqui no Sistema Integra — o Omie não é mais a origem
+            dos produtos. Use "Novo Produto" para cadastrar e "Editar Produto" para ajustar preços, NCM e códigos.
+            As imagens e a ficha técnica também são adicionadas aqui para aparecerem no hotsite.
           </p>
         </div>
       </div>
+      <ProductModal
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setEditingProduct(null); }}
+        editingProduct={editingProduct}
+      />
+
     </div>
   );
 }
