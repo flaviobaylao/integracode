@@ -536,6 +536,12 @@ export function registerIndustriaRoutes(app: Express) {
               lotNumber,
               quantity: String(produced),
               minQuantity: '0',
+              // CMV congelado no lote (Flavio, 01/set): ate aqui o custo so existia
+              // no rodape de notes da ordem, ilegivel para maquina. Gravado em coluna,
+              // ele vira o preco do pedido de transferencia para a filial.
+              unitCost: cmvUnit > 0 ? cmvUnit.toFixed(4) : null,
+              totalCost: totalCost > 0 ? totalCost.toFixed(2) : null,
+              productionOrderId: id,
               notes: `Produzido via ${order.order_number} — validade ${lotExpiry}`,
             } as any);
             await storage.createInventoryMovement({
