@@ -30,6 +30,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye,
+  Truck, DollarSign,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -1601,22 +1602,192 @@ ${fichas}
 // ===========================================================================
 // ABA 4 — ESTOQUE PRODUTO ACABADO (lotes — mesmo sistema consumido pela NF-e)
 // ===========================================================================
+function TransferenciaDialog({ lotes, onClose, onDone }: { lotes: any[]; onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast();
+  const [enviando, setEnviando] = useState(false);
+  const [destinoId, setDestinoId] = useState<string>('');
+  const [customerId, setCustomerId] = useState<string>('');
+  const [obs, setObs] = useState('');
+  // Quantidade por lote: comeca no saldo inteiro, mas e editavel — transferir a
+  // producao inteira e o caso comum, nao uma regra.
+  const [qtds, setQtds] = useState<Record<string, string>>(
+    () => Object.fromEntries(lotes.map((l) => [l.id, String(n(l.quantity))])));
+
+  const { data: dest } = useQuery({
+    queryKey: ['/api/inventory/transfer-order/destinations'],
+    queryFn: () => jfetch('/api/inventory/transfer-order/destinations'),
+  });
+  const destinos: any[] = dest?.destinations || [];
+  const destinoSel = destinos.find((d) => d.instanceId === destinoId) || null;
+
+  // Pre-seleciona GYN se ele aparecer na lista — e o destino de 99% das transferencias.
+  useMemo(() => {
+    if (destinoId || !destinos.length) return;
+    const gyn = destinos.find((d) => String(d.instanceName).toUpperCase() === 'GYN') || destinos[0];
+    if (gyn) { setDestinoId(gyn.instanceId); setCustomerId(gyn.customerId || ''); }
+  }, [destinos.length]);
+
+  const linhas = lotes.map((l) => {
+    const q = n(qtds[l.id]);
+    const unit = l.cmvUnit != null ? Number(l.cmvUnit) : null;
+    return { lot: l, q, unit, total: unit != null ? unit * q : null, saldo: n(l.quantity) };
+  });
+  const semCmv = linhas.filter((r) => r.unit == null);
+  const excedidas = linhas.filter((r) => r.q > r.saldo || r.q <= 0);
+  const total = linhas.reduce((sum, r) => sum + (r.total || 0), 0);
+  const podeEnviar = !!destinoId && !!customerId && !semCmv.length && !excedidas.length && !enviando;
+
+  const enviar = async () => {
+    setEnviando(true);
+    try {
+      const j = await jfetch('/api/inventory/transfer-order', {
+        method: 'POST',
+        body: JSON.stringify({
+          lots: linhas.map((r) => ({ lotId: r.lot.id, quantity: r.q })),
+          destinationInstanceId: destinoId,
+          customerId,
+          notes: obs || undefined,
+        }),
+      });
+      toast({
+        title: `Pedido ${j.orderNumber} criado`,
+        description: `${linhas.length} lote(s) · ${fmtBRL(j.total)} — está em "A Faturar" no pipeline de faturamento.`,
+      });
+      onDone();
+    } catch (e: any) {
+      toast({ title: 'Não foi possível criar o pedido', description: e.message, variant: 'destructive' });
+    } finally { setEnviando(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Truck className="h-5 w-5 text-emerald-600" /> Pedido de transferência entre filiais
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <Label>Filial de destino</Label>
+              <Select value={destinoId} onValueChange={(v) => {
+                setDestinoId(v);
+                setCustomerId(destinos.find((d) => d.instanceId === v)?.customerId || '');
+              }}>
+                <SelectTrigger><SelectValue placeholder="Selecione a filial" /></SelectTrigger>
+                <SelectContent>
+                  {destinos.map((d) => (
+                    <SelectItem key={d.instanceId} value={d.instanceId}>{d.instanceDisplayName || d.instanceName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Destinatário da NF</Label>
+              {destinoSel?.customerId ? (
+                <div className="text-sm border rounded-md px-3 py-2 bg-gray-50 dark:bg-gray-800">
+                  <b>{destinoSel.customerName}</b>
+                  <span className="text-gray-500"> · {destinoSel.customerDocument || 'sem documento'}</span>
+                  {destinoSel.matchBy === 'nome' && (
+                    <p className="text-[11px] text-amber-600 mt-0.5">
+                      Encontrado pelo nome, não pelo CNPJ da filial — confira antes de faturar.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-red-600 border border-red-200 rounded-md px-3 py-2">
+                  Nenhum cliente cadastrado com o CNPJ desta filial. Cadastre a filial como
+                  cliente antes de emitir a transferência.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="border rounded-lg overflow-auto max-h-[45vh]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Produto</TableHead>
+                  <TableHead>Lote</TableHead>
+                  <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead className="text-right w-[130px]">Qtd. transferir</TableHead>
+                  <TableHead className="text-right">CMV unit.</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {linhas.map((r) => (
+                  <TableRow key={r.lot.id}>
+                    <TableCell className="font-medium text-sm">{r.lot.product?.name || r.lot.productId}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.lot.lotNumber}</TableCell>
+                    <TableCell className="text-right text-sm">{fmtQty(r.saldo)}</TableCell>
+                    <TableCell className="text-right">
+                      <Input
+                        className={`h-8 text-right ${r.q > r.saldo || r.q <= 0 ? 'border-red-500' : ''}`}
+                        value={qtds[r.lot.id] ?? ''}
+                        onChange={(e) => setQtds((p) => ({ ...p, [r.lot.id]: e.target.value }))}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {r.unit != null ? fmtBRL(r.unit) : <span className="text-red-600">sem CMV</span>}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-medium">
+                      {r.total != null ? fmtBRL(r.total) : '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div>
+            <Label>Observação (opcional)</Label>
+            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2}
+              placeholder="Ex.: remessa da produção da semana" />
+          </div>
+
+          {semCmv.length > 0 && (
+            <p className="text-sm text-red-600 flex items-center gap-1">
+              <AlertTriangle className="h-4 w-4" />
+              {semCmv.length} lote(s) sem CMV — não dá para precificar a transferência. Remova-os da seleção.
+            </p>
+          )}
+          {excedidas.length > 0 && (
+            <p className="text-sm text-red-600 flex items-center gap-1">
+              <AlertTriangle className="h-4 w-4" /> Quantidade inválida ou maior que o saldo em {excedidas.length} linha(s).
+            </p>
+          )}
+          <p className="text-sm">
+            Total do pedido (a CMV): <b className="text-emerald-700">{fmtBRL(total)}</b>
+            <span className="text-gray-500"> — o estoque só é baixado no faturamento.</span>
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={enviar} disabled={!podeEnviar} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            {enviando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Truck className="h-4 w-4 mr-1" />}
+            Emitir pedido para faturamento
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function EstoqueTab() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState('');
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [transferindo, setTransferindo] = useState(false);
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['/api/inventory/summary'],
     queryFn: () => jfetch('/api/inventory/summary'),
   });
-  // A aba de Estoque de Produto Acabado mostra APENAS a instancia IND, a fabrica (31/08/2026).
-  // Os cards do topo tambem sao recalculados sobre esse recorte, para nao misturar instancias.
-  const INSTANCIA_ESTOQUE_ACABADO = 'IND';
-  const lots: any[] = (data?.lots || []).filter(
-    (l: any) => String(l.instance?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_ACABADO
-  );
+  const lots: any[] = data?.lots || [];
   const negativos = lots.filter((l) => n(l.quantity) < 0).length;
-  const totalProducts = new Set(lots.map((l: any) => l.productId)).size;
-  const totalInUse = lots.filter((l: any) => l.stockType === 'in_use').reduce((acc: number, l: any) => acc + n(l.quantity), 0);
-  const totalBlocked = lots.filter((l: any) => l.stockType !== 'in_use').reduce((acc: number, l: any) => acc + n(l.quantity), 0);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return lots;
@@ -1624,20 +1795,48 @@ function EstoqueTab() {
     return lots.filter((l) => [l.product?.name, l.lotNumber].some((v) => String(v ?? '').toLowerCase().includes(s)));
   }, [lots, search]);
 
+  // Só lote com saldo e com CMV pode virar transferência: sem saldo não há o que
+  // mandar, sem CMV não há por quanto mandar.
+  const transferivel = (l: any) => n(l.quantity) > 0 && l.cmvUnit != null;
+  const selecionaveis = filtered.filter(transferivel);
+  const selecionados = lots.filter((l) => sel.has(l.id));
+  const todosMarcados = selecionaveis.length > 0 && selecionaveis.every((l) => sel.has(l.id));
+
+  const toggle = (id: string) => setSel((p) => {
+    const nx = new Set(p);
+    nx.has(id) ? nx.delete(id) : nx.add(id);
+    return nx;
+  });
+  const toggleTodos = () => setSel((p) => {
+    const nx = new Set(p);
+    if (todosMarcados) selecionaveis.forEach((l) => nx.delete(l.id));
+    else selecionaveis.forEach((l) => nx.add(l.id));
+    return nx;
+  });
+
   return (
     <div className="space-y-4">
-      <div key={`inv-cards-${lots.length}`} className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div key={`inv-cards-${lots.length}`} className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-emerald-100 rounded-lg"><Package className="h-5 w-5 text-emerald-600" /></div>
-          <div><p className="text-2xl font-bold">{totalProducts}</p><p className="text-xs text-gray-500">Produtos</p></div>
+          <div><p className="text-2xl font-bold">{data?.totalProducts ?? 0}</p><p className="text-xs text-gray-500">Produtos</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-green-100 rounded-lg"><CheckCircle2 className="h-5 w-5 text-green-600" /></div>
-          <div><p className="text-2xl font-bold">{fmtQty(totalInUse)}</p><p className="text-xs text-gray-500">Em Uso</p></div>
+          <div><p className="text-2xl font-bold">{fmtQty(data?.totalInUse ?? 0)}</p><p className="text-xs text-gray-500">Em Uso</p></div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4 flex items-center gap-3">
+          <div className="p-2 bg-blue-100 rounded-lg"><DollarSign className="h-5 w-5 text-blue-600" /></div>
+          <div>
+            <p className="text-2xl font-bold">{fmtBRL(data?.valorEmEstoque ?? 0)}</p>
+            <p className="text-xs text-gray-500">
+              Valor a CMV{data?.lotesSemCmv ? ` · ${data.lotesSemCmv} lote(s) sem custo` : ''}
+            </p>
+          </div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-orange-100 rounded-lg"><Package className="h-5 w-5 text-orange-600" /></div>
-          <div><p className="text-2xl font-bold">{fmtQty(totalBlocked)}</p><p className="text-xs text-gray-500">Bloqueado</p></div>
+          <div><p className="text-2xl font-bold">{fmtQty(data?.totalBlocked ?? 0)}</p><p className="text-xs text-gray-500">Bloqueado</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-red-100 rounded-lg"><AlertTriangle className="h-5 w-5 text-red-600" /></div>
@@ -1654,6 +1853,11 @@ function EstoqueTab() {
           <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
         </Button>
         <span className="text-sm text-gray-500">{isLoading ? 'Carregando...' : `${filtered.length} lote(s)`}</span>
+        {sel.size > 0 && (
+          <Button size="sm" onClick={() => setTransferindo(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Truck className="h-4 w-4 mr-1" /> Pedido de transferência ({sel.size})
+          </Button>
+        )}
         <div className="flex-1" />
         <Link href="/estoque">
           <Button variant="outline" size="sm"><ExternalLink className="h-4 w-4 mr-1" /> Gestão completa de Estoque</Button>
@@ -1664,18 +1868,29 @@ function EstoqueTab() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <Checkbox checked={todosMarcados} onCheckedChange={toggleTodos}
+                  disabled={!selecionaveis.length} aria-label="Selecionar todos os lotes transferíveis" />
+              </TableHead>
               <TableHead>Produto</TableHead>
               <TableHead>Lote</TableHead>
               <TableHead>Instância</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Quantidade</TableHead>
+              <TableHead className="text-right">CMV unit.</TableHead>
+              <TableHead className="text-right">CMV do saldo</TableHead>
               <TableHead className="text-right">Mínimo</TableHead>
               <TableHead>Obs.</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map((l) => (
-              <TableRow key={l.id}>
+              <TableRow key={l.id} className={sel.has(l.id) ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
+                <TableCell>
+                  <Checkbox checked={sel.has(l.id)} onCheckedChange={() => toggle(l.id)}
+                    disabled={!transferivel(l)}
+                    aria-label={`Selecionar lote ${l.lotNumber}`} />
+                </TableCell>
                 <TableCell className="font-medium">{l.product?.name || l.productId}</TableCell>
                 <TableCell className="font-mono text-xs">{l.lotNumber}</TableCell>
                 <TableCell>{l.instance?.name || '-'}</TableCell>
@@ -1685,16 +1900,42 @@ function EstoqueTab() {
                     : <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">Bloqueado</Badge>}
                 </TableCell>
                 <TableCell className={`text-right ${n(l.quantity) < 0 ? 'text-red-600 font-semibold' : ''}`}>{fmtQty(l.quantity)}</TableCell>
+                <TableCell className="text-right whitespace-nowrap">
+                  {l.cmvUnit != null ? (
+                    <>
+                      {fmtBRL(l.cmvUnit)}
+                      {l.productionOrderNumber && (
+                        <span className="block text-[10px] text-gray-400 font-mono">{l.productionOrderNumber}</span>
+                      )}
+                    </>
+                  ) : <span className="text-gray-400">—</span>}
+                </TableCell>
+                <TableCell className="text-right">
+                  {l.cmvStock != null ? fmtBRL(l.cmvStock) : <span className="text-gray-400">—</span>}
+                </TableCell>
                 <TableCell className="text-right">{fmtQty(l.minQuantity)}</TableCell>
                 <TableCell className="max-w-[220px] truncate text-xs" title={l.notes || ''}>{l.notes || '-'}</TableCell>
               </TableRow>
             ))}
             {!isLoading && filtered.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-gray-400 py-8">Nenhum lote encontrado — finalize uma ordem de produção para gerar o primeiro lote</TableCell></TableRow>
+              <TableRow><TableCell colSpan={10} className="text-center text-gray-400 py-8">Nenhum lote encontrado — finalize uma ordem de produção para gerar o primeiro lote</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </div>
+
+      {transferindo && (
+        <TransferenciaDialog
+          lotes={selecionados}
+          onClose={() => setTransferindo(false)}
+          onDone={() => {
+            setTransferindo(false);
+            setSel(new Set());
+            qc.invalidateQueries({ queryKey: ['/api/inventory/summary'] });
+            qc.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+          }}
+        />
+      )}
     </div>
   );
 }
