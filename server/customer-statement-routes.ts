@@ -211,7 +211,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
         SELECT r.id, r.title_number, r.customer_name, r.description, r.category,
                r.issue_date, r.due_date, r.amount, r.amount_paid, r.status,
                r.payment_method, r.notes, r.fiscal_invoice_id, r.billing_pipeline_id, r.sales_card_id,
-               r.omie_instance_id
+               r.omie_instance_id, r.created_at
         FROM receivables r
         WHERE r.deleted_at IS NULL
           AND (r.customer_id = ${customerId} ${docCond})
@@ -244,6 +244,59 @@ export function registerCustomerStatementRoutes(app: Express): void {
         payByRec.set(p.receivable_id, arr);
       }
 
+      // ── TÍTULOS FANTASMAS ──────────────────────────────────────────────────
+      // Ver Titulo_Fantasma_NF102004_CausaRaiz_2026-08-04.md. Rotinas de reparo de
+      // órfãos (ex.: backfill-missing-receivables) criam um SEGUNDO título para uma
+      // NF que JÁ tem título: o card duplicado — vindo da Recuperação de Faturamento —
+      // não tem sales_card_id, então a rotina não acha a NF-e e o título nasce sem
+      // vínculo nenhum, com o número cru da NF e um vencimento novo.
+      //
+      // Regra: se a NF já tem título ANCORADO (fiscal_invoice_id preenchido), qualquer
+      // outro título da MESMA NF (mesma instância Omie) SEM NF-e, SEM card de venda e
+      // criado mais de 1 dia DEPOIS do ancorado é duplicata.
+      //
+      // Decisão do Flavio (04/ago/2026): só some da tela o fantasma SEM nenhum centavo
+      // recebido. Fantasma com baixa continua visível e é contado em
+      // `duplicadasComBaixa` — o Extrato nunca esconde dinheiro que de fato entrou.
+      const chaveNfDe = (r: any): string | null => {
+        const nf = nfKeyOf(noteVal(r.notes, "nf")) || nfKeyOf(r.title_number);
+        return nf ? `${String(r.omie_instance_id || "")}:${nf}` : null;
+      };
+      const ancoradoPorNf = new Map<string, any>();
+      for (const r of receivables) {
+        if (!r.fiscal_invoice_id) continue;
+        const k = chaveNfDe(r);
+        if (!k) continue;
+        const atual = ancoradoPorNf.get(k);
+        if (!atual || new Date(r.created_at || 0) < new Date(atual.created_at || 0)) ancoradoPorNf.set(k, r);
+      }
+      const temDinheiro = (r: any) => num(r.amount_paid) > 0.009 || (payByRec.get(r.id) || []).length > 0;
+      const ehDuplicata = (r: any): boolean => {
+        if (r.fiscal_invoice_id || r.sales_card_id) return false;
+        const k = chaveNfDe(r);
+        if (!k) return false;
+        const anc = ancoradoPorNf.get(k);
+        if (!anc || anc.id === r.id) return false;
+        const nasceu = new Date(r.created_at || 0).getTime();
+        const ancNasceu = new Date(anc.created_at || 0).getTime();
+        if (!isFinite(nasceu) || !isFinite(ancNasceu)) return false;
+        return nasceu - ancNasceu > 86400000; // mais de 1 dia depois
+      };
+      const fantasmasIgnorados: any[] = [];
+      const duplicadasComBaixa: any[] = [];
+      const receivablesUteis = receivables.filter((r) => {
+        if (!ehDuplicata(r)) return true;
+        if (temDinheiro(r)) { duplicadasComBaixa.push(r); return true; }
+        fantasmasIgnorados.push(r);
+        return false;
+      });
+      if (fantasmasIgnorados.length) {
+        console.log(
+          `[extrato-cliente] ${fantasmasIgnorados.length} titulo(s) fantasma ignorado(s) p/ cliente ${customerId}: ` +
+            fantasmasIgnorados.map((r) => `${r.title_number}=${r.amount}`).join(", ")
+        );
+      }
+
       // ── Monta as notas (agrupando parcelas do mesmo número de NF) ───────────
       type NotaAgg = {
         key: string;
@@ -265,7 +318,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const notas = new Map<string, NotaAgg>();
       const nfSeen = new Set<string>();
 
-      for (const r of receivables) {
+      for (const r of receivablesUteis) {
         const nfFromNotes = noteVal(r.notes, "nf");
         const nf = nfKeyOf(nfFromNotes) || nfKeyOf(r.title_number);
         const pedido = noteVal(r.notes, "pedido");
@@ -674,6 +727,14 @@ export function registerCustomerStatementRoutes(app: Express): void {
           canceladas.length +
           Array.from(notas.values()).filter((n) => !canceladasSet.has(n.nf) && n.valor <= 0.009 && n.valorCancelado > 0.009).length,
         baixasEstimadas: linhas.filter((l) => l.estimado).length,
+        // Duplicatas de reparo de órfãos: as sem baixa foram REMOVIDAS do extrato;
+        // as com baixa continuam visíveis e só são sinalizadas.
+        titulosFantasma: fantasmasIgnorados.length,
+        valorFantasma:
+          Math.round(fantasmasIgnorados.reduce((s2, r) => s2 + num(r.amount), 0) * 100) / 100,
+        duplicadasComBaixa: duplicadasComBaixa.length,
+        valorDuplicadasComBaixa:
+          Math.round(duplicadasComBaixa.reduce((s2, r) => s2 + num(r.amount_paid), 0) * 100) / 100,
       };
 
       res.json({
