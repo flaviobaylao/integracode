@@ -2993,11 +2993,21 @@ export const inventoryLots = pgTable("inventory_lots", {
   lotNumber: varchar("lot_number").notNull(),
   quantity: decimal("quantity", { precision: 12, scale: 4 }).notNull().default('0'),
   minQuantity: decimal("min_quantity", { precision: 12, scale: 4 }).default('0'),
+  // CMV do lote, CONGELADO na finalizacao da ordem de producao (Flavio, 01/set).
+  // unitCost = custo total dos insumos consumidos / quantidade produzida.
+  // Nao e recalculado depois: se o preco da polpa subir em setembro, o lote de
+  // agosto continua valendo o que custou em agosto. E o preco usado no pedido de
+  // transferencia para a filial. NULL = lote sem custo conhecido (entrada manual
+  // ou remanejamento) — a tela mostra "—", nunca R$ 0,00.
+  unitCost: decimal("unit_cost", { precision: 14, scale: 4 }),
+  totalCost: decimal("total_cost", { precision: 14, scale: 2 }),
+  productionOrderId: varchar("production_order_id"),
   isActive: boolean("is_active").notNull().default(true),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
+  index("idx_inventory_lots_prod_order").on(table.productionOrderId),
   index("idx_inventory_lots_product").on(table.productId),
   index("idx_inventory_lots_instance").on(table.instanceId),
   index("idx_inventory_lots_type").on(table.stockType),
