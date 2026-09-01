@@ -29,6 +29,7 @@ import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
+  Paperclip, Upload, Download, Eye,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,13 @@ function MateriaPrimaTab() {
     queryFn: () => jfetch('/api/industria/raw-materials'),
   });
   const materials: Material[] = data?.materials || [];
+
+  // Metadado dos anexos de especificacao tecnica (so a contagem por material —
+  // o binario nunca vem na listagem, senao a aba carregaria dezenas de MB).
+  const { data: anexos } = useQuery<Record<string, { total: number }>>({
+    queryKey: ['/api/industria/raw-materials/attachments/summary'],
+    queryFn: () => jfetch('/api/industria/raw-materials/attachments/summary'),
+  });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['/api/industria/raw-materials'] });
@@ -251,6 +259,11 @@ function MateriaPrimaTab() {
                   <TableCell className="font-medium">
                     {m.name} {m.code && <span className="text-xs text-gray-400">({m.code})</span>}
                     {m.is_active === false && <Badge variant="secondary" className="ml-1 text-[10px]">inativo</Badge>}
+                    {n(anexos?.[m.id]?.total) > 0 && (
+                      <Badge variant="outline" className="ml-1 text-[10px] gap-0.5" title="Especificacoes tecnicas anexadas">
+                        <Paperclip className="h-2.5 w-2.5" />{anexos![m.id].total}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell><Badge variant="outline" className="capitalize">{m.category || 'outros'}</Badge></TableCell>
                   <TableCell>{m.unit || '-'}</TableCell>
@@ -343,6 +356,7 @@ function MaterialDialog({ material, onClose, onSave, saving }: any) {
               <Label htmlFor="mat-active">Material ativo</Label>
             </div>
           )}
+          <AnexosEspecificacao materialId={f.id} />
           {!isNew && <p className="text-xs text-gray-400">O estoque só muda por movimentação (entrada/saída/ajuste) — use o botão de movimentar na lista.</p>}
         </div>
         <DialogFooter>
@@ -353,6 +367,119 @@ function MaterialDialog({ material, onClose, onSave, saving }: any) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ANEXOS DE ESPECIFICACAO TECNICA (laudos, fichas do fornecedor, certificados)
+// Varios arquivos por materia-prima, qualquer tipo, ate 15MB cada.
+// Backend: /api/industria/raw-materials/:id/attachments (raw-material-attachments-routes.ts).
+// Fica dentro do modal de edicao; no cadastro NOVO o material ainda nao tem id,
+// entao a secao so avisa que os anexos entram depois de salvar.
+// ---------------------------------------------------------------------------
+const fmtBytes = (b: number) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+
+function AnexosEspecificacao({ materialId }: { materialId: string | null }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [enviando, setEnviando] = useState(false);
+  const inputId = `mp-anexo-${materialId || 'novo'}`;
+
+  const { data: lista, refetch } = useQuery<any[]>({
+    queryKey: ['/api/industria/raw-materials', materialId, 'attachments'],
+    queryFn: () => jfetch(`/api/industria/raw-materials/${materialId}/attachments`),
+    enabled: !!materialId,
+  });
+
+  const atualizar = () => {
+    refetch();
+    qc.invalidateQueries({ queryKey: ['/api/industria/raw-materials/attachments/summary'] });
+  };
+
+  const enviar = async (files: FileList | null) => {
+    if (!files?.length || !materialId) return;
+    const grande = Array.from(files).find((f) => f.size > 15 * 1024 * 1024);
+    if (grande) {
+      toast({ title: 'Arquivo muito grande', description: `${grande.name} passa de 15MB.`, variant: 'destructive' });
+      return;
+    }
+    setEnviando(true);
+    try {
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append('arquivos', f));
+      const r = await fetch(`/api/industria/raw-materials/${materialId}/attachments`, {
+        method: 'POST', credentials: 'include', body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.message || `Falha (${r.status})`);
+      toast({ title: 'Especificação anexada', description: `${files.length} arquivo(s) enviado(s).` });
+      atualizar();
+    } catch (e: any) {
+      toast({ title: 'Erro ao anexar', description: String(e.message || e), variant: 'destructive' });
+    } finally { setEnviando(false); }
+  };
+
+  const remover = async (a: any) => {
+    if (!confirm(`Remover o anexo "${a.fileName}"?`)) return;
+    try {
+      await jfetch(`/api/industria/raw-material-attachments/${a.id}`, { method: 'DELETE' });
+      toast({ title: 'Anexo removido' });
+      atualizar();
+    } catch (e: any) {
+      toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' });
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <div className="flex items-center justify-between">
+        <Label className="flex items-center gap-1.5"><Paperclip className="h-4 w-4" /> Especificações técnicas</Label>
+        {materialId && (
+          <>
+            <input id={inputId} type="file" multiple className="hidden"
+              onChange={(e) => { enviar(e.target.files); e.currentTarget.value = ''; }} />
+            <label htmlFor={inputId}>
+              <Button type="button" variant="outline" size="sm" asChild disabled={enviando}>
+                <span className="cursor-pointer">
+                  {enviando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
+                  Anexar arquivos
+                </span>
+              </Button>
+            </label>
+          </>
+        )}
+      </div>
+
+      {!materialId ? (
+        <p className="text-xs text-gray-400">Cadastre o material primeiro; depois reabra em Editar para anexar laudos, fichas do fornecedor e certificados.</p>
+      ) : !lista?.length ? (
+        <p className="text-xs text-gray-400">Nenhum arquivo anexado. Aceita PDF, imagem, Word, Excel e texto — até 15MB por arquivo.</p>
+      ) : (
+        <div className="divide-y">
+          {lista.map((a: any) => (
+            <div key={a.id} className="flex items-center gap-2 py-1.5">
+              <FileText className="h-4 w-4 text-gray-400 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm truncate" title={a.fileName}>{a.fileName}</p>
+                <p className="text-[11px] text-gray-400">
+                  {fmtBytes(a.fileSize)} · {fmtDate(a.createdAt)}
+                  {a.extractStatus === 'sem_texto' && ' · sem texto pesquisável (PDF escaneado)'}
+                </p>
+              </div>
+              <Button type="button" variant="ghost" size="sm" title="Abrir" asChild>
+                <a href={`/api/industria/raw-material-attachments/${a.id}`} target="_blank" rel="noreferrer"><Eye className="h-4 w-4" /></a>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" title="Baixar" asChild>
+                <a href={`/api/industria/raw-material-attachments/${a.id}?download=1`}><Download className="h-4 w-4" /></a>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" title="Remover" className="text-red-500 hover:text-red-600" onClick={() => remover(a)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -594,7 +721,7 @@ function OrdensTab() {
         <div className="flex-1" />
         <Button variant="outline" size="sm" disabled={selected.size === 0} onClick={() => setReportOpen(true)}
           title="Relatório agregado das matérias-primas das ordens selecionadas">
-          <Printer className="h-4 w-4 mr-1" /> Relatório de MP ({selected.size})
+          <Printer className="h-4 w-4 mr-1" /> Relatório de OP ({selected.size})
         </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOrderDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Nova Ordem
