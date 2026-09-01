@@ -721,7 +721,7 @@ function OrdensTab() {
         <div className="flex-1" />
         <Button variant="outline" size="sm" disabled={selected.size === 0} onClick={() => setReportOpen(true)}
           title="Relatório agregado das matérias-primas das ordens selecionadas">
-          <Printer className="h-4 w-4 mr-1" /> Relatório de OP ({selected.size})
+          <Printer className="h-4 w-4 mr-1" /> Relatório de MP ({selected.size})
         </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOrderDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Nova Ordem
