@@ -815,7 +815,12 @@ export class DatabaseStorage implements IStorage {
       .from(customers)
       .leftJoin(users, eq(customers.sellerId, users.id));
     
-    const whereConditions = [eq(customers.omieStatus, 'ativo')];
+    // 🔒 Um cadastro só é "Cliente Ativo" quando OS DOIS campos concordam: is_active (fonte da
+    // verdade do Integra, controlada por Inativar/Reativar) E omie_status='ativo'. Antes o filtro
+    // usava só omie_status, então: (a) inativados via botão (is_active=false, omie ainda 'ativo')
+    // continuavam aparecendo, e (b) excluídos (omie='inativo', is_active=true) sumiam. Exigir os
+    // dois resolve os dois casos sem reexibir excluídos.
+    const whereConditions = [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
     if (sellerId) {
       whereConditions.push(eq(customers.sellerId, sellerId));
     }
@@ -1064,10 +1069,11 @@ export class DatabaseStorage implements IStorage {
     // 1. Update customer: set isActive = false and inactivatedAt = now
     const [inactivatedCustomer] = await db
       .update(customers)
-      .set({ 
-        isActive: false, 
+      .set({
+        isActive: false,
+        omieStatus: 'inativo', // mantém os dois campos em sincronia (some de Clientes Ativos)
         inactivatedAt: agora(),
-        updatedAt: agora() 
+        updatedAt: agora()
       })
       .where(eq(customers.id, customerId))
       .returning();
@@ -1123,10 +1129,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, true)));
     const inactivatedIds = activeBefore.map((r) => r.id);
 
-    // 1. customers.isActive = false
+    // 1. customers.isActive = false (+ omie_status='inativo' p/ manter os dois campos alinhados)
     await db
       .update(customers)
-      .set({ isActive: false, inactivatedAt: agora(), updatedAt: agora() })
+      .set({ isActive: false, omieStatus: 'inativo', inactivatedAt: agora(), updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Remover da lista de Clientes Ativos (active_customers)
@@ -1189,7 +1195,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCustomer(id: string): Promise<void> {
-    await db.update(customers).set({ omieStatus: 'inativo' }).where(eq(customers.id, id));
+    // Exclusão = soft delete. Zera os DOIS campos p/ ficar consistente (some de Clientes Ativos
+    // e também aparece como Inativo na Gestão de Clientes).
+    await db.update(customers).set({ omieStatus: 'inativo', isActive: false, updatedAt: agora() }).where(eq(customers.id, id));
   }
 
   async getCustomersByRoute(route: string): Promise<Customer[]> {

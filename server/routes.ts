@@ -3852,6 +3852,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔧 SANEAMENTO (só Admin): alinha os cadastros divergentes achados pela auditoria, para que
+  // is_active e omie_status concordem. Um cadastro é ativo só se AMBOS forem "ativos".
+  //  • is_active=false & omie_status='ativo'  → omie_status='inativo'  (inativados via botão que ainda apareciam)
+  //  • is_active=true  & omie_status='inativo' → só é tocado se body.incluirExcluidos===true
+  //    (são cadastros EXCLUÍDOS; alinhar zera is_active para refletir Inativo na Gestão).
+  // POST { dryRun?: boolean, incluirExcluidos?: boolean }. Idempotente.
+  app.post('/api/admin/customers/reconciliar-ativos', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { customers } = await import('../shared/schema');
+      const dryRun = req.body?.dryRun === true;
+      const incluirExcluidos = req.body?.incluirExcluidos === true;
+      const all = await storage.getAllCustomers();
+      const ghosts = all.filter((c: any) => c.isActive === false && c.omieStatus === 'ativo');
+      const excluidos = all.filter((c: any) => c.isActive === true && c.omieStatus === 'inativo');
+      let ghostsAtualizados = 0, excluidosAtualizados = 0; const errors: string[] = [];
+      if (!dryRun) {
+        for (const c of ghosts) {
+          try { await db.update(customers).set({ omieStatus: 'inativo', updatedAt: agora() } as any).where(eq(customers.id, String(c.id))); ghostsAtualizados++; }
+          catch (e: any) { if (errors.length < 8) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
+        }
+        if (incluirExcluidos) {
+          for (const c of excluidos) {
+            try { await db.update(customers).set({ isActive: false, updatedAt: agora() } as any).where(eq(customers.id, String(c.id))); excluidosAtualizados++; }
+            catch (e: any) { if (errors.length < 8) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
+          }
+        }
+      }
+      res.json({
+        dryRun,
+        incluirExcluidos,
+        ghostsInativadosDetectados: ghosts.length,
+        excluidosDetectados: excluidos.length,
+        ghostsAtualizados,
+        excluidosAtualizados,
+        errors,
+      });
+    } catch (error: any) {
+      console.error('Error reconciling clientes-ativos:', error);
+      res.status(500).json({ message: 'Falha no saneamento: ' + String(error?.message || error) });
+    }
+  });
+
   // 🚫 Inativação em massa — EXCLUSIVA do Admin (só o Admin inativa). Mesma semântica da individual:
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
   app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
