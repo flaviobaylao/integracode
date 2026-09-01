@@ -504,6 +504,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       logsByCustomer.get(l.customerId)!.push(l);
     }
     for (const a of pending) {
+      if (isLockedToday(a)) continue;               // trava manual do dia: não auto-conclui
       const cLogs = logsByCustomer.get(a.customerId) || [];
       const matching = cLogs
         .filter(l => new Date(l.attendanceDate) >= new Date(a.assignedAt))
@@ -536,6 +537,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // 2) Cancelar atribuicoes para clientes que NAO sao mais candidatos
   // (ex: cliente foi atendido por outra via, mudanca de status)
   for (const a of pendingNow) {
+    if (isLockedToday(a)) continue;                 // trava manual do dia: não cancela
     if (!candidateByCustomerId.has(a.customerId)) {
       await db.update(repescagemAssignments).set({
         status: 'cancelled',
