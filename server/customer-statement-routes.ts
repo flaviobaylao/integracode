@@ -20,6 +20,7 @@ import { type Express } from "express";
 import { authenticateUser } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { foraDaDivida } from "./divida-viva";
 
 // Decisão do Flavio (04/ago/2026): o Extrato é uma tela de CONSULTA (só GET, nada
 // editável) e fica liberada para TODOS os perfis, sem filtro de carteira —
@@ -494,14 +495,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const hojeDia = hojeBR(); // dia de hoje em America/Sao_Paulo (YYYY-MM-DD)
       const linhas: any[] = [];
 
-      // Operações informativas (não são dívida): DEVOLUÇÃO DE VENDA, faturamento de
-      // outra praça ([GYN]), TROCA DE MERCADORIA, REMESSA DE AMOSTRA GRÁTIS e
-      // "Outra saída de mercadoria ou prestação de serviço não especificado"
-      // (CFOP 5949/6949 — bonificação, brinde, remessa: não gera cobrança).
-      // Não ganham tag de situação e o seu valor NÃO entra no saldo devedor /
-      // vencido / a vencer.
-      const foraDaDivida = (d: any) =>
-        /DEVOLU|\[GYN\]|\[IND\]|TROCA|AMOSTRA|OUTRAS?\s+SA[IÍ]DAS?/i.test(String(d || ""));
+      // Operações informativas (não são dívida): DEVOLUÇÃO, outra praça
+      // ([GYN]/[BSB]/[IND]), TROCA, AMOSTRA e CFOP 5949/6949. A regra mora em
+      // divida-viva.ts e vale também no badge da rota, no bloqueio de crédito e
+      // no alerta — não ganham tag de situação e o valor NÃO entra no saldo
+      // devedor / vencido / a vencer.
 
       for (const n of Array.from(notas.values())) {
         const cancelada = canceladasSet.has(n.nf) || (n.valor <= 0.009 && n.valorCancelado > 0.009);
