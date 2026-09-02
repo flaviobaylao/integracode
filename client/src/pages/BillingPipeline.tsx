@@ -539,6 +539,18 @@ export default function BillingPipeline() {
   };
   const saveEdit = () => {
     if (!detailItem || !editData) return;
+    // 🚫 Item sem quantidade nao pode ser salvo: linha zerada vira item fantasma
+    // na NF-e (foi o que aconteceu nas NF 104366/104367). Para tirar o produto do
+    // pedido use a lixeira da linha — nao zere a quantidade.
+    const _zeradas = (editData.products || []).filter((p: any) => !(parseFloat(String(p?.quantity ?? 0).replace(',', '.')) > 0));
+    if (_zeradas.length > 0) {
+      toast({
+        title: 'Item sem quantidade',
+        description: `${_zeradas.length} item(ns) com quantidade zero: ${_zeradas.map((p: any) => p?.name || 'sem nome').join(', ')}. Informe a quantidade ou remova a linha do pedido.`,
+        variant: 'destructive',
+      });
+      return;
+    }
     const restricted = !canEdit && isSellerRole; // vendedor/telemarketing dono
     const data = restricted
       ? { products: editData.products, paymentMethod: editData.paymentMethod, scheduledBillingDate: editData.scheduledBillingDate, notes: editData.notes }
