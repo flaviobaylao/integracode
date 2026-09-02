@@ -48,6 +48,28 @@ const REPESCAGEM_EXCLUDED_SELLER_IDS = new Set<string>([
   'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
 ]);
 
+// Roteamento especial por carteira (dono) e idade na repescagem (dias):
+//  - Gilmar (até 3 dias)   -> Letícia (travado)
+//  - Jhonatan (até 3 dias) -> Robson  (travado)
+//  - Carlos (até 3 dias)   -> Letícia/Robson 50/50 (travado, determinístico por cliente)
+// Fora da janela e demais vendedores seguem a distribuição normal entre habilitados.
+const REP_ROUTE = {
+  GILMAR: 'omie-vendor-3882132483',
+  JHONATAN: 'b35a9dd5-7a49-4c65-9002-01407b859961',
+  CARLOS: 'omie-vendor-4325830798',
+  LETICIA: '9faf8fa3-698d-4f90-9607-3f1ff7787a2b',
+  ROBSON: 'omie-vendor-4077616122',
+};
+const REP_SPECIAL_MAX_DAYS = 3;
+// Retorna o atendente-alvo (telemarketing) do roteamento especial, ou null.
+function repescagemSpecialTarget(ownerId: string | null, daysSince: number, customerId: string): string | null {
+  if (!ownerId || daysSince > REP_SPECIAL_MAX_DAYS) return null;
+  if (ownerId === REP_ROUTE.GILMAR) return REP_ROUTE.LETICIA;
+  if (ownerId === REP_ROUTE.JHONATAN) return REP_ROUTE.ROBSON;
+  if (ownerId === REP_ROUTE.CARLOS) return (repShuffleKey(customerId) % 2 === 0) ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON;
+  return null;
+}
+
 function brTodayStr(): string {
   const now = new Date();
   const offset = -3 * 60; // BRT
@@ -629,6 +651,12 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // Escolhe o alvo de um candidato: Fase A (externo por perimetro, dono primeiro,
   // teto EXTERNAL_MAX_PER_SELLER) -> Fase B (telemarketing por menor carga).
   function chooseTarget(customerId: string): { userId: string; phase: 'external' | 'telemarketing' } | null {
+    // Roteamento especial (Gilmar/Jhonatan/Carlos até 3 dias) tem prioridade, se o alvo estiver habilitado.
+    const spTarget = repescagemSpecialTarget(
+      coordById.get(customerId)?.sellerId || null,
+      (candidateByCustomerId.get(customerId) as any)?.daysSince ?? 999,
+      customerId);
+    if (spTarget && internalSet.has(spTarget)) return { userId: spTarget, phase: 'telemarketing' };
     if (isExternalPortfolio(customerId)) {
       const ownerId = coordById.get(customerId)?.sellerId || null;
       const qualifying = externalIds.filter(extId =>
@@ -661,6 +689,36 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     else internalLoad.set(userId, (internalLoad.get(userId) || 0) + 1);
   }
 
+  // 3.4) ROTEAMENTO ESPECIAL: carteiras Gilmar/Jhonatan/Carlos dentro de 3 dias vão para
+  // Letícia/Robson e ficam TRAVADAS no dia (não sofrem promoção/rebalanceamento). Respeita
+  // uma troca manual do admin (linha travada no dia). Reaplicado a cada rodada.
+  const pinnedSpecial = new Set<string>();
+  for (const cand of candidates) {
+    const target = repescagemSpecialTarget(coordById.get(cand.customerId)?.sellerId || null, (cand as any).daysSince ?? 999, cand.customerId);
+    if (target && internalSet.has(target)) pinnedSpecial.add(cand.customerId);
+  }
+  for (const a of stillPending) {
+    if (!candidateByCustomerId.has(a.customerId) || !pinnedSpecial.has(a.customerId)) continue;
+    if (isLockedToday(a)) continue; // respeita trava manual do dia
+    const target = repescagemSpecialTarget(coordById.get(a.customerId)?.sellerId || null, (candidateByCustomerId.get(a.customerId) as any)?.daysSince ?? 999, a.customerId)!;
+    if (a.assignedUserId !== target) {
+      const oldUser = a.assignedUserId;
+      await db.update(repescagemAssignments).set({
+        assignedUserId: target, phase: 'telemarketing', locked: true, lockedDate: today, assignedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(repescagemAssignments.id, a.id));
+      await db.insert(repescagemAssignmentHistory).values({
+        assignmentId: a.id, customerId: a.customerId, fromUserId: oldUser, toUserId: target,
+        action: 'reassigned', reason: 'Roteamento especial da carteira (ate 3 dias)',
+      });
+      if (externalSet.has(oldUser)) externalLoad.set(oldUser, Math.max(0, (externalLoad.get(oldUser) || 0) - 1));
+      else if (internalSet.has(oldUser)) internalLoad.set(oldUser, Math.max(0, (internalLoad.get(oldUser) || 0) - 1));
+      internalLoad.set(target, (internalLoad.get(target) || 0) + 1);
+      validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: target } as any);
+    } else {
+      await db.update(repescagemAssignments).set({ locked: true, lockedDate: today, updatedAt: new Date() }).where(eq(repescagemAssignments.id, a.id));
+    }
+  }
+
   // 3.5) Promover para o vendedor externo: clientes de carteira externa que hoje
   // estao no telemarketing mas passaram a qualificar no perimetro (<=2km) da rota
   // do dia de um vendedor externo habilitado (dono primeiro, respeitando o teto).
@@ -669,6 +727,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
     if (isLockedToday(a)) continue;                   // trava manual do dia: não promove
+    if (pinnedSpecial.has(a.customerId)) continue;    // roteamento especial: fica no telemarketing alvo
     if (!internalSet.has(a.assignedUserId)) continue; // so mexe em quem esta no telemarketing
     if (!isExternalPortfolio(a.customerId)) continue;
     const ownerId = coordById.get(a.customerId)?.sellerId || null;
@@ -760,7 +819,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       if (!max.id || !min.id || max.v - min.v <= 1) break;
       // Só move clientes SEM dono de telemarketing (externos/sem dono). Cliente de carteira de
       // telemarketing fica preso ao próprio dono — o rebalanceamento nunca cruza carteira.
-      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId) && !isLockedToday(a));
+      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId) && !isLockedToday(a) && !pinnedSpecial.has(a.customerId));
       if (!toMove) break;
       await db.update(repescagemAssignments).set({
         assignedUserId: min.id,
@@ -817,6 +876,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       if (priorStatuses.includes('completed')) continue;
       const target = chooseTarget(cand.customerId);
       if (!target) continue; // ninguem habilitado apto — fica sem atribuicao (fallback de orfaos)
+      const isSpecial = pinnedSpecial.has(cand.customerId);
       const inserted = await db.insert(repescagemAssignments).values({
         customerId: cand.customerId,
         lastRedDate: cand.lastRedDate,
@@ -824,6 +884,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         status: 'pending',
         phase: target.phase,
         carteiraSellerId: coordById.get(cand.customerId)?.sellerId || null,
+        ...(isSpecial ? { locked: true, lockedDate: today } : {}),
       }).returning();
       const newAssign = inserted[0];
       await db.insert(repescagemAssignmentHistory).values({
@@ -832,7 +893,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         fromUserId: null,
         toUserId: target.userId,
         action: 'assigned',
-        reason: target.phase === 'external' ? 'Distribuicao por perimetro (vendedor externo)' : 'Distribuicao telemarketing',
+        reason: isSpecial ? 'Roteamento especial da carteira (ate 3 dias)' : (target.phase === 'external' ? 'Distribuicao por perimetro (vendedor externo)' : 'Distribuicao telemarketing'),
       });
       applyLoad(target.userId, target.phase);
     }
@@ -1048,6 +1109,22 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
       else preTeleLoad.set(r.assigned_user_id, (preTeleLoad.get(r.assigned_user_id) || 0) + 1);
     }
   } catch (e) { console.error('[runDailyDraw] lockedSurvivors:', (e as any)?.message); }
+
+  // ROTEAMENTO ESPECIAL (rota do dia): carteiras Gilmar/Jhonatan/Carlos dentro de 3 dias vão
+  // para Letícia/Robson (telemarketing) e travadas — não entram na alocação por perímetro.
+  const teleSet = new Set(telemarketers);
+  for (const cand of candidates) {
+    if (allocated.has(cand.customerId)) continue; // já preservado (travado) ou alocado
+    const owner = coordById.get(cand.customerId)?.sellerId || null;
+    const target = repescagemSpecialTarget(owner, (cand as any).daysSince ?? 999, cand.customerId);
+    if (!target || !teleSet.has(target)) continue;
+    allocated.add(cand.customerId);
+    preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
+    rows.push({ customerId: cand.customerId, lastRedDate: cand.lastRedDate, assignedUserId: target,
+      carteiraSellerId: owner, phase: 'telemarketing', drawDate, status: 'in_route',
+      locked: true, lockedDate: drawDate });
+  }
+
   const anchorsBySeller = new Map<string, Array<{ lat: number; lng: number }>>();
   for (const sellerId of externalSellers) {
     anchorsBySeller.set(sellerId, await repGetRouteAnchors(sellerId, drawDate));
