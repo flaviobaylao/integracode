@@ -194,6 +194,8 @@ async function scopeSellerName(req: any): Promise<string> {
     if ((!row) && umail) { const M = String(umail).replace(/[']/g, ''); const r = await rawq("SELECT COALESCE(role,'') AS role, NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome, is_active FROM users WHERE lower(email)=lower('" + M + "') LIMIT 1"); row = r[0]; }
     if (!row || row.is_active === false) return "";
     let role = String(row.role || '');
+    const impU = s.impersonateUserId;
+    if (impU && role === 'admin') { const SID2 = String(impU).replace(/[^a-zA-Z0-9_-]/g, ''); if (SID2) { const r2 = await rawq("SELECT COALESCE(role,'') AS role, NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome, is_active FROM users WHERE id='" + SID2 + "' LIMIT 1"); if (r2[0] && r2[0].is_active !== false) { role = String(r2[0].role || ''); row = r2[0]; } } }
     const imp = s.impersonateRole;
     if (imp && role === 'admin') role = String(imp);
     if (role !== 'vendedor' && role !== 'telemarketing') return "";
