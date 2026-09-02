@@ -14,6 +14,7 @@ import { db } from './db';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
 import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
+import { escolherDocumentoFiscal } from './fiscal-doc';
 
 // Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
 // sai com CFOP incorreto e é REJEITADA pela SEFAZ. Barramos ANTES da trava/baixa de estoque/criação
@@ -2758,6 +2759,43 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     console.warn('[NFE] falha ao resolver a origem do card (segue como modelo 55):', e?.message);
   }
 
+  // ── Documento e CEP do destinatario: o CADASTRO e a fonte de verdade ────────
+  // ANTES o documento saia de `item.customerDocument || customer?.cnpj || ...`,
+  // dando prioridade a COPIA CONGELADA do card. Copia errada (ZOI: 15 digitos) ou
+  // vazia fazia a nota nascer ruim, e corrigir o cadastro depois nao adiantava:
+  // a nota ja tinha a copia. Agora o cadastro valido vence sempre.
+  const __docFiscal = escolherDocumentoFiscal(
+    (customer as any)?.cnpj || (customer as any)?.cpf || '',
+    item.customerDocument || ''
+  );
+  if (!__docFiscal) {
+    console.warn(`[NFE] ⚠️ Cliente "${item.customerName}" sem CPF/CNPJ valido (nem no cadastro, nem no card).`);
+  }
+
+  // CEP ausente no cadastro faz a NF-e sair com "00000000" e a SEFAZ rejeita.
+  // Herdamos o CEP da ultima NF-e AUTORIZADA do mesmo cliente: ela ja passou pela
+  // SEFAZ, entao aquele CEP e comprovadamente aceito.
+  let __cepFiscal = String((customer as any)?.zipCode || '').replace(/\D/g, '');
+  if (__cepFiscal.length !== 8 && item.customerId) {
+    try {
+      const __r: any = await db.execute(sql`
+        SELECT regexp_replace(COALESCE(customer_cep, ''), '[^0-9]', '', 'g') AS cep
+          FROM fiscal_invoices
+         WHERE customer_id = ${item.customerId}
+           AND status = 'authorized'
+           AND length(regexp_replace(COALESCE(customer_cep, ''), '[^0-9]', '', 'g')) = 8
+         ORDER BY created_at DESC
+         LIMIT 1`);
+      const __cepAnterior = String(__r?.rows?.[0]?.cep || '');
+      if (__cepAnterior.length === 8) {
+        __cepFiscal = __cepAnterior;
+        console.log(`[NFE] 🔧 CEP herdado da ultima NF-e autorizada do cliente ${item.customerId}: ${__cepFiscal}`);
+      }
+    } catch (e: any) {
+      console.warn('[NFE] falha ao herdar CEP de NF-e anterior:', e?.message);
+    }
+  }
+
   const invoice = await storage.createFiscalInvoiceAtomic({
     series: serieDoc,
     status: 'draft',
@@ -2772,11 +2810,11 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     issuerPhone,
     customerId: item.customerId || null,
     customerName: item.customerName || '',
-    customerCnpjCpf: item.customerDocument || customer?.cnpj || customer?.cpf || '',
+    customerCnpjCpf: __docFiscal,
     customerIe: (customer as any)?.stateRegistration || (customer as any)?.state_registration || (customer as any)?.ie || '',
     customerAddress: customer?.address || '',
     customerBairro: customer?.neighborhood || '',
-    customerCep: customer?.zipCode || '',
+    customerCep: __cepFiscal,
     customerCity: customer?.city || '',
     customerUf: customer?.state || '',
     customerPhone: customer?.phone || '',
