@@ -12,9 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Plus, Pencil, Trash2, DollarSign, Users, TrendingUp, Calendar, Trophy } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, DollarSign, Users, TrendingUp, Calendar, Trophy, Info } from "lucide-react";
 import SalesGoalsDashboard from './SalesGoalsDashboard';
 import type { SalesGoal, User } from "@shared/schema";
 
@@ -346,6 +347,68 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                   Nova Meta
                 </Button>
                 )}
+                {/* "i" — explica de onde vem cada valor das 3 colunas de comissao.
+                    As faixas do telemarketing sao lidas do proprio backend
+                    (commissionTiers) para nunca divergirem da regra em vigor. */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground"
+                      aria-label="Como a comissão é calculada" title="Como a comissão é calculada">
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[30rem] text-sm">
+                    <div className="font-semibold mb-1">Como a comissão é calculada</div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      <strong>Comissão</strong> usa a meta, <strong>Comissão Conquistada</strong> usa o
+                      faturamento atual e <strong>Projeção da Comissão</strong> usa a projeção do mês.
+                    </p>
+                    <ul className="space-y-2">
+                      <li className="flex gap-2">
+                        <span className="font-medium w-40 shrink-0">Gilmar</span>
+                        <span>7% sobre o valor da coluna.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-medium w-40 shrink-0">Carlos e Jhonatan</span>
+                        <span>8% sobre o valor da coluna.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-medium w-40 shrink-0">Radilton e Cleber</span>
+                        <span>4,5% sobre o valor da coluna.</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-medium w-40 shrink-0">Robson, Natália e Maria Eduarda</span>
+                        <span>
+                          Faixas de Comissão de Vendas Internas — a alíquota acompanha o % de
+                          atingimento da própria coluna
+                          {(() => {
+                            const t = dashboardData?.commissionTiers?.telemarketing;
+                            if (!t?.thresholds?.length) return '.';
+                            const partes = t.thresholds.map((th, i) => {
+                              const prox = t.thresholds[i + 1];
+                              const faixa = prox ? `${th}–${prox - 0.01}%` : `${th}%+`;
+                              return `${faixa}: ${String(t.rates[i]).replace('.', ',')}%`;
+                            });
+                            return ` (${partes.join(' · ')}).`;
+                          })()}
+                        </span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-medium w-40 shrink-0">Letícia</span>
+                        <span>
+                          8% <strong>da meta</strong> menos R$ 1.400,00 — a diferença entre o fixo dela
+                          (R$ 3.200) e a base de um administrativo (R$ 1.800). Ela recebe só o que
+                          excede essa diferença. As outras duas colunas são proporcionais ao
+                          atingimento: comissão da meta × (valor da coluna ÷ meta).
+                        </span>
+                      </li>
+                    </ul>
+                    <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">
+                      Quem não está nesta lista aparece com <strong>—</strong>: não há regra definida,
+                      e a tela não arbitra um valor. Resultado negativo vira R$ 0,00.
+                    </p>
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
           </CardHeader>
