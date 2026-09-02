@@ -12,6 +12,10 @@ import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { User } from "@shared/schema";
 import { getBrazilMonth, getBrazilYear } from '@/lib/brazilTimezone';
+import {
+  regraDoVendedor, modoComissao, rotuloRegraCurto, calcularComissao,
+  TIPO_FAIXA_PADRAO, type ModoComissao, type RegraComissao,
+} from '@/lib/comissaoMetas';
 
 interface CommissionDashboardData {
   month: number;
@@ -166,6 +170,39 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
 
   const canSeeAllDetails = podeVerTodos;
 
+  // REGRA DE APURACAO (02/09/2026): somente Robson, Natalia e Maria Eduarda seguem as
+  // Faixas de Comissao (Vendas Internas). Os demais tem percentual fixo — mostrar
+  // "Faixa 3 / 6,00%" para eles daria um numero que ninguem vai pagar. A linha
+  // agregada TELEMARKETING e o proprio grupo de Vendas Internas, entao continua em faixas.
+  const regraDaLinha = (sellerId: string, sellerName: string): RegraComissao =>
+    sellerId === 'TELEMARKETING' ? { tipo: 'faixa' } : regraDoVendedor(sellerName);
+  const modoDoVendedor = (sellerId: string, sellerName: string): ModoComissao =>
+    modoComissao(regraDaLinha(sellerId, sellerName));
+
+  // Faixas: sempre a tabela de Vendas Internas, como no box "Gerenciar Metas".
+  const faixaPadrao = data?.commissionTiers?.[TIPO_FAIXA_PADRAO];
+
+  // A ultima coluna ("Regra") so faz sentido para quem enxerga alguma comissao.
+  const mostrarColunaRegra =
+    canSeeAllDetails || user.role === 'vendedor' || user.role === 'telemarketing';
+
+  /** As 3 colunas de comissao em R$ da linha, na mesma regra do box de metas:
+   *  Comissao usa a meta, Conquistada usa o faturamento atual e Projecao usa a projecao. */
+  const comissoesDaLinha = (entry: SellerResult) => {
+    const regra = regraDaLinha(entry.sellerId, entry.sellerName);
+    const meta = entry.revenueGoal || 0;
+    const atual = entry.revenueActual || 0;
+    const proj = entry.revenueProjected || 0;
+    const atingAtual = meta > 0 ? (atual / meta) * 100 : 0;
+    const atingProj = meta > 0 ? (proj / meta) * 100 : 0;
+    return {
+      regra,
+      meta: calcularComissao(regra, meta, 100, faixaPadrao, meta),
+      atual: calcularComissao(regra, atual, atingAtual, faixaPadrao, meta),
+      proj: calcularComissao(regra, proj, atingProj, faixaPadrao, meta),
+    };
+  };
+
   const historyByEntity = useMemo(() => {
     if (!data?.history) return {};
     const grouped: Record<string, HistoryEntry[]> = {};
@@ -300,19 +337,22 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                       <TableHead>Vendedor</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead className="text-right">Meta</TableHead>
+                      <TableHead className="text-right bg-gray-50">Comissão</TableHead>
                       <TableHead className="text-right">Atual</TableHead>
+                      <TableHead className="text-right bg-gray-50">Comissão Conquistada</TableHead>
                       <TableHead className="text-right">Projetado</TableHead>
+                      <TableHead className="text-right bg-gray-50">Projeção da Comissão</TableHead>
                       <TableHead className="text-right">% Atingimento</TableHead>
                       <TableHead className="text-center">Faixa</TableHead>
-                      {(canSeeAllDetails || user.role === 'vendedor' || user.role === 'telemarketing') && (
-                        <TableHead className="text-right">Comissão</TableHead>
+                      {mostrarColunaRegra && (
+                        <TableHead className="text-right">Regra</TableHead>
                       )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {allEntries.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={mostrarColunaRegra ? 11 : 10} className="text-center py-8 text-muted-foreground">
                           Nenhuma meta configurada para este período. Crie metas na seção acima.
                         </TableCell>
                       </TableRow>
@@ -320,6 +360,24 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                       allEntries.map((entry) => {
                         const isMine = isCurrentUser(entry.sellerId);
                         const showCommission = canSeeAllDetails || isMine;
+                        const modo = modoDoVendedor(entry.sellerId, entry.sellerName);
+                        const com = comissoesDaLinha(entry);
+                        const regra = com.regra;
+                        /** Celula de comissao em R$: cadeado quando a linha nao e sua,
+                         *  "—" quando o vendedor nao tem regra cadastrada. */
+                        const celulaComissao = (valor: number | null, destaque: boolean) => (
+                          <TableCell className="text-right font-mono bg-gray-50">
+                            {!showCommission ? (
+                              <Lock className="h-4 w-4 text-muted-foreground inline" />
+                            ) : valor === null ? (
+                              <span className="text-muted-foreground">—</span>
+                            ) : (
+                              <span className={destaque ? 'font-semibold' : 'text-muted-foreground'}>
+                                {formatCurrency(valor)}
+                              </span>
+                            )}
+                          </TableCell>
+                        );
                         return (
                           <TableRow key={entry.sellerId} className={isMine ? 'bg-blue-50/50' : ''}>
                             <TableCell className="font-medium">
@@ -334,6 +392,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                             <TableCell className="text-right font-mono">
                               {entry.revenueGoal > 0 ? formatCurrency(entry.revenueGoal) : '—'}
                             </TableCell>
+                            {celulaComissao(com.meta, false)}
                             <TableCell className="text-right">
                               <div className="font-mono font-semibold">
                                 {formatCurrency(entry.revenueActual)}
@@ -354,9 +413,11 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                                 </div>
                               )}
                             </TableCell>
+                            {celulaComissao(com.atual, true)}
                             <TableCell className="text-right font-mono font-semibold">
                               {formatCurrency(entry.revenueProjected)}
                             </TableCell>
+                            {celulaComissao(com.proj, false)}
                             <TableCell className="text-right">
                               {entry.revenueGoal > 0 ? (
                                 <span className={entry.achievementPct >= 100 ? 'text-green-600 font-semibold' : entry.achievementPct >= 85 ? 'text-amber-600' : 'text-red-600'}>
@@ -365,18 +426,30 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                               ) : '—'}
                             </TableCell>
                             <TableCell className="text-center">
-                              {entry.revenueGoal > 0 ? (
+                              {modo !== 'faixa' ? (
+                                <Badge variant="outline" className="text-xs text-muted-foreground" title="Não usa faixas">
+                                  {modo === 'fixo' ? 'Fixo' : '—'}
+                                </Badge>
+                              ) : entry.revenueGoal > 0 ? (
                                 <Badge className={`${getTierColor(entry.commissionTier)} border`}>
                                   Faixa {entry.commissionTier}
                                 </Badge>
                               ) : '—'}
                             </TableCell>
-                            {(canSeeAllDetails || user.role === 'vendedor' || user.role === 'telemarketing') && (
+                            {mostrarColunaRegra && (
                               <TableCell className="text-right">
-                                {showCommission && entry.revenueGoal > 0 ? (
+                                {!showCommission ? (
+                                  <Lock className="h-4 w-4 text-muted-foreground inline" />
+                                ) : modo === 'nenhum' ? (
+                                  <span className="text-muted-foreground">—</span>
+                                ) : modo === 'fixo' ? (
+                                  <span className="font-semibold text-green-700 text-xs whitespace-nowrap">
+                                    {rotuloRegraCurto(regra)}
+                                  </span>
+                                ) : entry.revenueGoal > 0 ? (
                                   <span className="font-semibold text-green-700">{formatPct(entry.commissionRate)}</span>
                                 ) : (
-                                  <Lock className="h-4 w-4 text-muted-foreground inline" />
+                                  <span className="text-muted-foreground">—</span>
                                 )}
                               </TableCell>
                             )}
@@ -392,8 +465,11 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
         </TabsContent>
 
         <TabsContent value="tiers" className="mt-4">
+          {/* So a tabela de Vendas Internas fica visivel: e a unica em uso (Robson,
+              Natalia e Maria Eduarda). As de Externo CLT/PJ ficavam na tela sem
+              ninguem apurando por elas. */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-            {Object.entries(data.commissionTiers).map(([type, tiers]) => {
+            {Object.entries(data.commissionTiers).filter(([type]) => type === 'telemarketing').map(([type, tiers]) => {
               const labels = type === 'telemarketing'
                 ? ['Até 89,99%', '90% a 99,99%', '100% a 109,99%', '110% a 119,99%', '120% ou mais']
                 : ['Até 84,99%', '85% a 99,99%', '100% a 109,99%', '110% a 119,99%', '120% ou mais'];
@@ -404,6 +480,10 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                       <Award className="h-4 w-4" />
                       {type === 'vendedor_clt' ? 'Comissão — Externo CLT' : type === 'vendedor_pj' ? 'Comissão — Externo PJ' : 'Comissão — Vendas Internas'}
                     </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      Aplica-se a Robson, Natália e Maria Eduarda. Os demais vendedores têm
+                      percentual fixo.
+                    </p>
                   </CardHeader>
                   <CardContent>
                     <Table>
@@ -448,7 +528,10 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {allEntries.map((entry) => (
+                    {allEntries.map((entry) => {
+                      const regra = regraDoVendedor(entry.sellerName);
+                      const modo = modoDoVendedor(entry.sellerId, entry.sellerName);
+                      return (
                       <TableRow key={entry.sellerId}>
                         <TableCell className="font-medium">
                           {entry.sellerName}
@@ -456,21 +539,30 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                             ({SELLER_TYPE_LABELS[entry.sellerType] || entry.sellerType})
                           </span>
                         </TableCell>
-                        {[1, 2, 3, 4, 5].map((tier) => (
-                          <TableCell key={tier} className="text-center">
-                            {entry.commissionTier === tier && entry.revenueGoal > 0 ? (
-                              <Badge className={`${getTierColor(tier)} border`}>
-                                {formatPct(entry.commissionRate)}
-                              </Badge>
-                            ) : entry.commissionTier > tier && entry.revenueGoal > 0 ? (
-                              <span className="text-green-400">✓</span>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
+                        {modo !== 'faixa' ? (
+                          <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                            {modo === 'fixo'
+                              ? `Não usa faixas — ${rotuloRegraCurto(regra)}`
+                              : 'Sem regra de comissão definida'}
                           </TableCell>
-                        ))}
+                        ) : (
+                          [1, 2, 3, 4, 5].map((tier) => (
+                            <TableCell key={tier} className="text-center">
+                              {entry.commissionTier === tier && entry.revenueGoal > 0 ? (
+                                <Badge className={`${getTierColor(tier)} border`}>
+                                  {formatPct(entry.commissionRate)}
+                                </Badge>
+                              ) : entry.commissionTier > tier && entry.revenueGoal > 0 ? (
+                                <span className="text-green-400">✓</span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </TableCell>
+                          ))
+                        )}
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -515,6 +607,12 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                         const entry = allEntries.find(e => e.sellerId === h.seller_id);
                         const name = entry?.sellerName || h.seller_id;
                         const isCurrent = h.month === data.month && h.year === data.year;
+                        // So sobrescreve quando conseguimos identificar o vendedor; sem
+                        // identificacao, mantem o registro historico como esta.
+                        const regraHist = entry ? regraDoVendedor(entry.sellerName) : null;
+                        const modoHist: ModoComissao = entry
+                          ? modoDoVendedor(entry.sellerId, entry.sellerName)
+                          : 'faixa';
                         return (
                           <TableRow key={h.id} className={isCurrent ? 'bg-blue-50/30' : ''}>
                             <TableCell className="font-medium text-sm">{name}</TableCell>
@@ -539,12 +637,22 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
                               {formatPct(parseFloat(h.achievement_pct || '0'))}
                             </TableCell>
                             <TableCell className="text-center">
-                              <Badge className={`${getTierColor(h.commission_tier)} border text-xs`}>
-                                F{h.commission_tier}
-                              </Badge>
+                              {modoHist === 'faixa' ? (
+                                <Badge className={`${getTierColor(h.commission_tier)} border text-xs`}>
+                                  F{h.commission_tier}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-xs text-muted-foreground">
+                                  {modoHist === 'fixo' ? 'Fixo' : '—'}
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm">
-                              {parseFloat(h.commission_pct || '0').toFixed(2)}%
+                              {modoHist === 'faixa'
+                                ? `${parseFloat(h.commission_pct || '0').toFixed(2)}%`
+                                : modoHist === 'fixo'
+                                  ? rotuloRegraCurto(regraHist)
+                                  : '—'}
                             </TableCell>
                             <TableCell className="text-center">
                               {h.is_projected ? (

@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { sortSellersByType } from "@/lib/sellerOrder";
-import { regraDoVendedor, calcularComissao, descricaoRegra, type FaixaComissao } from "@/lib/comissaoMetas";
+import { regraDoVendedor, calcularComissao, descricaoRegra, TIPO_FAIXA_PADRAO, type FaixaComissao } from "@/lib/comissaoMetas";
 import { usePermissions } from "@/lib/permissions";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -280,10 +280,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
   // vendedor sem regra entra como "—" na linha e nao contamina o rodape.
   const totaisComissao = goalsVisiveis.reduce((acc, g) => {
     const nome = getSellerName(g.sellerId);
-    const tipo = getSellerType(g.sellerId);
     const regra = regraDoVendedor(nome);
     if (!regra) return acc;
-    const faixa = dashboardData?.commissionTiers?.[tipo || ''];
+    const faixa = dashboardData?.commissionTiers?.[TIPO_FAIXA_PADRAO];
     const meta = parseFloat(g.revenueGoal?.toString() || '0');
     const at = metricsMap[g.sellerId]?.actual || 0;
     const pj = metricsMap[g.sellerId]?.projected || 0;
@@ -391,6 +390,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             });
                             return ` (${partes.join(' · ')}).`;
                           })()}
+                          {' '}São os <strong>únicos</strong> que seguem faixas; todos os demais têm
+                          percentual fixo.
                         </span>
                       </li>
                       <li className="flex gap-2">
@@ -451,7 +452,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     // ── COMISSAO (regra em @/lib/comissaoMetas). Cada coluna usa a sua propria
                     // base; nas faixas, a aliquota segue o atingimento daquela coluna.
                     const regra = regraDoVendedor(getSellerName(goal.sellerId));
-                    const faixa = dashboardData?.commissionTiers?.[type || ''];
+                    // Quem segue faixas usa SEMPRE a tabela de Vendas Internas (telemarketing),
+                    // mesmo que esteja cadastrado como Externo CLT/PJ.
+                    const faixa = dashboardData?.commissionTiers?.[TIPO_FAIXA_PADRAO];
                     const atingAtual = goalValue > 0 ? (actual / goalValue) * 100 : 0;
                     const comissaoMeta = calcularComissao(regra, goalValue, 100, faixa, goalValue);
                     const comissaoAtual = calcularComissao(regra, actual, atingAtual, faixa, goalValue);
@@ -499,9 +502,10 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                                     {instanceLabels[instId] || instId.slice(0, 4)}: {formatCurrency(val as number)}
                                   </div>
                                 ))}
-                                {Object.keys(metrics.byInstance).length > 1 && (
-                                  <div className="font-semibold border-t mt-0.5 pt-0.5">Total: {formatCurrency(actual)}</div>
-                                )}
+                                {/* O Total sai SEMPRE. Antes ele so aparecia com 2+ instancias,
+                                    entao quando havia uma unica instancia a tela mostrava apenas
+                                    o valor daquela instancia e escondia o faturamento real. */}
+                                <div className="font-semibold border-t mt-0.5 pt-0.5">Total: {formatCurrency(actual)}</div>
                               </>
                             ) : (
                               formatCurrency(actual)
