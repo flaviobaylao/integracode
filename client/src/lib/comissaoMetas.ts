@@ -52,6 +52,12 @@ const REGRAS: Array<{ chaves: string[]; regra: RegraComissao }> = [
   { chaves: ['leticia'], regra: { tipo: 'fixo', pct: 8, descontoFixo: 1400, proporcionalAMeta: true } },
 ];
 
+/** Tabela de faixas usada por quem segue faixas. Confirmado por Flavio em 02/09/2026:
+ *  "somente Robson, Natalia e Maria Eduarda utilizam as regras de faixas de comissao
+ *  para VENDAS INTERNAS" — ou seja, sempre a tabela telemarketing, independentemente
+ *  do tipo com que o vendedor esta cadastrado. */
+export const TIPO_FAIXA_PADRAO = 'telemarketing';
+
 /** Devolve a regra do vendedor, ou null quando nao ha regra definida. */
 export function regraDoVendedor(sellerName: string): RegraComissao {
   const nome = semAcento(sellerName);
@@ -101,6 +107,28 @@ export function calcularComissao(
   const bruto = (valor * regra.pct) / 100;
   const liquido = bruto - (regra.descontoFixo || 0);
   return liquido > 0 ? liquido : 0; // piso zero
+}
+
+/** Como a comissao deste vendedor e apurada:
+ *   'faixa'  -> Faixas de Comissao (Vendas Internas)
+ *   'fixo'   -> percentual fixo (com ou sem desconto)
+ *   'nenhum' -> sem regra cadastrada; a tela mostra "—" e nunca uma faixa. */
+export type ModoComissao = 'faixa' | 'fixo' | 'nenhum';
+
+export function modoComissao(regra: RegraComissao): ModoComissao {
+  if (!regra) return 'nenhum';
+  return regra.tipo === 'faixa' ? 'faixa' : 'fixo';
+}
+
+/** Rotulo curto da regra, para colunas de resumo. */
+export function rotuloRegraCurto(regra: RegraComissao): string {
+  if (!regra) return '—';
+  if (regra.tipo === 'faixa') return 'Faixas';
+  const pct = `${regra.pct.toString().replace('.', ',')}%`;
+  if (regra.descontoFixo) {
+    return `${pct} da meta − R$ ${regra.descontoFixo.toLocaleString('pt-BR')}`;
+  }
+  return `${pct} fixo`;
 }
 
 /** Texto curto da regra, para o title/tooltip da coluna. */
