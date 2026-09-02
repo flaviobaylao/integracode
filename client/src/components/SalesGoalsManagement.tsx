@@ -286,9 +286,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     const meta = parseFloat(g.revenueGoal?.toString() || '0');
     const at = metricsMap[g.sellerId]?.actual || 0;
     const pj = metricsMap[g.sellerId]?.projected || 0;
-    acc.meta += calcularComissao(regra, meta, 100, faixa) || 0;
-    acc.atual += calcularComissao(regra, at, meta > 0 ? (at / meta) * 100 : 0, faixa) || 0;
-    acc.proj += calcularComissao(regra, pj, meta > 0 ? (pj / meta) * 100 : 0, faixa) || 0;
+    acc.meta += calcularComissao(regra, meta, 100, faixa, meta) || 0;
+    acc.atual += calcularComissao(regra, at, meta > 0 ? (at / meta) * 100 : 0, faixa, meta) || 0;
+    acc.proj += calcularComissao(regra, pj, meta > 0 ? (pj / meta) * 100 : 0, faixa, meta) || 0;
     return acc;
   }, { meta: 0, atual: 0, proj: 0 });
 
@@ -390,9 +390,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     const regra = regraDoVendedor(getSellerName(goal.sellerId));
                     const faixa = dashboardData?.commissionTiers?.[type || ''];
                     const atingAtual = goalValue > 0 ? (actual / goalValue) * 100 : 0;
-                    const comissaoMeta = calcularComissao(regra, goalValue, 100, faixa);
-                    const comissaoAtual = calcularComissao(regra, actual, atingAtual, faixa);
-                    const comissaoProj = calcularComissao(regra, projected, achievement, faixa);
+                    const comissaoMeta = calcularComissao(regra, goalValue, 100, faixa, goalValue);
+                    const comissaoAtual = calcularComissao(regra, actual, atingAtual, faixa, goalValue);
+                    const comissaoProj = calcularComissao(regra, projected, achievement, faixa, goalValue);
                     const tituloRegra = descricaoRegra(regra);
                     return (
                       <TableRow key={goal.id}>
