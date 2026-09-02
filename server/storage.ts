@@ -188,6 +188,7 @@ import { calculateNextVisitDate } from "@shared/visitSchedule";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
 import { naoEFantasma } from "./ghost-receivables";
+import { ehDividaViva } from "./divida-viva";
 
 export interface IStorage {
   getAgentDetailedStats(): Promise<Array<{ 
@@ -5498,6 +5499,8 @@ export class DatabaseStorage implements IStorage {
         AND (r.amount - COALESCE(r.amount_paid, 0)) > 0
         -- Duplicata de reparo de orfaos nao bloqueia venda: ver ghost-receivables.ts
         AND ${naoEFantasma('r')}
+        -- Devolucao / outra praca / troca / amostra / CFOP 5949: ver divida-viva.ts
+        AND ${ehDividaViva('r')}
         -- Títulos HISTÓRICOS da migração Omie (import_origin='omie_historico') NÃO são
         -- dívida viva para fins de bloqueio de crédito — são dados migrados (tratados como
         -- conciliados). Sem esta exclusão, uma dívida de 2020-2025 importada travaria uma
