@@ -2037,17 +2037,20 @@ export default function RotaDoDia() {
                             {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />}
                             <span className="truncate">{visit.customerName}</span>
                           </p>
+                          {/* Solicitar Alteração: SOMENTE clientes ativos (não leads). */}
+                          {!isLead && (
                           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
                             <ChangeRequestControl
                               disabled
-                              entityType={isLead ? 'lead' : 'customer'}
-                              entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
-                              customerId={visit.customerId}
-                              entityName={visit.customerName}
-                              sellerId={selectedSellerId}
-                              state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                              entityType="customer"
+                              entityId={String(visit.customerId)}
+                            customerId={visit.customerId}
+                            entityName={visit.customerName}
+                            sellerId={selectedSellerId}
+                            state={changeRequestStates[crKey('customer', String(visit.customerId))]}
                             />
                           </div>
+                          )}
                         </div>
                       ) : (
                       <>
@@ -2263,18 +2266,20 @@ export default function RotaDoDia() {
                           >
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </Button>
-                          {/* 📋 Solicitar Alteração — no mobile fica ABAIXO dos ícones (linha própria); no desktop, inline. */}
+                          {/* 📋 Solicitar Alteração — SOMENTE clientes ativos (não leads). No mobile fica ABAIXO dos ícones. */}
+                          {!isLead && (
                           <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0">
                           <ChangeRequestControl
                             disabled={hasCheckinOrSale(visit.customerId)}
-                            entityType={isLead ? 'lead' : 'customer'}
-                            entityId={String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId)}
+                            entityType="customer"
+                            entityId={String(visit.customerId)}
                             customerId={visit.customerId}
                             entityName={visit.customerName}
                             sellerId={selectedSellerId}
-                            state={changeRequestStates[crKey(isLead ? 'lead' : 'customer', String(isLead ? (visit.entityId || visit.leadId || visit.customerId) : visit.customerId))]}
+                            state={changeRequestStates[crKey('customer', String(visit.customerId))]}
                           />
                           </div>
+                          )}
                           {/* ✏️ Ajustar / assumir atendimento (Adm) — ícone junto às demais ações */}
                           {isCheckinAdmin && !isLead && (
                             <Button
@@ -3005,18 +3010,7 @@ export default function RotaDoDia() {
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       )}
-                      {/* 📋 Solicitar Alteração — no mobile fica ABAIXO dos ícones; no desktop, inline. */}
-                      <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0">
-                      <ChangeRequestControl
-                        disabled={hasCheckinOrSale(r.customerId)}
-                        entityType="repescagem"
-                        entityId={String(r.assignmentId)}
-                        customerId={r.customerId}
-                        entityName={r.customerName}
-                        sellerId={selectedSellerId}
-                        state={changeRequestStates[crKey('repescagem', String(r.assignmentId))]}
-                      />
-                      </div>
+                      {/* Solicitar Alteração REMOVIDO para Repescagem — somente clientes ativos têm o botão. */}
                     </div>
                   </div>
                   );
