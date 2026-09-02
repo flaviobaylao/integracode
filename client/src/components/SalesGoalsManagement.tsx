@@ -367,11 +367,11 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     <TableHead>Vendedor</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead className="text-right">Meta</TableHead>
-                    <TableHead className="text-right">Comissão</TableHead>
+                    <TableHead className="text-right bg-gray-50">Comissão</TableHead>
                     <TableHead className="text-right">Fat. Atual</TableHead>
-                    <TableHead className="text-right">Comissão Conquistada</TableHead>
+                    <TableHead className="text-right bg-gray-50">Comissão Conquistada</TableHead>
                     <TableHead className="text-right">Projeção</TableHead>
-                    <TableHead className="text-right">Projeção da Comissão</TableHead>
+                    <TableHead className="text-right bg-gray-50">Projeção da Comissão</TableHead>
                     <TableHead className="text-right">% Ating.</TableHead>
                     {canManage && <TableHead className="text-right">% Cobertura (7d)</TableHead>}
                     {canEdit && <TableHead className="text-right">Ações</TableHead>}
@@ -422,7 +422,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             );
                           })()}
                         </TableCell>
-                        <TableCell className="text-right font-mono" title={tituloRegra}>
+                        <TableCell className="text-right font-mono bg-gray-50" title={tituloRegra}>
                           {comissaoMeta === null
                             ? <span className="text-muted-foreground">—</span>
                             : <span className="text-muted-foreground">{formatCurrency(comissaoMeta)}</span>}
@@ -445,7 +445,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right font-mono" title={tituloRegra}>
+                        <TableCell className="text-right font-mono bg-gray-50" title={tituloRegra}>
                           {comissaoAtual === null
                             ? <span className="text-muted-foreground">—</span>
                             : <span className="font-semibold">{formatCurrency(comissaoAtual)}</span>}
@@ -455,7 +455,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             {formatCurrency(projected)}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right font-mono" title={tituloRegra}>
+                        <TableCell className="text-right font-mono bg-gray-50" title={tituloRegra}>
                           {comissaoProj === null
                             ? <span className="text-muted-foreground">—</span>
                             : <span className="text-muted-foreground">{formatCurrency(comissaoProj)}</span>}
@@ -515,7 +515,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     <TableRow className="bg-muted/50 font-semibold">
                       <TableCell colSpan={2}>Total</TableCell>
                       <TableCell className="text-right font-mono">{formatCurrency(totalGoal)}</TableCell>
-                      <TableCell className="text-right font-mono">{formatCurrency(totaisComissao.meta)}</TableCell>
+                      <TableCell className="text-right font-mono bg-gray-50">{formatCurrency(totaisComissao.meta)}</TableCell>
                       <TableCell className="text-right font-mono">
                         <div>
                           {Object.keys(totalByInstance).length > 0 && Object.keys(totalByInstance).length > 1 && (
@@ -530,9 +530,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                           <div>{formatCurrency(totalActual)}</div>
                         </div>
                       </TableCell>
-                      <TableCell className="text-right font-mono">{formatCurrency(totaisComissao.atual)}</TableCell>
+                      <TableCell className="text-right font-mono bg-gray-50">{formatCurrency(totaisComissao.atual)}</TableCell>
                       <TableCell className="text-right font-mono">{formatCurrency(totalProjected)}</TableCell>
-                      <TableCell className="text-right font-mono">{formatCurrency(totaisComissao.proj)}</TableCell>
+                      <TableCell className="text-right font-mono bg-gray-50">{formatCurrency(totaisComissao.proj)}</TableCell>
                       <TableCell className="text-right">
                         {totalGoal > 0 ? (
                           <span className={`text-sm font-mono ${(totalProjected / totalGoal) * 100 >= 100 ? 'text-green-600' : ''}`}>
