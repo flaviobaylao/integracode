@@ -86,6 +86,15 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     situacao: customers.situacao,
   }).from(customers).where(inArray(customers.id, customerIds));
 
+  // Função (role) do DONO da carteira de cada candidato. Regra: SOMENTE clientes de
+  // carteira de VENDEDOR EXTERNO (role 'vendedor') entram em repescagem. Clientes de
+  // carteira de telemarketing (ou sem dono/outro papel) NÃO caem em repescagem.
+  const candSellerIds = Array.from(new Set(cs.map(c => c.sellerId).filter(Boolean) as string[]));
+  const candSellerRoleRows = candSellerIds.length
+    ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, candSellerIds))
+    : [];
+  const candSellerRoleById = new Map(candSellerRoleRows.map(u => [u.id, u.role]));
+
   // 2) Visitas registradas (visit_schedule_history) — usado para marcar "efetuada"
   const visits = await db.select({
     customerId: visitScheduleHistory.customerId,
@@ -297,6 +306,9 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   for (const c of cs) {
     // Carteiras de canal/sistema (Honest 1/2/3, HOTSITE, INSTAGRAM) NAO entram em repescagem.
     if (REPESCAGEM_EXCLUDED_SELLER_IDS.has(c.sellerId || '')) continue;
+    // SOMENTE clientes de carteira de VENDEDOR EXTERNO (role 'vendedor') entram em repescagem.
+    // Clientes de telemarketing (ou sem dono/outro papel) NÃO caem em repescagem.
+    if (candSellerRoleById.get(c.sellerId || '') !== 'vendedor') continue;
     // Clientes INATIVOS nao entram em repescagem (cobre dessincronizacao entre
     // customers.isActive e active_customers, alem de status vindo do Omie).
     if ((c as any).isActive === false
