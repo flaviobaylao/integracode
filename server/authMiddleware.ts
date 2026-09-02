@@ -71,6 +71,11 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
 
     // 🔁 "Entrar como" (impersonação de ADMIN): permite ao admin ver o sistema com a visão de
     // outra função. Só se aplica quando a função REAL é admin (impede escalonamento de privilégio).
+    const _impUserId = (req.session as any)?.impersonateUserId;
+    if (_impUserId && user.role === 'admin') {
+      const _tgt = await storage.getUser(String(_impUserId));
+      if (_tgt && _tgt.isActive) { (req as any).realUser = user; user = _tgt as any; (req as any).impersonating = true; }
+    }
     const _impRole = (req.session as any)?.impersonateRole;
     if (_impRole && user.role === 'admin') {
       (req as any).realUser = user;
