@@ -78,6 +78,7 @@ import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
 import { objectStorageClient } from './replit_integrations/object_storage/objectStorage';
 import { naoEFantasma } from "./ghost-receivables";
+import { ehDividaViva } from "./divida-viva";
 
 // 🔌 DESLIGAMENTO DO OMIE NO CADASTRO DE CLIENTES (o 2.0 vira o dono do cadastro).
 // Controla APENAS a sincronização de CADASTRO de cliente com o Omie — as duas direções:
@@ -24328,6 +24329,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             )
             -- Duplicata de reparo de orfaos nao e divida: ver ghost-receivables.ts
             AND ${naoEFantasma('r')}
+            -- Devolucao / outra praca / troca / amostra / CFOP 5949: ver divida-viva.ts
+            AND ${ehDividaViva('r')}
             AND (
               r.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
               ${documents.length > 0
