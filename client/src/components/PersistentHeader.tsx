@@ -65,10 +65,19 @@ export default function PersistentHeader() {
   const realRole = u?._realRole || u?.role;
   const isRealAdmin = realRole === 'admin';
   const impersonatingRole = u?._impersonatingRole as string | undefined;
-  const verComo = async (role: string) => {
-    if (!role) return;
+  const [verComoUsers, setVerComoUsers] = useState<any[]>([]);
+  useEffect(() => {
+    if (!isRealAdmin) return;
+    let alive = true;
+    fetch('/api/users', { credentials: 'include' }).then((r) => r.ok ? r.json() : []).then((list) => { if (alive && Array.isArray(list)) setVerComoUsers(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, [isRealAdmin]);
+  const VER_COMO_ORDER = ['vendedor', 'telemarketing', 'coordinator', 'administrative', 'motorista', 'industria'];
+  const usersByRole = VER_COMO_ORDER.map((r) => [r, verComoUsers.filter((x: any) => x && x.role === r && x.role !== 'admin').sort((a: any, b: any) => (((a.firstName || '') + ' ' + (a.lastName || '')).localeCompare((b.firstName || '') + ' ' + (b.lastName || '')))) ] as [string, any[]]).filter(([, list]) => list.length > 0);
+  const verComo = async (userId: string) => {
+    if (!userId) return;
     try {
-      await fetch('/api/admin/impersonate', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
+      await fetch('/api/admin/impersonate', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
       window.location.reload();
     } catch { /* noop */ }
   };
@@ -133,12 +142,11 @@ export default function PersistentHeader() {
               data-testid="select-ver-como"
             >
               <option value="">Ver como…</option>
-              <option value="coordinator">Coordenador</option>
-              <option value="administrative">Administrativo</option>
-              <option value="vendedor">Vendedor</option>
-              <option value="telemarketing">Telemarketing</option>
-              <option value="motorista">Motorista</option>
-              <option value="industria">Indústria</option>
+              {usersByRole.map(([r, list]) => (
+                <optgroup key={r} label={ROLE_LABELS[r] || r}>
+                  {list.map((usr: any) => (<option key={usr.id} value={usr.id}>{[usr.firstName, usr.lastName].filter(Boolean).join(' ') || usr.email || usr.id}</option>))}
+                </optgroup>
+              ))}
             </select>
           )}
           <div className="text-right hidden sm:block">
