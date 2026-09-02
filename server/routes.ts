@@ -1051,6 +1051,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // 🏭 Perfil "Indústria": acesso total — o front recebe role 'admin' (crachá continua "Indústria" via _perfilIndustria).
           const u: any = user.role === 'industria' ? { ...user, role: 'admin', _perfilIndustria: true } : user;
           // 🔁 "Entrar como": expõe a função impersonada + a real para o front (só admin real).
+          const impUserId = (req.session as any)?.impersonateUserId;
+          if (impUserId && u.role === 'admin') {
+            const _t = await storage.getUser(String(impUserId));
+            if (_t) return res.json({ ..._t, _impersonatingRole: _t.role, _realRole: 'admin' });
+          }
           const impRole = (req.session as any)?.impersonateRole;
           if (impRole && u.role === 'admin') {
             return res.json({ ...u, role: impRole, _impersonatingRole: impRole, _realRole: 'admin' });
@@ -1108,6 +1113,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const IMPERSONATABLE_ROLES = ['coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria'];
   app.post('/api/admin/impersonate', authenticateAdmin, async (req: any, res) => {
     try {
+      const userId = String(req.body?.userId || '');
+      if (userId) {
+        const target = await storage.getUser(userId);
+        if (!target || target.isActive === false) return res.status(400).json({ message: 'Usu\u00e1rio inv\u00e1lido para visualiza\u00e7\u00e3o.' });
+        if (target.role === 'admin') return res.status(400).json({ message: 'N\u00e3o \u00e9 poss\u00edvel ver como outro administrador.' });
+        (req.session as any).impersonateUserId = userId;
+        delete (req.session as any).impersonateRole;
+        return req.session.save((err: any) => { if (err) return res.status(500).json({ message: 'Erro ao salvar sess\u00e3o' }); res.json({ ok: true, impersonatingUserId: userId, impersonatingRole: target.role }); });
+      }
       const role = String(req.body?.role || '');
       if (!IMPERSONATABLE_ROLES.includes(role)) {
         return res.status(400).json({ message: 'Função inválida para visualização.' });
@@ -1123,6 +1137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   app.post('/api/admin/impersonate/stop', authenticateAdmin, async (req: any, res) => {
     try {
+      delete (req.session as any).impersonateUserId;
       delete (req.session as any).impersonateRole;
       req.session.save((err: any) => {
         if (err) return res.status(500).json({ message: 'Erro ao salvar sessão' });
