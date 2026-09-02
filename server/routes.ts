@@ -13,6 +13,7 @@ import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCar
 import { logCustomerChanges, getCustomerChangeHistory } from "./customerAudit";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
+import { validarDocumentosDoPayload, normalizarDocumento } from "./documentValidation";
 import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { registerOmieNfeImportRoutes } from "./omie-nfe-import";
@@ -2177,6 +2178,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Clean data: transform empty strings to null for numeric fields
+      // 🔒 VALIDAÇÃO DE CPF/CNPJ — barra documento invalido no CADASTRO, e nao so
+      // na emissao da NF-e. Recupera zeros a esquerda perdidos e move o valor
+      // para a coluna certa quando o conteudo nao corresponde ao campo.
+      {
+        const __doc = validarDocumentosDoPayload(req.body);
+        if (!__doc.ok) {
+          console.warn(`🚫 [DOC-PATCH] ${'cliente '+id+': '}${__doc.erro}`);
+          return res.status(400).json({ message: __doc.erro, field: 'cnpj' });
+        }
+        __doc.avisos.forEach(a => console.log(`🔧 [DOC-PATCH] ${'cliente '+id+': '}${a}`));
+        Object.assign(req.body, __doc.campos);
+      }
       const cleanedData: any = {};
       Object.keys(req.body).forEach(key => {
         const value = req.body[key];
@@ -2392,6 +2405,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Transformar strings vazias em null para campos numéricos
+      // 🔒 VALIDAÇÃO DE CPF/CNPJ — barra documento invalido no CADASTRO, e nao so
+      // na emissao da NF-e. Recupera zeros a esquerda perdidos e move o valor
+      // para a coluna certa quando o conteudo nao corresponde ao campo.
+      {
+        const __doc = validarDocumentosDoPayload(req.body);
+        if (!__doc.ok) {
+          console.warn(`🚫 [DOC-CREATE] ${''}${__doc.erro}`);
+          return res.status(400).json({ message: __doc.erro, field: 'cnpj' });
+        }
+        __doc.avisos.forEach(a => console.log(`🔧 [DOC-CREATE] ${''}${a}`));
+        Object.assign(req.body, __doc.campos);
+      }
       const cleanedData = {
         ...req.body,
         customerType: req.body.customerType || 'pessoa_fisica', // ✅ Default para pessoa física
@@ -2850,6 +2875,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Transformar strings vazias em null para campos numéricos
       const __blankDoc = (v: any) => (String(v ?? '').replace(/\D/g, '').length ? v : null);
+      // 🔒 VALIDAÇÃO DE CPF/CNPJ — barra documento invalido no CADASTRO, e nao so
+      // na emissao da NF-e. Recupera zeros a esquerda perdidos e move o valor
+      // para a coluna certa quando o conteudo nao corresponde ao campo.
+      {
+        const __doc = validarDocumentosDoPayload(req.body);
+        if (!__doc.ok) {
+          console.warn(`🚫 [DOC-PUT] ${'cliente '+id+': '}${__doc.erro}`);
+          return res.status(400).json({ message: __doc.erro, field: 'cnpj' });
+        }
+        __doc.avisos.forEach(a => console.log(`🔧 [DOC-PUT] ${'cliente '+id+': '}${a}`));
+        Object.assign(req.body, __doc.campos);
+      }
+
       const data = {
         ...req.body,
         // Se normalizedWeekdaysJson foi definido, usar; senão, não incluir no update (manter valor existente)
@@ -29375,8 +29413,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const normalizedDoc = String(document).replace(/\D/g, '');
           if (!normalizedDoc) continue;
           
-          const documentType = normalizedDoc.length <= 11 ? 'cpf' : 'cnpj';
-          documentsMap.set(normalizedDoc, { fantasyName: fantasyName || '', documentType });
+          // ⚠️ ANTES classificava pelo TAMANHO: um CNPJ iniciado por zeros (que perdeu
+          // os zeros numa conversao numerica) entrava como CPF, e um documento de 15
+          // digitos entrava como CNPJ. AGORA classifica pelo digito verificador.
+          const __r = normalizarDocumento(normalizedDoc, normalizedDoc.length <= 11 ? 'cpf' : 'cnpj');
+          if (!__r.ok || __r.vazio) {
+            console.warn(`🚫 [IMPORT-DOC] documento ignorado: ${normalizedDoc}`);
+            continue;
+          }
+          documentsMap.set(__r.digitos, { fantasyName: fantasyName || '', documentType: __r.tipo });
         }
         
         const documentsInFile = Array.from(documentsMap.keys());
