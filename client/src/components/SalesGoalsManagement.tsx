@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { sortSellersByType } from "@/lib/sellerOrder";
+import { regraDoVendedor, calcularComissao, descricaoRegra, type FaixaComissao } from "@/lib/comissaoMetas";
 import { usePermissions } from "@/lib/permissions";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
 interface CommissionDashboardData {
+  commissionTiers?: Record<string, FaixaComissao>;
   sellers: Array<{
     sellerId: string;
     sellerName: string;
@@ -120,7 +122,10 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: ['admin', 'coordinator', 'administrative'].includes(user.role),
+    // Vendedor e telemarketing tambem precisam: sem isso as colunas de Fat. Atual,
+    // Projecao e as tres de comissao apareceriam zeradas para eles. O endpoint ja
+    // devolve apenas a propria linha para esses papeis.
+    enabled: ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'].includes(user.role),
   });
 
   const { data: yearlySummary } = useQuery<YearlySummaryData>({
@@ -215,6 +220,14 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
 
   const canManage = ['admin', 'coordinator', 'administrative'].includes(user.role);
   const canEdit = user.role === 'admin';
+  // VISIBILIDADE DO BOX (18/08/2026): vendedor e telemarketing passam a ver o box
+  // "Gerenciar Metas de Faturamento" para acompanhar a propria comissao — mas SO a
+  // propria linha. Gestao (admin/coordinator/administrative) ve a equipe inteira.
+  // O backend ja devolve apenas a propria meta para esses papeis; o filtro abaixo
+  // e a segunda barreira, para o caso de a API passar a devolver mais.
+  const isSellerRole = ['vendedor', 'telemarketing'].includes(user.role);
+  const podeVerBox = canManage || isSellerRole;
+  const goalsVisiveis = canManage ? salesGoals : salesGoals.filter((g) => g.sellerId === user.id);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -259,11 +272,28 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
     return u?.sellerType || '';
   };
 
-  const totalGoal = salesGoals.reduce((s, g) => s + parseFloat(g.revenueGoal?.toString() || '0'), 0);
-  const totalActual = salesGoals.reduce((s, g) => s + (metricsMap[g.sellerId]?.actual || 0), 0);
-  const totalProjected = salesGoals.reduce((s, g) => s + (metricsMap[g.sellerId]?.projected || 0), 0);
+  const totalGoal = goalsVisiveis.reduce((s, g) => s + parseFloat(g.revenueGoal?.toString() || '0'), 0);
+  const totalActual = goalsVisiveis.reduce((s, g) => s + (metricsMap[g.sellerId]?.actual || 0), 0);
+  const totalProjected = goalsVisiveis.reduce((s, g) => s + (metricsMap[g.sellerId]?.projected || 0), 0);
+  // Totais das colunas de comissao. Somam apenas quem TEM regra definida —
+  // vendedor sem regra entra como "—" na linha e nao contamina o rodape.
+  const totaisComissao = goalsVisiveis.reduce((acc, g) => {
+    const nome = getSellerName(g.sellerId);
+    const tipo = getSellerType(g.sellerId);
+    const regra = regraDoVendedor(nome);
+    if (!regra) return acc;
+    const faixa = dashboardData?.commissionTiers?.[tipo || ''];
+    const meta = parseFloat(g.revenueGoal?.toString() || '0');
+    const at = metricsMap[g.sellerId]?.actual || 0;
+    const pj = metricsMap[g.sellerId]?.projected || 0;
+    acc.meta += calcularComissao(regra, meta, 100, faixa) || 0;
+    acc.atual += calcularComissao(regra, at, meta > 0 ? (at / meta) * 100 : 0, faixa) || 0;
+    acc.proj += calcularComissao(regra, pj, meta > 0 ? (pj / meta) * 100 : 0, faixa) || 0;
+    return acc;
+  }, { meta: 0, atual: 0, proj: 0 });
+
   const totalByInstance: Record<string, number> = {};
-  for (const g of salesGoals) {
+  for (const g of goalsVisiveis) {
     const byInst = metricsMap[g.sellerId]?.byInstance || {};
     for (const [instId, val] of Object.entries(byInst)) {
       totalByInstance[instId] = (totalByInstance[instId] || 0) + (val as number);
@@ -278,17 +308,19 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
         </h2>
       </div>
 
-      {canEdit && (
+      {podeVerBox && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <DollarSign className="h-5 w-5" />
-                  Gerenciar Metas de Faturamento
+                  {canManage ? 'Gerenciar Metas de Faturamento' : 'Minha Meta e Comissão'}
                 </CardTitle>
                 <CardDescription>
-                  Defina a meta de faturamento mensal para cada vendedor ou atendente de telemarketing individualmente.
+                  {canManage
+                    ? 'Defina a meta de faturamento mensal para cada vendedor ou atendente de telemarketing individualmente.'
+                    : 'Sua meta do mês, o quanto já foi faturado e a comissão correspondente. Você vê apenas os seus números.'}
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
@@ -322,11 +354,11 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
               <div className="flex items-center justify-center h-32">
                 <Loader2 className="h-6 w-6 animate-spin" />
               </div>
-            ) : salesGoals.length === 0 ? (
+            ) : goalsVisiveis.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <DollarSign className="h-10 w-10 mx-auto mb-3 opacity-40" />
                 <p>Nenhuma meta configurada para {months.find(m => m.value === selectedMonth)?.label}/{selectedYear}.</p>
-                <p className="text-sm">Clique em "Nova Meta" para começar.</p>
+                {canManage && <p className="text-sm">Clique em "Nova Meta" para começar.</p>}
               </div>
             ) : (
               <Table>
@@ -335,21 +367,33 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                     <TableHead>Vendedor</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead className="text-right">Meta</TableHead>
+                    <TableHead className="text-right">Comissão</TableHead>
                     <TableHead className="text-right">Fat. Atual</TableHead>
+                    <TableHead className="text-right">Comissão Conquistada</TableHead>
                     <TableHead className="text-right">Projeção</TableHead>
+                    <TableHead className="text-right">Projeção da Comissão</TableHead>
                     <TableHead className="text-right">% Ating.</TableHead>
-                    <TableHead className="text-right">% Cobertura (7d)</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
+                    {canManage && <TableHead className="text-right">% Cobertura (7d)</TableHead>}
+                    {canEdit && <TableHead className="text-right">Ações</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {salesGoals.map((goal) => {
+                  {goalsVisiveis.map((goal) => {
                     const type = getSellerType(goal.sellerId);
                     const metrics = metricsMap[goal.sellerId];
                     const goalValue = parseFloat(goal.revenueGoal?.toString() || '0');
                     const actual = metrics?.actual || 0;
                     const projected = metrics?.projected || 0;
                     const achievement = goalValue > 0 ? (projected / goalValue) * 100 : 0;
+                    // ── COMISSAO (regra em @/lib/comissaoMetas). Cada coluna usa a sua propria
+                    // base; nas faixas, a aliquota segue o atingimento daquela coluna.
+                    const regra = regraDoVendedor(getSellerName(goal.sellerId));
+                    const faixa = dashboardData?.commissionTiers?.[type || ''];
+                    const atingAtual = goalValue > 0 ? (actual / goalValue) * 100 : 0;
+                    const comissaoMeta = calcularComissao(regra, goalValue, 100, faixa);
+                    const comissaoAtual = calcularComissao(regra, actual, atingAtual, faixa);
+                    const comissaoProj = calcularComissao(regra, projected, achievement, faixa);
+                    const tituloRegra = descricaoRegra(regra);
                     return (
                       <TableRow key={goal.id}>
                         <TableCell className="font-medium">{getSellerName(goal.sellerId)}</TableCell>
@@ -378,6 +422,11 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             );
                           })()}
                         </TableCell>
+                        <TableCell className="text-right font-mono" title={tituloRegra}>
+                          {comissaoMeta === null
+                            ? <span className="text-muted-foreground">—</span>
+                            : <span className="text-muted-foreground">{formatCurrency(comissaoMeta)}</span>}
+                        </TableCell>
                         <TableCell className="text-right font-mono">
                           <div>
                             {metrics?.byInstance && Object.keys(metrics.byInstance).length > 0 ? (
@@ -396,10 +445,20 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             )}
                           </div>
                         </TableCell>
+                        <TableCell className="text-right font-mono" title={tituloRegra}>
+                          {comissaoAtual === null
+                            ? <span className="text-muted-foreground">—</span>
+                            : <span className="font-semibold">{formatCurrency(comissaoAtual)}</span>}
+                        </TableCell>
                         <TableCell className="text-right font-mono">
                           <span className={projected >= goalValue && goalValue > 0 ? 'text-green-600 font-semibold' : projected > 0 ? 'text-amber-600' : ''}>
                             {formatCurrency(projected)}
                           </span>
+                        </TableCell>
+                        <TableCell className="text-right font-mono" title={tituloRegra}>
+                          {comissaoProj === null
+                            ? <span className="text-muted-foreground">—</span>
+                            : <span className="text-muted-foreground">{formatCurrency(comissaoProj)}</span>}
                         </TableCell>
                         <TableCell className="text-right">
                           {goalValue > 0 ? (
@@ -411,6 +470,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             </div>
                           ) : '—'}
                         </TableCell>
+                        {canManage && (
                         <TableCell className="text-right">
                           {(() => {
                             const uu = allUsers.find((x: User) => x.id === goal.sellerId) as any;
@@ -424,6 +484,8 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             return <span className={`text-sm font-mono ${color}`} title={`${atend}/${plan} planejados (7d)`}>{c}%</span>;
                           })()}
                         </TableCell>
+                        )}
+                        {canEdit && (
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
                             {perms.can(CARD_METAS, "editar") && (
@@ -443,15 +505,17 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                             )}
                           </div>
                         </TableCell>
+                        )}
                       </TableRow>
                     );
                   })}
                 </TableBody>
-                {salesGoals.length > 1 && (
+                {canManage && goalsVisiveis.length > 1 && (
                   <TableFooter>
                     <TableRow className="bg-muted/50 font-semibold">
                       <TableCell colSpan={2}>Total</TableCell>
                       <TableCell className="text-right font-mono">{formatCurrency(totalGoal)}</TableCell>
+                      <TableCell className="text-right font-mono">{formatCurrency(totaisComissao.meta)}</TableCell>
                       <TableCell className="text-right font-mono">
                         <div>
                           {Object.keys(totalByInstance).length > 0 && Object.keys(totalByInstance).length > 1 && (
@@ -466,7 +530,9 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                           <div>{formatCurrency(totalActual)}</div>
                         </div>
                       </TableCell>
+                      <TableCell className="text-right font-mono">{formatCurrency(totaisComissao.atual)}</TableCell>
                       <TableCell className="text-right font-mono">{formatCurrency(totalProjected)}</TableCell>
+                      <TableCell className="text-right font-mono">{formatCurrency(totaisComissao.proj)}</TableCell>
                       <TableCell className="text-right">
                         {totalGoal > 0 ? (
                           <span className={`text-sm font-mono ${(totalProjected / totalGoal) * 100 >= 100 ? 'text-green-600' : ''}`}>
@@ -475,7 +541,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                         ) : '—'}
                       </TableCell>
                       <TableCell />
-                      <TableCell />
+                      {canEdit && <TableCell />}
                     </TableRow>
                   </TableFooter>
                 )}

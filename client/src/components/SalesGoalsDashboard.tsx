@@ -136,12 +136,24 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
     }
   };
 
+  // PRIVACIDADE (18/08/2026): vendedor e telemarketing enxergam SOMENTE a propria
+  // meta. Antes a tabela listava todo mundo e escondia apenas o valor da comissao —
+  // meta, faturamento e projecao dos colegas ficavam visiveis. Gestao (admin,
+  // coordinator, administrative) continua vendo a equipe inteira.
+  const podeVerTodos = ['admin', 'coordinator', 'administrative'].includes(user.role);
   const allEntries = useMemo(() => {
     if (!data) return [];
     const entries = [...data.sellers];
     if (data.telemarketing) entries.push(data.telemarketing);
-    return entries;
-  }, [data]);
+    if (podeVerTodos) return entries;
+    return entries.filter((e) => {
+      if (e.sellerId === data.currentUserId) return true;
+      if (e.sellerId === 'TELEMARKETING' && (data.telemarketing as any)?.members) {
+        return (data.telemarketing as any).members.some((m: any) => m.id === data.currentUserId);
+      }
+      return false;
+    });
+  }, [data, podeVerTodos]);
 
   const isCurrentUser = (sellerId: string) => {
     if (!data) return false;
@@ -152,7 +164,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
     return false;
   };
 
-  const canSeeAllDetails = ['admin', 'coordinator', 'administrative'].includes(user.role);
+  const canSeeAllDetails = podeVerTodos;
 
   const historyByEntity = useMemo(() => {
     if (!data?.history) return {};
