@@ -47,3 +47,37 @@ export function isValidFiscalDoc(value: string): boolean {
   if (d.length === 14) return isValidCnpj(d);
   return false;
 }
+
+/**
+ * Escolhe o CPF/CNPJ que vai para a NF-e, tratando o CADASTRO como fonte de
+ * verdade e a copia do card como fallback.
+ *
+ * Motivo (ZOI MICRO PADARIA ARTESANAL, 01-02/set/2026): a criacao da NF-e fazia
+ *   `item.customerDocument || customer?.cnpj || customer?.cpf || ''`
+ * ou seja, a COPIA CONGELADA do card vencia o cadastro. Quando essa copia estava
+ * errada (15 digitos) ou vazia, a nota nascia com o valor ruim — e corrigir o
+ * cadastro depois NAO consertava a nota, porque o documento ja tinha sido
+ * copiado. O retry falhava de novo com a mesma mensagem, indefinidamente.
+ *
+ * Ordem: cadastro valido > copia valida > recuperacao de zeros a esquerda > vazio.
+ * Devolver '' e proposital: a montagem do XML ja trata destinatario nao
+ * identificado, e um documento invalido no XML e rejeitado pela SEFAZ.
+ */
+export function escolherDocumentoFiscal(docCadastro: string, docCopia: string): string {
+  const cad = (docCadastro || '').replace(/\D/g, '');
+  const cop = (docCopia || '').replace(/\D/g, '');
+
+  if (isValidFiscalDoc(cad)) return cad;
+  if (isValidFiscalDoc(cop)) return cop;
+
+  // Recupera zeros a esquerda perdidos numa conversao numerica em algum ponto do
+  // caminho (ex.: "65979000186" -> "00065979000186", caso MERCADINHO JAO).
+  for (const d of [cad, cop]) {
+    if (d.length >= 11 && d.length < 14) {
+      const comZeros = d.padStart(14, '0');
+      if (isValidCnpj(comZeros)) return comZeros;
+    }
+  }
+
+  return '';
+}
