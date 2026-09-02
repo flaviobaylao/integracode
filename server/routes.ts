@@ -4713,8 +4713,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         instanceLabels[inst.id] = inst.name || inst.display_name || inst.id;
       }
 
-      // Telemarketing: visualizacao limitada as proprias informacoes (ve apenas a propria linha)
-      const _restrictOwn = user.role === 'telemarketing';
+      // PRIVACIDADE (18/08/2026): vendedor TAMBEM passa a receber apenas a propria
+      // linha. Antes so o telemarketing era restrito, entao um vendedor recebia no
+      // payload a meta, o faturamento e a projecao de todos os colegas — bastava
+      // abrir o DevTools para ler. Gestao (admin/coordinator/administrative) segue
+      // recebendo a equipe inteira.
+      const _restrictOwn = ['vendedor', 'telemarketing'].includes(user.role);
       const _sellersOut = _restrictOwn ? results.filter((r: any) => r.sellerId === user.id) : results;
       const _historyOut = _restrictOwn ? (historyRows.rows || []).filter((h: any) => String(h.seller_id) === String(user.id)) : (historyRows.rows || []);
 
@@ -4725,7 +4729,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         workingDaysElapsed,
         commissionTiers: COMMISSION_TIERS,
         sellers: _sellersOut,
-        telemarketing: telemarketingResult,
+        // O bloco do grupo Vendas Internas so vai para quem pode ver a equipe ou
+        // para quem e membro do proprio grupo.
+        telemarketing: (!_restrictOwn || (telemarketingResult as any)?.members?.some?.((m: any) => m.id === user.id))
+          ? telemarketingResult : undefined,
         history: _historyOut,
         currentUserId: user.id,
         instanceLabels,
