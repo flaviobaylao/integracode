@@ -179,6 +179,7 @@ import {
   type InsertSpedExport,
 } from "@shared/schema";
 import { db } from "./db";
+import { sanitizeOrderLines } from "./order-lines";
 import { eq, and, desc, asc, gte, lte, gt, lt, sql, inArray, or, isNotNull, isNull, ne, like, getTableColumns } from "drizzle-orm";
 // Garante uma unica vez por processo o valor 'lixeira' no enum billing_pipeline_stage.
 let __lixeiraEnumReady = false;
@@ -1592,7 +1593,12 @@ export class DatabaseStorage implements IStorage {
   async createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard> {
     // Derivar routeDay do scheduledDate se não for fornecido
     let processedSalesCard = { ...salesCard };
-    
+
+    // 🧹 Item sem quantidade nao entra no pedido (ver server/order-lines.ts).
+    if (Array.isArray((processedSalesCard as any).products)) {
+      (processedSalesCard as any).products = sanitizeOrderLines((processedSalesCard as any).products, 'createSalesCard').lines;
+    }
+
     if (!processedSalesCard.routeDay && processedSalesCard.scheduledDate) {
       const scheduledDate = new Date(processedSalesCard.scheduledDate);
       const dayOfWeek = scheduledDate.getDay();
@@ -1672,9 +1678,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard> {
+    // 🧹 Ao editar o pedido, a linha "removida" costuma chegar zerada em vez de
+    // sumir do array — e era assim que o item fantasma nascia. Descarta aqui.
+    const _sc: any = { ...(salesCard as any) };
+    if (Array.isArray(_sc.products)) {
+      _sc.products = sanitizeOrderLines(_sc.products, `updateSalesCard ${id}`).lines;
+    }
     const [updatedSalesCard] = await db
       .update(salesCards)
-      .set({ ...salesCard as any, updatedAt: agora() })
+      .set({ ..._sc as any, updatedAt: agora() })
       .where(eq(salesCards.id, id))
       .returning();
     return updatedSalesCard;
@@ -8835,12 +8847,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createBillingPipelineItem(data: InsertBillingPipeline): Promise<BillingPipeline> {
-    const [item] = await db.insert(billingPipeline).values(data).returning();
+    // 🧹 Camada 1 (ver server/order-lines.ts): item sem quantidade nao entra no
+    // pipeline. Sanear AQUI cobre todos os caminhos de uma vez (venda do app,
+    // hotsite, reconciliacao, duplicacao, balcao) sem depender de cada rota lembrar.
+    const _clean: any = { ...(data as any) };
+    if (Array.isArray(_clean.products)) {
+      _clean.products = sanitizeOrderLines(_clean.products, 'createBillingPipelineItem').lines;
+    }
+    const [item] = await db.insert(billingPipeline).values(_clean).returning();
     return item;
   }
 
   async updateBillingPipelineItem(id: string, data: Partial<InsertBillingPipeline>): Promise<BillingPipeline> {
-    const [item] = await db.update(billingPipeline).set({ ...data, updatedAt: new Date() }).where(eq(billingPipeline.id, id)).returning();
+    const _clean: any = { ...(data as any) };
+    if (Array.isArray(_clean.products)) {
+      _clean.products = sanitizeOrderLines(_clean.products, `updateBillingPipelineItem ${id}`).lines;
+    }
+    const [item] = await db.update(billingPipeline).set({ ..._clean, updatedAt: new Date() }).where(eq(billingPipeline.id, id)).returning();
     return item;
   }
 

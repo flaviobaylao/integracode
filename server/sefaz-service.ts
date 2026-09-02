@@ -1886,6 +1886,31 @@ export class SefazService {
         return { success: false, errorCode: 'NO_ITEMS', errorMessage: 'Nota fiscal não possui itens' };
       }
 
+      // 🚫 TRAVA FINAL — item com qCom = 0 nao vai para a SEFAZ.
+      // Em 31/ago/2026 as NF 104366 e 104367 foram autorizadas com itens em
+      // QUANT 0,0000 (linhas fantasma do pedido, que nem entravam no total).
+      // Item de quantidade zero e irregular; esta guarda esta no ponto por onde
+      // TODA transmissao passa (auto-emissao, botao Transmitir, retentativa).
+      const itensZerados = (items as any[]).filter((it) => {
+        const q = parseFloat(String(it?.quantity ?? '0').replace(',', '.'));
+        return !Number.isFinite(q) || q <= 0;
+      });
+      if (itensZerados.length > 0) {
+        const nomes = itensZerados.map((it: any) => it?.productName || it?.productCode || 'item sem nome').join(', ');
+        const msg = `NF-e com ${itensZerados.length} item(ns) sem quantidade: ${nomes}. Corrija o pedido (remova a linha ou informe a quantidade) e fature de novo.`;
+        console.error(`🚫 [SEFAZ] Transmissao bloqueada — NF ${invoice.invoiceNumber}: ${msg}`);
+        try {
+          await storage.createFiscalInvoiceEvent({
+            invoiceId,
+            eventType: 'erro',
+            status: 'error',
+            description: msg,
+            errorMessage: msg,
+          } as any);
+        } catch {}
+        return { success: false, errorCode: 'ZERO_QTY_ITEM', errorMessage: msg };
+      }
+
       const scenario = invoice.fiscalScenarioId
         ? await storage.getFiscalScenario(invoice.fiscalScenarioId)
         : null;

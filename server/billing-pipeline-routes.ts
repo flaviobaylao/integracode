@@ -1,6 +1,7 @@
 import { Express } from 'express';
 import { randomUUID } from 'crypto';
 import { storage } from './storage';
+import { validateOrderLines, assertNoZeroQuantityLines, ZeroQuantityLineError } from './order-lines';
 // Hora oficial do Brasil — ver shared/tempo.ts (INSTANTE grava UTC; DATA DE
 // CALENDARIO grava meia-noite UTC e nunca converte fuso).
 import { agora, paredeBR, dataCalendario, hojeBR } from '@shared/tempo';
@@ -1656,6 +1657,15 @@ export function registerBillingPipelineRoutes(app: Express) {
           });
         }
 
+        // 🚫 Item sem quantidade → barra ANTES do claim/baixa de estoque/criacao da nota.
+        // (camada 2 — ver server/order-lines.ts; foi assim que as NF 104366/104367
+        //  sairam com QUANT 0,0000 em 31/ago/2026)
+        const linesCheck = validateOrderLines((item as any).products);
+        if (!linesCheck.valid) {
+          console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} — item sem quantidade`);
+          return res.status(400).json({ message: linesCheck.message, zeroQuantityError: true, details: linesCheck.message });
+        }
+
         // Cadastro fiscal incompleto (sem UF/CEP) → barra antes de travar/baixar estoque/criar a nota.
         const fiscalCheck = await validateCustomerFiscalData(item);
         if (!fiscalCheck.valid) {
@@ -2081,6 +2091,12 @@ export function registerBillingPipelineRoutes(app: Express) {
 
           if (stage === 'faturado' && item.stage !== 'faturado') {
             // Cadastro fiscal incompleto (sem UF/CEP) → não fatura este item.
+            // 🚫 Item sem quantidade — mesma trava do faturamento individual.
+            const linesCheck = validateOrderLines((item as any).products);
+            if (!linesCheck.valid) {
+              results.push({ id, success: false, error: linesCheck.message });
+              continue;
+            }
             const fiscalCheck = await validateCustomerFiscalData(item);
             if (!fiscalCheck.valid) {
               results.push({ id, success: false, error: fiscalCheck.message });
@@ -2283,6 +2299,10 @@ export function registerBillingPipelineRoutes(app: Express) {
       } catch (e: any) { console.warn('[RETRY-NFE] falha ao reemitir NF nova:', e?.message); }
       return res.status(422).json({ success: false, message: emitRes?.errorMessage || 'Falha ao transmitir a NF-e.' });
     } catch (err: any) {
+      // Pedido com item zerado e erro do PEDIDO (400), nao falha do servidor (500).
+      if (err instanceof ZeroQuantityLineError || err?.code === 'ZERO_QTY_LINE') {
+        return res.status(400).json({ success: false, message: err.message, zeroQuantityError: true });
+      }
       res.status(500).json({ success: false, message: err.message });
     }
   });
@@ -2578,6 +2598,9 @@ async function resolveCondicaoPagamento(item: any): Promise<{ effForma: string; 
 }
 
 async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>, opts?: { skipEmit?: boolean }) {
+  // 🚫 REDE FINAL: nenhuma NF nasce com item de quantidade zero, venha o pedido
+  //    de onde vier (retentativa, balcao, reconciliacao, dado legado).
+  assertNoZeroQuantityLines((item as any)?.products, `pedido ${item?.orderNumber || item?.salesCardId || item?.id}`);
   // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
   // ⚠️ CHAVE À PROVA DE COLISÃO: casa pelo sales_card_id COMPLETO. O ref textual do pedido
   //    (orderNumber = 'INT-<8 hex>') TRUNCA o UUID em 8 caracteres e COLIDE entre cartões distintos
