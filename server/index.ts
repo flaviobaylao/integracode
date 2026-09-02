@@ -4878,7 +4878,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
-  app.get("/api/dashboard2/full", async (_req, res) => {
+  app.get("/api/dashboard2/full", async (req, res) => {
     try {
       const tz = "America/Sao_Paulo";
       const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -4893,7 +4893,37 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // ── REGRA OFICIAL DE FATURAMENTO (vigencia 01/07/2026) — server/faturamento-oficial.ts
       // NF-e autorizada de venda, deduplicada por CNPJ+serie+numero, data SEM AT TIME ZONE
       // (as datas ja estao em horario de Brasilia). now() e timestamptz, esse sim converte.
-      const VF = nfVendaWhere('fi'); const VFROM = nfVendaFrom('fi'); const VDATA = nfData('fi');
+      // Visao por carteira: vendedor/telemarketing (e admin via Ver como) enxergam so o que implantaram.
+      let __scopeSellerId = '';
+      try {
+        const __s: any = (req as any).session || {};
+        let __uid: any = __s?.userId || __s?.user?.claims?.sub || (((req as any).isAuthenticated && (req as any).isAuthenticated()) ? (req as any).user?.claims?.sub : null);
+        let __umail: any = __s?.userEmail || __s?.user?.claims?.email || (req as any).user?.claims?.email || null;
+        if (__uid) {
+          let __u: any = await storage.getUser(String(__uid));
+          if ((!__u) && __umail) __u = await storage.getUserByEmail(String(__umail));
+          if (__u && __u.isActive) {
+            let __role = __u.role; let __sid = String(__u.id || '');
+            const __impU = __s?.impersonateUserId;
+            const __imp = __s?.impersonateRole;
+            if (__impU && __u.role === 'admin') { const __t = await storage.getUser(String(__impU)); if (__t) { __role = __t.role; __sid = String(__t.id || ''); } }
+            else if (__imp && __u.role === 'admin') { __role = __imp; }
+            if (__role === 'vendedor' || __role === 'telemarketing') __scopeSellerId = __sid;
+          }
+        }
+      } catch (e) {}
+      const __SID = __scopeSellerId.replace(/[^a-zA-Z0-9_-]/g, '');
+      const __RESTRICT = __SID.length > 0;
+      const __keySet = `(SELECT unnest(ARRAY[su.id, su.omie_vendor_code, 'omie-vendor-'||su.omie_vendor_code]) FROM users su WHERE su.id='${__SID}')`;
+      const __impl = `COALESCE(NULLIF((SELECT bp_s.seller_id FROM ${PIPELINE_POR_NF} bp_s WHERE bp_s.num = fi.invoice_number LIMIT 1),''),(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = fi.sales_card_id LIMIT 1))`;
+      const __implLeg = `COALESCE(NULLIF((SELECT bp_s.seller_id FROM ${PIPELINE_POR_NF} bp_s WHERE bp_s.num = fiscal_invoices.invoice_number LIMIT 1),''),(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = fiscal_invoices.sales_card_id LIMIT 1))`;
+      const SCOPE     = __RESTRICT ? ` AND (${__impl}) = ANY(${__keySet})` : '';
+      const SCOPE_LEG = __RESTRICT ? ` AND (${__implLeg}) = ANY(${__keySet})` : '';
+      const SCOPE_BLK = __RESTRICT ? ` AND bo.seller_id = ANY(${__keySet})` : '';
+      const SCOPE_BP  = __RESTRICT ? ` AND bp.seller_id = ANY(${__keySet})` : '';
+      const SCOPE_SC  = __RESTRICT ? ` AND sc.seller_id = ANY(${__keySet})` : '';
+      const SCOPE_ORD = __RESTRICT ? ` AND seller_id = ANY(${__keySet})` : '';
+      const VF = nfVendaWhere('fi') + SCOPE; const VFROM = nfVendaFrom('fi'); const VDATA = nfData('fi');
       const statsRows = await q2(`SELECT COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS today_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1), 0) AS yesterday_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 7), 0) AS last_week_same_day_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate >= date_trunc('week', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS week_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS month_sales FROM (SELECT fi.total_invoice, ${VDATA}::date AS fdate FROM ${VFROM} WHERE ${VF}) t`);
       const stats = { todaySales: statsRows[0]?.today_sales ?? 0, lastWeekSameDaySales: statsRows[0]?.last_week_same_day_sales ?? 0, yesterdaySales: statsRows[0]?.yesterday_sales ?? 0, weekSales: statsRows[0]?.week_sales ?? 0, monthSales: statsRows[0]?.month_sales ?? 0 };
       // FIX (18/jul): número grande de "Faturamento do Mês" = NF-e autorizada do mês (faturamento real, = dashboard2/all),
@@ -4909,11 +4939,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // Grafico anual: meses ANTERIORES a vigencia mantem o calculo legado (nao reprocessamos
       // o passado); de 01/07/2026 em diante vale a Regra Oficial.
       const _legado = "status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (import_origin IS NULL OR TRIM(import_origin) = '')";
-      const monthlySeriesRows = await q2(`SELECT m, COALESCE(SUM(v),0) AS v FROM (SELECT to_char(date_trunc('month', COALESCE(emission_date,authorization_date,created_at)),'YYYY-MM') AS m, total_invoice AS v FROM fiscal_invoices WHERE ${_legado} AND COALESCE(emission_date,authorization_date,created_at)::date >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo'))::date AND COALESCE(emission_date,authorization_date,created_at)::date < '${VIGENCIA_REGRA_OFICIAL}'::date UNION ALL SELECT to_char(date_trunc('month', ${VDATA}),'YYYY-MM') AS m, fi.total_invoice AS v FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date >= '${VIGENCIA_REGRA_OFICIAL}'::date) s GROUP BY m ORDER BY m`);
+      const monthlySeriesRows = await q2(`SELECT m, COALESCE(SUM(v),0) AS v FROM (SELECT to_char(date_trunc('month', COALESCE(emission_date,authorization_date,created_at)),'YYYY-MM') AS m, total_invoice AS v FROM fiscal_invoices WHERE ${_legado}${SCOPE_LEG} AND COALESCE(emission_date,authorization_date,created_at)::date >= date_trunc('year',(now() AT TIME ZONE 'America/Sao_Paulo'))::date AND COALESCE(emission_date,authorization_date,created_at)::date < '${VIGENCIA_REGRA_OFICIAL}'::date UNION ALL SELECT to_char(date_trunc('month', ${VDATA}),'YYYY-MM') AS m, fi.total_invoice AS v FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date >= '${VIGENCIA_REGRA_OFICIAL}'::date) s GROUP BY m ORDER BY m`);
       const series = { daily: dailySeriesRows.map((r: any) => ({ d: r.d, v: Number(r.v) || 0 })), monthly: monthlySeriesRows.map((r: any) => ({ m: r.m, v: Number(r.v) || 0 })) };
       const vendasEfetivasMes: any = { label: null, value: 0, approx: true };
-      const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at, COALESCE(scb.operation_type::text, bpb.operation_type, 'venda') AS operation_type FROM blocked_orders bo LEFT JOIN sales_cards scb ON scb.id = bo.sales_card_id LEFT JOIN LATERAL (SELECT operation_type FROM billing_pipeline b2 WHERE b2.sales_card_id = bo.sales_card_id ORDER BY created_at DESC LIMIT 1) bpb ON true LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','') OR u.id = bo.seller_id) WHERE bo.status = 'blocked' ORDER BY bo.blocked_at DESC NULLS LAST`);
-      const aFaturar = await q2(`SELECT bp.id, COALESCE(c.name, '-') AS customer_name, COALESCE(bp.seller_name, '') AS seller_name, bp.sale_value, bp.created_at FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id WHERE bp.stage IN ('pedido','a_faturar') ORDER BY bp.created_at DESC NULLS LAST`);
+      const blocked = await q2(`SELECT bo.id, COALESCE(c.name, '-') AS customer_name, TRIM(CONCAT(u.first_name, ' ', u.last_name)) AS seller_name, bo.total_amount, bo.block_reason, bo.blocked_at, COALESCE(scb.operation_type::text, bpb.operation_type, 'venda') AS operation_type FROM blocked_orders bo LEFT JOIN sales_cards scb ON scb.id = bo.sales_card_id LEFT JOIN LATERAL (SELECT operation_type FROM billing_pipeline b2 WHERE b2.sales_card_id = bo.sales_card_id ORDER BY created_at DESC LIMIT 1) bpb ON true LEFT JOIN customers c ON c.id = bo.customer_id LEFT JOIN users u ON (u.omie_vendor_code = bo.seller_id OR u.omie_vendor_code = replace(bo.seller_id,'omie-vendor-','') OR u.id = bo.seller_id) WHERE bo.status = 'blocked'${SCOPE_BLK} ORDER BY bo.blocked_at DESC NULLS LAST`);
+      const aFaturar = await q2(`SELECT bp.id, COALESCE(c.name, '-') AS customer_name, COALESCE(bp.seller_name, '') AS seller_name, bp.sale_value, bp.created_at FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id WHERE bp.stage IN ('pedido','a_faturar')${SCOPE_BP} ORDER BY bp.created_at DESC NULLS LAST`);
       const nfsHoje = await q2(`SELECT fi.id, COALESCE(fi.customer_name,'-') AS customer_name, fi.invoice_number, fi.total_invoice, COALESCE(fi.authorization_date, fi.emission_date) AS authorization_date, COALESCE(vend.nome,'Sem vendedor') AS seller_name FROM ${VFROM} LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id LEFT JOIN ${PIPELINE_POR_NF} bp ON bp.num = fi.invoice_number LEFT JOIN LATERAL (SELECT NULLIF(TRIM(COALESCE(u.first_name,'')||' '||COALESCE(u.last_name,'')),'') AS nome FROM users u WHERE u.id = COALESCE(NULLIF(bp.seller_id,''), sc.seller_id) OR u.omie_vendor_code = COALESCE(NULLIF(bp.seller_id,''), sc.seller_id) OR u.omie_vendor_code = REPLACE(COALESCE(NULLIF(bp.seller_id,''), sc.seller_id,''),'omie-vendor-','') LIMIT 1) vend ON true WHERE ${VF} AND ${VDATA}::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY COALESCE(fi.authorization_date, fi.emission_date) DESC NULLS LAST`);
 
       const faturadosDia = await q2(`SELECT COALESCE(NULLIF(TRIM(fi.customer_name),''),'-') AS customer_name, COALESCE(SUM(fi.total_invoice),0) AS total FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date GROUP BY 1 HAVING COALESCE(SUM(fi.total_invoice),0) > 0 ORDER BY total DESC`);
@@ -4921,11 +4951,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const ordersOverview = { blocked, aFaturar, nfsHoje, faturadosDia, faturadosSemana };
       // Clientes a atender no dia = clientes agendados (sales_cards.scheduled_date = a Rota do Dia).
       // Visitado (Visitas Efetivadas) = existe CHECK-IN em route_checkpoints na mesma data.
-      const sched = await q2(`SELECT sc.customer_id AS customer_id, (sc.scheduled_date)::date::text AS d, BOOL_OR(EXISTS (SELECT 1 FROM route_checkpoints rc WHERE rc.customer_id = sc.customer_id AND rc.checkpoint_type = 'check_in' AND (rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (sc.scheduled_date)::date)) AS visited FROM sales_cards sc WHERE sc.scheduled_date IS NOT NULL AND (sc.scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}' AND sc.customer_id IS NOT NULL GROUP BY sc.customer_id, d`);
-      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE stage <> 'lixeira' AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      const sched = await q2(`SELECT sc.customer_id AS customer_id, (sc.scheduled_date)::date::text AS d, BOOL_OR(EXISTS (SELECT 1 FROM route_checkpoints rc WHERE rc.customer_id = sc.customer_id AND rc.checkpoint_type = 'check_in' AND (rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (sc.scheduled_date)::date)) AS visited FROM sales_cards sc WHERE sc.scheduled_date IS NOT NULL AND (sc.scheduled_date)::date BETWEEN '${startDate}' AND '${endDate}' AND sc.customer_id IS NOT NULL${SCOPE_SC} GROUP BY sc.customer_id, d`);
+      const orders = await q2(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE stage <> 'lixeira' AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL${SCOPE_ORD} GROUP BY customer_id, d`);
       let metas: any[] = [];
       // Meta = média dos ÚLTIMOS 3 faturamentos (pedidos) de cada cliente
-      try { metas = await q2(`SELECT customer_id, AVG(sale_value) AS meta FROM (SELECT customer_id, sale_value, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) AS rn FROM billing_pipeline WHERE stage <> 'lixeira' AND sale_value > 0 AND customer_id IS NOT NULL) t WHERE rn <= 3 GROUP BY customer_id`); } catch (e) {}
+      try { metas = await q2(`SELECT customer_id, AVG(sale_value) AS meta FROM (SELECT customer_id, sale_value, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) AS rn FROM billing_pipeline WHERE stage <> 'lixeira' AND sale_value > 0 AND customer_id IS NOT NULL${SCOPE_ORD}) t WHERE rn <= 3 GROUP BY customer_id`); } catch (e) {}
       const custInfo = await q2(`SELECT c.id AS customer_id, c.name AS customer_name, c.seller_id, TRIM(CONCAT(u.first_name,' ',u.last_name)) AS seller_name FROM customers c LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(c.seller_id,'omie-vendor-','') OR u.id = c.seller_id)`);
       const metaMap = new Map<string, number>();
       for (const m of metas) metaMap.set(m.customer_id, Number(m.meta) || 0);
