@@ -73,7 +73,7 @@ export default function PersistentHeader() {
     return () => { alive = false; };
   }, [isRealAdmin]);
   const VER_COMO_ORDER = ['vendedor', 'telemarketing', 'coordinator', 'administrative', 'motorista', 'industria'];
-  const usersByRole = VER_COMO_ORDER.map((r) => [r, verComoUsers.filter((x: any) => x && x.role === r && x.role !== 'admin').sort((a: any, b: any) => (((a.firstName || '') + ' ' + (a.lastName || '')).localeCompare((b.firstName || '') + ' ' + (b.lastName || '')))) ] as [string, any[]]).filter(([, list]) => list.length > 0);
+  const usersByRole = VER_COMO_ORDER.map((r) => [r, verComoUsers.filter((x: any) => x && x.role === r && x.role !== 'admin' && (r !== 'vendedor' || x.isActive !== false)).sort((a: any, b: any) => (((a.firstName || '') + ' ' + (a.lastName || '')).localeCompare((b.firstName || '') + ' ' + (b.lastName || '')))) ] as [string, any[]]).filter(([, list]) => list.length > 0);
   const verComo = async (userId: string) => {
     if (!userId) return;
     try {
