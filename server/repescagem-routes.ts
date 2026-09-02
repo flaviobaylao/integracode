@@ -699,7 +699,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   }
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId) || !pinnedSpecial.has(a.customerId)) continue;
-    if (isLockedToday(a)) continue; // respeita trava manual do dia
+    // Roteamento especial é AUTORITATIVO: mesmo travado em outro atendente, corrige para o alvo.
     const target = repescagemSpecialTarget(coordById.get(a.customerId)?.sellerId || null, (candidateByCustomerId.get(a.customerId) as any)?.daysSince ?? 999, a.customerId)!;
     if (a.assignedUserId !== target) {
       const oldUser = a.assignedUserId;
@@ -714,7 +714,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       else if (internalSet.has(oldUser)) internalLoad.set(oldUser, Math.max(0, (internalLoad.get(oldUser) || 0) - 1));
       internalLoad.set(target, (internalLoad.get(target) || 0) + 1);
       validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: target } as any);
-    } else {
+    } else if (!isLockedToday(a)) {
       await db.update(repescagemAssignments).set({ locked: true, lockedDate: today, updatedAt: new Date() }).where(eq(repescagemAssignments.id, a.id));
     }
   }
@@ -873,7 +873,9 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         continue;
       }
       const priorStatuses = priorMap.get(`${cand.customerId}_${cand.lastRedDate}`) || [];
-      if (priorStatuses.includes('completed')) continue;
+      // Cliente atendido (completed) sem venda continua vermelho: para o roteamento especial
+      // ele DEVE ser re-atribuído ao alvo (só sai da repescagem com venda). Demais: pula.
+      if (priorStatuses.includes('completed') && !pinnedSpecial.has(cand.customerId)) continue;
       const target = chooseTarget(cand.customerId);
       if (!target) continue; // ninguem habilitado apto — fica sem atribuicao (fallback de orfaos)
       const isSpecial = pinnedSpecial.has(cand.customerId);
