@@ -44,6 +44,11 @@ export function foraDaDivida(descricao: any): boolean {
  */
 export function ehDividaViva(alias: string): SQL {
   const a = sql.raw(alias);
-  return sql`(COALESCE(${a}.description, '') || ' ' || COALESCE(${a}.category, ''))
-    !~* '(DEVOLU|\[GYN\]|\[BSB\]|\[IND\]|TROCA|AMOSTRA|OUTRAS?[[:space:]]+SA[IÍ]DAS?)'`;
+  // ATENCAO: isto e um TEMPLATE LITERAL. `\[` dentro dele vira `[` na string final,
+  // e ai `[GYN]` deixaria de ser texto literal para virar CLASSE DE CARACTERES —
+  // casando qualquer G, Y ou N e derrubando praticamente todo titulo. Por isso o
+  // escape e DUPLO (`\\[`), para chegar ao Postgres como `\[`. Regressao real em
+  // 02/set/2026: o badge e o bloqueio de credito zeraram por causa disto.
+  const marcadores = "(DEVOLU|\\[GYN\\]|\\[BSB\\]|\\[IND\\]|TROCA|AMOSTRA|OUTRAS?[[:space:]]+SA[IÍ]DAS?)";
+  return sql`(COALESCE(${a}.description, '') || ' ' || COALESCE(${a}.category, '')) !~* ${marcadores}`;
 }
