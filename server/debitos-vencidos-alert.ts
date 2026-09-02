@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { sendUmblerTalkText } from './chat-routes';
 import { storage } from './storage';
 import { sqlIdsFantasmas } from "./ghost-receivables";
+import { foraDaDivida } from "./divida-viva";
 
 // Alerta diário (dias úteis, 08:30 BRT): débitos VENCIDOS por carteira.
 // FONTE = aba Contas a Receber (storage.getReceivables({status:'vencida'})): traz o
@@ -93,7 +94,10 @@ export async function enviarAlertaDebitosVencidos(apply: boolean, opts?: { toOve
   const recs = recsAll.filter((r) => String(r.status) === 'vencida'
     && (Number(r.amount || 0) - Number(r.amountPaid || 0)) > 0.005
     && !idsHistorico.has(String(r.id))
-    && !idsFantasma.has(String(r.id)));
+    && !idsFantasma.has(String(r.id))
+    // Devolucao / outra praca ([GYN]/[BSB]/[IND]) / troca / amostra / CFOP 5949
+    // nao sao divida do cliente: nao viram cobranca. Ver divida-viva.ts.
+    && !foraDaDivida(`${(r as any).description || ''} ${(r as any).category || ''}`));
 
   // 2) Cadastro de clientes (carteira/vendedor + cidade)
   const cs = rowsOf(await db.execute(sql`SELECT id, name, city, cnpj, cpf, seller_id FROM customers`));
