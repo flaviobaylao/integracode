@@ -62,12 +62,23 @@ const REP_ROUTE = {
 };
 const REP_SPECIAL_MAX_DAYS = 3;
 // Retorna o atendente-alvo (telemarketing) do roteamento especial, ou null.
-function repescagemSpecialTarget(ownerId: string | null, daysSince: number, customerId: string): string | null {
+// carlosTarget: alvo pré-calculado (split 50/50 balanceado) para clientes do Carlos.
+function repescagemSpecialTarget(ownerId: string | null, daysSince: number, customerId: string, carlosTarget?: string): string | null {
   if (!ownerId || daysSince > REP_SPECIAL_MAX_DAYS) return null;
   if (ownerId === REP_ROUTE.GILMAR) return REP_ROUTE.LETICIA;
   if (ownerId === REP_ROUTE.JHONATAN) return REP_ROUTE.ROBSON;
-  if (ownerId === REP_ROUTE.CARLOS) return (repShuffleKey(customerId) % 2 === 0) ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON;
+  if (ownerId === REP_ROUTE.CARLOS) return carlosTarget || ((repShuffleKey(customerId) % 2 === 0) ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON);
   return null;
+}
+// Split 50/50 EXATO dos clientes do Carlos (até 3 dias) entre Letícia e Robson,
+// determinístico por ordenação do customerId. Retorna Map customerId -> alvo.
+function repescagemCarlosSplit(cands: Array<{ customerId: string; daysSince?: number }>, ownerOf: (id: string) => string | null): Map<string, string> {
+  const ids = cands
+    .filter(c => ownerOf(c.customerId) === REP_ROUTE.CARLOS && ((c as any).daysSince ?? 999) <= REP_SPECIAL_MAX_DAYS)
+    .map(c => c.customerId).sort();
+  const m = new Map<string, string>();
+  ids.forEach((id, i) => m.set(id, i % 2 === 0 ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON));
+  return m;
 }
 
 function brTodayStr(): string {
@@ -483,6 +494,12 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     lng: c.lng != null ? Number(c.lng) : null,
     sellerId: (c.sellerId as string | null) || null,
   }]));
+  // Split 50/50 exato dos clientes do Carlos e helper de alvo especial deste ciclo.
+  const carlosSplit = repescagemCarlosSplit(candidates as any, (id) => coordById.get(id)?.sellerId || null);
+  const specialTargetFor = (customerId: string) => repescagemSpecialTarget(
+    coordById.get(customerId)?.sellerId || null,
+    (candidateByCustomerId.get(customerId) as any)?.daysSince ?? 999,
+    customerId, carlosSplit.get(customerId));
   const ownerSellerIds = Array.from(new Set(custInfo.map(c => c.sellerId).filter(Boolean) as string[]));
   const ownerRoleRows = ownerSellerIds.length > 0
     ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, ownerSellerIds))
@@ -652,10 +669,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // teto EXTERNAL_MAX_PER_SELLER) -> Fase B (telemarketing por menor carga).
   function chooseTarget(customerId: string): { userId: string; phase: 'external' | 'telemarketing' } | null {
     // Roteamento especial (Gilmar/Jhonatan/Carlos até 3 dias) tem prioridade, se o alvo estiver habilitado.
-    const spTarget = repescagemSpecialTarget(
-      coordById.get(customerId)?.sellerId || null,
-      (candidateByCustomerId.get(customerId) as any)?.daysSince ?? 999,
-      customerId);
+    const spTarget = specialTargetFor(customerId);
     if (spTarget && internalSet.has(spTarget)) return { userId: spTarget, phase: 'telemarketing' };
     if (isExternalPortfolio(customerId)) {
       const ownerId = coordById.get(customerId)?.sellerId || null;
@@ -694,13 +708,13 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // uma troca manual do admin (linha travada no dia). Reaplicado a cada rodada.
   const pinnedSpecial = new Set<string>();
   for (const cand of candidates) {
-    const target = repescagemSpecialTarget(coordById.get(cand.customerId)?.sellerId || null, (cand as any).daysSince ?? 999, cand.customerId);
+    const target = specialTargetFor(cand.customerId);
     if (target && internalSet.has(target)) pinnedSpecial.add(cand.customerId);
   }
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId) || !pinnedSpecial.has(a.customerId)) continue;
     // Roteamento especial é AUTORITATIVO: mesmo travado em outro atendente, corrige para o alvo.
-    const target = repescagemSpecialTarget(coordById.get(a.customerId)?.sellerId || null, (candidateByCustomerId.get(a.customerId) as any)?.daysSince ?? 999, a.customerId)!;
+    const target = specialTargetFor(a.customerId)!;
     if (a.assignedUserId !== target) {
       const oldUser = a.assignedUserId;
       await db.update(repescagemAssignments).set({
@@ -1115,10 +1129,11 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   // ROTEAMENTO ESPECIAL (rota do dia): carteiras Gilmar/Jhonatan/Carlos dentro de 3 dias vão
   // para Letícia/Robson (telemarketing) e travadas — não entram na alocação por perímetro.
   const teleSet = new Set(telemarketers);
+  const carlosSplitDraw = repescagemCarlosSplit(candidates as any, (id) => coordById.get(id)?.sellerId || null);
   for (const cand of candidates) {
     if (allocated.has(cand.customerId)) continue; // já preservado (travado) ou alocado
     const owner = coordById.get(cand.customerId)?.sellerId || null;
-    const target = repescagemSpecialTarget(owner, (cand as any).daysSince ?? 999, cand.customerId);
+    const target = repescagemSpecialTarget(owner, (cand as any).daysSince ?? 999, cand.customerId, carlosSplitDraw.get(cand.customerId));
     if (!target || !teleSet.has(target)) continue;
     allocated.add(cand.customerId);
     preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
