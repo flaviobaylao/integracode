@@ -14,6 +14,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar, Thermometer } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { ChangeRequestControl } from "./change-request/ChangeRequestControl";
 
 type ServiceType = 'debito_vencido' | 'venda' | 'nao_venda' | 'prospecao';
 
@@ -503,16 +504,26 @@ export default function VirtualServiceLogModal({
                   </div>
                 )}
 
-                <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setIsCreating(false)}>
-                    Cancelar
-                  </Button>
-                  <Button 
-                    onClick={handleSubmit} 
-                    disabled={createLogMutation.isPending}
-                  >
-                    {createLogMutation.isPending ? "Salvando..." : "Salvar Atendimento"}
-                  </Button>
+                {/* 📋 Solicitar Alteração — leva o texto do "Notas do Atendimento" JUNTO com a solicitação. */}
+                <div className="flex flex-wrap gap-2 items-center justify-between pt-1 border-t">
+                  <ChangeRequestControl
+                    entityType={entityType}
+                    entityId={customerId}
+                    customerId={customerId}
+                    entityName={customerName}
+                    attachedNote={notes}
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => setIsCreating(false)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      onClick={handleSubmit}
+                      disabled={createLogMutation.isPending}
+                    >
+                      {createLogMutation.isPending ? "Salvando..." : "Salvar Atendimento"}
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
