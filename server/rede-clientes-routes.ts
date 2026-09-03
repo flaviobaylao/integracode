@@ -31,6 +31,19 @@ function mesCorrente(): string {
     .slice(0, 7);
 }
 
+/** 'YYYY-MM' do mes anterior a `mes`. */
+function mesAnterior(mes: string): string {
+  let [y, m] = mes.split("-").map(Number);
+  m--;
+  if (m < 1) { m = 12; y--; }
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+/** O MESMO mes, um ano atras — a comparacao que tira a sazonalidade do caminho. */
+function mesmoMesAnoAnterior(mes: string): string {
+  const [y, m] = mes.split("-");
+  return `${Number(y) - 1}-${m}`;
+}
+
 // ── Filtro de venda (espelho de carteira-routes.ts) ──────────────────────────
 const CNPJS_GRUPO = ["28295493000153", "28295493000234", "28295493000315", "52921727000105"];
 const CNPJS_NAO_CLIENTE = ["14877972000173"]; // BARUC — transporte/armazenagem, nao e' cliente de venda
@@ -134,13 +147,19 @@ export function registerRedesClientes(app: Express) {
       const e = escopo(req);
       const mes = String(req.query.mes || "").match(/^\d{4}-\d{2}$/) ? String(req.query.mes) : mesCorrente();
       const ano = mes.slice(0, 4);
+      // Tres recortes de mes: o vigente, o anterior e o mesmo mes do ano passado.
+      // Mes anterior mostra o movimento recente; mesmo mes do ano passado tira a
+      // sazonalidade da conta (dezembro nao se compara com novembro).
+      const mesAnt = mesAnterior(mes);
+      const mesAnoAnt = mesmoMesAnoAnterior(mes);
+      const anoAnt = String(Number(ano) - 1);
 
       const redes = (await db.execute(sql`
         SELECT id, nome, observacao, criado_por_nome,
                to_char(created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM/YYYY') AS criada_em
         FROM cliente_redes ORDER BY nome`)).rows as any[];
       if (!redes.length) {
-        return res.json({ mes, ano, redes: [], podeEditar: podeEditar(e.papel), escopo: { restrito: e.restrito, papel: e.papel } });
+        return res.json({ mes, mesAnt, mesAnoAnt, ano, anoAnt, redes: [], podeEditar: podeEditar(e.papel), escopo: { restrito: e.restrito, papel: e.papel } });
       }
 
       // Membros com o cadastro. O vendedor restrito enxerga a rede inteira (o
@@ -173,14 +192,20 @@ export function registerRedesClientes(app: Express) {
       const fat = (await db.execute(sql.raw(`
         SELECT ${CHAVE_TITULO} AS chave,
                COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mes)}'),0)::float AS fat_mes,
+                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mes)}'),0)::float       AS fat_mes,
                COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(ano)}'),0)::float    AS fat_ano
+                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnt)}'),0)::float    AS fat_mes_ant,
+               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
+                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnoAnt)}'),0)::float AS fat_mes_ano_ant,
+               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
+                        FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(ano)}'),0)::float          AS fat_ano,
+               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
+                        FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(anoAnt)}'),0)::float       AS fat_ano_ant
         FROM receivables
         WHERE deleted_at IS NULL
           AND ${NAO_CANCELADO}
           AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
-          AND issue_date >= '${esc(ano)}-01-01'
+          AND issue_date >= '${esc(anoAnt)}-01-01'
           ${FILTRO_VENDA}
           AND ${CHAVE_TITULO} IN (${listaChaves})
         GROUP BY 1`))).rows as any[];
@@ -232,7 +257,10 @@ export function registerRedesClientes(app: Express) {
           vendedor: String(m.vendedor || "Sem vendedor"),
           sellerId: String(m.seller_id || ""),
           fatMes: Number(f.fat_mes || 0),
+          fatMesAnt: Number(f.fat_mes_ant || 0),
+          fatMesAnoAnt: Number(f.fat_mes_ano_ant || 0),
           fatAno: Number(f.fat_ano || 0),
+          fatAnoAnt: Number(f.fat_ano_ant || 0),
           debito: Number(mDeb.get(k) || 0),
         };
         const arr = porRede.get(String(m.rede_id));
@@ -260,7 +288,10 @@ export function registerRedesClientes(app: Express) {
             ativos: cls.filter((c) => c.ativo).length,
             inativos: cls.filter((c) => !c.ativo).length,
             fatMes: soma((c) => c.fatMes),
+            fatMesAnt: soma((c) => c.fatMesAnt),
+            fatMesAnoAnt: soma((c) => c.fatMesAnoAnt),
             fatAno: soma((c) => c.fatAno),
+            fatAnoAnt: soma((c) => c.fatAnoAnt),
             debito: soma((c) => c.debito),
           },
         };
@@ -272,7 +303,7 @@ export function registerRedesClientes(app: Express) {
         : saida;
 
       res.json({
-        mes, ano, redes: filtradas,
+        mes, mesAnt, mesAnoAnt, ano, anoAnt, redes: filtradas,
         podeEditar: podeEditar(e.papel),
         escopo: { restrito: e.restrito, papel: e.papel, vendedor: e.nome },
       });
