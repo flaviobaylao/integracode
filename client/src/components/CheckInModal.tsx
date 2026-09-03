@@ -61,6 +61,8 @@ export default function CheckInModal({
     const SR = (typeof window !== 'undefined') ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
     if (!SR) { toast({ title: 'Gravação de áudio não suportada neste navegador', description: 'Abra pelo Chrome do celular para usar a transcrição.', variant: 'destructive' }); return; }
     if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} return; }
+    // Só um microfone por vez: para a gravação das Observações, se estiver ativa.
+    if (gravandoNotes && notesRecRef.current) { try { notesRecRef.current.stop(); } catch {} }
     try {
       const r = new SR();
       r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true;
@@ -70,6 +72,28 @@ export default function CheckInModal({
       r.onend = () => { setGravando(false); recRef.current = null; };
       recRef.current = r; r.start(); setGravando(true);
     } catch { setGravando(false); recRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
+  };
+
+  // 🎙️ Ditado por voz (transcrição pt-BR) para a caixa de OBSERVAÇÕES do check-in — mesma
+  // tecnologia da explicação de débito (Web Speech API do navegador). Anexa ao texto já digitado.
+  const [gravandoNotes, setGravandoNotes] = useState(false);
+  const notesRecRef = useRef<any>(null);
+  const notesBaseRef = useRef<string>('');
+  const toggleGravacaoNotes = () => {
+    const SR = (typeof window !== 'undefined') ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SR) { toast({ title: 'Gravação de áudio não suportada neste navegador', description: 'Abra pelo Chrome do celular para usar a transcrição.', variant: 'destructive' }); return; }
+    if (gravandoNotes && notesRecRef.current) { try { notesRecRef.current.stop(); } catch {} return; }
+    // Só um microfone por vez: para a gravação do débito, se estiver ativa.
+    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} }
+    try {
+      const r = new SR();
+      r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true;
+      notesBaseRef.current = notes ? notes.trim() + ' ' : '';
+      r.onresult = (e: any) => { let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setNotes(notesBaseRef.current + t); };
+      r.onerror = () => { setGravandoNotes(false); notesRecRef.current = null; };
+      r.onend = () => { setGravandoNotes(false); notesRecRef.current = null; };
+      notesRecRef.current = r; r.start(); setGravandoNotes(true);
+    } catch { setGravandoNotes(false); notesRecRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
   };
 
   // Calcular distância usando Haversine
@@ -472,13 +496,25 @@ export default function CheckInModal({
 
               <div>
                 <label className="block text-sm font-medium mb-1">📝 Observações</label>
-                <textarea
-                  placeholder="Relatar o ocorrido na visita (opcional)"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full h-20 p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm"
-                  data-testid="textarea-checkin-notes"
-                />
+                <div className="relative">
+                  <textarea
+                    placeholder="Relatar o ocorrido na visita (pode ditar pelo microfone) (opcional)"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="w-full h-20 p-2 pr-11 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm"
+                    data-testid="textarea-checkin-notes"
+                  />
+                  <button
+                    type="button"
+                    onClick={toggleGravacaoNotes}
+                    className={`absolute right-2 top-2 rounded-full p-1.5 ${gravandoNotes ? 'bg-blue-600 text-white animate-pulse' : 'bg-white text-blue-600 border border-blue-300'}`}
+                    aria-label={gravandoNotes ? 'Parar gravação' : 'Ditar observações'}
+                    data-testid="button-mic-notes"
+                  >
+                    <Mic className="h-4 w-4" />
+                  </button>
+                </div>
+                {gravandoNotes && <div className="text-[11px] text-blue-600 dark:text-blue-300 mt-1">Gravando… fale a observação.</div>}
               </div>
 
               {hasDebt && (
