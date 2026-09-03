@@ -228,9 +228,21 @@ export async function runDelegationReturns(): Promise<void> {
         await db.update(delegations).set({ status: "expirada", updatedAt: now }).where(eq(delegations.id, d.id));
         continue;
       }
-      let ok = 0, fail = 0;
+      // 🔒 ÚLTIMA ALTERAÇÃO MANUAL PREVALECE: só devolve ao titular o cliente que
+      // AINDA está com o delegado (sellerId == toUserId do snapshot). Se foi rezoneado
+      // manualmente para outro vendedor durante a delegação, NÃO reverte (preserva o manual).
+      // Quando o snapshot não tem toUserId (registro incompleto), pula por segurança.
+      let ok = 0, fail = 0, mantidos = 0;
+      const _custIds = rows.map((r) => r.customerId).filter(Boolean) as string[];
+      const _cur = _custIds.length
+        ? await db.select({ id: customers.id, sellerId: customers.sellerId }).from(customers).where(inArray(customers.id, _custIds))
+        : [];
+      const _curMap = new Map(_cur.map((x: any) => [String(x.id), String(x.sellerId || "")]));
       for (const c of rows) {
         try {
+          const atual = _curMap.get(String(c.customerId));
+          const delegado = String((c as any).toUserId || "");
+          if (!delegado || atual !== delegado) { mantidos++; continue; }
           await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId));
           ok++;
         } catch (e: any) {
@@ -239,7 +251,7 @@ export async function runDelegationReturns(): Promise<void> {
         }
       }
       await db.update(delegations).set({ status: "expirada", updatedAt: now }).where(eq(delegations.id, d.id));
-      console.log(`[acessos-delegacoes] auto-retorno delegação ${d.id}: ${ok} devolvidos, ${fail} falhas -> titular ${d.fromUserId}`);
+      console.log(`[acessos-delegacoes] auto-retorno delegação ${d.id}: ${ok} devolvidos, ${mantidos} mantidos (rezoneados manualmente), ${fail} falhas -> titular ${d.fromUserId}`);
     }
   } catch (e: any) {
     console.error("[acessos-delegacoes] runDelegationReturns:", e?.message);
@@ -260,9 +272,21 @@ export async function runDelegationActivations(): Promise<void> {
     ));
     for (const d of due) {
       const rows = await db.select().from(delegationCustomers).where(eq(delegationCustomers.delegationId, d.id));
-      let ok = 0, fail = 0;
+      // 🔒 ÚLTIMA ALTERAÇÃO MANUAL PREVALECE: só move para o delegado o cliente que
+      // ainda está com o titular (sellerId == fromUserId). Se já foi rezoneado
+      // manualmente para outro vendedor, NÃO sobrescreve.
+      let ok = 0, fail = 0, mantidos = 0;
+      const _custIds = rows.map((r) => r.customerId).filter(Boolean) as string[];
+      const _cur = _custIds.length
+        ? await db.select({ id: customers.id, sellerId: customers.sellerId }).from(customers).where(inArray(customers.id, _custIds))
+        : [];
+      const _curMap = new Map(_cur.map((x: any) => [String(x.id), String(x.sellerId || "")]));
+      const _titular = String(d.fromUserId || "");
       for (const c of rows) {
         try {
+          const atual = _curMap.get(String(c.customerId));
+          // move só se ainda está com o titular (ou se não sabemos o titular, mantém o comportamento antigo)
+          if (_titular && atual !== _titular) { mantidos++; continue; }
           await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId));
           ok++;
         } catch (e: any) {
@@ -271,7 +295,7 @@ export async function runDelegationActivations(): Promise<void> {
         }
       }
       await db.update(delegations).set({ status: "ativa", updatedAt: now }).where(eq(delegations.id, d.id));
-      console.log(`[acessos-delegacoes] ativação delegação ${d.id}: ${ok} movidos p/ delegados, ${fail} falhas`);
+      console.log(`[acessos-delegacoes] ativação delegação ${d.id}: ${ok} movidos p/ delegados, ${mantidos} mantidos (manual), ${fail} falhas`);
     }
   } catch (e: any) {
     console.error("[acessos-delegacoes] runDelegationActivations:", e?.message);

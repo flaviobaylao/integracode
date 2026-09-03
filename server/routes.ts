@@ -3949,6 +3949,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔧 REPARO (só Admin): restaura o vendedor de cada cliente para a ÚLTIMA ALTERAÇÃO MANUAL.
+  // Motivo do bug: a devolução automática de delegação de carteira (a cada 15 min) regravava
+  // customers.sellerId para o titular, por cima de rezoneamentos manuais e SEM logar. Toda
+  // alteração manual (bulk/edit) É registrada em customer_change_history; logo, a linha de
+  // sellerId mais recente no histórico é sempre o último vendedor definido manualmente.
+  // Aqui: onde o vendedor atual difere dessa última alteração manual, restauramos (quando o
+  // nome resolve para exatamente 1 usuário). Ambíguos/sem correspondência são listados.
+  // POST { dryRun?: boolean }.
+  app.post('/api/admin/customers/reparar-vendedor-manual', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { customers } = await import('../shared/schema');
+      const dryRun = req.body?.dryRun === true;
+
+      // 1) Última alteração de sellerId por cliente (o histórico só registra mudanças MANUAIS)
+      const hq: any = await db.execute(sql`
+        SELECT DISTINCT ON (customer_id) customer_id, new_value, created_at
+        FROM customer_change_history
+        WHERE field = 'sellerId'
+        ORDER BY customer_id, created_at DESC`);
+      const histRows: any[] = hq.rows || hq || [];
+
+      // 2) Usuários -> rótulo igual ao usado no histórico ([first last] || email || id)
+      const uq: any = await db.execute(sql`SELECT id, first_name, last_name, email FROM users`);
+      const users: any[] = uq.rows || uq || [];
+      const labelOf = (u: any) => ([u.first_name, u.last_name].filter(Boolean).join(' ').trim() || u.email || u.id);
+      const byLabel = new Map<string, string[]>();
+      const add = (k: any, id: string) => { const key = String(k || '').trim().toLowerCase(); if (!key) return; if (!byLabel.has(key)) byLabel.set(key, []); const a = byLabel.get(key)!; if (!a.includes(id)) a.push(id); };
+      for (const u of users) { add(labelOf(u), String(u.id)); add(u.email, String(u.id)); add(String(u.id), String(u.id)); }
+      const nomeDe = (id: string) => { const u = users.find((x) => String(x.id) === String(id)); return u ? labelOf(u) : id; };
+
+      // 3) sellerId atual de cada cliente
+      const all = await storage.getAllCustomers();
+      const currMap = new Map<string, string>();
+      for (const c of all) currMap.set(String(c.id), String((c as any).sellerId || ''));
+
+      const u0 = req.currentUser;
+      const actor = { id: u0?.id, name: [u0?.firstName, u0?.lastName].filter(Boolean).join(' ').trim() || u0?.email };
+
+      const reparar: any[] = [];
+      const ambiguos: any[] = [];
+      const semUsuario: any[] = [];
+      for (const h of histRows) {
+        const cid = String(h.customer_id);
+        if (!currMap.has(cid)) continue; // cliente não existe mais
+        const alvoNome = String(h.new_value || '').trim();
+        if (!alvoNome || alvoNome === '—') continue; // última alteração foi "sem vendedor"
+        const atualId = currMap.get(cid) || '';
+        const cands = byLabel.get(alvoNome.toLowerCase()) || [];
+        // já está na última alteração manual (inclusive quando o nome é ambíguo mas o atual é um dos candidatos)
+        if (atualId && cands.includes(atualId)) continue;
+        if (cands.length === 1) {
+          if (String(cands[0]) !== atualId) reparar.push({ id: cid, deId: atualId, deNome: atualId ? nomeDe(atualId) : '—', paraId: cands[0], paraNome: alvoNome });
+        } else if (cands.length === 0) {
+          semUsuario.push({ id: cid, atual: atualId ? nomeDe(atualId) : '—', ultimoManual: alvoNome });
+        } else {
+          ambiguos.push({ id: cid, atual: atualId ? nomeDe(atualId) : '—', ultimoManual: alvoNome, candidatos: cands.length });
+        }
+      }
+
+      let reparados = 0; const errors: string[] = [];
+      if (!dryRun) {
+        for (const r of reparar) {
+          try {
+            const before = await storage.getCustomer(r.id).catch(() => null);
+            await db.update(customers).set({ sellerId: r.paraId, updatedAt: agora() } as any).where(eq(customers.id, r.id));
+            try { await logCustomerChanges({ customerId: r.id, before, changes: { sellerId: r.paraId }, actor, source: 'reparo-vendedor-manual' }); } catch (_e) {}
+            reparados++;
+          } catch (e: any) { if (errors.length < 10) errors.push(String(r.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
+        }
+      }
+
+      res.json({
+        dryRun,
+        clientesComHistoricoVendedor: histRows.length,
+        divergentes: reparar.length,
+        reparados,
+        ambiguos: ambiguos.length,
+        semUsuarioCorrespondente: semUsuario.length,
+        exemplosReparo: reparar.slice(0, 50),
+        listaAmbiguos: ambiguos.slice(0, 50),
+        listaSemUsuario: semUsuario.slice(0, 50),
+        errors,
+      });
+    } catch (error: any) {
+      console.error('Error reparando vendedor manual:', error);
+      res.status(500).json({ message: 'Falha no reparo de vendedor: ' + String(error?.message || error) });
+    }
+  });
+
   // 🚫 Inativação em massa — EXCLUSIVA do Admin (só o Admin inativa). Mesma semântica da individual:
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
   app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
