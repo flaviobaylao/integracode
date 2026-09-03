@@ -91,6 +91,33 @@ function formatPeriodicity(periodicity: string | null | undefined): string {
   return periodicityMap[periodicity] || periodicity;
 }
 
+// 🟢 Bolinhas de "Efetividade em vendas" (mesma leitura do Resumo de Visitas e Atendimentos):
+// 1 bolinha por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1). VERDE = houve faturamento no ciclo,
+// VERMELHA = sem venda. Recebe visit.salesCycles (anexado pelo backend da rota do dia).
+function SalesCycleDots({ cycles }: { cycles?: Array<{ start?: string; end?: string; green?: boolean }> }) {
+  if (!Array.isArray(cycles) || cycles.length === 0) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 ml-1 align-middle"
+      title="Efetividade em vendas por ciclo — verde: houve venda; vermelho: sem venda"
+    >
+      {cycles.map((cy, ci) => (
+        <span
+          key={ci}
+          title={`${cy?.start ?? ''} a ${cy?.end ?? ''}: ${cy?.green ? 'houve venda' : 'sem venda'}`}
+          style={{
+            display: 'inline-block',
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            background: cy?.green ? '#22c55e' : '#ef4444',
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -2163,6 +2190,7 @@ export default function RotaDoDia() {
                             {visit.customerId && (
                               <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
                                 🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || '') || '—'}
+                                <SalesCycleDots cycles={(visit as any).salesCycles} />
                                 {' • '}
                                 🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                                 {' • '}
@@ -2574,6 +2602,7 @@ export default function RotaDoDia() {
                                   {visit.customerId && (
                                     <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                                       🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
+                                      <SalesCycleDots cycles={(visit as any).salesCycles} />
                                       {' • '}
                                       🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                                       {' • '}
