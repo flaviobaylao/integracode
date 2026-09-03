@@ -4038,6 +4038,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔧 SINCRONIZA a lista "Clientes Ativos" (tabela active_customers) com quem está ATIVO na
+  // Gestão (customers.is_active=true, omie_status='ativo', não-lead, não-fornecedor, com documento).
+  // REGRA (pedido do Flavio): quem foi retirado por INATIVAÇÃO (linha de active_customers com
+  // is_active=false) NÃO volta. Então:
+  //   • sem linha na carteira  → cria (entra na lista)
+  //   • linha existe e ATIVA   → só religa ao cadastro certo (corrige duplicado/mal-vinculado)
+  //   • linha existe e INATIVA → PULA (respeita a remoção manual)
+  // Sem documento: não dá para entrar (active_customers exige documento) — apenas conta.
+  // POST { dryRun?: boolean }.
+  app.post('/api/admin/active-customers/sync-gestao', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const all = await storage.getAllCustomers();
+      const elegiveis = all.filter((c: any) =>
+        c.isActive === true && c.omieStatus === 'ativo' && c.isLead !== true && (c as any).isSupplier !== true
+      );
+      let adicionados = 0, religados = 0, jaOk = 0, ignoradosInativados = 0, semDocumento = 0;
+      const errors: string[] = [];
+      const exemplosAdd: any[] = []; const exemplosIgnorados: any[] = [];
+      for (const c of elegiveis) {
+        const doc = String((c as any).cpf || '').replace(/\D/g, '') || String((c as any).cnpj || '').replace(/\D/g, '');
+        if (!doc) { semDocumento++; continue; }
+        try {
+          const existing = await storage.getActiveCustomerByDocument(doc);
+          if (!existing) {
+            if (exemplosAdd.length < 40) exemplosAdd.push({ id: c.id, nome: (c as any).fantasyName || (c as any).name, doc });
+            if (!dryRun) {
+              await storage.createActiveCustomer({
+                document: doc,
+                documentType: (c as any).cpf ? 'cpf' : 'cnpj',
+                fantasyNameImported: (c as any).fantasyName || (c as any).name,
+                customerId: String(c.id),
+                omieInstanceId: (c as any).omieInstanceId || null,
+                uploadId: 'sync-gestao',
+                matchStatus: 'matched',
+                latitude: (c as any).latitude ?? null,
+                longitude: (c as any).longitude ?? null,
+                isActive: true,
+              } as any);
+            }
+            adicionados++;
+          } else if (existing.isActive === false) {
+            // Retirado por inativação → não traz de volta
+            if (exemplosIgnorados.length < 40) exemplosIgnorados.push({ id: c.id, nome: (c as any).fantasyName || (c as any).name, doc });
+            ignoradosInativados++;
+          } else if (String(existing.customerId || '') !== String(c.id)) {
+            // Linha ativa mas apontando para outro cadastro (duplicado) → religa ao ativo
+            if (!dryRun) {
+              await storage.updateActiveCustomer(existing.id, {
+                customerId: String(c.id),
+                matchStatus: 'matched',
+                fantasyNameImported: (c as any).fantasyName || (c as any).name,
+                deactivatedAt: null,
+              } as any);
+            }
+            religados++;
+          } else {
+            jaOk++;
+          }
+        } catch (e: any) { if (errors.length < 10) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
+      }
+      res.json({
+        dryRun,
+        elegiveis: elegiveis.length,
+        adicionados,
+        religados,
+        jaNaLista: jaOk,
+        ignoradosInativados,
+        semDocumento,
+        errors,
+        exemplosAdicionar: exemplosAdd.slice(0, 20),
+        exemplosIgnorados: exemplosIgnorados.slice(0, 20),
+      });
+    } catch (error: any) {
+      console.error('Error sync active-customers gestao:', error);
+      res.status(500).json({ message: 'Falha no sync de Clientes Ativos: ' + String(error?.message || error) });
+    }
+  });
+
   // 🚫 Inativação em massa — EXCLUSIVA do Admin (só o Admin inativa). Mesma semântica da individual:
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
   app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
