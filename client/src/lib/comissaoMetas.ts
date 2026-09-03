@@ -6,11 +6,15 @@
 //   Carlos e Jhonatan ...... 8,0% sobre o valor
 //   Radilton e Cleber ...... 4,5% sobre o valor
 //   Robson, Natalia e Maria Eduarda ... faixa de comissao do tipo (telemarketing)
-//   Leticia ................ 8,0% sobre a META menos a diferenca salarial de
+//   Leticia ................ 4,0% sobre a META menos a diferenca salarial de
 //                            R$ 1.400,00 (fixo dela R$ 3.200 menos a base de um
 //                            administrativo, R$ 1.800). Ela so recebe o EXCEDENTE
 //                            dessa diferenca; piso zero.
-//                            Ex.: meta 30k -> 8% = 2.400 - 1.400 = R$ 1.000.
+//                            Percentual alterado de 8,0% para 4,0% por Flavio em
+//                            03/09/2026.
+//                            Ex.: meta 40k -> 4% = 1.600 - 1.400 = R$ 200.
+//                            Meta 35k ou menos -> 4% nao cobre os R$ 1.400 e a
+//                            comissao fica em R$ 0,00.
 //   Quem nao esta na lista . sem regra -> a tela mostra "—", nunca um numero
 //                            inventado que alguem possa cobrar depois.
 //
@@ -49,7 +53,7 @@ const REGRAS: Array<{ chaves: string[]; regra: RegraComissao }> = [
   { chaves: ['carlos', 'jhonatan', 'jonatan', 'jhonathan'], regra: { tipo: 'fixo', pct: 8 } },
   { chaves: ['radilton', 'cleber'], regra: { tipo: 'fixo', pct: 4.5 } },
   { chaves: ['robson', 'natalia', 'maria'], regra: { tipo: 'faixa' } },
-  { chaves: ['leticia'], regra: { tipo: 'fixo', pct: 8, descontoFixo: 1400, proporcionalAMeta: true } },
+  { chaves: ['leticia'], regra: { tipo: 'fixo', pct: 4, descontoFixo: 1400, proporcionalAMeta: true } },
 ];
 
 /** Tabela de faixas usada por quem segue faixas. Confirmado por Flavio em 02/09/2026:
