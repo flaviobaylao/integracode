@@ -28,12 +28,16 @@ import { exportToExcel } from "@/lib/tableTools";
 type ClienteRede = {
   id: string; nome: string; doc: string | null; cidade: string; bairro: string;
   ativo: boolean; conquista: string | null; cadastroEm: string | null; inativadoEm: string | null;
-  vendedor: string; sellerId: string; fatMes: number; fatAno: number; debito: number;
+  vendedor: string; sellerId: string;
+  fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
 };
 type Rede = {
   id: string; nome: string; observacao: string; criadaPor: string; criadaEm: string;
   clientes: ClienteRede[];
-  totais: { clientes: number; ativos: number; inativos: number; fatMes: number; fatAno: number; debito: number };
+  totais: {
+    clientes: number; ativos: number; inativos: number;
+    fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
+  };
 };
 type Candidato = {
   id: string; nome: string; doc: string | null; cidade: string; bairro: string;
@@ -52,6 +56,17 @@ const dataBR = (d: any) => {
   const m = String(d || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : "—";
 };
+/** Variação % de `atual` sobre `base`. Sem base não há variação — devolve null
+ *  em vez de inventar "+100%", que é o erro clássico de dividir por zero. */
+const variacao = (atual: number, base: number): number | null => {
+  const b = Number(base) || 0;
+  if (b <= 0) return null;
+  return ((Number(atual) || 0) - b) / b;
+};
+/** "+18%" / "-7%" — o sinal é o que se lê primeiro. */
+const pct = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(0)}%`);
+const corVar = (v: number | null) => (v === null ? "text-muted-foreground" : v > 0 ? "text-emerald-700" : v < 0 ? "text-destructive" : "text-muted-foreground");
+
 /** CNPJ/CPF com pontuação, para conferir raiz de CNPJ a olho. */
 const docBR = (d: any) => {
   const s = String(d || "").replace(/\D/g, "");
@@ -78,7 +93,10 @@ export default function RedeClientes() {
 
   const redes: Rede[] = data?.redes || [];
   const mes: string = data?.mes || "";
+  const mesAnt: string = data?.mesAnt || "";
+  const mesAnoAnt: string = data?.mesAnoAnt || "";
   const ano: string = data?.ano || "";
+  const anoAnt: string = data?.anoAnt || "";
   const podeEditar = data?.podeEditar === true;
 
   const listaFiltrada = useMemo(() => {
@@ -93,10 +111,11 @@ export default function RedeClientes() {
 
   // Totais do rodapé: a soma de todas as redes que estão na tela.
   const totalGeral = useMemo(() => {
-    const t = { redes: 0, clientes: 0, ativos: 0, fatMes: 0, fatAno: 0, debito: 0 };
+    const t = { redes: 0, clientes: 0, ativos: 0, fatMes: 0, fatMesAnt: 0, fatMesAnoAnt: 0, fatAno: 0, fatAnoAnt: 0, debito: 0 };
     for (const r of listaFiltrada) {
       t.redes++; t.clientes += r.totais.clientes; t.ativos += r.totais.ativos;
-      t.fatMes += r.totais.fatMes; t.fatAno += r.totais.fatAno; t.debito += r.totais.debito;
+      t.fatMes += r.totais.fatMes; t.fatMesAnt += r.totais.fatMesAnt; t.fatMesAnoAnt += r.totais.fatMesAnoAnt;
+      t.fatAno += r.totais.fatAno; t.fatAnoAnt += r.totais.fatAnoAnt; t.debito += r.totais.debito;
     }
     return t;
   }, [listaFiltrada]);
@@ -111,7 +130,12 @@ export default function RedeClientes() {
           Rede: r.nome, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Cidade: c.cidade, Bairro: c.bairro,
           Status: c.ativo ? "Ativo" : "Inativo", "Data da conquista": c.conquista ? dataBR(c.conquista) : "",
           Vendedor: c.vendedor,
+          [`Faturamento ${labelMes(mesAnoAnt)}`]: Number(c.fatMesAnoAnt.toFixed(2)),
+          [`Faturamento ${labelMes(mesAnt)}`]: Number(c.fatMesAnt.toFixed(2)),
           [`Faturamento ${labelMes(mes)}`]: Number(c.fatMes.toFixed(2)),
+          "Var. vs mês anterior": pct(variacao(c.fatMes, c.fatMesAnt)),
+          [`Var. vs ${labelMes(mesAnoAnt)}`]: pct(variacao(c.fatMes, c.fatMesAnoAnt)),
+          [`Faturamento ${anoAnt}`]: Number(c.fatAnoAnt.toFixed(2)),
           [`Faturamento ${ano}`]: Number(c.fatAno.toFixed(2)),
           "Débito vencido": Number(c.debito.toFixed(2)),
         });
@@ -119,7 +143,12 @@ export default function RedeClientes() {
       linhas.push({
         Rede: r.nome, Cliente: `TOTAL — ${r.totais.clientes} clientes`, "CPF/CNPJ": "", Cidade: "", Bairro: "",
         Status: `${r.totais.ativos} ativos / ${r.totais.inativos} inativos`, "Data da conquista": "", Vendedor: "",
+        [`Faturamento ${labelMes(mesAnoAnt)}`]: Number(r.totais.fatMesAnoAnt.toFixed(2)),
+        [`Faturamento ${labelMes(mesAnt)}`]: Number(r.totais.fatMesAnt.toFixed(2)),
         [`Faturamento ${labelMes(mes)}`]: Number(r.totais.fatMes.toFixed(2)),
+        "Var. vs mês anterior": pct(variacao(r.totais.fatMes, r.totais.fatMesAnt)),
+        [`Var. vs ${labelMes(mesAnoAnt)}`]: pct(variacao(r.totais.fatMes, r.totais.fatMesAnoAnt)),
+        [`Faturamento ${anoAnt}`]: Number(r.totais.fatAnoAnt.toFixed(2)),
         [`Faturamento ${ano}`]: Number(r.totais.fatAno.toFixed(2)),
         "Débito vencido": Number(r.totais.debito.toFixed(2)),
       });
@@ -196,7 +225,17 @@ export default function RedeClientes() {
               <span className="text-muted-foreground">
                 {NUM(totalGeral.clientes)} clientes · <span className="text-emerald-700">{NUM(totalGeral.ativos)} ativos</span>
               </span>
-              <span>Faturamento {labelMes(mes)}: <b className="text-blue-700">{BRL0(totalGeral.fatMes)}</b></span>
+              <span className="text-muted-foreground">{labelMes(mesAnoAnt)}: {BRL0(totalGeral.fatMesAnoAnt)}</span>
+              <span className="text-muted-foreground">{labelMes(mesAnt)}: {BRL0(totalGeral.fatMesAnt)}</span>
+              <span>
+                {labelMes(mes)}: <b className="text-blue-700">{BRL0(totalGeral.fatMes)}</b>{" "}
+                <span className={corVar(variacao(totalGeral.fatMes, totalGeral.fatMesAnt))}>
+                  {pct(variacao(totalGeral.fatMes, totalGeral.fatMesAnt))} vs mês ant.
+                </span>{" "}
+                <span className={corVar(variacao(totalGeral.fatMes, totalGeral.fatMesAnoAnt))}>
+                  {pct(variacao(totalGeral.fatMes, totalGeral.fatMesAnoAnt))} vs {labelMes(mesAnoAnt)}
+                </span>
+              </span>
               <span>Faturamento {ano}: <b className="text-blue-700">{BRL0(totalGeral.fatAno)}</b></span>
               <span>
                 Débito vencido:{" "}
@@ -235,13 +274,35 @@ export default function RedeClientes() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
+                      {/* Ordem cronológica: mesmo mês do ano passado, mês anterior,
+                          mês vigente (destacado) e o ano. Lê-se da esquerda para a
+                          direita como o tempo passa. */}
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">{labelMes(mesAnoAnt)}</p>
+                        <p className="text-base font-semibold text-muted-foreground">{BRL0(r.totais.fatMesAnoAnt)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">{labelMes(mesAnt)}</p>
+                        <p className="text-base font-semibold text-muted-foreground">{BRL0(r.totais.fatMesAnt)}</p>
+                      </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">Faturamento {labelMes(mes)}</p>
                         <p className="text-lg font-bold text-blue-700">{BRL0(r.totais.fatMes)}</p>
+                        <p className="text-[11px] leading-tight">
+                          <span className={corVar(variacao(r.totais.fatMes, r.totais.fatMesAnt))}>
+                            {pct(variacao(r.totais.fatMes, r.totais.fatMesAnt))} vs mês ant.
+                          </span>{" · "}
+                          <span className={corVar(variacao(r.totais.fatMes, r.totais.fatMesAnoAnt))}>
+                            {pct(variacao(r.totais.fatMes, r.totais.fatMesAnoAnt))} vs {labelMes(mesAnoAnt)}
+                          </span>
+                        </p>
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">Faturamento {ano}</p>
                         <p className="text-lg font-bold text-blue-700">{BRL0(r.totais.fatAno)}</p>
+                        <p className="text-[11px] leading-tight text-muted-foreground">
+                          {anoAnt}: {BRL0(r.totais.fatAnoAnt)}
+                        </p>
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">Débito vencido</p>
@@ -274,6 +335,8 @@ export default function RedeClientes() {
                             <TableHead>Bairro</TableHead>
                             <TableHead className="w-24">Status</TableHead>
                             <TableHead className="w-32 whitespace-nowrap">Data da conquista</TableHead>
+                            <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnoAnt)}</TableHead>
+                            <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnt)}</TableHead>
                             <TableHead className="text-right whitespace-nowrap">Fat. {labelMes(mes)}</TableHead>
                             <TableHead className="text-right whitespace-nowrap">Fat. {ano}</TableHead>
                             <TableHead className="text-right whitespace-nowrap">Débito</TableHead>
@@ -297,8 +360,18 @@ export default function RedeClientes() {
                                 </span>
                               </TableCell>
                               <TableCell className="text-sm whitespace-nowrap">{dataBR(c.conquista)}</TableCell>
-                              <TableCell className="text-right whitespace-nowrap">{BRL(c.fatMes)}</TableCell>
-                              <TableCell className="text-right whitespace-nowrap font-medium">{BRL(c.fatAno)}</TableCell>
+                              <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(c.fatMesAnoAnt)}</TableCell>
+                              <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(c.fatMesAnt)}</TableCell>
+                              <TableCell className="text-right whitespace-nowrap">
+                                {BRL(c.fatMes)}
+                                <span className={`block text-[11px] ${corVar(variacao(c.fatMes, c.fatMesAnt))}`}>
+                                  {pct(variacao(c.fatMes, c.fatMesAnt))} vs mês ant.
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right whitespace-nowrap font-medium">
+                                {BRL(c.fatAno)}
+                                <span className="block text-[11px] text-muted-foreground">{anoAnt}: {BRL(c.fatAnoAnt)}</span>
+                              </TableCell>
                               <TableCell className={`text-right whitespace-nowrap ${c.debito > 0 ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
                                 {BRL(c.debito)}
                               </TableCell>
@@ -314,6 +387,8 @@ export default function RedeClientes() {
                               {r.totais.ativos} ativos
                             </TableCell>
                             <TableCell />
+                            <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(r.totais.fatMesAnoAnt)}</TableCell>
+                            <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(r.totais.fatMesAnt)}</TableCell>
                             <TableCell className="text-right whitespace-nowrap">{BRL(r.totais.fatMes)}</TableCell>
                             <TableCell className="text-right whitespace-nowrap">{BRL(r.totais.fatAno)}</TableCell>
                             <TableCell className={`text-right whitespace-nowrap ${r.totais.debito > 0 ? "text-destructive" : ""}`}>
