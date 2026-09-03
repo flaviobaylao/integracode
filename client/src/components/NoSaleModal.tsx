@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { XCircle, AlertTriangle } from "lucide-react";
+import { XCircle, AlertTriangle, Mic } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 interface NoSaleModalProps {
@@ -24,6 +24,26 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // 🎙️ Ditado por voz (transcrição pt-BR) para as Observações — mesma tecnologia do check-in
+  // (Web Speech API do navegador). Anexa ao texto já digitado.
+  const [gravandoNotes, setGravandoNotes] = useState(false);
+  const notesRecRef = useRef<any>(null);
+  const notesBaseRef = useRef<string>('');
+  const toggleGravacaoNotes = () => {
+    const SR = (typeof window !== 'undefined') ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SR) { toast({ title: 'Gravação de áudio não suportada neste navegador', description: 'Abra pelo Chrome do celular para usar a transcrição.', variant: 'destructive' }); return; }
+    if (gravandoNotes && notesRecRef.current) { try { notesRecRef.current.stop(); } catch {} return; }
+    try {
+      const r = new SR();
+      r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true;
+      notesBaseRef.current = notes ? notes.trim() + ' ' : '';
+      r.onresult = (e: any) => { let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setNotes(notesBaseRef.current + t); };
+      r.onerror = () => { setGravandoNotes(false); notesRecRef.current = null; };
+      r.onend = () => { setGravandoNotes(false); notesRecRef.current = null; };
+      notesRecRef.current = r; r.start(); setGravandoNotes(true);
+    } catch { setGravandoNotes(false); notesRecRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
+  };
 
   // Initialize phone when card opens
   useEffect(() => {
@@ -67,6 +87,7 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
   });
 
   const resetForm = () => {
+    if (gravandoNotes && notesRecRef.current) { try { notesRecRef.current.stop(); } catch {} }
     setReason('');
     setNotes('');
     setPhone('');
@@ -195,14 +216,26 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
 
             <div>
               <Label htmlFor="notes">Observações Adicionais</Label>
-              <Textarea
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Descreva detalhes sobre o motivo da não venda..."
-                rows={4}
-                className="resize-none"
-              />
+              <div className="relative">
+                <Textarea
+                  id="notes"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Descreva detalhes sobre o motivo da não venda... (pode ditar pelo microfone)"
+                  rows={4}
+                  className="resize-none pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={toggleGravacaoNotes}
+                  className={`absolute right-2 top-2 rounded-full p-1.5 ${gravandoNotes ? 'bg-red-600 text-white animate-pulse' : 'bg-white text-red-600 border border-red-300'}`}
+                  aria-label={gravandoNotes ? 'Parar gravação' : 'Ditar observações'}
+                  data-testid="button-mic-nosale-notes"
+                >
+                  <Mic className="h-4 w-4" />
+                </button>
+              </div>
+              {gravandoNotes && <div className="text-[11px] text-red-600 mt-1">Gravando… fale a observação.</div>}
               <p className="text-xs text-gray-500 mt-1">
                 Opcional: Adicione informações que possam ajudar em futuras abordagens
               </p>
