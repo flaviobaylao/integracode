@@ -26,6 +26,7 @@ import { sql } from "drizzle-orm";
 import { nfVendaWhere, nfVendaFrom, nfData, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
 import { authenticateUser } from "./authMiddleware";
 import { registerAgendaCarteira } from "./agenda-carteira-routes";
+import { registerRedesClientes } from "./rede-clientes-routes";
 
 const TZ = "America/Sao_Paulo";
 
@@ -217,6 +218,8 @@ async function ensureAnotacoes(): Promise<void> {
 export function registerCarteira(app: Express) {
   // Aba "Agenda da carteira" (tabela dinamica de atendimentos por dia da semana).
   registerAgendaCarteira(app);
+  // Aba "Rede de Cliente" (grupos de filiais / mesma gestao, consolidados).
+  registerRedesClientes(app);
 
   // ---------------------------------------------------------------------------
   // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
