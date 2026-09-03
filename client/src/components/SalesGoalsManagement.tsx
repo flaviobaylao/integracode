@@ -397,7 +397,7 @@ export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps
                       <li className="flex gap-2">
                         <span className="font-medium w-40 shrink-0">Letícia</span>
                         <span>
-                          8% <strong>da meta</strong> menos R$ 1.400,00 — a diferença entre o fixo dela
+                          4% <strong>da meta</strong> menos R$ 1.400,00 — a diferença entre o fixo dela
                           (R$ 3.200) e a base de um administrativo (R$ 1.800). Ela recebe só o que
                           excede essa diferença. As outras duas colunas são proporcionais ao
                           atingimento: comissão da meta × (valor da coluna ÷ meta).
