@@ -26,6 +26,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Customer } from "@shared/schema";
 import { Loader2, Plus } from "lucide-react";
+import { SeloRedeDoCliente } from "@/pages/RedeClientes";
 
 interface CustomerEditModalProps {
   isOpen: boolean;
@@ -469,6 +470,10 @@ export default function CustomerEditModal({
           <DialogDescription>
             Atualize as informações cadastrais do cliente
           </DialogDescription>
+          {/* Marcação de REDE: só aparece quando o cliente faz parte de uma.
+              Quem edita o cadastro precisa saber que o número dele é consolidado
+              com o de outras filiais em Gestão de Carteiras. */}
+          <SeloRedeDoCliente customerId={customer?.id} className="mt-1 self-start" />
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
