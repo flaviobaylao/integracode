@@ -240,7 +240,13 @@ export function registerRedesClientes(app: Express) {
       }
 
       const saida = redes.map((r) => {
-        const cls = (porRede.get(String(r.id)) || []).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+        // Ordem DENTRO da rede: faturamento do mes vigente do maior para o menor —
+        // e' o que responde "quem esta puxando a rede agora". Empate (varias
+        // filiais em zero no comeco do mes) desempata pelo faturamento do ano e,
+        // so' entao, pelo nome, para a lista nao dancar a cada recarga.
+        const cls = (porRede.get(String(r.id)) || []).sort(
+          (a, b) => b.fatMes - a.fatMes || b.fatAno - a.fatAno || a.nome.localeCompare(b.nome, "pt-BR"),
+        );
         const soma = (f: (c: any) => number) => cls.reduce((t, c) => t + f(c), 0);
         return {
           id: String(r.id),
