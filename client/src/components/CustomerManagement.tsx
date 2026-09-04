@@ -166,6 +166,7 @@ export default function CustomerManagement() {
       toast({ title: "Inativação em massa concluída", description: `${res.inactivated ?? 0} cliente(s) inativado(s)${extra.length ? ' · ' + extra.join(' · ') : ''}.` });
       setSelectedIds(new Set());
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
     },
     onError: (e: any) => { toast({ title: "Erro na inativação em massa", description: e?.message || String(e), variant: "destructive" }); },
   });
@@ -221,6 +222,7 @@ export default function CustomerManagement() {
       }
       toast({ title: "Edição em massa concluída", description: `${ids.length} cliente(s): ${msg.join(' · ') || 'sem alterações'}.` });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       setShowBulkEdit(false); setSelectedIds(new Set());
       setBulkWeekdays([]); setBulkSeller(''); setBulkPeriodicity(''); setBulkSituacao('');
     } catch (e: any) {
