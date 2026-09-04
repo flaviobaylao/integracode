@@ -1359,21 +1359,32 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     .map((product: any) => {
                       const selectedProduct = products.find(p => p.id === product.id);
                       const isSelected = !!selectedProduct;
-                      
+                      // DISPONIBILIDADE (set/2026): item indisponivel nao pode ser ADICIONADO,
+                      // mas se ja estiver no pedido continua editavel — pedido antigo e
+                      // recorrencia nao sao alterados por esta regra.
+                      const indisponivel = product?.availableForSale === false && !isSelected;
+
                       return (
                         <div key={product.id} className="p-4 bg-gray-50 rounded-lg space-y-3">
                           <div className="flex items-center space-x-2">
                             <Checkbox
                               id={`product-${product.id}`}
                               checked={isSelected}
-                              onCheckedChange={(checked) => handleProductToggle(product.id, checked as boolean)}
+                              disabled={indisponivel}
+                              onCheckedChange={(checked) => {
+                                if (indisponivel) return;
+                                handleProductToggle(product.id, checked as boolean);
+                              }}
                               data-testid={`checkbox-product-${product.id}`}
                             />
-                            <Label 
-                              htmlFor={`product-${product.id}`} 
-                              className="text-sm font-medium cursor-pointer flex-1"
+                            <Label
+                              htmlFor={`product-${product.id}`}
+                              className={`text-sm font-medium cursor-pointer flex-1 ${indisponivel ? 'text-gray-400' : ''}`}
                             >
                               {product.name}
+                              {indisponivel && (
+                                <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
+                              )}
                             </Label>
                           </div>
                           
