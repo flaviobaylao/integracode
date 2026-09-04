@@ -358,12 +358,14 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
     const _tokens = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
     const _comFicha = await temTabelaFichas();
     const _all: any = _comFicha
-      ? await db.execute(sql`SELECT p.name, p.price, p.retail_price, p.resale_goiania_price, p.stock, (d.product_id IS NOT NULL) AS tem_ficha FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id WHERE p.is_active=true ORDER BY p.name`)
-      : await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock, false AS tem_ficha FROM products WHERE is_active=true ORDER BY name`);
+      ? await db.execute(sql`SELECT p.name, p.price, p.retail_price, p.resale_goiania_price, p.stock, p.available_for_sale, (d.product_id IS NOT NULL) AS tem_ficha FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id WHERE p.is_active=true ORDER BY p.name`)
+      : await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock, available_for_sale, false AS tem_ficha FROM products WHERE is_active=true ORDER BY name`);
     const _rows0 = (_all.rows || []).filter((p: any) => { const n = _norm(p.name); return _tokens.length ? _tokens.every((t: string) => n.includes(t)) : n.includes(_norm(termo)); }).slice(0, 8);
     const r: any = { rows: _rows0 };
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
-      return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}${p.tem_ficha ? '; TEM ficha tecnica (use consultar_ficha_tecnica para composicao/nutricional/validade)' : ''}`).join(' | ');
+      // DISPONIBILIDADE (set/2026): o produto continua aparecendo na consulta — o cliente
+      // pode ter perguntado por ele — mas a resposta avisa a IA que NAO da para vender.
+      return r.rows.map((p: any) => `${p.name}: varejo ${brl(p.retail_price || p.price)}${p.resale_goiania_price ? '; revenda ' + brl(p.resale_goiania_price) : ''}${p.stock != null ? '; estoque ' + p.stock : ''}${p.available_for_sale === false ? '; ⚠️ AINDA NAO DISPONIVEL — nao pode ser vendido; informe o cliente e ofereca outro sabor' : ''}${p.tem_ficha ? '; TEM ficha tecnica (use consultar_ficha_tecnica para composicao/nutricional/validade)' : ''}`).join(' | ');
     }
     if (name === 'consultar_ficha_tecnica') return await consultarFichaTecnica(input || {});
     if (name === 'consultar_pedido') return await consultarPedido(input || {}, ctx);
@@ -477,7 +479,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     // Catálogo ativo + matcher por tokens (mesma lógica do consultar_produto).
     const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const _stop = new Set(['de', 'da', 'do', 'com', 'e', 'a', 'o', 'os', 'as', 'para', 'por', 'sabor', 'ml', 'l', 'un', 'und', 'suco', 'sucos']);
-    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock FROM products WHERE is_active=true ORDER BY name`);
+    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock, available_for_sale FROM products WHERE is_active=true ORDER BY name`);
     const catalog: any[] = _all.rows || [];
     const matchP = (termo: string) => {
       const toks = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
@@ -501,6 +503,16 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       }
       resolved.push({ p: m[0], qtd });
     }
+    // 🚫 DISPONIBILIDADE (set/2026) — o item aparece no catalogo e na consulta, mas nao
+    // pode ser vendido. Barra ANTES de calcular preco/registrar: melhor a IA avisar o
+    // cliente e oferecer outro sabor do que gravar um pedido que ninguem consegue entregar.
+    const indisponiveis = resolved.filter((r) => r.p?.available_for_sale === false).map((r) => r.p.name);
+    if (indisponiveis.length) {
+      return 'NÃO registrei o pedido: ' + indisponiveis.join(' e ') + (indisponiveis.length > 1 ? ' estão' : ' está')
+        + ' AINDA NÃO DISPONÍVEL para venda. Avise o cliente com simpatia, ofereça outro sabor do catálogo'
+        + ' e só chame registrar_pedido de novo quando o pedido não tiver mais esse item.';
+    }
+
     if (naoEnc.length) return 'Não encontrei no catálogo: ' + naoEnc.join('; ') + '. Confirme o nome exato com o cliente (use consultar_produto) e tente de novo.';
     if (ambig.length) return 'Itens ambíguos, peça ao cliente para especificar: ' + ambig.join(' | ');
     if (!resolved.length) return 'Nenhum item válido para registrar.';
