@@ -580,20 +580,15 @@ function HotsiteContent() {
   // View: Checkout
   if (view === 'checkout') {
     return (
-      <div>
-        <div className="max-w-md mx-auto px-4 pt-4">
-          <label className="block text-sm font-semibold text-gray-700 mb-1">Cupom ou código de indicação (opcional)</label>
-          <input value={referralCode} onChange={(e) => setReferralCode(e.target.value.toUpperCase())} placeholder="Ex.: HONEST8 ou INDXXXXXX" className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <p className="text-xs text-gray-400 mt-1">Vale um desconto por pedido — o cupom tem prioridade sobre a indicação. Novo cliente ganha 15% no 1º pedido com o código de quem indicou; se você já indicou alguém, o desconto entra sozinho.</p>
-        </div>
-        <CheckoutForm
+      <CheckoutForm
         cartItems={cart}
         total={calculateTotal()}
         onSubmit={handleCheckout}
         onBack={() => setView('catalog')}
         isProcessing={isProcessing}
+        code={referralCode}
+        onCodeChange={setReferralCode}
       />
-      </div>
     );
   }
 
