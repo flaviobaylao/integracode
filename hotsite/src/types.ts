@@ -12,6 +12,10 @@ export interface Product {
   imageUrl: string | null;
   images?: string[] | null; // Array de URLs de imagens para galeria
   stock: number;
+  // Disponibilidade de venda (set/2026): quando false o produto CONTINUA na vitrine,
+  // porém sem poder ser adicionado ao carrinho ("ainda não disponível"). Opcional
+  // porque respostas de deploys antigos não trazem o campo — ausente = disponível.
+  availableForSale?: boolean;
 }
 
 export interface CartItem extends Product {
