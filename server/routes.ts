@@ -26409,7 +26409,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resaleBrasiliaPrice: product.resaleBrasiliaPrice ? parseFloat(product.resaleBrasiliaPrice) : null,
         imageUrl: product.imageUrl || '/placeholder-product.jpg',
         images: product.images || (product.imageUrl ? [product.imageUrl] : []),
-        stock: product.stock
+        stock: product.stock,
+        // Disponibilidade de venda: a loja MOSTRA o produto e desabilita o botao
+        // ("Ainda não disponível"). Por isso ele continua na lista, e nao e filtrado.
+        availableForSale: (product as any).availableForSale !== false
       }));
       
       res.json(formattedProducts);
@@ -26706,7 +26709,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             productId: item.productId
           });
         }
-        
+
+        // 🚫 DISPONIBILIDADE DE VENDA (set/2026) — o item aparece na vitrine, mas nao
+        // pode virar pedido. A loja ja desabilita o botao; esta e a trava real, valida
+        // tambem para PIX/cartao/Google Pay, que reentram por este endpoint.
+        if ((product as any).availableForSale === false) {
+          return res.status(400).json({
+            message: `${product.name} ainda não está disponível para venda. Remova o item para finalizar o pedido.`,
+            code: 'PRODUTO_INDISPONIVEL',
+            productId: item.productId
+          });
+        }
+
         // Selecionar preço correto baseado na tabela do cliente
         let correctPrice: number;
         if (validatedData.priceTable) {
