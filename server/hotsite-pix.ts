@@ -56,6 +56,12 @@ export async function computeServerTotal(body: any): Promise<{ total: number; su
     const product = await storage.getProduct(String(item.productId || ''));
     if (!product) return { error: `Produto ${item.productName || item.productId} não encontrado` };
     if (!product.isActive) return { error: `Produto ${product.name} não está mais disponível` };
+    // 🚫 DISPONIBILIDADE DE VENDA (set/2026) — barra ANTES de gerar cobranca (PIX,
+    // cartao e Google Pay passam por aqui). Sem isto o cliente pagaria por um item
+    // que o /api/public/orders recusaria depois — dinheiro entrando sem pedido.
+    if ((product as any).availableForSale === false) {
+      return { error: `${product.name} ainda não está disponível para venda. Remova o item para finalizar o pedido.` };
+    }
     let price: number;
     switch (body.priceTable) {
       case 'retail': price = (product as any).retailPrice ?? product.price; break;
