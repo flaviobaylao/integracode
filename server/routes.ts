@@ -4060,7 +4060,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (billingId) { try { svc = await getOmieServiceForBilling(storage, billingId); } catch { svc = null; } }
       if (!svc) svc = getOmieService(storage);
       if (!svc) return res.status(503).json({ ok: false, message: 'Serviço Omie indisponível no servidor' });
-      const resp = await svc.fetchCompleteOrder(String(orderId));
+      const numero = req.query?.numero ? String(req.query.numero) : '';
+      const hasDet = (r: any) => Array.isArray(r?.pedido_venda_produto?.det || r?.det) && (r?.pedido_venda_produto?.det || r?.det).length > 0;
+      // 1) por codigo_pedido; 2) fallback por numero_pedido; 3) na instância default se ainda vazio
+      let resp = await svc.fetchCompleteOrder(String(orderId));
+      if (!hasDet(resp) && numero && typeof svc.fetchOrderByNumero === 'function') {
+        const r2 = await svc.fetchOrderByNumero(numero);
+        if (hasDet(r2)) resp = r2;
+      }
+      if (!hasDet(resp)) {
+        const def = getOmieService(storage);
+        if (def && def !== svc) {
+          let r3 = await def.fetchCompleteOrder(String(orderId));
+          if (!hasDet(r3) && numero) r3 = await def.fetchOrderByNumero(numero);
+          if (hasDet(r3)) resp = r3;
+        }
+      }
       if (!resp) return res.json({ ok: false, message: `Pedido ${orderId} não encontrado no Omie` });
       const det = (resp?.pedido_venda_produto?.det || resp?.det || []) as any[];
       const cab = resp?.pedido_venda_produto?.cabecalho || resp?.cabecalho || {};

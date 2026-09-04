@@ -1005,6 +1005,20 @@ export class OmieService {
     }
   }
 
+  // Consulta um pedido pelo NÚMERO do pedido (numero_pedido), quando o codigo_pedido não bate.
+  async fetchOrderByNumero(numero: string): Promise<any | null> {
+    if (!numero) return null;
+    try {
+      const response = await this.makeRequest('/produtos/pedido/', 'ConsultarPedido', {
+        numero_pedido: String(numero)
+      });
+      return response;
+    } catch (error) {
+      console.log(`⚠️ Erro ao consultar pedido por numero ${numero}:`, error);
+      return null;
+    }
+  }
+
   // Método para buscar dados completos de um cliente específico
   async fetchClientData(clientCode: string): Promise<{fantasyName: string, companyName: string, rawData?: any} | null> {
     if (!clientCode) return null;
