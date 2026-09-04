@@ -4047,6 +4047,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //   • linha existe e INATIVA → PULA (respeita a remoção manual)
   // Sem documento: não dá para entrar (active_customers exige documento) — apenas conta.
   // POST { dryRun?: boolean }.
+
+  // 🔎 CONSULTA os ITENS de um pedido direto no Omie (quando o faturamento no Integra veio sem
+  // itens). Usa as credenciais do Omie já configuradas no servidor — não exige acesso do usuário.
+  // orderId = codigo_pedido do Omie (customers/billings.omieOrderId). Opcional billingId para
+  // resolver a instância Omie correta. Só leitura.
+  app.get('/api/admin/omie/pedido-itens/:orderId', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { orderId } = req.params;
+      const billingId = req.query?.billingId ? String(req.query.billingId) : '';
+      let svc: any = null;
+      if (billingId) { try { svc = await getOmieServiceForBilling(storage, billingId); } catch { svc = null; } }
+      if (!svc) svc = getOmieService(storage);
+      if (!svc) return res.status(503).json({ ok: false, message: 'Serviço Omie indisponível no servidor' });
+      const resp = await svc.fetchCompleteOrder(String(orderId));
+      if (!resp) return res.json({ ok: false, message: `Pedido ${orderId} não encontrado no Omie` });
+      const det = (resp?.pedido_venda_produto?.det || resp?.det || []) as any[];
+      const cab = resp?.pedido_venda_produto?.cabecalho || resp?.cabecalho || {};
+      const itens = (det || []).map((d: any) => ({
+        codigo: d?.produto?.codigo ?? d?.produto?.codigo_produto ?? null,
+        descricao: d?.produto?.descricao ?? null,
+        quantidade: d?.produto?.quantidade ?? null,
+        valorUnitario: d?.produto?.valor_unitario ?? null,
+        valorTotal: d?.produto?.valor_total ?? null,
+      }));
+      res.json({
+        ok: true,
+        orderId,
+        numeroPedido: cab?.numero_pedido ?? null,
+        dataPedido: cab?.data_previsao ?? cab?.etapa ?? null,
+        totalItens: itens.length,
+        itens,
+      });
+    } catch (error: any) {
+      console.error('Error consultando pedido Omie:', error?.message || error);
+      res.status(500).json({ ok: false, message: 'Falha ao consultar pedido no Omie: ' + String(error?.message || error) });
+    }
+  });
+
   app.post('/api/admin/active-customers/sync-gestao', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun === true;
