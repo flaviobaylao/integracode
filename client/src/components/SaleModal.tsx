@@ -440,7 +440,18 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   }, [salesCard, isOpen]);
 
   // Controlar seleção de produtos
+  // DISPONIBILIDADE (set/2026): produto sem disponibilidade CONTINUA na lista — o
+  // vendedor precisa ver que ele existe — mas nao pode ser marcado. Quem decide e a
+  // tela de Produtos (interruptor "Disponivel para venda"). Enquanto o campo nao
+  // existir na resposta da API (deploy antigo), `=== false` mantem tudo liberado.
+  const indisponivel = (product: any) => product?.availableForSale === false;
+
   const handleProductSelect = (productId: string, isSelected: boolean) => {
+    // Trava tambem aqui: um clique via teclado/atalho nao pode furar o `disabled`.
+    if (isSelected) {
+      const p = Array.isArray(products) ? products.find((x: Product) => x.id === productId) : null;
+      if (indisponivel(p)) return;
+    }
     if (isSelected) {
       setSelectedProducts(prev => ({ ...prev, [productId]: 1 }));
     } else {
@@ -988,6 +999,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                   <Checkbox
                                     id={`product-${product.id}`}
                                     checked={!!selectedProducts[product.id]}
+                                    disabled={indisponivel(product)}
                                     onCheckedChange={(checked) => handleProductSelect(product.id, checked as boolean)}
                                     data-testid={`checkbox-product-${product.id}`}
                                   />
@@ -995,7 +1007,12 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                     htmlFor={`product-${product.id}`}
                                     className="text-sm cursor-pointer flex-1"
                                   >
-                                    <div className="font-medium">{product.name}</div>
+                                    <div className={`font-medium ${indisponivel(product) ? 'text-gray-400' : ''}`}>
+                                      {product.name}
+                                      {indisponivel(product) && (
+                                        <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
+                                      )}
+                                    </div>
                                     <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
                                     <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
                                   </Label>
@@ -1041,6 +1058,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                   <Checkbox
                                     id={`product-${product.id}`}
                                     checked={!!selectedProducts[product.id]}
+                                    disabled={indisponivel(product)}
                                     onCheckedChange={(checked) => handleProductSelect(product.id, checked as boolean)}
                                     data-testid={`checkbox-product-${product.id}`}
                                   />
@@ -1048,7 +1066,12 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                     htmlFor={`product-${product.id}`}
                                     className="text-sm cursor-pointer flex-1"
                                   >
-                                    <div className="font-medium">{product.name}</div>
+                                    <div className={`font-medium ${indisponivel(product) ? 'text-gray-400' : ''}`}>
+                                      {product.name}
+                                      {indisponivel(product) && (
+                                        <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
+                                      )}
+                                    </div>
                                     <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
                                     <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
                                   </Label>
@@ -1094,6 +1117,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                   <Checkbox
                                     id={`product-${product.id}`}
                                     checked={!!selectedProducts[product.id]}
+                                    disabled={indisponivel(product)}
                                     onCheckedChange={(checked) => handleProductSelect(product.id, checked as boolean)}
                                     data-testid={`checkbox-product-${product.id}`}
                                   />
@@ -1101,7 +1125,12 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                     htmlFor={`product-${product.id}`}
                                     className="text-sm cursor-pointer flex-1"
                                   >
-                                    <div className="font-medium">{product.name}</div>
+                                    <div className={`font-medium ${indisponivel(product) ? 'text-gray-400' : ''}`}>
+                                      {product.name}
+                                      {indisponivel(product) && (
+                                        <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
+                                      )}
+                                    </div>
                                     <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
                                     <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
                                   </Label>
