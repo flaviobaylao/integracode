@@ -23,9 +23,12 @@ interface CheckoutFormProps {
   onSubmit: (customer: Customer, paymentMethod: 'pix' | 'card' | 'boleto') => void;
   onBack: () => void;
   isProcessing: boolean;
+  // VIGIA CUPOM: o codigo mora no App (vai junto no pedido); aqui so entra a UI.
+  code: string;
+  onCodeChange: (value: string) => void;
 }
 
-export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isProcessing }: CheckoutFormProps) {
+export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isProcessing, code, onCodeChange }: CheckoutFormProps) {
   const { category } = useCustomerType();
   
   // Determinar tipo de cliente baseado na categoria selecionada
@@ -65,6 +68,89 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   const [documentValidated, setDocumentValidated] = useState(false);
   const [documentError, setDocumentError] = useState('');
   
+  // VIGIA CUPOM: previa do desconto na propria tela (botao Aplicar).
+  // O servidor continua sendo a fonte de verdade — o pedido sai com o valor CHEIO
+  // e quem abate e o /api/public/orders. Aqui e so previa para o cliente ver.
+  type CupomPreview = { ok: boolean; msg: string; code?: string; discount?: number; total?: number };
+  const [codeChecking, setCodeChecking] = useState(false);
+  const [codePreview, setCodePreview] = useState<CupomPreview | null>(null);
+  // Mexeu no campo (ou no carrinho) => previa antiga nao vale mais.
+  useEffect(() => { setCodePreview(null); }, [code, total]);
+
+  const motivoCupom = (r: any, temDoc: boolean): string => {
+    const motivo = String((r && r.reason) || '');
+    switch (motivo) {
+      case 'inexistente':
+        return temDoc
+          ? 'Código não encontrado.'
+          : 'Código não encontrado. Se for código de indicação, informe seu CPF/CNPJ abaixo e tente de novo.';
+      case 'inativo':
+      case 'nao_habilitado_no_2_0': return 'Este código não está ativo.';
+      case 'nao_iniciado': return 'Este cupom ainda não começou a valer.';
+      case 'expirado': return 'Este cupom já expirou.';
+      case 'esgotado': return 'Este cupom já atingiu o limite de usos.';
+      case 'teto_atingido': return 'Este código de indicação já atingiu o limite de usos.';
+      case 'pedido_minimo':
+        return `Este cupom vale a partir de R$ ${Number(r?.minOrderValue || 0).toFixed(2)}.`;
+      case 'canal_nao_permitido': return 'Este cupom não vale para compras pelo site.';
+      case 'ja_usado_por_este_cliente':
+      case 'ja_usou': return 'Você já usou este código.';
+      case 'auto_indicacao': return 'Você não pode usar o seu próprio código de indicação.';
+      case 'desconto_invalido_para_este_valor': return 'O desconto não se aplica a este valor de pedido.';
+      case 'sem_codigo': return 'Digite um código.';
+      default: return 'Código inválido para este pedido.';
+    }
+  };
+
+  const aplicarCodigo = async () => {
+    const limpo = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!limpo) { setCodePreview({ ok: false, msg: 'Digite um código.' }); return; }
+    const doc = String(formData.cpfCnpj || '').replace(/\D/g, '');
+    setCodeChecking(true);
+    try {
+      // 1) cupom promocional (tabela coupons) — tem prioridade, igual ao servidor
+      const qs = new URLSearchParams({ code: limpo, total: String(total), channel: 'hotsite' });
+      if (doc) qs.set('document', doc);
+      const cup = await fetch(`/api/coupons/validate?${qs.toString()}`).then((r) => r.json()).catch(() => null);
+      if (cup && cup.valid) {
+        const desconto = Number(cup.discount) || 0;
+        setCodePreview({
+          ok: true,
+          code: String(cup.code || limpo),
+          discount: desconto,
+          total: Number(cup.totalAfter ?? (total - desconto)),
+          msg: `Cupom ${cup.code || limpo} aplicado.`,
+        });
+        return;
+      }
+      // 2) codigo de indicacao (tabela referral_coupons) — precisa do documento
+      if (doc) {
+        const ind = await fetch(`/api/referral/validate?code=${encodeURIComponent(limpo)}&referredDocument=${doc}`)
+          .then((r) => r.json())
+          .catch(() => null);
+        if (ind && ind.valid) {
+          const pct = Number(ind.discountPct) || 15;
+          const desconto = Math.round(total * (pct / 100) * 100) / 100;
+          setCodePreview({
+            ok: true,
+            code: String(ind.code || limpo),
+            discount: desconto,
+            total: Math.round((total - desconto) * 100) / 100,
+            msg: `Código de indicação aplicado: ${pct}% de desconto.`,
+          });
+          return;
+        }
+        setCodePreview({ ok: false, msg: motivoCupom(ind && ind.reason ? ind : cup, true) });
+        return;
+      }
+      setCodePreview({ ok: false, msg: motivoCupom(cup, false) });
+    } catch {
+      setCodePreview({ ok: false, msg: 'Não deu para validar agora. Tente de novo em alguns segundos.' });
+    } finally {
+      setCodeChecking(false);
+    }
+  };
+
   // Estados para captura de localização GPS
   const [deliveryLocation, setDeliveryLocation] = useState<{ latitude: number; longitude: number; capturedAt: Date } | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
@@ -433,6 +519,49 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
       </div>
 
       <div className="p-4 max-w-2xl mx-auto">
+        {/* VIGIA CUPOM: cupom/indicacao logo acima do resumo, com botao Aplicar */}
+        <div className="bg-white rounded-xl p-4 mb-4 shadow-sm">
+          <label htmlFor="campo-cupom" className="block text-sm font-semibold text-gray-700 mb-2">
+            Cupom ou código de indicação (opcional)
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="campo-cupom"
+              value={code}
+              onChange={(e) => onCodeChange(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); aplicarCodigo(); } }}
+              placeholder="Ex.: HONEST8 ou INDXXXXXX"
+              className="flex-1 min-w-0 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm uppercase focus:border-rose-400 focus:outline-none"
+              data-testid="input-cupom"
+            />
+            <button
+              type="button"
+              onClick={aplicarCodigo}
+              disabled={codeChecking || !String(code || '').trim()}
+              className="shrink-0 bg-rose-500 hover:bg-rose-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold px-5 py-2 rounded-lg text-sm transition-all active:scale-95"
+              data-testid="btn-aplicar-cupom"
+            >
+              {codeChecking ? 'Validando...' : 'Aplicar'}
+            </button>
+          </div>
+          {codePreview && (
+            <p
+              className={`text-sm mt-2 flex items-start gap-1 ${codePreview.ok ? 'text-green-700' : 'text-red-600'}`}
+              data-testid="msg-cupom"
+            >
+              <span>{codePreview.ok ? '✓' : '✕'}</span>
+              <span>
+                {codePreview.msg}
+                {codePreview.ok && codePreview.discount ? ` Você economiza R$ ${codePreview.discount.toFixed(2)}.` : ''}
+              </span>
+            </p>
+          )}
+          <p className="text-xs text-gray-400 mt-2">
+            Vale um desconto por pedido — o cupom tem prioridade sobre a indicação. Novo cliente ganha 15% no 1º pedido
+            com o código de quem indicou; se você já indicou alguém, o desconto entra sozinho.
+          </p>
+        </div>
+
         {/* Resumo do Pedido */}
         <div className="bg-white rounded-xl p-4 mb-4 shadow-sm">
           <h2 className="font-bold text-lg mb-3">Resumo do Pedido</h2>
@@ -443,10 +572,27 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 <span className="font-semibold">R$ {(item.price * item.quantity).toFixed(2)}</span>
               </div>
             ))}
-            <div className="border-t pt-2 flex justify-between font-bold text-lg">
-              <span>Total:</span>
-              <span className="text-rose-600">R$ {total.toFixed(2)}</span>
-            </div>
+            {codePreview?.ok && codePreview.discount ? (
+              <>
+                <div className="border-t pt-2 flex justify-between text-gray-600">
+                  <span>Subtotal</span>
+                  <span>R$ {total.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-green-700 font-semibold" data-testid="linha-desconto">
+                  <span>Desconto ({codePreview.code})</span>
+                  <span>− R$ {codePreview.discount.toFixed(2)}</span>
+                </div>
+                <div className="border-t pt-2 flex justify-between font-bold text-lg">
+                  <span>Total:</span>
+                  <span className="text-rose-600">R$ {Number(codePreview.total ?? total).toFixed(2)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="border-t pt-2 flex justify-between font-bold text-lg">
+                <span>Total:</span>
+                <span className="text-rose-600">R$ {total.toFixed(2)}</span>
+              </div>
+            )}
           </div>
         </div>
 
