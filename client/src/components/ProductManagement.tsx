@@ -141,6 +141,28 @@ export default function ProductManagement() {
     },
   });
 
+  // DISPONIBILIDADE DE VENDA (set/2026) — interruptor por produto.
+  // Desligado: o produto CONTINUA aparecendo no card do vendedor, no Hotsite e para a
+  // IA do Instagram, porem sem poder ser selecionado, com "(ainda não disponível)".
+  // Diferente de inativar, que faz o produto sumir de tudo.
+  const updateDisponibilidadeMutation = useMutation({
+    mutationFn: async ({ productId, availableForSale }: { productId: string; availableForSale: boolean }) => {
+      return await apiRequest('PUT', `/api/products/${productId}`, { availableForSale });
+    },
+    onSuccess: (_data: any, vars: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      toast({
+        title: vars.availableForSale ? "Produto liberado para venda" : "Produto marcado como indisponível",
+        description: vars.availableForSale
+          ? "Ele volta a poder ser selecionado nos pedidos."
+          : "Continua aparecendo nas listas, mas ninguém consegue selecionar.",
+      });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao alterar disponibilidade", description: error.message, variant: "destructive" });
+    },
+  });
+
   const handleImageUpload = async (productId: string, files: FileList) => {
     if (files.length === 0) return;
 
@@ -292,7 +314,39 @@ export default function ProductManagement() {
                       <p className="text-sm font-medium text-gray-800">{product.stock} un</p>
                     </div>
                   </div>
-                  
+
+                  {/* Disponível para venda — vale para vendedor, Hotsite e Instagram */}
+                  <div className={`flex items-center justify-between rounded-md border px-3 py-2 ${
+                    (product as any).availableForSale === false ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200'
+                  }`}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-700">Disponível para venda</p>
+                      <p className="text-[11px] text-gray-500 leading-tight">
+                        {(product as any).availableForSale === false
+                          ? 'Aparece nas listas como "ainda não disponível", sem poder ser selecionado.'
+                          : 'Pode ser selecionado normalmente nos pedidos.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={(product as any).availableForSale !== false}
+                      disabled={updateDisponibilidadeMutation.isPending}
+                      onClick={() => updateDisponibilidadeMutation.mutate({
+                        productId: product.id,
+                        availableForSale: (product as any).availableForSale === false,
+                      })}
+                      data-testid={`switch-disponivel-${product.id}`}
+                      className={`ml-3 shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+                        (product as any).availableForSale === false ? 'bg-gray-300' : 'bg-green-600'
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        (product as any).availableForSale === false ? 'translate-x-1' : 'translate-x-6'
+                      }`} />
+                    </button>
+                  </div>
+
                   {(product.omieCodigoProduto || product.omieCodigo) && (
                     <div className="flex items-center justify-between">
                       <div className="text-xs text-gray-500 flex items-center">
