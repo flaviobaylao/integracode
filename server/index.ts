@@ -378,6 +378,13 @@ run();
       // ⚠️ Coluna adicionada ao schema drizzle → o ALTER PRECISA ficar aqui no boot,
       // senão todo SELECT de billing_pipeline quebra entre o deploy e o ALTER.
       await db.execute(sql.raw("ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS is_priority boolean NOT NULL DEFAULT false"));
+      // Disponibilidade de venda por produto (set/2026). Produto com false CONTINUA
+      // aparecendo nas listas, mas nao pode ser selecionado ("ainda nao disponivel").
+      // ⚠️ Coluna no schema drizzle → o ALTER precisa rodar no boot, senao todo
+      // SELECT de products quebra entre o deploy e a migracao. Default true: quem ja
+      // existe segue vendavel. NAO desligamos nenhum produto aqui — quem decide e a
+      // tela de Produtos, senao o boot desfaria a escolha do usuario a cada deploy.
+      await db.execute(sql.raw("ALTER TABLE products ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true"));
       await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinates_locked boolean NOT NULL DEFAULT false"));
       // Fluxo de retorno de lead (15 dias): colunas de controle (aditivas, idempotentes).
       await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS original_return_date timestamp"));
