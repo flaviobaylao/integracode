@@ -365,25 +365,22 @@ export default function ActiveCustomers() {
   });
 
   const inactivateMutation = useMutation({
-    mutationFn: async ({ customerId, activeCustomerId }: { customerId: string; activeCustomerId: string }) => {
-      const response = await fetch(`/api/customers/${customerId}/inactivate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ cardId: activeCustomerId })
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Falha ao inativar cliente');
-      }
-      return response.json();
+    // UNIFICADO: todo botão "Inativar" usa a MESMA ação (bulk-inactivate) — marca isActive=false
+    // e omie_status='inativo', tira o cliente da lista de Clientes Ativos E muda a situação para
+    // "Inativo" na Gestão de Clientes. Antes este caminho usava /inactivate (exigia cardId) e só
+    // atualizava a lista de ativos, deixando a Gestão desatualizada (mostrando "Ativo").
+    mutationFn: async ({ customerId }: { customerId: string; activeCustomerId?: string }) => {
+      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids: [customerId] });
+      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
     },
-    onSuccess: (data) => {
-      toast({ 
-        title: "Cliente inativado!", 
-        description: data.message || "O cliente foi removido da lista de clientes ativos." 
+    onSuccess: (data: any) => {
+      toast({
+        title: "Cliente inativado!",
+        description: "Removido da lista de Clientes Ativos e marcado como Inativo na Gestão de Clientes.",
       });
+      // Atualiza AS DUAS telas: Clientes Ativos (active-customers) e Gestão de Clientes (customers)
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
       setShowInactivateDialog(false);
       setCustomerToInactivate(null);
     },
