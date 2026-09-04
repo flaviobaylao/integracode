@@ -378,6 +378,13 @@ export const products = pgTable("products", {
   imageUrl: varchar("image_url"), // Imagem principal (mantido para compatibilidade)
   images: text("images").array(), // Array de URLs de imagens (galeria)
   isActive: boolean("is_active").notNull().default(true),
+  // DISPONIBILIDADE DE VENDA (set/2026) — diferente de `isActive`:
+  //   isActive=false        -> produto SOME de todas as listas (descontinuado)
+  //   availableForSale=false-> produto CONTINUA APARECENDO, mas nao pode ser
+  //   selecionado; as telas mostram "(ainda nao disponivel)". Para quando falta
+  //   materia-prima e o item volta a ser vendido depois (ex.: UVA).
+  // Liga/desliga por produto na tela de Produtos. Default true = nada muda.
+  availableForSale: boolean("available_for_sale").notNull().default(true),
   
   // Multi-tenant Omie: identificação da instância de origem
   omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem
