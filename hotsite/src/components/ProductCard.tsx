@@ -22,6 +22,11 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
   
   const displayPrice = getProductPrice(product, priceTable);
 
+  // DISPONIBILIDADE (set/2026): o produto continua na vitrine — o cliente precisa saber
+  // que ele existe — mas nao entra no carrinho. Ligado/desligado por produto na tela de
+  // Produtos. `=== false` de proposito: resposta antiga sem o campo segue vendendo.
+  const indisponivel = product.availableForSale === false;
+
   return (
     <>
     <div className="product-card" data-testid={`product-card-${product.id}`}>
@@ -80,11 +85,16 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
               Ver detalhes
             </button>
             <button
-              onClick={() => onAddToCart(product)}
-              className="flex-1 btn-primary text-sm py-2 px-3"
+              onClick={() => { if (!indisponivel) onAddToCart(product); }}
+              disabled={indisponivel}
+              className={`flex-1 text-sm py-2 px-3 ${
+                indisponivel
+                  ? 'rounded-lg bg-gray-200 text-gray-500 font-semibold cursor-not-allowed'
+                  : 'btn-primary'
+              }`}
               data-testid={`btn-add-cart-${product.id}`}
             >
-              Adicionar
+              {indisponivel ? 'Ainda não disponível' : 'Adicionar'}
             </button>
           </div>
         </div>
@@ -129,12 +139,22 @@ export default function ProductCard({ product, onAddToCart }: ProductCardProps) 
               </div>
 
               <button
-                onClick={() => onAddToCart(product)}
-                className="w-full btn-primary py-3 text-lg"
+                onClick={() => { if (!indisponivel) onAddToCart(product); }}
+                disabled={indisponivel}
+                className={`w-full py-3 text-lg ${
+                  indisponivel
+                    ? 'rounded-lg bg-gray-200 text-gray-500 font-semibold cursor-not-allowed'
+                    : 'btn-primary'
+                }`}
                 data-testid={`btn-add-cart-modal-${product.id}`}
               >
-                🛒 Adicionar ao Carrinho
+                {indisponivel ? 'Ainda não disponível' : '🛒 Adicionar ao Carrinho'}
               </button>
+              {indisponivel && (
+                <p className="mt-2 text-center text-sm text-amber-700">
+                  Este sabor está temporariamente fora de linha. Avisaremos assim que voltar.
+                </p>
+              )}
             </div>
 
             {/* Detalhes Técnicos */}
