@@ -27,6 +27,14 @@ const CINZA = "#898781";
 const COR_BARRA = { faturamento: "#2a78d6", debito: "#d03b3b", inativos: "#eda100", perdidos: "#4a3aa7" };
 // Data de conquista: azul = entrou ou voltou; vermelho = saiu.
 const COR_CONQUISTA = { entrada: "#2a78d6", saida: "#d03b3b" };
+// ── Escala fixa do gráfico de evolução ───────────────────────────────────────
+// O Flavio pediu eixo travado de 0 a 350 mil, de 50 em 50 mil, para comparar um
+// mês com o outro (e uma carteira com a outra) sem a escala se mexer embaixo.
+// Escala automática dá a ilusão de que todo mês tem a mesma altura de barra.
+const Y_MAX = 350000;
+const Y_PASSO = 50000;
+const Y_TICKS = Array.from({ length: Y_MAX / Y_PASSO + 1 }, (_, i) => i * Y_PASSO);
+
 const SERIE_TITULOS = "#2a78d6";
 const SERIE_NF = "#eb6834";
 
@@ -478,6 +486,15 @@ export default function GestaoCarteiras() {
     }
     return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
   }, [d, clientes, meses, filtrarVend, clienteDaSerie]);
+
+  // Com o eixo travado, mês acima do teto sai CORTADO no desenho. Cortar sem
+  // avisar é esconder — então a tela diz quais são e quanto deram.
+  const acimaDoTeto = useMemo(
+    () => (serie || [])
+      .filter((p: any) => Number(p?.valor || 0) > Y_MAX)
+      .map((p: any) => ({ mes: p.mes, valor: Number(p.valor || 0) })),
+    [serie],
+  );
 
   const kpis = useMemo(() => {
     if (!filtrarVend) return d?.kpis || {};
@@ -1285,7 +1302,14 @@ export default function GestaoCarteiras() {
                 <LineChart data={serie} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#ececea" vertical={false} />
                   <XAxis dataKey="mes" tickFormatter={labelMes} tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={{ stroke: "#ececea" }} />
-                  <YAxis tickFormatter={(v: any) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))}
+                  {/* Eixo travado em 0–350 mil, de 50 em 50 mil. `allowDataOverflow`
+                      e' o que faz o limite valer de verdade — sem ele o Recharts
+                      estica o dominio para caber o dado e o eixo deixa de ser fixo. */}
+                  <YAxis
+                    domain={[0, Y_MAX]}
+                    ticks={Y_TICKS}
+                    allowDataOverflow
+                    tickFormatter={(v: any) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))}
                     tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={false} width={52} />
                   <Tooltip formatter={(v: any, n: any) => [BRL(v), n]} labelFormatter={(l: any) => labelMes(String(l))} />
                   <Legend />
@@ -1295,6 +1319,16 @@ export default function GestaoCarteiras() {
                   ) : null}
                 </LineChart>
               </ResponsiveContainer>
+              <p className="text-xs text-muted-foreground mt-2">
+                Escala fixa de 0 a {BRL0(Y_MAX)}, de {BRL0(Y_PASSO)} em {BRL0(Y_PASSO)}.
+                {acimaDoTeto.length ? (
+                  <span className="text-amber-700 font-medium">
+                    {" "}{acimaDoTeto.length === 1 ? "1 mês passa" : `${acimaDoTeto.length} meses passam`} do teto e{" "}
+                    {acimaDoTeto.length === 1 ? "aparece cortado" : "aparecem cortados"}:{" "}
+                    {acimaDoTeto.map((p: any) => `${labelMes(p.mes)} ${BRL0(p.valor)}`).join(" · ")}.
+                  </span>
+                ) : null}
+              </p>
               {!filtrarVend && d?.excluidos?.valor > 0 ? (
                 <p className="text-xs text-muted-foreground mt-2">
                   Fora da carteira: {BRL0(d.excluidos.valor)} em {NUM(d.excluidos.titulos)} títulos que não são venda
