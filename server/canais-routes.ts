@@ -245,7 +245,8 @@ export function registerCanaisRoutes(app: Express): void {
         return res.status(400).json({ message: 'Este pedido não é de um canal digital' });
       }
 
-      await storage.deleteSalesCard(id);
+      // Exclusão deliberada de pedido de canal digital (admin) — passa pela blindagem com force.
+      await storage.deleteSalesCard(id, { force: true });
       try {
         const { journalMarkDeleted } = await import('./order-journal');
         await journalMarkDeleted(id, u.email);

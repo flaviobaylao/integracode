@@ -459,7 +459,29 @@ run();
   // requireRole inline delas. Rotas registradas ANTES (routes.ts, painéis IA
   // com OFICIAL_ADMIN_KEY) não são afetadas por esta linha.
   // ==========================================================================
-  app.use('/api/admin', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']));
+  const ADMIN_PATHS_QUALQUER_LOGADO = new Set([
+    // leituras informativas / ações próprias que telas de vendedor/telemarketing já usavam
+    '/routes/missing-coords', '/justificativas/semana', '/justificativas/pendentes-todos',
+    '/visits/generate-from-1-0', '/cadastro-receita-sync/status',
+  ]);
+  const _isLoopbackInterno = (req: Request) => {
+    const ra = String((req.socket && (req.socket as any).remoteAddress) || '');
+    const loopback = ra.indexOf('127.0.0.1') >= 0 || ra === '::1' || ra === '::ffff:127.0.0.1';
+    return loopback && !req.headers['x-forwarded-for'];
+  };
+  app.use('/api/admin', (req: Request, res: Response, next: NextFunction) => {
+    // (a) auto-chamadas internas do próprio servidor (VIGIA/relatórios fazem fetch em 127.0.0.1)
+    if (_isLoopbackInterno(req)) return next();
+    // (b) tarefas externas (Cowork/cron) sem sessão: header x-integra-task-key = env INTEGRA_TASK_KEY
+    const taskKey = process.env.INTEGRA_TASK_KEY;
+    if (taskKey && String(req.headers['x-integra-task-key'] || '') === taskKey) return next();
+    // (c) usuário logado
+    return authenticateUser(req, res, (err?: any) => {
+      if (err) return next(err);
+      if (ADMIN_PATHS_QUALQUER_LOGADO.has(req.path)) return next();
+      return requireRole(['admin', 'coordinator', 'administrative'])(req, res, next);
+    });
+  });
 
   // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────
   app.get('/api/admin/automations/mode', async (_req, res) => {
