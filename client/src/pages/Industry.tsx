@@ -115,7 +115,11 @@ const fmtDateTime = (v: any) => {
 const jfetch = async (url: string, opts: any = {}) => {
   const r = await fetch(url, { credentials: 'include', headers: opts.body ? { 'Content-Type': 'application/json' } : undefined, ...opts });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || j?.error) throw new Error(j?.error || j?.message || `Falha (${r.status})`);
+  if (!r.ok || j?.error) {
+    const err: any = new Error(j?.error || j?.message || `Falha (${r.status})`);
+    err.code = j?.code; err.status = r.status; err.body = j;
+    throw err;
+  }
   return j;
 };
 
@@ -614,6 +618,13 @@ function OrdensTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reportOpen, setReportOpen] = useState(false);
   const [opReportOpen, setOpReportOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+  // OPs finalizadas sem baixa de insumo (Flavio 05/set) — o botao fica ambar
+  // enquanto existir alguma.
+  const { data: auditoria } = useQuery({
+    queryKey: ['/api/industria/production-orders/auditoria-baixa'],
+    queryFn: () => jfetch('/api/industria/production-orders/auditoria-baixa'),
+  });
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['/api/industria/production-orders'],
@@ -625,6 +636,7 @@ function OrdensTab() {
     qc.invalidateQueries({ queryKey: ['/api/industria/production-orders'] });
     qc.invalidateQueries({ queryKey: ['/api/industria/raw-materials'] });
     qc.invalidateQueries({ queryKey: ['/api/inventory/summary'] });
+    qc.invalidateQueries({ queryKey: ['/api/industria/production-orders/auditoria-baixa'] });
   };
 
   const counts = useMemo(() => ({
@@ -734,6 +746,11 @@ function OrdensTab() {
           title="Relatório produtivo completo das ordens selecionadas">
           <ClipboardList className="h-4 w-4 mr-1" /> Relatório de OP ({selected.size})
         </Button>
+        <Button variant="outline" size="sm" onClick={() => setAuditOpen(true)}
+          className={auditoria?.total ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100' : ''}
+          title="Ordens finalizadas que NÃO deram baixa em matéria-prima">
+          <AlertTriangle className="h-4 w-4 mr-1" /> Auditoria de baixa{auditoria?.total ? ` (${auditoria.total})` : ''}
+        </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOrderDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Nova Ordem
         </Button>
@@ -842,6 +859,7 @@ function OrdensTab() {
 
       {orderDialog != null && <OrderDialog order={orderDialog} onClose={() => setOrderDialog(null)} onDone={() => { setOrderDialog(null); invalidate(); }} />}
       {finalizeDialog && <FinalizeDialog order={finalizeDialog} onClose={() => setFinalizeDialog(null)} onDone={() => { setFinalizeDialog(null); invalidate(); }} />}
+      {auditOpen && <AuditoriaBaixaDialog onClose={() => setAuditOpen(false)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['/api/industria/production-orders/auditoria-baixa'] }); }} />}
       {detailsDialog && <OrderDetailsDialog order={detailsDialog} onClose={() => setDetailsDialog(null)} />}
       {reportOpen && (
         <MateriaisReportDialog
@@ -1041,6 +1059,78 @@ function OrderDialog({ order, onClose, onDone }: any) {
   );
 }
 
+// Ordens finalizadas SEM baixa de insumo: lista o que o servidor encontrou e
+// permite a baixa retroativa (itens da OP -> receita do produto), uma a uma.
+function AuditoriaBaixaDialog({ onClose, onDone }: any) {
+  const { toast } = useToast();
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['/api/industria/production-orders/auditoria-baixa'],
+    queryFn: () => jfetch('/api/industria/production-orders/auditoria-baixa'),
+  });
+  const [busy, setBusy] = useState<string | null>(null);
+  const orders: any[] = data?.orders || [];
+
+  const reparar = async (o: any) => {
+    const previa = (o.previa || []).map((p: any) => `• ${p.name || p.raw_material_id}: ${fmtQty(p.quantity_used)}${p.existe ? '' : ' (NÃO EXISTE NO CADASTRO)'}`).join('\n');
+    if (!window.confirm(
+      `Dar baixa retroativa nos insumos da ${o.order_number} (${o.product_name}, ${fmtQty(o.quantity)} un)?\n\n` +
+      `Fonte: ${o.fonte === 'itens_da_op' ? 'itens gravados na OP' : o.fonte === 'receita' ? 'receita do produto' : 'nenhuma'}\n${previa}\n\n` +
+      `Isso baixa o estoque de matéria-prima HOJE, grava as movimentações apontando para a OP e preenche o CMV do lote. Não dá para desfazer pela tela (só reabrindo a OP).`
+    )) return;
+    setBusy(o.id);
+    try {
+      const j = await jfetch(`/api/industria/production-orders/${o.id}/baixar-insumos`, { method: 'POST', body: JSON.stringify({}) });
+      toast({ title: `${o.order_number}: baixa registrada`, description: `${(j.consumed || []).length} insumo(s) · CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})` });
+      (j.warnings || []).forEach((w: string) => toast({ title: 'Atenção', description: w, variant: 'destructive' }));
+      await refetch(); onDone();
+    } catch (e: any) { toast({ title: 'Baixa não realizada', description: String(e.message || e), variant: 'destructive' }); }
+    finally { setBusy(null); }
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" /> Ordens finalizadas sem baixa de insumos</DialogTitle></DialogHeader>
+        <p className="text-sm text-gray-500">
+          Ordens com status Finalizada que não têm nenhuma movimentação de saída de matéria-prima. A partir de agora a finalização exige insumos (ou confirmação explícita) e roda em transação — esta lista é o passivo antigo.
+        </p>
+        {isLoading && <p className="text-sm text-gray-400">Carregando...</p>}
+        {!isLoading && orders.length === 0 && <p className="text-sm text-emerald-700">Nenhuma ordem finalizada sem baixa. ✓</p>}
+        <div className="space-y-2">
+          {orders.map((o) => (
+            <div key={o.id} className="rounded-lg border p-3 text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-xs">{o.order_number}</span>
+                <span className="font-medium">{o.product_name}</span>
+                <span className="text-gray-500">{fmtQty(o.quantity)} un · lote {o.lot_number || '-'} · {fmtDate(o.end_date || o.production_date)}</span>
+                {o.confirmada_sem_baixa && <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-100">confirmada sem baixa</Badge>}
+                <div className="flex-1" />
+                <Button size="sm" disabled={busy === o.id || o.fonte === 'nenhuma' || (o.previa || []).some((p: any) => !p.existe)}
+                  onClick={() => reparar(o)} className="bg-amber-600 hover:bg-amber-700 text-white">
+                  {busy === o.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <ArrowDownCircle className="h-4 w-4 mr-1" />}
+                  Baixar insumos ({o.fonte === 'itens_da_op' ? 'itens da OP' : o.fonte === 'receita' ? 'receita' : 'sem fonte'})
+                </Button>
+              </div>
+              {(o.previa || []).length > 0 ? (
+                <ul className="mt-2 text-xs text-gray-600 grid grid-cols-1 md:grid-cols-2 gap-x-4">
+                  {o.previa.map((p: any, i: number) => (
+                    <li key={i} className={p.existe ? '' : 'text-red-600'}>
+                      {p.name || p.raw_material_id}: <b>{fmtQty(p.quantity_used)}</b>{p.unit ? ` ${p.unit}` : ''}{p.existe ? ` (estoque ${fmtQty(p.estoque)})` : ' — não existe no cadastro'}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-red-600">Sem itens na OP e sem receita para o produto — informe os insumos editando a ordem (reabrir) ou cadastre a receita.</p>
+              )}
+            </div>
+          ))}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FinalizeDialog({ order, onClose, onDone }: any) {
   const { toast } = useToast();
   const { materials } = useIndustriaAux();
@@ -1086,16 +1176,38 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
     if (!f.lot_expiry_date) { toast({ title: 'Validade do lote produzido é obrigatória', variant: 'destructive' }); return; }
     if (f.brix_degree !== '' && !(n(f.brix_degree) > 0)) { toast({ title: 'Grau Brix inválido', variant: 'destructive' }); return; }
     if (f.ph !== '' && !(n(f.ph) > 0)) { toast({ title: 'PH inválido', variant: 'destructive' }); return; }
+    const materiais = f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0);
+    // Sem insumo NAO passa em silencio (Flavio 05/set): ja houve OP finalizada
+    // sem baixa de materia-prima. O servidor tambem recusa (400 SEM_INSUMOS)
+    // a menos que a finalizacao sem baixa seja confirmada explicitamente.
+    let confirmSemInsumos = false;
+    if (materiais.length === 0) {
+      if (!window.confirm(
+        `ATENÇÃO: nenhuma matéria-prima/insumo foi informado.\n\n` +
+        `Finalizar assim NÃO dá baixa em insumo nenhum e o CMV do lote fica zerado.\n\n` +
+        `Clique em Cancelar para informar os insumos consumidos. Clique em OK apenas se esta ordem realmente não consumiu nada.`
+      )) return;
+      confirmSemInsumos = true;
+    }
     setSaving(true);
     try {
       const j = await jfetch(`/api/industria/production-orders/${order.id}/finalize`, {
         method: 'POST',
-        body: JSON.stringify({ ...f, materials: f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0) }),
+        body: JSON.stringify({ ...f, materials: materiais, confirm_sem_insumos: confirmSemInsumos }),
       });
-      toast({ title: `Ordem ${order.order_number} finalizada`, description: `CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})` });
+      const nIns = (j.consumed || []).length;
+      toast({
+        title: `Ordem ${order.order_number} finalizada`,
+        description: `${nIns ? `Baixa de ${nIns} insumo(s)` : 'SEM baixa de insumos'} · CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})`,
+      });
       (j.warnings || []).forEach((w: string) => toast({ title: 'Atenção', description: w, variant: 'destructive' }));
       onDone();
-    } catch (e: any) { toast({ title: 'Erro ao finalizar', description: String(e.message || e), variant: 'destructive' }); }
+    } catch (e: any) {
+      const msg = e?.code === 'MATERIAL_INEXISTENTE'
+        ? `${e.message}. Nada foi gravado — a ordem continua aberta.`
+        : String(e.message || e);
+      toast({ title: 'Erro ao finalizar — nada foi gravado', description: msg, variant: 'destructive' });
+    }
     finally { setSaving(false); }
   };
 
@@ -1120,6 +1232,12 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
               <Label className="text-sm font-semibold">Matéria-Prima Consumida (real)</Label>
               <Button type="button" variant="outline" size="sm" onClick={addMat}><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
             </div>
+            {f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0).length === 0 && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 text-amber-800 text-xs p-2 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span><b>Nenhum insumo informado.</b> A finalização não vai dar baixa em matéria-prima nenhuma e o CMV ficará zerado. Adicione os materiais consumidos (a ordem foi criada sem itens ou a lista está vazia).</span>
+              </div>
+            )}
             {f.materials.map((m: any, idx: number) => {
               const mat = materials.find((x) => String(x.id) === String(m.raw_material_id));
               const enough = mat ? n(mat.quantity) >= n(m.quantity_used) : true;
