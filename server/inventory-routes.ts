@@ -6,6 +6,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { ensureCmvLoteColumns } from "./ensure-cmv-lote";
+import { attachTransferLocks, getLotTransferLock, getTransferLocks } from "./lot-lock";
 
 // Custo de um lote: numero ou null. NUNCA 0 por omissao — um lote sem custo
 // conhecido (entrada manual, remanejamento entre filiais) precisa aparecer como
@@ -34,7 +35,9 @@ export function registerInventoryRoutes(app: Express) {
         stockType: stockType as string,
         isActive: isActive !== undefined ? isActive === 'true' : undefined,
       });
-      res.json(lots);
+      // transferLock: lote preso numa NF/pedido de transferencia (ver lot-lock.ts).
+      // A tela usa para esconder Editar/Excluir e explicar o porque.
+      res.json(await attachTransferLocks(lots));
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao buscar lotes de estoque', error: error.message });
     }
@@ -106,6 +109,14 @@ export function registerInventoryRoutes(app: Express) {
         return res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.flatten().fieldErrors });
       }
 
+      // TRAVA (Flavio 05/set): lote em pedido/NF de transferencia nao se edita.
+      // Libera so com o cancelamento/devolucao da NF (que estorna o estoque) ou,
+      // antes da nota, mandando o pedido para a Lixeira.
+      const lock = await getLotTransferLock(req.params.id);
+      if (lock) {
+        return res.status(409).json({ message: `Lote ${existing.lotNumber} travado: ${lock.reason}`, transferLock: lock });
+      }
+
       const prevQty = existing.quantity;
       const lot = await storage.updateInventoryLot(req.params.id, parsed.data);
 
@@ -135,6 +146,11 @@ export function registerInventoryRoutes(app: Express) {
     try {
       const existing = await storage.getInventoryLot(req.params.id);
       if (!existing) return res.status(404).json({ message: 'Lote não encontrado' });
+
+      const lock = await getLotTransferLock(req.params.id);
+      if (lock) {
+        return res.status(409).json({ message: `Lote ${existing.lotNumber} travado: ${lock.reason}`, transferLock: lock });
+      }
 
       if (parseFloat(existing.quantity) > 0) {
         await storage.createInventoryMovement({
@@ -206,6 +222,8 @@ export function registerInventoryRoutes(app: Express) {
         for (const row of (r.rows || [])) opMap.set(String(row.id), String(row.order_number || ''));
       }
 
+      const locks = await getTransferLocks(lots.map((l: any) => l.id));
+
       const summary = lots.map(lot => {
         const unit = lotUnitCost(lot);
         const qty = parseFloat(lot.quantity as any) || 0;
@@ -221,6 +239,9 @@ export function registerInventoryRoutes(app: Express) {
           cmvTotalProduzido: lot.totalCost != null ? Number(lot.totalCost) : null,
           cmvStock: unit != null ? Number((unit * qty).toFixed(2)) : null,
           productionOrderNumber: lot.productionOrderId ? (opMap.get(String(lot.productionOrderId)) || null) : null,
+          // Trava de transferencia: preenchida quando o lote esta num pedido TRF
+          // vivo ou numa NF de transferencia nao cancelada/devolvida.
+          transferLock: locks.get(lot.id) || null,
         };
       });
 
@@ -237,6 +258,7 @@ export function registerInventoryRoutes(app: Express) {
         // em vez de apresentar um total que finge estar completo.
         valorEmEstoque: Number(valorEmEstoque.toFixed(2)),
         lotesSemCmv: summary.filter((l: any) => l.cmvUnit == null).length,
+        lotesTravados: summary.filter((l: any) => l.transferLock).length,
       });
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao buscar resumo de estoque', error: error.message });
