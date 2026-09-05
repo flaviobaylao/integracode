@@ -25,6 +25,8 @@ import { useToast } from '@/hooks/use-toast';
 import { exportToExcel } from '@/lib/tableTools';
 import RecipesEditor from '@/components/RecipesEditor';
 import DocumentosEmpresa from '@/components/DocumentosEmpresa';
+import ChecklistProducao from '@/components/ChecklistProducao';
+import ManutencaoMaquinas from '@/components/ManutencaoMaquinas';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import {
@@ -32,7 +34,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye,
-  Truck, DollarSign, Lock,
+  Truck, DollarSign, Lock, ListChecks, Wrench,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -2196,6 +2198,12 @@ export default function Industry() {
             <TabsTrigger value="estoque" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <Factory className="h-4 w-4" /> Estoque Produto Acabado
             </TabsTrigger>
+            <TabsTrigger value="checklist" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
+              <ListChecks className="h-4 w-4" /> Checklist
+            </TabsTrigger>
+            <TabsTrigger value="manutencao" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
+              <Wrench className="h-4 w-4" /> Manutenção
+            </TabsTrigger>
             <TabsTrigger value="documentos" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <Paperclip className="h-4 w-4" /> Documentos
             </TabsTrigger>
@@ -2205,6 +2213,8 @@ export default function Industry() {
           <TabsContent value="receitas"><RecipesEditor /></TabsContent>
           <TabsContent value="ordens"><OrdensTab /></TabsContent>
           <TabsContent value="estoque"><EstoqueTab /></TabsContent>
+          <TabsContent value="checklist"><ChecklistProducao /></TabsContent>
+          <TabsContent value="manutencao"><ManutencaoMaquinas /></TabsContent>
           <TabsContent value="documentos"><DocumentosEmpresa /></TabsContent>
         </Tabs>
       </div>
