@@ -314,6 +314,38 @@ export function registerRedesClientes(app: Express) {
   });
 
   // ---------------------------------------------------------------------------
+  // GET /api/carteira/redes/resumo
+  // Lista enxuta para quem so' precisa saber QUEM esta em cada rede — o filtro
+  // do grafico de evolucao, por exemplo. Devolve a CHAVE de cada membro (a mesma
+  // do resto da tela de carteiras), nao o id do cadastro, para o consumidor
+  // conseguir casar com o faturamento sem outra consulta.
+  // ---------------------------------------------------------------------------
+  app.get("/api/carteira/redes/resumo", authenticateUser, async (_req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const rows = (await db.execute(sql.raw(`
+        SELECT r.id, r.nome, ${CHAVE_CADASTRO} AS chave
+        FROM cliente_redes r
+        JOIN cliente_rede_membros m ON m.rede_id = r.id
+        JOIN customers c ON c.id = m.customer_id
+        ORDER BY r.nome
+        LIMIT 20000`))).rows as any[];
+      const mapa = new Map<string, { id: string; nome: string; chaves: string[] }>();
+      for (const x of rows) {
+        const id = String(x.id);
+        const atual = mapa.get(id) || { id, nome: String(x.nome || ""), chaves: [] };
+        const k = String(x.chave || "");
+        if (k && !atual.chaves.includes(k)) atual.chaves.push(k);
+        mapa.set(id, atual);
+      }
+      res.json(Array.from(mapa.values()).map((r) => ({ ...r, clientes: r.chaves.length })));
+    } catch (err: any) {
+      console.error("[redes resumo]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // GET /api/carteira/redes/clientes?busca=...
   // Fonte do seletor de clientes. Devolve a rede a que cada um ja pertence, para
   // o usuario nao tentar colocar o mesmo cliente em duas.
