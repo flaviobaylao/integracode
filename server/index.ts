@@ -50,6 +50,7 @@ import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
+import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
@@ -3446,6 +3447,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Industria; as rotas nao colidem (/raw-materials/attachments/summary,
   // /raw-materials/:id/attachments, /raw-material-attachments/:attId).
   try { registerRawMaterialAttachmentRoutes(app); } catch (e) { console.error('[mp-anexos]', e); }
+
+  // Documentos da empresa (aba Documentos do modulo Industria): alvara, licenca,
+  // AVCB, contrato social, certificado... com instancia, vigencia, status e
+  // arquivo anexado — 05/set/2026. Rotas /api/industria/documentos*.
+  try { registerCompanyDocumentsRoutes(app); } catch (e) { console.error('[docs-empresa]', e); }
 
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
