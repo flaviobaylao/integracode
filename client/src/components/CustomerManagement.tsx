@@ -99,7 +99,7 @@ export default function CustomerManagement() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [dayMulti, setDayMulti] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState('active') // (E2-A) padrão = Ativos; "Inativo" e "Todos" mostram os demais;
+  const [statusFilter, setStatusFilter] = useState('active'); // (E2-A) padrão = Ativos; "Inativo" e "Todos" mostram os demais
   const [sellerFilter, setSellerFilter] = useState('all');
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
