@@ -90,8 +90,7 @@ function montarTexto(v: VendCfg, jan: { from: string; to: string }, rows: any[])
   rows.forEach((r, i) => {
     const dd = diasEntre(r.dataPedido, r.dataEntrega);
     total += parseFloat(String(r.valor || 0)) || 0;
-    body.push(`${i + 1}. ${r.cliente}`);
-    body.push(`   ${fmtBR(r.dataPedido)} → ${fmtBR(r.dataEntrega)}  (${dd == null ? "—" : dd + "d"})`);
+    body.push(`${i + 1}. ${r.cliente} · ${fmtBR(r.dataPedido).slice(0, 5)}→${fmtBR(r.dataEntrega).slice(0, 5)} (${dd == null ? "—" : dd + "d"})`);
   });
   body.push("");
   body.push(`Total: ${rows.length} ped · R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
