@@ -245,7 +245,9 @@ export default function RedeClientes() {
           </Card>
 
           {listaFiltrada.map((r) => {
-            const aberta = abertas[r.id] !== false; // nasce aberta
+            // Nasce RECOLHIDA: com várias redes, abrir todas empurrava os
+            // totais para fora da tela e obrigava a rolar para comparar.
+            const aberta = abertas[r.id] === true;
             return (
               <Card key={r.id} data-testid={`card-rede-${r.id}`}>
                 <CardHeader className="pb-2">
