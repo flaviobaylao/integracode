@@ -26,6 +26,7 @@ import { exportToExcel } from '@/lib/tableTools';
 import RecipesEditor from '@/components/RecipesEditor';
 import DocumentosEmpresa from '@/components/DocumentosEmpresa';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
+import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
@@ -1911,7 +1912,39 @@ function TransferenciaDialog({ lotes, onClose, onDone }: { lotes: any[]; onClose
 
 function EstoqueTab() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [search, setSearch] = useState('');
+  const [danfeBusy, setDanfeBusy] = useState<string | null>(null);
+
+  // DANFE da NF de transferencia direto da aba (Flavio 05/set): mesma rota e
+  // mesmo gerador do pipeline de faturamento (/api/fiscal-invoices/batch +
+  // jsPDF). O numero vem da trava do lote; o CNPJ da instancia de origem
+  // desambigua a numeracao (cada filial numera as suas NF-e).
+  const imprimirDanfe = async (lotes: any[]) => {
+    const alvo = lotes.filter((l) => l.transferLock?.invoiceNumber);
+    if (!alvo.length) { toast({ title: 'Nenhum lote com NF de transferência', variant: 'destructive' }); return; }
+    const numeros = Array.from(new Set(alvo.map((l) => String(l.transferLock.invoiceNumber))));
+    const issuerCnpj = alvo[0]?.instance?.cnpj || undefined;
+    setDanfeBusy(alvo.length === 1 ? alvo[0].id : '*');
+    try {
+      const buscar = async (cnpj?: string) => {
+        const res = await fetch('/api/fiscal-invoices/batch', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceNumbers: numeros, issuerCnpj: cnpj }),
+        });
+        if (!res.ok) throw new Error(`Falha ao buscar a NF-e (${res.status})`);
+        return (await res.json()) as DanfeInvoice[];
+      };
+      // Primeiro filtrando pelo CNPJ do emitente (IND); se o cadastro da instancia
+      // nao bater com o issuer_cnpj da nota, tenta sem o filtro.
+      let invoices = await buscar(issuerCnpj);
+      if (!invoices.length && issuerCnpj) invoices = await buscar(undefined);
+      if (!invoices.length) throw new Error(`NF-e ${numeros.join(', ')} não encontrada`);
+      await generateMultiDanfePdf(invoices);
+      toast({ title: `DANFE ${invoices.length > 1 ? 'geradas' : 'gerada'}`, description: `NF-e ${invoices.map((i) => i.invoiceNumber).join(', ')}` });
+    } catch (e: any) { toast({ title: 'Erro ao gerar DANFE', description: String(e.message || e), variant: 'destructive' }); }
+    finally { setDanfeBusy(null); }
+  };
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [transferindo, setTransferindo] = useState(false);
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -1944,8 +1977,13 @@ function EstoqueTab() {
   // Só lote com saldo e com CMV pode virar transferência: sem saldo não há o que
   // mandar, sem CMV não há por quanto mandar.
   const transferivel = (l: any) => n(l.quantity) > 0 && l.cmvUnit != null;
+  // Lotes com NF de transferencia (para o botao de DANFE): os selecionados que tem
+  // NF ganham prioridade; sem selecao, todas as NF distintas da lista filtrada.
+  const lotesComNf = filtered.filter((l) => l.transferLock?.invoiceNumber);
+  const nfsAbertas = Array.from(new Set(lotesComNf.map((l) => String(l.transferLock.invoiceNumber))));
+  const selComNf = lotesComNf.filter((l) => sel.has(l.id));
   const selecionaveis = filtered.filter(transferivel);
-  const selecionados = lots.filter((l) => sel.has(l.id));
+  const selecionados = lots.filter((l) => sel.has(l.id) && transferivel(l));
   const todosMarcados = selecionaveis.length > 0 && selecionaveis.every((l) => sel.has(l.id));
 
   const toggle = (id: string) => setSel((p) => {
@@ -2006,9 +2044,17 @@ function EstoqueTab() {
             </span>
           ) : null}
         </span>
-        {sel.size > 0 && (
+        {selecionados.length > 0 && (
           <Button size="sm" onClick={() => setTransferindo(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-            <Truck className="h-4 w-4 mr-1" /> Pedido de transferência ({sel.size})
+            <Truck className="h-4 w-4 mr-1" /> Pedido de transferência ({selecionados.length})
+          </Button>
+        )}
+        {lotesComNf.length > 0 && (
+          <Button variant="outline" size="sm" disabled={danfeBusy != null}
+            onClick={() => imprimirDanfe(selComNf.length ? selComNf : lotesComNf)}
+            title={selComNf.length ? 'DANFE das NF-e de transferência dos lotes selecionados' : 'DANFE de todas as NF-e de transferência em aberto nesta lista'}>
+            {danfeBusy === '*' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Printer className="h-4 w-4 mr-1" />}
+            DANFE transferência ({selComNf.length || nfsAbertas.length})
           </Button>
         )}
         <div className="flex-1" />
@@ -2041,7 +2087,7 @@ function EstoqueTab() {
               <TableRow key={l.id} className={sel.has(l.id) ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
                 <TableCell>
                   <Checkbox checked={sel.has(l.id)} onCheckedChange={() => toggle(l.id)}
-                    disabled={!transferivel(l)}
+                    disabled={!transferivel(l) && !l.transferLock?.invoiceNumber}
                     aria-label={`Selecionar lote ${l.lotNumber}`} />
                 </TableCell>
                 <TableCell className="font-medium">{l.product?.name || l.productId}</TableCell>
@@ -2055,6 +2101,13 @@ function EstoqueTab() {
                       <Lock className="h-3 w-3" />
                       {l.transferLock.invoiceNumber ? `NF ${l.transferLock.invoiceNumber}` : (l.transferLock.orderNumber || 'TRF')}
                     </span>
+                  )}
+                  {l.transferLock?.invoiceNumber && (
+                    <button type="button" onClick={() => imprimirDanfe([l])} disabled={danfeBusy != null}
+                      title={`Imprimir DANFE da NF-e ${l.transferLock.invoiceNumber} (transferência)`}
+                      className="ml-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-sans bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 align-middle disabled:opacity-50">
+                      {danfeBusy === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />} DANFE
+                    </button>
                   )}
                 </TableCell>
                 <TableCell>{l.instance?.name || '-'}</TableCell>
