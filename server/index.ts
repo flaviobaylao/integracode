@@ -8,6 +8,7 @@ import { registerIaTakeover } from "./ia-takeover";
 import { registerIaFila } from "./ia-fila";
 import { registerIaDiag } from "./ia-diag";
 import { registerCanaisGestao } from "./canais-gestao";
+import { registerRelatorioEntregas } from "./relatorio-entregas-whatsapp";
 import { registerPolishGestao } from "./polish-gestao";
 import { registerCommunicationAutomationsRoutes } from "./communication-automations-routes";
 import { registerPaymentVerificationRoutes } from "./payment-verification-routes";
@@ -95,6 +96,7 @@ registerIaTakeover(app);
 registerIaFila(app);
 registerIaDiag(app);
 registerCanaisGestao(app);
+try { registerRelatorioEntregas(app); } catch (e) { console.error('[rel-entregas]', e); }
 registerPolishGestao(app);
 
 // MIDDLEWARE DE CACHE-BUSTING - Force o navegador a buscar versões novas
