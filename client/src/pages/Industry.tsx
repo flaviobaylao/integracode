@@ -1800,8 +1800,22 @@ function EstoqueTab() {
     queryKey: ['/api/inventory/summary'],
     queryFn: () => jfetch('/api/inventory/summary'),
   });
-  const lots: any[] = data?.lots || [];
+  // So a instancia IND (Flavio 05/set): esta aba e o estoque da INDUSTRIA — o que
+  // foi produzido e ainda nao saiu para as filiais. O estoque de GYN/BSB/SERV fica
+  // na "Gestao completa de Estoque" (/estoque). Os cards sao recalculados aqui, so
+  // sobre os lotes da IND, para nao mostrar a valorizacao das filiais como se
+  // fosse da fabrica.
+  const lots: any[] = (data?.lots || []).filter((l: any) => String(l.instance?.name || '').toUpperCase() === 'IND');
   const negativos = lots.filter((l) => n(l.quantity) < 0).length;
+  const resumo = useMemo(() => ({
+    totalProducts: new Set(lots.map((l) => l.productId)).size,
+    totalInUse: lots.filter((l) => l.stockType === 'in_use').reduce((s, l) => s + n(l.quantity), 0),
+    transferidos: lots.filter((l) => l.transferLock && n(l.quantity) <= 0).length,
+    totalBlocked: lots.filter((l) => l.stockType === 'blocked').reduce((s, l) => s + n(l.quantity), 0),
+    valorEmEstoque: lots.reduce((s, l) => s + (l.cmvStock || 0), 0),
+    lotesSemCmv: lots.filter((l) => l.cmvUnit == null).length,
+    lotesTravados: lots.filter((l) => l.transferLock).length,
+  }), [lots]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return lots;
@@ -1833,24 +1847,24 @@ function EstoqueTab() {
       <div key={`inv-cards-${lots.length}`} className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-emerald-100 rounded-lg"><Package className="h-5 w-5 text-emerald-600" /></div>
-          <div><p className="text-2xl font-bold">{data?.totalProducts ?? 0}</p><p className="text-xs text-gray-500">Produtos</p></div>
+          <div><p className="text-2xl font-bold">{resumo.totalProducts}</p><p className="text-xs text-gray-500">Produtos</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-green-100 rounded-lg"><CheckCircle2 className="h-5 w-5 text-green-600" /></div>
-          <div><p className="text-2xl font-bold">{fmtQty(data?.totalInUse ?? 0)}</p><p className="text-xs text-gray-500">Em Uso</p></div>
+          <div><p className="text-2xl font-bold">{fmtQty(resumo.totalInUse)}</p><p className="text-xs text-gray-500">Em Uso</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-blue-100 rounded-lg"><DollarSign className="h-5 w-5 text-blue-600" /></div>
           <div>
-            <p className="text-2xl font-bold">{fmtBRL(data?.valorEmEstoque ?? 0)}</p>
+            <p className="text-2xl font-bold">{fmtBRL(resumo.valorEmEstoque)}</p>
             <p className="text-xs text-gray-500">
-              Valor a CMV{data?.lotesSemCmv ? ` · ${data.lotesSemCmv} lote(s) sem custo` : ''}
+              Valor a CMV{resumo.lotesSemCmv ? ` · ${resumo.lotesSemCmv} lote(s) sem custo` : ''}
             </p>
           </div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-orange-100 rounded-lg"><Package className="h-5 w-5 text-orange-600" /></div>
-          <div><p className="text-2xl font-bold">{fmtQty(data?.totalBlocked ?? 0)}</p><p className="text-xs text-gray-500">Bloqueado</p></div>
+          <div><p className="text-2xl font-bold">{fmtQty(resumo.totalBlocked)}</p><p className="text-xs text-gray-500">Bloqueado</p></div>
         </CardContent></Card>
         <Card><CardContent className="p-4 flex items-center gap-3">
           <div className="p-2 bg-red-100 rounded-lg"><AlertTriangle className="h-5 w-5 text-red-600" /></div>
@@ -1868,9 +1882,9 @@ function EstoqueTab() {
         </Button>
         <span className="text-sm text-gray-500">
           {isLoading ? 'Carregando...' : `${filtered.length} lote(s)`}
-          {!isLoading && data?.lotesTravados ? (
+          {!isLoading && resumo.lotesTravados ? (
             <span className="ml-2 inline-flex items-center gap-1 text-amber-700" title="Lotes em pedido/NF de transferência: não podem ser editados nem ter a OP reaberta até a nota ser cancelada ou devolvida.">
-              <Lock className="h-3.5 w-3.5" /> {data.lotesTravados} em transferência
+              <Lock className="h-3.5 w-3.5" /> {resumo.lotesTravados} em transferência{resumo.transferidos ? ` (${resumo.transferidos} transferido(s) por completo)` : ''}
             </span>
           ) : null}
         </span>
@@ -1927,7 +1941,13 @@ function EstoqueTab() {
                 </TableCell>
                 <TableCell>{l.instance?.name || '-'}</TableCell>
                 <TableCell>
-                  {l.stockType === 'in_use'
+                  {l.transferLock && n(l.quantity) <= 0
+                    // Saiu inteiro na NF de transferencia (Flavio 05/set): nao e mais
+                    // "Em Uso" na fabrica. Estado derivado (saldo 0 + trava da NF),
+                    // sem coluna nova — se a NF for cancelada, o estorno devolve o saldo
+                    // e o lote volta sozinho para "Em Uso".
+                    ? <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100" title={l.transferLock.reason}>Transferido</Badge>
+                    : l.stockType === 'in_use'
                     ? <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">Em Uso</Badge>
                     : <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">Bloqueado</Badge>}
                 </TableCell>
@@ -1950,7 +1970,7 @@ function EstoqueTab() {
               </TableRow>
             ))}
             {!isLoading && filtered.length === 0 && (
-              <TableRow><TableCell colSpan={10} className="text-center text-gray-400 py-8">Nenhum lote encontrado — finalize uma ordem de produção para gerar o primeiro lote</TableCell></TableRow>
+              <TableRow><TableCell colSpan={10} className="text-center text-gray-400 py-8">Nenhum lote na instância IND — finalize uma ordem de produção para gerar o primeiro lote</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
