@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
-  Package, Plus, Edit, Trash2, RefreshCw, ArrowRightLeft,
+  Package, Plus, Edit, Trash2, RefreshCw, ArrowRightLeft, Lock,
   Loader2, Search, AlertTriangle, CheckCircle2, Archive,
   TrendingDown, TrendingUp, History
 } from 'lucide-react';
@@ -32,6 +32,9 @@ interface InventoryLot {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  // Trava de transferencia (server/lot-lock.ts): lote em pedido/NF de
+  // transferencia entre filiais. Editar/Excluir ficam indisponiveis.
+  transferLock?: { reason: string; orderNumber: string | null; invoiceNumber: number | null } | null;
 }
 
 interface InventoryMovement {
@@ -482,6 +485,13 @@ export default function Inventory() {
                                     )}
                                   </TableCell>
                                   <TableCell className="text-right">
+                                    {lot.transferLock ? (
+                                      <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1 font-normal cursor-help"
+                                        title={lot.transferLock.reason}>
+                                        <Lock className="h-3 w-3" />
+                                        {lot.transferLock.invoiceNumber ? `NF-e ${lot.transferLock.invoiceNumber}` : (lot.transferLock.orderNumber || 'transferência')}
+                                      </Badge>
+                                    ) : (
                                     <div className="flex justify-end gap-1">
                                       <Button variant="ghost" size="sm" onClick={() => handleEdit(lot)}>
                                         <Edit className="h-4 w-4" />
@@ -495,6 +505,7 @@ export default function Inventory() {
                                         <Trash2 className="h-4 w-4" />
                                       </Button>
                                     </div>
+                                    )}
                                   </TableCell>
                                 </TableRow>
                               );
