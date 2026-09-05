@@ -869,8 +869,21 @@ export function registerNfeRoutes(app: Express) {
         const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
 
-        // Reverse stock consumption for cancelled invoice
+        // TRANSFERENCIA ENTRE FILIAIS (Flavio 05/set): estorno EXATO — o lote que
+        // saiu na NF recebe a quantidade de volta na origem e a entrada espelho e
+        // retirada do destino. Isso e o que libera a trava do lote e da OP. O
+        // estorno generico abaixo devolveria "no primeiro lote em uso" e deixaria
+        // a mercadoria contada duas vezes (origem + filial).
+        let transferReversal: any = null;
         try {
+          const { reverseTransferStockExact } = await import('./lot-lock.js');
+          transferReversal = await reverseTransferStockExact(invoice, req.currentUser?.email || req.user?.email || null);
+        } catch (trfErr: any) {
+          console.warn('⚠️ Erro no estorno exato da transferencia (cancelamento):', trfErr.message);
+        }
+
+        // Reverse stock consumption for cancelled invoice
+        if (!transferReversal?.handled) try {
           const { reverseStockConsumption } = await import('./inventory-routes.js');
           const userId = req.user?.id || req.userId || null;
           for (const item of items) {
@@ -934,7 +947,7 @@ export function registerNfeRoutes(app: Express) {
           }
         } catch (lixErr: any) { console.warn('[NF-e CANCEL] Falha ao mover card para a Lixeira:', lixErr?.message); }
 
-        res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true, receivablesComPagamento });
+        res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true, receivablesComPagamento, transferReversal });
       } else {
         res.status(400).json(result);
       }
@@ -1115,8 +1128,18 @@ export function registerNfeRoutes(app: Express) {
         console.warn('⚠️ Erro ao cancelar contas a receber após devolução NF-e:', recErr.message);
       }
 
-      // Reverse stock consumption for returned invoice
+      // TRANSFERENCIA ENTRE FILIAIS (Flavio 05/set): estorno EXATO (origem +, destino -),
+      // ver comentario no cancelamento. Libera a trava do lote e da OP.
+      let transferReversal: any = null;
       try {
+        const { reverseTransferStockExact } = await import('./lot-lock.js');
+        transferReversal = await reverseTransferStockExact(originalInvoice, user?.email || null);
+      } catch (trfErr: any) {
+        console.warn('⚠️ Erro no estorno exato da transferencia (devolucao):', trfErr.message);
+      }
+
+      // Reverse stock consumption for returned invoice
+      if (!transferReversal?.handled) try {
         const { reverseStockConsumption } = await import('./inventory-routes.js');
         const userId = req.user?.id || req.userId || null;
         for (const item of originalItems) {
@@ -1160,6 +1183,7 @@ export function registerNfeRoutes(app: Express) {
         message: `NF-e de devolução emitida e autorizada pela SEFAZ com sucesso. Protocolo: ${sefazResult.protocolNumber}`,
         receivablesCancelled: true,
         receivablesComPagamento,
+        transferReversal,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, errorMessage: error.message });
