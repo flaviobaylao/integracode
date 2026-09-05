@@ -1064,6 +1064,8 @@ export default function GestaoCarteiras() {
             {/* Quantidade de clientes por ticket médio + a classe A+/A-/.../D- */}
             <Card>
               <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
                 <CardTitle>
                   {abaQuadro === "ticket" ? "Quantidade de clientes por ticket médio" : "Classe do cliente"}
                 </CardTitle>
@@ -1082,6 +1084,82 @@ export default function GestaoCarteiras() {
                     </>
                   )}
                 </CardDescription>
+                  </div>
+                  {/* "i": de onde vem cada coluna do quadro. O texto acompanha a
+                      aba aberta — explicar ticket enquanto a tela mostra classe
+                      seria pior do que não explicar. */}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="De onde vêm estes números" data-testid="info-ticket-medio">
+                        <Info className="h-4 w-4" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-[420px] max-w-[92vw] text-sm space-y-3">
+                      {abaQuadro === "ticket" ? (
+                        <>
+                          <p className="font-semibold">De onde vêm estes números</p>
+                          <p className="text-muted-foreground">
+                            A base é a mesma do resto da tela: <b>títulos de venda emitidos</b> em Contas a Receber no
+                            período de {labelMes(inicio)} a {labelMes(fim)}, já sem devolução, troca, amostra,
+                            bonificação, remessa, transferência, aporte, NF-e cancelada e pedido na lixeira. O quadro
+                            obedece os filtros de cima (vendedor, cidade, PJ/PF).
+                          </p>
+                          <div>
+                            <p className="font-semibold">Em que faixa o cliente cai</p>
+                            <p className="text-muted-foreground mt-1">
+                              Pelo <b>ticket médio dele</b> = faturado no período ÷ <b>meses em que ele comprou</b>. É o
+                              ritmo do cliente <i>quando</i> compra — mês parado não dilui. Quem não comprou nada no
+                              período não aparece em faixa nenhuma.
+                            </p>
+                          </div>
+                          <div>
+                            <p className="font-semibold">Fat. médio/mês da faixa</p>
+                            <p className="text-muted-foreground mt-1">
+                              É outra conta, de propósito: soma da <b>média mensal</b> de cada cliente da faixa
+                              (faturado ÷ <b>todos os {NUM(meses.length)} meses</b> do período, contando os parados).
+                              Por isso a soma das faixas fecha com o faturamento médio por mês da carteira — e por isso
+                              uma faixa de ticket baixo pode entregar muito, quando tem muita gente dentro.
+                            </p>
+                          </div>
+                          <p className="text-muted-foreground text-xs border-t pt-2">
+                            <b>%</b> é a fatia de clientes da faixa; <b>% do fat.</b> é a fatia do faturamento médio/mês.
+                            As duas colunas raramente batem — e é justamente a diferença entre elas que mostra onde o
+                            dinheiro está concentrado.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="font-semibold">De onde vêm estes números</p>
+                          <p className="text-muted-foreground">
+                            Mesma base do quadro de ticket: títulos de venda emitidos de {labelMes(inicio)} a{" "}
+                            {labelMes(fim)}, com as mesmas exclusões e obedecendo os filtros de cima.
+                          </p>
+                          <div>
+                            <p className="font-semibold">A letra (A a D)</p>
+                            <p className="text-muted-foreground mt-1">
+                              Vem da <b>média ponderada/mês</b> do cliente: a média mensal do período com peso crescente
+                              por recência (o mês mais antigo pesa 1; o mais recente pesa {NUM(meses.length)}). Quem
+                              esfriou desce de letra sozinho.
+                            </p>
+                          </div>
+                          <div>
+                            <p className="font-semibold">O sinal (+ ou −)</p>
+                            <p className="text-muted-foreground mt-1">
+                              É a positivação de pagamento: <b>+</b> para quem pagou ao menos 80% dos títulos do período
+                              em até 3 dias do vencimento <i>e</i> não tem nada vencido em aberto hoje. A folga de 3 dias
+                              existe porque boleto que vence em fim de semana ou feriado só compensa no dia útil
+                              seguinte. Cliente sem nenhuma data de baixa registrada é julgado só pelo débito de hoje.
+                            </p>
+                          </div>
+                          <p className="text-muted-foreground text-xs border-t pt-2">
+                            A classe <b>não</b> depende do recorte da tela: o mesmo cliente tem a mesma classe com ou sem
+                            filtro de vendedor. <b>Débito hoje</b> é o vencido em aberto agora, não do período.
+                          </p>
+                        </>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </div>
                 {/* Abas do quadro */}
                 <div className="flex gap-1 pt-2" role="tablist">
                   {([
