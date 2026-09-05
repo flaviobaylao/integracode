@@ -4,11 +4,9 @@ import { storage } from './storage';
 // Middleware que funciona tanto com Replit Auth quanto com autenticação local
 export const authenticateUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // Bypass para endpoints públicos
-    if (req.path === '/api/customers/map-data') {
-      return next();
-    }
-    
+    // (E1, 05/set/2026) Removido o bypass de /api/customers/map-data: a tela do Mapa roda dentro
+    // do app autenticado (ClientsMap.tsx) e a rota devolvia nome/telefone/endereço de toda a base.
+
     let userId: string | null = null;
     let userEmail: string | null = null;
     
@@ -169,3 +167,40 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
     res.status(500).json({ message: "Authentication error" });
   }
 };
+
+// ==========================================================================
+// 410 Gone — desligamento de rotas de migração/reconciliação do Omie e do
+// Integra 1.0 (plano de 05/set/2026, etapas E1/E3). A rota continua
+// registrada (o código sai nas etapas E5/E6), mas responde 410 antes de
+// executar qualquer coisa. Reversível: basta remover o middleware.
+// ==========================================================================
+export const gone = (motivo: string) => {
+  return (_req: Request, res: Response) => {
+    res.status(410).json({
+      message: `Rota desativada (${motivo}). O Integra 2.0 não tem mais vínculo com o Omie/Integra 1.0.`,
+      desativadaEm: '2026-09-05',
+    });
+  };
+};
+
+// ==========================================================================
+// Rate limit simples em memória por IP (E1, 05/set/2026) — para rotas públicas
+// do hotsite que consultam cadastro por CPF/CNPJ. Não muda o comportamento
+// de uso normal (limite alto); só barra enumeração em massa.
+// ==========================================================================
+const _rl = new Map<string, { n: number; t: number }>();
+export const rateLimitPorIp = (maxPorMinuto: number) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ip = String((req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket?.remoteAddress || 'ip?').trim();
+      const now = Date.now();
+      const k = `${req.path}|${ip}`;
+      const cur = _rl.get(k);
+      if (!cur || now - cur.t > 60_000) { _rl.set(k, { n: 1, t: now }); return next(); }
+      cur.n++;
+      if (cur.n > maxPorMinuto) return res.status(429).json({ message: 'Muitas consultas. Tente novamente em 1 minuto.' });
+      return next();
+    } catch { return next(); }
+  };
+};
+setInterval(() => { const now = Date.now(); for (const [k, v] of _rl) if (now - v.t > 120_000) _rl.delete(k); }, 60_000).unref?.();

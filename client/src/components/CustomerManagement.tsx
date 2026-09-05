@@ -233,8 +233,8 @@ export default function CustomerManagement() {
   };
 
   const deleteCustomerMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest('DELETE', `/api/customers/${id}`);
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => {
+      await apiRequest('DELETE', `/api/customers/${id}`, { motivo });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
@@ -833,11 +833,19 @@ export default function CustomerManagement() {
                               <MapPin className="h-4 w-4" />
                             </Button>
                           )}
-                          {perms.can(CARD_CLIENTES, "excluir") && (
+                          {isAdmin && perms.can(CARD_CLIENTES, "excluir") && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => deleteCustomerMutation.mutate(customer.id)}
+                            title="Excluir (inativa com trilha; só Admin; exige motivo)"
+                            onClick={() => {
+                              // (E1, 05/set/2026) Antes: 1 clique, sem confirmação, sem motivo, sem trilha.
+                              const nome = customer.fantasyName || customer.name || customer.id;
+                              const motivo = window.prompt(`Excluir o cliente "${nome}"?\n\nO cadastro NÃO é apagado: ele fica Inativo e o motivo vai para o histórico.\n\nInforme o MOTIVO (mín. 5 caracteres):`);
+                              if (motivo === null) return;
+                              if (motivo.trim().length < 5) { toast({ title: 'Motivo obrigatório', description: 'Informe ao menos 5 caracteres.', variant: 'destructive' }); return; }
+                              deleteCustomerMutation.mutate({ id: customer.id, motivo: motivo.trim() });
+                            }}
                             data-testid={`button-delete-customer-${customer.id}`}
                           >
                             <Trash2 className="h-4 w-4 text-red-600" />

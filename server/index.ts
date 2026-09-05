@@ -47,7 +47,7 @@ import { registerLeadCapture } from "./lead-capture";
 import { sql } from "drizzle-orm";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
-import { authenticateUser, requireRole } from './authMiddleware';
+import { authenticateUser, requireRole, gone } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
@@ -447,6 +447,20 @@ run();
     }
   })();
 
+  // ==========================================================================
+  // 🔒 TRAVA DE PREFIXO /api/admin (E1, 05/set/2026)
+  // Todas as rotas /api/admin/* registradas DAQUI PARA BAIXO neste arquivo
+  // exigem sessão + papel de gestão. Antes, ~45 POST e ~75 GET /api/admin/*
+  // deste arquivo respondiam sem login (virar NF-e p/ produção, disparar
+  // WhatsApp, ligar agentes IA, sobrescrever cadastro, dashboard financeiro).
+  // Os papéis são os mesmos que as rotas com middleware inline já usavam
+  // (admin/coordinator/administrative), para não tirar acesso de ninguém que
+  // usa essas telas hoje; rotas que já eram só-admin continuam só-admin pelo
+  // requireRole inline delas. Rotas registradas ANTES (routes.ts, painéis IA
+  // com OFICIAL_ADMIN_KEY) não são afetadas por esta linha.
+  // ==========================================================================
+  app.use('/api/admin', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']));
+
   // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────
   app.get('/api/admin/automations/mode', async (_req, res) => {
     try {
@@ -591,7 +605,7 @@ run();
   registerDelegationRoutes(app);
 
   // Re-vincula active_customers.customerId ao cliente correto do 2.0 POR DOCUMENTO (corrige id orfao/conflito de identidade).
-  app.post('/api/admin/sync/relink-active-customers', async (req: Request, res: Response) => {
+  app.post('/api/admin/sync/relink-active-customers', gone('religação de clientes pelo 1.0'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     try {
       const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
@@ -2669,7 +2683,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
 
   // IMPORTAÇÃO COMPLETA do cadastro de clientes 1.0 -> 2.0 por DOCUMENTO (chave confiável). Traz TODOS os campos comuns.
   // Match: por documento (cnpj/cpf normalizado); senão por id; senão INSERT. dryRun/apply. + checagem de paridade.
-  app.post('/api/admin/sync/import-all-customers', async (req: Request, res: Response) => {
+  app.post('/api/admin/sync/import-all-customers', gone('importação de clientes do 1.0'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     const pgMod = await import('pg');
     const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -2760,7 +2774,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
   // Reconcilia seller_id de TODOS os clientes 2.0:=1.0 casando por DOCUMENTO e, quando nao ha doc-match, por NOME+CIDADE (nao-ambiguo).
-  app.post('/api/admin/sync/reconcile-customers', async (req: Request, res: Response) => {
+  app.post('/api/admin/sync/reconcile-customers', gone('reconciliação de clientes com o 1.0'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     const pgMod = await import('pg');
     const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -2832,7 +2846,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
   // Dedup de clientes por DOCUMENTO no 2.0: mantem 1 registro ativo por cpf/cnpj; re-aponta FKs dos duplicados p/ o primario e desativa os duplicados (is_active=false, reversivel, NAO apaga).
-  app.post('/api/admin/customers/dedup', async (req: Request, res: Response) => {
+  app.post('/api/admin/customers/dedup', gone('dedup automático — duplicados são resolvidos com aprovação nominal, etapa E2-B'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     try {
       const dg = (x: any) => String(x || '').replace(/[^0-9]/g, '');
@@ -2867,7 +2881,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
   // Sincroniza seller_id 2.0:=1.0 por DOCUMENTO (cobre clientes com id divergente que o audit-por-id nao pega).
-  app.post('/api/admin/sync/seller-by-doc', async (req: Request, res: Response) => {
+  app.post('/api/admin/sync/seller-by-doc', gone('vendedor copiado do 1.0'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     const pgMod = await import('pg');
     const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -3009,7 +3023,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   });
 
   // Espelha active_customers do 1.0 no 2.0: upsert das linhas do 1.0 (valores exatos) + desativa extras do 2.0 (reversivel, is_active=false). NAO apaga.
-  app.post('/api/admin/sync/active-customers-mirror', async (req: Request, res: Response) => {
+  app.post('/api/admin/sync/active-customers-mirror', gone('espelho de Clientes Ativos do 1.0'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     const pgMod = await import('pg');
     const src = new pgMod.default.Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -3054,7 +3068,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
     finally { await src.end().catch(() => {}); await tgt.end().catch(() => {}); }
   });
 
-    app.post("/api/admin/financial/reconcile", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+    app.post("/api/admin/financial/reconcile", gone('backfill financeiro a partir do 1.0'), async (req, res) => {
     try {
       const cancelIds: string[] = Array.isArray(req.body?.cancelIds) ? req.body.cancelIds : [];
       const result: any = { cancelled: 0, backfilled: { receivables: 0, payables: 0 }, errors: [] };

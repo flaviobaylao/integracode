@@ -3,7 +3,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { generateBoletoForReceivable, generatePixForReceivable } from "./billing-pipeline-routes";
-import { authenticateUser, requireRole } from "./authMiddleware";
+import { authenticateUser, requireRole, gone } from "./authMiddleware";
 const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ async function setSetting(key: string, value: string) {
 
 export function registerChargeGuarantee(app: Express) {
   // ---- Puxar CEP/endereco faltantes do 1.0 (fill-only, por documento) -----
-  app.post("/api/admin/customers/pull-cep-from-1-0", authenticateUser, requireRole(FIN_ROLES), async (req: Request, res: Response) => {
+  app.post("/api/admin/customers/pull-cep-from-1-0", gone('CEP copiado do 1.0'), async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
     let src: any = null;
     try {

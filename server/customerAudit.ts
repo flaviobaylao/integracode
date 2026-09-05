@@ -181,3 +181,23 @@ export async function getCustomerChangeHistory(customerId: string, limit = 30): 
     LIMIT ${lim}`);
   return (r.rows || r) as any[];
 }
+
+
+/**
+ * Registra uma nota livre no histórico do cliente (ex.: motivo de inativação/exclusão).
+ * Sem mudança de schema: usa customer_change_history com field='motivo'. Nunca lança.
+ * (E1, 05/set/2026)
+ */
+export async function logCustomerNote(params: { customerId: string; label: string; text: string; actor?: AuditActor; source?: string }): Promise<void> {
+  const { customerId, label, text, actor, source } = params;
+  if (!customerId || !text || !String(text).trim()) return;
+  try {
+    await ensureCustomerAuditTable();
+    const actorName = (actor?.name && String(actor.name).trim()) || 'Sistema';
+    await db.execute(sql`
+      INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_user_id, changed_by_name, source)
+      VALUES (${customerId}, 'motivo', ${label}, NULL, ${String(text).trim().slice(0, 500)}, ${actor?.id || null}, ${actorName}, ${source || null})`);
+  } catch (e: any) {
+    console.error('[customer-audit] logCustomerNote falhou:', e?.message || e);
+  }
+}

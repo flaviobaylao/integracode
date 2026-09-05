@@ -420,16 +420,8 @@ export default function SalesCards() {
             <Upload className="w-4 h-4 mr-2" />
             Importar Planilha
           </Button>
-          {user && (user.role === 'admin' || user.role === 'administrative') && (
-            <Button
-              variant="destructive"
-              onClick={() => setShowDeleteAllDialog(true)}
-              data-testid="button-delete-all-cards"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Eliminar Todos os Cards
-            </Button>
-          )}
+          {/* (E1, 05/set/2026) Botão "Eliminar Todos os Cards" removido: apagava TODOS os cards
+              (db.delete sem WHERE). A rota responde 410. */}
           <Button
             className="bg-honest-blue hover:bg-blue-700"
             onClick={() => setShowModal(true)}

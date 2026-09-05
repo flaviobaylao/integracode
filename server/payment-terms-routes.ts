@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { authenticateUser, requireRole } from "./authMiddleware";
+import { authenticateUser, requireRole, gone } from "./authMiddleware";
 
 // ---------------------------------------------------------------------------
 // Prazos/condições de pagamento por cliente — puxa do 1.0 (Neon) p/ o 2.0.
@@ -151,7 +151,7 @@ export function registerPaymentTerms(app: Express) {
   });
 
   // ---- Puxar forma/prazo/desconto/parcelamento do 1.0 p/ o 2.0 ------------
-  app.post("/api/admin/payment-terms/pull-from-1-0", async (req, res) => {
+  app.post("/api/admin/payment-terms/pull-from-1-0", gone('condições de pagamento copiadas do 1.0'), async (req, res) => {
     const apply = req.body?.apply === true;
     const map = (req.body?.map || {}) as Record<string, string>;
     // alvo 2.0 -> coluna 1.0

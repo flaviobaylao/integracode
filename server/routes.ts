@@ -6,11 +6,11 @@ import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFIC
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
-import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess } from "./authMiddleware";
+import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess, gone, rateLimitPorIp } from "./authMiddleware";
 import { requirePermission } from "./delegations-routes";
 import { getOmieService, getOmieServiceForInstance, isOmieConfigured, createOmieOrder, OmieService, resolveDefaultInstanceId, cacheBankAccountsForAllInstances, cleanupOmieCredentials } from "./omieIntegration";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange, regenerateCustomerAgenda } from "./visitScheduleService";
-import { logCustomerChanges, getCustomerChangeHistory } from "./customerAudit";
+import { logCustomerChanges, getCustomerChangeHistory, logCustomerNote } from "./customerAudit";
 import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimization.js";
 import { receitaService } from "./receitaIntegration";
 import { validarDocumentosDoPayload, normalizarDocumento } from "./documentValidation";
@@ -1743,7 +1743,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
-  app.get('/api/customers/map-data', async (req: any, res) => {
+  app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
     try {
       // Situacao selecionada no mapa: 'ativos' (padrao), 'inativados' ou 'perdidos'.
       // - inativados: cadastro desativado (customers.is_active=false).
@@ -2354,6 +2354,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Inactivate customer and delete future cards
       const result = await storage.inactivateCustomer(id, cardId);
+      // 📜 (E1, 05/set/2026) Trilha — este caminho não registrava nada no histórico.
+      try {
+        const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email };
+        await logCustomerChanges({ customerId: id, before: { isActive: existingCustomer.isActive }, changes: { isActive: false }, actor, source: 'inactivate' });
+        const motivo = String(req.body?.motivo || '').trim();
+        if (motivo) await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: motivo, actor, source: 'inactivate' });
+      } catch (_e) {}
       
       // Build success message
       let message = "Cliente inativado com sucesso no sistema";
@@ -3056,8 +3063,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (['vendedor', 'telemarketing'].includes(_role)) {
         return res.status(403).json({ message: "Seu perfil não pode excluir clientes." });
       }
+      // 🔒 (E1, 05/set/2026) Exclusão (soft delete) é SÓ do Admin e exige MOTIVO — antes era
+      // 1 clique na lixeira, sem confirmação, sem trilha e sem inactivated_at.
+      if (_role !== 'admin') {
+        return res.status(403).json({ message: "Somente o Admin pode excluir clientes." });
+      }
+      const motivo = String(req.body?.motivo || req.query?.motivo || '').trim();
+      if (motivo.length < 5) {
+        return res.status(400).json({ message: "Informe o motivo da exclusão (mínimo 5 caracteres)." });
+      }
+      const before = await storage.getCustomer(id);
+      if (!before) return res.status(404).json({ message: "Cliente não encontrado" });
       await storage.deleteCustomer(id);
-      res.json({ message: "Customer deleted successfully" });
+      const u = req.currentUser;
+      const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
+      try { await logCustomerChanges({ customerId: id, before: { isActive: before.isActive }, changes: { isActive: false }, actor, source: 'delete' }); } catch (_e) {}
+      try { await logCustomerNote({ customerId: id, label: 'Motivo da exclusão', text: motivo, actor, source: 'delete' }); } catch (_e) {}
+      res.json({ message: "Cliente excluído (inativado com trilha). Nenhum dado foi apagado." });
     } catch (error) {
       console.error("Error deleting customer:", error);
       res.status(500).json({ message: "Failed to delete customer" });
@@ -3913,7 +3935,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //  • is_active=true  & omie_status='inativo' → só é tocado se body.incluirExcluidos===true
   //    (são cadastros EXCLUÍDOS; alinhar zera is_active para refletir Inativo na Gestão).
   // POST { dryRun?: boolean, incluirExcluidos?: boolean }. Idempotente.
-  app.post('/api/admin/customers/reconciliar-ativos', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/admin/customers/reconciliar-ativos', gone('reconciliação is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'), async (req: any, res) => {
     try {
       const { customers } = await import('../shared/schema');
       const dryRun = req.body?.dryRun === true;
@@ -4174,14 +4196,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // customers.isActive=false, sai de Clientes Ativos e apaga cards futuros pendentes.
   app.post('/api/customers/bulk-inactivate', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
-      const { ids } = req.body || {};
+      const { ids, motivo } = req.body || {};
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
       const result = await storage.bulkInactivateCustomers(ids.map((x: any) => String(x)));
-      // 📜 Auditoria: registra "Ativo: Sim → Não" para os que estavam ativos
+      // 📜 Auditoria: registra "Ativo: Sim → Não" para os que estavam ativos (+ motivo, E1 05/set/2026 —
+      // o front já enviava `motivo` e o servidor descartava)
       const u = req.currentUser;
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
+      const motivoTxt = String(motivo || '').trim();
       for (const cid of (result.inactivatedIds || [])) {
         try { await logCustomerChanges({ customerId: cid, before: { isActive: true }, changes: { isActive: false }, actor, source: 'bulk' }); } catch (_e) {}
+        if (motivoTxt) { try { await logCustomerNote({ customerId: cid, label: 'Motivo da inativação', text: motivoTxt, actor, source: 'bulk' }); } catch (_e) {} }
       }
       res.json({ ok: true, ...result });
     } catch (error: any) {
@@ -7654,7 +7679,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete all sales cards (admin only)
-  app.delete('/api/sales-cards', authenticateUser, requireRole(['admin', 'administrative']), async (req: any, res) => {
+  app.delete('/api/sales-cards', gone('exclusão em massa de TODOS os cards — db.delete sem WHERE'), async (req: any, res) => {
     try {
       const deletedCount = await storage.deleteAllSalesCards();
       res.json({ 
@@ -7939,7 +7964,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Remove da lista de Clientes Ativos os registros marcados como "nao encontrado no sistema"
   // (active_customers.match_status = 'unmatched'). Remocao reversivel (is_active=false): sai da
   // lista sem apagar a linha; nao afeta o cadastro de clientes.
-  app.post('/api/admin/remove-unmatched-active-customers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/admin/remove-unmatched-active-customers', gone('remoção de "não encontrados" — não há mais planilha de importação'), async (req: any, res) => {
     try {
       const result: any = await db.execute(sql`
         UPDATE active_customers
@@ -7956,7 +7981,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/admin/reconcile-inactive-active-customers', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/admin/reconcile-inactive-active-customers', gone('reconciliação em massa de Clientes Ativos — inativação só por ação humana com trilha'), async (req: any, res) => {
     try {
       const result: any = await db.execute(sql`
         UPDATE active_customers
@@ -26462,7 +26487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Verificar se cliente já existe (por email, telefone ou CPF)
-  app.post('/api/public/customers/check', async (req, res) => {
+  app.post('/api/public/customers/check', rateLimitPorIp(30), async (req, res) => {
     try {
       const { email, phone, cpf } = req.body;
       
@@ -26510,7 +26535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Verificar se cliente já existe por CNPJ (hotsite - revendedores)
-  app.post('/api/public/customers/check-cnpj', async (req, res) => {
+  app.post('/api/public/customers/check-cnpj', rateLimitPorIp(30), async (req, res) => {
     try {
       const { cnpj } = req.body;
       
@@ -29546,7 +29571,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/active-customers', async (req: any, res) => {
+  app.get('/api/active-customers', authenticateUser, async (req: any, res) => {
     try {
       // Auto-sync (throttled, fire-and-forget): mantém a lista alinhada às rotas ao abrir a tela.
       const nowMs = Date.now();
@@ -29574,7 +29599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   
   // Histórico de uploads
-  app.get('/api/active-customers/uploads', async (req: any, res) => {
+  app.get('/api/active-customers/uploads', authenticateUser, async (req: any, res) => {
     try {
       const uploads = await storage.getActiveCustomerUploads();
       res.json(uploads);
@@ -29804,7 +29829,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Verificar se cliente está na lista ativa
-  app.get('/api/active-customers/check/:customerId', async (req: any, res) => {
+  app.get('/api/active-customers/check/:customerId', authenticateUser, async (req: any, res) => {
     try {
       const { customerId } = req.params;
       console.log('📋 Verificando status ativo para cliente:', customerId);
