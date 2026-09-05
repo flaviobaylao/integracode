@@ -103,8 +103,11 @@ const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; nat
 { table: "chat_deliveries", pk: "id", hasUpdatedAt: true },
 { table: "chat_reports", pk: "id", hasUpdatedAt: false },
 // --- Tabelas de recurso adicionais (descobertas na varredura de abas; tinham dados no 1.0 e estavam vazias no 2.0) ---
-{ table: "active_customers", pk: "id", hasUpdatedAt: true },        // alimenta a tela "Clientes Ativos"
-{ table: "active_customer_uploads", pk: "id", hasUpdatedAt: false },
+// (E2-A, 05/set/2026) active_customers e active_customer_uploads SAÍRAM do sync 1.0→2.0: o upsert
+// sem guarda de updated_at sobrescrevia is_active/customer_id/deactivated_at da lista com o estado
+// do 1.0 (mesmo defeito de users/receivables). A lista é derivada do cadastro do 2.0.
+// { table: "active_customers", pk: "id", hasUpdatedAt: true },
+// { table: "active_customer_uploads", pk: "id", hasUpdatedAt: false },
 { table: "fiscal_scenarios", pk: "id", hasUpdatedAt: true },        // cenários fiscais
 { table: "chat_ai_settings", pk: "id", hasUpdatedAt: true },
 { table: "chat_ai_logs", pk: "id", hasUpdatedAt: false },

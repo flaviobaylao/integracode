@@ -223,7 +223,7 @@ export interface IStorage {
   getRoutesBySellerId(sellerId: string): Promise<Route[]>;
   
   // Customer operations
-  getCustomers(sellerId?: string): Promise<CustomerWithSeller[]>;
+  getCustomers(sellerId?: string, opts?: { incluirInativos?: boolean }): Promise<CustomerWithSeller[]>;
   getAllCustomers(): Promise<Customer[]>;
   getCustomer(id: string): Promise<CustomerWithSeller | undefined>;
   getCustomerByCpf(cpf: string): Promise<Customer | undefined>;
@@ -812,7 +812,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Customer operations
-  async getCustomers(sellerId?: string): Promise<CustomerWithSeller[]> {
+  async getCustomers(sellerId?: string, opts?: { incluirInativos?: boolean }): Promise<CustomerWithSeller[]> {
     const baseQuery = db
       .select()
       .from(customers)
@@ -823,12 +823,17 @@ export class DatabaseStorage implements IStorage {
     // usava só omie_status, então: (a) inativados via botão (is_active=false, omie ainda 'ativo')
     // continuavam aparecendo, e (b) excluídos (omie='inativo', is_active=true) sumiam. Exigir os
     // dois resolve os dois casos sem reexibir excluídos.
-    const whereConditions = [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
+    // (E2-A, 05/set/2026) `incluirInativos`: a Gestão de Clientes precisa VER os inativos (badge
+    // "Inativo", filtro "Inativo", Reativar). Desde 01/set (e57c8ffd) o filtro duplo escondia todos
+    // os inativos da Gestão — "clientes desaparecidos". As demais telas continuam só com ativos.
+    const whereConditions = opts?.incluirInativos
+      ? []
+      : [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
     if (sellerId) {
       whereConditions.push(eq(customers.sellerId, sellerId));
     }
     
-    const query = baseQuery.where(and(...whereConditions));
+    const query = whereConditions.length ? baseQuery.where(and(...whereConditions)) : baseQuery;
     
     const result = await query;
     
@@ -1195,6 +1200,19 @@ export class DatabaseStorage implements IStorage {
       .update(activeCustomers)
       .set({ isActive: true, deactivatedAt: null, updatedAt: agora() })
       .where(inArray(activeCustomers.customerId, ids));
+    // 2b. (E2-A, 05/set/2026) Também por DOCUMENTO: linha da lista ligada a outro id (duplicado /
+    // id renomeado) ou sem customer_id ficava inativa e o cliente reativado continuava fora da
+    // Rota do Dia e do Mapa (que casam por documento). Religa ao cadastro reativado.
+    for (const id of ids) {
+      await db.execute(sql`
+        UPDATE active_customers ac
+        SET is_active = true, deactivated_at = null, updated_at = now(),
+            customer_id = COALESCE(ac.customer_id, c.id), match_status = 'matched'
+        FROM customers c
+        WHERE c.id = ${id} AND ac.is_active = false
+          AND regexp_replace(COALESCE(ac.document,''), '[^0-9]', '', 'g') <> ''
+          AND regexp_replace(COALESCE(ac.document,''), '[^0-9]', '', 'g') = regexp_replace(COALESCE(c.cnpj, c.cpf, ''), '[^0-9]', '', 'g')`);
+    }
 
     return {
       processed: ids.length,

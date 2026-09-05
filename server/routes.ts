@@ -1606,7 +1606,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(result);
       }
       
-      const customers = await storage.getCustomers(sellerId);
+      // (E2-A, 05/set/2026) Gestão de Clientes pede ?incluirInativos=true para listar TODOS os
+      // cadastrados (fonte única). Um cadastro só é "ativo" se is_active E omie_status='ativo';
+      // os demais vêm marcados isActive=false para a tela mostrar o badge "Inativo" e permitir Reativar.
+      const incluirInativos = String(req.query.incluirInativos || '') === 'true';
+      const customers = await storage.getCustomers(sellerId, { incluirInativos });
+      if (incluirInativos) {
+        return res.json(customers.map((c: any) => (c.isActive === true && c.omieStatus === 'ativo') ? c : { ...c, isActive: false }));
+      }
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);
@@ -4155,9 +4162,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             adicionados++;
           } else if (existing.isActive === false) {
-            // Retirado por inativação → não traz de volta
-            if (exemplosIgnorados.length < 40) exemplosIgnorados.push({ id: c.id, nome: (c as any).fantasyName || (c as any).name, doc });
-            ignoradosInativados++;
+            // (E2-A, 05/set/2026) Antes: "retirado por inativação → não traz de volta". Isso perpetuava
+            // desativações feitas por planilha/cron/sync do 1.0: cliente REATIVADO na Gestão continuava
+            // fora da lista, da Rota do Dia e do Mapa. Regra nova (fonte única = cadastro): cadastro
+            // ativo ⇒ está na lista. Quem foi inativado no cadastro nem chega aqui (`elegiveis` exige
+            // isActive=true). Não existe mais "remover da lista sem inativar" (nenhuma tela usa).
+            const voltar = true;
+            if (voltar) {
+              if (!dryRun) {
+                await storage.updateActiveCustomer(existing.id, {
+                  customerId: String(c.id), matchStatus: 'matched', isActive: true, deactivatedAt: null,
+                  fantasyNameImported: (c as any).fantasyName || (c as any).name,
+                } as any);
+              }
+              religados++;
+            } else {
+              if (exemplosIgnorados.length < 40) exemplosIgnorados.push({ id: c.id, nome: (c as any).fantasyName || (c as any).name, doc });
+              ignoradosInativados++;
+            }
           } else if (String(existing.customerId || '') !== String(c.id)) {
             // Linha ativa mas apontando para outro cadastro (duplicado) → religa ao ativo
             if (!dryRun) {
@@ -29610,7 +29632,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Upload de planilha de clientes ativos - OTIMIZADO com batch processing
-  app.post('/api/active-customers/upload', authenticateUser, requireRole(['admin', 'coordinator']), upload.single('file'), async (req: any, res) => {
+  app.post('/api/active-customers/upload', gone('importação de Clientes Ativos por planilha — decisão de 05/set/2026: a lista é derivada do cadastro, não de planilha'), authenticateUser, requireRole(['admin', 'coordinator']), upload.single('file'), async (req: any, res) => {
     let uploadRecord: any = null;
     try {
       const user = req.currentUser;

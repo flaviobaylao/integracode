@@ -99,7 +99,7 @@ export default function CustomerManagement() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [dayMulti, setDayMulti] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active') // (E2-A) padrão = Ativos; "Inativo" e "Todos" mostram os demais;
   const [sellerFilter, setSellerFilter] = useState('all');
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
@@ -123,7 +123,13 @@ export default function CustomerManagement() {
   });
 
   const { data: customers = [], isLoading } = useQuery<CustomerWithSeller[]>({
-    queryKey: ['/api/customers'],
+    // (E2-A, 05/set/2026) Gestão lista TODOS os cadastrados (ativos e inativos) — fonte única.
+    queryKey: ['/api/customers', 'incluirInativos'],
+    queryFn: async () => {
+      const r = await fetch('/api/customers?incluirInativos=true', { credentials: 'include' });
+      if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+      return r.json();
+    },
     retry: false,
   });
 
