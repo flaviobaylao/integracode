@@ -1,6 +1,6 @@
 // ============================================================================
 // MÓDULO INDÚSTRIA 2.0 — formato 1.0 completo + melhorias (18/ago/2026)
-// Abas: Matéria-Prima · Receitas · Ordens de Produção · Estoque Produto Acabado
+// Abas: Matéria-Prima · Receitas · Ordens de Produção · Estoque Produto Acabado · Documentos (05/set/2026)
 // Backend: /api/industria/* (industria-routes.ts) + /api/inventory/* (lotes).
 // Melhorias sobre o 1.0: finalização integrada ao estoque de produto acabado
 // (inventory_lots, consumido pela NF-e), polpa produzida entra no estoque de
@@ -24,6 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { exportToExcel } from '@/lib/tableTools';
 import RecipesEditor from '@/components/RecipesEditor';
+import DocumentosEmpresa from '@/components/DocumentosEmpresa';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
@@ -1977,12 +1978,16 @@ export default function Industry() {
             <TabsTrigger value="estoque" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <Factory className="h-4 w-4" /> Estoque Produto Acabado
             </TabsTrigger>
+            <TabsTrigger value="documentos" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
+              <Paperclip className="h-4 w-4" /> Documentos
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="materia"><MateriaPrimaTab /></TabsContent>
           <TabsContent value="receitas"><RecipesEditor /></TabsContent>
           <TabsContent value="ordens"><OrdensTab /></TabsContent>
           <TabsContent value="estoque"><EstoqueTab /></TabsContent>
+          <TabsContent value="documentos"><DocumentosEmpresa /></TabsContent>
         </Tabs>
       </div>
     </div>
