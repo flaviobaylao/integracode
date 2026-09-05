@@ -212,26 +212,6 @@ export default function Sellers() {
     },
   });
 
-  const syncVendorsMutation = useMutation({
-    mutationFn: async () => {
-      return await apiRequest('POST', '/api/omie/sync-vendors');
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/users'] });
-      toast({
-        title: "Sincronização concluída",
-        description: `${data.imported} vendedores importados, ${data.updated} atualizados`,
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro na sincronização",
-        description: error.message || "Erro ao sincronizar vendedores do Omie",
-        variant: "destructive",
-      });
-    },
-  });
-
   const openCreate = () => {
     setForm({ ...EMPTY_FORM });
     setEditingId(null);
@@ -337,15 +317,6 @@ export default function Sellers() {
               Novo Vendedor
             </Button>
           )}
-          <Button
-            onClick={() => syncVendorsMutation.mutate()}
-            disabled={syncVendorsMutation.isPending}
-            variant="outline"
-            size="sm"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${syncVendorsMutation.isPending ? 'animate-spin' : ''}`} />
-            {syncVendorsMutation.isPending ? 'Sincronizando...' : 'Sincronizar Omie'}
-          </Button>
           <Badge variant="secondary" className="px-3 py-1">
             <Users className="h-4 w-4 mr-1" />
             {activeSellers.length} ativos

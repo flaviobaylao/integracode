@@ -48,8 +48,6 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Faturamento", "Faturamentos", [A, C, D, V]],
   ["Faturamento", "Faturamento NF-e", REPORTS],
   ["Faturamento", "Pipeline Faturamento", [A, C, D, T]],
-  ["Faturamento", "Pedido de Venda", REPORTS],
-  ["Faturamento", "Faturar / Faturado", REPORTS],
   ["Faturamento", "Recuperação de Faturamento", REPORTS],
   ["Financeiro", "Contas a Receber", [A, C, D, T]],
   ["Financeiro", "Contas a Pagar", REPORTS],
@@ -74,11 +72,9 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Indústria", "Matéria-Prima e Receitas", [A, I]],
   ["Relatórios", "Relatórios Dinâmicos", REPORTS],
   ["Relatórios", "Relatórios IA", REPORTS],
-  ["Administração", "Integração Omie", REPORTS],
-  ["Administração", "Instâncias Omie", [A]],
+  ["Administração", "Empresas do Grupo", [A]],
   ["Administração", "Ambiente Fiscal", REPORTS],
   ["Administração", "Agentes IA", REPORTS],
-  ["Administração", "Logs Etapas Omie", REPORTS],
   ["Administração", "RH / Métricas", [A, C, D, V, M, I]],
   ["Administração", "Usuários", [A]],
   ["Administração", "Administração do Sistema", [A]],
@@ -106,7 +102,7 @@ export type Flags = Record<CapKey, boolean>;
 const VIEW_ONLY = new Set<string>([
   "Dashboard", "Vendedores", "Localizações", "Mapa de Clientes", "Resumo das Rotas", "Relatórios de Entregas",
   "Dashboard de Entregas", "Relatórios Dinâmicos", "Relatórios IA", "Plano de Contas / DRE", "Fluxo de Caixa",
-  "Radar de Compras", "Ambiente Fiscal", "Logs Etapas Omie", "RH / Métricas", "Auditoria de Check-ins",
+  "Radar de Compras", "Ambiente Fiscal", "RH / Métricas", "Auditoria de Check-ins",
   "Auditoria de Cobranças", "Conferência de Pagamentos", "Dashboard de Conversas", "Débitos Vencidos", "Pedidos Bloqueados",
 ]);
 const GRUPOS_VENDAS = new Set(["Vendas", "Clientes", "Faturamento"]);

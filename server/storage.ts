@@ -223,7 +223,7 @@ export interface IStorage {
   getRoutesBySellerId(sellerId: string): Promise<Route[]>;
   
   // Customer operations
-  getCustomers(sellerId?: string): Promise<CustomerWithSeller[]>;
+  getCustomers(sellerId?: string, opts?: { incluirInativos?: boolean }): Promise<CustomerWithSeller[]>;
   getAllCustomers(): Promise<Customer[]>;
   getCustomer(id: string): Promise<CustomerWithSeller | undefined>;
   getCustomerByCpf(cpf: string): Promise<Customer | undefined>;
@@ -259,7 +259,7 @@ export interface IStorage {
   getSalesCard(id: string): Promise<SalesCardWithRelations | undefined>;
   createSalesCard(salesCard: InsertSalesCard): Promise<SalesCard>;
   updateSalesCard(id: string, salesCard: Partial<InsertSalesCard>): Promise<SalesCard>;
-  deleteSalesCard(id: string): Promise<void>;
+  deleteSalesCard(id: string, opts?: { force?: boolean }): Promise<void>;
   deleteAllSalesCards(): Promise<number>;
   getSalesCardsByDate(date: Date, sellerId?: string, customerId?: string): Promise<SalesCardWithRelations[]>;
   getOverdueSalesCards(sellerId?: string): Promise<SalesCardWithRelations[]>;
@@ -812,7 +812,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Customer operations
-  async getCustomers(sellerId?: string): Promise<CustomerWithSeller[]> {
+  async getCustomers(sellerId?: string, opts?: { incluirInativos?: boolean }): Promise<CustomerWithSeller[]> {
     const baseQuery = db
       .select()
       .from(customers)
@@ -823,12 +823,17 @@ export class DatabaseStorage implements IStorage {
     // usava só omie_status, então: (a) inativados via botão (is_active=false, omie ainda 'ativo')
     // continuavam aparecendo, e (b) excluídos (omie='inativo', is_active=true) sumiam. Exigir os
     // dois resolve os dois casos sem reexibir excluídos.
-    const whereConditions = [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
+    // (E2-A, 05/set/2026) `incluirInativos`: a Gestão de Clientes precisa VER os inativos (badge
+    // "Inativo", filtro "Inativo", Reativar). Desde 01/set (e57c8ffd) o filtro duplo escondia todos
+    // os inativos da Gestão — "clientes desaparecidos". As demais telas continuam só com ativos.
+    const whereConditions = opts?.incluirInativos
+      ? []
+      : [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
     if (sellerId) {
       whereConditions.push(eq(customers.sellerId, sellerId));
     }
     
-    const query = baseQuery.where(and(...whereConditions));
+    const query = whereConditions.length ? baseQuery.where(and(...whereConditions)) : baseQuery;
     
     const result = await query;
     
@@ -1107,7 +1112,11 @@ export class DatabaseStorage implements IStorage {
             eq(salesCards.status, 'pending'),
             eq(salesCards.status, 'in_progress')
           ),
-          gte(salesCards.scheduledDate, today)
+          gte(salesCards.scheduledDate, today),
+          // 🛡️ BLINDAGEM (restaurada em 05/set/2026, E1): NUNCA apaga card com VENDA ou com
+          //    PRODUTOS — é um PEDIDO REAL (hotsite/IA/vendedor), não um slot de agenda.
+          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`,
         )
       )
       .returning();
@@ -1151,7 +1160,10 @@ export class DatabaseStorage implements IStorage {
         and(
           inArray(salesCards.customerId, ids),
           or(eq(salesCards.status, 'pending'), eq(salesCards.status, 'in_progress')),
-          gte(salesCards.scheduledDate, today)
+          gte(salesCards.scheduledDate, today),
+          // 🛡️ BLINDAGEM (restaurada em 05/set/2026, E1): pedido real não é apagado.
+          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`,
         )
       )
       .returning();
@@ -1188,6 +1200,19 @@ export class DatabaseStorage implements IStorage {
       .update(activeCustomers)
       .set({ isActive: true, deactivatedAt: null, updatedAt: agora() })
       .where(inArray(activeCustomers.customerId, ids));
+    // 2b. (E2-A, 05/set/2026) Também por DOCUMENTO: linha da lista ligada a outro id (duplicado /
+    // id renomeado) ou sem customer_id ficava inativa e o cliente reativado continuava fora da
+    // Rota do Dia e do Mapa (que casam por documento). Religa ao cadastro reativado.
+    for (const id of ids) {
+      await db.execute(sql`
+        UPDATE active_customers ac
+        SET is_active = true, deactivated_at = null, updated_at = now(),
+            customer_id = COALESCE(ac.customer_id, c.id), match_status = 'matched'
+        FROM customers c
+        WHERE c.id = ${id} AND ac.is_active = false
+          AND regexp_replace(COALESCE(ac.document,''), '[^0-9]', '', 'g') <> ''
+          AND regexp_replace(COALESCE(ac.document,''), '[^0-9]', '', 'g') = regexp_replace(COALESCE(c.cnpj, c.cpf, ''), '[^0-9]', '', 'g')`);
+    }
 
     return {
       processed: ids.length,
@@ -1198,9 +1223,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCustomer(id: string): Promise<void> {
-    // Exclusão = soft delete. Zera os DOIS campos p/ ficar consistente (some de Clientes Ativos
-    // e também aparece como Inativo na Gestão de Clientes).
-    await db.update(customers).set({ omieStatus: 'inativo', isActive: false, updatedAt: agora() }).where(eq(customers.id, id));
+    // Exclusão = soft delete (E1, 05/set/2026). Antes só zerava os flags e NÃO gravava
+    // inactivated_at nem tirava da lista de Clientes Ativos — o cliente "sumia" sem marca.
+    // Agora tem a MESMA semântica da inativação: inactivated_at + sai da lista (por id e por
+    // documento). NÃO apaga cards/pedidos. Nenhum dado é removido.
+    const [c] = await db.select().from(customers).where(eq(customers.id, id));
+    if (!c) return;
+    await db.update(customers)
+      .set({ omieStatus: 'inativo', isActive: false, inactivatedAt: agora(), updatedAt: agora() })
+      .where(eq(customers.id, id));
+    const doc = String((c as any).cnpj || (c as any).cpf || (c as any).document || '').replace(/\D/g, '');
+    await db.execute(sql`
+      UPDATE active_customers SET is_active = false, deactivated_at = now(), updated_at = now()
+      WHERE is_active = true AND (customer_id = ${id}
+        OR (${doc} <> '' AND regexp_replace(COALESCE(document,''), '[^0-9]', '', 'g') = ${doc}))`);
   }
 
   async getCustomersByRoute(route: string): Promise<Customer[]> {
@@ -2523,13 +2559,33 @@ export class DatabaseStorage implements IStorage {
     return cardsWithRelations as SalesCardWithRelations[];
   }
 
-  async deleteSalesCard(id: string): Promise<void> {
+  // 🛡️ BLINDAGEM (28/jul/2026, revertida em b257db43, restaurada em 05/set/2026 — E1):
+  // card com VENDA (sale_value > 0) ou com PRODUTOS é um PEDIDO REAL. Exclusão só passa com
+  // { force: true } (endpoint admin deliberado de excluir pedido do hotsite). Qualquer outra
+  // chamada recebe erro em vez de apagar em silêncio.
+  async deleteSalesCard(id: string, opts?: { force?: boolean }): Promise<void> {
+    if (!opts?.force) {
+      const guarded = await db
+        .delete(salesCards)
+        .where(and(
+          eq(salesCards.id, id),
+          sql`(${salesCards.saleValue} IS NULL OR ${salesCards.saleValue}::numeric = 0)`,
+          sql`(${salesCards.products} IS NULL OR jsonb_typeof(${salesCards.products}) <> 'array' OR jsonb_array_length(${salesCards.products}) = 0)`
+        ))
+        .returning({ id: salesCards.id });
+      if (!guarded.length) {
+        const [ainda] = await db.select({ id: salesCards.id }).from(salesCards).where(eq(salesCards.id, id));
+        if (ainda) throw new Error('CARD_COM_VENDA: este card tem valor/produtos (é um PEDIDO) e não pode ser excluído por esta rota.');
+      }
+      return;
+    }
     await db.delete(salesCards).where(eq(salesCards.id, id));
   }
 
+  // ⛔ (E1, 05/set/2026) Exclusão em massa de TODOS os cards desativada: era `db.delete(salesCards)`
+  // sem WHERE, acessível por botão. Mantida a assinatura para não quebrar chamadores.
   async deleteAllSalesCards(): Promise<number> {
-    const result = await db.delete(salesCards);
-    return result.rowCount || 0;
+    throw new Error('DESATIVADO: exclusão em massa de todos os cards foi removida em 05/set/2026 (risco de perda de pedidos).');
   }
 
   async getSalesCardsByDate(date: Date, sellerId?: string, customerId?: string): Promise<SalesCardWithRelations[]> {

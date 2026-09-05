@@ -1,7 +1,7 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel } from "@/lib/tableTools";
 import { useState, useEffect, useRef } from 'react';
 import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, RotateCw, TrendingUp, Home, Loader2, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, TrendingUp, Home, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import OmieInstanceBadge from '@/components/OmieInstanceBadge';
 import FiscalScenariosTab from '@/components/FiscalScenariosTab';
@@ -103,18 +103,6 @@ function getCfopDisplayName(cfop: string): string {
   return cfopMap[cfop] || cfop;
 }
 
-interface SyncProgress {
-  status: 'idle' | 'running' | 'completed' | 'error';
-  currentPage: number;
-  totalPages: number;
-  invoicesFound: number;
-  invoicesProcessed: number;
-  inserted: number;
-  updated: number;
-  currentInvoice: string;
-  message: string;
-}
-
 export default function Billings() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<BillingFilters>({
@@ -126,124 +114,9 @@ export default function Billings() {
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [customerNameSearch, setCustomerNameSearch] = useState('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [sseReconnectKey, setSseReconnectKey] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
 
-  const sseRetryCountRef = useRef(0);
-  const maxSseRetries = 3;
   const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    let eventSource: EventSource | null = null;
-    let idleCount = 0;
-    const maxIdleBeforeClose = 120;
-    let isMounted = true;
-
-    const createEventSource = () => {
-      eventSource = new EventSource('/api/omie/sync-billings/progress');
-      
-      eventSource.onmessage = (event) => {
-        if (!isMounted) return;
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.status === 'idle') {
-            idleCount++;
-            if (idleCount > maxIdleBeforeClose) {
-              console.log('SSE: Muitos eventos idle, fechando conexão');
-              eventSource?.close();
-              setIsSyncing(false);
-              setSyncProgress(null);
-              sseRetryCountRef.current = 0;
-            }
-            return;
-          }
-          
-          idleCount = 0;
-          sseRetryCountRef.current = 0;
-          setSyncProgress(data);
-          
-          if (data.status === 'completed') {
-            eventSource?.close();
-            setIsSyncing(false);
-            sseRetryCountRef.current = 0;
-            queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-            toast({
-              title: 'Sincronização concluída',
-              description: data.message || `${data.inserted || 0} inseridos, ${data.updated || 0} atualizados.`,
-            });
-          } else if (data.status === 'error') {
-            eventSource?.close();
-            setIsSyncing(false);
-            sseRetryCountRef.current = 0;
-            queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-            toast({
-              title: 'Erro na sincronização',
-              description: data.message || 'Erro desconhecido',
-              variant: 'destructive',
-            });
-          }
-        } catch (e) {
-          console.error('Erro ao processar SSE:', e);
-        }
-      };
-
-      eventSource.onerror = (e) => {
-        console.error('SSE error:', e);
-        eventSource?.close();
-        if (!isMounted) return;
-        
-        sseRetryCountRef.current += 1;
-        if (sseRetryCountRef.current >= maxSseRetries) {
-          // SSE falhou — ativar modo polling como fallback silencioso
-          console.log('SSE: Falhou, usando polling como fallback');
-          sseRetryCountRef.current = 0;
-          let pollStopped = false;
-          const pollInterval = setInterval(async () => {
-            if (!isMounted || pollStopped) { clearInterval(pollInterval); return; }
-            try {
-              const r = await fetch('/api/omie/sync-billings/state', { credentials: 'include' });
-              if (r.ok) {
-                const data = await r.json();
-                if (data.status === 'completed' || data.status === 'error') {
-                  pollStopped = true;
-                  clearInterval(pollInterval);
-                  if (isMounted) {
-                    setSyncProgress(data);
-                    setIsSyncing(false);
-                    queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-                    queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-                  }
-                } else if (data.status === 'running' && isMounted) {
-                  setSyncProgress(data);
-                }
-              }
-            } catch {}
-          }, 2000);
-        } else {
-          console.log(`SSE: Tentativa ${sseRetryCountRef.current}/${maxSseRetries}, reconectando em 2s...`);
-          setTimeout(() => {
-            if (isMounted && isSyncing) {
-              setSseReconnectKey(k => k + 1);
-            }
-          }, 2000);
-        }
-      };
-    };
-
-    if (isSyncing) {
-      createEventSource();
-    }
-
-    return () => {
-      isMounted = false;
-      eventSource?.close();
-    };
-  }, [isSyncing, sseReconnectKey, queryClient]);
 
   // Query para buscar faturamentos (sem filtros - tudo client-side)
   const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({
@@ -371,58 +244,6 @@ export default function Billings() {
     queryKey: ['/api/omie/instances/public'],
     staleTime: 5 * 60 * 1000,
   });
-
-  // Mutation para sincronização de faturamentos do Omie
-  // A sincronização agora roda em background (retorna 202) e o progresso vem via SSE
-  const syncOmieBillingsMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/omie/sync-billings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include'
-      });
-      
-      // 202 = Accepted (background job started) - é sucesso
-      if (!response.ok && response.status !== 202) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Erro ${response.status}: ${response.statusText}`);
-      }
-      
-      return response.json();
-    },
-    onSuccess: () => {
-      // Servidor confirmou que a sincronização iniciou - agora conectar o SSE para acompanhar o progresso
-      setIsSyncing(true);
-    },
-    onError: (error: any) => {
-      setIsSyncing(false);
-      setSyncProgress(null);
-      toast({
-        title: 'Erro ao sincronizar faturamentos',
-        description: error.message || 'Erro desconhecido',
-        variant: 'destructive',
-      });
-    }
-  });
-
-  const handleSyncOmieBillings = () => {
-    // Mostrar o card de progresso com estado inicial antes de chamar o servidor
-    setSyncProgress({ 
-      status: 'running', 
-      currentPage: 0, 
-      totalPages: 0, 
-      invoicesFound: 0, 
-      invoicesProcessed: 0,
-      inserted: 0,
-      updated: 0,
-      currentInvoice: '',
-      message: 'Conectando ao servidor...' 
-    });
-    // Iniciar a sincronização - SSE será conectado após confirmação do servidor
-    syncOmieBillingsMutation.mutate();
-  };
 
   const handleFilterChange = (key: keyof BillingFilters, value: string | number | undefined) => {
     setFilters(prev => ({
@@ -558,8 +379,6 @@ export default function Billings() {
       // Sync acabou de completar — atualizar lista
       queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
       queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      setIsSyncing(false);
-      setSyncProgress(null);
       toast({
         title: 'Sincronização concluída',
         description: displaySync?.message || 'Lista de faturamentos atualizada.',
@@ -595,22 +414,6 @@ export default function Billings() {
         
         <div className="flex flex-col items-end gap-2">
           <div className="flex gap-2 flex-wrap justify-end">
-            <Button 
-              variant="default" 
-              onClick={handleSyncOmieBillings}
-              disabled={syncOmieBillingsMutation.isPending}
-              data-testid="button-sync-billings"
-              title="Sincronizar faturamentos dos últimos 60 dias do Omie"
-              className="bg-green-600 hover:bg-green-700"
-            >
-              {syncOmieBillingsMutation.isPending ? (
-                <RotateCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-2" />
-              )}
-              Sincronizar
-            </Button>
-            
             <Button variant="outline" onClick={() => refetch()} data-testid="button-refresh">
               <RefreshCw className="w-4 h-4" />
             </Button>
@@ -669,76 +472,6 @@ export default function Billings() {
         </TabsContent>
 
         <TabsContent value="faturamentos" className="space-y-6 mt-4">
-
-      {isSyncing && (
-        <Card className="border-green-500 bg-green-50 dark:bg-green-950/30">
-          <CardContent className="pt-6">
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <Loader2 className="h-5 w-5 animate-spin text-green-600" />
-                <div className="flex-1">
-                  <p className="font-medium text-green-700 dark:text-green-400">
-                    Sincronizando faturamentos dos últimos 60 dias...
-                  </p>
-                  <p className="text-sm text-green-600 dark:text-green-500">
-                    {syncProgress?.message || 'Conectando ao Omie ERP...'}
-                  </p>
-                </div>
-              </div>
-              
-              {syncProgress && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">Página</p>
-                    <p className="font-bold text-lg text-green-700 dark:text-green-400">
-                      {syncProgress.currentPage || '-'}
-                    </p>
-                  </div>
-                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">NFs Processadas</p>
-                    <p className="font-bold text-lg text-green-700 dark:text-green-400">
-                      {(syncProgress.invoicesProcessed || 0).toLocaleString('pt-BR')}
-                    </p>
-                  </div>
-                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">Inseridas</p>
-                    <p className="font-bold text-lg text-blue-600 dark:text-blue-400">
-                      {(syncProgress.inserted || 0).toLocaleString('pt-BR')}
-                    </p>
-                  </div>
-                  <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-sm">
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">Atualizadas</p>
-                    <p className="font-bold text-lg text-orange-600 dark:text-orange-400">
-                      {(syncProgress.updated || 0).toLocaleString('pt-BR')}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {syncProgress && syncProgress.totalPages > 0 && (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
-                    <span>Progresso da sincronização</span>
-                    <span>{syncProgress.currentPage || 0} / {syncProgress.totalPages} páginas</span>
-                  </div>
-                  <div className="h-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-green-500 transition-all duration-300" 
-                      style={{ width: `${Math.min(100, Math.round((syncProgress.currentPage / syncProgress.totalPages) * 100))}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {syncProgress?.currentInvoice && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                  Processando NF: <span className="font-mono font-medium">{syncProgress.currentInvoice}</span>
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Estatísticas */}
       {stats && (

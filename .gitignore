@@ -16,3 +16,6 @@ telegram-session/
 *.log
 tmp/
 .cache/
+# (E3, 05/set/2026) nunca versionar sessoes/cookies
+cookies.txt
+cookie.txt

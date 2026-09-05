@@ -658,7 +658,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
           ? "Venda finalizada. Gerando o link de pagamento no cartão..."
           : shouldBlockOrder
             ? "Pedido enviado para aprovação devido ao prazo do boleto"
-            : "Venda finalizada e enviada para Omie com sucesso!"
+            : "Venda finalizada e enviada ao Pipeline de Faturamento!"
       });
       onClose();
       resetForm();

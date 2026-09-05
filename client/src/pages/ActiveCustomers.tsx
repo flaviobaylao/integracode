@@ -311,22 +311,6 @@ export default function ActiveCustomers() {
     },
   });
 
-  const bulkSendMutation = useMutation({
-    mutationFn: async (cardIds: string[]) => {
-      const res = await apiRequest('POST', '/api/sales-cards/bulk-send-to-omie', { cardIds });
-      return res as any;
-    },
-    onSuccess: (data: any) => {
-      setSelectedCardIds(new Set());
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/pending-omie'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
-      toast({ title: "Envio em lote concluído", description: `${data.succeeded} enviado(s) com sucesso, ${data.failed} com falha.` });
-    },
-    onError: (error: any) => {
-      toast({ variant: "destructive", title: "Erro no envio em lote", description: error.message });
-    },
-  });
-
   const bulkCancelMutation = useMutation({
     mutationFn: async (cardIds: string[]) => {
       const res = await apiRequest('POST', '/api/sales-cards/bulk-cancel', { cardIds });
@@ -2417,7 +2401,7 @@ export default function ActiveCustomers() {
                                 size="sm"
                                 className="bg-blue-600 hover:bg-blue-700"
                                 onClick={() => sendToOmieMutation.mutate(card.id)}
-                                disabled={sendToOmieMutation.isPending || bulkSendMutation.isPending}
+                                disabled={sendToOmieMutation.isPending}
                               >
                                 {sendToOmieMutation.isPending ? (
                                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -2450,7 +2434,7 @@ export default function ActiveCustomers() {
                   variant="outline"
                   className="border-red-300 text-red-600 hover:bg-red-50"
                   onClick={() => bulkCancelMutation.mutate(Array.from(selectedCardIds))}
-                  disabled={bulkCancelMutation.isPending || bulkSendMutation.isPending}
+                  disabled={bulkCancelMutation.isPending}
                 >
                   {bulkCancelMutation.isPending ? (
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -2458,18 +2442,6 @@ export default function ActiveCustomers() {
                     <X className="w-4 h-4 mr-2" />
                   )}
                   Cancelar Selecionados
-                </Button>
-                <Button
-                  className="bg-blue-600 hover:bg-blue-700"
-                  onClick={() => bulkSendMutation.mutate(Array.from(selectedCardIds))}
-                  disabled={bulkSendMutation.isPending || bulkCancelMutation.isPending}
-                >
-                  {bulkSendMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <Send className="w-4 h-4 mr-2" />
-                  )}
-                  Enviar Selecionados
                 </Button>
               </div>
             </div>

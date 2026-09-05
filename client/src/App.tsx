@@ -34,8 +34,6 @@ import DeliveryRoutesList from "@/pages/DeliveryRoutesList";
 import RotaEntrega from "@/pages/RotaEntrega";
 import DeliveryDailySummary from "@/pages/DeliveryDailySummary";
 import UserManagementPage from "@/pages/UserManagementPage";
-import BankAccountsDebug from "@/pages/BankAccountsDebug";
-import ContasReceber from "@/pages/ContasReceber";
 import OverdueDebtsPage from "@/pages/OverdueDebts";
 import ExtratoClientePage from "@/pages/ExtratoCliente";
 import SalesGoalsPage from "@/pages/SalesGoals";
@@ -71,7 +69,6 @@ import PedidoRapido from "@/pages/PedidoRapido";
 import VendasDigitais from "@/pages/VendasDigitais";
 import TelemarketingRotaDoDia from "@/pages/TelemarketingRotaDoDia";
 import OmieInstances from "@/pages/OmieInstances";
-import OmieStageLogs from "@/pages/OmieStageLogs";
 import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
 import BillingPipeline from "@/pages/BillingPipeline";
@@ -262,7 +259,6 @@ function Router() {
           <Route path="/billings" component={Billings} />
           <Route path="/sales-goals" component={SalesGoalsPage} />
           <Route path="/blocked-orders" component={BlockedOrdersPage} />
-          <Route path="/contas-receber" component={ContasReceber} />
           <Route path="/overdue-debts" component={OverdueDebtsPage} />
           <Route path="/extrato-cliente" component={ExtratoClientePage} />
           <Route path="/delivery-dashboard" component={DeliveryDashboard} />
@@ -306,7 +302,6 @@ function Router() {
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
           <Route path="/admin/omie-instances" component={OmieInstances} />
-          <Route path="/admin/omie-stage-logs" component={OmieStageLogs} />
           <Route path="/admin/sync-monitor" component={SyncMonitor} />
           <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
@@ -358,7 +353,6 @@ function Router() {
           <Route path="/fechar-rota" component={FecharRota} />
           <Route path="/fechamento-painel" component={FechamentoPainel} />
             <Route path="/programa-indicacao" component={ProgramaIndicacao} />
-          <Route path="/debug/bank-accounts" component={BankAccountsDebug} />
         </>
       )}
       <Route component={NotFound} />

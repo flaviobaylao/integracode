@@ -234,37 +234,6 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     addToActiveMutation.mutate();
   };
 
-  const sendToOmieMutation = useMutation({
-    mutationFn: async () => {
-      if (!customer?.id) throw new Error("Customer ID is required");
-      return await apiRequest("POST", `/api/customers/${customer.id}/send-to-omie`, {});
-    },
-    onSuccess: (data: any) => {
-      toast({
-        title: "Sucesso!",
-        description: data.message || "Cliente enviado para o Omie com sucesso.",
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/customers', customer?.id] });
-    },
-    onError: (error: any) => {
-      const isRateLimit = error?.response?.status === 429 || error?.rateLimit === true;
-      const errorMessage = isRateLimit 
-        ? "A API Omie está temporariamente bloqueada. Tente novamente em alguns minutos."
-        : error?.response?.data?.message || error.message || "Erro ao enviar cliente para o Omie";
-      
-      toast({
-        title: isRateLimit ? "Aguarde" : "Erro",
-        description: errorMessage,
-        variant: isRateLimit ? "default" : "destructive",
-      });
-    },
-  });
-
-  const handleSendToOmie = () => {
-    if (!customer?.id) return;
-    sendToOmieMutation.mutate();
-  };
-
   const openWaze = (latitude: string, longitude: string) => {
     if (!latitude || !longitude) return;
     const wazeUrl = `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes&zoom=17`;

@@ -481,27 +481,6 @@ export default function RoutesSummary() {
     }
   });
 
-  const syncOmieStagesDayMutation = useMutation({
-    mutationFn: async (date: string) => {
-      return await apiRequest('POST', `/api/delivery-routes/sync-omie-stages-day`, { date });
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
-      toast({
-        title: "Etapas Omie sincronizadas",
-        description: data.message || "Sincronização concluída",
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Erro ao sincronizar etapas Omie",
-        description: error.message || "Não foi possível sincronizar",
-        variant: "destructive",
-      });
-    }
-  });
-
   const activeDrivers = drivers.filter(d => d.isActive);
   // FASE 3.4n - filtro do pop-up "Adicionar Pedidos" (nome, endereco, NF, pedido)
   const orderSearchLower = orderSearch.trim().toLowerCase();
@@ -723,27 +702,6 @@ export default function RoutesSummary() {
                     <>
                       <Send className="h-4 w-4 mr-2" />
                       📤 Enviar {pendingSendRoutes.length} Rota(s) para Motoristas
-                    </>
-                  )}
-                </Button>
-              )}
-              {routes.length > 0 && routes.some(r => ['rota_salva', 'rota_enviada', 'em_andamento'].includes(r.status)) && (
-                <Button
-                  variant="outline"
-                  onClick={() => syncOmieStagesDayMutation.mutate(selectedDate)}
-                  disabled={syncOmieStagesDayMutation.isPending}
-                  className="border-orange-400 text-orange-600 hover:bg-orange-50"
-                  data-testid="button-sync-omie-day"
-                >
-                  {syncOmieStagesDayMutation.isPending ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Sincronizando Omie...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Atualizar Etapas Omie
                     </>
                   )}
                 </Button>

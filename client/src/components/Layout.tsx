@@ -30,7 +30,6 @@ const MENU_CARD: Record<string, string> = {
   products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores",
   billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "billing-pipeline": "Pipeline Faturamento",
-  "order-sale": "Pedido de Venda", "order-billing": "Faturar / Faturado", "order-billed": "Faturar / Faturado",
   "recuperacao-faturamento": "Recuperação de Faturamento",
   "fin-receivables": "Contas a Receber", "fin-payables": "Contas a Pagar", "fin-overdue": "Débitos Vencidos",
   "fin-blocked": "Pedidos Bloqueados", "fin-chart": "Plano de Contas / DRE", "fin-dre": "Plano de Contas / DRE",
@@ -43,8 +42,8 @@ const MENU_CARD: Record<string, string> = {
   "telemarketing-disparo": "Disparo em Massa", "automacoes-comunicacao": "Automações de Comunicação",
   industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas",
   relatorios: "Relatórios Dinâmicos", "relatorios-ia": "Relatórios IA",
-  omie: "Integração Omie", "omie-instances": "Instâncias Omie", "sync-monitor": "Ambiente Fiscal",
-  "agentes-ia": "Agentes IA", "omie-stage-logs": "Logs Etapas Omie", rh: "RH / Métricas",
+  "omie-instances": "Empresas do Grupo", "sync-monitor": "Ambiente Fiscal",
+  "agentes-ia": "Agentes IA", rh: "RH / Métricas",
   users: "Usuários", "admin-system": "Administração do Sistema", "cenarios-fiscais": "Cenários Fiscais",
   "acessos-delegacoes": "Acessos e Delegações",
 };
@@ -340,11 +339,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'billings', label: isVendedor ? 'Meus Faturamentos' : 'Faturamentos', icon: 'fas fa-file-invoice-dollar', available: canAccessReports || isVendedor, badge: null },
         { id: 'fiscal-invoices', label: 'Faturamento NF-e', icon: 'fas fa-file-alt', available: canAccessReports, badge: null },
         { id: 'billing-pipeline', label: 'Pipeline Faturamento', icon: 'fas fa-columns', available: canAccessReports || isTelemarketing || isVendedor, badge: null },
-        { id: 'order-sale', label: 'Pedido de Venda', icon: 'fas fa-shopping-cart', available: canAccessReports, badge: null },
-        { id: 'order-billing', label: 'Faturar', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
-        { id: 'order-billed', label: 'Faturado', icon: 'fas fa-check-circle', available: canAccessReports, badge: null },
-        { id: 'order-awaiting-route', label: 'Aguardando Rota', icon: 'fas fa-clock', available: canAccessReports, badge: null },
-        { id: 'order-in-route', label: 'Em Rota', icon: 'fas fa-truck', available: canAccessReports, badge: null },
         { id: 'recuperacao-faturamento', label: 'Recuperação de Faturamento', icon: 'fas fa-rotate-left', available: canAccessReports, badge: null },
       ],
     },
@@ -477,11 +471,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#6366f1',
       icon: 'fas fa-cog',
       items: [
-        { id: 'omie', label: 'Integração Omie', icon: 'fas fa-link', available: canAccessReports, badge: null },
-        { id: 'omie-instances', label: 'Instâncias Omie', icon: 'fas fa-building', available: canAccessUsers, badge: null },
+        { id: 'omie-instances', label: 'Empresas do Grupo', icon: 'fas fa-building', available: canAccessUsers, badge: null },
         { id: 'sync-monitor', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
         { id: 'agentes-ia', label: 'Agentes IA', icon: 'fas fa-robot', available: canAccessReports, badge: null },
-      { id: 'omie-stage-logs', label: 'Logs Etapas Omie', icon: 'fas fa-list-check', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
         { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
         { id: 'sellers', label: 'Vendedores', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
@@ -631,11 +623,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }
     if (itemId === 'solicitacoes-alteracao') { navigate('/admin/solicitacoes-alteracao'); return; }
-
-    if (itemId === 'omie-stage-logs') {
-      navigate('/admin/omie-stage-logs');
-      return;
-    }
 
     if (itemId === 'admin-system') {
       navigate('/admin/system');

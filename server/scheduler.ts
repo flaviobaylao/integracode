@@ -943,15 +943,17 @@ cron.schedule('0 0 * * *', async () => {
 // Limpeza mensal automatica: remove da lista de Clientes Ativos os registros
 // "nao encontrado" (match_status unmatched) - deixa a lista so com clientes
 // vinculados ao cadastro. Roda no dia 1 de cada mes as 04:00 (BRT). Idempotente.
+// (E2-A, 05/set/2026) DESLIGADO o UPDATE: este cron desativava toda linha 'unmatched' — e 'unmatched'
+// era gerado pelo upload de planilha casando CPF/CNPJ sem normalizar, então cliente REAL sumia da
+// Rota do Dia e do Mapa no dia 1. Não há mais planilha; nenhuma automação altera is_active.
+// Mantido só como RELATÓRIO (log), sem escrever nada.
 cron.schedule('0 4 1 * *', async () => {
   try {
     const r: any = await db.execute(sql`
-      UPDATE active_customers
-      SET is_active = false, deactivated_at = now(), updated_at = now()
-      WHERE is_active = true AND match_status = 'unmatched'
-      RETURNING id`);
-    const n = (r.rows ? r.rows.length : (Array.isArray(r) ? r.length : (r.rowCount ?? 0)));
-    console.log(`[UNMATCHED-CLEANUP] Limpeza mensal: ${n} registros(s) nao encontrado removido(s) da lista de ativos.`);
+      SELECT count(*)::int AS n FROM active_customers
+      WHERE is_active = true AND match_status = 'unmatched'`);
+    const n = Number(r?.rows?.[0]?.n ?? 0);
+    console.log(`[UNMATCHED-REPORT] ${n} linha(s) 'unmatched' ainda ativas em active_customers (somente informativo; nenhuma foi alterada).`);
   } catch (e: any) {
     console.error('[UNMATCHED-CLEANUP] falha na limpeza mensal:', e?.message || e);
   }

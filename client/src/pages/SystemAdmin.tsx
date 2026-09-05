@@ -581,12 +581,10 @@ export default function SystemAdmin() {
               Processo roda em background sem travar o sistema. Acompanhe o progresso abaixo enquanto processa.
             </AlertDescription>
           </Alert>
-          <Button onClick={handleEnrichAllNf} disabled={isEnrichingNf} className="bg-blue-600 hover:bg-blue-700">
-            {isEnrichingNf ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processando NFs...</>
-            ) : (
-              <><RefreshCw className="mr-2 h-4 w-4" />Preencher Todos os Números de NF</>
-            )}
+          {/* (E3, 05/set/2026) Botão desativado: buscava números de NF na API do Omie (rota em 410).
+              As NF-e do 2.0 nascem com número no próprio pipeline/SEFAZ. */}
+          <Button disabled className="bg-gray-300 text-gray-600" title="Desativado — Omie desligado em 05/set/2026">
+            <RefreshCw className="mr-2 h-4 w-4" />Desativado (Omie desligado)
           </Button>
           {nfEnrichState && (
             <div className="space-y-2">

@@ -1,6 +1,5 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { hojeBR } from '@shared/tempo';
-import ReconcileButton from "@/components/ReconcileButton";
 import { useState, useEffect, useRef } from 'react';
 import { generateMultiCobrancaPdf, type CobrancaData } from '@/lib/cobranca-generator';
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -872,7 +871,6 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
 
   return (
     <div className="space-y-4">
-      {!readOnly && <ReconcileButton table="receivables" />}
       <div className="flex flex-wrap gap-3 items-end">
         <div>
           <Label className="text-xs">Instância</Label>
@@ -1626,7 +1624,6 @@ function PayablesTab() {
 
   return (
     <div className="space-y-4">
-      <ReconcileButton table="payables" />
       <div className="flex flex-wrap gap-3 items-end">
         <div><Label className="text-xs">Instância</Label><InstanceFilter value={instanceId} onChange={setInstanceId} /></div>
         <div>

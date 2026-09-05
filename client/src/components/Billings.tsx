@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
+import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -6,9 +6,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useToast } from "@/hooks/use-toast";
 import { useState, useMemo } from "react";
-import { RefreshCw, FileText, Calendar, DollarSign, Search, Filter, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { FileText, Calendar, DollarSign, Search, Filter, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
 interface Billing {
   id: string;
@@ -36,9 +35,6 @@ interface Billing {
 }
 
 export default function Billings() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [isSyncing, setIsSyncing] = useState(false);
   
   // Estados dos filtros
   const [filters, setFilters] = useState({
@@ -63,49 +59,6 @@ export default function Billings() {
     queryKey: ['/api/billings'],
     retry: false,
   });
-
-  // Mutação para sincronizar faturamentos
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch('/api/omie/sync-billings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Erro na sincronização');
-      }
-
-      return response.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      toast({
-        title: "Sincronização concluída",
-        description: `${data.imported} importados, ${data.updated} atualizados, ${data.totalProcessed} processados`,
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro na sincronização",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleSync = async () => {
-    setIsSyncing(true);
-    try {
-      await syncMutation.mutateAsync();
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -299,15 +252,6 @@ export default function Billings() {
           <h1 className="text-2xl font-bold text-gray-800">Faturamentos</h1>
           <p className="text-gray-600">Gerencie e sincronize notas fiscais do Omie ERP</p>
         </div>
-        <Button
-          onClick={handleSync}
-          disabled={isSyncing}
-          className="bg-honest-blue hover:bg-blue-700"
-          data-testid="button-sync-billings"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
-          {isSyncing ? 'Sincronizando...' : 'Sincronizar Omie'}
-        </Button>
       </div>
 
       {/* Statistics Cards */}
@@ -488,12 +432,7 @@ export default function Billings() {
                   : "Nenhum faturamento corresponde aos filtros aplicados"
                 }
               </p>
-              {billings.length === 0 ? (
-                <Button onClick={handleSync} variant="outline" data-testid="button-sync-empty">
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Sincronizar do Omie
-                </Button>
-              ) : (
+              {billings.length > 0 && (
                 <Button onClick={clearFilters} variant="outline" data-testid="button-clear-filters-empty">
                   Limpar Filtros
                 </Button>
