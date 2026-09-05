@@ -28,13 +28,17 @@ const COR_BARRA = { faturamento: "#2a78d6", debito: "#d03b3b", inativos: "#eda10
 // Data de conquista: azul = entrou ou voltou; vermelho = saiu.
 const COR_CONQUISTA = { entrada: "#2a78d6", saida: "#d03b3b" };
 // ── Escala fixa do gráfico de evolução ───────────────────────────────────────
-// O Flavio pediu eixo travado de 0 a 650 mil, de 50 em 50 mil, para comparar um
-// mês com o outro (e uma carteira com a outra) sem a escala se mexer embaixo.
-// Escala automática dá a ilusão de que todo mês tem a mesma altura de barra.
-// 650 mil cobre o pico histórico (dez/25, ~R$ 560 mil) com folga.
-const Y_MAX = 650000;
+// Eixo travado, de 50 em 50 mil, para comparar um mês com o outro (e uma
+// carteira com a outra) sem a escala se mexer embaixo — escala automática dá a
+// ilusão de que todo mês tem a mesma altura.
+// DOIS TETOS, escolhidos pelo recorte: a carteira inteira chega a ~R$ 560 mil
+// num mês de pico, mas um cliente ou uma rede vive numa ordem de grandeza bem
+// menor. Um teto só serviria mal aos dois — no de 650 mil a linha de um cliente
+// ficava colada no zero.
+const Y_MAX_GERAL = 600000;   // sem filtro de cliente/rede
+const Y_MAX_RECORTE = 350000; // com um cliente ou uma rede escolhida
 const Y_PASSO = 50000;
-const Y_TICKS = Array.from({ length: Y_MAX / Y_PASSO + 1 }, (_, i) => i * Y_PASSO);
+const ticksAte = (max: number) => Array.from({ length: max / Y_PASSO + 1 }, (_, i) => i * Y_PASSO);
 
 const SERIE_TITULOS = "#2a78d6";
 const SERIE_NF = "#eb6834";
@@ -519,13 +523,19 @@ export default function GestaoCarteiras() {
     return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
   }, [d, clientes, meses, filtrarVend, clienteDaSerie, redeDaSerie]);
 
+  // Teto do eixo: 350 mil quando há um cliente ou uma rede escolhida, 600 mil
+  // na carteira inteira. Dentro de cada um dos dois casos a escala não se mexe,
+  // que é o que permite comparar um mês com o outro.
+  const yMax = alvoSerie ? Y_MAX_RECORTE : Y_MAX_GERAL;
+  const yTicks = useMemo(() => ticksAte(yMax), [yMax]);
+
   // Com o eixo travado, mês acima do teto sai CORTADO no desenho. Cortar sem
   // avisar é esconder — então a tela diz quais são e quanto deram.
   const acimaDoTeto = useMemo(
     () => (serie || [])
-      .filter((p: any) => Number(p?.valor || 0) > Y_MAX)
+      .filter((p: any) => Number(p?.valor || 0) > yMax)
       .map((p: any) => ({ mes: p.mes, valor: Number(p.valor || 0) })),
-    [serie],
+    [serie, yMax],
   );
 
   const kpis = useMemo(() => {
@@ -1113,6 +1123,19 @@ export default function GestaoCarteiras() {
                             </p>
                           </div>
                           <div>
+                            <p className="font-semibold">Como as quantidades de clientes são contadas</p>
+                            <p className="text-muted-foreground mt-1">
+                              Cada linha conta <b>clientes distintos</b>, e cliente aqui é <b>um CPF/CNPJ</b> — sem
+                              documento no título, vale o nome normalizado. Filial com CNPJ próprio conta separado
+                              (para ver o grupo somado, use a aba <b>Rede de Cliente</b>).
+                            </p>
+                            <p className="text-muted-foreground mt-1">
+                              <b>PJ e PF</b> saem do documento: 14 dígitos é PJ, 11 é PF; sem documento, vale o tipo do
+                              cadastro. Quem não dá para identificar entra em <b>Clientes</b> mas não em PJ nem em PF —
+                              por isso <b>PJ + PF pode dar menos que o total</b>.
+                            </p>
+                          </div>
+                          <div>
                             <p className="font-semibold">Fat. médio/mês da faixa</p>
                             <p className="text-muted-foreground mt-1">
                               É outra conta, de propósito: soma da <b>média mensal</b> de cada cliente da faixa
@@ -1431,8 +1454,8 @@ export default function GestaoCarteiras() {
                       esconde um sim outro nao quando ficam apertados, e a escala
                       de 50 em 50 mil deixa de ser legivel. */}
                   <YAxis
-                    domain={[0, Y_MAX]}
-                    ticks={Y_TICKS}
+                    domain={[0, yMax]}
+                    ticks={yTicks}
                     interval={0}
                     allowDataOverflow
                     tickFormatter={(v: any) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))}
@@ -1446,7 +1469,8 @@ export default function GestaoCarteiras() {
                 </LineChart>
               </ResponsiveContainer>
               <p className="text-xs text-muted-foreground mt-2">
-                Escala fixa de 0 a {BRL0(Y_MAX)}, de {BRL0(Y_PASSO)} em {BRL0(Y_PASSO)}.
+                Escala fixa de 0 a {BRL0(yMax)}, de {BRL0(Y_PASSO)} em {BRL0(Y_PASSO)}
+                {alvoSerie ? " — teto do recorte por cliente ou rede" : " — teto da carteira inteira"}.
                 {acimaDoTeto.length ? (
                   <span className="text-amber-700 font-medium">
                     {" "}{acimaDoTeto.length === 1 ? "1 mês passa" : `${acimaDoTeto.length} meses passam`} do teto e{" "}
