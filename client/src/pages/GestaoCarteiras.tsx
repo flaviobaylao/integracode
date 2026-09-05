@@ -28,10 +28,11 @@ const COR_BARRA = { faturamento: "#2a78d6", debito: "#d03b3b", inativos: "#eda10
 // Data de conquista: azul = entrou ou voltou; vermelho = saiu.
 const COR_CONQUISTA = { entrada: "#2a78d6", saida: "#d03b3b" };
 // ── Escala fixa do gráfico de evolução ───────────────────────────────────────
-// O Flavio pediu eixo travado de 0 a 350 mil, de 50 em 50 mil, para comparar um
+// O Flavio pediu eixo travado de 0 a 650 mil, de 50 em 50 mil, para comparar um
 // mês com o outro (e uma carteira com a outra) sem a escala se mexer embaixo.
 // Escala automática dá a ilusão de que todo mês tem a mesma altura de barra.
-const Y_MAX = 350000;
+// 650 mil cobre o pico histórico (dez/25, ~R$ 560 mil) com folga.
+const Y_MAX = 650000;
 const Y_PASSO = 50000;
 const Y_TICKS = Array.from({ length: Y_MAX / Y_PASSO + 1 }, (_, i) => i * Y_PASSO);
 
@@ -220,7 +221,9 @@ export default function GestaoCarteiras() {
   const [balde, setBalde] = useState<"inativos" | "perdidos" | "debito">("inativos");
   const [ordSitCol, setOrdSitCol] = useState<string>("");
   const [ordSitDir, setOrdSitDir] = useState<"asc" | "desc">("asc");
-  const [clienteSerie, setClienteSerie] = useState<string>(""); // chave do cliente no gráfico
+  // Alvo do gráfico de evolução: um cliente, uma REDE (grupo de filiais) ou
+  // nada (a carteira inteira do recorte). Um estado só — os dois não convivem.
+  const [alvoSerie, setAlvoSerie] = useState<{ tipo: "cliente" | "rede"; id: string } | null>(null);
   const [ordem, setOrdem] = useState<"total" | "ponderada">("total");
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C" | "D">("todas");
   const [sinalSel, setSinalSel] = useState<"todos" | "+" | "-">("todos");
@@ -467,10 +470,27 @@ export default function GestaoCarteiras() {
   // A série do gráfico segue o período; com filtro de vendedor ela é recomposta
   // a partir dos clientes daquela carteira (por isso o back manda porMes).
   // Cliente escolhido para o gráfico (vazio = a carteira toda do recorte).
+  // Redes de cliente: só nome + chaves dos membros, para o filtro do gráfico.
+  const { data: redesResumo = [] } = useQuery<Array<{ id: string; nome: string; chaves: string[]; clientes: number }>>({
+    queryKey: ["/api/carteira/redes/resumo"],
+    queryFn: async () => {
+      const r = await fetch("/api/carteira/redes/resumo", { credentials: "include" });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 60000,
+  });
+
   const clienteDaSerie = useMemo(
-    () => (clienteSerie ? todos.find((c) => c.chave === clienteSerie) || null : null),
-    [clienteSerie, todos],
+    () => (alvoSerie?.tipo === "cliente" ? todos.find((c) => c.chave === alvoSerie.id) || null : null),
+    [alvoSerie, todos],
   );
+  const redeDaSerie = useMemo(
+    () => (alvoSerie?.tipo === "rede" ? (redesResumo || []).find((r) => r.id === alvoSerie.id) || null : null),
+    [alvoSerie, redesResumo],
+  );
+  /** Nome do que está no gráfico agora — vale para o título e para as frases. */
+  const rotuloAlvoSerie = clienteDaSerie?.nome || (redeDaSerie ? `Rede ${redeDaSerie.nome}` : "");
 
   const serie = useMemo(() => {
     const base: any[] = d?.serie || [];
@@ -479,13 +499,25 @@ export default function GestaoCarteiras() {
       const pm: any = (clienteDaSerie as any).porMes || {};
       return meses.map((m) => ({ mes: m, valor: Number(pm[m]) || 0, titulos: 0, clientes: 0, valorNf: null }));
     }
+    // Rede: a série é a SOMA das filiais, mês a mês. Filial que não aparece no
+    // recorte (outro vendedor, outro tipo) simplesmente não soma — o gráfico
+    // respeita os filtros de cima, como todo o resto da tela.
+    if (redeDaSerie) {
+      const doGrupo = new Set(redeDaSerie.chaves);
+      const soma = new Map<string, number>();
+      for (const c of clientes as any[]) {
+        if (!doGrupo.has(c.chave)) continue;
+        for (const [m, v] of Object.entries(c.porMes || {})) soma.set(m, (soma.get(m) || 0) + (Number(v) || 0));
+      }
+      return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
+    }
     if (!filtrarVend) return base;
     const soma = new Map<string, number>();
     for (const c of clientes as any[]) {
       for (const [m, v] of Object.entries(c.porMes || {})) soma.set(m, (soma.get(m) || 0) + (Number(v) || 0));
     }
     return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
-  }, [d, clientes, meses, filtrarVend, clienteDaSerie]);
+  }, [d, clientes, meses, filtrarVend, clienteDaSerie, redeDaSerie]);
 
   // Com o eixo travado, mês acima do teto sai CORTADO no desenho. Cortar sem
   // avisar é esconder — então a tela diz quais são e quanto deram.
@@ -1204,40 +1236,52 @@ export default function GestaoCarteiras() {
                 <div className="min-w-0">
                   <CardTitle>
                     Evolução do faturamento
-                    {clienteDaSerie ? <span className="text-base font-normal text-muted-foreground"> · {clienteDaSerie.nome}</span> : null}
+                    {rotuloAlvoSerie ? <span className="text-base font-normal text-muted-foreground"> · {rotuloAlvoSerie}</span> : null}
                   </CardTitle>
                   <CardDescription>
                     Base: títulos de venda emitidos em Contas a Receber
-                    {!filtrarVend && !clienteDaSerie && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
+                    {!filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
                     {fim === mesHoje ? " · o último mês ainda está em curso" : ""}
                   </CardDescription>
-                  {/* Filtro por cliente: digitar filtra a lista (datalist nativo).
-                      Vazio = a carteira inteira do recorte. */}
+                  {/* Filtro do gráfico: um CLIENTE ou uma REDE inteira. As redes
+                      vêm primeiro na lista, prefixadas com "Rede: ", porque são
+                      poucas e é o recorte que se procura de propósito. Vazio = a
+                      carteira inteira do recorte. */}
                   <div className="flex items-center gap-2 mt-2">
-                    <div className="relative w-[300px] max-w-full">
+                    <div className="relative w-[340px] max-w-full">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
-                        list="clientes-da-serie"
+                        list="alvos-da-serie"
                         defaultValue=""
-                        placeholder="Ver um cliente só — digite o nome"
+                        placeholder="Ver um cliente ou uma rede — digite o nome"
                         className="pl-8 h-8"
                         data-testid="input-cliente-serie"
                         onChange={(e) => {
                           const alvo = String(e.target.value || "").trim().toLocaleLowerCase("pt-BR");
-                          if (!alvo) { setClienteSerie(""); return; }
+                          if (!alvo) { setAlvoSerie(null); return; }
+                          const rede = (redesResumo || []).find((r) => `rede: ${r.nome}`.toLocaleLowerCase("pt-BR") === alvo);
+                          if (rede) { setAlvoSerie({ tipo: "rede", id: rede.id }); return; }
                           const achado = clientes.find((c) => c.nome.toLocaleLowerCase("pt-BR") === alvo);
-                          if (achado) setClienteSerie(achado.chave);
+                          if (achado) setAlvoSerie({ tipo: "cliente", id: achado.chave });
                         }}
                       />
-                      <datalist id="clientes-da-serie">
+                      <datalist id="alvos-da-serie">
+                        {(redesResumo || []).map((r) => (
+                          <option key={`rede-${r.id}`} value={`Rede: ${r.nome}`} />
+                        ))}
                         {clientes.slice(0, 1200).map((c) => <option key={c.chave} value={c.nome} />)}
                       </datalist>
                     </div>
-                    {clienteDaSerie ? (
+                    {alvoSerie ? (
                       <Button size="sm" variant="ghost" className="h-8" data-testid="button-limpar-cliente-serie"
-                        onClick={() => { setClienteSerie(""); const el = document.querySelector('[data-testid="input-cliente-serie"]') as HTMLInputElement | null; if (el) el.value = ""; }}>
+                        onClick={() => { setAlvoSerie(null); const el = document.querySelector('[data-testid="input-cliente-serie"]') as HTMLInputElement | null; if (el) el.value = ""; }}>
                         Limpar
                       </Button>
+                    ) : null}
+                    {redeDaSerie ? (
+                      <span className="text-xs text-muted-foreground" data-testid="nota-rede-serie">
+                        soma de {NUM(redeDaSerie.clientes)} {redeDaSerie.clientes === 1 ? "filial" : "filiais"} da rede
+                      </span>
                     ) : null}
                   </div>
                 </div>
@@ -1304,17 +1348,21 @@ export default function GestaoCarteiras() {
                   <XAxis dataKey="mes" tickFormatter={labelMes} tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={{ stroke: "#ececea" }} />
                   {/* Eixo travado em 0–350 mil, de 50 em 50 mil. `allowDataOverflow`
                       e' o que faz o limite valer de verdade — sem ele o Recharts
-                      estica o dominio para caber o dado e o eixo deixa de ser fixo. */}
+                      estica o dominio para caber o dado e o eixo deixa de ser fixo.
+                      `interval={0}` forca TODOS os rotulos: sem ele o Recharts
+                      esconde um sim outro nao quando ficam apertados, e a escala
+                      de 50 em 50 mil deixa de ser legivel. */}
                   <YAxis
                     domain={[0, Y_MAX]}
                     ticks={Y_TICKS}
+                    interval={0}
                     allowDataOverflow
                     tickFormatter={(v: any) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))}
                     tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={false} width={52} />
                   <Tooltip formatter={(v: any, n: any) => [BRL(v), n]} labelFormatter={(l: any) => labelMes(String(l))} />
                   <Legend />
                   <Line type="linear" dataKey="valor" name="Faturamento (títulos emitidos)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-                  {!filtrarVend && !clienteDaSerie && (d?.fonte?.mesesComNf || 0) > 0 ? (
+                  {!filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0 ? (
                     <Line type="linear" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
                   ) : null}
                 </LineChart>
