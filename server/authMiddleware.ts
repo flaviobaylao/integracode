@@ -203,4 +203,4 @@ export const rateLimitPorIp = (maxPorMinuto: number) => {
     } catch { return next(); }
   };
 };
-setInterval(() => { const now = Date.now(); for (const [k, v] of _rl) if (now - v.t > 120_000) _rl.delete(k); }, 60_000).unref?.();
+setInterval(() => { const now = Date.now(); Array.from(_rl.entries()).forEach(([k, v]) => { if (now - v.t > 120_000) _rl.delete(k); }); }, 60_000).unref?.();

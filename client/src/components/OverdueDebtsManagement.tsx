@@ -2,7 +2,7 @@ import { useActiveSellers, MultiSelect, DateRangeFilter, dateInRange } from "@/l
 import { hojeBR } from '@shared/tempo';
 import { useState } from "react";
 import * as React from "react";
-import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
+import { useQuery } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
 import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import WhatsAppButton from "@/components/WhatsAppButton";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
@@ -69,7 +68,6 @@ export default function OverdueDebtsManagement() {
   const [sortBy, setSortBy] = useState<'dias_atraso' | 'cliente' | 'instancia' | 'valor'>('dias_atraso');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const { toast } = useToast();
-  const queryClient = useQueryClient();
 
   // Query para buscar usuário logado
   const { data: user } = useQuery<User>({
@@ -152,81 +150,10 @@ export default function OverdueDebtsManagement() {
     refetchOnWindowFocus: true, // Atualizar ao voltar para a aba
   });
 
-  // Query para buscar vendedores
-  const { data: vendedores, isLoading: isLoadingVendedores, error: vendedoresError } = useQuery<any[]>({
-    queryKey: ['/api/omie/vendedores'],
-    staleTime: 1000 * 60 * 10, // 10 minutos
-  });
-
   // Query para buscar informações da última planilha salva
   const { data: savedReportInfo, refetch: refetchReportInfo } = useQuery<any>({
     queryKey: ['/api/reports/overdue-debts/info'],
     staleTime: 1000 * 60, // 1 minuto
-  });
-
-  // Debug logs para vendedores
-  React.useEffect(() => {
-    console.log('Estado vendedores:', { vendedores: vendedores?.slice(0, 5), isLoadingVendedores, vendedoresError });
-    
-    // Log dos débitos e vendedores quando mudarem
-    if (overdueDebts?.debts) {
-      console.log('Debug débitos e vendedores:');
-      overdueDebts.debts.slice(0, 3).forEach((debt, idx) => {
-        console.log(`Cliente ${idx + 1}:`, {
-          nome: debt.cliente.nome_fantasia,
-          vendedores_array: debt.vendedores,
-          debitos_vendedores: debt.debitos.map(d => ({ 
-            documento: d.numero_documento, 
-            vendedor: d.codigo_vendedor
-          }))
-        });
-      });
-    }
-  }, [vendedores, isLoadingVendedores, vendedoresError, overdueDebts]);
-
-
-  // Mutation para sincronizar débitos vencidos
-  const syncOverdueDebts = useMutation({
-    mutationFn: async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 600000);
-      
-      try {
-        const response = await fetch('/api/omie/overdue-debts', {
-          method: 'GET',
-          credentials: 'include',
-          signal: controller.signal
-        });
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(errorText || 'Erro ao sincronizar débitos');
-        }
-        
-        return await response.json();
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    },
-    onSuccess: (data) => {
-      // Atualizar cache com dados da sincronização
-      queryClient.setQueryData(['/api/omie/overdue-debts/cached'], data);
-      // Invalidar para forçar reload do banco
-      queryClient.invalidateQueries({ queryKey: ['/api/omie/overdue-debts/cached'] });
-      // Atualizar informações da planilha salva
-      refetchReportInfo();
-      toast({
-        title: "Sincronização concluída",
-        description: `${data.totalClients} clientes com débitos vencidos encontrados. Planilha salva automaticamente.`,
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro na sincronização",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
   });
 
   // Função para baixar a planilha salva
@@ -441,71 +368,6 @@ export default function OverdueDebtsManagement() {
     }
   };
 
-  // Função para comparar arquivo Excel
-  const compareExcelFile = async (file: File) => {
-    try {
-      const formData = new FormData();
-      formData.append('excelFile', file);
-
-      const response = await fetch('/api/omie/compare-excel', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        let errorMessage = 'Erro ao comparar arquivo';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.message || errorMessage;
-        } catch {
-          // Se não conseguir fazer parse do JSON, usar a mensagem padrão
-          errorMessage = `Erro HTTP ${response.status}: ${response.statusText}`;
-        }
-        throw new Error(errorMessage);
-      }
-
-      let result;
-      try {
-        result = await response.json();
-      } catch (jsonError) {
-        console.error('Erro ao fazer parse do JSON:', jsonError);
-        throw new Error('Resposta inválida do servidor. Verifique os logs do console.');
-      }
-      // Resultado da comparação (funcionalidade removida)
-      console.log('Comparação Excel concluída:', result);
-
-      toast({
-        title: "Comparação concluída",
-        description: "Arquivo Excel analisado com sucesso.",
-      });
-
-    } catch (error: any) {
-      console.error('Erro ao comparar arquivo Excel:', error);
-      toast({
-        title: "Erro na comparação",
-        description: error.message,
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      if (file.type !== 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' && 
-          !file.name.endsWith('.xlsx')) {
-        toast({
-          title: "Formato inválido",
-          description: "Por favor, selecione um arquivo Excel (.xlsx).",
-          variant: "destructive",
-        });
-        return;
-      }
-      compareExcelFile(file);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -592,7 +454,7 @@ export default function OverdueDebtsManagement() {
                       ? (overdueDebts.totalClients > 0 
                           ? formatCurrency(overdueDebts.totalAmount / overdueDebts.totalClients)
                           : formatCurrency(0))
-                      : (vendedores?.find(v => v.codigo.toString() === selectedVendor)?.nome || `Vendedor ${selectedVendor}`)
+                      : resolveSeller(selectedVendor)
                     }
                   </p>
                 </div>

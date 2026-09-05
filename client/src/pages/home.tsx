@@ -6,7 +6,6 @@ import CustomerManagement from "@/components/CustomerManagement";
 import ProductManagement from "@/components/ProductManagement";
 import Billings from "@/pages/Billings";
 import WhatsAppIntegration from "@/components/WhatsAppIntegration";
-import OmieIntegration from "@/components/OmieIntegration";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
 import Sellers from "@/pages/sellers";
 import TelemarketingPage from "@/pages/telemarketing";
@@ -14,7 +13,6 @@ import SalesSchedule from "@/pages/SalesSchedule";
 import OverdueDebtsManagement from "@/components/OverdueDebtsManagement";
 import BlockedOrdersManagement from "@/components/BlockedOrdersManagement";
 import LocationsManagement from "@/pages/LocationsManagement";
-import OrderSteps from "@/components/OrderSteps";
 import DeliveryDashboard from "@/pages/DeliveryDashboard";
 import DeliveryManagement from "@/pages/DeliveryManagement";
 import DriverManagement from "@/pages/DriverManagement";
@@ -53,8 +51,6 @@ export default function Home() {
         return <Billings />;
       case 'whatsapp':
         return <WhatsAppIntegration />;
-      case 'omie':
-        return <OmieIntegration />;
       case 'sellers':
         return <Sellers />;
       case 'telemarketing':
@@ -69,16 +65,6 @@ export default function Home() {
         return <OverdueDebtsManagement />;
       case 'blocked-orders':
         return <BlockedOrdersManagement user={user as any} />;
-      case 'order-sale':
-        return <OrderSteps step="sale" />;
-      case 'order-billing':
-        return <OrderSteps step="billing" />;
-      case 'order-billed':
-        return <OrderSteps step="billed" />;
-      case 'order-awaiting-route':
-        return <OrderSteps step="awaiting-route" />;
-      case 'order-in-route':
-        return <OrderSteps step="in-route" />;
       case 'locations':
         return <LocationsManagement />;
       case 'delivery-dashboard':

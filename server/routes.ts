@@ -541,9 +541,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auto-resolve default Omie instance ID for env-var-based service
   await resolveDefaultInstanceId(storage);
   
-  // Limpar espaços/caracteres inválidos nas credenciais do Omie (corrige problemas de autenticação)
-  cleanupOmieCredentials(storage).catch(e => console.warn('⚠️ Erro ao limpar credenciais:', e.message));
-  cacheBankAccountsForAllInstances(storage).catch(e => console.warn('⚠️ Erro no cache de contas bancárias:', e.message));
+  // (E3, 05/set/2026) Removidas as chamadas de boot ao ERP antigo (cleanupOmieCredentials +
+  // cacheBankAccountsForAllInstances): batiam na API do Omie a cada deploy só para gravar
+  // defaultAccountCode/cnpj em omie_instances. O CNPJ das empresas já está gravado.
 
   // Configure Evolution API for WhatsApp
   const evolutionBaseUrl = process.env.EVOLUTION_API_BASE_URL;
@@ -2689,7 +2689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Resincronizar cliente local para o Omie
-  app.post('/api/customers/:id/send-to-omie', authenticateUser, async (req: any, res) => {
+  app.post('/api/customers/:id/send-to-omie', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       // 🔌 Sync de cadastro com o Omie DESLIGADO (2.0 é o dono do cadastro). Religue com OMIE_CADASTRO_SYNC=on.
       if (!OMIE_CADASTRO_SYNC_ON) {
@@ -4081,7 +4081,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // itens). Usa as credenciais do Omie já configuradas no servidor — não exige acesso do usuário.
   // orderId = codigo_pedido do Omie (customers/billings.omieOrderId). Opcional billingId para
   // resolver a instância Omie correta. Só leitura.
-  app.get('/api/admin/omie/pedido-itens/:orderId', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.get('/api/admin/omie/pedido-itens/:orderId', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { orderId } = req.params;
       const billingId = req.query?.billingId ? String(req.query.billingId) : '';
@@ -6042,7 +6042,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/hotsite-orders/:id/send-to-omie', authenticateUser, async (req: any, res) => {
+  app.post('/api/hotsite-orders/:id/send-to-omie', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
       const orderId = req.params.id;
@@ -8489,7 +8489,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enriquecimento completo de NFs para todas as instâncias (sem limite, em paralelo)
-  app.post('/api/admin/enrich-all-nf', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/admin/enrich-all-nf', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin']), async (req: any, res) => {
     if (nfEnrichState.running) {
       return res.status(409).json({ success: false, message: 'Enriquecimento já está em andamento.' });
     }
@@ -9219,7 +9219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/omie/check-credit', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/check-credit', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { cnpjCpf, valorVenda } = req.body;
       
@@ -9247,7 +9247,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/omie/client/:cnpjCpf', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/client/:cnpjCpf', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { cnpjCpf } = req.params;
       
@@ -9275,7 +9275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/omie/client/:cnpjCpf/credit', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/client/:cnpjCpf/credit', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { cnpjCpf } = req.params;
       
@@ -9304,7 +9304,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para listar clientes do Omie
-  app.get('/api/omie/clients', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/clients', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const pageSize = parseInt(req.query.pageSize as string) || 50;
@@ -9328,7 +9328,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para importar clientes do Omie
-  app.post('/api/omie/import-clients', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/import-clients', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       // 🔌 Import de cadastro do Omie DESLIGADO (2.0 é o dono). Religue com OMIE_CADASTRO_SYNC=on.
       if (!OMIE_CADASTRO_SYNC_ON) {
@@ -9433,7 +9433,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para sincronizar um cliente específico do Omie por CNPJ/CPF
-  app.post('/api/omie/sync-client-by-document', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-client-by-document', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       // 🔌 Sync de cadastro do Omie DESLIGADO (2.0 é o dono). Religue com OMIE_CADASTRO_SYNC=on.
       if (!OMIE_CADASTRO_SYNC_ON) {
@@ -9522,7 +9522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota NOVA e SIMPLES para sincronizar APENAS CLIENTES ATIVOS do Omie
-  app.post('/api/omie/sync-active-clients', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-active-clients', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       // DESLIGADO (01/jul/2026): cadastro de clientes gerido no 2.0 (import do 1.0). Omie nao sobrescreve clientes.
       return res.json({ disabled: true, message: 'Sincronizacao de clientes do Omie desligada. Cadastro gerido no INTEGRA 2.0.' });
@@ -9786,7 +9786,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/omie/test-stage-change', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/omie/test-stage-change', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const { omieOrderId, stageCode } = req.body;
       if (!omieOrderId || !stageCode) {
@@ -9866,7 +9866,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/omie/stages', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/stages', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -9990,7 +9990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint temporário para testar troca de etapa (SEM AUTH PARA TESTE)
-  app.get('/api/test-change-stage/:omieOrderId/:stageCode', async (req: any, res) => {
+  app.get('/api/test-change-stage/:omieOrderId/:stageCode', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       const { omieOrderId, stageCode } = req.params;
       
@@ -10025,7 +10025,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get orders by step/stage
-  app.get('/api/omie/orders/:step', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/orders/:step', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { step } = req.params;
       
@@ -10082,7 +10082,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sync orders by step/stage
-  app.post('/api/omie/orders/:step/sync', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/orders/:step/sync', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { step } = req.params;
       
@@ -10139,7 +10139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para debug de uma NF específica
-  app.get('/api/omie/debug-invoice/:invoiceNumber', authenticateUser, async (req, res) => {
+  app.get('/api/omie/debug-invoice/:invoiceNumber', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req, res) => {
     try {
       const { invoiceNumber } = req.params;
       console.log(`🔍 Buscando dados da NF ${invoiceNumber} para debug...`);
@@ -10171,7 +10171,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para debug de um pedido específico por número
-  app.get('/api/omie/debug-order/:orderNumber', authenticateUser, async (req, res) => {
+  app.get('/api/omie/debug-order/:orderNumber', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req, res) => {
     try {
       const { orderNumber } = req.params;
       console.log(`🔍 Buscando dados do pedido ${orderNumber} para debug...`);
@@ -11487,7 +11487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronização completa: Clientes + Faturamentos + Débitos Vencidos
-  app.post('/api/omie/sync-complete', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+  app.post('/api/omie/sync-complete', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
       console.log('🔄 Iniciando sincronização completa (Clientes + Faturamentos + Débitos)...');
       
@@ -11738,7 +11738,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar TODAS as notas fiscais do Omie (todas as instâncias ativas)
-  app.post('/api/billings/sync-all', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+  app.post('/api/billings/sync-all', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
       const activeInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
       const hasInstances = activeInstances.length > 0;
@@ -11844,7 +11844,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SINCRONIZAÇÃO TOTAL - Limpa todos os faturamentos e reimporta do Omie (sem filtro de data)
   // Executa em BACKGROUND para evitar timeout do browser
   // Itera todas as instâncias Omie ativas
-  app.post('/api/billings/full-sync', authenticateUser, requireRole(['admin']), async (req, res) => {
+  app.post('/api/billings/full-sync', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
       const activeInstances = (await storage.getOmieInstances()).filter((i: any) => i.isActive);
       const hasInstances = activeInstances.length > 0;
@@ -12265,7 +12265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie por período (todas as instâncias ativas)
-  app.post('/api/billings/sync', authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
+  app.post('/api/billings/sync', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator']), async (req, res) => {
     try {
       const { startDate, endDate } = req.body;
       
@@ -12593,7 +12593,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Nova rota: Buscar TODAS as contas a receber (sem filtros)
-  app.get('/api/omie/contas-receber', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/contas-receber', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       res.set({
         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -12746,7 +12746,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para sincronizar débitos do Omie (operação demorada) - Apenas usuários administrativos
-  app.get('/api/omie/overdue-debts', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/overdue-debts', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       // Verificar se usuário tem permissão para sincronizar (admin, coordinator, administrative)
       const userRole = req.currentUser?.role;
@@ -12952,7 +12952,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para comparar arquivo Excel com dados da sincronização
-  app.post('/api/omie/compare-excel', authenticateUser, upload.single('excelFile'), async (req: any, res) => {
+  app.post('/api/omie/compare-excel', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, upload.single('excelFile'), async (req: any, res) => {
     try {
       console.log('Route /api/omie/compare-excel called');
       console.log('File received:', !!req.file);
@@ -13085,7 +13085,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para buscar vendedores
-  app.get('/api/omie/vendedores', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/vendedores', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       console.log(`📋 [VENDEDORES] Requisição de ${req.currentUser?.email} (${req.currentUser?.role})`);
       
@@ -13111,7 +13111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para buscar um vendedor específico pelo código do Omie
-  app.get('/api/omie/vendedores/:codigo', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/vendedores/:codigo', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { codigo } = req.params;
       
@@ -13147,7 +13147,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para buscar cliente específico no Omie por CNPJ
-  app.get('/api/omie/search-client', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/search-client', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { cnpj } = req.query;
       
@@ -13496,7 +13496,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para sincronizar todos os vendedores do Omie
-  app.post('/api/omie/sync-vendors', authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
+  app.post('/api/omie/sync-vendors', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator']), async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -13532,7 +13532,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para sincronizar todos os produtos do Omie
-  app.post('/api/omie/sync-products', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-products', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     // ===== ROTA DESATIVADA (26/ago/2026) — LEIA ANTES DE REATIVAR =====
     //
     // Esta rota APAGA TODOS OS PRODUTOS antes de importar (o `deleteProduct`
@@ -13753,7 +13753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para obter boleto ou QR code de um débito vencido
-  app.get('/api/omie/boleto/:codigoLancamento', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/boleto/:codigoLancamento', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { codigoLancamento } = req.params;
       
@@ -13791,7 +13791,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota TEMPORÁRIA (sem auth) para listar contas correntes do Omie
-  app.get('/api/omie/bank-accounts-debug', async (req: any, res) => {
+  app.get('/api/omie/bank-accounts-debug', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -13816,7 +13816,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Listar códigos de parcela de uma instância específica
-  app.get('/api/omie/instances/:id/payment-terms', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.get('/api/omie/instances/:id/payment-terms', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const instance = await storage.getOmieInstance(req.params.id);
       if (!instance) return res.status(404).json({ message: 'Instância não encontrada' });
@@ -13829,7 +13829,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/omie/instances/:id/test', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/omie/instances/:id/test', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin']), async (req: any, res) => {
     const startTime = Date.now();
     try {
       const instance = await storage.getOmieInstance(req.params.id);
@@ -13888,7 +13888,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota TEMPORÁRIA (sem auth) para listar códigos de parcela do Omie
-  app.get('/api/omie/payment-terms-debug', async (req: any, res) => {
+  app.get('/api/omie/payment-terms-debug', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -13904,7 +13904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para listar contas correntes do Omie
-  app.get('/api/omie/bank-accounts', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/bank-accounts', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -13920,7 +13920,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para limpar cache do Omie
-  app.post('/api/omie/clear-cache', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/clear-cache', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -13936,7 +13936,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota de TESTE para verificar extração de dados de um pedido específico
-  app.post('/api/omie/test-order/:orderId', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/test-order/:orderId', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -13961,7 +13961,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint temporário para sincronização de setembro 2025 (sem autenticação)
-  app.post('/api/omie/sync-september-2025', async (req, res) => {
+  app.post('/api/omie/sync-september-2025', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req, res) => {
     try {
       console.log('🔄 Iniciando sincronização de setembro 2025...');
       const omieService = getOmieService(storage);
@@ -13983,7 +13983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota NOVA para sincronizar TODOS os pedidos do Omie (faturados e não faturados)
-  app.post('/api/omie/sync-all-orders', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-all-orders', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -14002,7 +14002,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para sincronizar pedidos ESPECÍFICOS (fallback para pedidos não listados)
-  app.post('/api/omie/sync-specific-orders', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/sync-specific-orders', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { orderNumbers } = req.body;
       
@@ -14032,7 +14032,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Rota para verificar completude das notas fiscais
-  app.get('/api/omie/verify-invoice-completeness', authenticateUser, async (req: any, res) => {
+  app.get('/api/omie/verify-invoice-completeness', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -14052,7 +14052,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
   // Endpoint temporário para limpar cache de etapas e forçar nova sincronização
-  app.post("/api/omie/clear-stage-cache", authenticateUser, async (req, res) => {
+  app.post("/api/omie/clear-stage-cache", gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -14078,7 +14078,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint de teste para verificar etapa de um pedido específico
-  app.get('/api/omie/test-stage/:orderId', async (req, res) => {
+  app.get('/api/omie/test-stage/:orderId', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -14106,7 +14106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint para forçar re-sync completo das notas fiscais com etapas corretas
-  app.post('/api/omie/force-resync-billings', async (req, res) => {
+  app.post('/api/omie/force-resync-billings', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req, res) => {
     try {
       console.log('🔄 Iniciando re-sync forçado das notas fiscais (multi-instância)...');
       
@@ -14159,7 +14159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Endpoint especializado para atualizar apenas as etapas das notas existentes
-  app.post('/api/omie/update-invoice-stages', async (req, res) => {
+  app.post('/api/omie/update-invoice-stages', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req, res) => {
     try {
       console.log('🔄 Iniciando atualização de etapas das notas fiscais...');
       const omieService = getOmieService(storage);
@@ -15935,7 +15935,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // DEBUG: Diagnóstico e sincronização forçada de etapas Omie para uma rota
-  app.post("/api/delivery-routes/:routeId/force-omie-sync", async (req: any, res) => {
+  app.post("/api/delivery-routes/:routeId/force-omie-sync", gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       const { routeId } = req.params;
       console.log(`🔍 [FORCE-OMIE-SYNC] Verificando rota ${routeId}`);
@@ -16075,7 +16075,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Endpoint para tentar preencher omieOrderId faltantes nos billings
-  app.post("/api/billings/fix-missing-omie-ids", async (req: any, res) => {
+  app.post("/api/billings/fix-missing-omie-ids", gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       console.log(`🔧 [FIX-OMIE-IDS] Buscando billings sem omieOrderId...`);
       
@@ -16345,7 +16345,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar etapas Omie para TODAS as rotas de um dia - muda todos os pedidos para "Em Rota" (20)
-  app.post("/api/delivery-routes/sync-omie-stages-day", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post("/api/delivery-routes/sync-omie-stages-day", gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { date } = req.body;
       const triggeredBy = (req as any).currentUser?.email || 'system';
@@ -18397,7 +18397,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ===== OMIE SALES ORDER INTEGRATION =====
 
   // Bulk send multiple cards to Omie
-  app.post('/api/sales-cards/bulk-send-to-omie', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+  app.post('/api/sales-cards/bulk-send-to-omie', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { cardIds } = req.body;
       if (!Array.isArray(cardIds) || cardIds.length === 0) {
@@ -18753,7 +18753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Exportar sales card para o Omie como pedido de venda
-  app.post('/api/sales-cards/:id/export-to-omie', isAuthenticated, async (req, res) => {
+  app.post('/api/sales-cards/:id/export-to-omie', gone('Omie — desligado em 05/set/2026, etapa E3'), isAuthenticated, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -18843,7 +18843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar status de entrega de todos os pedidos para o Omie
-  app.post('/api/omie/sync-delivery-status', isAuthenticated, async (req, res) => {
+  app.post('/api/omie/sync-delivery-status', gone('Omie — desligado em 05/set/2026, etapa E3'), isAuthenticated, async (req, res) => {
     try {
       const omieService = getOmieService(storage);
       if (!omieService) {
@@ -18935,7 +18935,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enviar card de vendas para faturamento (criar pedido no Omie)
-  app.post('/api/sales-cards/:id/invoice', isAuthenticated, async (req, res) => {
+  app.post('/api/sales-cards/:id/invoice', gone('Omie — desligado em 05/set/2026, etapa E3'), isAuthenticated, async (req, res) => {
     try {
       const { id } = req.params;
       const { products } = req.body; // Array de produtos com quantidades
@@ -19818,121 +19818,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Não falhar a finalização da venda se a atualização falhar
       }
 
-      // Get full card data with customer info for Omie
-      const fullCard = await storage.getSalesCardById(id);
-      
-      if (fullCard && fullCard.customer) {
-        try {
-          // Send order to Omie ERP
-          console.log('Sending order to Omie...');
-          
-          const omieOrderData = {
-            orderNumber,
-            customerId: fullCard.customer.id,
-            customerName: fullCard.customer.fantasyName || fullCard.customer.name,
-            customerDocument: fullCard.customer.cnpj || fullCard.customer.cpf,
-            products: products.map((p: any) => ({
-              name: p.name,
-              quantity: p.quantity,
-              unitPrice: p.unitPrice,
-              totalPrice: p.totalPrice
-            })),
-            totalValue,
-            orderDate: agora().toISOString(),
-          };
-
-          // Integração real com Omie API
-          const { createOmieOrder } = await import('./omieIntegration');
-          
-          // ✅ CORREÇÃO: Usar req.currentUser PRIMEIRO (tem dados completos do banco, incluindo omieVendorCode)
-          // req.user vem do Passport e não tem o código Omie
-          const currentUser = (req as any).currentUser || req.user;
-          let sellerIdForOmie = fullCard.sellerId; // Fallback para vendedor da carteira
-          
-          console.log(`🔍 [FINALIZE-SALE] DEBUG: currentUser.id=${currentUser?.id}, email=${currentUser?.email}, omieVendorCode=${currentUser?.omieVendorCode}`);
-          
-          if (currentUser?.omieVendorCode) {
-            sellerIdForOmie = `omie-vendor-${currentUser.omieVendorCode}`;
-            console.log(`📝 [FINALIZE-SALE] Usando vendedor do usuário logado: ${currentUser.email} -> ${sellerIdForOmie}`);
-          } else {
-            console.log(`⚠️ [FINALIZE-SALE] Usuário sem código Omie, usando vendedor da carteira: ${fullCard.sellerId}`);
-          }
-          
-          try {
-            const omieResult = await createOmieOrder({
-              customer: {
-                document: fullCard.customer.cnpj || fullCard.customer.cpf || '',
-                name: fullCard.customer.fantasyName || fullCard.customer.name,
-                email: fullCard.customer.email || '',
-                phone: fullCard.customer.phone || '',
-                address: fullCard.customer.address || ''
-              },
-              products: products.map((p: any) => ({
-                description: p.name,
-                quantity: p.quantity,
-                unitPrice: p.unitPrice,
-                totalPrice: p.totalPrice
-              })),
-              totalValue,
-              orderNumber,
-              sellerId: sellerIdForOmie, // ✅ Usar vendedor do usuário que está registrando
-              paymentMethod: paymentMethod || 'a_vista',
-              operationType: operationType || 'venda'
-            });
-
-            const omieOrderId = omieResult.numero_pedido || `OMIE-${orderNumber}`;
-            
-            await storage.updateSalesCard(id, { 
-              omieOrderId,
-              status: 'invoiced'
-            });
-
-            console.log('Order sent to Omie successfully:', omieOrderId);
-
-            res.json({
-              success: true,
-              orderNumber,
-              omieOrderId,
-              salesCard,
-              omieData: omieResult
-            });
-
-          } catch (omieApiError: any) {
-            console.error('Omie API Error:', omieApiError);
-            
-            // Marcar como completed mesmo com erro no Omie
-            const fallbackOrderId = `FALLBACK-${orderNumber}`;
-            await storage.updateSalesCard(id, { 
-              omieOrderId: fallbackOrderId,
-              status: 'completed'
-            });
-
-            res.json({
-              success: true,
-              orderNumber,
-              omieOrderId: fallbackOrderId,
-              salesCard,
-              warning: `Venda registrada localmente. Erro na integração Omie: ${omieApiError.message}`
-            });
-          }
-
-        } catch (omieError) {
-          console.error('Error sending to Omie:', omieError);
-          // Even if Omie fails, mark the sale as completed
-          res.json({
-            success: true,
-            orderNumber,
-            salesCard,
-            warning: 'Venda registrada, mas houve erro ao enviar para Omie'
-          });
-        }
-      } else {
-        res.json({
-          success: true,
-          orderNumber,
-          salesCard
-        });
+      // (E3, 05/set/2026) Antes: este ponto criava o pedido no Omie (createOmieOrder), gravava
+      // omieOrderId/status 'invoiced' e NÃO chamava o pipeline — o pedido só entrava no
+      // faturamento pela varredura horária (e a trava de 48h podia descartá-lo). Agora segue o
+      // mesmo caminho do PUT /api/sales-cards/:id e do hotsite: pipeline interno, idempotente
+      // (dedup por sales_card_id) e com regras de bloqueio. Nenhuma chamada ao ERP antigo.
+      let pipelineInfo: any = null;
+      try {
+        const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+        const currentUser = (req as any).currentUser || req.user;
+        const who = currentUser?.email || currentUser?.claims?.email || 'finalize-sale';
+        pipelineInfo = await autoSendToBillingPipeline(salesCard as any, who);
+      } catch (e: any) {
+        console.error('[FINALIZE-SALE] autoSend pipeline (venda já gravada; entra pela varredura):', e?.message);
+        pipelineInfo = { error: String(e?.message || e) };
       }
+
+      res.json({
+        success: true,
+        orderNumber,
+        salesCard,
+        pipeline: pipelineInfo,
+        ...(pipelineInfo?.error ? { warning: `Venda registrada. Pipeline: ${pipelineInfo.error}` } : {})
+      });
 
     } catch (error) {
       console.error("Error finalizing sale:", error);
@@ -19994,7 +19902,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Import products from Omie with correct active filter
-  app.post('/api/omie/import-products', isAuthenticated, async (req: any, res) => {
+  app.post('/api/omie/import-products', gone('Omie — desligado em 05/set/2026, etapa E3'), isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user?.claims?.sub;
       
@@ -24837,7 +24745,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Teste de cancelamento de nota
-  app.get('/api/omie/test-cancellation/:invoiceNumber', async (req: any, res) => {
+  app.get('/api/omie/test-cancellation/:invoiceNumber', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       const { invoiceNumber } = req.params;
       const omieService = getOmieService(storage);
@@ -24929,7 +24837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Exportar notas fiscais do Omie para Excel EXPANDIDO (para análise) - TEMPORÁRIO SEM AUTH
-  app.post('/api/omie/export-invoices-excel-expanded', async (req: any, res) => {
+  app.post('/api/omie/export-invoices-excel-expanded', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       console.log('\n📊 EXPORTANDO NOTAS FISCAIS DO OMIE PARA EXCEL (EXPANDIDO)...\n');
 
@@ -25122,7 +25030,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Exportar notas fiscais do Omie para Excel (para análise) - TEMPORÁRIO SEM AUTH
-  app.post('/api/omie/export-invoices-excel-temp', async (req: any, res) => {
+  app.post('/api/omie/export-invoices-excel-temp', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
 
       console.log('\n📊 EXPORTANDO NOTAS FISCAIS DO OMIE PARA EXCEL...\n');
@@ -25351,7 +25259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Sincronizar faturamentos do Omie - OTIMIZADO: usa syncAllOrders com caches pré-carregados
-  app.post('/api/omie/sync-billings', async (req: any, res) => {
+  app.post('/api/omie/sync-billings', gone('Omie — desligado em 05/set/2026, etapa E3'), async (req: any, res) => {
     try {
       if (isBillingSyncRunning()) {
         return res.status(409).json({ message: 'Sincronização já em andamento' });
@@ -25522,7 +25430,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Debug: Buscar notas específicas do Omie
-  app.post('/api/omie/debug-invoices', authenticateUser, async (req: any, res) => {
+  app.post('/api/omie/debug-invoices', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
     try {
       const { invoiceNumbers } = req.body;
       

@@ -11,11 +11,10 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X, CreditCard, Wifi, WifiOff, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, Star, Database, RefreshCw, Eye, EyeOff, Server, Shield, ShieldCheck, ShieldAlert, Upload, X, CreditCard } from "lucide-react";
 import type { OmieInstance } from "@shared/schema";
 
 interface OmieInstanceFormData {
@@ -61,8 +60,6 @@ export default function OmieInstances() {
   const [editingInstance, setEditingInstance] = useState<OmieInstance | null>(null);
   const [formData, setFormData] = useState<OmieInstanceFormData>(defaultFormData);
   const [showSecrets, setShowSecrets] = useState(false);
-  const [paymentTerms, setPaymentTerms] = useState<any[]>([]);
-  const [loadingTerms, setLoadingTerms] = useState(false);
 
   const [certDialogOpen, setCertDialogOpen] = useState(false);
   const [certInstanceId, setCertInstanceId] = useState<string | null>(null);
@@ -98,10 +95,10 @@ export default function OmieInstances() {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
       setIsDialogOpen(false);
       resetForm();
-      toast({ title: "Sucesso", description: "Instância Omie criada com sucesso" });
+      toast({ title: "Sucesso", description: "Empresa criada com sucesso" });
     },
     onError: (error: any) => {
-      toast({ title: "Erro", description: error.message || "Erro ao criar instância", variant: "destructive" });
+      toast({ title: "Erro", description: error.message || "Erro ao criar empresa", variant: "destructive" });
     },
   });
 
@@ -113,10 +110,10 @@ export default function OmieInstances() {
       setIsDialogOpen(false);
       setEditingInstance(null);
       resetForm();
-      toast({ title: "Sucesso", description: "Instância atualizada com sucesso" });
+      toast({ title: "Sucesso", description: "Empresa atualizada com sucesso" });
     },
     onError: (error: any) => {
-      toast({ title: "Erro", description: error.message || "Erro ao atualizar instância", variant: "destructive" });
+      toast({ title: "Erro", description: error.message || "Erro ao atualizar empresa", variant: "destructive" });
     },
   });
 
@@ -124,10 +121,10 @@ export default function OmieInstances() {
     mutationFn: (id: string) => apiRequest("DELETE", `/api/omie/instances/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
-      toast({ title: "Sucesso", description: "Instância excluída com sucesso" });
+      toast({ title: "Sucesso", description: "Empresa excluída com sucesso" });
     },
     onError: (error: any) => {
-      toast({ title: "Erro", description: error.message || "Erro ao excluir instância", variant: "destructive" });
+      toast({ title: "Erro", description: error.message || "Erro ao excluir empresa", variant: "destructive" });
     },
   });
 
@@ -136,59 +133,10 @@ export default function OmieInstances() {
       apiRequest("POST", `/api/omie/instances/${id}/set-default`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
-      toast({ title: "Sucesso", description: "Instância definida como padrão" });
+      toast({ title: "Sucesso", description: "Empresa definida como padrão" });
     },
     onError: (error: any) => {
-      toast({ title: "Erro", description: error.message || "Erro ao definir instância padrão", variant: "destructive" });
-    },
-  });
-
-  const [syncingInstanceId, setSyncingInstanceId] = useState<string | null>(null);
-  const [testingInstanceId, setTestingInstanceId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string } | null>>({});
-
-  const handleTestCredentials = async (instance: OmieInstance) => {
-    setTestingInstanceId(instance.id);
-    setTestResults(prev => ({ ...prev, [instance.id]: null }));
-    try {
-      const result = await apiRequest("POST", `/api/omie/instances/${instance.id}/test`);
-      setTestResults(prev => ({ ...prev, [instance.id]: result as any }));
-      const tests: string[] = (result as any).tests || [];
-      if ((result as any).ok) {
-        toast({ title: `✅ ${instance.name} — OK`, description: tests.join(' | ') || (result as any).message });
-      } else {
-        toast({
-          title: `⚠️ ${instance.name} — Atenção`,
-          description: tests.length > 0 ? tests.join(' | ') : (result as any).message,
-          variant: "destructive",
-        });
-      }
-    } catch (err: any) {
-      const msg = err.message || "Erro desconhecido";
-      setTestResults(prev => ({ ...prev, [instance.id]: { ok: false, message: msg } }));
-      toast({ title: `❌ ${instance.name} — Erro`, description: msg, variant: "destructive" });
-    } finally {
-      setTestingInstanceId(null);
-    }
-  };
-  
-  const syncClientsMutation = useMutation({
-    mutationFn: async (instanceId: string) => {
-      setSyncingInstanceId(instanceId);
-      return apiRequest("POST", "/api/omie/sync-active-clients", { omieInstanceId: instanceId });
-    },
-    onSuccess: (data: any) => {
-      setSyncingInstanceId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-      toast({
-        title: "Sincronização concluída",
-        description: `${data.imported || 0} clientes importados, ${data.updated || 0} atualizados`,
-      });
-    },
-    onError: (error: any) => {
-      setSyncingInstanceId(null);
-      toast({ title: "Erro na sincronização", description: error.message || "Erro ao sincronizar clientes", variant: "destructive" });
+      toast({ title: "Erro", description: error.message || "Erro ao definir empresa padrão", variant: "destructive" });
     },
   });
 
@@ -222,7 +170,7 @@ export default function OmieInstances() {
   };
 
   const handleDeleteCert = async (instanceId: string, instanceName: string) => {
-    if (!window.confirm(`Remover o certificado digital da instância ${instanceName}?`)) return;
+    if (!window.confirm(`Remover o certificado digital da empresa ${instanceName}?`)) return;
     try {
       const res = await apiRequest("DELETE", `/api/omie/instances/${instanceId}/certificate`);
       toast({ title: "Sucesso", description: "Certificado removido" });
@@ -249,25 +197,11 @@ export default function OmieInstances() {
     setFormData(defaultFormData);
     setEditingInstance(null);
     setShowSecrets(false);
-    setPaymentTerms([]);
   };
 
   const handleOpenCreate = () => {
     resetForm();
     setIsDialogOpen(true);
-  };
-
-  const loadPaymentTerms = async (instanceId: string) => {
-    setLoadingTerms(true);
-    setPaymentTerms([]);
-    try {
-      const terms = await apiRequest("GET", `/api/omie/instances/${instanceId}/payment-terms`);
-      setPaymentTerms(Array.isArray(terms) ? terms : []);
-    } catch (err: any) {
-      toast({ title: "Aviso", description: "Não foi possível carregar os códigos de parcela desta instância", variant: "destructive" });
-    } finally {
-      setLoadingTerms(false);
-    }
   };
 
   const handleOpenEdit = (instance: OmieInstance) => {
@@ -282,8 +216,6 @@ export default function OmieInstances() {
       isDefault: instance.isDefault,
       defaultParcelaCode: (instance as any).defaultParcelaCode || "",
     });
-    setPaymentTerms([]);
-    loadPaymentTerms(instance.id);
     setIsDialogOpen(true);
   };
 
@@ -300,12 +232,12 @@ export default function OmieInstances() {
     if (instance.isDefault) {
       toast({
         title: "Ação não permitida",
-        description: "Não é possível excluir a instância padrão. Defina outra como padrão antes.",
+        description: "Não é possível excluir a empresa padrão. Defina outra como padrão antes.",
         variant: "destructive",
       });
       return;
     }
-    if (window.confirm(`Tem certeza que deseja excluir a instância "${instance.displayName}"?`)) {
+    if (window.confirm(`Tem certeza que deseja excluir a empresa "${instance.displayName}"?`)) {
       deleteMutation.mutate(instance.id);
     }
   };
@@ -331,16 +263,16 @@ export default function OmieInstances() {
           <div>
             <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
               <Server className="h-6 w-6 text-blue-600" />
-              Instâncias Omie ERP
+              Empresas do Grupo
             </h1>
             <p className="text-gray-500 text-sm">
-              Gerencie múltiplas contas Omie para sincronização de dados
+              Gerencie as empresas do grupo e seus certificados digitais
             </p>
           </div>
         </div>
         <Button onClick={handleOpenCreate}>
           <Plus className="h-4 w-4 mr-2" />
-          Nova Instância
+          Nova Empresa
         </Button>
       </div>
 
@@ -348,10 +280,10 @@ export default function OmieInstances() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Database className="h-5 w-5" />
-            Instâncias Configuradas ({instances.length})
+            Empresas Configuradas ({instances.length})
           </CardTitle>
           <CardDescription>
-            Cada instância representa uma conta Omie ERP separada. Os dados sincronizados serão identificados pela tag colorida correspondente.
+            Cada empresa do grupo é identificada pela tag colorida correspondente.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -361,22 +293,22 @@ export default function OmieInstances() {
             </div>
           ) : error ? (
             <div className="text-red-500 text-center py-4">
-              Erro ao carregar instâncias: {String(error)}
+              Erro ao carregar empresas: {String(error)}
             </div>
           ) : instances.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>Nenhuma instância Omie configurada.</p>
-              <p className="text-sm mb-4">Clique em "Nova Instância" para adicionar manualmente ou use o botão abaixo para criar automaticamente.</p>
+              <p>Nenhuma empresa configurada.</p>
+              <p className="text-sm mb-4">Clique em "Nova Empresa" para adicionar manualmente ou use o botão abaixo para criar automaticamente.</p>
               <Button
                 variant="outline"
                 onClick={async () => {
                   try {
                     await apiRequest("POST", "/api/omie/instances/init-default");
-                    toast({ title: "Sucesso", description: "Instância padrão OMIE GYN criada com sucesso" });
+                    toast({ title: "Sucesso", description: "Empresa padrão OMIE GYN criada com sucesso" });
                     queryClient.invalidateQueries({ queryKey: ["/api/omie/instances"] });
                   } catch (error: any) {
-                    toast({ title: "Erro", description: error.message || "Erro ao criar instância padrão", variant: "destructive" });
+                    toast({ title: "Erro", description: error.message || "Erro ao criar empresa padrão", variant: "destructive" });
                   }
                 }}
               >
@@ -481,43 +413,6 @@ export default function OmieInstances() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {testResults[instance.id] !== undefined && testResults[instance.id] !== null && (
-                            <span title={testResults[instance.id]!.message}>
-                              {testResults[instance.id]!.ok ? (
-                                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                              ) : (
-                                <WifiOff className="h-4 w-4 text-red-500" />
-                              )}
-                            </span>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleTestCredentials(instance)}
-                            disabled={testingInstanceId === instance.id || !instance.isActive}
-                            title="Testar credenciais"
-                            className="text-purple-600 hover:text-purple-700"
-                          >
-                            {testingInstanceId === instance.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Wifi className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => syncClientsMutation.mutate(instance.id)}
-                            disabled={syncingInstanceId === instance.id || !instance.isActive}
-                            title={instance.isActive ? "Sincronizar clientes" : "Instância inativa"}
-                            className="text-blue-600 hover:text-blue-700"
-                          >
-                            {syncingInstanceId === instance.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="h-4 w-4" />
-                            )}
-                          </Button>
                           {!instance.isDefault && (
                             <Button
                               variant="ghost"
@@ -537,7 +432,7 @@ export default function OmieInstances() {
                             size="sm"
                             onClick={() => handleDelete(instance)}
                             disabled={deleteMutation.isPending || instance.isDefault}
-                            title={instance.isDefault ? "Não é possível excluir a instância padrão" : "Excluir"}
+                            title={instance.isDefault ? "Não é possível excluir a empresa padrão" : "Excluir"}
                             className={instance.isDefault ? "opacity-50 cursor-not-allowed" : "text-red-600 hover:text-red-700"}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -557,12 +452,12 @@ export default function OmieInstances() {
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>
-              {editingInstance ? "Editar Instância Omie" : "Nova Instância Omie"}
+              {editingInstance ? "Editar Empresa" : "Nova Empresa"}
             </DialogTitle>
             <DialogDescription>
               {editingInstance
-                ? "Atualize as informações da instância Omie."
-                : "Configure uma nova conta Omie para sincronização de dados."}
+                ? "Atualize as informações da empresa."
+                : "Cadastre uma nova empresa do grupo."}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit}>
@@ -651,52 +546,18 @@ export default function OmieInstances() {
               </div>
 
               <div className="grid gap-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="defaultParcelaCode" className="flex items-center gap-1">
-                    <CreditCard className="h-3.5 w-3.5" />
-                    Código de Parcela Padrão (À Vista)
-                  </Label>
-                  {editingInstance && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs text-blue-600"
-                      onClick={() => loadPaymentTerms(editingInstance.id)}
-                      disabled={loadingTerms}
-                    >
-                      {loadingTerms ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                      Carregar da Omie
-                    </Button>
-                  )}
-                </div>
-                {paymentTerms.length > 0 ? (
-                  <Select
-                    value={formData.defaultParcelaCode}
-                    onValueChange={(val) => setFormData({ ...formData, defaultParcelaCode: val === "__clear__" ? "" : val })}
-                  >
-                    <SelectTrigger id="defaultParcelaCode">
-                      <SelectValue placeholder="Selecione o código de parcela à vista" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__clear__">— Nenhum (auto-detectar) —</SelectItem>
-                      {paymentTerms.map((t: any) => (
-                        <SelectItem key={t.cCodigo} value={t.cCodigo}>
-                          {t.cCodigo} — {t.cDescricao}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    id="defaultParcelaCode"
-                    placeholder={editingInstance ? "Clique em 'Carregar da Omie' para ver os códigos" : "Ex: 000 ou A00"}
-                    value={formData.defaultParcelaCode}
-                    onChange={(e) => setFormData({ ...formData, defaultParcelaCode: e.target.value })}
-                  />
-                )}
+                <Label htmlFor="defaultParcelaCode" className="flex items-center gap-1">
+                  <CreditCard className="h-3.5 w-3.5" />
+                  Código de Parcela Padrão (À Vista)
+                </Label>
+                <Input
+                  id="defaultParcelaCode"
+                  placeholder="Ex: 000 ou A00"
+                  value={formData.defaultParcelaCode}
+                  onChange={(e) => setFormData({ ...formData, defaultParcelaCode: e.target.value })}
+                />
                 <p className="text-xs text-muted-foreground">
-                  Define qual código de condição de pagamento usar ao criar pedidos à vista no Omie. Cada instância pode ter um código diferente.
+                  Define qual código de condição de pagamento usar ao criar pedidos à vista. Cada empresa pode ter um código diferente.
                 </p>
               </div>
 
@@ -707,7 +568,7 @@ export default function OmieInstances() {
                     checked={formData.isActive}
                     onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
                   />
-                  <Label htmlFor="isActive">Instância Ativa</Label>
+                  <Label htmlFor="isActive">Empresa Ativa</Label>
                 </div>
                 {!editingInstance && (
                   <div className="flex items-center gap-2">
@@ -745,7 +606,7 @@ export default function OmieInstances() {
             </DialogTitle>
             <DialogDescription>
               Importe o arquivo PFX/P12 do certificado digital A1 e informe a senha.
-              O certificado será vinculado automaticamente à instância pelo CNPJ.
+              O certificado será vinculado automaticamente à empresa pelo CNPJ.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
