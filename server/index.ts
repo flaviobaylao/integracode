@@ -51,6 +51,7 @@ import { authenticateUser, requireRole, gone } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
+import { registerFabricaRoutes } from './fabrica-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
@@ -3488,6 +3489,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // AVCB, contrato social, certificado... com instancia, vigencia, status e
   // arquivo anexado — 05/set/2026. Rotas /api/industria/documentos*.
   try { registerCompanyDocumentsRoutes(app); } catch (e) { console.error('[docs-empresa]', e); }
+  // Checklist de producao + manutencao de maquinas (Flavio 05/set) — mesmo guard /api/industria
+  try { registerFabricaRoutes(app); } catch (e) { console.error('[fabrica]', e); }
 
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});
