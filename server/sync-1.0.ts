@@ -45,7 +45,13 @@ const INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES || "1", 10);
 // da linha existente no 2.0 casada por essa chave — sem alterar id/FKs.
 const SYNC_TABLES: Array<{ table: string; pk: string; hasUpdatedAt: boolean; naturalKey?: string | string[] }> = [
 { table: "omie_instances", pk: "id", hasUpdatedAt: true },
-{ table: "users", pk: "id", hasUpdatedAt: true },
+  // DESLIGADO (04/set): cadastro de USUARIOS gerido no 2.0, sem sync do 1.0.
+  // O upsert fazia ON CONFLICT(id) DO UPDATE SET (todas as colunas)=EXCLUDED, SEM
+  // guarda por updated_at, entao REVERTIA senha (password), is_active e role ao valor
+  // do 1.0 sempre que a linha do usuario era ressincronizada — o usuario resetava a
+  // senha no 2.0, funcionava, e minutos/dias depois voltava a "Email ou senha invalidos".
+  // Mesma familia do corte de receivables/billing_pipeline/customers.
+  // { table: "users", pk: "id", hasUpdatedAt: true },
 { table: "routes", pk: "id", hasUpdatedAt: true },
 // { table: "customers", ... } DESLIGADO (01/jul): cadastro gerido no 2.0, sem sync do 1.0.
 { table: "billings", pk: "id", hasUpdatedAt: false, naturalKey: "omie_order_id" },

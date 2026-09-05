@@ -37,7 +37,9 @@ const SYNC_TABLES: Array<{
 }> = [
   { table: "customers",       pk: "id", dateCol: "updated_at" },
   { table: "products",        pk: "id", dateCol: "updated_at" },
-  { table: "users",           pk: "id", dateCol: "updated_at" },
+  // DESLIGADO (04/set): cadastro de USUARIOS gerido no 2.0 — nao empurrar de volta p/ o 1.0.
+  // Junto com o corte no sync-1.0.ts, encerra o ping-pong que revertia password/is_active/role.
+  // { table: "users",           pk: "id", dateCol: "updated_at" },
   { table: "routes",          pk: "id", dateCol: "updated_at" },
   { table: "sales_cards",     pk: "id", dateCol: "updated_at" },
   { table: "leads",           pk: "id", dateCol: "updated_at" },

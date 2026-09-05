@@ -5831,7 +5831,10 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           'recipes','recipe_items',
           // CUTOVER industria 18/ago/2026: modulo Industria completo no 2.0
           // (/industria) — o 2.0 e o dono destas tabelas tambem.
-          'raw_materials','raw_material_movements','production_orders','production_order_items']);
+          'raw_materials','raw_material_movements','production_orders','production_order_items',
+          // CUTOVER usuarios 04/set/2026: o 2.0 e o dono de users (senha/is_active/role).
+          // O backfill do 1.0 revertia a senha resetada no 2.0 (login voltava a falhar).
+          'users']);
         const tq = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'";
         const sTabs = (await src.query(tq)).rows.map((r: any) => r.table_name);
         const tTabs = new Set((await tgt.query(tq)).rows.map((r: any) => r.table_name));
