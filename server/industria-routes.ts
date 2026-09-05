@@ -16,6 +16,7 @@ import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
+import { getProductionOrderTransferLock, getProductionOrderTransferLocks } from "./lot-lock";
 
 const num = (v: any): number | null => {
   if (v === '' || v == null) return null;
@@ -267,7 +268,12 @@ export function registerIndustriaRoutes(app: Express) {
       const k = String(it.production_order_id || '');
       (byOrder[k] = byOrder[k] || []).push(it);
     }
-    return (po.rows || []).map((o: any) => ({ ...o, items: byOrder[String(o.id)] || [] }));
+    // transfer_lock (Flavio 05/set): OP cujo lote esta numa NF/pedido de
+    // transferencia nao pode ser reaberta nem excluida ate a nota ser
+    // cancelada/devolvida. A tela esconde os botoes e mostra o motivo.
+    let locks = new Map<string, any>();
+    try { locks = await getProductionOrderTransferLocks(); } catch (e: any) { console.warn('[OP] travas de transferencia indisponiveis:', e?.message); }
+    return (po.rows || []).map((o: any) => ({ ...o, items: byOrder[String(o.id)] || [], transfer_lock: locks.get(String(o.id)) || null }));
   };
 
   const nextOrderNumber = async (): Promise<string> => {
@@ -377,6 +383,10 @@ export function registerIndustriaRoutes(app: Express) {
       // estornar o estoque que a finalização mexeu.
       let estorno: any = null;
       if (prev.status === 'finalizada') {
+        // TRAVA: lote da OP em pedido/NF de transferencia -> primeiro cancela ou
+        // devolve a nota (o estorno do estoque acontece la), so depois exclui.
+        const lock = await getProductionOrderTransferLock(id);
+        if (lock) return res.status(409).json({ error: `Ordem ${prev.order_number} travada — ${lock.reason}`, transfer_lock: lock });
         estorno = await reverseFinalization(id, prev, userOf(req as any));
         console.log('🏭 [OP] estorno antes de excluir', prev.order_number, estorno.undone);
       }
@@ -586,6 +596,12 @@ export function registerIndustriaRoutes(app: Express) {
       if (!order) return res.status(404).json({ error: 'ordem nao encontrada', id });
       if (order.status !== 'finalizada') return res.status(400).json({ error: 'so ordem finalizada pode ser reaberta', status: order.status });
       const by = userOf(req);
+
+      // TRAVA (Flavio 05/set): o lote produzido esta numa NF de transferencia.
+      // Reabrir agora zeraria um lote que a NF diz ter saido. Cancelar/devolver a
+      // nota estorna o estoque (origem e destino) e ai a ordem pode ser reaberta.
+      const lock = await getProductionOrderTransferLock(id);
+      if (lock) return res.status(409).json({ error: `Ordem ${order.order_number} travada — ${lock.reason}`, transfer_lock: lock });
 
       const { undone, warnings } = await reverseFinalization(id, order, by);
 
