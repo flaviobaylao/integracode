@@ -76,23 +76,28 @@ async function gerarRows(v: VendCfg, jan: { from: string; to: string }) {
 }
 
 function montarTexto(v: VendCfg, jan: { from: string; to: string }, rows: any[]): string {
+  // Cabecalho em negrito (fonte normal) FORA do bloco; a lista vai dentro de um bloco
+  // monospace (```), que o WhatsApp renderiza numa fonte menor e mais compacta no mobile.
   const L: string[] = [];
-  L.push(`📦 *Entregas — ${v.nome}*`);
-  L.push(`Pedidos de ${fmtBR(jan.from)} a ${fmtBR(jan.to)}`);
-  L.push("");
+  L.push(`📦 *Entregas — ${v.nome}*  ·  ${fmtBR(jan.from)} a ${fmtBR(jan.to)}`);
   if (!rows.length) {
+    L.push("");
     L.push("_Nenhum pedido na janela._");
     return L.join("\n");
   }
   let total = 0;
+  const body: string[] = [];
   rows.forEach((r, i) => {
     const dd = diasEntre(r.dataPedido, r.dataEntrega);
     total += parseFloat(String(r.valor || 0)) || 0;
-    L.push(`${i + 1}. ${r.cliente}`);
-    L.push(`   Pedido ${fmtBR(r.dataPedido)} · Entrega ${fmtBR(r.dataEntrega)} · ${dd == null ? "—" : dd + "d"}`);
+    body.push(`${i + 1}. ${r.cliente}`);
+    body.push(`   ${fmtBR(r.dataPedido)} → ${fmtBR(r.dataEntrega)}  (${dd == null ? "—" : dd + "d"})`);
   });
-  L.push("");
-  L.push(`Total: ${rows.length} pedido(s) · R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
+  body.push("");
+  body.push(`Total: ${rows.length} ped · R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
+  L.push("```");
+  L.push(body.join("\n"));
+  L.push("```");
   return L.join("\n");
 }
 
