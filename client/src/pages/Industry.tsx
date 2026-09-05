@@ -31,7 +31,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye,
-  Truck, DollarSign,
+  Truck, DollarSign, Lock,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -810,7 +810,16 @@ function OrdensTab() {
                         </Button>
                       </>
                     )}
-                    {o.status === 'finalizada' && (
+                    {o.status === 'finalizada' && o.transfer_lock && (
+                      // Lote desta OP esta num pedido/NF de transferencia (Flavio 05/set):
+                      // nem reabrir nem excluir ate a nota ser cancelada/devolvida.
+                      <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1 font-normal cursor-help"
+                        title={o.transfer_lock.reason}>
+                        <Lock className="h-3 w-3" />
+                        {o.transfer_lock.invoiceNumber ? `NF-e ${o.transfer_lock.invoiceNumber}` : (o.transfer_lock.orderNumber || 'transferência')}
+                      </Badge>
+                    )}
+                    {o.status === 'finalizada' && !o.transfer_lock && (
                       <>
                         <Button variant="ghost" size="sm" title="Reabrir ordem (estorna o estoque da finalização)" onClick={() => reopenOrder(o)}>
                           <RotateCcw className="h-4 w-4 text-amber-600" />
@@ -1857,7 +1866,14 @@ function EstoqueTab() {
         <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
         </Button>
-        <span className="text-sm text-gray-500">{isLoading ? 'Carregando...' : `${filtered.length} lote(s)`}</span>
+        <span className="text-sm text-gray-500">
+          {isLoading ? 'Carregando...' : `${filtered.length} lote(s)`}
+          {!isLoading && data?.lotesTravados ? (
+            <span className="ml-2 inline-flex items-center gap-1 text-amber-700" title="Lotes em pedido/NF de transferência: não podem ser editados nem ter a OP reaberta até a nota ser cancelada ou devolvida.">
+              <Lock className="h-3.5 w-3.5" /> {data.lotesTravados} em transferência
+            </span>
+          ) : null}
+        </span>
         {sel.size > 0 && (
           <Button size="sm" onClick={() => setTransferindo(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
             <Truck className="h-4 w-4 mr-1" /> Pedido de transferência ({sel.size})
@@ -1897,7 +1913,18 @@ function EstoqueTab() {
                     aria-label={`Selecionar lote ${l.lotNumber}`} />
                 </TableCell>
                 <TableCell className="font-medium">{l.product?.name || l.productId}</TableCell>
-                <TableCell className="font-mono text-xs">{l.lotNumber}</TableCell>
+                <TableCell className="font-mono text-xs whitespace-nowrap">
+                  {l.lotNumber}
+                  {l.transferLock && (
+                    // Trava (Flavio 05/set): lote em pedido/NF de transferencia. O
+                    // servidor recusa PUT/DELETE e a reabertura da OP enquanto durar.
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-sans bg-amber-50 text-amber-700 border border-amber-200 cursor-help align-middle"
+                      title={l.transferLock.reason}>
+                      <Lock className="h-3 w-3" />
+                      {l.transferLock.invoiceNumber ? `NF ${l.transferLock.invoiceNumber}` : (l.transferLock.orderNumber || 'TRF')}
+                    </span>
+                  )}
+                </TableCell>
                 <TableCell>{l.instance?.name || '-'}</TableCell>
                 <TableCell>
                   {l.stockType === 'in_use'
