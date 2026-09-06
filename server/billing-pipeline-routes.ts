@@ -439,6 +439,34 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     let registeringUser: any = null;
     const _cbe = String(createdByEmail || '').trim();
     if (_cbe && !/^(system|auto|reconcile)/i.test(_cbe)) { try { registeringUser = await storage.getUserByEmail(_cbe); } catch {} }
+
+    // ── IMPLANTADOR DURÁVEL (order_history) ─────────────────────────────────────
+    // order_history.sellerId guarda QUEM REGISTROU o pedido — "pode ser diferente do
+    // seller_id do sales_card/carteira" (schema). É a fonte de verdade quando o pedido
+    // chega ao pipeline por um caminho SEM humano ativo (varreduras/reconcile): sem isto,
+    // o pedido de um cliente da carteira de OUTRO vendedor acabava creditado ao dono da
+    // carteira, e não a quem lançou (comissão errada). Só consultamos quando NÃO há um
+    // implantador humano no createdByEmail (esse já é o registrante da ação atual).
+    let histSellerId: string | null = null;
+    let histSellerName: string | null = null;
+    if (!registeringUser) {
+      try {
+        const _hist = await storage.getOrderHistoryByCard(salesCard.id);
+        const _h = (_hist || []).find((h: any) => String(h.status) === 'completed'
+          && h.sellerId && !['system', 'unknown-vendor', 'instagram', 'chatgpt-ai'].includes(String(h.sellerId)));
+        if (_h) {
+          // Só credita quem de fato lança pedido (vendedor/telemarketing). Um admin que fecha
+          // o pedido em nome de alguém NÃO herda a comissão — mantém o vendedor do card.
+          try {
+            const _hu = await storage.getUser(String(_h.sellerId));
+            if (_hu && ['vendedor', 'telemarketing'].includes(String(_hu.role))) {
+              histSellerId = String(_h.sellerId);
+              histSellerName = `${_hu.firstName || ''} ${_hu.lastName || ''}`.trim() || (_h.sellerName ? String(_h.sellerName) : null);
+            }
+          } catch {}
+        }
+      } catch (e: any) { console.warn('[BILLING-PIPELINE] order_history lookup (segue):', e?.message); }
+    }
     const effectiveSellerId = registeringUser ? registeringUser.id : (salesCard.sellerId || null);
     const seller = registeringUser || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
 
@@ -479,14 +507,21 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     // O que separa (2) de (3) é o CANAL: digital = carteira manda; implantado = card manda.
     const _src = String(salesCard.source || '').toLowerCase();
     const _isDigitalChannel = ['hotsite', 'instagram', 'website', 'chatgpt-ai', 'ia'].includes(_src);
+    // Precedência: 1) humano que ESTÁ enviando agora (registeringUser)  2) implantador
+    //   registrado no order_history (histSeller) — quem lançou a venda, mesmo em varredura
+    //   3) canal digital -> dono da carteira  4) vendedor do card.
     const pedidoSellerId = registeringUser
       ? registeringUser.id
-      : (_isDigitalChannel ? (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId)) : effectiveSellerId);
+      : (histSellerId
+          ? histSellerId
+          : (_isDigitalChannel ? (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId)) : effectiveSellerId));
     const pedidoSellerName = registeringUser
       ? `${registeringUser.firstName || ''} ${registeringUser.lastName || ''}`.trim()
-      : (_isDigitalChannel
-          ? (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)))
-          : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null));
+      : (histSellerId
+          ? histSellerName
+          : (_isDigitalChannel
+              ? (walletSellerName || (isInstagram ? 'Instagram' : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)))
+              : (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : null)));
     console.log(`👤 [BILLING-PIPELINE] Vendedor do pedido: ${pedidoSellerName || pedidoSellerId} `
       + `(implantador=${registeringUser ? registeringUser.email : 'nenhum'}; carteira=${walletSellerName || '-'})`);
 
@@ -547,7 +582,8 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       void fireAutomation('pedido.criado', {
         customer: { name: customer?.fantasyName || customer?.name || 'Cliente' },
         order: { id: item.orderNumber, value: (Number(salesCard.saleValue) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) },
-        seller: { name: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : '' },
+        // Nome do vendedor = o MESMO atribuído ao pedido (implantador), não o dono da carteira.
+        seller: { name: pedidoSellerName || (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : '') },
         sellerPhone: (seller as any)?.phone || null,
       });
     }
@@ -629,9 +665,11 @@ export async function reconcilePendingOrders(opts?: { minAgeMinutes?: number; ca
       if (card.status === 'pending') {
         await db.execute(sql`UPDATE sales_cards SET status = 'completed', completed_date = ${completedDate}, updated_at = now() WHERE id = ${id} AND status = 'pending'`);
       }
-      let email = 'reconcile-pending';
-      try { if (card.sellerId) { const u = await storage.getUser(card.sellerId); if (u?.email) email = u.email; } } catch {}
-      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email, { skipHistoryGuard: opts?.skipHistoryGuard === true });
+      // NÃO impersonar o dono da carteira: passar o e-mail do card.sellerId aqui fazia a
+      // varredura creditar o pedido ao dono da carteira (registeringUser), roubando a comissão
+      // de quem lançou. Com a tag 'reconcile-pending', o autoSend usa o IMPLANTADOR gravado no
+      // order_history (quem registrou a venda) e só cai no card.sellerId se não houver registro.
+      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, 'reconcile-pending', { skipHistoryGuard: opts?.skipHistoryGuard === true });
       if (item) { recovered++; details.push({ id, val: card.saleValue, result: 'recovered', pipelineId: item.id, stage: item.stage }); }
       else { blockedOrSkipped++; details.push({ id, val: card.saleValue, result: 'blocked_or_dup' }); }
     } catch (e: any) {
@@ -688,9 +726,9 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
       if (card.status === 'pending') {
         await db.execute(sql`UPDATE sales_cards SET status = 'completed', completed_date = ${completedDate}, updated_at = now() WHERE id = ${id} AND status = 'pending'`);
       }
-      let email = 'sweep-orphans';
-      try { if (card.sellerId) { const u = await storage.getUser(card.sellerId); if (u?.email) email = u.email; } } catch {}
-      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, email, { skipHistoryGuard: opts?.skipHistoryGuard === true });
+      // NÃO impersonar o dono da carteira (ver reconcile acima): a tag 'sweep-orphans' deixa o
+      // autoSend usar o IMPLANTADOR do order_history em vez do dono da carteira do card.
+      const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, 'sweep-orphans', { skipHistoryGuard: opts?.skipHistoryGuard === true });
       if (item) { routed++; details.push({ id, val: card.saleValue, result: 'routed', pipelineId: item.id, stage: item.stage }); }
       else { toBlocked++; details.push({ id, val: card.saleValue, result: 'to_blocked_or_dup' }); }
     } catch (e: any) {
@@ -1392,6 +1430,70 @@ export function registerBillingPipelineRoutes(app: Express) {
       });
     } catch (e: any) {
       console.error('[fix-seller-implantador]', e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // CORRECAO RETROATIVA v2 — pela FONTE DE VERDADE (order_history.seller_id = quem REGISTROU
+  // o pedido). Corrige itens do pipeline cujo vendedor gravado != implantador registrado no
+  // order_history (ex.: varredura creditou o dono da carteira em vez de quem lancou). So
+  // considera implantador com papel vendedor/telemarketing. Body: { apply?: bool=false,
+  // since?: 'YYYY-MM-DD'=2026-07-23 }. apply=false = simulacao.
+  app.post('/api/admin/pipeline/fix-seller-por-historico', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const apply = req.body?.apply === true;
+      const since = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.since || '')) ? String(req.body.since) : '2026-07-23';
+      const q: any = await db.execute(sql`
+        WITH oh AS (
+          SELECT DISTINCT ON (o.sales_card_id) o.sales_card_id, o.seller_id AS impl_id
+          FROM order_history o
+          WHERE o.status = 'completed'
+            AND o.seller_id IS NOT NULL
+            AND o.seller_id NOT IN ('system','unknown-vendor','instagram','chatgpt-ai')
+          ORDER BY o.sales_card_id, o.order_date DESC, o.completed_at DESC NULLS LAST
+        )
+        SELECT bp.id, bp.order_number, bp.customer_name, bp.sale_value, bp.created_at,
+               bp.seller_id AS atual, bp.seller_name AS atual_nome,
+               oh.impl_id AS novo,
+               TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')) AS novo_nome
+        FROM billing_pipeline bp
+        JOIN oh ON oh.sales_card_id = bp.sales_card_id
+        JOIN users u ON u.id = oh.impl_id AND u.role IN ('vendedor','telemarketing')
+        WHERE bp.stage <> 'lixeira'
+          AND bp.created_at >= ${since}::date
+          AND COALESCE(bp.seller_id,'') <> oh.impl_id
+        ORDER BY bp.created_at DESC
+      `);
+      const rows: any[] = q?.rows || q || [];
+      let updated = 0;
+      if (apply) {
+        for (const r of rows) {
+          await db.execute(sql`
+            UPDATE billing_pipeline
+               SET seller_id = ${r.novo}, seller_name = ${r.novo_nome}, updated_at = now()
+             WHERE id = ${r.id}
+          `);
+          updated++;
+        }
+      }
+      res.json({
+        ok: true,
+        apply,
+        since,
+        fonte: 'order_history.seller_id',
+        encontrados: rows.length,
+        atualizados: updated,
+        amostra: rows.slice(0, 50).map((r) => ({
+          pedido: r.order_number,
+          cliente: r.customer_name,
+          valor: r.sale_value,
+          data: r.created_at,
+          de: r.atual_nome || r.atual,
+          para: r.novo_nome,
+        })),
+      });
+    } catch (e: any) {
+      console.error('[fix-seller-por-historico]', e);
       res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
