@@ -92,7 +92,10 @@ const CFOP_LABELS: Record<string, string> = {
   '5401': 'Venda de produção com ST (substituto)',
   '5403': 'Venda de mercadoria com ST (substituto)',
   '5405': 'Venda de mercadoria com ST (substituído)',
-  '5409': 'Venda com ST (substituído)',
+  '5408': 'Transferência de mercadoria própria sujeita a ST',
+  '5409': 'Transferência de mercadoria de terceiros sujeita a ST',
+  '5552': 'Transferência de bem do ativo imobilizado',
+  '5557': 'Transferência de material de uso ou consumo',
   '5910': 'Remessa em bonificação, doação ou brinde',
   '5911': 'Remessa de amostra grátis',
   '5929': 'Saída de mercadoria acobertada por NFC-e/ECF',
@@ -105,12 +108,35 @@ const CFOP_LABELS: Record<string, string> = {
   '6401': 'Venda de produção com ST (interestadual)',
   '6403': 'Venda com ST, substituto (interestadual)',
   '6404': 'Venda com ST, imposto já retido (interestadual)',
-  '6409': 'Venda com ST, substituído (interestadual)',
+  '6408': 'Transferência de mercadoria própria com ST (interestadual)',
+  '6409': 'Transferência de mercadoria de terceiros com ST (interestadual)',
+  '6552': 'Transferência de bem do ativo imobilizado (interestadual)',
+  '6557': 'Transferência de material de uso ou consumo (interestadual)',
   '6910': 'Bonificação, doação ou brinde (interestadual)',
   '6911': 'Remessa de amostra grátis (interestadual)',
   '6929': 'Saída acobertada por NFC-e/ECF (interestadual)',
   '6949': 'Outra saída não especificada (interestadual)',
 };
+// TRANSFERÊNCIA NÃO É SAÍDA DE MERCADORIA: é remessa entre estabelecimentos do
+// próprio grupo (GYN↔BSB↔IND), sai de um estoque e entra em outro, sem venda.
+// Fica FORA do relatório por padrão (chave "Incluir transferências" reabre).
+const TRANSFER_CFOPS = new Set([
+  '5151', '5152', '5408', '5409', '5552', '5557',
+  '6151', '6152', '6408', '6409', '6552', '6557',
+]);
+const isTransferencia = (r: { operation_type?: string | null; cfop?: string | null }) =>
+  String(r.operation_type || '').toLowerCase() === 'transferencia' ||
+  TRANSFER_CFOPS.has(String(r.cfop || '').replace(/\D/g, ''));
+
+// DEVOLUÇÃO ABATE A SAÍDA: CFOP de ENTRADA (começa com 1, 2 ou 3 — 1.202, 2.202,
+// 1.411 etc.) é mercadoria voltando. Entra no relatório com quantidade e valor
+// NEGATIVOS, para a saída líquida do produto ser venda − devolução.
+const isDevolucao = (r: { cfop?: string | null }) =>
+  /^[123]/.test(String(r.cfop || '').replace(/\D/g, ''));
+const sinalOf = (r: { cfop?: string | null }) => (isDevolucao(r) ? -1 : 1);
+const qtyOf = (r: { cfop?: string | null; quantity: string | number }) => sinalOf(r) * num(r.quantity);
+const valOf = (r: { cfop?: string | null; total_price: string | number }) => sinalOf(r) * num(r.total_price);
+
 const cfopName = (v: string | null | undefined) =>
   v ? (CFOP_LABELS[String(v).replace(/\D/g, '')] || '') : '';
 const cfopFull = (v: string) =>
@@ -231,6 +257,13 @@ interface EstoqueRow {
 
 // Chave de casamento produto↔estoque: nome sem caixa/espaços sobrando.
 const normProd = (s: string) => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
+// Chave canônica do produto: o CÓDIGO manda; só cai no nome normalizado quando
+// o item não tem código. Sem isso, "…350ml" e "…350mL" (mesmo PRD-FV-350) viravam
+// DUAS linhas na tabela, rachando quantidade, valor, % do valor, preço médio,
+// pedidos, clientes e Saída D.U., e repetindo o mesmo estoque nas duas.
+const normCode = (s: string | null | undefined) => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
+const prodKeyOf = (r: { product_code?: string | null; product_name: string }) =>
+  normCode(r.product_code) || normProd(r.product_name);
 
 interface ProdAgg {
   key: string;
@@ -269,6 +302,7 @@ export default function GestaoProdutos() {
   const [sortKey, setSortKey] = useState<SortKey>('value');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [detailProduct, setDetailProduct] = useState<string | null>(null);
+  const [incluirTransf, setIncluirTransf] = useState(false);
 
   const url = `/api/gestao/produtos-comercializados?de=${de}&ate=${ate}`;
   const [stockInst, setStockInst] = useState('todas');
@@ -282,9 +316,15 @@ export default function GestaoProdutos() {
   const estoqueIdx = useMemo(() => {
     const idx = new Map<string, { total: number; porInst: Map<string, number> }>();
     for (const e of estoqueRows) {
-      const k = normProd(e.product_name);
+      const kCode = normCode(e.product_code);
+      const kName = normProd(e.product_name);
+      const k = kCode || kName;
       let rec = idx.get(k);
       if (!rec) { rec = { total: 0, porInst: new Map() }; idx.set(k, rec); }
+      // o mesmo registro responde pelas duas chaves (código e nome), para casar
+      // tanto com itens que têm código quanto com os que não têm.
+      if (kCode) idx.set(kCode, rec);
+      if (kName && !idx.has(kName)) idx.set(kName, rec);
       const s = num(e.stock);
       rec.total += s;
       rec.porInst.set(e.instance_name, (rec.porInst.get(e.instance_name) || 0) + s);
@@ -299,14 +339,16 @@ export default function GestaoProdutos() {
   );
 
   // Estoque exibido para um produto, conforme o seletor (todas = soma).
-  const stockOf = (name: string): number | null => {
-    const rec = estoqueIdx.get(normProd(name));
+  const estoqueRec = (p: { key: string; name: string }) =>
+    estoqueIdx.get(p.key) || estoqueIdx.get(normProd(p.name));
+  const stockOf = (p: { key: string; name: string }): number | null => {
+    const rec = estoqueRec(p);
     if (!rec) return null;
     if (stockInst === 'todas') return rec.total;
     return rec.porInst.has(stockInst) ? (rec.porInst.get(stockInst) as number) : null;
   };
-  const stockTitle = (name: string): string => {
-    const rec = estoqueIdx.get(normProd(name));
+  const stockTitle = (p: { key: string; name: string }): string => {
+    const rec = estoqueRec(p);
     if (!rec) return 'Produto sem cadastro de estoque';
     return Array.from(rec.porInst.entries()).map(([i, s]) => `${i}: ${fmtQtd(s)}`).join(' · ');
   };
@@ -333,7 +375,49 @@ export default function GestaoProdutos() {
   }, [rows]);
   const cityOptions = useMemo(() => opts(rows.map((r) => cidadeCanonica(r.customer_city))), [rows]);
   const payOptions = useMemo(() => opts(rows.map((r) => r.payment_method), PAYMENT_LABELS), [rows]);
-  const prodOptions = useMemo(() => opts(rows.map((r) => r.product_name)), [rows]);
+  // Nome/código canônicos de cada chave: entre as grafias do mesmo produto vence
+  // a mais usada (empate → ordem alfabética), para a tela mostrar UMA linha só.
+  const prodCanon = useMemo(() => {
+    const nomes = new Map<string, Map<string, number>>();
+    const codigos = new Map<string, string | null>();
+    for (const r of rows) {
+      const k = prodKeyOf(r);
+      const m = nomes.get(k) || new Map<string, number>();
+      const nome = String(r.product_name || '').trim();
+      m.set(nome, (m.get(nome) || 0) + 1);
+      nomes.set(k, m);
+      if (!codigos.get(k) && r.product_code) codigos.set(k, r.product_code);
+    }
+    const out = new Map<string, { name: string; code: string | null }>();
+    for (const [k, m] of Array.from(nomes.entries())) {
+      const name = Array.from(m.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))[0][0];
+      out.set(k, { name, code: codigos.get(k) || null });
+    }
+    return out;
+  }, [rows]);
+  const prodName = (k: string) => prodCanon.get(k)?.name || k;
+
+  const prodOptions = useMemo(
+    () => Array.from(prodCanon.entries())
+      .map(([value, v]) => ({ value, label: v.name }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+    [prodCanon],
+  );
+
+  // Quanto ficou de fora por ser transferência (mostrado ao lado da chave).
+  const transfResumo = useMemo(() => {
+    let itens = 0, qtd = 0, valor = 0;
+    for (const r of rows) if (isTransferencia(r)) { itens++; qtd += num(r.quantity); valor += num(r.total_price); }
+    return { itens, qtd, valor };
+  }, [rows]);
+
+  // Quanto de devolução está abatendo a saída no período (antes dos filtros).
+  const devolResumo = useMemo(() => {
+    let itens = 0, qtd = 0, valor = 0;
+    for (const r of rows) if (isDevolucao(r) && !isTransferencia(r)) { itens++; qtd += num(r.quantity); valor += num(r.total_price); }
+    return { itens, qtd, valor };
+  }, [rows]);
 
   const activeFilters =
     instFilter.size + sellerFilter.size + customerFilter.size + opFilter.size + stageFilter.size +
@@ -350,6 +434,7 @@ export default function GestaoProdutos() {
   const cfopKeyOf = (r: ItemRow) => (r.cfop ? String(r.cfop) : 'sem NF');
 
   const matches = (r: ItemRow, q: string, ignoreCfop: boolean) => {
+    if (!incluirTransf && isTransferencia(r)) return false;
     if (instFilter.size && !instFilter.has(String(r.instance_name || ''))) return false;
     if (sellerFilter.size && !sellerFilter.has(String(r.seller_name || ''))) return false;
     if (customerFilter.size && !customerFilter.has(String(r.customer_name || ''))) return false;
@@ -358,7 +443,7 @@ export default function GestaoProdutos() {
     if (!ignoreCfop && cfopFilter.size && !cfopFilter.has(cfopKeyOf(r))) return false;
     if (cityFilter.size && !cityFilter.has(cidadeCanonica(r.customer_city))) return false;
     if (payFilter.size && !payFilter.has(String(r.payment_method || ''))) return false;
-    if (prodFilter.size && !prodFilter.has(String(r.product_name || ''))) return false;
+    if (prodFilter.size && !prodFilter.has(prodKeyOf(r))) return false;
     if (q) {
       const hay = [
         r.product_name, r.product_code, r.ncm, r.customer_name, r.seller_name,
@@ -372,14 +457,14 @@ export default function GestaoProdutos() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => matches(r, q, false));
-  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cfopFilter, cityFilter, payFilter, prodFilter]);
+  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cfopFilter, cityFilter, payFilter, prodFilter, incluirTransf]);
 
   // Base dos chips de CFOP: todos os filtros MENOS o próprio filtro de CFOP —
   // senão, ao selecionar um chip, os demais sumiriam e a multi-seleção morre.
   const filteredExceptCfop = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => matches(r, q, true));
-  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cityFilter, payFilter, prodFilter]);
+  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cityFilter, payFilter, prodFilter, incluirTransf]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -390,8 +475,8 @@ export default function GestaoProdutos() {
     for (const r of filtered) {
       orders.add(r.pipeline_id);
       customers.add(r.customer_id);
-      products.add(r.product_name);
-      const q = num(r.quantity), v = num(r.total_price);
+      products.add(prodKeyOf(r));
+      const q = qtyOf(r), v = valOf(r);
       qty += q; value += v;
       if (r.operation_type === 'troca') { trocaQty += q; trocaValue += v; }
     }
@@ -422,7 +507,7 @@ export default function GestaoProdutos() {
     for (const r of filtered) {
       const b = byMonth ? r.data.slice(0, 7) : r.data;
       const cur = map.get(b) || { valor: 0, qtd: 0 };
-      cur.valor += num(r.total_price); cur.qtd += num(r.quantity);
+      cur.valor += valOf(r); cur.qtd += qtyOf(r);
       map.set(b, cur);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]))
@@ -435,7 +520,7 @@ export default function GestaoProdutos() {
     for (const r of filtered) {
       const k = keyFn(r) || '—';
       const cur = map.get(k) || { valor: 0, qtd: 0 };
-      cur.valor += num(r.total_price); cur.qtd += num(r.quantity);
+      cur.valor += valOf(r); cur.qtd += qtyOf(r);
       map.set(k, cur);
     }
     return Array.from(map.entries())
@@ -452,7 +537,7 @@ export default function GestaoProdutos() {
     for (const r of filteredExceptCfop) {
       const k = cfopKeyOf(r);
       const cur = map.get(k) || { valor: 0, qtd: 0 };
-      cur.valor += num(r.total_price); cur.qtd += num(r.quantity);
+      cur.valor += valOf(r); cur.qtd += qtyOf(r);
       map.set(k, cur);
     }
     return Array.from(map.entries())
@@ -464,21 +549,22 @@ export default function GestaoProdutos() {
   const prodAgg = useMemo(() => {
     const map = new Map<string, ProdAgg>();
     for (const r of filtered) {
-      const k = r.product_name;
+      const k = prodKeyOf(r);
       let a = map.get(k);
       if (!a) {
-        a = { key: k, name: r.product_name, code: r.product_code, ncm: r.ncm, qty: 0, value: 0, orders: new Set(), customers: new Set(), trocaQty: 0, trocaValue: 0 };
+        const canon = prodCanon.get(k);
+        a = { key: k, name: canon?.name || r.product_name, code: canon?.code || r.product_code, ncm: r.ncm, qty: 0, value: 0, orders: new Set(), customers: new Set(), trocaQty: 0, trocaValue: 0 };
         map.set(k, a);
       }
       if (!a.code && r.product_code) a.code = r.product_code;
       if (!a.ncm && r.ncm) a.ncm = r.ncm;
-      const q = num(r.quantity), v = num(r.total_price);
+      const q = qtyOf(r), v = valOf(r);
       a.qty += q; a.value += v;
       a.orders.add(r.pipeline_id); a.customers.add(r.customer_id);
       if (r.operation_type === 'troca') { a.trocaQty += q; a.trocaValue += v; }
     }
     return Array.from(map.values());
-  }, [filtered]);
+  }, [filtered, prodCanon]);
 
   const topProducts = useMemo(
     () => [...prodAgg].sort((a, b) => (metric === 'valor' ? b.value - a.value : b.qty - a.qty)).slice(0, 10)
@@ -493,7 +579,7 @@ export default function GestaoProdutos() {
         case 'product': return p.name.toLowerCase();
         case 'code': return String(p.code || '').toLowerCase();
         case 'qty': case 'saidaDU': return p.qty;
-        case 'stock': { const s = stockOf(p.name); return s == null ? -1 : s; }
+        case 'stock': { const s = stockOf(p); return s == null ? -1 : s; }
         case 'value': case 'share': return p.value;
         case 'orders': return p.orders.size;
         case 'customers': return p.customers.size;
@@ -515,7 +601,7 @@ export default function GestaoProdutos() {
 
   // ── Detalhe de um produto (dialog) ───────────────────────────────────────
   const detailRows = useMemo(
-    () => (detailProduct ? filtered.filter((r) => r.product_name === detailProduct) : []),
+    () => (detailProduct ? filtered.filter((r) => prodKeyOf(r) === detailProduct) : []),
     [filtered, detailProduct],
   );
   const detailAgg = (keyFn: (r: ItemRow) => string, labels?: Record<string, string>) => {
@@ -523,7 +609,7 @@ export default function GestaoProdutos() {
     for (const r of detailRows) {
       const k = keyFn(r) || '—';
       const cur = map.get(k) || { valor: 0, qtd: 0 };
-      cur.valor += num(r.total_price); cur.qtd += num(r.quantity);
+      cur.valor += valOf(r); cur.qtd += qtyOf(r);
       map.set(k, cur);
     }
     return Array.from(map.entries()).map(([k, v]) => ({ name: labels?.[k] || k, ...v }))
@@ -547,7 +633,7 @@ export default function GestaoProdutos() {
     ['Produto', 'Código', 'NCM', 'Quantidade', `Saída por dia útil (${diasUteis} d.u.)`, `Estoque (${stockInst === 'todas' ? 'todas as instâncias' : stockInst})`, 'Valor', '% do valor', 'Pedidos', 'Clientes', 'Preço médio', 'Qtd em trocas', 'Valor em trocas'],
     sortedProds.map((p) => [
       p.name, p.code || '', p.ncm || '', nBR(p.qty), nBR(Math.round((p.qty / diasUteis) * 10) / 10),
-      (() => { const s = stockOf(p.name); return s == null ? '' : nBR(s); })(), nBR(p.value),
+      (() => { const s = stockOf(p); return s == null ? '' : nBR(s); })(), nBR(p.value),
       kpis.value > 0 ? nBR((p.value / kpis.value) * 100) : '0',
       p.orders.size, p.customers.size, nBR(p.qty > 0 ? p.value / p.qty : 0),
       nBR(p.trocaQty), nBR(p.trocaValue),
@@ -559,7 +645,7 @@ export default function GestaoProdutos() {
     ['Data', 'Produto', 'Código', 'NCM', 'Quantidade', 'Valor unit.', 'Valor total', 'Operação', 'Etapa', 'Cliente', 'Cidade', 'Vendedor', 'Instância', 'Pedido', 'NF', 'CFOP', 'Nome do CFOP', 'Status fiscal', 'Pagamento'],
     filtered.map((r) => [
       fmtBucket(r.data), r.product_name, r.product_code || '', r.ncm || '',
-      nBR(num(r.quantity)), nBR(num(r.unit_price)), nBR(num(r.total_price)),
+      nBR(qtyOf(r)), nBR(num(r.unit_price)), nBR(valOf(r)),
       OPERATION_LABELS[String(r.operation_type || '')] || r.operation_type || '',
       STAGE_LABELS[r.stage] || r.stage,
       r.customer_name, r.customer_city || '', r.seller_name || '', r.instance_name || '',
@@ -681,6 +767,33 @@ export default function GestaoProdutos() {
           <MultiSelectFilter label="CFOP" options={cfopOptions} selected={cfopFilter} onToggle={toggleInSet(setCfopFilter)} onClear={() => setCfopFilter(new Set())} testid="filtro-gp-cfop" searchable />
           <MultiSelectFilter label="Cidade" options={cityOptions} selected={cityFilter} onToggle={toggleInSet(setCityFilter)} onClear={() => setCityFilter(new Set())} testid="filtro-gp-cidade" searchable />
           <MultiSelectFilter label="Pagamento" options={payOptions} selected={payFilter} onToggle={toggleInSet(setPayFilter)} onClear={() => setPayFilter(new Set())} testid="filtro-gp-pagamento" />
+          <label
+            className="flex items-center gap-1.5 h-9 px-2.5 text-xs border rounded-md bg-white dark:bg-gray-800 dark:border-gray-600 cursor-pointer whitespace-nowrap"
+            title="Transferência entre instâncias do grupo não é venda: sai de um estoque e entra em outro."
+          >
+            <input
+              type="checkbox"
+              checked={incluirTransf}
+              onChange={(e) => setIncluirTransf(e.target.checked)}
+              className="accent-teal-600"
+              data-testid="check-incluir-transferencias"
+            />
+            Incluir transferências
+            {transfResumo.itens > 0 && (
+              <span className="text-gray-500">
+                ({transfResumo.itens.toLocaleString('pt-BR')} itens · {fmtQtd(transfResumo.qtd)} un · {fmtBRL(transfResumo.valor)})
+              </span>
+            )}
+          </label>
+          {devolResumo.itens > 0 && (
+            <span
+              className="flex items-center h-9 px-2.5 text-xs border rounded-md bg-white dark:bg-gray-800 dark:border-gray-600 text-gray-600 dark:text-gray-300 whitespace-nowrap"
+              title="CFOP de entrada (1.xxx/2.xxx): mercadoria de volta, lançada com sinal negativo."
+              data-testid="aviso-devolucoes"
+            >
+              Devoluções abatendo: −{fmtQtd(devolResumo.qtd)} un · −{fmtBRL(devolResumo.valor)}
+            </span>
+          )}
           {activeFilters > 0 && (
             <Button variant="ghost" size="sm" onClick={clearAll} data-testid="button-gp-limpar-filtros">
               Limpar filtros ×
@@ -906,7 +1019,7 @@ export default function GestaoProdutos() {
                     <tr
                       key={p.key}
                       className="border-t hover:bg-teal-50/60 dark:hover:bg-gray-700/50 cursor-pointer"
-                      onClick={() => setDetailProduct(p.name)}
+                      onClick={() => setDetailProduct(p.key)}
                       data-testid={`linha-produto-${p.key}`}
                     >
                       <td className="px-2 py-1.5 font-medium max-w-[280px]"><span className="block truncate" title={p.name}>{p.name}</span></td>
@@ -915,8 +1028,8 @@ export default function GestaoProdutos() {
                       <td className="px-2 py-1.5 text-right tabular-nums text-teal-700 dark:text-teal-300" title={`${fmtQtd(p.qty)} un ÷ ${diasUteis} dia(s) útil(eis)`}>
                         {(p.qty / diasUteis).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}
                       </td>
-                      <td className="px-2 py-1.5 text-right tabular-nums" title={stockTitle(p.name)}>
-                        {(() => { const s = stockOf(p.name); return s == null
+                      <td className="px-2 py-1.5 text-right tabular-nums" title={stockTitle(p)}>
+                        {(() => { const s = stockOf(p); return s == null
                           ? <span className="text-gray-400">—</span>
                           : <span className={s <= 0 ? 'text-red-600 font-medium' : 'text-gray-800 dark:text-gray-100'}>{fmtQtd(s)}</span>; })()}
                       </td>
@@ -938,6 +1051,10 @@ export default function GestaoProdutos() {
 
             <p className="mt-2 text-xs text-gray-500">
               Fonte: pedidos do Pipeline de Faturamento (todas as etapas, exceto lixeira), explodidos por item.
+              {' '}Transferências entre instâncias {incluirTransf ? 'ESTÃO incluídas' : 'não entram como saída de mercadoria'}
+              {' '}(operação "transferência" e CFOPs 5151/5152/5408/5409/6151/6152/6408/6409 e afins).
+              {' '}Devoluções (CFOP de entrada 1.xxx/2.xxx) entram com sinal negativo, abatendo a saída —
+              {' '}quantidade e valor da tabela são LÍQUIDOS.
               CFOP e status fiscal vêm da NF-e vinculada ao pedido quando ela existe. Clique numa linha para o
               detalhamento do produto por cliente, vendedor e instância.
             </p>
@@ -950,16 +1067,16 @@ export default function GestaoProdutos() {
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-auto">
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2">
-              <Package className="h-4 w-4 text-teal-600" /> {detailProduct}
+              <Package className="h-4 w-4 text-teal-600" /> {prodName(detailProduct || '')}
             </DialogTitle>
           </DialogHeader>
           {detailProduct && (
             <div className="text-sm space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 {(() => {
-                  const q = detailRows.reduce((s, r) => s + num(r.quantity), 0);
-                  const v = detailRows.reduce((s, r) => s + num(r.total_price), 0);
-                  const tq = detailRows.filter((r) => r.operation_type === 'troca').reduce((s, r) => s + num(r.quantity), 0);
+                  const q = detailRows.reduce((s, r) => s + qtyOf(r), 0);
+                  const v = detailRows.reduce((s, r) => s + valOf(r), 0);
+                  const tq = detailRows.filter((r) => r.operation_type === 'troca').reduce((s, r) => s + qtyOf(r), 0);
                   const cli = new Set(detailRows.map((r) => r.customer_id)).size;
                   return [
                     { l: 'Quantidade', v: fmtQtd(q) },
