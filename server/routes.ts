@@ -1531,6 +1531,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🧑‍💼 Vendedores do MAPA: lista fixa, tirada dos CADASTROS de clientes (e dos leads),
+  // independente das situações marcadas na tela — senão o filtro mudaria de opções conforme
+  // o usuário liga/desliga camadas. Devolve também quantos cadastros estão SEM vendedor.
+  // Definido ANTES de :id para evitar conflito de rota.
+  app.get('/api/customers/map-sellers', authenticateUser, async (_req: any, res) => {
+    try {
+      const allSellers = await db.select().from(users);
+      const nomePorId = new Map<string, string>();
+      for (const u of allSellers) {
+        const fn = u.firstName?.trim() || ''; const ln = u.lastName?.trim() || '';
+        nomePorId.set(u.id, (fn || ln) ? `${fn} ${ln}`.trim() : (u.email?.split('@')[0] || u.email || 'Desconhecido'));
+      }
+      const contagem = new Map<string, number>();
+      let semVendedor = 0;
+      const somar = (sid: any, qtd: number) => {
+        const nome = sid ? nomePorId.get(String(sid)) : null;
+        if (!nome) { semVendedor += qtd; return; }
+        contagem.set(nome, (contagem.get(nome) || 0) + qtd);
+      };
+      const rc: any = await db.execute(sql`
+        SELECT seller_id, COUNT(*)::int AS qtd
+        FROM customers
+        WHERE (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+        GROUP BY seller_id`);
+      for (const r of ((rc.rows || rc) as any[])) somar(r.seller_id, Number(r.qtd) || 0);
+      try {
+        const rl: any = await db.execute(sql`
+          SELECT assigned_to, COUNT(*)::int AS qtd
+          FROM leads
+          WHERE COALESCE(status::text,'') NOT IN ('converted','discarded')
+          GROUP BY assigned_to`);
+        for (const r of ((rl.rows || rl) as any[])) somar(r.assigned_to, Number(r.qtd) || 0);
+      } catch (e: any) { console.warn('[MAP-SELLERS] leads:', e?.message); }
+      const vendedores = Array.from(contagem.entries())
+        .map(([nome, qtd]) => ({ nome, qtd }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      res.json({ vendedores, semVendedor });
+    } catch (error: any) {
+      console.error('Erro ao listar vendedores do mapa:', error);
+      res.json({ vendedores: [], semVendedor: 0 });
+    }
+  });
+
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
     try {
