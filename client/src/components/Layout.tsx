@@ -43,7 +43,7 @@ const MENU_CARD: Record<string, string> = {
   "telemarketing-disparo": "Disparo em Massa", "automacoes-comunicacao": "Automações de Comunicação",
   industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas",
   relatorios: "Relatórios Dinâmicos", "relatorios-ia": "Relatórios IA",
-  "omie-instances": "Empresas do Grupo", "sync-monitor": "Ambiente Fiscal",
+  "empresas-grupo": "Empresas do Grupo", "sync-monitor": "Ambiente Fiscal",
   "agentes-ia": "Agentes IA", rh: "RH / Métricas",
   users: "Usuários", "admin-system": "Administração do Sistema", "cenarios-fiscais": "Cenários Fiscais",
   "acessos-delegacoes": "Acessos e Delegações",
@@ -473,7 +473,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#6366f1',
       icon: 'fas fa-cog',
       items: [
-        { id: 'omie-instances', label: 'Empresas do Grupo', icon: 'fas fa-building', available: canAccessUsers, badge: null },
+        { id: 'empresas-grupo', label: 'Empresas do Grupo', icon: 'fas fa-building', available: canAccessUsers, badge: null },
         { id: 'sync-monitor', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
         { id: 'agentes-ia', label: 'Agentes IA', icon: 'fas fa-robot', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
@@ -619,8 +619,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
 
-    if (itemId === 'omie-instances') {
-      navigate('/admin/omie-instances');
+    if (itemId === 'empresas-grupo') {
+      navigate('/admin/empresas');
       return;
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }

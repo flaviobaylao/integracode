@@ -91,7 +91,7 @@ export default function PurchaseRadar() {
   });
 
   const { data: instances = [] } = useQuery<any[]>({
-    queryKey: ["/api/omie/instances"],
+    queryKey: ["/api/companies"],
   });
 
   const { data: certificates = [] } = useQuery<any[]>({
@@ -680,9 +680,9 @@ export default function PurchaseRadar() {
                           <div>
                             <h4 className="font-medium text-amber-800 dark:text-amber-200">Configuração Necessária</h4>
                             <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                              Para ativar o radar automático, cada instância Omie precisa ter um CNPJ cadastrado e
+                              Para ativar o radar automático, cada empresa do grupo precisa ter um CNPJ cadastrado e
                               um certificado digital A1 válido configurado no módulo Indústria → Documentação.
-                              O certificado deve ter o mesmo CNPJ da instância.
+                              O certificado deve ter o mesmo CNPJ da empresa.
                             </p>
                           </div>
                         </div>
@@ -690,10 +690,10 @@ export default function PurchaseRadar() {
                     )}
 
                     <div>
-                      <h4 className="font-medium mb-2">Status das Instâncias ({certInstances.length})</h4>
+                      <h4 className="font-medium mb-2">Status das Empresas ({certInstances.length})</h4>
                       {certInstances.length === 0 ? (
                         <p className="text-sm text-muted-foreground">
-                          Nenhuma instância Omie ativa encontrada. Acesse Administração → Instâncias Omie para configurar.
+                          Nenhuma empresa ativa encontrada. Acesse Administração → Empresas do Grupo para configurar.
                         </p>
                       ) : (
                         <div className="space-y-2">

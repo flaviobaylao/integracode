@@ -141,7 +141,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   });
 
   const { data: instances } = useQuery({
-    queryKey: ['/api/omie/instances/public'],
+    queryKey: ['/api/companies/public'],
     retry: false,
   });
 
@@ -463,11 +463,8 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       // Mensagem principal de sucesso
       let description = customer ? "Cliente atualizado com sucesso!" : "Cliente criado com sucesso!";
       
-      // Adicionar informações sobre Omie e Sales Card (se disponíveis)
+      // Adicionar informações sobre o Sales Card (se disponíveis)
       const messages: string[] = [];
-      if (response._omieMessage) {
-        messages.push(response._omieMessage);
-      }
       if (response._salesCardMessage) {
         messages.push(response._salesCardMessage);
       }
@@ -496,7 +493,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   const inactivateCustomerMutation = useMutation({
     mutationFn: async () => {
       if (!customer) throw new Error("Cliente não encontrado");
-      // Inativação INTEGRA 2.0 (sem Omie): marca isActive=false e remove de Clientes Ativos,
+      // Inativação INTEGRA 2.0: marca isActive=false e remove de Clientes Ativos,
       // mantendo o cliente visível na Gestão com o selo "Inativo" (não some do sistema).
       return await apiRequest('POST', `/api/customers/bulk-inactivate`, { ids: [customer.id] });
     },
@@ -1255,7 +1252,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                         </FormLabel>
                         <Select value={field.value || '__none__'} onValueChange={(v) => field.onChange(v === '__none__' ? null : v)}>
                           <FormControl>
-                            <SelectTrigger data-testid="select-omie-instance">
+                            <SelectTrigger data-testid="select-empresa">
                               <SelectValue placeholder="Selecione a empresa/instância" />
                             </SelectTrigger>
                           </FormControl>

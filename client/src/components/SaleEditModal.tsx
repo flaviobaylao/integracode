@@ -277,7 +277,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     mutationFn: async (opts: string | { cardId: string; checkDuplicate?: boolean; dupJustificativa?: string }) => {
       const o = typeof opts === 'string' ? { cardId: opts } : opts;
       const scheduledBillingDate = (isScheduledOrder && scheduledOrderDate) ? scheduledOrderDate : undefined;
-      await apiRequest('POST', `/api/sales-cards/${o.cardId}/send-to-omie`, {
+      await apiRequest('POST', `/api/sales-cards/${o.cardId}/send-to-billing`, {
         scheduledBillingDate,
         // Só na 1ª tentativa pedimos a checagem de duplicidade; ao prosseguir
         // enviamos a justificativa (que dispensa nova checagem no backend).
@@ -671,10 +671,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       // Depois enviar para faturamento (com checagem de duplicação na 1ª tentativa)
       sendToOmieMutation.mutate({ cardId: card.id, checkDuplicate: true });
     } catch (error: any) {
-      console.error('Erro ao finalizar venda antes de enviar para Omie:', error);
+      console.error('Erro ao finalizar venda antes de enviar para faturamento:', error);
       toast({
         title: "Erro ao Finalizar",
-        description: error.message || "Não foi possível finalizar a venda antes de enviar para o Omie.",
+        description: error.message || "Não foi possível finalizar a venda antes de enviar para o faturamento.",
         variant: "destructive",
       });
     }
@@ -1809,7 +1809,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                 {isScheduledOrder ? (
                   <>📅 <strong>Agendar Pedido:</strong> Marca como concluído e agenda o pedido no faturamento (etapa "Agendado").</>
                 ) : (
-                  <>✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para faturamento no Omie.</>
+                  <>✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para o faturamento.</>
                 )}
               </p>
               <Button

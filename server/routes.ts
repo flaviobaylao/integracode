@@ -7645,26 +7645,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Estado do job de enriquecimento de NFs
-  const nfEnrichState = {
-    running: false,
-    totalByInstance: {} as Record<string, { total: number; checked: number; enriched: number }>,
-    startedAt: null as Date | null,
-    completedAt: null as Date | null,
-    error: null as string | null,
-  };
-
-  // Endpoint para estado atual do job de enriquecimento
-  app.get('/api/admin/enrich-all-nf/state', authenticateUser, requireRole(['admin']), (req: any, res) => {
-    res.json({
-      running: nfEnrichState.running,
-      totalByInstance: nfEnrichState.totalByInstance,
-      startedAt: nfEnrichState.startedAt?.toISOString() || null,
-      completedAt: nfEnrichState.completedAt?.toISOString() || null,
-      error: nfEnrichState.error,
-    });
-  });
-
   // Fix customers with incorrect delivery_weekdays (admin only)
   app.post('/api/admin/fix-customer-delivery-days', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
@@ -8043,121 +8023,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Listar pedidos pendentes de envio ao Omie
-  app.get('/api/sales-cards/pending-omie', authenticateUser, async (req: any, res) => {
-    try {
-      const user = req.currentUser;
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: "Acesso negado" });
-      }
-
-      const pendingCards = await db.select({
-        id: salesCards.id,
-        customerId: salesCards.customerId,
-        sellerId: salesCards.sellerId,
-        status: salesCards.status,
-        saleValue: salesCards.saleValue,
-        omieOrderId: salesCards.omieOrderId,
-        paymentMethod: salesCards.paymentMethod,
-        operationType: salesCards.operationType,
-        source: salesCards.source,
-        createdAt: salesCards.createdAt,
-        completedDate: salesCards.completedDate,
-        products: salesCards.products,
-      }).from(salesCards).where(
-        and(
-          eq(salesCards.status, 'completed'),
-          isNotNull(salesCards.saleValue),
-          isNull(salesCards.omieOrderId),
-          sql`CAST(${salesCards.saleValue} AS numeric) > 0`
-        )
-      ).orderBy(desc(salesCards.createdAt));
-
-      const pendingHistory = await db.select({
-        id: orderHistory.id,
-        salesCardId: orderHistory.salesCardId,
-        totalValue: orderHistory.totalValue,
-        omieOrderId: orderHistory.omieOrderId,
-        status: orderHistory.status,
-        orderDate: orderHistory.orderDate,
-        products: orderHistory.products,
-        sellerId: orderHistory.sellerId,
-        sellerName: orderHistory.sellerName,
-      }).from(orderHistory).where(
-        and(
-          inArray(orderHistory.status, ['completed', 'pending']),
-          isNull(orderHistory.omieOrderId),
-          sql`CAST(${orderHistory.totalValue} AS numeric) > 0`
-        )
-      ).orderBy(desc(orderHistory.orderDate));
-
-      const customerIds = [...new Set([
-        ...pendingCards.map(c => c.customerId),
-      ])].filter(Boolean);
-
-      const sellerIds = [...new Set([
-        ...pendingCards.map(c => c.sellerId),
-        ...pendingHistory.map(h => h.sellerId),
-      ])].filter(Boolean) as string[];
-
-      let customerMap = new Map<string, any>();
-      if (customerIds.length > 0) {
-        const custs = await db.select({
-          id: customers.id,
-          name: customers.name,
-          fantasyName: customers.fantasyName,
-          cnpj: customers.cnpj,
-        }).from(customers).where(inArray(customers.id, customerIds));
-        custs.forEach(c => customerMap.set(c.id, c));
-      }
-
-      let sellerMap = new Map<string, any>();
-      if (sellerIds.length > 0) {
-        const sellers = await db.select({
-          id: users.id,
-          firstName: users.firstName,
-          lastName: users.lastName,
-        }).from(users).where(inArray(users.id, sellerIds));
-        sellers.forEach(s => sellerMap.set(s.id, s));
-      }
-
-      const cardResults = pendingCards.map(card => {
-        const customer = customerMap.get(card.customerId);
-        const seller = sellerMap.get(card.sellerId);
-        return {
-          ...card,
-          type: 'sales_card' as const,
-          customerName: customer?.fantasyName || customer?.name || 'Desconhecido',
-          customerCnpj: customer?.cnpj || '',
-          sellerName: seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : 'Desconhecido',
-        };
-      });
-
-      const historyResults = pendingHistory.map(h => {
-        const seller = h.sellerId ? sellerMap.get(h.sellerId) : null;
-        return {
-          id: h.id,
-          salesCardId: h.salesCardId,
-          saleValue: h.totalValue,
-          omieOrderId: h.omieOrderId,
-          status: h.status,
-          createdAt: h.orderDate,
-          products: h.products,
-          type: 'order_history' as const,
-          sellerName: h.sellerName || (seller ? `${seller.firstName || ''} ${seller.lastName || ''}`.trim() : 'Desconhecido'),
-        };
-      });
-
-      res.json({
-        pendingCards: cardResults,
-        pendingHistory: historyResults,
-        totalPending: cardResults.length + historyResults.length,
-      });
-    } catch (error: any) {
-      console.error('Erro ao buscar pedidos pendentes Omie:', error);
-      res.status(500).json({ message: error.message });
-    }
-  });
 
   // Endpoint para buscar um card específico por ID
   app.get('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
@@ -14622,7 +14487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: 'Instância não encontrada' });
       }
 
-      const { name, displayName, appKey, appSecret, tagColor, isActive, isDefault, defaultParcelaCode } = validationResult.data as any;
+      const { name, displayName, appKey, appSecret, tagColor, isActive, isDefault } = validationResult.data as any;
 
       // Se está alterando o nome, verifica se já existe outra com este nome
       if (name && name !== existingInstance.name) {
@@ -14639,7 +14504,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (appSecret !== undefined) updateData.appSecret = typeof appSecret === 'string' ? appSecret.trim() : appSecret;
       if (tagColor !== undefined) updateData.tagColor = tagColor;
       if (isActive !== undefined) updateData.isActive = isActive;
-      if (defaultParcelaCode !== undefined) updateData.defaultParcelaCode = defaultParcelaCode || null;
 
       const instance = await storage.updateOmieInstance(req.params.id, updateData);
       

@@ -68,7 +68,7 @@ import SDRDigital from "@/pages/SDRDigital";
 import PedidoRapido from "@/pages/PedidoRapido";
 import VendasDigitais from "@/pages/VendasDigitais";
 import TelemarketingRotaDoDia from "@/pages/TelemarketingRotaDoDia";
-import OmieInstances from "@/pages/OmieInstances";
+import EmpresasGrupo from "@/pages/EmpresasGrupo";
 import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
 import BillingPipeline from "@/pages/BillingPipeline";
@@ -302,7 +302,9 @@ function Router() {
           <Route path="/telemarketing/rota-do-dia" component={TelemarketingRotaDoDia} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
-          <Route path="/admin/omie-instances" component={OmieInstances} />
+          <Route path="/admin/empresas" component={EmpresasGrupo} />
+          {/* alias legado (E7 remove) */}
+          <Route path="/admin/omie-instances" component={EmpresasGrupo} />
           <Route path="/admin/sync-monitor" component={SyncMonitor} />
           <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />

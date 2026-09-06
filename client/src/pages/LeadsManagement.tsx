@@ -141,7 +141,7 @@ export default function LeadsManagement() {
   }, [allUsers]);
 
   // Vendedores do filtro: todos que possuem ao menos um lead atribuído
-  // (inclui telemarketing/omie/inativos, ex.: Honest 2), rotulados por nome.
+  // (inclui telemarketing/inativos, ex.: Honest 2), rotulados por nome.
   const filterSellers = useMemo(() => {
     const ids = new Set<string>();
     (leads || []).forEach((l: any) => { if (l.assignedTo) ids.add(l.assignedTo); });

@@ -286,7 +286,7 @@ export default function SalesGoalsDashboard({ user }: SalesGoalsDashboardProps) 
             <p className="text-xs text-muted-foreground mt-1">
               {allEntries.filter(e => e.revenueGoal > 0).length > 0
                 ? `${allEntries.filter(e => e.revenueGoal > 0).length} com meta configurada`
-                : 'Com código Omie'}
+                : 'Sem meta configurada'}
             </p>
           </CardContent>
         </Card>

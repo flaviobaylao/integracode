@@ -102,7 +102,7 @@ export default function OverdueDebtsManagement() {
   };
 
   // Emite o DOCUMENTO de cobrança (boleto/PIX) do título — MESMO fluxo da aba Contas a
-  // Receber (usa o receivableId do título 2.0, não mais o código do Omie).
+  // Receber (usa o receivableId do título 2.0).
   const handleDownloadBoleto = async (documento: any, nomeCliente: string) => {
     const rid = documento?.receivableId;
     if (!rid) {
@@ -141,7 +141,7 @@ export default function OverdueDebtsManagement() {
   };
 
   // Débitos vencidos = MESMA lista de "vencida" da Contas a Receber (fonte local 2.0),
-  // agrupada por cliente. Não usa mais a sincronização do Omie.
+  // agrupada por cliente (server/divida-viva.ts).
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
     queryKey: ['/api/financial/overdue-debts'],
     staleTime: 1000 * 60 * 2, // 2 minutos - dados considerados "frescos"
@@ -223,7 +223,7 @@ export default function OverdueDebtsManagement() {
   };
 
   const formatDate = (dateString: string) => {
-    // A data já vem no formato brasileiro DD/MM/YYYY da API do Omie
+    // A data já vem no formato brasileiro DD/MM/YYYY
     // Apenas retornar como está, sem conversão
     if (!dateString) return '-';
     return dateString;
@@ -613,7 +613,7 @@ export default function OverdueDebtsManagement() {
                       <p className="font-medium">{selectedDebt.cliente.cnpj_cpf}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Código Cliente Omie</p>
+                      <p className="text-sm text-gray-600">Código do cliente</p>
                       <p className="font-medium">{selectedDebt.cliente.codigo_cliente_omie}</p>
                     </div>
                   </div>

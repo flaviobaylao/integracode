@@ -83,8 +83,7 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/rh": "Administração",
   "/admin/users": "Administração",
   "/admin/system": "Administração",
-  "/admin/omie-instances": "Administração",
-  "/admin/omie-stage-logs": "Administração",
+  "/admin/empresas": "Administração",
   "/admin/sync-monitor": "Administração",
 };
 

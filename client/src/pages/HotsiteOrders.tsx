@@ -120,7 +120,7 @@ export default function HotsiteOrders() {
   });
 
   // Mutation para enviar o pedido ao PIPELINE (faixa "Pedidos").
-  // Antes este botao mandava para o Omie; o faturamento hoje e 100% interno.
+  // O faturamento e 100% interno.
   const sendToPipelineMutation = useMutation({
     mutationFn: async (orderId: string) => {
       const response = await fetch(`/api/hotsite-orders/${orderId}/send-to-pipeline`, {

@@ -191,19 +191,19 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
   const sendToOmieMutation = useMutation({
     mutationFn: async (cardId: string) => {
-      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`);
+      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-billing`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/by-day'], exact: false });
       toast({
         title: "Sucesso",
-        description: "Pedido enviado para Omie com sucesso!",
+        description: "Pedido enviado para faturamento com sucesso!",
       });
     },
     onError: (error) => {
       toast({
-        title: "Erro ao Enviar para Omie",
+        title: "Erro ao enviar para faturamento",
         description: error.message,
         variant: "destructive",
       });
@@ -240,7 +240,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     if (!card?.saleValue || parseFloat(card.saleValue) === 0) {
       toast({
         title: "Aviso",
-        description: "Este card não possui uma venda registrada para enviar ao Omie.",
+        description: "Este card não possui uma venda registrada para enviar ao faturamento.",
         variant: "destructive",
       });
       return;
@@ -709,7 +709,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
             </Card>
           )}
 
-          {/* Integração Omie ERP removida do formulário da Rota do Dia (04/08/2026, a pedido). */}
+          {/* Bloco de integracao com ERP removido do formulario da Rota do Dia (04/08/2026). */}
         </div>
 
         {/* Botões para Pedidos Finalizados (venda concluída OU não-venda) */}

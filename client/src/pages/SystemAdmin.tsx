@@ -67,9 +67,6 @@ export default function SystemAdmin() {
   const [fixSellersResult, setFixSellersResult] = useState<any>(null);
 
   // Estados para enriquecimento completo de NFs
-  const [isEnrichingNf, setIsEnrichingNf] = useState(false);
-  const [nfEnrichState, setNfEnrichState] = useState<any>(null);
-  const nfEnrichPollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isLoading && user?.role !== 'admin') {
@@ -163,35 +160,6 @@ export default function SystemAdmin() {
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     } finally {
       setIsFixingSellers(false);
-    }
-  };
-
-  const handleEnrichAllNf = async () => {
-    if (isEnrichingNf) return;
-    setIsEnrichingNf(true);
-    setNfEnrichState({ running: true, totalByInstance: {}, startedAt: new Date().toISOString() });
-    try {
-      await apiRequest('POST', '/api/admin/enrich-all-nf', {});
-      toast({ title: 'Enriquecimento iniciado!', description: 'Processando em background. O progresso será atualizado automaticamente.' });
-      // Iniciar polling de progresso
-      nfEnrichPollRef.current = setInterval(async () => {
-        try {
-          const state = await apiRequest('GET', '/api/admin/enrich-all-nf/state');
-          setNfEnrichState(state);
-          if (!state.running) {
-            clearInterval(nfEnrichPollRef.current!);
-            nfEnrichPollRef.current = null;
-            setIsEnrichingNf(false);
-            if (!state.error) {
-              queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-              toast({ title: 'Enriquecimento concluído!', description: 'Números de NF preenchidos para todos os faturamentos.' });
-            }
-          }
-        } catch {}
-      }, 3000);
-    } catch (error: any) {
-      setIsEnrichingNf(false);
-      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     }
   };
 
@@ -521,7 +489,7 @@ export default function SystemAdmin() {
           </CardTitle>
           <CardDescription>
             Preenche os campos Vendedor (seller_id e seller_name) em TODOS os faturamentos de todas as
-            instâncias Omie, usando os dados de clientes como referência. Resolve o "-" na coluna Vendedor
+            empresas do grupo, usando os dados de clientes como referência. Resolve o "-" na coluna Vendedor
             e garante que as metas de faturamento contabilizem corretamente.
           </CardDescription>
         </CardHeader>
@@ -563,47 +531,6 @@ export default function SystemAdmin() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <RefreshCw className="h-5 w-5" />
-            Preencher Números de NF em Faturamentos
-          </CardTitle>
-          <CardDescription>
-            Busca o número de nota fiscal (NF) para todos os pedidos faturados que ainda não têm esse dado.
-            Processa todas as instâncias Omie em paralelo. Pode levar 20-40 minutos para processar milhares de pedidos.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              Processo roda em background sem travar o sistema. Acompanhe o progresso abaixo enquanto processa.
-            </AlertDescription>
-          </Alert>
-          {/* (E3, 05/set/2026) Botão desativado: buscava números de NF na API do Omie (rota em 410).
-              As NF-e do 2.0 nascem com número no próprio pipeline/SEFAZ. */}
-          <Button disabled className="bg-gray-300 text-gray-600" title="Desativado — Omie desligado em 05/set/2026">
-            <RefreshCw className="mr-2 h-4 w-4" />Desativado (Omie desligado)
-          </Button>
-          {nfEnrichState && (
-            <div className="space-y-2">
-              <div className={`text-sm font-medium ${nfEnrichState.running ? 'text-blue-600' : nfEnrichState.error ? 'text-red-600' : 'text-green-700'}`}>
-                {nfEnrichState.running ? 'Processando...' : nfEnrichState.error ? `Erro: ${nfEnrichState.error}` : 'Concluído!'}
-              </div>
-              {Object.entries(nfEnrichState.totalByInstance || {}).map(([label, data]: [string, any]) => (
-                <div key={label} className="flex items-center justify-between text-sm bg-gray-50 rounded px-3 py-2">
-                  <span className="font-medium">{label}</span>
-                  <span className="text-gray-600">
-                    {data.enriched} NFs preenchidas / {data.checked} verificadas
-                    {data.total > 0 && ` (${Math.round((data.checked / data.total) * 100)}%)`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -613,7 +540,7 @@ export default function SystemAdmin() {
           </CardTitle>
           <CardDescription>
             Mescla o registro duplicado "Ezequiel BSB" (omie-vendor-10457429564) com "Ezequiel DF"
-            (0e92757a), adicionando os códigos Omie do BSB e SERV ao usuário principal,
+            (0e92757a), adicionando os códigos de vendedor do BSB e SERV ao usuário principal,
             corrigindo clientes e faturamentos BSB. Executar apenas uma vez.
           </CardDescription>
         </CardHeader>

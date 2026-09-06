@@ -234,9 +234,9 @@ export default function Billings() {
     queryFn: () => fetch('/api/billings/sellers').then(res => res.json())
   });
 
-  // Query para buscar instâncias Omie (para filtro e badges)
+  // Query para buscar as empresas do grupo (para filtro e badges)
   const { data: omieInstances } = useQuery<OmieInstancePublic[]>({
-    queryKey: ['/api/omie/instances/public'],
+    queryKey: ['/api/companies/public'],
     staleTime: 5 * 60 * 1000,
   });
 
@@ -550,7 +550,7 @@ export default function Billings() {
 
             {omieInstances && omieInstances.length > 0 && (
               <div className="space-y-2">
-                <Label>Instância Omie</Label>
+                <Label>Empresa</Label>
                 <Select 
                   value={filters.omieInstanceId || 'all'}
                   onValueChange={(value) => handleFilterChange('omieInstanceId', value === 'all' ? undefined : value)}
