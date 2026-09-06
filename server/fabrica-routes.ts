@@ -9,6 +9,9 @@
 //  - Aba Manutenção: máquinas da fábrica com suas manutenções corretivas e
 //    preventivas; cada máquina aceita observações (dados técnicos) e fotos das
 //    partes e das manutenções realizadas.
+//  - (06/set) "permita anexar arquivos": qualquer arquivo (manual, NF de compra,
+//    laudo, planilha, PDF) na máquina ou numa manutenção — tabela machine_files,
+//    até 25MB, rotas /api/industria/maquinas/:id/arquivos e /maquinas/arquivos/:id.
 //
 // Mesmo desenho de company-documents-routes.ts / anexos de MP: binário em
 // base64 numa coluna própria, listagem NUNCA devolve a coluna data, arquivo
@@ -28,6 +31,8 @@ import { sql } from "drizzle-orm";
 
 const MAX_FOTO_BYTES = 12 * 1024 * 1024; // 12MB
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FOTO_BYTES } });
+const MAX_ARQUIVO_BYTES = 25 * 1024 * 1024; // 25MB — manuais, laudos, NFs, planilhas
+const uploadArquivo = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ARQUIVO_BYTES } });
 
 const STATUS_ITEM = ["pendente", "ok", "nao_conforme", "nao_aplicavel"];
 const TIPOS_MANUT = ["preventiva", "corretiva", "preditiva", "inspecao"];
@@ -95,6 +100,15 @@ export function ensureFabricaSchema(): Promise<void> {
         taken_at timestamptz DEFAULT now(),
         created_by varchar, created_by_name varchar, created_at timestamptz DEFAULT now())`);
       await run(`CREATE INDEX IF NOT EXISTS idx_machine_photos_machine ON machine_photos (machine_id, taken_at)`).catch(() => {});
+      // Arquivos de qualquer tipo (manual, NF de compra, laudo, planilha...) da máquina ou de uma manutenção
+      await run(`CREATE TABLE IF NOT EXISTS machine_files (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid()::varchar,
+        machine_id varchar NOT NULL,
+        maintenance_id varchar,
+        description text,
+        file_name text NOT NULL, mimetype text, file_size integer NOT NULL DEFAULT 0, data text,
+        created_by varchar, created_by_name varchar, created_at timestamptz DEFAULT now())`);
+      await run(`CREATE INDEX IF NOT EXISTS idx_machine_files_machine ON machine_files (machine_id, created_at)`).catch(() => {});
     })().catch((e: any) => { schemaReady = null; throw e; });
   }
   return schemaReady;
@@ -115,6 +129,12 @@ const podeEditar = (user: any) => ["admin", "coordinator"].includes(user?.role |
 function multerFoto(req: any, res: any, next: any) {
   upload.single("arquivo")(req, res, (err: any) => {
     if (err) return res.status(400).json({ message: err?.code === "LIMIT_FILE_SIZE" ? "Foto acima de 12MB" : (err?.message || "Falha no upload") });
+    next();
+  });
+}
+function multerArquivo(req: any, res: any, next: any) {
+  uploadArquivo.single("arquivo")(req, res, (err: any) => {
+    if (err) return res.status(400).json({ message: err?.code === "LIMIT_FILE_SIZE" ? "Arquivo acima de 25MB" : (err?.message || "Falha no upload") });
     next();
   });
 }
@@ -333,8 +353,9 @@ export function registerFabricaRoutes(app: Express) {
     // proxima preventiva sugerida = ultima preventiva + intervalo (quando os dois existem)
     proximaPreventivaSugerida: m.ultima_preventiva && m.preventive_interval_days
       ? new Date(new Date(toISO(m.ultima_preventiva) + "T00:00:00Z").getTime() + Number(m.preventive_interval_days) * 86400000).toISOString().slice(0, 10) : null,
-    manutencoes: Number(m.manutencoes || 0), fotos: Number(m.fotos || 0), observacoes: Number(m.observacoes || 0),
+    manutencoes: Number(m.manutencoes || 0), fotos: Number(m.fotos || 0), observacoes: Number(m.observacoes || 0), arquivos: Number(m.arquivos || 0),
   });
+  const mapArquivo = (f: any) => ({ id: f.id, maintenanceId: f.maintenance_id, description: f.description || "", fileName: f.file_name, mimetype: f.mimetype, fileSize: Number(f.file_size || 0), createdBy: f.created_by_name, createdAt: f.created_at });
   const SELECT_MAQ = sql`
     SELECT m.*,
       (SELECT MAX(done_date) FROM machine_maintenances x WHERE x.machine_id = m.id AND x.type = 'preventiva' AND x.status = 'realizada') AS ultima_preventiva,
@@ -342,6 +363,7 @@ export function registerFabricaRoutes(app: Express) {
       (SELECT MIN(scheduled_date) FROM machine_maintenances x WHERE x.machine_id = m.id AND x.status IN ('agendada','em_andamento') AND x.scheduled_date >= CURRENT_DATE) AS proxima_agendada,
       (SELECT COUNT(*) FROM machine_maintenances x WHERE x.machine_id = m.id) AS manutencoes,
       (SELECT COUNT(*) FROM machine_photos x WHERE x.machine_id = m.id) AS fotos,
+      (SELECT COUNT(*) FROM machine_files x WHERE x.machine_id = m.id) AS arquivos,
       (SELECT COUNT(*) FROM machine_notes x WHERE x.machine_id = m.id) AS observacoes
     FROM machines m`;
 
@@ -405,6 +427,7 @@ export function registerFabricaRoutes(app: Express) {
       if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" });
       const id = req.params.id;
       await db.execute(sql`DELETE FROM machine_photos WHERE machine_id = ${id}`);
+      await db.execute(sql`DELETE FROM machine_files WHERE machine_id = ${id}`);
       await db.execute(sql`DELETE FROM machine_maintenances WHERE machine_id = ${id}`);
       await db.execute(sql`DELETE FROM machine_notes WHERE machine_id = ${id}`);
       await db.execute(sql`DELETE FROM machines WHERE id = ${id}`);
@@ -422,7 +445,9 @@ export function registerFabricaRoutes(app: Express) {
       const notas: any = await db.execute(sql`SELECT * FROM machine_notes WHERE machine_id = ${maq.id} ORDER BY created_at DESC`);
       const man: any = await db.execute(sql`SELECT * FROM machine_maintenances WHERE machine_id = ${maq.id} ORDER BY COALESCE(done_date, scheduled_date) DESC NULLS LAST, created_at DESC`);
       const fotos: any = await db.execute(sql`SELECT id, machine_id, maintenance_id, caption, file_name, mimetype, file_size, taken_at, created_by_name, created_at FROM machine_photos WHERE machine_id = ${maq.id} ORDER BY taken_at DESC`);
+      const arqs: any = await db.execute(sql`SELECT id, maintenance_id, description, file_name, mimetype, file_size, created_by_name, created_at FROM machine_files WHERE machine_id = ${maq.id} ORDER BY created_at DESC`);
       res.json({
+        arquivos: (arqs.rows || []).map(mapArquivo),
         maquina: mapMaquina(maq),
         observacoes: (notas.rows || []).map((n: any) => ({ id: n.id, title: n.title || "", content: n.content, createdBy: n.created_by_name || n.created_by, createdAt: n.created_at })),
         manutencoes: (man.rows || []).map((x: any) => ({ id: x.id, type: x.type, status: x.status, scheduledDate: toISO(x.scheduled_date), doneDate: toISO(x.done_date), description: x.description || "", performedBy: x.performed_by || "", cost: x.cost != null ? Number(x.cost) : null, downtimeHours: x.downtime_hours != null ? Number(x.downtime_hours) : null, notes: x.notes || "", createdBy: x.created_by_name || x.created_by, createdAt: x.created_at })),
@@ -497,9 +522,52 @@ export function registerFabricaRoutes(app: Express) {
     try {
       await ensureFabricaSchema(); if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" });
       await db.execute(sql`UPDATE machine_photos SET maintenance_id = NULL WHERE maintenance_id = ${req.params.id}`);
+      await db.execute(sql`UPDATE machine_files SET maintenance_id = NULL WHERE maintenance_id = ${req.params.id}`);
       await db.execute(sql`DELETE FROM machine_maintenances WHERE id = ${req.params.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
+  // Arquivos (qualquer tipo) da máquina ou de uma manutenção (maintenanceId no form)
+  app.post("/api/industria/maquinas/:id/arquivos", multerArquivo, async (req: any, res) => {
+    try {
+      await ensureFabricaSchema();
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ message: "Envie o arquivo no campo 'arquivo'" });
+      const maq: any = await db.execute(sql`SELECT id FROM machines WHERE id = ${req.params.id}`);
+      if (!(maq.rows || [])[0]) return res.status(404).json({ message: "Máquina não encontrada" });
+      const u = quem(req);
+      const maintenanceId = str(req.body?.maintenanceId, 60);
+      const nome = Buffer.from(file.originalname || "arquivo", "latin1").toString("utf8").slice(0, 200);
+      const r: any = await db.execute(sql`
+        INSERT INTO machine_files (machine_id, maintenance_id, description, file_name, mimetype, file_size, data, created_by, created_by_name)
+        VALUES (${req.params.id}, ${maintenanceId}, ${str(req.body?.description, 300)}, ${nome}, ${file.mimetype || "application/octet-stream"}, ${file.size}, ${file.buffer.toString("base64")}, ${u.id}, ${u.nome})
+        RETURNING id, maintenance_id, description, file_name, mimetype, file_size, created_by_name, created_at`);
+      res.status(201).json({ ok: true, arquivo: mapArquivo((r.rows || [])[0]) });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.get("/api/industria/maquinas/arquivos/:id/download", async (req: any, res) => {
+    try {
+      await ensureFabricaSchema();
+      const r: any = await db.execute(sql`SELECT file_name, mimetype, data FROM machine_files WHERE id = ${req.params.id}`);
+      const row = (r.rows || [])[0];
+      if (!row || !row.data) return res.status(404).json({ message: "Arquivo não encontrado" });
+      const buf = Buffer.from(String(row.data), "base64");
+      const inline = /^(image\/|application\/pdf)/.test(String(row.mimetype || "")) && req.query.download !== "1";
+      res.setHeader("Content-Type", String(row.mimetype || "application/octet-stream"));
+      res.setHeader("Content-Length", String(buf.length));
+      res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(String(row.file_name || "arquivo"))}`);
+      res.setHeader("Cache-Control", "private, max-age=600");
+      res.end(buf);
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.patch("/api/industria/maquinas/arquivos/:id", async (req: any, res) => {
+    try { await ensureFabricaSchema(); await db.execute(sql`UPDATE machine_files SET description = ${str(req.body?.description, 300)} WHERE id = ${req.params.id}`); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.delete("/api/industria/maquinas/arquivos/:id", async (req: any, res) => {
+    try { await ensureFabricaSchema(); if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" }); await db.execute(sql`DELETE FROM machine_files WHERE id = ${req.params.id}`); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
   // Fotos da máquina (partes) ou de uma manutenção (maintenanceId no form)
