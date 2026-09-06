@@ -171,6 +171,7 @@ async function clienteBalcao(): Promise<string | null> {
       visitPeriodicity: cfg.periodicidade,
       virtualService: true,   // nao conta para meta de atendimento
       isActive: false,        // fica fora de rota e do radar de churn
+      inactivatedAt: new Date(), // (E2-E) invariante: inativo sempre com data (CHECK no banco)
     }) as any);
     console.log(`🆕 [LIO-PDV] Cliente do balcao criado: ${novo.id}`);
     return String(novo.id);

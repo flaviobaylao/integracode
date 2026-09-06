@@ -1,6 +1,10 @@
 -- E2-E — Trilha obrigatória de clientes (Integra 2.0) — 06/set/2026
--- Executar no editor "Database > Data > Query" do Railway (Ctrl+Enter), um bloco por vez.
--- O editor acrescenta LIMIT; por isso os blocos de escrita terminam em SELECT.
+-- COMO RODAR: os BLOCOS 2 e 3 têm CREATE FUNCTION/TRIGGER e ALTER TABLE — o editor "Query" do
+-- Railway acrescenta LIMIT e recusa. Rodar pelo psql: Railway > Postgres > Connect > copiar o
+-- comando "psql ..." (ou `railway connect Postgres`) e colar o arquivo inteiro, OU rodar
+-- `psql "$DATABASE_PUBLIC_URL" -f migrations/2026-09-06_e2e_trilha_clientes.sql`.
+-- Os BLOCOS 1 e 4 são SELECT/CTE e também rodam no editor Query.
+-- PRÉ-REQUISITO: migrations/2026-09-06_e2c_is_active_unico.sql já executada.
 -- Reversível: BLOCO R no fim.
 
 -- ============================================================================
@@ -18,8 +22,9 @@ WITH u AS (
 -- BLOCO 2 — trigger de auditoria: qualquer mudança de is_active, seller_id,
 --   cnpj, cpf, name ou fantasy_name em customers gera linha em
 --   customer_change_history, mesmo por SQL direto (index.ts, migrações,
---   scripts). Dedup: se o app já gravou a mesma mudança nos últimos 15 s,
---   a trigger não duplica.
+--   scripts). A trigger grava SEMPRE (source='trigger'); quando a mudança vem
+--   do app, o logCustomerChanges (customerAudit.ts) ASSUME essa linha nos 20 s
+--   seguintes, preenchendo ator/origem reais — sem duplicar.
 -- ============================================================================
 CREATE OR REPLACE FUNCTION trg_customers_audit_fn() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -28,35 +33,23 @@ DECLARE
   v_src   text := COALESCE(NULLIF(current_setting('integra.source', true), ''), 'trigger');
 BEGIN
   IF NEW.is_active IS DISTINCT FROM OLD.is_active THEN
-    IF NOT EXISTS (SELECT 1 FROM customer_change_history h WHERE h.customer_id = NEW.id AND h.field = 'isActive'
-                   AND h.new_value = CASE WHEN NEW.is_active THEN 'Sim' ELSE 'Não' END AND h.created_at > now() - interval '15 seconds') THEN
       INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_name, source)
       VALUES (NEW.id, 'isActive', 'Ativo', CASE WHEN OLD.is_active THEN 'Sim' ELSE 'Não' END,
               CASE WHEN NEW.is_active THEN 'Sim' ELSE 'Não' END, v_actor, v_src);
-    END IF;
   END IF;
   IF NEW.seller_id IS DISTINCT FROM OLD.seller_id THEN
-    IF NOT EXISTS (SELECT 1 FROM customer_change_history h WHERE h.customer_id = NEW.id AND h.field = 'sellerId'
-                   AND h.created_at > now() - interval '15 seconds') THEN
       INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_name, source)
       VALUES (NEW.id, 'sellerId', 'Vendedor', OLD.seller_id, NEW.seller_id, v_actor, v_src);
-    END IF;
   END IF;
   IF NEW.cnpj IS DISTINCT FROM OLD.cnpj OR NEW.cpf IS DISTINCT FROM OLD.cpf THEN
-    IF NOT EXISTS (SELECT 1 FROM customer_change_history h WHERE h.customer_id = NEW.id AND h.field IN ('cnpj','cpf')
-                   AND h.created_at > now() - interval '15 seconds') THEN
       INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_name, source)
       VALUES (NEW.id, CASE WHEN NEW.cnpj IS DISTINCT FROM OLD.cnpj THEN 'cnpj' ELSE 'cpf' END, 'Documento',
               COALESCE(OLD.cnpj, OLD.cpf), COALESCE(NEW.cnpj, NEW.cpf), v_actor, v_src);
-    END IF;
   END IF;
   IF NEW.name IS DISTINCT FROM OLD.name OR NEW.fantasy_name IS DISTINCT FROM OLD.fantasy_name THEN
-    IF NOT EXISTS (SELECT 1 FROM customer_change_history h WHERE h.customer_id = NEW.id AND h.field IN ('name','fantasyName')
-                   AND h.created_at > now() - interval '15 seconds') THEN
       INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_name, source)
       VALUES (NEW.id, CASE WHEN NEW.name IS DISTINCT FROM OLD.name THEN 'name' ELSE 'fantasyName' END, 'Nome',
               COALESCE(OLD.fantasy_name, OLD.name), COALESCE(NEW.fantasy_name, NEW.name), v_actor, v_src);
-    END IF;
   END IF;
   RETURN NEW;
 END $$;
