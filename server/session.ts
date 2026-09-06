@@ -26,7 +26,15 @@ export function getSession() {
     tableName: "sessions",
   });
 
-  const isHttps = process.env.NODE_ENV === "production";
+  // Cookie seguro: NODE_ENV=production é o sinal principal (o Railway sempre o define — sem
+  // ele o servidor nem serviria o build). BASE_URL https é a rede de segurança, para o cookie
+  // não cair silenciosamente para `secure:false; sameSite:lax` se alguém subir o serviço sem
+  // NODE_ENV. Em dev local (http://localhost) os dois são falsos e o cookie fica `lax`.
+  const isHttps = process.env.NODE_ENV === "production"
+    || String(process.env.BASE_URL || "").startsWith("https://");
+  if (process.env.NODE_ENV !== "production" && isHttps) {
+    console.warn("[SESSION] NODE_ENV != production, mas BASE_URL e https — cookie seguro mantido.");
+  }
 
   return session({
     secret: process.env.SESSION_SECRET,
