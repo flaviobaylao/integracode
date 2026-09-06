@@ -756,33 +756,6 @@ export const telemarketingQueue = pgTable("telemarketing_queue", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Overdue debts table - para armazenar débitos vencidos do Omie
-export const overdueDebts = pgTable("overdue_debts", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  clientId: varchar("client_id").notNull(), // ID do cliente no sistema
-  omieClientId: varchar("omie_client_id").notNull(), // ID do cliente no Omie
-  clientName: varchar("client_name").notNull(),
-  clientDocument: varchar("client_document"), // CPF/CNPJ
-  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
-  maxDaysOverdue: integer("max_days_overdue").notNull(),
-  vendedores: jsonb("vendedores").$type<number[]>(), // Array de códigos de vendedores
-  debts: jsonb("debts").$type<Array<{
-    numero_documento: string;
-    codigo_lancamento_omie: number;
-    valor: number;
-    data_vencimento: string;
-    dias_atraso: number;
-    observacao?: string;
-  }>>(),
-  
-  // Multi-tenant Omie: identificação da instância de origem
-  omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem
-  
-  lastSyncAt: timestamp("last_sync_at").defaultNow(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
 // Billing type enum  
 export const billingTypeEnum = pgEnum('billing_type', ['venda', 'troca', 'amostra']);
 
@@ -1570,9 +1543,6 @@ export type SalesCardWithRelations = SalesCard & {
 export type DeliveryDriver = typeof deliveryDrivers.$inferSelect;
 export type InsertDeliveryDriver = typeof deliveryDrivers.$inferInsert;
 
-export type OverdueDebt = typeof overdueDebts.$inferSelect;
-export type InsertOverdueDebt = typeof overdueDebts.$inferInsert;
-
 export type BlockedOrder = typeof blockedOrders.$inferSelect;
 export type InsertBlockedOrder = typeof blockedOrders.$inferInsert;
 export type BlockedOrderWithRelations = BlockedOrder & {
@@ -1658,28 +1628,6 @@ export const OPERATION_TYPE_LABELS = {
   'amostra': 'Amostra',
   'transferencia': 'Transferência'
 } as const;
-
-// Sync Status enum
-export const syncStatusEnum = pgEnum('sync_status_enum', ['success', 'error', 'in_progress']);
-
-// Sync Status table - tracks last synchronization timestamps for all sync operations
-export const syncStatus = pgTable("sync_status", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  syncType: varchar("sync_type").notNull().unique(), // 'omie_clients', 'omie_products', 'omie_billings', 'omie_vendors', 'omie_overdue_debts'
-  lastSyncAt: timestamp("last_sync_at").notNull(),
-  status: syncStatusEnum("status").notNull().default('success'),
-  message: text("message"),
-  recordsProcessed: integer("records_processed"),
-  totalRecords: integer("total_records"), // Total de registros a serem processados
-  currentProgress: integer("current_progress"), // Progresso atual (0-100 ou contagem)
-  lastFinishedAt: timestamp("last_finished_at"), // Data/hora da última conclusão bem-sucedida
-  syncDurationSeconds: integer("sync_duration_seconds"), // Duração da última sincronização em segundos
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const insertSyncStatusSchema = createInsertSchema(syncStatus).omit({ id: true, updatedAt: true });
-export type SyncStatus = typeof syncStatus.$inferSelect;
-export type InsertSyncStatus = z.infer<typeof insertSyncStatusSchema>;
 
 // Lead status enum
 export const leadStatusEnum = pgEnum('lead_status', ['pending', 'scheduled', 'visited', 'converted', 'discarded']);
@@ -2283,26 +2231,6 @@ export interface PendingDelivery {
 // ACTIVE CUSTOMERS - Lista de clientes ativos para rotas e visitas
 // ============================================================================
 
-// Tabela de uploads de lista de clientes ativos
-export const activeCustomerUploads = pgTable("active_customer_uploads", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  fileName: varchar("file_name").notNull(),
-  uploadedBy: varchar("uploaded_by").notNull(), // ID do usuário que fez upload
-  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
-  totalRecords: integer("total_records").notNull().default(0),
-  matchedRecords: integer("matched_records").notNull().default(0),
-  unmatchedRecords: integer("unmatched_records").notNull().default(0),
-  addedCustomers: integer("added_customers").notNull().default(0),
-  removedCustomers: integer("removed_customers").notNull().default(0),
-  keptCustomers: integer("kept_customers").notNull().default(0),
-  processingStatus: varchar("processing_status").notNull().default('pending'), // pending, processing, completed, error
-  errorMessage: text("error_message"),
-  fileHash: varchar("file_hash"), // Para evitar reprocessamento do mesmo arquivo
-}, (table) => [
-  index("idx_active_uploads_date").on(table.uploadedAt),
-  index("idx_active_uploads_status").on(table.processingStatus),
-]);
-
 // Tabela de clientes ativos (lista importada)
 export const activeCustomers = pgTable("active_customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2328,19 +2256,11 @@ export const activeCustomers = pgTable("active_customers", {
 ]);
 
 // Schemas e types para Active Customers
-export const insertActiveCustomerUploadSchema = createInsertSchema(activeCustomerUploads).omit({
-  id: true,
-  uploadedAt: true,
-});
-
 export const insertActiveCustomerSchema = createInsertSchema(activeCustomers).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
 });
-
-export type ActiveCustomerUpload = typeof activeCustomerUploads.$inferSelect;
-export type InsertActiveCustomerUpload = z.infer<typeof insertActiveCustomerUploadSchema>;
 
 export type ActiveCustomer = typeof activeCustomers.$inferSelect;
 export type InsertActiveCustomer = z.infer<typeof insertActiveCustomerSchema>;
@@ -2606,44 +2526,6 @@ export const insertVirtualAttendanceStatsSchema = createInsertSchema(virtualAtte
 
 export type VirtualAttendanceStat = typeof virtualAttendanceStats.$inferSelect;
 export type InsertVirtualAttendanceStat = z.infer<typeof insertVirtualAttendanceStatsSchema>;
-
-// ============================================================================
-// OMIE STAGE LOGS - Logs de transição de etapas de pedidos no Omie
-// ============================================================================
-
-export const omieStageLogs = pgTable("omie_stage_logs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  omieOrderId: bigint("omie_order_id", { mode: "number" }).notNull(),
-  orderNumber: varchar("order_number"),
-  customerName: varchar("customer_name"),
-  previousStage: varchar("previous_stage"),
-  newStage: varchar("new_stage").notNull(),
-  stageDescription: varchar("stage_description"),
-  trigger: varchar("trigger").notNull(),
-  triggerDetail: varchar("trigger_detail"),
-  routeId: varchar("route_id"),
-  stopId: varchar("stop_id"),
-  billingId: varchar("billing_id"),
-  driverEmail: varchar("driver_email"),
-  triggeredBy: varchar("triggered_by"),
-  success: boolean("success").notNull().default(true),
-  errorMessage: text("error_message"),
-  omieResponse: jsonb("omie_response"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_stage_logs_order").on(table.omieOrderId),
-  index("idx_stage_logs_created").on(table.createdAt),
-  index("idx_stage_logs_trigger").on(table.trigger),
-  index("idx_stage_logs_success").on(table.success),
-]);
-
-export const insertOmieStageLogSchema = createInsertSchema(omieStageLogs).omit({
-  id: true,
-  createdAt: true,
-});
-
-export type OmieStageLog = typeof omieStageLogs.$inferSelect;
-export type InsertOmieStageLog = z.infer<typeof insertOmieStageLogSchema>;
 
 // ============================================================================
 // NF-e (NOTA FISCAL ELETRÔNICA) MODULE

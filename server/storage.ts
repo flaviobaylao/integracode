@@ -13,15 +13,12 @@ import {
   locations,
   salesGoals,
   billings,
-  overdueDebts,
-  exportedReports,
   visitAgenda,
   dailyRoutes,
   routeCheckpoints,
   deliveryRoutes,
   deliveryRouteStops,
   deliveryDrivers,
-  syncStatus,
   leads,
   leadVisits,
   chatAgents,
@@ -38,7 +35,6 @@ import {
   whatsappConversationAnalysis,
   knowledgeBase,
   activeCustomers,
-  activeCustomerUploads,
   phoneNumberMappings,
   chatAiSettings,
   chatAiLogs,
@@ -68,10 +64,7 @@ import {
   type InsertSalesGoal,
   type Billing,
   type InsertBilling,
-  type ExportedReport,
-  type SyncStatus,
   type PendingDelivery,
-  type InsertSyncStatus,
   type Lead,
   type InsertLead,
   type LeadVisit,
@@ -106,8 +99,6 @@ import {
   type InsertKnowledgeBase,
   type ActiveCustomer,
   type InsertActiveCustomer,
-  type ActiveCustomerUpload,
-  type InsertActiveCustomerUpload,
   type ActiveCustomerWithVisits,
   type ChatAiSettings,
   type InsertChatAiSettings,
@@ -399,34 +390,12 @@ export interface IStorage {
   }>;
   markBillingsCancelledByOrderIds(omieOrderIds: string[]): Promise<number>;
 
-  // Overdue debts operations
-  getOverdueDebts(): Promise<any[]>;
+  // Debito vencido por documento (fonte unica: receivables)
   getOverdueDebtByDocument(document: string): Promise<any | undefined>;
-  syncOverdueDebts(debts: any[], forceEmpty?: boolean, omieInstanceId?: string | null): Promise<void>;
-  clearOverdueDebts(): Promise<void>;
 
-  // Exported reports operations
-  saveExportedReport(reportType: string, fileName: string, fileData: string, metadata?: any, createdBy?: string): Promise<any>;
-  getLatestExportedReport(reportType: string): Promise<any | undefined>;
-  deleteOldReports(reportType: string): Promise<void>;
-  
   // Billing stage operations
   getAllBillingsWithOrderId(): Promise<any[]>;
 
-  // Sync status operations
-  getSyncStatus(syncType: string): Promise<SyncStatus | undefined>;
-  getAllSyncStatus(): Promise<SyncStatus[]>;
-  upsertSyncStatus(syncStatus: InsertSyncStatus): Promise<SyncStatus>;
-  updateSyncStatus(syncType: string, data: { 
-    status: 'success' | 'error' | 'in_progress'; 
-    message?: string; 
-    recordsProcessed?: number;
-    totalRecords?: number;
-    currentProgress?: number;
-    lastFinishedAt?: Date;
-    lastSyncAt?: Date;
-  }): Promise<SyncStatus>;
-  
   // Lead operations
   getLeads(): Promise<Lead[]>;
   getLead(id: string): Promise<Lead | undefined>;
@@ -521,9 +490,6 @@ export interface IStorage {
   deleteActiveCustomer(id: string): Promise<void>;
   bulkUpsertActiveCustomers(customers: InsertActiveCustomer[]): Promise<{ added: number; updated: number }>;
   deactivateRemovedCustomers(uploadId: string, currentDocuments: string[], scopedInstanceIds?: string[]): Promise<number>;
-  getActiveCustomerUploads(): Promise<ActiveCustomerUpload[]>;
-  createActiveCustomerUpload(upload: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload>;
-  updateActiveCustomerUpload(id: string, upload: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload>;
   getCustomerByDocument(document: string): Promise<Customer | undefined>;
   isCustomerInActiveList(customerId: string): Promise<boolean>;
 
@@ -5462,11 +5428,7 @@ export class DatabaseStorage implements IStorage {
     console.log(`✅ Atualizados ${billingIds.length} billings para status: ${newStage}`);
   }
 
-  // Overdue debts operations
-  async getOverdueDebts(): Promise<any[]> {
-    return await db.select().from(overdueDebts).orderBy(desc(overdueDebts.lastSyncAt));
-  }
-
+  // Debito vencido por documento — fonte unica: receivables (server/divida-viva.ts)
   async getOverdueDebtByDocument(document: string): Promise<any | undefined> {
     // Normaliza REMOVENDO TODOS os não-dígitos (antes só tirava .-/, o que deixava
     // passar espaços e outros caracteres → falso-negativo que soltava devedores no
@@ -5518,98 +5480,6 @@ export class DatabaseStorage implements IStorage {
       console.log(`ℹ️ [STORAGE] Nenhum débito vencido (Contas a Receber) para: ${normalizedSearchDocument}`);
     }
     return undefined;
-  }
-
-  async syncOverdueDebts(debts: any[], forceEmpty: boolean = false, omieInstanceId?: string | null): Promise<void> {
-    console.log(`💾 [SYNC-DEBTS] Recebidos ${debts.length} débitos para sincronizar${omieInstanceId ? ` (instância: ${omieInstanceId})` : ''}`);
-    
-    // PROTEÇÃO: Não limpar dados existentes se receber array vazio (exceto se forceEmpty=true)
-    if (debts.length === 0 && !forceEmpty) {
-      console.log(`⚠️ [SYNC-DEBTS] Array vazio recebido - MANTENDO dados existentes para evitar perda de dados`);
-      console.log(`⚠️ [SYNC-DEBTS] Se realmente deseja limpar, use forceEmpty=true`);
-      return;
-    }
-    
-    // Mapear dados antes de limpar (para garantir que temos dados válidos)
-    const debtsToInsert = debts.map((debt, index) => {
-      const mapped = {
-        clientId: debt.cliente.codigo_cliente_omie?.toString() || 'unknown',
-        omieClientId: debt.cliente.codigo_cliente_omie?.toString() || '0',
-        clientName: debt.cliente.nome_fantasia || 'Cliente Desconhecido',
-        clientDocument: debt.cliente.cnpj_cpf || '',
-        totalAmount: debt.valorTotal.toString(),
-        maxDaysOverdue: debt.diasMaximoAtraso,
-        vendedores: debt.vendedores || [],
-        debts: debt.debitos || [],
-        omieInstanceId: omieInstanceId || null // Tag multi-tenant
-      };
-      
-      if (index === 0) {
-        console.log(`📝 [SYNC-DEBTS] Exemplo de débito mapeado:`, {
-          cliente: mapped.clientName,
-          documento: mapped.clientDocument,
-          valor: mapped.totalAmount,
-          diasAtraso: mapped.maxDaysOverdue,
-          omieInstanceId: mapped.omieInstanceId
-        });
-      }
-      
-      return mapped;
-    });
-    
-    // Se temos uma instância específica, limpar apenas débitos dessa instância
-    if (omieInstanceId) {
-      await db.delete(overdueDebts).where(eq(overdueDebts.omieInstanceId, omieInstanceId));
-      console.log(`🗑️ [SYNC-DEBTS] Débitos da instância ${omieInstanceId} removidos`);
-    } else {
-      // Limpar todos os débitos (comportamento legado)
-      await db.delete(overdueDebts);
-      console.log(`🗑️ [SYNC-DEBTS] Tabela overdue_debts limpa`);
-    }
-    
-    console.log(`💾 [SYNC-DEBTS] Inserindo ${debtsToInsert.length} débitos no banco...`);
-    await db.insert(overdueDebts).values(debtsToInsert);
-    console.log(`✅ [SYNC-DEBTS] ${debtsToInsert.length} débitos inseridos com sucesso`);
-  }
-
-  async clearOverdueDebts(): Promise<void> {
-    await db.delete(overdueDebts);
-  }
-
-  // Exported reports operations
-  async saveExportedReport(reportType: string, fileName: string, fileData: string, metadata?: any, createdBy?: string): Promise<ExportedReport> {
-    // Delete old reports of the same type before saving new one
-    await this.deleteOldReports(reportType);
-    
-    const [report] = await db
-      .insert(exportedReports)
-      .values({
-        reportType,
-        fileName,
-        fileData,
-        metadata,
-        createdBy
-      })
-      .returning();
-    
-    return report;
-  }
-
-  async getLatestExportedReport(reportType: string): Promise<ExportedReport | undefined> {
-    const [report] = await db
-      .select()
-      .from(exportedReports)
-      .where(eq(exportedReports.reportType, reportType))
-      .orderBy(desc(exportedReports.createdAt))
-      .limit(1);
-    
-    return report;
-  }
-
-  async deleteOldReports(reportType: string): Promise<void> {
-    await db
-      .delete(exportedReports)
-      .where(eq(exportedReports.reportType, reportType));
   }
 
   async getAllBillingsWithOrderId(): Promise<any[]> {
@@ -6036,102 +5906,6 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  // Sync status operations
-  async getSyncStatus(syncType: string): Promise<SyncStatus | undefined> {
-    const [status] = await db
-      .select()
-      .from(syncStatus)
-      .where(eq(syncStatus.syncType, syncType))
-      .limit(1);
-    return status;
-  }
-
-  async getAllSyncStatus(): Promise<SyncStatus[]> {
-    return await db
-      .select()
-      .from(syncStatus)
-      .orderBy(desc(syncStatus.lastSyncAt));
-  }
-
-  async upsertSyncStatus(data: InsertSyncStatus): Promise<SyncStatus> {
-    const [status] = await db
-      .insert(syncStatus)
-      .values(data)
-      .onConflictDoUpdate({
-        target: syncStatus.syncType,
-        set: {
-          ...data,
-          updatedAt: agora(),
-        },
-      })
-      .returning();
-    return status;
-  }
-
-  async updateSyncStatus(syncType: string, data: { 
-    status: 'success' | 'error' | 'in_progress'; 
-    message?: string; 
-    recordsProcessed?: number;
-    totalRecords?: number;
-    currentProgress?: number;
-    lastFinishedAt?: Date;
-    lastSyncAt?: Date;
-  }): Promise<SyncStatus> {
-    // Tentar atualizar primeiro
-    const [existing] = await db
-      .select()
-      .from(syncStatus)
-      .where(eq(syncStatus.syncType, syncType));
-    
-    if (existing) {
-      // Atualizar registro existente
-      const updateData: any = {
-        status: data.status,
-        updatedAt: agora()
-      };
-
-      if (data.message !== undefined) updateData.message = data.message;
-      if (data.recordsProcessed !== undefined) updateData.recordsProcessed = data.recordsProcessed;
-      if (data.totalRecords !== undefined) updateData.totalRecords = data.totalRecords;
-      if (data.currentProgress !== undefined) updateData.currentProgress = data.currentProgress;
-      if (data.lastFinishedAt !== undefined) updateData.lastFinishedAt = data.lastFinishedAt;
-      if (data.lastSyncAt !== undefined) updateData.lastSyncAt = data.lastSyncAt;
-      if ((data as any).syncDurationSeconds !== undefined) updateData.syncDurationSeconds = (data as any).syncDurationSeconds;
-      if (data.status === 'success') updateData.lastSyncAt = new Date();
-
-      const [status] = await db
-        .update(syncStatus)
-        .set(updateData)
-        .where(eq(syncStatus.syncType, syncType))
-        .returning();
-      return status;
-    } else {
-      // Criar novo registro
-      const insertData: any = {
-        syncType,
-        status: data.status,
-        lastSyncAt: data.lastSyncAt || new Date(),
-        updatedAt: new Date()
-      };
-
-      if (data.message !== undefined) insertData.message = data.message;
-      if (data.recordsProcessed !== undefined) insertData.recordsProcessed = data.recordsProcessed;
-      if (data.totalRecords !== undefined) insertData.totalRecords = data.totalRecords;
-      if (data.currentProgress !== undefined) insertData.currentProgress = data.currentProgress;
-      if (data.lastFinishedAt !== undefined) insertData.lastFinishedAt = data.lastFinishedAt;
-
-      const [status] = await db
-        .insert(syncStatus)
-        .values(insertData)
-        .returning();
-      return status;
-    }
-  }
-
-  async getSyncStatuses(): Promise<SyncStatus[]> {
-    return await db.select().from(syncStatus);
-  }
-  
   // Lead operations
   async getLeads(): Promise<Lead[]> {
     try {
@@ -7632,15 +7406,6 @@ export class DatabaseStorage implements IStorage {
     return toDeactivate.length;
   }
   
-  async getActiveCustomerUploads(): Promise<ActiveCustomerUpload[]> {
-    return await db.select().from(activeCustomerUploads).orderBy(desc(activeCustomerUploads.uploadedAt));
-  }
-  
-  async createActiveCustomerUpload(uploadData: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload> {
-    const [upload] = await db.insert(activeCustomerUploads).values(uploadData).returning();
-    return upload;
-  }
-
   // (E2-D leve, 06/set/2026) Fonte única: cadastro ativo ⇒ está na lista de Clientes Ativos.
   // Religa linha inativa (por id ou documento) ou cria a linha. Nunca desativa ninguém.
   // Roda todo dia 00:00 antes da geração de visitas e é idempotente.
@@ -7903,15 +7668,6 @@ export class DatabaseStorage implements IStorage {
       console.error(`❌ [VISIT-SCHEDULER] Erro crítico:`, error.message);
       return { processed: 0, generated: 0, errors: 1 };
     }
-  }
-  
-  async updateActiveCustomerUpload(id: string, uploadData: Partial<InsertActiveCustomerUpload>): Promise<ActiveCustomerUpload> {
-    const [upload] = await db
-      .update(activeCustomerUploads)
-      .set(uploadData)
-      .where(eq(activeCustomerUploads.id, id))
-      .returning();
-    return upload;
   }
   
   async getCustomerByDocument(document: string): Promise<Customer | undefined> {

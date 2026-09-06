@@ -20,7 +20,6 @@ import { registerPurchaseRoutes } from "./purchase-routes";
 import { registerCustomerStatementRoutes } from "./customer-statement-routes";
 import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
 import { registerOrderJournal } from "./order-journal";
-import { billingSyncState, isBillingSyncRunning } from "./billingSyncState";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
@@ -58,7 +57,6 @@ import {
   type InsertChatAiSettings,
   type ChatAiSettings,
   insertLeadSchema,
-  omieStageLogs,
   orderHistory,
   salesGoals,
 } from "@shared/schema";
@@ -162,26 +160,6 @@ function parseObjectStoragePath(path: string): { bucketName: string; objectName:
   };
 }
 
-// Helper function to save sync status after successful synchronization
-async function saveSyncStatus(
-  syncType: string, 
-  status: 'success' | 'error', 
-  recordsProcessed: number, 
-  message?: string
-) {
-  try {
-    await storage.upsertSyncStatus({
-      syncType,
-      lastSyncAt: agora(),
-      status,
-      message,
-      recordsProcessed
-    });
-    console.log(`✅ Sync status saved: ${syncType} - ${status} - ${recordsProcessed} records`);
-  } catch (error) {
-    console.error(`❌ Error saving sync status for ${syncType}:`, error);
-  }
-}
 
 
 // Helper function to determine if a visit is a LEAD (requires mandatory photo)
@@ -19053,42 +19031,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Estado global de sincronização para SSE
-
-  // Sync status endpoints
-  app.get('/api/sync-status', authenticateUser, async (req, res) => {
-    try {
-      const allStatus = await storage.getAllSyncStatus();
-      res.json(allStatus);
-    } catch (error: any) {
-      console.error('Erro ao buscar status de sincronização:', error);
-      res.status(500).json({ 
-        message: 'Erro ao buscar status de sincronização',
-        error: error.message 
-      });
-    }
-  });
-
-  app.get('/api/sync-status/:syncType', authenticateUser, async (req, res) => {
-    try {
-      const { syncType } = req.params;
-      const status = await storage.getSyncStatus(syncType);
-      
-      if (!status) {
-        return res.status(404).json({ 
-          message: 'Status de sincronização não encontrado' 
-        });
-      }
-      
-      res.json(status);
-    } catch (error: any) {
-      console.error('Erro ao buscar status de sincronização:', error);
-      res.status(500).json({ 
-        message: 'Erro ao buscar status de sincronização',
-        error: error.message 
-      });
-    }
-  });
 
   // ============================================================================
   // PHONEBOOK CONTACTS - Agenda telefônica da central de atendimento
@@ -23063,16 +23005,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   
-  // Histórico de uploads
-  app.get('/api/active-customers/uploads', authenticateUser, async (req: any, res) => {
-    try {
-      const uploads = await storage.getActiveCustomerUploads();
-      res.json(uploads);
-    } catch (error) {
-      console.error('Erro ao listar histórico de uploads:', error);
-      res.status(500).json({ message: 'Erro ao listar histórico de uploads' });
-    }
-  });
   
   app.post('/api/active-customers/upload', gone('importação de Clientes Ativos por planilha — decisão de 05/set/2026: a lista é derivada do cadastro, não de planilha'));
   

@@ -150,63 +150,6 @@ export default function OverdueDebtsManagement() {
     refetchOnWindowFocus: true, // Atualizar ao voltar para a aba
   });
 
-  // Query para buscar informações da última planilha salva
-  const { data: savedReportInfo, refetch: refetchReportInfo } = useQuery<any>({
-    queryKey: ['/api/reports/overdue-debts/info'],
-    staleTime: 1000 * 60, // 1 minuto
-  });
-
-  // Função para baixar a planilha salva
-  const downloadSavedReport = async () => {
-    try {
-      const response = await fetch('/api/reports/overdue-debts/latest', {
-        method: 'GET',
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Erro ao baixar planilha');
-      }
-
-      // Criar blob a partir da resposta
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      
-      // Obter nome do arquivo do header Content-Disposition
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let fileName = 'debitos-vencidos.xlsx';
-      if (contentDisposition) {
-        const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (fileNameMatch && fileNameMatch[1]) {
-          fileName = fileNameMatch[1];
-        }
-      }
-
-      // Criar link temporário e fazer download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      
-      // Limpar
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-
-      toast({
-        title: "Download concluído",
-        description: `Arquivo "${fileName}" baixado com sucesso.`,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Erro no download",
-        description: error.message || 'Erro ao baixar planilha salva',
-        variant: "destructive",
-      });
-    }
-  };
-
   const filteredDebts = overdueDebts?.debts?.filter(debt => {
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch = debt.cliente.nome_fantasia.toLowerCase().includes(searchLower) ||
