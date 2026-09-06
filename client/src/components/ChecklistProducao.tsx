@@ -15,7 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { carimbarFoto, agoraBR } from '@/lib/fotoCarimbo';
 import {
-  CheckCircle2, XCircle, Circle, MinusCircle, Camera, Trash2, Plus, Copy, RefreshCw, ChevronLeft, ChevronRight, Loader2, ImageIcon, CalendarDays,
+  CheckCircle2, XCircle, Circle, MinusCircle, Camera, Trash2, Plus, Copy, RefreshCw, ChevronLeft, ChevronRight, Loader2, ImageIcon, CalendarDays, Paperclip, FileText, Download,
 } from 'lucide-react';
 
 const jfetch = async (url: string, opts: any = {}) => {
@@ -28,6 +28,7 @@ const hojeISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Americ
 const fmtData = (iso: string) => { const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${y}`; };
 const fmtHora = (v: any) => v ? new Date(v).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 const somaDias = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const fmtBytes = (n: number) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
 const diaSemana = (iso: string) => new Date(iso + 'T12:00:00Z').toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'UTC' });
 
 const STATUS: Record<string, { label: string; cls: string; icon: any }> = {
@@ -47,6 +48,7 @@ export default function ChecklistProducao() {
   const [busy, setBusy] = useState<string | null>(null);
   const [fotoAberta, setFotoAberta] = useState<any>(null);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const arqRefs = useRef<Record<string, HTMLInputElement | null>>({}); // anexos de qualquer tipo
 
   const dias = useQuery({ queryKey: ['/api/industria/checklist/dias'], queryFn: () => jfetch('/api/industria/checklist/dias') });
   const ck = useQuery({ queryKey: ['/api/industria/checklist', data], queryFn: () => jfetch(`/api/industria/checklist/${data}`) });
@@ -106,6 +108,22 @@ export default function ChecklistProducao() {
       toast({ title: 'Foto anexada', description: `${it.description} — ${agoraBR()}` }); invalidate();
     } catch (e: any) { toast({ title: 'Erro ao anexar foto', description: String(e.message || e), variant: 'destructive' }); }
     finally { setBusy(null); }
+  };
+  const enviarArquivos = async (it: any, files: FileList | null) => {
+    const lista = Array.from(files || []); if (!lista.length) return;
+    setBusy('arq-' + it.id);
+    let okN = 0; const falhas: string[] = [];
+    for (const file of lista) {
+      const fd = new FormData(); fd.append('arquivo', file, file.name);
+      try { await jfetch(`/api/industria/checklist/itens/${it.id}/arquivos`, { method: 'POST', body: fd }); okN++; } catch (e: any) { falhas.push(`${file.name}: ${e.message || e}`); }
+    }
+    setBusy(null); invalidate();
+    toast({ title: `${okN} arquivo(s) anexado(s)`, description: falhas.length ? falhas.join('; ') : it.description, variant: falhas.length ? 'destructive' : undefined });
+  };
+  const removerArquivo = async (a: any) => {
+    if (!window.confirm(`Remover o arquivo "${a.fileName}"?`)) return;
+    try { await jfetch(`/api/industria/checklist/arquivos/${a.id}`, { method: 'DELETE' }); invalidate(); }
+    catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
   };
   const removerFoto = async (it: any) => {
     if (!window.confirm('Remover a foto deste item?')) return;
@@ -199,6 +217,12 @@ export default function ChecklistProducao() {
                         <Button size="sm" variant="outline" disabled={busy === 'foto-' + it.id} onClick={() => fileRefs.current[it.id]?.click()} title="Tirar/anexar foto (carimbada com data, hora e usuário)">
                           {busy === 'foto-' + it.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Camera className="h-4 w-4 mr-1" />} {it.hasPhoto ? 'Trocar foto' : 'Foto'}
                         </Button>
+                        <input type="file" multiple className="hidden"
+                          ref={(el) => { arqRefs.current[it.id] = el; }}
+                          onChange={(e) => { enviarArquivos(it, e.target.files); e.target.value = ''; }} />
+                        <Button size="sm" variant="outline" disabled={busy === 'arq-' + it.id} onClick={() => arqRefs.current[it.id]?.click()} title="Anexar arquivo de qualquer tipo (laudo, planilha, PDF... até 25MB)">
+                          {busy === 'arq-' + it.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Paperclip className="h-4 w-4 mr-1" />} Arquivo{(it.arquivos?.length || 0) > 0 ? ` (${it.arquivos.length})` : ''}
+                        </Button>
                         <Button size="sm" variant="ghost" className="text-red-500" onClick={() => removerItem(it)} title="Remover item"><Trash2 className="h-4 w-4" /></Button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-start">
@@ -210,6 +234,21 @@ export default function ChecklistProducao() {
                           </button>
                         )}
                       </div>
+                      {(it.arquivos?.length || 0) > 0 && (
+                        <div className="space-y-1">
+                          {it.arquivos.map((a: any) => (
+                            <div key={a.id} className="flex items-center gap-2 rounded border px-2 py-1 text-xs bg-white">
+                              <FileText className="h-4 w-4 text-gray-500 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <a href={`/api/industria/checklist/arquivos/${a.id}/download`} target="_blank" rel="noreferrer" className="font-medium text-blue-700 hover:underline truncate block" title={a.fileName}>{a.fileName}</a>
+                                <div className="text-[10px] text-gray-400 truncate">{fmtBytes(a.fileSize)} · {fmtHora(a.createdAt)}{a.createdBy ? ` · ${a.createdBy}` : ''}</div>
+                              </div>
+                              <a href={`/api/industria/checklist/arquivos/${a.id}/download?download=1`} title="Baixar"><Button size="sm" variant="ghost" className="h-6 px-1"><Download className="h-3 w-3" /></Button></a>
+                              <Button size="sm" variant="ghost" className="h-6 px-1 text-red-500" title="Remover" onClick={() => removerArquivo(a)}><Trash2 className="h-3 w-3" /></Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div className="text-[11px] text-gray-500 flex gap-3 flex-wrap">
                         <span>Criado {fmtHora(it.createdAt)}{it.createdBy ? ` por ${it.createdBy}` : ''}</span>
                         {it.checkedAt && <span>Registrado <b>{fmtHora(it.checkedAt)}</b>{it.checkedBy ? ` por ${it.checkedBy}` : ''}</span>}
