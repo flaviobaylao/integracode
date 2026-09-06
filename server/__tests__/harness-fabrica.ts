@@ -13,7 +13,7 @@ const t = (nome: string, cond: boolean, extra?: any) => { if (cond) { ok++; cons
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
 async function main() {
-  for (const tb of ['production_checklist_items', 'production_checklists', 'machine_photos', 'machine_maintenances', 'machine_notes', 'machines']) await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tb}`));
+  for (const tb of ['production_checklist_items', 'production_checklists', 'machine_files', 'machine_photos', 'machine_maintenances', 'machine_notes', 'machines']) await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tb}`));
   await db.execute(sql`DELETE FROM users WHERE id = 'h-admin'`);
   await db.execute(sql`INSERT INTO users (id, email, first_name, last_name, role, is_active) VALUES ('h-admin', 'harness@honest.test', 'Harness', 'Admin', 'admin', true)`);
 
@@ -137,16 +137,42 @@ async function main() {
     t('GET foto binario', r.status === 200 && r.buf!.equals(PNG));
     r = await call('GET', `/api/industria/maquinas/${maq.id}`);
     t('detalhe: 1 obs, 2 fotos (sem base64), 1 ligada a manutencao', r.json.observacoes.length === 1 && r.json.fotos.length === 2 && !('data' in r.json.fotos[0]) && r.json.fotos.filter((f: any) => f.maintenanceId === m1).length === 1, r.json.fotos);
+    console.log('\n7b) Arquivos (qualquer tipo) da maquina e da manutencao');
+    const PDF = Buffer.from('%PDF-1.4 fake');
+    const fda = (campos: Record<string, string> = {}, nome = 'manual-envasadora.pdf', tipo = 'application/pdf') => { const f = new FormData(); f.append('arquivo', new Blob([PDF], { type: tipo }), nome); for (const [k, v] of Object.entries(campos)) f.append(k, v); return f; };
+    r = await call('POST', `/api/industria/maquinas/${maq.id}/arquivos`, fda({ description: 'Manual do fabricante' }));
+    t('arquivo da maquina 201 (pdf, descricao, autor)', r.status === 201 && r.json?.arquivo?.fileName === 'manual-envasadora.pdf' && r.json.arquivo.description === 'Manual do fabricante' && r.json.arquivo.createdBy === 'Harness Admin' && r.json.arquivo.mimetype === 'application/pdf', r.json);
+    const arqMaq = r.json.arquivo.id;
+    r = await call('POST', `/api/industria/maquinas/${maq.id}/arquivos`, fda({ maintenanceId: m1 }, 'laudo.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'));
+    t('arquivo da manutencao 201 vinculado (xlsx aceito)', r.status === 201 && r.json?.arquivo?.maintenanceId === m1, r.json);
+    const arqMan = r.json.arquivo.id;
+    r = await call('POST', `/api/industria/maquinas/${maq.id}/arquivos`, {});
+    t('sem arquivo -> 400', r.status === 400);
+    r = await call('POST', `/api/industria/maquinas/nao-existe/arquivos`, fda());
+    t('maquina inexistente -> 404', r.status === 404);
+    r = await call('GET', `/api/industria/maquinas/arquivos/${arqMaq}/download`);
+    t('download pdf inline com o binario', r.status === 200 && r.ct.startsWith('application/pdf') && r.buf!.equals(PDF), r.ct);
+    const res2 = await fetch(`http://127.0.0.1:${port}/api/industria/maquinas/arquivos/${arqMan}/download?download=1`);
+    t('xlsx vem como attachment com nome', res2.status === 200 && /attachment/.test(res2.headers.get('content-disposition') || '') && /laudo\.xlsx/.test(res2.headers.get('content-disposition') || ''), res2.headers.get('content-disposition'));
+    r = await call('GET', `/api/industria/maquinas/${maq.id}`);
+    t('detalhe: 2 arquivos sem base64, 1 ligado a manutencao', r.json.arquivos.length === 2 && !('data' in r.json.arquivos[0]) && r.json.arquivos.filter((a: any) => a.maintenanceId === m1).length === 1, r.json.arquivos);
+    r = await call('GET', '/api/industria/maquinas');
+    t('lista conta arquivos', r.json.maquinas[0].arquivos === 2, r.json.maquinas[0]);
+    r = await call('PATCH', `/api/industria/maquinas/arquivos/${arqMaq}`, { description: 'Manual (rev. 2)' });
+    t('editar descricao', r.status === 200 && (await call('GET', `/api/industria/maquinas/${maq.id}`)).json.arquivos.find((a: any) => a.id === arqMaq).description === 'Manual (rev. 2)');
     r = await call('DELETE', `/api/industria/maquinas/manutencoes/${m1}`);
-    t('excluir manutencao solta a foto (nao apaga)', r.status === 200 && (await call('GET', `/api/industria/maquinas/${maq.id}`)).json.fotos.find((f: any) => f.id === fotoMan)?.maintenanceId === null);
+    t('excluir manutencao solta o arquivo (nao apaga)', r.status === 200 && (await call('GET', `/api/industria/maquinas/${maq.id}`)).json.arquivos.find((a: any) => a.id === arqMan)?.maintenanceId === null);
+    r = await call('DELETE', `/api/industria/maquinas/arquivos/${arqMan}`);
+    t('excluir arquivo', r.status === 200 && (await call('GET', `/api/industria/maquinas/arquivos/${arqMan}/download`)).status === 404);
+    t('excluir manutencao solta a foto (nao apaga)', (await call('GET', `/api/industria/maquinas/${maq.id}`)).json.fotos.find((f: any) => f.id === fotoMan)?.maintenanceId === null);
     r = await call('DELETE', `/api/industria/maquinas/observacoes/${obsId}`);
     t('excluir observacao', r.status === 200);
     r = await call('DELETE', `/api/industria/maquinas/fotos/${fotoMan}`);
     t('excluir foto', r.status === 200 && (await call('GET', `/api/industria/maquinas/fotos/${fotoMan}/arquivo`)).status === 404);
     r = await call('DELETE', `/api/industria/maquinas/${maq.id}`);
     t('excluir maquina limpa tudo', r.status === 200 && (await call('GET', '/api/industria/maquinas')).json.maquinas.length === 0);
-    const cnt: any = await db.execute(sql`SELECT (SELECT COUNT(*) FROM machine_photos)::int f, (SELECT COUNT(*) FROM machine_maintenances)::int m, (SELECT COUNT(*) FROM machine_notes)::int n`);
-    t('sem orfaos', cnt.rows[0].f === 0 && cnt.rows[0].m === 0 && cnt.rows[0].n === 0, cnt.rows[0]);
+    const cnt: any = await db.execute(sql`SELECT (SELECT COUNT(*) FROM machine_photos)::int f, (SELECT COUNT(*) FROM machine_maintenances)::int m, (SELECT COUNT(*) FROM machine_notes)::int n, (SELECT COUNT(*) FROM machine_files)::int a`);
+    t('sem orfaos (fotos, manutencoes, obs, arquivos)', cnt.rows[0].f === 0 && cnt.rows[0].m === 0 && cnt.rows[0].n === 0 && cnt.rows[0].a === 0, cnt.rows[0]);
   } finally { server.close(); }
   console.log(`\n${ok} ok, ${fail} falha(s)`);
   process.exit(fail ? 1 : 0);
