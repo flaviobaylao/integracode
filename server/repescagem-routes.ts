@@ -55,30 +55,31 @@ const REPESCAGEM_EXCLUDED_SELLER_IDS = new Set<string>([
 // Fora da janela e demais vendedores seguem a distribuição normal entre habilitados.
 const REP_ROUTE = {
   GILMAR: 'omie-vendor-3882132483',
-  JHONATAN: 'b35a9dd5-7a49-4c65-9002-01407b859961',
   CARLOS: 'omie-vendor-4325830798',
+  RADILTON: 'e9149282-adfc-448e-8d0e-a07765a06637',
+  JHONATAN: 'b35a9dd5-7a49-4c65-9002-01407b859961',
+  CLEBER: '883af1f5-0400-40b5-8add-091a29bbbe1e',
   LETICIA: '9faf8fa3-698d-4f90-9607-3f1ff7787a2b',
   ROBSON: 'omie-vendor-4077616122',
 };
-const REP_SPECIAL_MAX_DAYS = 3;
+// Roteamento especial por carteira (dono). SEM janela de dias: todo cliente destas
+// carteiras que cair em repescagem vai para o atendente-alvo (e também para o próprio
+// dono — "card duplo" na rota do dia, tratado na camada de rota).
+//  - Carlos, Gilmar, Radilton -> Letícia
+//  - Jhonatan, Cleber          -> Robson
+const REP_TO_LETICIA = new Set<string>([REP_ROUTE.CARLOS, REP_ROUTE.GILMAR, REP_ROUTE.RADILTON]);
+const REP_TO_ROBSON = new Set<string>([REP_ROUTE.JHONATAN, REP_ROUTE.CLEBER]);
 // Retorna o atendente-alvo (telemarketing) do roteamento especial, ou null.
-// carlosTarget: alvo pré-calculado (split 50/50 balanceado) para clientes do Carlos.
-function repescagemSpecialTarget(ownerId: string | null, daysSince: number, customerId: string, carlosTarget?: string): string | null {
-  if (!ownerId || daysSince > REP_SPECIAL_MAX_DAYS) return null;
-  if (ownerId === REP_ROUTE.GILMAR) return REP_ROUTE.LETICIA;
-  if (ownerId === REP_ROUTE.JHONATAN) return REP_ROUTE.ROBSON;
-  if (ownerId === REP_ROUTE.CARLOS) return carlosTarget || ((repShuffleKey(customerId) % 2 === 0) ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON);
+// (params daysSince/carlosTarget mantidos por compat. de assinatura; não usados.)
+function repescagemSpecialTarget(ownerId: string | null, _daysSince?: number, _customerId?: string, _carlosTarget?: string): string | null {
+  if (!ownerId) return null;
+  if (REP_TO_LETICIA.has(ownerId)) return REP_ROUTE.LETICIA;
+  if (REP_TO_ROBSON.has(ownerId)) return REP_ROUTE.ROBSON;
   return null;
 }
-// Split 50/50 EXATO dos clientes do Carlos (até 3 dias) entre Letícia e Robson,
-// determinístico por ordenação do customerId. Retorna Map customerId -> alvo.
-function repescagemCarlosSplit(cands: Array<{ customerId: string; daysSince?: number }>, ownerOf: (id: string) => string | null): Map<string, string> {
-  const ids = cands
-    .filter(c => ownerOf(c.customerId) === REP_ROUTE.CARLOS && ((c as any).daysSince ?? 999) <= REP_SPECIAL_MAX_DAYS)
-    .map(c => c.customerId).sort();
-  const m = new Map<string, string>();
-  ids.forEach((id, i) => m.set(id, i % 2 === 0 ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON));
-  return m;
+// Compat.: split não é mais usado (sem 50/50). Retorna mapa vazio.
+function repescagemCarlosSplit(_cands: Array<{ customerId: string; daysSince?: number }>, _ownerOf: (id: string) => string | null): Map<string, string> {
+  return new Map<string, string>();
 }
 
 function brTodayStr(): string {
@@ -1283,6 +1284,7 @@ async function ensureRepescagemLockCol(): Promise<void> {
   if (__ensuredLockCol) return;
   await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false"));
   await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked_date varchar"));
+  await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked_by varchar"));
   __ensuredLockCol = true;
 }
 
@@ -1457,9 +1459,11 @@ export function registerRepescagemRoutes(app: Express, opts: {
 
   // Reatribuir manualmente o atendente de uma alocação (admin). Aceita QUALQUER atendente
   // habilitado (override) e TRAVA a linha no dia para a redistribuição não reverter.
-  app.post('/api/repescagem/assignments/:id/reassign', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/repescagem/assignments/:id/reassign', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
     try {
       const { id } = req.params;
+      const actor = (req as any).currentUser;
+      const isAdmin = actor?.role === 'admin';
       const toUserId = String(req.body?.toUserId || '').trim();
       if (!toUserId) return res.status(400).json({ message: 'toUserId obrigatório' });
       const today = brTodayStr();
@@ -1467,6 +1471,10 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, id));
       if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
       const a = rows[0];
+      // Trava tem dono: se já travada hoje por OUTRO usuário, só ele ou admin pode trocar.
+      if ((a as any).locked && (a as any).lockedDate === today && (a as any).lockedBy && (a as any).lockedBy !== actor?.id && !isAdmin) {
+        return res.status(403).json({ message: 'Linha travada por outro usuário. Só quem travou ou um admin pode alterar.' });
+      }
       // Valida: atendente habilitado, elegível (vendedor/telemarketing) e não excluído.
       const enabled = await db.select().from(repescagemAttendants)
         .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
@@ -1476,17 +1484,17 @@ export function registerRepescagemRoutes(app: Express, opts: {
         return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
       }
       const phase = role === 'vendedor' ? 'external' : 'telemarketing';
-      // Atualiza a linha (pending) escolhida + TRAVA no dia.
+      // Atualiza a linha (pending) escolhida + TRAVA no dia (dono = quem trocou).
       await db.update(repescagemAssignments).set({
-        assignedUserId: toUserId, phase, locked: true, lockedDate: today, assignedAt: new Date(), updatedAt: new Date(),
+        assignedUserId: toUserId, phase, locked: true, lockedDate: today, lockedBy: actor?.id || null, assignedAt: new Date(), updatedAt: new Date(),
       }).where(eq(repescagemAssignments.id, id));
       // Propaga p/ a rota do dia (in_route do MESMO cliente hoje), mantendo consistência.
       await db.execute(sql`UPDATE repescagem_assignments
-        SET assigned_user_id = ${toUserId}, phase = ${phase}, locked = true, locked_date = ${today}, updated_at = now()
+        SET assigned_user_id = ${toUserId}, phase = ${phase}, locked = true, locked_date = ${today}, locked_by = ${actor?.id || null}, updated_at = now()
         WHERE customer_id = ${a.customerId} AND status = 'in_route' AND draw_date = ${today}`);
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId: id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId,
-        action: 'reassigned', reason: 'Troca manual pelo admin (linha travada no dia)',
+        action: 'reassigned', reason: 'Troca manual (linha travada no dia)',
       });
       res.json({ ok: true, assignmentId: id, assignedUserId: toUserId, phase, locked: true });
     } catch (e: any) {
@@ -1497,8 +1505,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
 
   // Atribuir manualmente um candidato SEM atribuição (admin) — cria a alocação (pending)
   // com o atendente escolhido e TRAVA no dia. Aceita qualquer atendente habilitado.
-  app.post('/api/repescagem/assign', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/repescagem/assign', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
     try {
+      const actor = (req as any).currentUser;
       const customerId = String(req.body?.customerId || '').trim();
       const toUserId = String(req.body?.toUserId || '').trim();
       const lastRedDate = String(req.body?.lastRedDate || '').trim() || brTodayStr();
@@ -1522,18 +1531,18 @@ export function registerRepescagemRoutes(app: Express, opts: {
       if (existing.length > 0) {
         assignmentId = existing[0].id;
         await db.update(repescagemAssignments).set({
-          assignedUserId: toUserId, phase, locked: true, lockedDate: today, assignedAt: new Date(), updatedAt: new Date(),
+          assignedUserId: toUserId, phase, locked: true, lockedDate: today, lockedBy: actor?.id || null, assignedAt: new Date(), updatedAt: new Date(),
         }).where(eq(repescagemAssignments.id, assignmentId));
       } else {
         const ins = await db.insert(repescagemAssignments).values({
           customerId, lastRedDate, assignedUserId: toUserId, status: 'pending', phase,
-          carteiraSellerId, locked: true, lockedDate: today,
+          carteiraSellerId, locked: true, lockedDate: today, lockedBy: actor?.id || null,
         }).returning();
         assignmentId = ins[0].id;
       }
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId, customerId, fromUserId: null, toUserId,
-        action: 'assigned', reason: 'Atribuição manual pelo admin (linha travada no dia)',
+        action: 'assigned', reason: 'Atribuição manual (linha travada no dia)',
       });
       res.json({ ok: true, assignmentId, assignedUserId: toUserId, phase, locked: true });
     } catch (e: any) {
@@ -1542,19 +1551,26 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
-  // Travar / destravar UMA linha (admin). A trava vale só para o dia vigente.
-  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  // Travar / destravar UMA linha (qualquer usuário). A trava vale só para o dia vigente.
+  // Quem trava vira "dono" da trava; só ele ou um admin conseguem destravar.
+  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
     try {
       const { id } = req.params;
+      const actor = (req as any).currentUser;
+      const isAdmin = actor?.role === 'admin';
       const locked = req.body?.locked === true || String(req.body?.locked) === 'true';
       const today = brTodayStr();
       await ensureRepescagemLockCol();
       const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, id));
       if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
       const a = rows[0];
+      // DESTRAVAR: só o dono da trava (locked_by) ou um admin.
+      if (!locked && (a as any).locked && (a as any).lockedDate === today && (a as any).lockedBy && (a as any).lockedBy !== actor?.id && !isAdmin) {
+        return res.status(403).json({ message: 'Só quem travou ou um admin pode destravar esta linha.' });
+      }
       // Aplica em todas as linhas do MESMO cliente hoje (pending + in_route), p/ UI e rota baterem.
       await db.execute(sql`UPDATE repescagem_assignments
-        SET locked = ${locked}, locked_date = ${locked ? today : null}, updated_at = now()
+        SET locked = ${locked}, locked_date = ${locked ? today : null}, locked_by = ${locked ? (actor?.id || null) : null}, updated_at = now()
         WHERE customer_id = ${a.customerId} AND (status = 'pending' OR (status = 'in_route' AND draw_date = ${today}))`);
       res.json({ ok: true, assignmentId: id, locked });
     } catch (e: any) {
@@ -1962,10 +1978,16 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const sellerNameById = new Map(sellersList.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
 
       const today = brTodayStr();
+      const actor = (req as any).currentUser;
+      const isAdmin = actor?.role === 'admin';
       const assignedCustomerIds = new Set(pending.map(p => p.customerId));
       const result = pending.map(p => {
         const c = customerById.get(p.customerId);
         const days = Math.floor((new Date(today).getTime() - new Date(p.lastRedDate).getTime()) / 86400000);
+        const isLocked = !!(p as any).locked && (p as any).lockedDate === today;
+        const lockedBy = isLocked ? ((p as any).lockedBy || null) : null;
+        // Destravar: admin sempre; o dono da trava; travas do sistema (sem dono) só admin.
+        const canUnlock = isAdmin || (!!lockedBy && lockedBy === actor?.id);
         return {
           assignmentId: p.id,
           customerId: p.customerId,
@@ -1984,7 +2006,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
           assignedUserName: userNameById.get(p.assignedUserId) || p.assignedUserId,
           assignedAt: p.assignedAt,
           unassigned: false,
-          locked: !!(p as any).locked && (p as any).lockedDate === today,
+          locked: isLocked,
+          lockedBy,
+          canUnlock,
         };
       });
 
@@ -2041,6 +2065,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
             assignedAt: '' as any,
             unassigned: true,
             locked: false,
+            lockedBy: null,
+            canUnlock: isAdmin,
           });
         }
       }
