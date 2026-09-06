@@ -938,9 +938,15 @@ export class DatabaseStorage implements IStorage {
       prevSellerId = (prev[0]?.sellerId ?? undefined) as any;
     }
 
+    // (E2-E, 06/set/2026) Invariante: inativo sempre com inactivated_at (CHECK no banco);
+    // reativado limpa a data. Vale para qualquer caminho que passe por aqui (PATCH/PUT/IA).
+    const extra: any = {};
+    if ((customer as any).isActive === false && !(customer as any).inactivatedAt) extra.inactivatedAt = agora();
+    if ((customer as any).isActive === true) extra.inactivatedAt = null;
+
     const [updatedCustomer] = await db
       .update(customers)
-      .set({ ...customer, updatedAt: agora() })
+      .set({ ...customer, ...extra, updatedAt: agora() })
       .where(eq(customers.id, id))
       .returning();
 
@@ -7633,6 +7639,39 @@ export class DatabaseStorage implements IStorage {
   async createActiveCustomerUpload(uploadData: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload> {
     const [upload] = await db.insert(activeCustomerUploads).values(uploadData).returning();
     return upload;
+  }
+
+  // (E2-D leve, 06/set/2026) Fonte única: cadastro ativo ⇒ está na lista de Clientes Ativos.
+  // Religa linha inativa (por id ou documento) ou cria a linha. Nunca desativa ninguém.
+  // Roda todo dia 00:00 antes da geração de visitas e é idempotente.
+  async syncActiveCustomersFromCadastro(): Promise<{ foraDaLista: number; religados: number; criados: number; semDocumento: number }> {
+    const r: any = await db.execute(sql`
+      WITH ativos AS (
+        SELECT c.id, regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc,
+               CASE WHEN COALESCE(c.cpf,'')<>'' THEN 'cpf' ELSE 'cnpj' END AS tipo,
+               COALESCE(NULLIF(c.fantasy_name,''),c.name) AS nome, c.omie_instance_id, c.latitude, c.longitude
+        FROM customers c
+        WHERE c.is_active=true
+          AND COALESCE(c.is_lead,false)=false AND COALESCE(c.is_supplier,false)=false AND COALESCE(c.virtual_service,false)=false
+          AND NOT EXISTS (SELECT 1 FROM active_customers a WHERE a.is_active=true
+                          AND (a.customer_id=c.id OR regexp_replace(COALESCE(a.document,''),'[^0-9]','','g')=regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g')))
+      ), religa AS (
+        UPDATE active_customers a SET is_active=true, deactivated_at=NULL, updated_at=now(), match_status='matched', customer_id=x.id
+        FROM ativos x
+        WHERE a.is_active=false AND (a.customer_id=x.id OR (x.doc<>'' AND regexp_replace(COALESCE(a.document,''),'[^0-9]','','g')=x.doc))
+        RETURNING a.customer_id
+      ), cria AS (
+        INSERT INTO active_customers (document, document_type, fantasy_name_imported, customer_id, omie_instance_id, upload_id, match_status, is_active, latitude, longitude)
+        SELECT x.doc, x.tipo, x.nome, x.id, x.omie_instance_id, 'sync-gestao', 'matched', true, x.latitude, x.longitude
+        FROM ativos x
+        WHERE x.doc<>'' AND NOT EXISTS (SELECT 1 FROM religa r WHERE r.customer_id=x.id)
+          AND NOT EXISTS (SELECT 1 FROM active_customers a WHERE a.customer_id=x.id)
+        RETURNING id
+      )
+      SELECT (SELECT count(*) FROM ativos)::int AS fora_da_lista, (SELECT count(*) FROM religa)::int AS religados,
+             (SELECT count(*) FROM cria)::int AS criados, (SELECT count(*) FROM ativos WHERE doc='')::int AS sem_documento`);
+    const row: any = ((r.rows || r) as any[])[0] || {};
+    return { foraDaLista: Number(row.fora_da_lista || 0), religados: Number(row.religados || 0), criados: Number(row.criados || 0), semDocumento: Number(row.sem_documento || 0) };
   }
 
   async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number; corrected?: number }> {
