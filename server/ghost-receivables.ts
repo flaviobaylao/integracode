@@ -27,20 +27,20 @@
 import { sql, type SQL } from "drizzle-orm";
 
 /** Número da NF normalizado a partir do title_number: só dígitos, sem zeros à esquerda. */
-function nfNormalizado(expr: SQL): SQL {
-  return sql`LTRIM(REGEXP_REPLACE(COALESCE(${expr}, ''), '[^0-9]', '', 'g'), '0')`;
+function nfNormalizado(expr: string): string {
+  return `LTRIM(REGEXP_REPLACE(COALESCE(${expr}, ''), '[^0-9]', '', 'g'), '0')`;
 }
 
 /**
- * Condição "este título NÃO é fantasma", para entrar no WHERE de qualquer leitura
- * de débito. `alias` é o apelido da tabela `receivables` na query de fora.
- *
- *   FROM receivables r WHERE ... AND ${naoEFantasma('r')}
+ * Versão TEXTO (SQL puro, sem parâmetros) da condição "este título NÃO é
+ * fantasma". Existe porque há leitores que montam a query como string
+ * (reportEngine, mkt-recompra) e não como template `sql`. A versão `sql`
+ * abaixo é só um `sql.raw` desta — regra única.
  */
-export function naoEFantasma(alias: string): SQL {
-  const a = sql.raw(alias);
-  const nfDeste = nfNormalizado(sql`${a}.title_number`);
-  return sql`NOT (
+export function naoEFantasmaText(alias: string): string {
+  const a = alias;
+  const nfDeste = nfNormalizado(`${a}.title_number`);
+  return `NOT (
     ${a}.fiscal_invoice_id IS NULL
     AND ${a}.sales_card_id IS NULL
     AND COALESCE(${a}.amount_paid, 0) = 0
@@ -52,10 +52,20 @@ export function naoEFantasma(alias: string): SQL {
         AND anc.id <> ${a}.id
         AND anc.fiscal_invoice_id IS NOT NULL
         AND COALESCE(anc.omie_instance_id::text, '') = COALESCE(${a}.omie_instance_id::text, '')
-        AND ${nfNormalizado(sql`anc.title_number`)} = ${nfDeste}
+        AND ${nfNormalizado('anc.title_number')} = ${nfDeste}
         AND anc.created_at < ${a}.created_at - INTERVAL '1 day'
     )
   )`;
+}
+
+/**
+ * Condição "este título NÃO é fantasma", para entrar no WHERE de qualquer leitura
+ * de débito. `alias` é o apelido da tabela `receivables` na query de fora.
+ *
+ *   FROM receivables r WHERE ... AND ${naoEFantasma('r')}
+ */
+export function naoEFantasma(alias: string): SQL {
+  return sql.raw(naoEFantasmaText(alias));
 }
 
 /**

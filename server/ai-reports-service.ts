@@ -1,6 +1,7 @@
 import { db } from "./db";
-import { customers, overdueDebts, billings, chatAiReports } from "@shared/schema";
-import { eq, sql, desc, and, gte, isNull, isNotNull } from "drizzle-orm";
+import { customers, chatAiReports } from "@shared/schema";
+import { eq, sql } from "drizzle-orm";
+import { listarDebitosVencidosPorCliente } from "./overdue-debts-por-cliente";
 
 interface ReportResult {
   reportType: string;
@@ -66,8 +67,11 @@ export async function generateCustomersReport(): Promise<ReportResult> {
 
 export async function generateOverdueDebtsReport(): Promise<ReportResult> {
   console.log("📊 [AI-REPORTS] Gerando relatório de débitos vencidos...");
-  
-  const allDebts = await db.select().from(overdueDebts);
+
+  // E4 (06/set/2026): fonte 2.0 (receivables) com a REGRA ÚNICA de débito vivo
+  // (server/divida-viva.ts), agrupada por cliente — NÃO mais `overdue_debts`
+  // (sync do Omie, congelado em 26/ago). Mesmo texto de saída de antes.
+  const { debts: allDebts, totalAmount } = await listarDebitosVencidosPorCliente();
 
   const lines: string[] = [
     `# DÉBITOS VENCIDOS - HONEST SUCOS`,
@@ -80,25 +84,26 @@ export async function generateOverdueDebtsReport(): Promise<ReportResult> {
   let totalDebt = 0;
 
   for (const debt of allDebts) {
-    const amount = parseFloat(debt.totalAmount?.toString() || '0');
+    const amount = Number(debt.valorTotal || 0);
     totalDebt += amount;
     
-    lines.push(`## ${debt.clientName}`);
-    lines.push(`- Doc: ${debt.clientDocument || 'N/D'}`);
+    lines.push(`## ${debt.cliente.nome_fantasia}`);
+    lines.push(`- Doc: ${debt.cliente.cnpj_cpf || 'N/D'}`);
     lines.push(`- Total em débito: R$ ${amount.toFixed(2)}`);
-    lines.push(`- Dias de atraso máximo: ${debt.maxDaysOverdue} dias`);
+    lines.push(`- Dias de atraso máximo: ${debt.diasMaximoAtraso} dias`);
+    if (debt.vendedores.length > 0) lines.push(`- Vendedor: ${debt.vendedores.join(', ')}`);
     
-    if (debt.debts && Array.isArray(debt.debts)) {
+    if (debt.debitos.length > 0) {
       lines.push(`- Detalhes dos títulos:`);
-      for (const d of debt.debts) {
-        lines.push(`  * Doc ${d.numero_documento}: R$ ${d.valor?.toFixed(2)} (venc: ${d.data_vencimento}, ${d.dias_atraso} dias atraso)`);
+      for (const d of debt.debitos) {
+        lines.push(`  * Doc ${d.numero_documento_fiscal || d.numero_documento}: R$ ${Number(d.valor || 0).toFixed(2)} (venc: ${d.data_vencimento}, ${d.dias_atraso} dias atraso)`);
       }
     }
     
     lines.push(``);
   }
 
-  lines.splice(3, 0, `Valor total em débitos: R$ ${totalDebt.toFixed(2)}`);
+  lines.splice(3, 0, `Valor total em débitos: R$ ${(totalAmount || totalDebt).toFixed(2)}`);
 
   const content = lines.join('\n');
   console.log(`✅ [AI-REPORTS] Relatório de débitos gerado: ${allDebts.length} clientes, R$ ${totalDebt.toFixed(2)} total`);
@@ -112,20 +117,33 @@ export async function generateOverdueDebtsReport(): Promise<ReportResult> {
 
 export async function generateBillingsReport(): Promise<ReportResult> {
   console.log("📊 [AI-REPORTS] Gerando relatório de faturamentos...");
-  
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  const recentBillings = await db
-    .select()
-    .from(billings)
-    .where(
-      and(
-        gte(billings.orderDate, thirtyDaysAgo),
-        eq(billings.isCancelled, false)
-      )
-    )
-    .orderBy(desc(billings.orderDate));
+
+  // E4 (06/set/2026): faturamento VIGENTE = billing_pipeline (estágio faturado ou
+  // posterior) + fiscal_invoices (número/valor da NF quando há NF-e autorizada).
+  // A tabela `billings` é histórico do Omie (termina em 22/jun/2026) e não é mais lida.
+  // A coluna `stage` é enum billing_pipeline_stage: comparar como texto.
+  const r: any = await db.execute(sql`
+    SELECT bp.id,
+           bp.customer_name      AS customer_fantasy_name,
+           bp.customer_document  AS customer_document,
+           bp.created_at         AS order_date,
+           bp.invoice_number     AS bp_invoice_number,
+           fi.invoice_number     AS fi_invoice_number,
+           COALESCE(fi.total_invoice, bp.sale_value, 0)::float AS total_value
+    FROM billing_pipeline bp
+    LEFT JOIN LATERAL (
+      SELECT fi.invoice_number, fi.total_invoice
+      FROM fiscal_invoices fi
+      WHERE fi.status = 'authorized'
+        AND fi.invoice_number = NULLIF(regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint
+      ORDER BY fi.created_at DESC
+      LIMIT 1
+    ) fi ON true
+    WHERE bp.stage::text IN ('faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue')
+      AND bp.created_at >= now() - interval '30 days'
+    ORDER BY bp.created_at DESC
+  `);
+  const recentBillings: any[] = r.rows || [];
 
   const customerSummary: Record<string, { 
     name: string; 
@@ -136,23 +154,23 @@ export async function generateBillingsReport(): Promise<ReportResult> {
   }> = {};
 
   for (const billing of recentBillings) {
-    const key = billing.customerDocument || billing.customerFantasyName;
+    const key = billing.customer_document || billing.customer_fantasy_name;
     if (!customerSummary[key]) {
       customerSummary[key] = {
-        name: billing.customerFantasyName,
-        document: billing.customerDocument || 'N/D',
+        name: billing.customer_fantasy_name,
+        document: billing.customer_document || 'N/D',
         totalValue: 0,
         orderCount: 0,
         lastOrder: ''
       };
     }
     
-    customerSummary[key].totalValue += parseFloat(billing.totalValue?.toString() || '0');
+    customerSummary[key].totalValue += Number(billing.total_value || 0);
     customerSummary[key].orderCount += 1;
     
     if (!customerSummary[key].lastOrder) {
-      customerSummary[key].lastOrder = billing.orderDate 
-        ? new Date(billing.orderDate).toLocaleDateString('pt-BR') 
+      customerSummary[key].lastOrder = billing.order_date 
+        ? new Date(billing.order_date).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) 
         : 'N/D';
     }
   }

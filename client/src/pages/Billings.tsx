@@ -1,7 +1,7 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel } from "@/lib/tableTools";
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { getBrazilDateISO, BRAZIL_TZ } from '@/lib/brazilTimezone';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, TrendingUp, Home, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, TrendingUp, Home, FileText, ArrowUp, ArrowDown, ArrowUpDown, Archive } from 'lucide-react';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import OmieInstanceBadge from '@/components/OmieInstanceBadge';
 import FiscalScenariosTab from '@/components/FiscalScenariosTab';
@@ -22,7 +23,6 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { apiRequest } from '@/lib/queryClient';
 
 interface Billing {
   id: string;
@@ -104,7 +104,6 @@ function getCfopDisplayName(cfop: string): string {
 }
 
 export default function Billings() {
-  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<BillingFilters>({
     page: 1,
     pageSize: 50,
@@ -114,10 +113,6 @@ export default function Billings() {
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [customerNameSearch, setCustomerNameSearch] = useState('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
-
-  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   // Query para buscar faturamentos (sem filtros - tudo client-side)
   const { data: billingsArray, isLoading: isLoadingBillings, refetch } = useQuery<Billing[]>({
     queryKey: ['/api/billings'],
@@ -335,58 +330,10 @@ export default function Billings() {
     </TableHead>
   );
 
-  // Query para buscar status de sincronização
-  const { data: syncStatuses } = useQuery<any[]>({
-    queryKey: ['/api/sync-status'],
-    refetchInterval: (query) => {
-      const statuses = query.state.data;
-      const isAnyInProgress = Array.isArray(statuses) && statuses.some(s => s.status === 'in_progress');
-      return isAnyInProgress ? 2000 : 10000;
-    }
-  });
-
-  const displaySync = syncStatuses?.find(s => s.syncType === 'omie_billings');
-
-  useEffect(() => {
-    if (displaySync?.status === 'in_progress' && displaySync?.lastSyncAt) {
-      const startTime = new Date(displaySync.lastSyncAt).getTime();
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
-      elapsedIntervalRef.current = setInterval(() => {
-        setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
-      }, 1000);
-    } else {
-      if (elapsedIntervalRef.current) {
-        clearInterval(elapsedIntervalRef.current);
-        elapsedIntervalRef.current = null;
-      }
-      setElapsedSeconds(null);
-    }
-    return () => {
-      if (elapsedIntervalRef.current) {
-        clearInterval(elapsedIntervalRef.current);
-        elapsedIntervalRef.current = null;
-      }
-    };
-  }, [displaySync?.status, displaySync?.lastSyncAt]);
-
-  // Detectar conclusão do sync via polling (confiável em produção, independente do SSE)
-  const prevSyncFinishedRef = useRef<string | null>(null);
-  useEffect(() => {
-    const finishedAt = displaySync?.lastFinishedAt;
-    if (!finishedAt) return;
-    if (prevSyncFinishedRef.current === finishedAt) return;
-    if (prevSyncFinishedRef.current !== null) {
-      // Sync acabou de completar — atualizar lista
-      queryClient.invalidateQueries({ queryKey: ['/api/billings'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/billings/stats'] });
-      toast({
-        title: 'Sincronização concluída',
-        description: displaySync?.message || 'Lista de faturamentos atualizada.',
-      });
-    }
-    prevSyncFinishedRef.current = finishedAt;
-  }, [displaySync?.lastFinishedAt]);
-
+  // E4 (06/set/2026): o Omie foi desligado. Esta aba é SOMENTE LEITURA do histórico
+  // sincronizado do Omie (tabela `billings`, até jun/2026). Não há mais sincronização,
+  // status de sync nem qualquer ação de escrita aqui. O faturamento vigente está no
+  // Pipeline de Faturamento (billing_pipeline) e nas NF-e (fiscal_invoices).
   return (
     <div className="p-6 space-y-6">
       {/* Back Button */}
@@ -408,7 +355,7 @@ export default function Billings() {
         <div>
           <h1 className="text-3xl font-bold" data-testid="page-title">Faturamentos</h1>
           <p className="text-muted-foreground">
-            Gerencie faturamentos e cenários fiscais
+            Histórico Omie (até jun/2026) e cenários fiscais
           </p>
         </div>
         
@@ -422,38 +369,14 @@ export default function Billings() {
               variant="outline" 
               onClick={() => exportToExcel(filteredBillings.map((b) => ({ Pedido: b.orderNumber || "", NF: b.invoiceNumber || "", CFOP: getCfopDisplayName(b.cfop), Cliente: b.customerFantasyName || "", Data: b.invoiceDate ? formatDate(b.invoiceDate) : "", Valor: b.totalValue, Vencimento: b.dueDate ? formatDate(b.dueDate) : "", Pagamento: b.paymentMethod || "", Vendedor: b.sellerName || "", Etapa: b.invoiceStage || "" })), "faturamentos")} 
               data-testid="button-export"
-              title="Exportar todos os dados do Omie para Excel"
+              title="Exportar o histórico Omie para Excel"
             >
               <Download className="w-4 h-4 mr-2" />
               Exportar Excel
             </Button>
           </div>
           
-          <div className="text-right">
-            {displaySync?.status === 'in_progress' && elapsedSeconds !== null ? (
-              <p className="text-xs font-semibold text-orange-600 animate-pulse">
-                ⏱ Em andamento há {elapsedSeconds >= 60
-                  ? `${Math.floor(elapsedSeconds / 60)}min ${elapsedSeconds % 60}s`
-                  : `${elapsedSeconds}s`}
-              </p>
-            ) : (
-              <>
-                {displaySync?.lastSyncAt && (
-                  <p className="text-xs text-muted-foreground">Última tentativa: {new Date(displaySync.lastSyncAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
-                )}
-                {displaySync?.lastFinishedAt && (
-                  <p className="text-xs font-medium text-green-600">Última conclusão: {new Date(displaySync.lastFinishedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</p>
-                )}
-                {displaySync?.syncDurationSeconds != null && (
-                  <p className="text-xs text-muted-foreground">
-                    Duração: {displaySync.syncDurationSeconds >= 60
-                      ? `${Math.floor(displaySync.syncDurationSeconds / 60)}min ${displaySync.syncDurationSeconds % 60}s`
-                      : `${displaySync.syncDurationSeconds}s`}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
+          <p className="text-xs text-muted-foreground">Somente leitura — sem sincronização.</p>
         </div>
       </div>
 
@@ -472,6 +395,15 @@ export default function Billings() {
         </TabsContent>
 
         <TabsContent value="faturamentos" className="space-y-6 mt-4">
+          <Alert className="border-amber-300 bg-amber-50 text-amber-900" data-testid="alert-billings-historico">
+            <Archive className="h-4 w-4" />
+            <AlertTitle>Histórico Omie (até jun/2026) — somente leitura</AlertTitle>
+            <AlertDescription>
+              Esta lista é o histórico de faturamentos sincronizado do Omie, encerrado em 22/06/2026. O Omie foi desligado:
+              nada aqui é atualizado nem pode ser editado. O faturamento vigente está no <strong>Pipeline de Faturamento</strong> e
+              nas <strong>Notas Fiscais (NF-e)</strong> do Integra.
+            </AlertDescription>
+          </Alert>
 
       {/* Estatísticas */}
       {stats && (

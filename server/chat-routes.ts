@@ -3147,7 +3147,7 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/webhook/force-production", authenticateUser, requireRole(["admin"]), async (req, res) => {
     try {
       const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
-      const prodDomain = process.env.REPLIT_DOMAIN || (process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',')[0] : null);
+      const prodDomain = (process.env.BASE_URL || process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/^https?:\/\//, '').replace(/\/+$/, '');
       
       if (!prodDomain) {
         return res.status(400).json({ 
@@ -4991,7 +4991,8 @@ export function registerChatRoutes(app: Express): void {
   app.post("/api/chat/webhook/force-config", authenticateUser, requireRole(['admin']), async (req, res) => {
     try {
       // SEMPRE usar o domínio de produção estável - NUNCA o domínio de dev
-      const prodDomain = 'integrahonest.replit.app';
+      // (E4: Railway; BASE_URL/APP_URL quando existir)
+      const prodDomain = (process.env.BASE_URL || process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/^https?:\/\//, '').replace(/\/+$/, '');
       const webhookUrl = `https://${prodDomain}/api/chat/webhook/messages`;
       
       console.log(`📡 [WEBHOOK-FORCE] Reconfigurando webhook SEMPRE para PRODUÇÃO: ${webhookUrl}`);

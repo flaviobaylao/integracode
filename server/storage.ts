@@ -187,8 +187,7 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
-import { naoEFantasma } from "./ghost-receivables";
-import { ehDividaViva } from "./divida-viva";
+import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
 
 export interface IStorage {
   getAgentDetailedStats(): Promise<Array<{ 
@@ -841,91 +840,34 @@ export class DatabaseStorage implements IStorage {
     // Extrair IDs dos clientes
     const customerIds = result.map(row => row.customers!.id);
     
-    // Buscar positivações do mês atual através dos faturamentos (billings)
-    const currentMonthStart = dataCalendario(hojeBR());
-    currentMonthStart.setDate(1);
-    currentMonthStart.setHours(0, 0, 0, 0);
-    
-    const currentMonthEnd = dataCalendario(hojeBR());
-    currentMonthEnd.setMonth(currentMonthEnd.getMonth() + 1);
-    currentMonthEnd.setDate(0);
-    currentMonthEnd.setHours(23, 59, 59, 999);
-    
-    // Buscar códigos Omie dos clientes (filtrar nulls e garantir tipo string[])
-    const customerOmieCodes = result
-      .map(row => row.customers?.omieClientCode)
-      .filter((code): code is string => !!code);
-    
-    let positivationMap = new Map();
-    
-    if (customerOmieCodes.length > 0) {
-      const positivations = await db
-        .select({
-          omieCustomerCode: billings.omieCustomerCode,
-          count: sql<number>`COUNT(*)`.mapWith(Number),
-        })
-        .from(billings)
-        .where(
-          and(
-            inArray(billings.omieCustomerCode, customerOmieCodes),
-            isNotNull(billings.invoiceDate),
-            gte(billings.invoiceDate, currentMonthStart),
-            sql`${billings.invoiceDate} <= ${currentMonthEnd}`,
-            eq(billings.isCancelled, false),
-            sql`${billings.totalValue} > 0`
-          )
-        )
-        .groupBy(billings.omieCustomerCode);
-      
-      // Criar mapa: omieCustomerCode -> true/false
-      const omieCodeMap = new Map(
-        positivations.map(p => [p.omieCustomerCode, p.count > 0])
-      );
-      
-      // Converter para customerId -> true/false
-      positivationMap = new Map(
-        result.map(row => [
-          row.customers!.id,
-          row.customers!.omieClientCode ? omieCodeMap.get(row.customers!.omieClientCode) || false : false
-        ])
-      );
-    }
-    
-    // Buscar última venda real de todos os clientes através dos faturamentos (billings)
+    // E4 (06/set/2026): "positivado no mês" e "última venda" passaram a vir do
+    // faturamento VIGENTE do 2.0 — billing_pipeline (customer_id, created_at, estágio
+    // faturado ou posterior). A tabela `billings` é histórico do Omie (termina em
+    // 22/jun/2026) e NÃO é mais lida aqui. `stage` é enum: comparado como texto.
+    // Mês corrente por dia-calendário no fuso Brasil (created_at é instante UTC).
+    let positivationMap = new Map<string, boolean>();
     let lastActivityMap = new Map<string, Date>();
-    
-    if (customerOmieCodes.length > 0) {
-      const lastBillings = await db
-        .select()
-        .from(billings)
-        .where(
-          and(
-            inArray(billings.omieCustomerCode, customerOmieCodes),
-            isNotNull(billings.invoiceDate),
-            eq(billings.isCancelled, false),
-            sql`${billings.totalValue} > 0`
-          )
-        )
-        .orderBy(billings.omieCustomerCode, desc(billings.invoiceDate));
-      
-      // Agrupar por omieCustomerCode e pegar a primeira (mais recente)
-      const omieLastActivityMap = new Map<string, Date>();
-      for (const billing of lastBillings) {
-        if (billing.omieCustomerCode && billing.invoiceDate && !omieLastActivityMap.has(billing.omieCustomerCode)) {
-          omieLastActivityMap.set(billing.omieCustomerCode, billing.invoiceDate);
-        }
+    try {
+      const agg: any = await db.execute(sql`
+        SELECT bp.customer_id,
+               MAX(bp.created_at) AS last_sale_at,
+               BOOL_OR(
+                 date_trunc('month', (bp.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')
+                 = date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')
+               ) AS positivado_mes
+        FROM billing_pipeline bp
+        WHERE bp.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+          AND bp.stage::text IN ('faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue')
+          AND COALESCE(bp.sale_value, 0) > 0
+        GROUP BY bp.customer_id
+      `);
+      for (const row of ((agg.rows || []) as any[])) {
+        if (!row.customer_id) continue;
+        positivationMap.set(String(row.customer_id), row.positivado_mes === true);
+        if (row.last_sale_at) lastActivityMap.set(String(row.customer_id), new Date(row.last_sale_at));
       }
-      
-      // Converter de omieCustomerCode para customerId
-      lastActivityMap = new Map(
-        result
-          .filter(row => row.customers?.omieClientCode)
-          .map(row => [
-            row.customers!.id,
-            omieLastActivityMap.get(row.customers!.omieClientCode!) || null
-          ])
-          .filter((entry): entry is [string, Date] => entry[1] !== null)
-      );
+    } catch (e: any) {
+      console.warn('[STORAGE] getCustomers: falha ao ler positivação/última venda do billing_pipeline:', e?.message);
     }
     
     // Montar resultado final
@@ -4296,10 +4238,7 @@ export class DatabaseStorage implements IStorage {
           )
           WHERE c.seller_id = ${userSellerId}
             AND coalesce(c.is_active, true) = true
-            AND r.deleted_at IS NULL
-            AND (r.amount - coalesce(r.amount_paid, 0)) > 0
-            AND coalesce(r.import_origin, '') <> 'omie_historico'
-            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+            AND ${whereDebitoVivoSql('r')}
         `);
 
         totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
@@ -5534,39 +5473,25 @@ export class DatabaseStorage implements IStorage {
     // FASE 3.4r - Fonte de verdade dos débitos vencidos passou a ser a aba Contas a
     // Receber (tabela `receivables`), NAO mais a tabela `overdueDebts` (sync do Omie,
     // defasada) — que estava soltando no bloqueio E na liberação automática clientes
-    // que de fato tinham débito vencido. Replica EXATAMENTE a regra de "vencida" do
-    // getReceivables({status:'vencida'}) / aba Contas a Receber: título EM ABERTO
-    // (status IN ('a_vencer','vencida')) E vencimento < hoje no fuso Brasil. A régua é a
-    // DATA, não o flag: 'vencida' com vencimento repostergado p/ hoje/futuro NÃO é débito
-    // vivo (não bloqueia). Só em aberto (amount - amount_paid > 0).
+    // que de fato tinham débito vencido.
+    // E4 (06/set/2026): a condição de "débito vivo" (em aberto, vencido por
+    // dia-calendário BRT, sem fantasma, sem devolução/outra praça, sem histórico
+    // Omie) é a REGRA ÚNICA de server/divida-viva.ts (whereDebitoVivoSql) —
+    // a mesma da tela de Débitos Vencidos, do alerta e dos relatórios.
     const result: any = await db.execute(sql`
       SELECT MAX(r.customer_name) AS client_name,
              SUM(r.amount - COALESCE(r.amount_paid, 0)) AS saldo,
              MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (r.due_date)::date)) AS max_dias,
              COUNT(*)::int AS n
       FROM receivables r
-      WHERE r.deleted_at IS NULL
-        AND (r.amount - COALESCE(r.amount_paid, 0)) > 0
-        -- Duplicata de reparo de orfaos nao bloqueia venda: ver ghost-receivables.ts
-        AND ${naoEFantasma('r')}
-        -- Devolucao / outra praca / troca / amostra / CFOP 5949: ver divida-viva.ts
-        AND ${ehDividaViva('r')}
-        -- Títulos HISTÓRICOS da migração Omie (import_origin='omie_historico') NÃO são
-        -- dívida viva para fins de bloqueio de crédito — são dados migrados (tratados como
-        -- conciliados). Sem esta exclusão, uma dívida de 2020-2025 importada travaria uma
-        -- venda atual (bloqueio indevido). Só entram no cálculo os recebíveis correntes.
-        AND COALESCE(r.import_origin, '') <> 'omie_historico'
-        AND (
-          r.status IN ('a_vencer', 'vencida')
-          AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
-        )
+      WHERE ${whereDebitoVivoSql('r')}
         AND regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
     const n = Number(row.n || 0);
     const saldoNum = Number(row.saldo || 0);
     // Piso de tolerância: débitos vencidos totais de até R$ 50,00 NÃO bloqueiam a venda
     // (evita travar pedido por centavos / 1 dia de atraso). Só bloqueia acima do piso.
-    const DEBT_BLOCK_TOLERANCE = 50;
+    const DEBT_BLOCK_TOLERANCE = PISO_DEBITO_BLOQUEIO;
     if (n > 0 && saldoNum > DEBT_BLOCK_TOLERANCE) {
       const totalAmount = saldoNum.toFixed(2);
       const maxDaysOverdue = Number(row.max_dias || 0);

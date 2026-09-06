@@ -45,6 +45,7 @@ import { registerChargeGuarantee } from "./charge-guarantee-routes";
 import { registerInstagram } from "./instagram-routes";
 import { registerLeadCapture } from "./lead-capture";
 import { sql } from "drizzle-orm";
+import { whereDebitoVivoSql } from "./divida-viva";
 import { registerRepescagemRoutes } from './repescagem-routes';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole, gone } from './authMiddleware';
@@ -5326,7 +5327,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
   // ── Relatório IA: dashboard consolidado de vendas ────────────────────────
   // GET /api/reports/ia-dashboard?dias=30  — READ-ONLY
-  // Fonte-verdade de vendas = billing_pipeline (vivo); débitos = overdue_debts.
+  // Fonte-verdade de vendas = billing_pipeline (vivo); débitos = receivables (regra única de divida-viva.ts).
   app.get('/api/reports/ia-dashboard', async (req: Request, res: Response) => {
     try {
       const dias = Math.max(1, Math.min(parseInt(String(req.query.dias)) || 30, 365));
@@ -5423,27 +5424,21 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       `);
 
       // 5) Débitos vencidos — fonte 2.0 (Contas a Receber), NAO mais overdue_debts (Omie desligado).
-      //    Mesma regra de "vencida" do getOverdueDebtByDocument / aba Contas a Receber.
+      //    REGRA ÚNICA de débito vivo: server/divida-viva.ts (whereDebitoVivoSql).
       const debitosTop: any = await db.execute(sql`
         SELECT max(customer_name) AS client_name,
                sum(amount - coalesce(amount_paid, 0))::float AS total_amount,
                max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date))::int AS max_days_overdue
-        FROM receivables
-        WHERE deleted_at IS NULL
-          AND (amount - coalesce(amount_paid, 0)) > 0
-          AND coalesce(import_origin, '') <> 'omie_historico'
-          AND (status IN ('a_vencer', 'vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+        FROM receivables r
+        WHERE ${whereDebitoVivoSql('r')}
         GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
         ORDER BY total_amount DESC LIMIT 15
       `);
       const debitosResumo: any = await db.execute(sql`
         SELECT count(*)::int AS clientes, coalesce(sum(saldo), 0)::float AS valor_total FROM (
           SELECT sum(amount - coalesce(amount_paid, 0)) AS saldo
-          FROM receivables
-          WHERE deleted_at IS NULL
-            AND (amount - coalesce(amount_paid, 0)) > 0
-            AND coalesce(import_origin, '') <> 'omie_historico'
-            AND (status IN ('a_vencer', 'vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+          FROM receivables r
+          WHERE ${whereDebitoVivoSql('r')}
           GROUP BY coalesce(nullif(regexp_replace(coalesce(customer_document, ''), '[^0-9]', '', 'g'), ''), customer_id, customer_name)
         ) t
       `);

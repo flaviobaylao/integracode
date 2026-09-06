@@ -21,6 +21,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { whereDebitoVivoText } from './divida-viva';
 
 // ---------------------------------------------------------------------------
 // As réguas. Cada uma é um momento, não uma "campanha".
@@ -204,7 +205,16 @@ SELECT c.id, c.name, c.phone, c.seller_id,
        COALESCE(t.ticket_medio, 0)                 AS ticket_medio,
        COALESCE(m.skus, 0)                         AS skus,
        ((now() AT TIME ZONE 'America/Sao_Paulo')::date - r.ultima_compra)::int       AS dias_desde_compra,
-       (SELECT 1 FROM overdue_debts od WHERE od.client_id = c.id LIMIT 1) AS inadimplente,
+       -- E4: inadimplente = tem título de DÉBITO VIVO na Contas a Receber (regra única de
+       -- server/divida-viva.ts). NÃO lê mais overdue_debts (sync do Omie, congelado).
+       (SELECT 1 FROM receivables od
+         WHERE ${whereDebitoVivoText('od')}
+           AND (od.customer_id = c.id
+                OR (od.customer_id IS NULL
+                    AND regexp_replace(COALESCE(od.customer_document,''),'[^0-9]','','g') <> ''
+                    AND regexp_replace(COALESCE(od.customer_document,''),'[^0-9]','','g')
+                        = regexp_replace(COALESCE(c.cnpj, c.cpf, ''),'[^0-9]','','g')))
+         LIMIT 1) AS inadimplente,
        (SELECT 1 FROM chat_customers cc
          WHERE cc.whatsapp_opt_out = true
            AND regexp_replace(COALESCE(cc.phone,''),'[^0-9]','','g')
