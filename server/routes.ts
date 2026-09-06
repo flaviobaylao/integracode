@@ -1523,10 +1523,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
     try {
-      // Situacao selecionada no mapa: 'ativos' (padrao), 'inativados' ou 'perdidos'.
+      // Situacao selecionada no mapa: 'ativos' (padrao), 'inativados', 'perdidos' ou 'leads'.
       // - inativados: cadastro desativado (customers.is_active=false).
       // - perdidos: cadastro ATIVO em churn (mesma regua da Gestao de Carteiras:
       //   comprou em 3+ meses distintos e esta ha 3+ meses sem comprar).
+      // - leads: prospects em aberto da tabela leads (dia = dia do proximo contato).
       const situacao = String(req.query.situacao || 'ativos').toLowerCase();
       const buildSellerMap = async () => {
         const allSellers = await db.select().from(users);
@@ -1594,6 +1595,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
+        return res.json(rows);
+      }
+      if (situacao === 'leads') {
+        // 🟡 CAMADA LEADS: prospects em aberto (nao convertidos/descartados). Todo lead tem coordenada
+        // (latitude/longitude sao NOT NULL na tabela). O "dia da semana" do lead e o dia do PROXIMO CONTATO
+        // (next_contact_date) - e o equivalente ao dia de rota do cliente da carteira.
+        const sellerMap = await buildSellerMap();
+        const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+        // SELECT * de proposito: a tabela leads recebe colunas novas com o tempo e um SELECT de
+        // colunas fixas quebraria a camada inteira se uma delas ainda nao existisse no banco.
+        const r: any = await db.execute(sql`
+          SELECT * FROM leads
+          WHERE COALESCE(status::text,'') NOT IN ('converted','discarded')
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+            AND latitude::float <> 0 AND longitude::float <> 0`);
+        const rows = ((r.rows || r) as any[]).map((l) => {
+          // Dia do lead = dia da semana do PROXIMO CONTATO (equivalente ao dia de rota do cliente).
+          let dia = '';
+          if (l.next_contact_date) {
+            const d = new Date(l.next_contact_date);
+            if (!isNaN(d.getTime())) dia = DOW[d.getUTCDay()] || '';
+          }
+          const sid = l.assigned_to ?? null;
+          return {
+            id: l.id,
+            name: l.fantasy_name || 'Lead',
+            fantasyName: l.fantasy_name ?? null,
+            phone: l.phone || '',
+            address: [l.neighborhood, l.city].filter(Boolean).join(' - '),
+            neighborhood: l.neighborhood || '',
+            document: '',
+            latitude: parseFloat(String(l.latitude)),
+            longitude: parseFloat(String(l.longitude)),
+            weekdays: dia,
+            isActive: false,
+            visitDay: dia || 'Seg',
+            customerId: l.id,
+            sellerId: sid,
+            sellerName: sid ? (sellerMap.get(String(sid)) || null) : null,
+            situacao: 'lead',
+            visitPeriodicity: l.periodicity ?? null,
+            leadStatus: l.status ?? null,
+            leadTemperature: l.temperature ?? null,
+            nextContactDate: l.next_contact_date ?? null,
+            contact: l.contact ?? null,
+          };
+        });
+        console.log(`📍 [MAP-DATA] ${rows.length} LEADS mapeados`);
         return res.json(rows);
       }
       // 🎯 MAPA = CARTEIRA do cadastro (customers.is_active) com coordenadas, com a MESMA ELEGIBILIDADE
