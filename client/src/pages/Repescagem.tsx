@@ -48,6 +48,8 @@ type Assignment = {
   assignedAt: string;
   unassigned?: boolean;
   locked?: boolean;
+  lockedBy?: string | null;
+  canUnlock?: boolean;
 };
 
 type HistoryEntry = {
@@ -670,27 +672,22 @@ export default function Repescagem() {
                       </td>
                       <td className="px-3 py-2 text-center">
                         {a.unassigned || !a.assignmentId ? (
-                          isAdmin ? (
-                            <Select
-                              value={undefined}
-                              onValueChange={(v) => { if (v) assign.mutate({ customerId: a.customerId, toUserId: v, lastRedDate: a.lastRedDate }); }}
-                            >
-                              <SelectTrigger className="h-7 text-xs w-[150px]" data-testid={`select-assignee-${a.customerId}`}><SelectValue placeholder="Atribuir..." /></SelectTrigger>
-                              <SelectContent>
-                                {enabledAttendants.map(e => (
-                                  <SelectItem key={e.userId} value={e.userId}>{e.name}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Badge className="bg-gray-100 text-gray-700 border border-gray-300" data-testid={`badge-assigned-${a.customerId}`}>
-                              Não atribuído
-                            </Badge>
-                          )
-                        ) : isAdmin ? (
+                          <Select
+                            value={undefined}
+                            onValueChange={(v) => { if (v) assign.mutate({ customerId: a.customerId, toUserId: v, lastRedDate: a.lastRedDate }); }}
+                          >
+                            <SelectTrigger className="h-7 text-xs w-[150px]" data-testid={`select-assignee-${a.customerId}`}><SelectValue placeholder="Atribuir..." /></SelectTrigger>
+                            <SelectContent>
+                              {enabledAttendants.map(e => (
+                                <SelectItem key={e.userId} value={e.userId}>{e.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
                           <div className="flex items-center justify-center gap-1">
                             <Select
                               value={a.assignedUserId}
+                              disabled={!!a.locked && !a.canUnlock}
                               onValueChange={(v) => { if (v && v !== a.assignedUserId) reassign.mutate({ assignmentId: a.assignmentId, toUserId: v }); }}
                             >
                               <SelectTrigger className="h-7 text-xs w-[150px]" data-testid={`select-assignee-${a.customerId}`}><SelectValue /></SelectTrigger>
@@ -705,20 +702,15 @@ export default function Repescagem() {
                             </Select>
                             <button
                               type="button"
-                              onClick={() => toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked })}
-                              disabled={toggleLock.isPending}
-                              title={a.locked ? 'Travado hoje — clique para destravar' : 'Destravado — clique para travar (não sofre redistribuição hoje)'}
-                              className={a.locked ? 'text-orange-600' : 'text-gray-400 hover:text-orange-600'}
+                              onClick={() => { if (a.locked && !a.canUnlock) return; toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked }); }}
+                              disabled={toggleLock.isPending || (!!a.locked && !a.canUnlock)}
+                              title={a.locked ? (a.canUnlock ? 'Travado — clique para destravar' : 'Travado por outro usuário (só ele ou um admin destrava)') : 'Destravado — clique para travar (só você ou um admin destrava)'}
+                              className={a.locked ? (a.canUnlock ? 'text-orange-600' : 'text-gray-400 cursor-not-allowed') : 'text-gray-400 hover:text-orange-600'}
                               data-testid={`button-lock-${a.customerId}`}
                             >
                               {a.locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
                             </button>
                           </div>
-                        ) : (
-                          <Badge className="bg-sky-100 text-sky-800 border border-sky-300" data-testid={`badge-assigned-${a.customerId}`}>
-                            {a.assignedUserName}
-                            {a.locked && <Lock className="inline h-3 w-3 ml-1 text-orange-600" />}
-                          </Badge>
                         )}
                       </td>
                       <td className="px-3 py-2 text-center">
