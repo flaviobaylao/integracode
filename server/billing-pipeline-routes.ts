@@ -15,6 +15,7 @@ import { sql, eq, and, gte, isNull } from 'drizzle-orm';
 import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
+import { resolveDestinoFiscal } from './rede-clientes-routes';
 
 // Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
 // sai com CFOP incorreto e é REJEITADA pela SEFAZ. Barramos ANTES da trava/baixa de estoque/criação
@@ -2589,7 +2590,13 @@ export async function deductStockForBilling(item: any, user: any): Promise<Recor
 // boleto nascam com a MESMA forma/prazo (espelho exigido pelo Flavio, 22/ago/2026).
 async function resolveCondicaoPagamento(item: any): Promise<{ effForma: string; prazoDays: number; hasCadastro: boolean; custCond: any }> {
   let custCond: any = null;
-  try { if (item.customerId) custCond = await storage.getCustomer(item.customerId); } catch {}
+  try {
+    // Rede: quem paga e' o DESTINATARIO, entao a condicao de pagamento e' a dele —
+    // o local de entrega nao tem titulo proprio.
+    const dest = await resolveDestinoFiscal(item.customerId);
+    if (dest) custCond = await storage.getCustomer(dest.destinatario.id);
+    else if (item.customerId) custCond = await storage.getCustomer(item.customerId);
+  } catch {}
   const hasCadastro = !!(custCond && custCond.paymentMethod);
   const effForma = hasCadastro ? String(custCond.paymentMethod) : String(item.paymentMethod || 'a_vista');
   const defaultDays = (fm: string) => (fm === 'pix' ? 5 : fm === 'boleto' ? 7 : 0);
@@ -2622,6 +2629,28 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     }
   } catch (e: any) { console.warn('[NFE-DEDUP] falha ao checar duplicata (segue):', e?.message); }
   const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
+
+  // ── REDE DE CLIENTES: destinatario x local de entrega ──────────────────────
+  // Pedido de um CNPJ marcado como LOCAL DE ENTREGA numa rede: a nota sai no CNPJ
+  // do DESTINATARIO da rede (dados fiscais e financeiros dele) e este cliente vai
+  // no grupo <entrega>. Fora desse caso __destino e' null e nada muda.
+  const __destino = await resolveDestinoFiscal(item.customerId);
+  if (__destino) {
+    console.log(`[NFE-REDE] Pedido de "${__destino.entrega.nome}" fatura no destinatario "${__destino.destinatario.nome}" (${__destino.destinatario.doc}); mercadoria entregue em ${__destino.entrega.cidade}/${__destino.entrega.uf}.`);
+  }
+  // Cadastro que responde pelos campos de DESTINATARIO da nota.
+  const __cliFiscal: any = __destino ? {
+    id: __destino.destinatario.id,
+    cnpj: __destino.destinatario.doc,
+    cpf: null,
+    stateRegistration: __destino.destinatario.ie,
+    address: __destino.destinatario.endereco,
+    neighborhood: __destino.destinatario.bairro,
+    zipCode: __destino.destinatario.cep,
+    city: __destino.destinatario.cidade,
+    state: __destino.destinatario.uf,
+    phone: __destino.destinatario.telefone,
+  } : customer;
 
   let issuerName = '', issuerCnpj = '', issuerIe = '', issuerAddress = '', issuerUf = '', issuerCityCode = '', issuerCity = '', issuerPhone = '';
 
@@ -2764,9 +2793,11 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   // dando prioridade a COPIA CONGELADA do card. Copia errada (ZOI: 15 digitos) ou
   // vazia fazia a nota nascer ruim, e corrigir o cadastro depois nao adiantava:
   // a nota ja tinha a copia. Agora o cadastro valido vence sempre.
+  // Com rede, a copia congelada do card e' o documento do LOCAL DE ENTREGA — nunca
+  // pode servir de fallback para o destinatario.
   const __docFiscal = escolherDocumentoFiscal(
-    (customer as any)?.cnpj || (customer as any)?.cpf || '',
-    item.customerDocument || ''
+    (__cliFiscal as any)?.cnpj || (__cliFiscal as any)?.cpf || '',
+    __destino ? '' : (item.customerDocument || '')
   );
   if (!__docFiscal) {
     console.warn(`[NFE] ⚠️ Cliente "${item.customerName}" sem CPF/CNPJ valido (nem no cadastro, nem no card).`);
@@ -2775,13 +2806,14 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   // CEP ausente no cadastro faz a NF-e sair com "00000000" e a SEFAZ rejeita.
   // Herdamos o CEP da ultima NF-e AUTORIZADA do mesmo cliente: ela ja passou pela
   // SEFAZ, entao aquele CEP e comprovadamente aceito.
-  let __cepFiscal = String((customer as any)?.zipCode || '').replace(/\D/g, '');
-  if (__cepFiscal.length !== 8 && item.customerId) {
+  let __cepFiscal = String((__cliFiscal as any)?.zipCode || '').replace(/\D/g, '');
+  const __cepClienteId = __destino ? __destino.destinatario.id : item.customerId;
+  if (__cepFiscal.length !== 8 && __cepClienteId) {
     try {
       const __r: any = await db.execute(sql`
         SELECT regexp_replace(COALESCE(customer_cep, ''), '[^0-9]', '', 'g') AS cep
           FROM fiscal_invoices
-         WHERE customer_id = ${item.customerId}
+         WHERE customer_id = ${__cepClienteId}
            AND status = 'authorized'
            AND length(regexp_replace(COALESCE(customer_cep, ''), '[^0-9]', '', 'g')) = 8
          ORDER BY created_at DESC
@@ -2789,7 +2821,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
       const __cepAnterior = String(__r?.rows?.[0]?.cep || '');
       if (__cepAnterior.length === 8) {
         __cepFiscal = __cepAnterior;
-        console.log(`[NFE] 🔧 CEP herdado da ultima NF-e autorizada do cliente ${item.customerId}: ${__cepFiscal}`);
+        console.log(`[NFE] 🔧 CEP herdado da ultima NF-e autorizada do cliente ${__cepClienteId}: ${__cepFiscal}`);
       }
     } catch (e: any) {
       console.warn('[NFE] falha ao herdar CEP de NF-e anterior:', e?.message);
@@ -2808,16 +2840,30 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     issuerCityCode,
     issuerCity,
     issuerPhone,
-    customerId: item.customerId || null,
-    customerName: item.customerName || '',
+    customerId: (__destino ? __destino.destinatario.id : item.customerId) || null,
+    customerName: (__destino ? __destino.destinatario.nome : item.customerName) || '',
     customerCnpjCpf: __docFiscal,
-    customerIe: (customer as any)?.stateRegistration || (customer as any)?.state_registration || (customer as any)?.ie || '',
-    customerAddress: customer?.address || '',
-    customerBairro: customer?.neighborhood || '',
+    customerIe: (__cliFiscal as any)?.stateRegistration || (__cliFiscal as any)?.state_registration || (__cliFiscal as any)?.ie || '',
+    customerAddress: __cliFiscal?.address || '',
+    customerBairro: __cliFiscal?.neighborhood || '',
     customerCep: __cepFiscal,
-    customerCity: customer?.city || '',
-    customerUf: customer?.state || '',
-    customerPhone: customer?.phone || '',
+    customerCity: __cliFiscal?.city || '',
+    customerUf: __cliFiscal?.state || '',
+    customerPhone: __cliFiscal?.phone || '',
+    // LOCAL DE ENTREGA — so' existe no caso de rede; nota comum grava tudo NULL e
+    // o XML sai sem o grupo <entrega>, identico ao de hoje.
+    deliveryCustomerId: __destino ? __destino.entrega.id : null,
+    deliveryName: __destino ? __destino.entrega.nome : null,
+    deliveryCnpjCpf: __destino ? __destino.entrega.doc : null,
+    deliveryIe: __destino ? (__destino.entrega.ie || null) : null,
+    deliveryAddress: __destino ? __destino.entrega.endereco : null,
+    deliveryNumber: null, // o numero e' extraido do endereco na montagem do XML
+    deliveryBairro: __destino ? __destino.entrega.bairro : null,
+    deliveryCep: __destino ? String(__destino.entrega.cep || '').replace(/\D/g, '') : null,
+    deliveryCity: __destino ? __destino.entrega.cidade : null,
+    deliveryCityCode: null, // resolvido pela UF+cidade na montagem do XML
+    deliveryUf: __destino ? __destino.entrega.uf : null,
+    deliveryPhone: __destino ? __destino.entrega.telefone : null,
     natureOfOperation,
     cfop,
     fiscalScenarioId,
@@ -3483,10 +3529,13 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   else titleNumber = `TIT-${item.salesCardId?.substring(0, 8)}`;
 
   const chartAccountId = await resolveRevenueChartAccountId();
+  // Rede: o titulo nasce no CNPJ do DESTINATARIO — e' ele quem recebe a nota e paga.
+  // O local de entrega aparece na nota, nao no financeiro.
+  const __destTitulo = await resolveDestinoFiscal(item.customerId);
   const baseReceivable: any = {
-    customerId: item.customerId || null,
-    customerName: item.customerName || 'Cliente',
-    customerDocument: item.customerDocument || null,
+    customerId: (__destTitulo ? __destTitulo.destinatario.id : item.customerId) || null,
+    customerName: (__destTitulo ? __destTitulo.destinatario.nome : item.customerName) || 'Cliente',
+    customerDocument: (__destTitulo ? __destTitulo.destinatario.doc : item.customerDocument) || null,
     amountPaid: '0',
     status: 'a_vencer',
     chartAccountId,
