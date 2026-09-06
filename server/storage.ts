@@ -7425,7 +7425,20 @@ export class DatabaseStorage implements IStorage {
   // (E2-D leve, 06/set/2026) Fonte única: cadastro ativo ⇒ está na lista de Clientes Ativos.
   // Religa linha inativa (por id ou documento) ou cria a linha. Nunca desativa ninguém.
   // Roda todo dia 00:00 antes da geração de visitas e é idempotente.
-  async syncActiveCustomersFromCadastro(): Promise<{ foraDaLista: number; religados: number; criados: number; semDocumento: number }> {
+  async syncActiveCustomersFromCadastro(): Promise<{ foraDaLista: number; religados: number; criados: number; semDocumento: number; ponteirosMortos: number }> {
+    // (set/2026) Passo 0: linha da lista cujo customer_id NÃO EXISTE em customers.
+    // Não é o mesmo que a limpeza por match_status desligada na E2-A: aqui o cadastro
+    // apontado simplesmente não existe (nem ativo, nem inativo), então a linha só serve
+    // para a geração de visitas produzir agenda órfã. Desativa (não apaga) e deixa trilha.
+    const pm: any = await db.execute(sql`
+      WITH mortos AS (
+        UPDATE active_customers a SET is_active=false, deactivated_at=now(), updated_at=now()
+        WHERE a.is_active=true AND a.customer_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM customers c WHERE c.id=a.customer_id)
+        RETURNING a.id
+      ) SELECT (SELECT count(*) FROM mortos)::int AS n`);
+    const ponteirosMortos = Number(((pm.rows || pm) as any[])[0]?.n || 0);
+
     const r: any = await db.execute(sql`
       WITH ativos AS (
         SELECT c.id, regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc,
@@ -7452,7 +7465,7 @@ export class DatabaseStorage implements IStorage {
       SELECT (SELECT count(*) FROM ativos)::int AS fora_da_lista, (SELECT count(*) FROM religa)::int AS religados,
              (SELECT count(*) FROM cria)::int AS criados, (SELECT count(*) FROM ativos WHERE doc='')::int AS sem_documento`);
     const row: any = ((r.rows || r) as any[])[0] || {};
-    return { foraDaLista: Number(row.fora_da_lista || 0), religados: Number(row.religados || 0), criados: Number(row.criados || 0), semDocumento: Number(row.sem_documento || 0) };
+    return { foraDaLista: Number(row.fora_da_lista || 0), religados: Number(row.religados || 0), criados: Number(row.criados || 0), semDocumento: Number(row.sem_documento || 0), ponteirosMortos };
   }
 
   async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number; corrected?: number }> {
