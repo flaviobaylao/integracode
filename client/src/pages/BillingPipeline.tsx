@@ -19,7 +19,7 @@ import {
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
   Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp, Globe,
-  Star, StarOff, Store
+  Star, StarOff, Store, Network
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { hojeBR, diasUteisEntre } from '@shared/tempo';
@@ -42,6 +42,13 @@ interface BillingPipelineItem {
   fiscalError?: string | null;
   source?: string | null;
   paidOnline?: boolean;
+  // REDE — só vem preenchido quando o cliente do pedido é LOCAL DE ENTREGA de uma
+  // rede que já tem destinatário marcado: a NF-e sairá no CNPJ abaixo, não no dele.
+  redeNome?: string | null;
+  redeDestinatarioNome?: string | null;
+  redeDestinatarioDoc?: string | null;
+  redeDestinatarioCidade?: string | null;
+  redeDestinatarioUf?: string | null;
   deliveryDriverName?: string | null; // entregador da rota (cards em_rota/em_rota_bsb)
   deliveryRouteDate?: string | null;  // data programada da rota (YYYY-MM-DD)
   paymentMethod: string | null;
@@ -174,6 +181,14 @@ const CATEGORY_LABELS: Record<string, string> = {
   reposicao: 'Reposição',
 };
 const CATEGORY_ORDER = ['venda', 'cancelado', 'devolvida', 'devolucao', 'amostra', 'bonificacao', 'troca', 'reposicao'];
+
+/** CNPJ/CPF pontuado — o financeiro confere a raiz do CNPJ a olho. */
+function docBR(d: any): string {
+  const s = String(d || '').replace(/\D/g, '');
+  if (s.length === 14) return `${s.slice(0, 2)}.${s.slice(2, 5)}.${s.slice(5, 8)}/${s.slice(8, 12)}-${s.slice(12)}`;
+  if (s.length === 11) return `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9)}`;
+  return s || '';
+}
 // Cores das tags: Venda=verde, Cancelado=vermelho escuro, Devolução=vermelho claro, Amostra=azul, Troca=amarelo
 // (correspondência por texto para tolerar variações de chave, ex.: 'devolucao'/'devolução')
 function operationBadgeClass(cat: string | null): string {
@@ -1435,6 +1450,37 @@ export default function BillingPipeline() {
                 </div>
               </div>
 
+              {/* REDE — destinatário e local de entrega diferentes. Aparece só quando
+                  o cliente do pedido está marcado como LOCAL DE ENTREGA de uma rede
+                  que já tem destinatário: quem fatura precisa ver para quem a nota
+                  vai sair antes de emitir. */}
+              {detailItem.redeDestinatarioNome && (
+                <div className="rounded-lg p-4 border border-violet-200 bg-violet-50 dark:bg-violet-950/30">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Network className="h-4 w-4 text-violet-700" />
+                    <span className="font-semibold text-sm text-violet-900 dark:text-violet-200">
+                      Rede{detailItem.redeNome ? ` · ${detailItem.redeNome}` : ''}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="text-[10px] uppercase tracking-wider text-violet-500 font-medium">A nota sai para</label>
+                      <p className="font-semibold text-sm">{detailItem.redeDestinatarioNome}</p>
+                      <p className="text-xs font-mono text-gray-600">{docBR(detailItem.redeDestinatarioDoc) || '-'}</p>
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="text-[10px] uppercase tracking-wider text-violet-500 font-medium">A mercadoria desce em</label>
+                      <p className="font-semibold text-sm">{detailItem.customerName}</p>
+                      <p className="text-xs font-mono text-gray-600">{detailItem.customerDocument || '-'}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-violet-800 mt-3">
+                    A NF-e e o boleto nascem no CNPJ do destinatário, com a condição de pagamento dele.
+                    O endereço do cliente acima vai no quadro <b>LOCAL DE ENTREGA</b> da DANFE.
+                  </p>
+                </div>
+              )}
+
               <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <DollarSign className="h-4 w-4 text-gray-500" />
@@ -2076,6 +2122,19 @@ function KanbanCard({
           {item.invoiceNumber && (
             <Badge variant="outline" className="text-[10px] border-green-300 text-green-700 bg-green-50">
               NF {item.invoiceNumber}
+            </Badge>
+          )}
+          {/* REDE: este pedido entrega aqui, mas a nota sai em outro CNPJ. Quem
+              fatura precisa ver isso no card, nao so' ao abrir o pedido. */}
+          {item.redeDestinatarioNome && (
+            <Badge
+              variant="outline"
+              className="text-[10px] border-violet-300 text-violet-800 bg-violet-50"
+              title={`Rede${item.redeNome ? ` ${item.redeNome}` : ''}: a NF-e sai para ${item.redeDestinatarioNome}${item.redeDestinatarioDoc ? ` (${docBR(item.redeDestinatarioDoc)})` : ''}, com a condição de pagamento dele. A mercadoria é entregue neste cliente, que vai no quadro LOCAL DE ENTREGA da nota.`}
+              data-testid={`badge-rede-entrega-${item.id}`}
+            >
+              <Network className="h-2.5 w-2.5 mr-0.5" />
+              NF-e p/ {item.redeDestinatarioNome}
             </Badge>
           )}
         </div>
