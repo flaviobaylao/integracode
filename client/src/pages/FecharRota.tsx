@@ -96,6 +96,9 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       const cid = r?.customerId ? String(r.customerId) : "";
       if (!cid || out.some((o) => o.customerId === cid)) continue;
       if (crEfet.has(cid)) continue;
+      // FASE 4: card inativo = o pedido do cliente foi colocado pela outra pessoa (dono/habilitado).
+      // Quem NÃO colocou o pedido não precisa justificar — o card está isento.
+      if (r?.inactive) continue;
       const done = checkedIn.has(cid) || attended.has(cid) || hasOrder(cid);
       const debito = (!exigirDebito || suspDebito.has(cid)) ? 0 : debtOf(cid);
       const visitOk = done || suspVisita.has(cid);
@@ -138,7 +141,11 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const route = routeData?.route;
   const { data: overlayData } = useQuery<any>({ queryKey: ["/api/repescagem/route-overlay", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/repescagem/route-overlay?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
   const overlay = Array.isArray(overlayData) ? overlayData : (overlayData?.overlay || []);
-  const incluiRepescagem = REPESCAGEM_FECHA_SELLERS.has(String(sellerId));
+  // FASE 4 (reformulação): os clientes em repescagem TAMBÉM estão sujeitos a justificativa no
+  // fechamento — para QUALQUER vendedor/atendente que tenha card de repescagem no dia (dono e
+  // habilitado, card duplo), não mais só a whitelist antiga de TMK. Mantemos a whitelist como
+  // reforço, mas basta ter card de repescagem hoje.
+  const incluiRepescagem = (Array.isArray(overlay) && overlay.length > 0) || REPESCAGEM_FECHA_SELLERS.has(String(sellerId));
   const routeCustomerIds = useMemo(() => {
     const s = new Set<string>();
     (route?.visits || []).forEach((v: any) => { const c = v?.customerId || v?.entityId; if (c) s.add(String(c)); });

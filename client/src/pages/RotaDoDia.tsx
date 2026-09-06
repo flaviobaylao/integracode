@@ -1170,7 +1170,8 @@ export default function RotaDoDia() {
   const collapseAllRep = () => setRepExpanded(new Set());
 
   const virtualActiveCount = filteredVirtualVisits.filter((v: any) => !crEfetuadaByKey(crKey('customer', String((v as any).customerId)))).length;
-  const repescagemActiveCount = filteredRepescagem.filter((r: any) => !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
+  // FASE 4: cards inativos (pedido colocado por quem não é o dono desta rota) não contam como ativos.
+  const repescagemActiveCount = filteredRepescagem.filter((r: any) => !(r as any).inactive && !crEfetuadaByKey(crKey('repescagem', String((r as any).assignmentId)))).length;
   // ↩️ Solicitações REJEITADAS entre os cards da rota — para ciência do vendedor.
   const rejeitadasCount = Object.values(changeRequestStates).filter((s: any) => s?.status === 'rejeitadas').length;
 
@@ -1856,12 +1857,17 @@ export default function RotaDoDia() {
                     className={`flex items-start justify-between p-2 rounded-lg border ${
                       crEfetuadaByKey(crKey('repescagem', String(r.assignmentId)))
                         ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
-                        : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
-                          // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
-                          // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
-                          // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
-                          ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
-                          : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
+                        : r.inactive
+                          // 🚫 FASE 4: o pedido do cliente foi colocado por OUTRA pessoa (o dono ou o
+                          // habilitado). Este card "perdeu" a repescagem → totalmente inativo/desabilitado
+                          // (cinza, sem ações) e isento de justificativa no fechamento de rota.
+                          ? 'opacity-50 grayscale bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
+                          : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
+                            // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
+                            // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
+                            // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
+                            ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                            : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
                     }`}
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
@@ -1881,6 +1887,11 @@ export default function RotaDoDia() {
                         {r.isOwnerCopy && (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#8a6d3b] text-white" title="Cliente da sua carteira em repescagem com outro atendente">
                             Em repescagem{r.assignedToName ? ` · ${r.assignedToName}` : ''}
+                          </span>
+                        )}
+                        {r.inactive && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-500 text-white" title={`O pedido deste cliente foi colocado por ${r.orderWinnerName || 'outro atendente'}. Este card ficou inativo e não precisa de justificativa.`} data-testid={`repescagem-inativo-${r.customerId}`}>
+                            Pedido de {r.orderWinnerName || 'outro'} · inativo
                           </span>
                         )}
                         {repIsExpanded && (<>
@@ -1964,8 +1975,9 @@ export default function RotaDoDia() {
                       >
                         {repIsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                       </Button>
+                      {/* FASE 4: card inativo (pedido feito por outra pessoa) não tem ações operacionais. */}
                       {/* Botões só para repescagem que caiu no telemarketing */}
-                      {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                      {!r.inactive && r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
@@ -1976,7 +1988,7 @@ export default function RotaDoDia() {
                           <MessageCircle className="h-4 w-4" />
                         </Button>
                       )}
-                      {r.customerId && (
+                      {!r.inactive && r.customerId && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
@@ -1987,7 +1999,7 @@ export default function RotaDoDia() {
                           <FileText className="h-4 w-4" />
                         </Button>
                       )}
-                      {r.latitude && r.longitude && (
+                      {!r.inactive && r.latitude && r.longitude && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
