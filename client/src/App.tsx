@@ -118,7 +118,7 @@ import IndustriaDados from "@/pages/IndustriaDados";
 import TodasAsContas from "@/pages/TodasAsContas";
 import FluxoCaixa from "@/pages/FluxoCaixa";
 import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
-import SyncMonitor from "@/pages/SyncMonitor";
+import AmbienteFiscal from "@/pages/AmbienteFiscal";
 
 // Casca que exibe a sidebar de seções persistente nas páginas de módulo
 // (rotas autenticadas que renderizam fora do Layout do Dashboard).
@@ -305,7 +305,9 @@ function Router() {
           <Route path="/admin/empresas" component={EmpresasGrupo} />
           {/* alias legado (E7 remove) */}
           <Route path="/admin/omie-instances" component={EmpresasGrupo} />
-          <Route path="/admin/sync-monitor" component={SyncMonitor} />
+          <Route path="/admin/ambiente-fiscal" component={AmbienteFiscal} />
+          {/* alias legado (E7 remove) */}
+          <Route path="/admin/sync-monitor" component={AmbienteFiscal} />
           <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/admin/solicitacoes-alteracao" component={SolicitacoesAlteracao} />

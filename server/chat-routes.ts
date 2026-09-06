@@ -982,88 +982,6 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Migrar TODO o historico de conversas do 1.0 -> 2.0 (fire-and-forget, idempotente)
-  async function writeChatMigStatus(obj: any) {
-    const v = JSON.stringify(obj);
-    try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${v}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${v}, updated_by='migrate-chat-history', updated_at=now()`); } catch (e) { console.error("[MIGRATE-CHAT] persist:", e); }
-  }
-  async function runChatHistoryMigration(dryRun: boolean) {
-    const out: any[] = [];
-    await writeChatMigStatus({ at: new Date().toISOString(), step: "iniciando", dryRun });
-    const { Client } = await import("pg");
-    const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 20000, query_timeout: 60000 });
-    src.on("error", (e: any) => { console.error("[MIGRATE-CHAT] src client error:", e?.message || e); });
-    try {
-      await Promise.race([
-        src.connect(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout conectando ao 1.0 (25s)")), 25000)),
-      ]);
-      await writeChatMigStatus({ at: new Date().toISOString(), step: "conectado ao 1.0", dryRun });
-      for (const t of ["chat_customers", "chat_conversations", "chat_messages"]) {
-        const info: any = { table: t };
-        try {
-          const tgtColsQ: any = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name=${t}`);
-          const srcColsQ = await src.query("SELECT column_name FROM information_schema.columns WHERE table_name=$1", [t]);
-          const tgtCols = new Map<string, string>((tgtColsQ.rows || []).map((r: any) => [r.column_name, r.data_type]));
-          const srcCols = new Set<string>(srcColsQ.rows.map((r: any) => r.column_name));
-          const cols = Array.from(tgtCols.keys()).filter((c) => srcCols.has(c));
-          if (!cols.includes("id")) { info.skip = "sem coluna id"; out.push(info); continue; }
-          const tgtIdsQ: any = await db.execute(sql.raw(`SELECT id FROM "${t}"`));
-          const srcIdsQ = await src.query(`SELECT id FROM "${t}"`);
-          const tgtIds = new Set<string>((tgtIdsQ.rows || []).map((r: any) => String(r.id)));
-          const missing = srcIdsQ.rows.map((r: any) => String(r.id)).filter((id: string) => !tgtIds.has(id));
-          info.total_1_0 = srcIdsQ.rowCount; info.tinha_2_0 = (tgtIdsQ.rows || []).length; info.faltando = missing.length;
-          if (dryRun || missing.length === 0) { out.push(info); continue; }
-          const colListRaw = cols.map((c) => `"${c}"`).join(",");
-          let inserted = 0, failed = 0; const errs: string[] = [];
-          for (let k = 0; k < missing.length; k += 500) {
-            const chunk = missing.slice(k, k + 500);
-            const rowsQ = await src.query(`SELECT ${colListRaw} FROM "${t}" WHERE id::text = ANY($1)`, [chunk]);
-            for (const row of rowsQ.rows) {
-              const valExprs = cols.map((c) => {
-                const dt = tgtCols.get(c) || "";
-                let v = (row as any)[c];
-                if ((dt === "json" || dt === "jsonb") && v !== null) {
-                  const jsonStr = typeof v === "string" ? v : JSON.stringify(v);
-                  return sql`${jsonStr}::${sql.raw(dt)}`;
-                }
-                return sql`${v}`;
-              });
-              try {
-                await db.execute(sql`INSERT INTO ${sql.identifier(t)} (${sql.raw(colListRaw)}) VALUES (${sql.join(valExprs, sql`, `)}) ON CONFLICT (id) DO NOTHING`);
-                inserted++;
-              } catch (e: any) { failed++; if (errs.length < 8) errs.push(`${(row as any).id}: ${String(e?.message || e).slice(0, 90)}`); }
-            }
-          }
-          info.inserido = inserted; info.falhou = failed; if (errs.length) info.erros = errs;
-        } catch (e: any) { info.erroTabela = String(e?.message || e).slice(0, 140); }
-        out.push(info);
-      }
-      await writeChatMigStatus({ at: new Date().toISOString(), step: "concluido", dryRun, resultado: out });
-    } catch (error: any) {
-      console.error("[MIGRATE-CHAT] Erro:", error);
-      await writeChatMigStatus({ at: new Date().toISOString(), step: "erro", erro: String(error?.message || error).slice(0, 200), parcial: out });
-    } finally { try { await src.end(); } catch {} }
-  }
-  app.post("/api/admin/chat/migrate-history-from-1-0", authenticateUser, async (req: any, res: any) => {
-    if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: "REPLIT_DATABASE_URL nao configurado" });
-    const dryRun = req.body?.dryRun === true;
-    res.json({ started: true, dryRun, note: "rodando em background; veja /api/admin/chat/migrate-history-from-1-0/status" });
-    runChatHistoryMigration(dryRun).catch((e) => console.error("[MIGRATE-CHAT] bg:", e));
-  });
-  app.get("/api/admin/chat/migrate-history-from-1-0/status", authenticateUser, async (req: any, res: any) => {
-    try {
-      const r = await db.execute(sql`SELECT value, updated_at FROM system_settings WHERE key='chat_migration_last'`);
-      const row = (r as any).rows?.[0];
-      res.json(row ? { ...JSON.parse(row.value), updated_at: row.updated_at } : { none: true });
-    } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 120) }); }
-  });
-
-  // ============================================================
-  // CHAT AGENTS CRUD
-  // ============================================================
-
-  // Get all chat agents
   app.get("/api/chat/agents", authenticateUser, async (req, res) => {
     try {
       const agents = await storage.getChatAgents();
@@ -3178,41 +3096,6 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Endpoint para FORÇAR reconfiguração do webhook de DESENVOLVIMENTO (apenas para testes)
-  app.post("/api/chat/webhook/force-dev-config", authenticateUser, requireRole(["admin"]), async (req, res) => {
-    try {
-      const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
-      const devDomain = process.env.REPLIT_DEV_DOMAIN;
-      
-      if (!devDomain) {
-        return res.status(400).json({ 
-          error: "REPLIT_DEV_DOMAIN não encontrado", 
-          message: "Este endpoint só funciona no ambiente de desenvolvimento" 
-        });
-      }
-      
-      const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
-      console.log(`🔧 [FORCE-DEV] Forçando webhook para desenvolvimento: ${webhookUrl}`);
-      
-      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl);
-      
-      if (result.success) {
-        console.log(`✅ [FORCE-DEV] Webhook reconfigurado para desenvolvimento`);
-        res.json({ 
-          success: true, 
-          message: "Webhook reconfigurado para desenvolvimento com sucesso",
-          url: webhookUrl,
-          warning: "ATENÇÃO: O webhook agora aponta para desenvolvimento. Mensagens de produção NÃO serão recebidas!"
-        });
-      } else {
-        console.error(`❌ [FORCE-DEV] Erro:`, result.error);
-        res.status(500).json({ error: result.error });
-      }
-    } catch (error: any) {
-      console.error('[FORCE-DEV] Erro:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   // Endpoint para conectar instância ao WhatsApp (gerar QR Code)
   app.get("/api/chat/webhook/connect", async (req, res) => {

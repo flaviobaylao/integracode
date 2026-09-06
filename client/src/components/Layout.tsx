@@ -43,7 +43,7 @@ const MENU_CARD: Record<string, string> = {
   "telemarketing-disparo": "Disparo em Massa", "automacoes-comunicacao": "Automações de Comunicação",
   industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas",
   relatorios: "Relatórios Dinâmicos", "relatorios-ia": "Relatórios IA",
-  "empresas-grupo": "Empresas do Grupo", "sync-monitor": "Ambiente Fiscal",
+  "empresas-grupo": "Empresas do Grupo", "ambiente-fiscal": "Ambiente Fiscal",
   "agentes-ia": "Agentes IA", rh: "RH / Métricas",
   users: "Usuários", "admin-system": "Administração do Sistema", "cenarios-fiscais": "Cenários Fiscais",
   "acessos-delegacoes": "Acessos e Delegações",
@@ -474,7 +474,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-cog',
       items: [
         { id: 'empresas-grupo', label: 'Empresas do Grupo', icon: 'fas fa-building', available: canAccessUsers, badge: null },
-        { id: 'sync-monitor', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
+        { id: 'ambiente-fiscal', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
         { id: 'agentes-ia', label: 'Agentes IA', icon: 'fas fa-robot', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
         { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
@@ -631,8 +631,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    if (itemId === 'sync-monitor') {
-      navigate('/admin/sync-monitor');
+    if (itemId === 'ambiente-fiscal') {
+      navigate('/admin/ambiente-fiscal');
       return;
     }
 
