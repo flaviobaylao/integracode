@@ -36,6 +36,7 @@ import { ensureFinancialAuditSchema } from './financial-audit';
 import { webhookTokenGuard } from './webhook-security';
 import { registerVisitSummary } from "./visit-summary-route";
 import { registerCarteira } from "./carteira-routes";
+import { registerGestaoDebitoVendas } from "./gestao-debito-vendas-routes";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
 import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provider";
 import { registerGeocodeAnalyze } from "./geocode-analyze";
@@ -632,6 +633,7 @@ run();
   } catch (e: any) { console.error('[doc-delivery routes]', e?.message || e); }
   registerVisitSummary(app);
   registerCarteira(app);
+  registerGestaoDebitoVendas(app);
   registerCadastroReceitaSync(app);
   registerGeocodeAnalyze(app);
   registerReconciliation(app);
