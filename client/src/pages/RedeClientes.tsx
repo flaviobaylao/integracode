@@ -761,12 +761,25 @@ function AjudaPapelNFe() {
               onde o entregador descarrega e colhe a assinatura.
             </p>
           </div>
-        </div>
 
-        <p className="text-xs text-muted-foreground border-t pt-2">
-          Clicar de novo no mesmo botão desmarca. Sem nenhuma marcação — e enquanto a rede não
-          tiver um destinatário — cada CNPJ fatura no próprio nome, exatamente como antes.
-        </p>
+          <div className="rounded border p-2 bg-muted/40">
+            <p className="text-xs font-semibold">3. Nenhum dos dois marcado <span className="font-normal text-muted-foreground">(situação padrão)</span></p>
+            <p className="text-xs text-muted-foreground">
+              É como todo cliente nasce. Clicar de novo no botão já marcado volta para cá.
+            </p>
+            <p className="text-xs mt-1">
+              <b>Resultado:</b> nada muda. O cliente fatura no próprio CNPJ, com a condição de
+              pagamento dele, e a NF-e sai sem o quadro LOCAL DE ENTREGA — exatamente como antes
+              da rede existir.
+            </p>
+            <p className="text-xs mt-1 text-muted-foreground">
+              Vale também para a rede inteira: enquanto <b>nenhum</b> integrante for marcado como
+              destinatário, quem estiver como local de entrega continua faturando no próprio nome
+              (a tela avisa em amarelo). O redirecionamento só começa quando existe o par
+              destinatário + local de entrega.
+            </p>
+          </div>
+        </div>
       </PopoverContent>
     </Popover>
   );
