@@ -2734,6 +2734,8 @@ export const repescagemAssignments = pgTable("repescagem_assignments", {
   // Dia (YYYY-MM-DD, BR) a que a trava se aplica. A trava só vale para o dia vigente;
   // na virada do dia ela é ignorada/limpa (destrava automática).
   lockedDate: varchar("locked_date"),
+  // Quem travou a linha (user id). Só esse usuário ou um admin podem destravar.
+  lockedBy: varchar("locked_by"),
 });
 
 export const repescagemAssignmentHistory = pgTable("repescagem_assignment_history", {
