@@ -129,11 +129,90 @@ async function ensureRedes(): Promise<void> {
   // o faturamento aparecer duas vezes e ninguem saberia qual esta certa.
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_rede_membro_cliente ON cliente_rede_membros (customer_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_rede_membro_rede ON cliente_rede_membros (rede_id)`);
+  // ── PAPEL FISCAL DO INTEGRANTE ────────────────────────────────────────────
+  // 'nenhum'      → integrante comum. A nota dele sai como sempre saiu.
+  // 'destinatario'→ e' o CNPJ que recebe a nota e paga. UM por rede.
+  // 'entrega'     → mantem cadastro, rota e pedidos proprios, mas ao faturar a
+  //                 NF-e sai no CNPJ do destinatario e este endereco vai no
+  //                 grupo <entrega>.
+  // Rede sem destinatario marcado se comporta exatamente como hoje.
+  await db.execute(sql`ALTER TABLE cliente_rede_membros ADD COLUMN IF NOT EXISTS papel varchar NOT NULL DEFAULT 'nenhum'`);
+  // Dois destinatarios na mesma rede deixariam o faturamento ambiguo.
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_rede_um_destinatario
+                       ON cliente_rede_membros (rede_id) WHERE papel = 'destinatario'`);
   __redesProntas = true;
 }
 
 const esc = (s: any) => String(s ?? "").replace(/'/g, "''");
 const limpaId = (s: any) => String(s || "").replace(/[^A-Za-z0-9_-]/g, "");
+
+/** Cadastro de um integrante, no formato que o faturamento consome. */
+export type DadosFiscaisCliente = {
+  id: string; nome: string; doc: string | null; ie: string | null;
+  endereco: string; bairro: string; cep: string; cidade: string; uf: string; telefone: string;
+  paymentMethod: string | null; boletoDays: number | null;
+  collectionDiscount: string | null; paymentInstallments: number | null;
+  installmentSchedule: string | null;
+};
+
+/**
+ * Para quem sai a nota de um pedido deste cliente.
+ *
+ * Devolve null — e o faturamento segue exatamente como sempre — quando o
+ * cliente nao esta em rede, nao esta marcado como LOCAL DE ENTREGA, ou a rede
+ * dele ainda nao tem um DESTINATARIO marcado. So' devolve algo no caso em que
+ * ha' de fato uma separacao a fazer: a nota vai para o CNPJ `destinatario`
+ * (com a condicao de pagamento DELE, porque e' ele quem paga) e a mercadoria
+ * desce no endereco `entrega`, que e' o proprio cliente do pedido.
+ */
+export async function resolveDestinoFiscal(customerId: string | null | undefined):
+  Promise<{ destinatario: DadosFiscaisCliente; entrega: DadosFiscaisCliente } | null> {
+  const cid = limpaId(customerId);
+  if (!cid) return null;
+  try {
+    await ensureRedes();
+    const rows = (await db.execute(sql`
+      SELECT m.papel,
+             c.id, c.name, c.fantasy_name, c.company_name,
+             COALESCE(NULLIF(c.cnpj,''), NULLIF(c.cpf,'')) AS doc,
+             c.state_registration, c.address, c.neighborhood, c.zip_code, c.city, c.state, c.phone,
+             c.payment_method, c.boleto_days, c.collection_discount, c.payment_installments,
+             c.installment_schedule
+      FROM cliente_rede_membros m
+      JOIN customers c ON c.id = m.customer_id
+      WHERE m.rede_id = (SELECT rede_id FROM cliente_rede_membros WHERE customer_id = ${cid} LIMIT 1)
+        AND (m.customer_id = ${cid} OR m.papel = 'destinatario')`)).rows as any[];
+    if (rows.length < 2) return null; // sem rede, ou sem destinatario marcado
+    const map = (r: any): DadosFiscaisCliente => ({
+      id: String(r.id),
+      nome: String(r.company_name || r.name || r.fantasy_name || "").trim(),
+      doc: r.doc ? String(r.doc).replace(/\D/g, "") : null,
+      ie: r.state_registration ? String(r.state_registration) : null,
+      endereco: String(r.address || ""),
+      bairro: String(r.neighborhood || ""),
+      cep: String(r.zip_code || ""),
+      cidade: String(r.city || ""),
+      uf: String(r.state || "").toUpperCase(),
+      telefone: String(r.phone || ""),
+      paymentMethod: r.payment_method || null,
+      boletoDays: r.boleto_days == null ? null : Number(r.boleto_days),
+      collectionDiscount: r.collection_discount == null ? null : String(r.collection_discount),
+      paymentInstallments: r.payment_installments == null ? null : Number(r.payment_installments),
+      installmentSchedule: r.installment_schedule || null,
+    });
+    const eu = rows.find((r) => String(r.id) === cid);
+    const dest = rows.find((r) => String(r.papel) === "destinatario");
+    if (!eu || !dest) return null;
+    if (String(eu.papel) !== "entrega") return null;   // integrante comum fatura sozinho
+    if (String(dest.id) === cid) return null;          // o proprio destinatario
+    return { destinatario: map(dest), entrega: map(eu) };
+  } catch (err) {
+    // Rede e' um refinamento do faturamento, nao um pre-requisito dele: se esta
+    // consulta falhar, a nota sai no formato de sempre em vez de nao sair.
+    console.error("[resolveDestinoFiscal]", err);
+    return null;
+  }
+}
 
 export function registerRedesClientes(app: Express) {
   // ---------------------------------------------------------------------------
@@ -166,7 +245,7 @@ export function registerRedesClientes(app: Express) {
       // sentido dela e' consolidar), mas so' se tiver ao menos um cliente seu —
       // rede de outra carteira nem aparece.
       const membros = (await db.execute(sql.raw(`
-        SELECT m.rede_id, c.id, c.name, c.fantasy_name, c.city, c.neighborhood,
+        SELECT m.rede_id, COALESCE(m.papel,'nenhum') AS papel, c.id, c.name, c.fantasy_name, c.city, c.neighborhood,
                c.is_active, c.seller_id, c.created_at::date::text AS cadastro_em,
                c.inactivated_at::date::text AS inativado_em,
                NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS doc,
@@ -262,6 +341,7 @@ export function registerRedesClientes(app: Express) {
           fatAno: Number(f.fat_ano || 0),
           fatAnoAnt: Number(f.fat_ano_ant || 0),
           debito: Number(mDeb.get(k) || 0),
+          papel: String(m.papel || "nenhum"),
         };
         const arr = porRede.get(String(m.rede_id));
         if (arr) arr.push(cli); else porRede.set(String(m.rede_id), [cli]);
@@ -511,6 +591,46 @@ export function registerRedesClientes(app: Express) {
       res.json({ ok: true });
     } catch (err: any) {
       console.error("[redes PATCH]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // PATCH /api/carteira/redes/:id/papel   { clienteId, papel }
+  // papel: 'destinatario' | 'entrega' | 'nenhum'.
+  // Marcar um novo destinatario rebaixa o anterior — a rede so' tem um.
+  // ---------------------------------------------------------------------------
+  app.patch("/api/carteira/redes/:id/papel", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const e = escopo(req);
+      if (!podeEditar(e.papel)) return res.status(403).json({ ok: false, error: "Definir destinatário e local de entrega é restrito ao Admin, Coordenação e Administrativo." });
+      const id = limpaId(req.params.id);
+      const clienteId = limpaId((req.body || {}).clienteId);
+      const papel = String((req.body || {}).papel || "").trim();
+      if (!["destinatario", "entrega", "nenhum"].includes(papel)) {
+        return res.status(400).json({ ok: false, error: "Papel inválido." });
+      }
+      const membro = (await db.execute(sql`
+        SELECT 1 FROM cliente_rede_membros WHERE rede_id = ${id} AND customer_id = ${clienteId} LIMIT 1`)).rows as any[];
+      if (!membro.length) return res.status(404).json({ ok: false, error: "Cliente não pertence a esta rede." });
+
+      if (papel === "destinatario") {
+        // Sem CNPJ e sem endereco a nota nao fecha; melhor barrar aqui do que
+        // na SEFAZ.
+        const c = (await db.execute(sql`
+          SELECT COALESCE(NULLIF(cnpj,''), NULLIF(cpf,'')) AS doc, address, city, state
+          FROM customers WHERE id = ${clienteId} LIMIT 1`)).rows as any[];
+        const dados = c[0] || {};
+        if (!dados.doc || !dados.address || !dados.city || !dados.state) {
+          return res.status(400).json({ ok: false, error: "O destinatário precisa de CNPJ/CPF, endereço, cidade e UF no cadastro." });
+        }
+        await db.execute(sql`UPDATE cliente_rede_membros SET papel = 'nenhum' WHERE rede_id = ${id} AND papel = 'destinatario'`);
+      }
+      await db.execute(sql`UPDATE cliente_rede_membros SET papel = ${papel} WHERE rede_id = ${id} AND customer_id = ${clienteId}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[redes papel]", err);
       res.status(500).json({ ok: false, error: err?.message || String(err) });
     }
   });

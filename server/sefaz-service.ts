@@ -1492,6 +1492,39 @@ function buildDocumento(
   const totalCofins = parseFloat(invoice.totalCofins?.toString() || '0');
   const totalIpi = parseFloat(invoice.totalIpi?.toString() || '0');
 
+  // ── LOCAL DE ENTREGA (grupo <entrega>) ─────────────────────────────────────
+  // Rede de clientes: a nota sai no CNPJ do destinatario (ja montado acima) e a
+  // mercadoria desce no endereco abaixo. Nota comum tem delivery_* NULL e este
+  // bloco nao produz nada — o XML fica identico ao de sempre.
+  // NFC-e (modelo 65) nao leva <entrega>.
+  let entrega: Record<string, any> | null = null;
+  if (!isNFCe && invoice.deliveryCnpjCpf && invoice.deliveryUf) {
+    const entDoc = onlyDigits(invoice.deliveryCnpjCpf);
+    const entUf = String(invoice.deliveryUf).toUpperCase().slice(0, 2);
+    const entCidade = String(invoice.deliveryCity || '').replace(/\s*\([A-Z]{2}\)\s*$/, '');
+    const { xLgr: entLgr, nro: entNro, xCompl: entCompl } = parseCustomerAddress(invoice.deliveryAddress || '');
+    const entNroBruto = invoice.deliveryNumber ? sanitizeStr(invoice.deliveryNumber, 10) : entNro;
+    const entCep = onlyDigits(invoice.deliveryCep || '');
+    const entFone = onlyDigits(invoice.deliveryPhone || '').slice(0, 14);
+    entrega = {
+      ...(entDoc.length === 14 ? { CNPJ: entDoc } : entDoc.length === 11 ? { CPF: entDoc } : {}),
+      ...(invoice.deliveryName ? { xNome_Opc: sanitizeStr(invoice.deliveryName, 60) } : {}),
+      xLgr: (!entLgr || entLgr.length < 2) ? 'N/I' : entLgr.replace(/\s+$/, ''),
+      nro: /^0+$/.test(entNroBruto) ? 'S/N' : (entNroBruto || 'S/N'),
+      ...(entCompl ? { xCpl: entCompl } : {}),
+      xBairro: sanitizeStr(invoice.deliveryBairro || 'N/I', 60),
+      cMun: ensureCityCodeMatchesUf(invoice.deliveryCityCode, entUf, entCidade),
+      xMun: sanitizeStr(entCidade || UF_CAPITAL_NAME[entUf] || 'Goiania', 60),
+      UF: entUf,
+      ...(entCep.length === 8 && !/^0+$/.test(entCep) ? { CEP_Opc: entCep } : {}),
+      cPais_Opc: '1058',
+      xPais_Opc: 'BRASIL',
+      ...(entFone.length >= 6 && !/^0+$/.test(entFone) ? { fone_Opc: entFone } : {}),
+      ...(invoice.deliveryIe ? { IE_Opc: onlyDigits(invoice.deliveryIe) } : {}),
+    };
+    console.log(`📍 [NFE-XML] Local de entrega: ${invoice.deliveryName || entDoc} — ${entrega.xMun}/${entUf}`);
+  }
+
   const documento: Record<string, any> = {
     ide: {
       cUF,
@@ -1535,6 +1568,7 @@ function buildDocumento(
       CRT: crt,
     },
     ...(dest ? { dest } : {}),
+    ...(entrega ? { entrega } : {}),
     det_list: detList,
     total: {
       ICMSTot: {

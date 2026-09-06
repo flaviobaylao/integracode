@@ -245,7 +245,11 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   doc.text(canhotLines, margin + 2, y + 4);
   doc.setFontSize(5.5);
   doc.text(`EMISSÃO: ${fmtDateOnly(emissionDate)}    VALOR TOTAL: R$ ${fmtCur(invoice.totalInvoice || '0')}    DESTINATÁRIO: ${invoice.customerName || ''}`, margin + 2, y + 10);
-  const destAddrShort = invoice.customerAddress || '';
+  // Quem assina o canhoto esta' no LOCAL DE ENTREGA, nao no endereco de cobranca:
+  // com rede, o entregador precisa ver no recibo o endereco onde vai descarregar.
+  const destAddrShort = (invoice as any).deliveryName
+    ? `ENTREGAR EM: ${(invoice as any).deliveryName} - ${(invoice as any).deliveryAddress || ''} - ${(invoice as any).deliveryCity || ''}/${(invoice as any).deliveryUf || ''}`
+    : (invoice.customerAddress || '');
   if (destAddrShort) {
     doc.setFontSize(5);
     const addrShort = doc.splitTextToSize(destAddrShort, contentWidth - 46);
@@ -426,6 +430,40 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   drawField('INSCRIÇÃO ESTADUAL', invoice.customerIe || '', margin + destMuniW + destUfW + destFoneW, y, destIeW, 10);
   drawField('HORA DA SAÍDA/ENTRADA', fmtTimeOnly(emissionDate), margin + destMuniW + destUfW + destFoneW + destIeW, y, destHourW, 10);
   y += 10;
+
+  // ── LOCAL DE ENTREGA ───────────────────────────────────────────────────────
+  // So' aparece quando a nota separa quem paga de onde a mercadoria desce (rede
+  // de clientes). Nota comum nao tem delivery_* e este quadro nem e' desenhado.
+  const entregaNome = (invoice as any).deliveryName || '';
+  const entregaDoc = (invoice as any).deliveryCnpjCpf || '';
+  if (entregaNome || entregaDoc) {
+    drawBox(margin, y, contentWidth, 5);
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0);
+    doc.text('LOCAL DE ENTREGA', margin + 2, y + 3.5);
+    y += 5;
+
+    const entNameW = contentWidth * 0.55;
+    const entCnpjW = contentWidth * 0.25;
+    const entIeW = contentWidth - entNameW - entCnpjW;
+    drawField('NOME / RAZÃO SOCIAL', entregaNome, margin, y, entNameW, 10);
+    drawField('CNPJ / CPF', entregaDoc, margin + entNameW, y, entCnpjW, 10);
+    drawField('INSCRIÇÃO ESTADUAL', (invoice as any).deliveryIe || '', margin + entNameW + entCnpjW, y, entIeW, 10);
+    y += 10;
+
+    const entAddrW = contentWidth * 0.40;
+    const entBairroW = contentWidth * 0.20;
+    const entMuniW = contentWidth * 0.20;
+    const entUfW = contentWidth * 0.05;
+    const entCepW = contentWidth - entAddrW - entBairroW - entMuniW - entUfW;
+    drawField('ENDEREÇO', (invoice as any).deliveryAddress || '', margin, y, entAddrW, 10);
+    drawField('BAIRRO / DISTRITO', (invoice as any).deliveryBairro || '', margin + entAddrW, y, entBairroW, 10);
+    drawField('MUNICÍPIO', (invoice as any).deliveryCity || '', margin + entAddrW + entBairroW, y, entMuniW, 10);
+    drawField('UF', (invoice as any).deliveryUf || '', margin + entAddrW + entBairroW + entMuniW, y, entUfW, 10);
+    drawField('CEP', (invoice as any).deliveryCep || '', margin + entAddrW + entBairroW + entMuniW + entUfW, y, entCepW, 10);
+    y += 10;
+  }
 
   drawBox(margin, y, contentWidth, 5);
   doc.setFontSize(6);

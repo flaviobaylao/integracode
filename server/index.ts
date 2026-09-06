@@ -378,6 +378,20 @@ run();
       await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false"));
       await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_repescagem_assign_draw ON repescagem_assignments(draw_date)"));
       await db.execute(sql.raw("ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS check_in_notes text"));
+
+      // ── LOCAL DE ENTREGA na NF-e (rede de clientes) ────────────────────────
+      // Rede com destinatario unico: a nota sai no CNPJ do integrante marcado
+      // como DESTINATARIO e a mercadoria desce no CNPJ do pedido. Estas colunas
+      // guardam esse segundo endereco e alimentam o grupo <entrega> do XML.
+      // Precisam existir ANTES do primeiro SELECT (estao no schema drizzle).
+      for (const col of [
+        "delivery_customer_id varchar", "delivery_name varchar", "delivery_cnpj_cpf varchar",
+        "delivery_ie varchar", "delivery_address text", "delivery_number varchar",
+        "delivery_bairro varchar", "delivery_cep varchar", "delivery_city varchar",
+        "delivery_city_code varchar", "delivery_uf varchar", "delivery_phone varchar",
+      ]) {
+        await db.execute(sql.raw(`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS ${col}`));
+      }
       // Prioridade do card na roteirização (checkbox nas etapas "Aguardando Rota").
       // ⚠️ Coluna adicionada ao schema drizzle → o ALTER PRECISA ficar aqui no boot,
       // senão todo SELECT de billing_pipeline quebra entre o deploy e o ALTER.

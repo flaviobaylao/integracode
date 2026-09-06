@@ -2809,6 +2809,25 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   customerCity: varchar("customer_city"),
   customerUf: varchar("customer_uf"),
   customerPhone: varchar("customer_phone"),
+  // ── LOCAL DE ENTREGA (grupo <entrega> da NF-e) ────────────────────────────
+  // So' preenchido quando o pedido e' de um cliente marcado como LOCAL DE ENTREGA
+  // de uma rede: ai o destinatario acima e' o CNPJ do integrante marcado como
+  // DESTINATARIO, e a mercadoria desce no endereco abaixo. Nota comum deixa tudo
+  // NULL e o XML sai identico ao de hoje (nenhum grupo <entrega> e' emitido).
+  // ⚠️ As colunas sao criadas no boot (server/index.ts). Adicionar aqui sem o
+  //    ALTER derruba TODO SELECT de fiscal_invoices.
+  deliveryCustomerId: varchar("delivery_customer_id"),
+  deliveryName: varchar("delivery_name"),
+  deliveryCnpjCpf: varchar("delivery_cnpj_cpf"),
+  deliveryIe: varchar("delivery_ie"),
+  deliveryAddress: text("delivery_address"),
+  deliveryNumber: varchar("delivery_number"),
+  deliveryBairro: varchar("delivery_bairro"),
+  deliveryCep: varchar("delivery_cep"),
+  deliveryCity: varchar("delivery_city"),
+  deliveryCityCode: varchar("delivery_city_code"),
+  deliveryUf: varchar("delivery_uf"),
+  deliveryPhone: varchar("delivery_phone"),
   natureOfOperation: varchar("nature_of_operation"),
   cfop: varchar("cfop"),
   totalProducts: decimal("total_products", { precision: 12, scale: 2 }).default('0'),
