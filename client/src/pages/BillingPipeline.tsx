@@ -30,6 +30,7 @@ interface BillingPipelineItem {
   customerId: string;
   customerName: string;
   customerAltName?: string | null; // nome alternativo (ex.: razão social) — usado só na busca
+  customerCity?: string | null; // cidade do cadastro do cliente (customers.city) — exibida no card
   customerDocument: string | null;
   sellerId: string | null;
   sellerName: string | null;
@@ -113,6 +114,24 @@ const ROUTABLE_STAGES = new Set(['impresso', 'aguardando_rota', 'aguardando_rota
      0 ou 1 dia util  -> verde     2 dias uteis -> amarelo
      3 dias uteis     -> vermelho  acima de 3   -> roxo
    Fora dessas etapas (pedido, a faturar, entregue, lixeira...) nao aparece. */
+/* Cidade do cliente no card: o dado gravado em customers.city vem sem padrao
+   ("GOIANIA", "Goiânia", "RIO VERDE (GO)"). Aqui so a EXIBICAO e normalizada —
+   tira o sufixo " (UF)", espacos sobrando e devolve em Title Case com as
+   preposicoes em minuscula ("Aparecida de Goiania"). Nao altera o dado. */
+const cidadeLabel = (raw: any): string | null => {
+  const s = String(raw ?? '')
+    .replace(/\s*\([A-Za-z]{2}\)\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return null;
+  const minusculas = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+  return s
+    .toLocaleLowerCase('pt-BR')
+    .split(' ')
+    .map((p, idx) => (idx > 0 && minusculas.has(p)) ? p : p.charAt(0).toLocaleUpperCase('pt-BR') + p.slice(1))
+    .join(' ');
+};
+
 const DELAY_STAGES = new Set([
   'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb',
   'outras_cidades', 'aguardando_rota', 'em_rota',
@@ -423,9 +442,11 @@ export default function BillingPipeline() {
   const items = useMemo(() => (rawItems as BillingPipelineItem[]).map((i) => {
     const c = resolveCustomer(i);
     const fantasy = ((c?.fantasyName || '').trim()) || ((c?.name || '').trim());
-    return (fantasy && fantasy !== i.customerName)
+    const cidade = cidadeLabel(c?.city);
+    const base = (fantasy && fantasy !== i.customerName)
       ? { ...i, customerName: fantasy, customerAltName: i.customerName }
       : i;
+    return cidade ? { ...base, customerCity: cidade } : base;
   }), [rawItems, customerById, customerByDoc]);
 
   const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
@@ -680,6 +701,7 @@ export default function BillingPipeline() {
           // Rotula o card bloqueado pelo NOME FANTASIA (igual ao resto do board), com fallback p/ razão social.
           customerName: (customerById.get(b.customerId)?.fantasyName || '').trim() || b.customer?.fantasyName || b.customer?.name || b.customerName || 'Cliente',
           customerAltName: b.customer?.name ?? customerById.get(b.customerId)?.name ?? null, // razão social — para a busca também encontrar
+          customerCity: cidadeLabel(customerById.get(b.customerId)?.city ?? b.customer?.city),
           customerDocument: b.customer?.cnpj ?? b.customer?.cpf ?? b.customer?.document ?? null,
           sellerId: b.sellerId ?? null,
           sellerName: b.seller ? ((b.seller.firstName || '') + ' ' + (b.seller.lastName || '')).trim() : (b.sellerId ?? null),
@@ -1280,6 +1302,7 @@ export default function BillingPipeline() {
               const matchesText = !_q
                 || (i.customerName || '').toLowerCase().includes(_q)
                 || ((i as any).customerAltName || '').toLowerCase().includes(_q)
+                || ((i as any).customerCity || '').toLowerCase().includes(_q)
                 || (i.invoiceNumber || '').toLowerCase().includes(_q)
                 || (_qDigits.length >= 3 && (i.customerDocument || '').replace(/\D/g, '').includes(_qDigits));
               // (2) Vendedor (nome canônico) — múltipla seleção
@@ -1996,6 +2019,16 @@ function KanbanCard({
           )}
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm truncate">{item.customerName}</p>
+            {item.customerCity && (
+              <p
+                className="text-xs text-gray-500 flex items-center gap-1 truncate"
+                title={`Cidade do cadastro do cliente: ${item.customerCity}`}
+                data-testid={`cidade-cliente-${item.id}`}
+              >
+                <MapPin className="h-3 w-3 flex-shrink-0" />
+                <span className="truncate">{item.customerCity}</span>
+              </p>
+            )}
             {item.sellerName && (
               <p className="text-xs text-gray-500 flex items-center gap-1">
                 <User className="h-3 w-3" />
