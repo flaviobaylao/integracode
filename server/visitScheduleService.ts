@@ -155,11 +155,130 @@ async function generateVisitsForCustomer(customer: any): Promise<number> {
   return generatedCount;
 }
 
+// =============================================================================
+//  🧭 CLIENTE SEM DIA DE ROTA — FALLBACK "REGRA DOS LEADS" + FLAG P/ INBOX
+//  ---------------------------------------------------------------------------
+//  Quando o cadastro do cliente perde o dia de rota (weekdays = []), a agenda
+//  antiga ficava como RESÍDUO e o cliente reaparecia num dia que o cadastro já
+//  não define. Regra nova (set/2026):
+//   1) SEMPRE limpar as visitas futuras pendentes (nada de resíduo);
+//   2) SEM dia de rota → alocar como LEAD: dia de rota da REGIÃO (coordenada do
+//      cliente vs. clientes do vendedor) + periodicidade SEMANAL, até o cadastro
+//      ser regularizado. Sem coordenada/vendedor não há como rotear → só a Inbox;
+//   3) Faltando dia de rota / periodicidade / vendedor / coordenada → abrir uma
+//      SOLICITAÇÃO DE ALTERAÇÃO automática (Inbox de Administração), sem duplicar.
+// =============================================================================
+const __AGENDA_WD_NUM: Record<string, number> = { dom: 0, domingo: 0, seg: 1, segunda: 1, ter: 2, terca: 2, qua: 3, quarta: 3, qui: 4, quinta: 4, sex: 5, sexta: 5, sab: 6, sabado: 6 };
+function __agendaWdToNum(s: any): number | null {
+  const k = String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  if (k in __AGENDA_WD_NUM) return __AGENDA_WD_NUM[k];
+  const k3 = k.slice(0, 3);
+  return (k3 in __AGENDA_WD_NUM) ? __AGENDA_WD_NUM[k3] : null;
+}
+function __agendaParseWeekdays(raw: any): number[] {
+  let arr: any[] = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (typeof raw === 'string') { try { const p = JSON.parse(raw); arr = Array.isArray(p) ? p : [p]; } catch { arr = raw.split(/[,;\/]/); } }
+  const nums = arr.map(__agendaWdToNum).filter((n): n is number => n !== null);
+  return Array.from(new Set(nums));
+}
+function __agendaHaversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371, toRad = (d: number) => d * Math.PI / 180;
+  const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+// Dia de rota (0=Dom..6=Sáb) mais adequado a (lat,lng), por voto ponderado pela
+// proximidade dos K clientes mais próximos do vendedor (com coord+dias), ou null.
+function __agendaRegionWeekday(custs: Array<{ latitude: any; longitude: any; weekdays: any }>, lat: number, lng: number, maxKm = 15, k = 8): number | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !custs || !custs.length) return null;
+  const near = custs
+    .map(c => ({ d: __agendaHaversineKm(lat, lng, Number(c.latitude), Number(c.longitude)), wds: __agendaParseWeekdays(c.weekdays) }))
+    .filter(o => Number.isFinite(o.d) && o.wds.length > 0)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, k)
+    .filter(o => o.d <= maxKm);
+  if (!near.length) return null;
+  const score: Record<number, number> = {};
+  for (const o of near) { const w = 1 / (o.d + 0.3); for (const wd of o.wds) score[wd] = (score[wd] || 0) + w; }
+  let best: number | null = null, bestScore = -1;
+  for (const wd of Object.keys(score).map(Number)) { if (score[wd] > bestScore) { bestScore = score[wd]; best = wd; } }
+  return best;
+}
+// Clientes ativos (com coord+dias) de um vendedor — base do "dia de rota da região".
+async function __agendaSellerCustomers(sellerId: string, excludeId?: string): Promise<Array<{ latitude: any; longitude: any; weekdays: any }>> {
+  if (!sellerId) return [];
+  const r: any = await db.execute(sql`
+    SELECT CAST(latitude AS DOUBLE PRECISION) AS latitude, CAST(longitude AS DOUBLE PRECISION) AS longitude, weekdays
+    FROM customers
+    WHERE seller_id = ${sellerId} AND is_active = true AND (is_lead IS NOT TRUE)
+      AND latitude IS NOT NULL AND longitude IS NOT NULL
+      AND weekdays IS NOT NULL AND weekdays NOT IN ('[]','null','')
+      ${excludeId ? sql`AND id <> ${excludeId}` : sql``}
+  `);
+  return (r.rows || []) as any[];
+}
+// Retorna a lista de campos de cadastro FALTANTES entre: dia de rota,
+// periodicidade, vendedor e coordenada. Vazio = cadastro completo.
+function __detectCadastroIncompleto(c: any, weekdayNums: number[]): string[] {
+  const faltando: string[] = [];
+  if (!weekdayNums || weekdayNums.length === 0) faltando.push('dia de rota');
+  if (!c.visitPeriodicity || !String(c.visitPeriodicity).trim()) faltando.push('periodicidade');
+  if (!c.sellerId || !String(c.sellerId).trim()) faltando.push('vendedor');
+  const lat = Number(c.latitude), lng = Number(c.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) faltando.push('coordenada');
+  return faltando;
+}
+// Abre uma SOLICITAÇÃO DE ALTERAÇÃO automática na Inbox de Administração para um
+// cliente com cadastro incompleto. Idempotente por entidade (o índice único parcial
+// ux_cr_pending garante no máximo 1 pendente por cliente). Nunca lança / bloqueia.
+async function __flagCadastroIncompletoInbox(c: any, faltando: string[]): Promise<void> {
+  try {
+    const cid = String(c.id);
+    const nome = String(c.fantasyName || c.name || cid).slice(0, 300);
+    // Tipos mapeados p/ os do card de solicitação; o resto entra em "outro".
+    const types: string[] = [];
+    if (faltando.includes('dia de rota')) types.push('dia_rota');
+    if (faltando.includes('periodicidade')) types.push('periodicidade');
+    if (faltando.includes('vendedor') || faltando.includes('coordenada')) types.push('outro');
+    if (types.length === 0) types.push('outro');
+    const resumo = `Cadastro incompleto (automático): faltando ${faltando.join(', ')}. ` +
+      `Enquanto isso, o cliente é roteado pela regra dos leads (coordenada + periodicidade semanal) quando possível. ` +
+      `Regularize o cadastro para ele voltar à rota normal.`;
+    const details: any = { outro: resumo };
+    if (faltando.includes('dia de rota')) details.diaRota = [];
+    const msg = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      role: 'admin', by: null, byName: 'Sistema (automático)',
+      text: resumo, at: new Date().toISOString(), kind: 'request',
+    };
+    // Só insere se NãO houver pendente para o cliente (o índice único também protege).
+    await db.execute(sql`
+      INSERT INTO change_requests
+        (entity_type, entity_id, customer_id, entity_name, seller_id,
+         types, details, status, requested_by, requested_by_name, messages)
+      SELECT 'customer', ${cid}, ${cid}, ${nome}, ${c.sellerId || null},
+             ${JSON.stringify(types)}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', NULL, 'Sistema (automático)',
+             ${JSON.stringify([msg])}::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM change_requests
+        WHERE entity_type = 'customer' AND entity_id = ${cid} AND status = 'pending'
+      )
+    `);
+  } catch (e: any) {
+    // Corrida com o índice único parcial OU tabela ainda não criada → ignora silenciosamente.
+    if (!String(e?.message || '').includes('ux_cr_pending')) {
+      console.warn('[agenda] flag cadastro incompleto (Inbox) não aplicada:', e?.message);
+    }
+  }
+}
+
 // Regenera a agenda FUTURA de um cliente ancorada na Data de Início do Fornecimento.
 // Usada quando o serviceStartDate muda (ex.: edição em massa): apaga as visitas
 // futuras ainda PENDENTES (preserva o que já passou / foi realizado) e gera 4 novas
 // ocorrências a partir da nova data. Usa o núcleo calculateNextVisitDate (mesmo motor
 // da regeneração de telemarketing), que já respeita o serviceStartDate como âncora.
+// SEM dia de rota → alocação pela "regra dos leads" (coordenada + semanal) + flag Inbox.
 // Retorna a quantidade de visitas criadas (0 = nada gerado).
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
   const { calculateNextVisitDate } = await import('../shared/visitSchedule');
@@ -168,28 +287,54 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
   const c: any = rows[0];
   // 🚫 LEADS não geram agenda por periodicidade — aparecem só pela DATA do próximo contato.
   if (c.isLead === true) return 0;
-  let weekdays: any;
-  try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { return 0; }
-  if (!Array.isArray(weekdays) || weekdays.length === 0) return 0;
-  const periodicity = c.visitPeriodicity || 'semanal';
-  const serviceStart = c.serviceStartDate ? new Date(c.serviceStartDate) : undefined;
+
+  // Dias cadastrados: versão bruta (p/ o motor calculateNextVisitDate) + numérica (p/ checagem).
+  let weekdaysRaw: any[] = [];
+  try { const p = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; weekdaysRaw = Array.isArray(p) ? p : (p != null ? [p] : []); } catch { weekdaysRaw = []; }
+  const weekdayNums = __agendaParseWeekdays(c.weekdays);
+
+  // 📥 CADASTRO INCOMPLETO → solicitação automática p/ a Inbox (não bloqueia, não duplica).
+  try {
+    const faltando = __detectCadastroIncompleto(c, weekdayNums);
+    if (faltando.length) void __flagCadastroIncompletoInbox(c, faltando);
+  } catch (e: any) { console.warn('[agenda] checagem de cadastro incompleto falhou:', e?.message); }
 
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-  // Remove só visitas futuras ainda pendentes (não toca em visitas passadas/realizadas)
+  // Remove SEMPRE as visitas futuras ainda pendentes (não toca no passado/realizado).
+  // Isso elimina o RESÍDUO quando o cliente perde o dia de rota (weekdays vazio).
   await db.delete(visitAgenda).where(and(
     eq(visitAgenda.customerId, customerId),
     eq(visitAgenda.visitStatus, 'pending'),
     gte(visitAgenda.scheduledDate, today),
   ));
 
+  const serviceStart = c.serviceStartDate ? new Date(c.serviceStartDate) : undefined;
+  let periodicity = c.visitPeriodicity || 'semanal';
+  let targetWeekdays: any[] = weekdaysRaw;
+
+  // 🧭 FALLBACK "regra dos leads": cliente SEM dia de rota é alocado pela COORDENADA
+  // (dia de rota da região dos clientes do vendedor) com periodicidade SEMANAL, até o
+  // cadastro ser regularizado. Sem coordenada/vendedor não há como rotear → só a Inbox trata.
+  if (weekdayNums.length === 0) {
+    const lat = Number(c.latitude), lng = Number(c.longitude);
+    let wd: number | null = null;
+    if (Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0) && c.sellerId) {
+      const sellerCusts = await __agendaSellerCustomers(String(c.sellerId), customerId);
+      wd = __agendaRegionWeekday(sellerCusts, lat, lng);
+    }
+    if (wd === null) return 0; // sem coordenada/vendedor/região → aguarda regularização (Inbox)
+    targetWeekdays = [['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][wd]];
+    periodicity = 'semanal'; // regra dos leads
+  }
+
   // Calcula 4 próximas datas ancoradas no início do fornecimento
   let dates: Date[] = [];
   try {
-    const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today, serviceStartDate: serviceStart }).nextDate;
+    const first = calculateNextVisitDate({ weekdays: targetWeekdays, periodicity, referenceDate: today, serviceStartDate: serviceStart }).nextDate;
     dates.push(first);
     let last = first;
     for (let i = 0; i < 3; i++) {
-      const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last, serviceStartDate: serviceStart }).nextDate;
+      const nx = calculateNextVisitDate({ weekdays: targetWeekdays, periodicity, lastCompletedDate: last, serviceStartDate: serviceStart }).nextDate;
       dates.push(nx); last = nx;
     }
   } catch { return 0; }
