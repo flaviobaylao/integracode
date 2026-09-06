@@ -13,7 +13,7 @@ const t = (nome: string, cond: boolean, extra?: any) => { if (cond) { ok++; cons
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
 async function main() {
-  for (const tb of ['production_checklist_items', 'production_checklists', 'machine_files', 'machine_photos', 'machine_maintenances', 'machine_notes', 'machines']) await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tb}`));
+  for (const tb of ['production_checklist_files', 'production_checklist_items', 'production_checklists', 'machine_files', 'machine_photos', 'machine_maintenances', 'machine_notes', 'machines']) await db.execute(sql.raw(`DROP TABLE IF EXISTS ${tb}`));
   await db.execute(sql`DELETE FROM users WHERE id = 'h-admin'`);
   await db.execute(sql`INSERT INTO users (id, email, first_name, last_name, role, is_active) VALUES ('h-admin', 'harness@honest.test', 'Harness', 'Admin', 'admin', true)`);
 
@@ -72,6 +72,22 @@ async function main() {
     t('arquivo nao-imagem -> 400', r.status === 400);
     r = await call('DELETE', `/api/industria/checklist/itens/${i2.id}/foto`);
     t('remover foto', r.status === 200 && (await call('GET', `/api/industria/checklist/itens/${i2.id}/foto`)).status === 404);
+    console.log('\n3b) Arquivos (qualquer tipo) do item');
+    const PDFI = Buffer.from('%PDF-1.4 laudo');
+    const fdi = (nome = 'laudo-temperatura.pdf', tipo = 'application/pdf') => { const f = new FormData(); f.append('arquivo', new Blob([PDFI], { type: tipo }), nome); return f; };
+    r = await call('POST', `/api/industria/checklist/itens/${i2.id}/arquivos`, fdi());
+    t('arquivo do item 201 com autor', r.status === 201 && r.json?.arquivo?.fileName === 'laudo-temperatura.pdf' && r.json.arquivo.createdBy === 'Harness Admin', r.json);
+    const arqItem = r.json.arquivo.id;
+    r = await call('POST', `/api/industria/checklist/itens/${i2.id}/arquivos`, fdi('planilha.xlsx', 'application/vnd.ms-excel'));
+    t('segundo arquivo (xlsx) 201', r.status === 201);
+    r = await call('POST', `/api/industria/checklist/itens/nao-existe/arquivos`, fdi());
+    t('item inexistente -> 404', r.status === 404);
+    r = await call('GET', `/api/industria/checklist/arquivos/${arqItem}/download`);
+    t('download pdf com o binario', r.status === 200 && r.ct.startsWith('application/pdf') && r.buf!.equals(PDFI));
+    r = await call('GET', '/api/industria/checklist/2026-09-05');
+    t('GET do dia traz arquivos[] no item (sem base64)', r.json.items[1].arquivos.length === 2 && r.json.items[0].arquivos.length === 0 && !('data' in r.json.items[1].arquivos[0]), r.json.items[1].arquivos);
+    r = await call('DELETE', `/api/industria/checklist/arquivos/${arqItem}`);
+    t('remover arquivo', r.status === 200 && (await call('GET', `/api/industria/checklist/arquivos/${arqItem}/download`)).status === 404);
 
     console.log('\n4) Dias + copiar do dia anterior');
     r = await call('POST', '/api/industria/checklist/2026-09-06/copiar-anterior', {});
@@ -86,6 +102,9 @@ async function main() {
     t('observacao do dia', r.status === 200 && (await call('GET', '/api/industria/checklist/2026-09-06')).json.checklist.notes === 'Produção de maracujá');
     r = await call('DELETE', `/api/industria/checklist/itens/${i1.id}`);
     t('remover item', r.status === 200 && (await call('GET', '/api/industria/checklist/2026-09-05')).json.items.length === 2);
+    r = await call('DELETE', `/api/industria/checklist/itens/${i2.id}`);
+    const orf: any = await db.execute(sql`SELECT COUNT(*)::int c FROM production_checklist_files WHERE item_id = ${i2.id}`);
+    t('remover item apaga os arquivos dele', r.status === 200 && orf.rows[0].c === 0, orf.rows[0]);
 
     console.log('\n5) Maquinas');
     r = await call('POST', '/api/industria/maquinas', { name: 'Envasadora linha 1', code: 'ENV-01', sector: 'Envase', brand: 'Tetra', preventiveIntervalDays: 90, technicalData: '380V, 15kW' });
