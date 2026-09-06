@@ -182,8 +182,8 @@ function InstanceFilter({ value, onChange }: { value: string; onChange: (v: stri
 // ============================================================================
 function useInstanceNames(): Record<string, string> {
   const { data } = useQuery<any[]>({
-    queryKey: ['/api/omie/instances'],
-    queryFn: () => fetch('/api/omie/instances', { credentials: 'include' }).then(r => r.json()).catch(() => []),
+    queryKey: ['/api/companies'],
+    queryFn: () => fetch('/api/companies', { credentials: 'include' }).then(r => r.json()).catch(() => []),
   });
   const map: Record<string, string> = {};
   (Array.isArray(data) ? data : []).forEach((i) => { if (i?.id) map[i.id] = i.displayName || i.name || i.id; });
@@ -3090,7 +3090,7 @@ function FinancialAccountsTab() {
                 <div className="grid grid-cols-3 gap-3">
                   <div><Label>Chave PIX</Label><Input value={form.pixKey || ''} onChange={e => setForm({ ...form, pixKey: e.target.value })} placeholder="CPF, CNPJ, e-mail ou telefone" /></div>
                   <div>
-                    <Label>Instância Omie</Label>
+                    <Label>Empresa</Label>
                     <Select value={form.omieInstanceId || 'none'} onValueChange={v => setForm({ ...form, omieInstanceId: v === 'none' ? '' : v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>

@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { MENU_ITEM_INDEX, resolveMenuHref } from "@/lib/menuItems";
+import { MENU_ITEM_INDEX, resolveMenuHref, normalizeFavorites } from "@/lib/menuItems";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 
 // (15/jul/2026) Cabeçalho persistente exibido em todas as páginas de módulo
@@ -26,13 +26,13 @@ export default function PersistentHeader() {
 
   useEffect(() => {
     const load = () => {
-      try { setFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]")); } catch { /* noop */ }
+      try { setFavorites(normalizeFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]"))); } catch { /* noop */ }
     };
     load();
     // Persistência por USUÁRIO (servidor): hidrata os favoritos salvos na conta.
     fetch('/api/user/favorites', { credentials: 'include' })
       .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d && Array.isArray(d.favorites) && d.favorites.length > 0) { setFavorites(d.favorites); try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(d.favorites)); } catch { /* noop */ } } })
+      .then((d) => { const favs = normalizeFavorites(d?.favorites); if (favs.length > 0) { setFavorites(favs); try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs)); } catch { /* noop */ } } })
       .catch(() => { /* noop */ });
     window.addEventListener("storage", load);
     return () => window.removeEventListener("storage", load);

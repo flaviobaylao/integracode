@@ -689,7 +689,7 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
         // ninguem perceber no caixa.
         if (unit === null || unit <= 0) {
           return res.status(409).json({
-            message: `"${p.name}" nao tem preco de ${tabela} cadastrado. Cadastre no Omie ou troque a tabela.`,
+            message: `"${p.name}" nao tem preco de ${tabela} cadastrado. Cadastre em Precos de Venda ou troque a tabela.`,
             produtoId: id,
             codigo: p.omie_code || null,
             tabela,

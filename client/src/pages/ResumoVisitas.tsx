@@ -190,7 +190,7 @@ export default function ResumoVisitas() {
   // e dos totais do topo, para que o painel continue mostrando o panorama enquanto a grade
   // abaixo mostra só os clientes do card clicado.
   const filteredBase = useMemo(() => {
-    // Normaliza espaços repetidos: nomes vindos do Omie podem ter espaço duplo
+    // Normaliza espaços repetidos: nomes legados podem ter espaço duplo
     // (ex.: "EMPORIO NOBRE  SETOR OESTE"), então a busca digitada com 1 espaço não casava.
     const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
     const q = norm(search);

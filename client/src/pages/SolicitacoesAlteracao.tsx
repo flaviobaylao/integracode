@@ -37,7 +37,7 @@ const fmtDate = (s?: string) => {
 };
 
 // 📋 Botão de copiar a razão social do cliente para a área de transferência
-// (facilita colar a busca no Omie/sistema ao efetuar a alteração manual). (30/jul/2026)
+// (facilita colar a busca no sistema ao efetuar a alteração manual). (30/jul/2026)
 function CopyBtn({ text }: { text: string }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);

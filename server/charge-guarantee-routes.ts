@@ -1,28 +1,17 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { storage } from "./storage";
 import { generateBoletoForReceivable, generatePixForReceivable } from "./billing-pipeline-routes";
-import { authenticateUser, requireRole, gone } from "./authMiddleware";
+import { authenticateUser, requireRole } from "./authMiddleware";
 const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
 // GARANTIR COBRANCA - corrige "faturado sem cobranca" DAQUI PRA FRENTE.
-//   POST /api/admin/customers/pull-cep-from-1-0 { apply }  -> preenche CEP/endereco faltantes do 1.0 (fill-only)
 //   POST /api/admin/financial/garantir-cobranca { apply, sinceISO, cutoffReset }
 //        -> gera a cobranca que faltou nos recebiveis de VENDA em aberto criados A PARTIR do cutoff (nao toca no legado)
 //   GET  /api/admin/financial/garantir-cobranca/last
 // O cutoff (system_settings.charge_guarantee_cutoff) e fixado no 1o uso = "de agora em diante".
 // ---------------------------------------------------------------------------
-
-const dig = (x: any): string => String(x ?? "").replace(/\D/g, "");
-
-async function pgClient(url: string | undefined) {
-  const pgMod = await import("pg");
-  const c = new pgMod.default.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
-  await c.connect();
-  return c;
-}
 
 async function getSetting(key: string): Promise<string | null> {
   try {
@@ -37,55 +26,6 @@ async function setSetting(key: string, value: string) {
 }
 
 export function registerChargeGuarantee(app: Express) {
-  // ---- Puxar CEP/endereco faltantes do 1.0 (fill-only, por documento) -----
-  app.post("/api/admin/customers/pull-cep-from-1-0", gone('CEP copiado do 1.0'), async (req: Request, res: Response) => {
-    const apply = req.body?.apply === true;
-    let src: any = null;
-    try {
-      src = await pgClient(process.env.REPLIT_DATABASE_URL);
-      const wanted = ["zip_code", "address", "city", "neighborhood", "state"];
-      const colsRes = (await src.query(
-        "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers'"
-      )).rows.map((r: any) => r.column_name);
-      const have = wanted.filter((c) => colsRes.includes(c));
-      if (!have.includes("zip_code")) return res.status(400).json({ error: "1.0 sem coluna zip_code", colsDoOneZero: colsRes.filter((c: string) => /zip|cep|address|city|bairro|neighbor|state|uf/i.test(c)) });
-      const sel = have.map((c) => `"${c}"`).join(", ");
-      const rows1 = (await src.query(
-        `SELECT COALESCE(NULLIF(regexp_replace(COALESCE(cnpj,''),'\\D','','g'),''), NULLIF(regexp_replace(COALESCE(cpf,''),'\\D','','g'),'')) AS doc, ${sel}
-         FROM customers WHERE (cnpj IS NOT NULL OR cpf IS NOT NULL)`
-      )).rows as any[];
-      const byDoc = new Map<string, any>();
-      for (const r of rows1) { const d = dig(r.doc); if (d.length >= 11) byDoc.set(d, r); }
-
-      const cust2 = await storage.getCustomers();
-      const alvo = (cust2 || []).filter((c: any) => dig(c.zipCode).length < 8);
-      let matched = 0, updated = 0, semMatch = 0; const erros: string[] = [];
-      const amostra: any[] = [];
-      for (const c of alvo) {
-        const d = dig(c.cnpj) || dig(c.cpf) || dig(c.document);
-        if (d.length < 11) { semMatch++; continue; }
-        const src1 = byDoc.get(d);
-        if (!src1) { semMatch++; continue; }
-        matched++;
-        const patch: any = {};
-        if (dig(c.zipCode).length < 8 && dig(src1.zip_code).length === 8) patch.zipCode = String(src1.zip_code);
-        if (!c.address && src1.address) patch.address = String(src1.address);
-        if (!c.city && src1.city) patch.city = String(src1.city);
-        if (!c.neighborhood && src1.neighborhood) patch.neighborhood = String(src1.neighborhood);
-        if (!c.state && src1.state) patch.state = String(src1.state);
-        if (!Object.keys(patch).length) continue;
-        if (amostra.length < 15) amostra.push({ nome: c.name, ...patch });
-        if (apply) {
-          try { await storage.updateCustomer(c.id, patch); updated++; }
-          catch (e: any) { erros.push(`${c.name}: ${e?.message || e}`); }
-        } else { updated++; }
-      }
-      res.json({ apply, colunas1_0: have, alvoSemCEP: alvo.length, matched, updated, semMatch, erros: erros.slice(0, 20), amostra });
-    } catch (e: any) {
-      res.status(500).json({ error: String(e?.message || e) });
-    } finally { try { if (src) await src.end(); } catch {} }
-  });
-
   // ---- Garantir cobranca nos recebiveis de venda em aberto (a partir do cutoff) ----
   app.post("/api/admin/financial/garantir-cobranca", authenticateUser, requireRole(FIN_ROLES), async (req: Request, res: Response) => {
     try {

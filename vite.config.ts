@@ -2,22 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-// Plugins Replit — apenas em ambiente Replit
-const IS_REPLIT = !!process.env.REPL_ID;
-
 export default defineConfig(async () => {
-  const replitPlugins: any[] = [];
-
-  if (IS_REPLIT) {
-    const { default: runtimeErrorOverlay } = await import("@replit/vite-plugin-runtime-error-modal");
-    replitPlugins.push(runtimeErrorOverlay());
-
-    if (process.env.NODE_ENV !== "production") {
-      const { cartographer } = await import("@replit/vite-plugin-cartographer");
-      replitPlugins.push(cartographer());
-    }
-  }
-
   // PWA plugin — usa manifest.webmanifest estático de client/public/
   const pwaPlugins: any[] = [];
   if (process.env.VITE_PWA !== "false") {
@@ -65,7 +50,7 @@ export default defineConfig(async () => {
   }
 
   return {
-    plugins: [react(), ...replitPlugins, ...pwaPlugins],
+    plugins: [react(), ...pwaPlugins],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "client", "src"),

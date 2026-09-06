@@ -147,21 +147,6 @@ interface ActiveCustomerWithVisits {
   currentMonthTotal?: number;
 }
 
-interface UploadRecord {
-  id: string;
-  fileName: string;
-  uploadedBy: string;
-  uploadedAt: string;
-  totalRecords: number;
-  matchedRecords: number;
-  unmatchedRecords: number;
-  addedCustomers: number;
-  removedCustomers: number;
-  keptCustomers: number;
-  processingStatus: string;
-  errorMessage: string | null;
-}
-
 // Função ROBUSTA para parsear weekdays - NUNCA quebra
 // Suporta: arrays, PostgreSQL {}, JSON [], strings separadas por vírgula/semicolon/slash
 function parseWeekdaysArray(input: any): string[] {
@@ -254,8 +239,6 @@ export default function ActiveCustomers() {
   const [lastOrderCustomerId, setLastOrderCustomerId] = useState<string | null>(null);
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [lastOrderLoading, setLastOrderLoading] = useState(false);
-  const [showPendingOmieDialog, setShowPendingOmieDialog] = useState(false);
-  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
   const [selectedPersonType, setSelectedPersonType] = useState<string>("");
   const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
@@ -267,65 +250,7 @@ export default function ActiveCustomers() {
   const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
   const [bulkStartDate, setBulkStartDate] = useState("");
   const [bulkGeocode, setBulkGeocode] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-
-  const { data: pendingOmieData, isLoading: isLoadingPendingOmie } = useQuery({
-    queryKey: ['/api/sales-cards/pending-omie'],
-    queryFn: () => fetch('/api/sales-cards/pending-omie', { credentials: 'include' }).then(r => r.json()),
-    enabled: showPendingOmieDialog,
-  });
-
-  const allCardIds: string[] = pendingOmieData?.pendingCards?.map((c: any) => c.id) || [];
-  const allSelected = allCardIds.length > 0 && allCardIds.every(id => selectedCardIds.has(id));
-  const someSelected = allCardIds.some(id => selectedCardIds.has(id));
-
-  const toggleSelectAll = () => {
-    if (allSelected) {
-      setSelectedCardIds(new Set());
-    } else {
-      setSelectedCardIds(new Set(allCardIds));
-    }
-  };
-
-  const toggleCard = (id: string) => {
-    setSelectedCardIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const sendToOmieMutation = useMutation({
-    mutationFn: async (cardId: string) => {
-      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/pending-omie'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
-      toast({ title: "Sucesso", description: "Pedido enviado para Omie com sucesso!" });
-    },
-    onError: (error: any) => {
-      toast({ variant: "destructive", title: "Erro ao Enviar para Omie", description: error.message });
-    },
-  });
-
-  const bulkCancelMutation = useMutation({
-    mutationFn: async (cardIds: string[]) => {
-      const res = await apiRequest('POST', '/api/sales-cards/bulk-cancel', { cardIds });
-      return res as any;
-    },
-    onSuccess: (data: any) => {
-      setSelectedCardIds(new Set());
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards/pending-omie'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
-      toast({ title: "Cancelamento concluído", description: `${data.cancelled} pedido(s) cancelado(s).` });
-    },
-    onError: (error: any) => {
-      toast({ variant: "destructive", title: "Erro ao cancelar", description: error.message });
-    },
-  });
 
   const updatePhoneMutation = useMutation({
     mutationFn: async ({ customerId, phone, contact }: { customerId: string; phone: string; contact: string }) => {
@@ -607,16 +532,6 @@ export default function ActiveCustomers() {
     }
   }, [receitaSyncStatus]);
 
-  const { 
-    data: uploads = [], 
-    isLoading: isLoadingUploads,
-    isError: isErrorUploads,
-    error: uploadError
-  } = useQuery<UploadRecord[]>({
-    queryKey: ["/api/active-customers/uploads"],
-    retry: 2,
-  });
-
   // Query para estatísticas de atendimentos virtuais
   const { data: serviceLogsStats } = useQuery<{
     total: number;
@@ -638,75 +553,6 @@ export default function ActiveCustomers() {
     queryKey: ["/api/sellers/active"],
     staleTime: 30000,
   });
-
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      const response = await fetch("/api/active-customers/upload", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      
-      const contentType = response.headers.get("content-type");
-      const text = await response.text();
-      
-      console.log("Upload response:", {
-        ok: response.ok,
-        status: response.status,
-        contentType,
-        textLength: text.length,
-        firstChars: text.substring(0, 100)
-      });
-      
-      if (!response.ok) {
-        try {
-          const error = JSON.parse(text);
-          throw new Error(error.message || `Erro: ${response.status}`);
-        } catch (e) {
-          throw new Error(`Erro no upload (${response.status}): ${text.substring(0, 200)}`);
-        }
-      }
-      
-      try {
-        return JSON.parse(text);
-      } catch (e) {
-        throw new Error(`Resposta inválida do servidor: ${text.substring(0, 200)}`);
-      }
-    },
-    onSuccess: (data) => {
-      toast({
-        title: "Upload concluído",
-        description: `${data.totalRecords} registros processados. ${data.matchedRecords} encontrados, ${data.addedCustomers} adicionados, ${data.removedCustomers} removidos.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/active-customers/uploads"] });
-    },
-    onError: (error: Error) => {
-      console.error("Upload error:", error);
-      toast({
-        title: "Erro no upload",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      if (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls")) {
-        toast({
-          title: "Formato inválido",
-          description: "Por favor, envie um arquivo Excel (.xlsx ou .xls)",
-          variant: "destructive",
-        });
-        return;
-      }
-      uploadMutation.mutate(file);
-    }
-  };
 
   const generateVisitsMutation = useMutation({
     mutationFn: async () => {
@@ -1244,10 +1090,6 @@ export default function ActiveCustomers() {
           <TabsTrigger value="list" data-testid="tab-list">
             <Users className="h-4 w-4 mr-2" />
             Lista de Clientes
-          </TabsTrigger>
-          <TabsTrigger value="history" data-testid="tab-history">
-            <History className="h-4 w-4 mr-2" />
-            Histórico de Uploads
           </TabsTrigger>
         </TabsList>
 
@@ -2212,83 +2054,6 @@ export default function ActiveCustomers() {
           </DialogContent>
         </Dialog>
 
-        <TabsContent value="history" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileSpreadsheet className="h-5 w-5" />
-                Histórico de Uploads
-              </CardTitle>
-              <CardDescription>
-                Visualize todos os uploads de planilhas realizados
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoadingUploads ? (
-                <div className="space-y-4">
-                  {[1, 2, 3].map((i) => (
-                    <Skeleton key={i} className="h-16 w-full" />
-                  ))}
-                </div>
-              ) : uploads.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  Nenhum upload realizado ainda
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Arquivo</TableHead>
-                        <TableHead>Data</TableHead>
-                        <TableHead>Registros</TableHead>
-                        <TableHead>Encontrados</TableHead>
-                        <TableHead>Adicionados</TableHead>
-                        <TableHead>Removidos</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {uploads.map((upload) => (
-                        <TableRow key={upload.id} data-testid={`row-upload-${upload.id}`}>
-                          <TableCell>
-                            {upload.processingStatus === "completed" ? (
-                              <CheckCircle2 className="h-5 w-5 text-green-500" />
-                            ) : upload.processingStatus === "error" ? (
-                              <XCircle className="h-5 w-5 text-red-500" />
-                            ) : (
-                              <Clock className="h-5 w-5 text-yellow-500" />
-                            )}
-                          </TableCell>
-                          <TableCell className="font-medium">{upload.fileName}</TableCell>
-                          <TableCell>
-                            {format(new Date(upload.uploadedAt), "dd/MM/yyyy HH:mm", { locale: ptBR })}
-                          </TableCell>
-                          <TableCell>{upload.totalRecords}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="bg-green-50 text-green-700">
-                              {upload.matchedRecords}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                              +{upload.addedCustomers}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="bg-red-50 text-red-700">
-                              -{upload.removedCustomers}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
       {/* Dialog de Confirmação para Inativar Cliente */}
@@ -2317,137 +2082,6 @@ export default function ActiveCustomers() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Dialog Pedidos Pendentes Omie */}
-      <Dialog open={showPendingOmieDialog} onOpenChange={(open) => { setShowPendingOmieDialog(open); if (!open) setSelectedCardIds(new Set()); }}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-orange-500" />
-              Pedidos Pendentes de Envio ao Omie
-            </DialogTitle>
-          </DialogHeader>
-
-          <ScrollArea className="flex-1 min-h-0">
-            {isLoadingPendingOmie ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 animate-spin mr-2" />
-                <span>Verificando pedidos pendentes...</span>
-              </div>
-            ) : !pendingOmieData || (pendingOmieData.totalPending === 0) ? (
-              <div className="text-center py-12 text-gray-500">
-                <Send className="w-12 h-12 mx-auto mb-3 text-green-400" />
-                <p className="text-lg font-medium">Nenhum pedido pendente!</p>
-                <p className="text-sm">Todos os pedidos foram enviados ao Omie.</p>
-              </div>
-            ) : (
-              <div className="space-y-4 pr-2">
-                <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg border border-orange-200">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />
-                    <span className="text-sm text-orange-700 font-medium">
-                      {pendingOmieData.totalPending} pedido(s) pendente(s) de envio
-                    </span>
-                  </div>
-                  {selectedCardIds.size > 0 && (
-                    <span className="text-sm font-semibold text-blue-700">
-                      {selectedCardIds.size} selecionado(s)
-                    </span>
-                  )}
-                </div>
-
-                {pendingOmieData.pendingCards?.length > 0 && (
-                  <div>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-10">
-                            <Checkbox
-                              checked={allSelected}
-                              onCheckedChange={toggleSelectAll}
-                              aria-label="Selecionar todos"
-                              className={someSelected && !allSelected ? "opacity-60" : ""}
-                            />
-                          </TableHead>
-                          <TableHead>Cliente</TableHead>
-                          <TableHead>Vendedor</TableHead>
-                          <TableHead>Valor</TableHead>
-                          <TableHead>Data</TableHead>
-                          <TableHead>Ação</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pendingOmieData.pendingCards.map((card: any) => (
-                          <TableRow
-                            key={card.id}
-                            className={selectedCardIds.has(card.id) ? "bg-blue-50" : ""}
-                          >
-                            <TableCell>
-                              <Checkbox
-                                checked={selectedCardIds.has(card.id)}
-                                onCheckedChange={() => toggleCard(card.id)}
-                                aria-label={`Selecionar pedido de ${card.customerName}`}
-                              />
-                            </TableCell>
-                            <TableCell className="font-medium text-sm">{card.customerName}</TableCell>
-                            <TableCell className="text-sm">{card.sellerName}</TableCell>
-                            <TableCell className="text-sm font-medium text-green-600">
-                              R$ {parseFloat(card.saleValue || '0').toFixed(2)}
-                            </TableCell>
-                            <TableCell className="text-sm text-gray-500">
-                              {card.createdAt ? new Date(card.createdAt).toLocaleDateString('pt-BR') : '-'}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                className="bg-blue-600 hover:bg-blue-700"
-                                onClick={() => sendToOmieMutation.mutate(card.id)}
-                                disabled={sendToOmieMutation.isPending}
-                              >
-                                {sendToOmieMutation.isPending ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <>
-                                    <Send className="w-3 h-3 mr-1" />
-                                    Enviar
-                                  </>
-                                )}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </div>
-            )}
-          </ScrollArea>
-
-          {/* Bulk action footer - only shown when items are selected */}
-          {selectedCardIds.size > 0 && (
-            <div className="border-t pt-3 flex items-center justify-between gap-3 flex-shrink-0">
-              <span className="text-sm text-gray-600 font-medium">
-                {selectedCardIds.size} pedido(s) selecionado(s)
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="border-red-300 text-red-600 hover:bg-red-50"
-                  onClick={() => bulkCancelMutation.mutate(Array.from(selectedCardIds))}
-                  disabled={bulkCancelMutation.isPending}
-                >
-                  {bulkCancelMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <X className="w-4 h-4 mr-2" />
-                  )}
-                  Cancelar Selecionados
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

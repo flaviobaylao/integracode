@@ -83,9 +83,8 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/rh": "Administração",
   "/admin/users": "Administração",
   "/admin/system": "Administração",
-  "/admin/omie-instances": "Administração",
-  "/admin/omie-stage-logs": "Administração",
-  "/admin/sync-monitor": "Administração",
+  "/admin/empresas": "Administração",
+  "/admin/ambiente-fiscal": "Administração",
 };
 
 // Retorna o rotulo do grupo (secao) para uma rota, ou null se desconhecida.

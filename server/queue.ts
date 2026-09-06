@@ -33,7 +33,6 @@ export function getRedisConnection(): IORedis | null {
 // ---------------------------------------------------------------------------
 
 export const QUEUE_NAMES = {
-  OMIE_SYNC: "omie-sync",
   BILLING_SYNC: "billing-sync",
   TELEGRAM_NOTIFY: "telegram-notify",
 } as const;
@@ -55,11 +54,6 @@ export function getQueue(name: QueueName): Queue | null {
 // ---------------------------------------------------------------------------
 // Job types
 // ---------------------------------------------------------------------------
-
-export interface OmieSyncJobData {
-  instanceId: number;
-  triggerType: "manual" | "scheduled";
-}
 
 export interface BillingSyncJobData {
   instanceId: number;

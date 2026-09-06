@@ -61,16 +61,8 @@ class EvolutionAPIService {
     this.config = config;
     console.log('✅ Evolution API configurada:', config.apiUrl);
 
-    // Webhook configuration is handled by routes.ts to avoid conflicts
-    // In development mode, we DON'T reconfigure to preserve production webhook
-    const isDev = process.env.NODE_ENV === 'development';
-    const devDomain = process.env.REPLIT_DEV_DOMAIN;
-    
-    if (isDev && devDomain) {
-      console.log(`⚠️  [WEBHOOK-INIT] Modo DESENVOLVIMENTO - NÃO reconfigurando webhook para preservar produção`);
-      console.log(`💡 [WEBHOOK-INIT] Use POST /api/chat/webhook/force-dev-config para testar em dev`);
-    }
-    // Production webhook configuration is handled in routes.ts
+    // A configuracao do webhook fica em routes.ts (producao). Em desenvolvimento nada e
+    // reconfigurado, para nao roubar o webhook de producao.
   }
 
   public isConfigured(): boolean {

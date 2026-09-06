@@ -6,7 +6,7 @@
 //   Instagram : Pedidos · Regras da IA · Metricas
 // As telas Pedidos do Site, Tabela de Precos e Cupons de Desconto sao
 // REAPROVEITADAS (mesmos componentes de sempre) — nada foi reescrito.
-// Cadastro de cliente dos dois canais: SOMENTE INTEGRA 2.0 (sem Omie).
+// Cadastro de cliente dos dois canais: SOMENTE INTEGRA 2.0.
 // ============================================================================
 import { useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
@@ -165,7 +165,7 @@ function DestinoCadastro({ texto }: { texto: string }) {
           <CheckCircle2 className="h-4 w-4" /> INTEGRA 2.0
         </div>
         <div className="flex items-center gap-2 text-gray-600">
-          <XCircle className="h-4 w-4 text-gray-400" /> Omie — não recebe cadastro deste canal
+          <XCircle className="h-4 w-4 text-gray-400" /> Nenhum ERP externo recebe cadastro deste canal
         </div>
         <p className="text-xs text-gray-500 pt-1">{texto}</p>
       </CardContent>

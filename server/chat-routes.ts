@@ -14,7 +14,6 @@ import { evolutionAPIService } from "./evolution-api-service";
 import { evolutionPollingService } from "./evolution-polling-service";
 import { getAgentColor } from "./chat-distribution-service";
 import { uploadMediaFromBase64 } from "./whatsapp-media-storage";
-import { objectStorageClient } from "./replit_integrations/object_storage/objectStorage";
 import { nanoid } from "nanoid";
 import {
   insertChatAgentSchema,
@@ -498,9 +497,8 @@ async function consolidateDuplicateConversations(storage: any): Promise<{ consol
   return { consolidated: consolidatedCount, merged: mergedMessagesCount };
 }
 
-// Helper function to upload chat media to Object Storage
+// Guarda a midia do chat no banco (tabela chat_media) e serve via /api/chat-media/:id.
 async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, originalFilename: string): Promise<string | null> {
-  // Fallback: guarda a midia no banco e serve via /api/chat-media/:id (funciona no Railway, sem Object Storage do Replit)
   const saveToDb = async (): Promise<string | null> => {
     try {
       await db.execute(sql`CREATE TABLE IF NOT EXISTS chat_media (id text PRIMARY KEY, mimetype text, filename text, data text, created_at timestamptz DEFAULT now())`);
@@ -508,40 +506,15 @@ async function uploadChatMediaToStorage(buffer: Buffer, mimetype: string, origin
       const b64 = buffer.toString('base64');
       await db.execute(sql`INSERT INTO chat_media (id, mimetype, filename, data) VALUES (${id}, ${mimetype}, ${originalFilename}, ${b64})`);
       const url = `/api/chat-media/${id}`;
-      console.log(`✅ [CHAT-UPLOAD] Salvo no banco (fallback): ${url} (${Math.round(buffer.length / 1024)}KB)`);
+      console.log(`✅ [CHAT-UPLOAD] Salvo no banco: ${url} (${Math.round(buffer.length / 1024)}KB)`);
       return url;
     } catch (e: any) {
-      console.error('❌ [CHAT-UPLOAD] Falha no fallback DB:', e?.message || e);
+      console.error('❌ [CHAT-UPLOAD] Falha ao salvar no banco:', e?.message || e);
       return null;
     }
   };
-  try {
-    console.log(`📤 [CHAT-UPLOAD] Iniciando upload: ${originalFilename} (${mimetype}, ${Math.round(buffer.length / 1024)}KB)`);
-    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
-    const privateDir = process.env.PRIVATE_OBJECT_DIR;
-    const baseDirEnv = publicPaths || privateDir;
-    if (!baseDirEnv) {
-      console.log('⚠️ [CHAT-UPLOAD] Object Storage nao configurado — usando fallback no banco');
-      return await saveToDb();
-    }
-    const baseDir = baseDirEnv.split(',')[0].trim();
-    const pathNorm = baseDir.startsWith('/') ? baseDir : `/${baseDir}`;
-    const parts = pathNorm.split('/').filter(p => p);
-    const bucketName = parts[0];
-    const basePath = parts.slice(1).join('/');
-    const fileId = nanoid(12);
-    const ext = path.extname(originalFilename).toLowerCase() || '.bin';
-    const objectName = `${basePath}/chat-media/${fileId}${ext}`;
-    const bucket = objectStorageClient.bucket(bucketName);
-    const file = bucket.file(objectName);
-    await file.save(buffer, { contentType: mimetype, resumable: false });
-    const serverUrl = `/api/storage-image/${bucketName}/${objectName}`;
-    console.log(`✅ [CHAT-UPLOAD] Arquivo salvo: ${serverUrl} (${Math.round(buffer.length / 1024)}KB)`);
-    return serverUrl;
-  } catch (error: any) {
-    console.error('❌ [CHAT-UPLOAD] Erro no Object Storage, tentando fallback no banco:', error.message);
-    return await saveToDb();
-  }
+  console.log(`📤 [CHAT-UPLOAD] Iniciando upload: ${originalFilename} (${mimetype}, ${Math.round(buffer.length / 1024)}KB)`);
+  return await saveToDb();
 }
 
 // -- Umbler uTalk (api.utalk.chat): envio de texto via WhatsApp --
@@ -982,88 +955,6 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Migrar TODO o historico de conversas do 1.0 -> 2.0 (fire-and-forget, idempotente)
-  async function writeChatMigStatus(obj: any) {
-    const v = JSON.stringify(obj);
-    try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('chat_migration_last', ${v}, 'migrate-chat-history', now()) ON CONFLICT (key) DO UPDATE SET value=${v}, updated_by='migrate-chat-history', updated_at=now()`); } catch (e) { console.error("[MIGRATE-CHAT] persist:", e); }
-  }
-  async function runChatHistoryMigration(dryRun: boolean) {
-    const out: any[] = [];
-    await writeChatMigStatus({ at: new Date().toISOString(), step: "iniciando", dryRun });
-    const { Client } = await import("pg");
-    const src = new Client({ connectionString: process.env.REPLIT_DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 20000, query_timeout: 60000 });
-    src.on("error", (e: any) => { console.error("[MIGRATE-CHAT] src client error:", e?.message || e); });
-    try {
-      await Promise.race([
-        src.connect(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout conectando ao 1.0 (25s)")), 25000)),
-      ]);
-      await writeChatMigStatus({ at: new Date().toISOString(), step: "conectado ao 1.0", dryRun });
-      for (const t of ["chat_customers", "chat_conversations", "chat_messages"]) {
-        const info: any = { table: t };
-        try {
-          const tgtColsQ: any = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name=${t}`);
-          const srcColsQ = await src.query("SELECT column_name FROM information_schema.columns WHERE table_name=$1", [t]);
-          const tgtCols = new Map<string, string>((tgtColsQ.rows || []).map((r: any) => [r.column_name, r.data_type]));
-          const srcCols = new Set<string>(srcColsQ.rows.map((r: any) => r.column_name));
-          const cols = Array.from(tgtCols.keys()).filter((c) => srcCols.has(c));
-          if (!cols.includes("id")) { info.skip = "sem coluna id"; out.push(info); continue; }
-          const tgtIdsQ: any = await db.execute(sql.raw(`SELECT id FROM "${t}"`));
-          const srcIdsQ = await src.query(`SELECT id FROM "${t}"`);
-          const tgtIds = new Set<string>((tgtIdsQ.rows || []).map((r: any) => String(r.id)));
-          const missing = srcIdsQ.rows.map((r: any) => String(r.id)).filter((id: string) => !tgtIds.has(id));
-          info.total_1_0 = srcIdsQ.rowCount; info.tinha_2_0 = (tgtIdsQ.rows || []).length; info.faltando = missing.length;
-          if (dryRun || missing.length === 0) { out.push(info); continue; }
-          const colListRaw = cols.map((c) => `"${c}"`).join(",");
-          let inserted = 0, failed = 0; const errs: string[] = [];
-          for (let k = 0; k < missing.length; k += 500) {
-            const chunk = missing.slice(k, k + 500);
-            const rowsQ = await src.query(`SELECT ${colListRaw} FROM "${t}" WHERE id::text = ANY($1)`, [chunk]);
-            for (const row of rowsQ.rows) {
-              const valExprs = cols.map((c) => {
-                const dt = tgtCols.get(c) || "";
-                let v = (row as any)[c];
-                if ((dt === "json" || dt === "jsonb") && v !== null) {
-                  const jsonStr = typeof v === "string" ? v : JSON.stringify(v);
-                  return sql`${jsonStr}::${sql.raw(dt)}`;
-                }
-                return sql`${v}`;
-              });
-              try {
-                await db.execute(sql`INSERT INTO ${sql.identifier(t)} (${sql.raw(colListRaw)}) VALUES (${sql.join(valExprs, sql`, `)}) ON CONFLICT (id) DO NOTHING`);
-                inserted++;
-              } catch (e: any) { failed++; if (errs.length < 8) errs.push(`${(row as any).id}: ${String(e?.message || e).slice(0, 90)}`); }
-            }
-          }
-          info.inserido = inserted; info.falhou = failed; if (errs.length) info.erros = errs;
-        } catch (e: any) { info.erroTabela = String(e?.message || e).slice(0, 140); }
-        out.push(info);
-      }
-      await writeChatMigStatus({ at: new Date().toISOString(), step: "concluido", dryRun, resultado: out });
-    } catch (error: any) {
-      console.error("[MIGRATE-CHAT] Erro:", error);
-      await writeChatMigStatus({ at: new Date().toISOString(), step: "erro", erro: String(error?.message || error).slice(0, 200), parcial: out });
-    } finally { try { await src.end(); } catch {} }
-  }
-  app.post("/api/admin/chat/migrate-history-from-1-0", authenticateUser, async (req: any, res: any) => {
-    if (!process.env.REPLIT_DATABASE_URL) return res.status(400).json({ error: "REPLIT_DATABASE_URL nao configurado" });
-    const dryRun = req.body?.dryRun === true;
-    res.json({ started: true, dryRun, note: "rodando em background; veja /api/admin/chat/migrate-history-from-1-0/status" });
-    runChatHistoryMigration(dryRun).catch((e) => console.error("[MIGRATE-CHAT] bg:", e));
-  });
-  app.get("/api/admin/chat/migrate-history-from-1-0/status", authenticateUser, async (req: any, res: any) => {
-    try {
-      const r = await db.execute(sql`SELECT value, updated_at FROM system_settings WHERE key='chat_migration_last'`);
-      const row = (r as any).rows?.[0];
-      res.json(row ? { ...JSON.parse(row.value), updated_at: row.updated_at } : { none: true });
-    } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 120) }); }
-  });
-
-  // ============================================================
-  // CHAT AGENTS CRUD
-  // ============================================================
-
-  // Get all chat agents
   app.get("/api/chat/agents", authenticateUser, async (req, res) => {
     try {
       const agents = await storage.getChatAgents();
@@ -2463,44 +2354,8 @@ export function registerChatRoutes(app: Express): void {
           '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         };
         
-        // Handle Object Storage URLs - convert to base64
-        if (mediaUrl.startsWith('/api/storage-image/')) {
-          try {
-            const storagePathMatch = mediaUrl.match(/^\/api\/storage-image\/([^/]+)\/(.+)$/);
-            console.log(`📤 [WHATSAPP-SEND] Object Storage match: ${storagePathMatch ? 'success' : 'failed'}`);
-            if (storagePathMatch) {
-              const [, bucketName, objectPath] = storagePathMatch;
-              console.log(`📤 [WHATSAPP-SEND] Buscando do Object Storage: bucket=${bucketName}, object=${objectPath}`);
-              
-              const bucket = objectStorageClient.bucket(bucketName);
-              const file = bucket.file(objectPath);
-              
-              const [exists] = await file.exists();
-              console.log(`📤 [WHATSAPP-SEND] Arquivo existe: ${exists}`);
-              
-              if (exists) {
-                const [fileBuffer] = await file.download();
-                const base64Data = fileBuffer.toString('base64');
-                const filename = path.basename(objectPath);
-                
-                const ext = path.extname(filename).toLowerCase();
-                detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
-                detectedFileName = filename;
-                
-                finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
-                console.log(`📤 [WHATSAPP-SEND] Convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
-              } else {
-                console.error(`❌ [WHATSAPP-SEND] Arquivo não encontrado: ${objectPath}`);
-                return res.status(404).json({ error: "Arquivo de mídia não encontrado" });
-              }
-            }
-          } catch (storageErr: any) {
-            console.error(`❌ [WHATSAPP-SEND] Erro ao buscar do Object Storage:`, storageErr.message);
-            return res.status(500).json({ error: "Erro ao processar arquivo de mídia" });
-          }
-        }
         // Handle legacy /uploads/ paths
-        else if (mediaUrl.startsWith('/uploads/') || mediaUrl.includes('attached_assets')) {
+        if (mediaUrl.startsWith('/uploads/') || mediaUrl.includes('attached_assets')) {
           try {
             let filePath = mediaUrl;
             if (mediaUrl.startsWith('/uploads/')) {
@@ -3178,41 +3033,6 @@ export function registerChatRoutes(app: Express): void {
     }
   });
 
-  // Endpoint para FORÇAR reconfiguração do webhook de DESENVOLVIMENTO (apenas para testes)
-  app.post("/api/chat/webhook/force-dev-config", authenticateUser, requireRole(["admin"]), async (req, res) => {
-    try {
-      const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'CHAT_HONEST';
-      const devDomain = process.env.REPLIT_DEV_DOMAIN;
-      
-      if (!devDomain) {
-        return res.status(400).json({ 
-          error: "REPLIT_DEV_DOMAIN não encontrado", 
-          message: "Este endpoint só funciona no ambiente de desenvolvimento" 
-        });
-      }
-      
-      const webhookUrl = `https://${devDomain}/api/chat/webhook/messages`;
-      console.log(`🔧 [FORCE-DEV] Forçando webhook para desenvolvimento: ${webhookUrl}`);
-      
-      const result = await evolutionAPIService.setWebhook(instanceName, webhookUrl);
-      
-      if (result.success) {
-        console.log(`✅ [FORCE-DEV] Webhook reconfigurado para desenvolvimento`);
-        res.json({ 
-          success: true, 
-          message: "Webhook reconfigurado para desenvolvimento com sucesso",
-          url: webhookUrl,
-          warning: "ATENÇÃO: O webhook agora aponta para desenvolvimento. Mensagens de produção NÃO serão recebidas!"
-        });
-      } else {
-        console.error(`❌ [FORCE-DEV] Erro:`, result.error);
-        res.status(500).json({ error: result.error });
-      }
-    } catch (error: any) {
-      console.error('[FORCE-DEV] Erro:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   // Endpoint para conectar instância ao WhatsApp (gerar QR Code)
   app.get("/api/chat/webhook/connect", async (req, res) => {
@@ -4574,50 +4394,8 @@ export function registerChatRoutes(app: Express): void {
                 
                 console.log(`📤 [SEND-WHATSAPP] mediaUrl recebida: ${mediaUrl}`);
                 
-                // Handle Object Storage URLs (new method - persistent)
-                if (mediaUrl.startsWith('/api/storage-image/')) {
-                  try {
-                    // Parse /api/storage-image/{bucket}/{objectPath}
-                    const storagePathMatch = mediaUrl.match(/^\/api\/storage-image\/([^/]+)\/(.+)$/);
-                    console.log(`📤 [SEND-WHATSAPP] Regex match: ${storagePathMatch ? 'success' : 'failed'}`);
-                    if (storagePathMatch) {
-                      const [, bucketName, objectPath] = storagePathMatch;
-                      console.log(`📤 [SEND-WHATSAPP] Buscando do Object Storage: bucket=${bucketName}, object=${objectPath}`);
-                      
-                      const bucket = objectStorageClient.bucket(bucketName);
-                      const file = bucket.file(objectPath);
-                      
-                      console.log(`📤 [SEND-WHATSAPP] Verificando existência do arquivo...`);
-                      const [exists] = await file.exists();
-                      console.log(`📤 [SEND-WHATSAPP] Arquivo existe: ${exists}`);
-                      
-                      if (!exists) {
-                        console.error(`❌ [SEND-WHATSAPP] Arquivo não encontrado no Object Storage: ${objectPath}`);
-                        sendResult = { success: false, error: 'Arquivo de mídia não encontrado no storage' };
-                      } else {
-                        const [fileBuffer] = await file.download();
-                        const base64Data = fileBuffer.toString('base64');
-                        const filename = path.basename(objectPath);
-                        
-                        const ext = path.extname(filename).toLowerCase();
-                        detectedMimetype = mimeTypes[ext] || 'application/octet-stream';
-                        detectedFileName = filename;
-                        
-                        finalMediaUrl = `data:${detectedMimetype};base64,${base64Data}`;
-                        conversionSuccess = true;
-                        console.log(`📤 [SEND-WHATSAPP] Object Storage convertido para base64: ${detectedMimetype} (${Math.round(base64Data.length / 1024)}KB)`);
-                      }
-                    } else {
-                      console.error(`❌ [SEND-WHATSAPP] Regex não encontrou bucket/path na URL: ${mediaUrl}`);
-                      sendResult = { success: false, error: 'URL de mídia inválida' };
-                    }
-                  } catch (storageErr: any) {
-                    console.error(`❌ [SEND-WHATSAPP] Erro ao buscar do Object Storage:`, storageErr.message, storageErr.stack);
-                    sendResult = { success: false, error: `Erro ao acessar storage: ${storageErr.message}` };
-                  }
-                }
-                // Handle legacy /uploads/chat/ paths (fallback for old uploads)
-                else if (mediaUrl.startsWith('/uploads/') || mediaUrl.includes('attached_assets')) {
+                // Handle legacy /uploads/chat/ paths
+                if (mediaUrl.startsWith('/uploads/') || mediaUrl.includes('attached_assets')) {
                   try {
                     let filePath = mediaUrl;
                     if (mediaUrl.startsWith('/uploads/')) {

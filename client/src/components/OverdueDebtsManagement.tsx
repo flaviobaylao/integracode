@@ -102,7 +102,7 @@ export default function OverdueDebtsManagement() {
   };
 
   // Emite o DOCUMENTO de cobrança (boleto/PIX) do título — MESMO fluxo da aba Contas a
-  // Receber (usa o receivableId do título 2.0, não mais o código do Omie).
+  // Receber (usa o receivableId do título 2.0).
   const handleDownloadBoleto = async (documento: any, nomeCliente: string) => {
     const rid = documento?.receivableId;
     if (!rid) {
@@ -141,7 +141,7 @@ export default function OverdueDebtsManagement() {
   };
 
   // Débitos vencidos = MESMA lista de "vencida" da Contas a Receber (fonte local 2.0),
-  // agrupada por cliente. Não usa mais a sincronização do Omie.
+  // agrupada por cliente (server/divida-viva.ts).
   const { data: overdueDebts, isLoading, refetch } = useQuery<OverdueDebtsData>({
     queryKey: ['/api/financial/overdue-debts'],
     staleTime: 1000 * 60 * 2, // 2 minutos - dados considerados "frescos"
@@ -149,63 +149,6 @@ export default function OverdueDebtsManagement() {
     refetchOnMount: 'always', // Sempre buscar ao montar o componente
     refetchOnWindowFocus: true, // Atualizar ao voltar para a aba
   });
-
-  // Query para buscar informações da última planilha salva
-  const { data: savedReportInfo, refetch: refetchReportInfo } = useQuery<any>({
-    queryKey: ['/api/reports/overdue-debts/info'],
-    staleTime: 1000 * 60, // 1 minuto
-  });
-
-  // Função para baixar a planilha salva
-  const downloadSavedReport = async () => {
-    try {
-      const response = await fetch('/api/reports/overdue-debts/latest', {
-        method: 'GET',
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Erro ao baixar planilha');
-      }
-
-      // Criar blob a partir da resposta
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      
-      // Obter nome do arquivo do header Content-Disposition
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let fileName = 'debitos-vencidos.xlsx';
-      if (contentDisposition) {
-        const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (fileNameMatch && fileNameMatch[1]) {
-          fileName = fileNameMatch[1];
-        }
-      }
-
-      // Criar link temporário e fazer download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      
-      // Limpar
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-
-      toast({
-        title: "Download concluído",
-        description: `Arquivo "${fileName}" baixado com sucesso.`,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Erro no download",
-        description: error.message || 'Erro ao baixar planilha salva',
-        variant: "destructive",
-      });
-    }
-  };
 
   const filteredDebts = overdueDebts?.debts?.filter(debt => {
     const searchLower = searchTerm.toLowerCase();
@@ -280,7 +223,7 @@ export default function OverdueDebtsManagement() {
   };
 
   const formatDate = (dateString: string) => {
-    // A data já vem no formato brasileiro DD/MM/YYYY da API do Omie
+    // A data já vem no formato brasileiro DD/MM/YYYY
     // Apenas retornar como está, sem conversão
     if (!dateString) return '-';
     return dateString;
@@ -670,7 +613,7 @@ export default function OverdueDebtsManagement() {
                       <p className="font-medium">{selectedDebt.cliente.cnpj_cpf}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Código Cliente Omie</p>
+                      <p className="text-sm text-gray-600">Código do cliente</p>
                       <p className="font-medium">{selectedDebt.cliente.codigo_cliente_omie}</p>
                     </div>
                   </div>

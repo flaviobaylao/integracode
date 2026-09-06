@@ -297,10 +297,10 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
           </div>
 
           <div className="border-t border-gray-200 pt-4">
-            <h3 className="text-sm font-semibold mb-3">Códigos do Omie (opcional)</h3>
+            <h3 className="text-sm font-semibold mb-3">Códigos do produto (opcional)</h3>
             <div className="space-y-3">
               <div>
-                <Label htmlFor="omieCodigo">Código Alfanumérico Omie</Label>
+                <Label htmlFor="omieCodigo">Código do produto</Label>
                 <Input
                   id="omieCodigo"
                   value={formData.omieCodigo}
@@ -308,11 +308,11 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
                   placeholder="Ex: PRD00003"
                   data-testid="input-omie-codigo"
                 />
-                <p className="text-xs text-gray-500 mt-1">Código do produto no Omie (ex: PRD00003)</p>
+                <p className="text-xs text-gray-500 mt-1">Código alfanumérico do produto (ex: PRD00003)</p>
               </div>
               
               <div>
-                <Label htmlFor="omieCodigoProduto">ID Numérico do Produto Omie</Label>
+                <Label htmlFor="omieCodigoProduto">ID numérico do produto</Label>
                 <Input
                   id="omieCodigoProduto"
                   value={formData.omieCodigoProduto}
@@ -320,7 +320,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
                   placeholder="Ex: 2425693571"
                   data-testid="input-omie-codigo-produto"
                 />
-                <p className="text-xs text-gray-500 mt-1">ID numérico do produto no Omie</p>
+                <p className="text-xs text-gray-500 mt-1">ID numérico legado do produto</p>
               </div>
             </div>
           </div>

@@ -186,8 +186,8 @@ export async function computeForecast(only?: string): Promise<{ asOf: string; mo
 async function scopeSellerName(req: any): Promise<string> {
   try {
     const s: any = (req && req.session) || {};
-    let uid: any = s.userId || (s.user && s.user.claims && s.user.claims.sub) || ((req && req.isAuthenticated && req.isAuthenticated() && req.user && req.user.claims) ? req.user.claims.sub : null);
-    let umail: any = s.userEmail || (s.user && s.user.claims && s.user.claims.email) || ((req && req.user && req.user.claims) ? req.user.claims.email : null) || null;
+    let uid: any = s.userId || (s.user && s.user.claims && s.user.claims.sub) || null;
+    let umail: any = s.userEmail || (s.user && s.user.claims && s.user.claims.email) || null;
     let row: any = null;
     const SID = uid ? String(uid).replace(/[^a-zA-Z0-9_-]/g, '') : '';
     if (SID) { const r = await rawq("SELECT COALESCE(role,'') AS role, NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome, is_active FROM users WHERE id='" + SID + "' LIMIT 1"); row = r[0]; }

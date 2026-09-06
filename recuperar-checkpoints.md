@@ -149,7 +149,7 @@ Após executar a recuperação:
 ## 🆘 Suporte
 
 Se encontrar problemas:
-1. Verifique os logs do servidor no Replit
+1. Verifique os logs do servidor no Railway
 2. Compartilhe o retorno JSON dos endpoints de migração
 3. Confirme que está logado como admin
 

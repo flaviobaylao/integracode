@@ -13,7 +13,6 @@ import { execSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { objectStorageClient } from "./replit_integrations/object_storage/objectStorage";
 
 const CERT_ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
 
@@ -412,18 +411,8 @@ export function registerNfeRoutes(app: Express) {
         try { fs.unlinkSync(tmpFile); } catch {}
       }
 
-      let storageKey: string | null = null;
-    try {
-      const privateDir = process.env.PRIVATE_OBJECT_DIR;
-      const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-      if (privateDir && bucketId && objectStorageClient) {
-        storageKey = `${privateDir}/certificates/${crypto.randomUUID()}.pfx`;
-        await objectStorageClient.bucket(bucketId).file(storageKey).save(file.buffer, { contentType: 'application/x-pkcs12' });
-      }
-    } catch (e: any) {
-      console.warn('[CERT-UPLOAD] Object Storage indisponivel, usando pfx no banco:', e?.message);
-      storageKey = null;
-    }
+      // O PFX fica cifrado no banco (pfx_data). Nao ha object storage externo.
+      const storageKey: string | null = null;
     const pfxData = encryptPassword(file.buffer.toString('base64'));
 
       const cert = await storage.createDigitalCertificate({

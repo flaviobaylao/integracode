@@ -93,7 +93,7 @@ export default function CustomerEditModal({
     checkActiveStatus();
   }, [customer?.id, isOpen, isLead]);
 
-  const { data: instances = [] } = useQuery<any[]>({ queryKey: ["/api/omie/instances/public"] });
+  const { data: instances = [] } = useQuery<any[]>({ queryKey: ["/api/companies/public"] });
 
   const [ieLoading, setIeLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -792,7 +792,7 @@ export default function CustomerEditModal({
               value={(formData as any).omieInstanceId || "__none__"}
               onValueChange={(value) => setFormData(prev => ({ ...prev, omieInstanceId: value === "__none__" ? "" : value } as any))}
             >
-              <SelectTrigger data-testid="select-omie-instance">
+              <SelectTrigger data-testid="select-empresa">
                 <SelectValue placeholder="Selecione a empresa/instância" />
               </SelectTrigger>
               <SelectContent>

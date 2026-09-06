@@ -4,7 +4,7 @@
 
 **URL do Sistema Integra:**
 ```
-https://integrahonest.replit.app
+https://integracode-production.up.railway.app
 ```
 
 ---
@@ -12,7 +12,7 @@ https://integrahonest.replit.app
 ## 📲 Instalação no Android (Chrome)
 
 1. **Abra o navegador Chrome** no seu celular Android
-2. **Acesse o link:** https://integrahonest.replit.app
+2. **Acesse o link:** https://integracode-production.up.railway.app
 3. **No menu do Chrome** (3 pontos no canto superior direito), toque em:
    - **"Adicionar à tela inicial"** ou
    - **"Instalar app"**
@@ -24,7 +24,7 @@ https://integrahonest.replit.app
 ## 📲 Instalação no iPhone (Safari)
 
 1. **Abra o Safari** no seu iPhone
-2. **Acesse o link:** https://integrahonest.replit.app
+2. **Acesse o link:** https://integracode-production.up.railway.app
 3. Toque no **botão de compartilhar** (quadrado com seta para cima)
 4. Role para baixo e selecione **"Adicionar à Tela de Início"**
 5. Edite o nome se desejar (sugestão: "Integra")

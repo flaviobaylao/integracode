@@ -28,11 +28,8 @@ export default function ProductManagement() {
   const [ncmValue, setNcmValue] = useState("");
   // Ficha técnica: qual produto está com upload em andamento (só um por vez).
   const [uploadingFicha, setUploadingFicha] = useState<string | null>(null);
-  // CADASTRO DE PRODUTO: o ProductModal ja existia e fazia POST /api/products,
-  // mas nao era usado por nenhuma tela desde que o botao de sincronizar o Omie
-  // saiu (26/ago/2026) — na pratica o catalogo ficou sem NENHUMA porta de
-  // entrada pela interface. Aqui ele volta a ser aberto: "Novo Produto" no
-  // cabecalho e o lapis de editar em cada card.
+  // CADASTRO DE PRODUTO: "Novo Produto" no cabecalho e o lapis de editar em cada card
+  // (o catalogo e mantido aqui; nao ha mais importacao de ERP).
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   
@@ -49,12 +46,6 @@ export default function ProductManagement() {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
-
-  // A mutation de "Sincronizar Produtos" foi REMOVIDA em 26/ago/2026 junto com o
-  // botão. Ela chamava POST /api/omie/sync-products, rota que apagava todos os
-  // produtos antes de importar e que hoje responde 410. Removida por inteiro (e
-  // não só desligada) para ninguém reaproveitar a fiação achando que ainda serve:
-  // com o Omie descontinuado, o catálogo daqui não tem origem para reimportação.
 
   // Mutation para deletar imagem
   const deleteImageMutation = useMutation({
@@ -239,31 +230,8 @@ export default function ProductManagement() {
             <Plus className="mr-2 h-4 w-4" />
             Novo Produto
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              window.location.hash = '#omie-integration';
-            }}
-            data-testid="button-omie-integration"
-          >
-            <i className="fas fa-cog mr-2"></i>Configurações Omie
-          </Button>
-          {/*
-            BOTÃO "Sincronizar Produtos" REMOVIDO (26/ago/2026).
-
-            Ele chamava POST /api/omie/sync-products, que APAGA todos os
-            produtos antes de importar. Com o Omie descontinuado, o INTEGRA
-            virou a fonte de verdade do catálogo: apagar levaria junto preços
-            de varejo e atacado, fotos e NCM, sem nada de onde reimportar — e
-            derrubaria o PDV do balcão, que lê essas mesmas colunas.
-
-            A rota no servidor também foi desativada (responde 410). Este
-            botão sai da tela para ninguém bater numa porta fechada; a trava
-            que importa é a do servidor.
-
-            Preço de produto agora se altera em Produtos & Estoque →
-            Preços de Venda.
-          */}
+          {/* Botoes "Configuracoes Omie" e "Sincronizar Produtos" removidos (Omie desligado, E5).
+              Preco de produto se altera em Produtos & Estoque -> Precos de Venda. */}
         </div>
       </div>
 
@@ -658,8 +626,8 @@ export default function ProductManagement() {
         <div className="flex items-center">
           <i className="fas fa-info-circle text-blue-500 mr-2"></i>
           <p className="text-sm text-blue-700">
-            <strong>Importante:</strong> O catálogo é mantido aqui no Sistema Integra — o Omie não é mais a origem
-            dos produtos. Use "Novo Produto" para cadastrar e "Editar Produto" para ajustar preços, NCM e códigos.
+            <strong>Importante:</strong> O catálogo é mantido aqui no Sistema Integra.
+            Use "Novo Produto" para cadastrar e "Editar Produto" para ajustar preços, NCM e códigos.
             As imagens e a ficha técnica também são adicionadas aqui para aparecerem no hotsite.
           </p>
         </div>

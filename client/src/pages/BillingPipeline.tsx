@@ -202,7 +202,7 @@ function operationBadgeClass(cat: string | null): string {
   return 'border-slate-300 text-slate-700';
 }
 
-// Cor da tag da INSTÂNCIA Omie: fundo escuro + fonte clara (BSB=verde, GYN=azul, SERV=amarelo, IND=roxo)
+// Cor da tag da EMPRESA do grupo: fundo escuro + fonte clara (BSB=verde, GYN=azul, SERV=amarelo, IND=roxo)
 function instanceBadgeClass(name: string | null): string {
   const n = (name || '').toUpperCase();
   if (n.includes('BSB')) return 'bg-green-700 text-green-100 border-green-700';
@@ -351,8 +351,8 @@ export default function BillingPipeline() {
   const { data: sellersList = [] } = useQuery<any[]>({ queryKey: ['/api/sellers/active'] });
   const { data: productCatalog = [] } = useQuery<any[]>({ queryKey: ['/api/products'] });
   const { data: customersList = [] } = useQuery<any[]>({ queryKey: ['/api/customers'] });
-  // Instâncias Omie (empresa emissora) — pick-list da edição do pedido no modal de detalhes.
-  const { data: omieInstancesList = [] } = useQuery<any[]>({ queryKey: ['/api/omie/instances/public'], staleTime: 5 * 60 * 1000 });
+  // Empresas do grupo (emissora) — pick-list da edição do pedido no modal de detalhes.
+  const { data: omieInstancesList = [] } = useQuery<any[]>({ queryKey: ['/api/companies/public'], staleTime: 5 * 60 * 1000 });
   const [prodSearch, setProdSearch] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -461,7 +461,7 @@ export default function BillingPipeline() {
         title: data.active ? 'Faturamento interno ATIVADO' : 'Faturamento interno DESATIVADO',
         description: data.active
           ? 'Todos os novos pedidos serao encaminhados para o pipeline interno'
-          : 'Pedidos voltam ao fluxo normal pelo Omie',
+          : 'Pedidos deixam de ser encaminhados automaticamente',
       });
     },
     onError: (error: any) => {

@@ -9,6 +9,7 @@ import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
+import { normalizeFavorites } from "@/lib/menuItems";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/lib/permissions";
@@ -43,7 +44,7 @@ const MENU_CARD: Record<string, string> = {
   "telemarketing-disparo": "Disparo em Massa", "automacoes-comunicacao": "Automações de Comunicação",
   industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas",
   relatorios: "Relatórios Dinâmicos", "relatorios-ia": "Relatórios IA",
-  "omie-instances": "Empresas do Grupo", "sync-monitor": "Ambiente Fiscal",
+  "empresas-grupo": "Empresas do Grupo", "ambiente-fiscal": "Ambiente Fiscal",
   "agentes-ia": "Agentes IA", rh: "RH / Métricas",
   users: "Usuários", "admin-system": "Administração do Sistema", "cenarios-fiscais": "Cenários Fiscais",
   "acessos-delegacoes": "Acessos e Delegações",
@@ -115,18 +116,25 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const MAX_FAVORITES = 10;
   const [favorites, setFavorites] = useState<string[]>([]);
   useEffect(() => {
+    // normalizeFavorites traduz ids de menu renomeados (E6): quem tinha "omie-instances" ou
+    // "sync-monitor" salvo continua vendo o atalho, agora sob o id novo.
     let local: string[] = [];
-    try { local = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]"); } catch { /* noop */ }
-    if (Array.isArray(local)) setFavorites(local);
+    try { local = normalizeFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]")); } catch { /* noop */ }
+    if (local.length > 0) setFavorites(local);
     // Persistência por USUÁRIO (servidor): sobrevive a logout/login e troca de dispositivo.
     fetch('/api/user/favorites', { credentials: 'include' })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => {
         if (!d || !Array.isArray(d.favorites)) return;
-        if (d.favorites.length > 0) {
-          setFavorites(d.favorites);
-          try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(d.favorites)); } catch { /* noop */ }
-        } else if (Array.isArray(local) && local.length > 0) {
+        const remotos = normalizeFavorites(d.favorites);
+        if (remotos.length > 0) {
+          setFavorites(remotos);
+          try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(remotos)); } catch { /* noop */ }
+          // Se algum id foi traduzido, regrava no servidor para nao repetir a traducao sempre.
+          if (JSON.stringify(remotos) !== JSON.stringify(d.favorites)) {
+            fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: remotos }) }).catch(() => { /* noop */ });
+          }
+        } else if (local.length > 0) {
           // servidor ainda vazio, mas já existem favoritos locais → migra pro servidor (não apaga)
           fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: local }) }).catch(() => { /* noop */ });
         }
@@ -473,8 +481,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#6366f1',
       icon: 'fas fa-cog',
       items: [
-        { id: 'omie-instances', label: 'Empresas do Grupo', icon: 'fas fa-building', available: canAccessUsers, badge: null },
-        { id: 'sync-monitor', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
+        { id: 'empresas-grupo', label: 'Empresas do Grupo', icon: 'fas fa-building', available: canAccessUsers, badge: null },
+        { id: 'ambiente-fiscal', label: 'Ambiente Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
         { id: 'agentes-ia', label: 'Agentes IA', icon: 'fas fa-robot', available: canAccessReports, badge: null },
         { id: 'rh', label: isVendedor ? 'Minhas Métricas' : 'RH', icon: 'fas fa-briefcase', available: true, badge: null },
         { id: 'users', label: 'Usuários', icon: 'fas fa-user-cog', available: canAccessUsers, badge: null },
@@ -619,8 +627,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
 
-    if (itemId === 'omie-instances') {
-      navigate('/admin/omie-instances');
+    if (itemId === 'empresas-grupo') {
+      navigate('/admin/empresas');
       return;
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }
@@ -631,8 +639,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    if (itemId === 'sync-monitor') {
-      navigate('/admin/sync-monitor');
+    if (itemId === 'ambiente-fiscal') {
+      navigate('/admin/ambiente-fiscal');
       return;
     }
 

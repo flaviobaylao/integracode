@@ -72,7 +72,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
       setSelectedOrders(new Set());
       toast({
         title: "Pedidos liberados",
-        description: `${data.released} pedido(s) liberado(s) e enviado(s) para o Omie.`,
+        description: `${data.released} pedido(s) liberado(s) e enviado(s) para o faturamento.`,
       });
     },
     onError: (error: Error) => {
@@ -214,7 +214,7 @@ export default function BlockedOrdersManagement({ user }: BlockedOrdersProps) {
       case 'released':
         return <Badge variant="secondary">Liberado</Badge>;
       case 'sent_to_omie':
-        return <Badge variant="default">Enviado ao Omie</Badge>;
+        return <Badge variant="default">Enviado ao Faturamento</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }

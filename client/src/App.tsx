@@ -68,7 +68,7 @@ import SDRDigital from "@/pages/SDRDigital";
 import PedidoRapido from "@/pages/PedidoRapido";
 import VendasDigitais from "@/pages/VendasDigitais";
 import TelemarketingRotaDoDia from "@/pages/TelemarketingRotaDoDia";
-import OmieInstances from "@/pages/OmieInstances";
+import EmpresasGrupo from "@/pages/EmpresasGrupo";
 import FiscalInvoices from "@/pages/FiscalInvoices";
 import Inventory from "@/pages/Inventory";
 import BillingPipeline from "@/pages/BillingPipeline";
@@ -118,7 +118,7 @@ import IndustriaDados from "@/pages/IndustriaDados";
 import TodasAsContas from "@/pages/TodasAsContas";
 import FluxoCaixa from "@/pages/FluxoCaixa";
 import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
-import SyncMonitor from "@/pages/SyncMonitor";
+import AmbienteFiscal from "@/pages/AmbienteFiscal";
 
 // Casca que exibe a sidebar de seções persistente nas páginas de módulo
 // (rotas autenticadas que renderizam fora do Layout do Dashboard).
@@ -221,7 +221,7 @@ function Router() {
                 Recarregar Página
               </button>
               <button
-                onClick={() => window.location.href = '/api/login'}
+                onClick={() => window.location.href = '/login'}
                 className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors text-sm"
                 data-testid="button-login"
               >
@@ -302,8 +302,12 @@ function Router() {
           <Route path="/telemarketing/rota-do-dia" component={TelemarketingRotaDoDia} />
           <Route path="/admin/users" component={UserManagementPage} />
           <Route path="/admin/system" component={SystemAdmin} />
-          <Route path="/admin/omie-instances" component={OmieInstances} />
-          <Route path="/admin/sync-monitor" component={SyncMonitor} />
+          <Route path="/admin/empresas" component={EmpresasGrupo} />
+          {/* alias legado (E7 remove) */}
+          <Route path="/admin/omie-instances" component={EmpresasGrupo} />
+          <Route path="/admin/ambiente-fiscal" component={AmbienteFiscal} />
+          {/* alias legado (E7 remove) */}
+          <Route path="/admin/sync-monitor" component={AmbienteFiscal} />
           <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/admin/solicitacoes-alteracao" component={SolicitacoesAlteracao} />

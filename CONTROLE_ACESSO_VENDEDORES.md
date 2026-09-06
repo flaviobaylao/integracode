@@ -63,7 +63,7 @@ async getUserByEmail(email: string): Promise<User | undefined> {
    - `isActive: true`
 
 ### Processo de Login
-1. Vendedor acessa o sistema via autenticação Replit
+1. Vendedor acessa o sistema (login por email + senha)
 2. Sistema verifica email no banco de dados
 3. Se encontrado e role = 'vendedor', acesso liberado com filtros
 4. Interface personalizada é carregada

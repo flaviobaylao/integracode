@@ -1,4 +1,4 @@
-import { ObjectStorageService } from "./replit_integrations/object_storage";
+import { ObjectStorageService } from "./object-storage";
 import { nanoid } from "nanoid";
 
 const objectStorageService = new ObjectStorageService();

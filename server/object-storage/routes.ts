@@ -4,8 +4,6 @@ import * as nodePath from "path";
 import { randomUUID } from "crypto";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 
-const IS_REPLIT = !!process.env.REPL_ID;
-
 function getUploadDir(): string {
   const dir = process.env.UPLOAD_DIR || nodePath.join(process.cwd(), "uploads");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -13,12 +11,9 @@ function getUploadDir(): string {
 }
 
 /**
- * Register object storage routes.
+ * Rotas de armazenamento de arquivos (upload em disco/banco no Railway).
  *
- * On Replit: uses GCS presigned URL flow.
- * On Railway/local: uses server-side multer upload to local disk.
- *
- * Routes registered:
+ * Rotas:
  *   POST /api/uploads/request-url  — get upload URL (presigned or local)
  *   PUT  /api/uploads/put/:uuid    — local-only: receive raw file bytes
  *   GET  /objects/:objectPath(*)   — serve stored file
@@ -42,8 +37,8 @@ export function registerObjectStorageRoutes(app: Express): void {
     }
   });
 
-  // ── Local-only: receive raw PUT upload ──────────────────────────────────────
-  if (!IS_REPLIT) {
+  // ── Recebe o PUT com os bytes do arquivo ────────────────────────────────────
+  {
     app.put("/api/uploads/put/:uuid", async (req, res) => {
       try {
         const { uuid } = req.params;
@@ -81,7 +76,7 @@ export function registerObjectStorageRoutes(app: Express): void {
           fs.writeFileSync(filePath, buf);
         } else {
           // Modo BANCO (padrão no Railway): durável, sobrevive a deploys (disco é efêmero).
-          const { db } = await import("../../db");
+          const { db } = await import("../db");
           const { sql } = await import("drizzle-orm");
           await db.execute(sql`INSERT INTO stored_objects (id, mime_type, size_bytes, content_base64, created_at) VALUES (${uuid}, ${contentType}, ${buf.length}, ${buf.toString("base64")}, now()) ON CONFLICT (id) DO UPDATE SET mime_type = EXCLUDED.mime_type, size_bytes = EXCLUDED.size_bytes, content_base64 = EXCLUDED.content_base64`);
         }

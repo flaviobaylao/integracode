@@ -37,20 +37,9 @@ npm run build
 
 Os arquivos otimizados serão gerados na pasta `dist/`.
 
-## 📦 Deploy no Replit
+## 📦 Deploy
 
-### Opção 1: Static Deployment (Recomendado)
-
-1. No Replit, vá em **Deploy** > **Static Site**
-2. Configure:
-   - **Build Command**: `cd hotsite && npm install && npm run build`
-   - **Publish Directory**: `hotsite/dist`
-   - **Output Directory**: `dist`
-3. Clique em **Deploy**
-
-### Opção 2: Servir via Express
-
-Adicione ao `server/index.ts` do Sistema Integra:
+O hotsite é servido pelo próprio servidor do Integra (Railway), montado em `/hotsite`:
 
 ```typescript
 import express from 'express';
@@ -59,7 +48,7 @@ import path from 'path';
 app.use('/hotsite', express.static(path.join(__dirname, '../hotsite/dist')));
 ```
 
-Depois, acesse via: `https://seu-projeto.replit.app/hotsite`
+Depois, acesse via: `https://integracode-production.up.railway.app/hotsite`
 
 ## 🔧 Configuração
 
