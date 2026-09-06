@@ -6498,6 +6498,11 @@ app.get('/api/admin/sync/billing-type-values', async (_req, res) => {
     ]));
   });
 
+  // 410 para qualquer rota antiga do Omie que nao exista mais (E5, set/2026). Fica DEPOIS de
+  // todas as rotas vivas (ex.: alias /api/omie/instances e /api/omie/overdue-debts/cached) e
+  // ANTES do fallback do SPA, para que uma chamada antiga receba JSON 410 e nao o index.html.
+  app.all('/api/omie/*', gone('Omie — codigo removido em set/2026, etapa E5'));
+
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
