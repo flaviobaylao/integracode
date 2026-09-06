@@ -1550,10 +1550,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!nome) { semVendedor += qtd; return; }
         contagem.set(nome, (contagem.get(nome) || 0) + qtd);
       };
+      // Só cadastros PLOTÁVEIS (com coordenada) — as 4 situações do mapa saem daqui; sem isso a
+      // lista encheria de vendedor cujo cliente nunca aparece no mapa.
       const rc: any = await db.execute(sql`
         SELECT seller_id, COUNT(*)::int AS qtd
         FROM customers
         WHERE (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0
         GROUP BY seller_id`);
       for (const r of ((rc.rows || rc) as any[])) somar(r.seller_id, Number(r.qtd) || 0);
       try {
@@ -1561,6 +1565,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SELECT assigned_to, COUNT(*)::int AS qtd
           FROM leads
           WHERE COALESCE(status::text,'') NOT IN ('converted','discarded')
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+            AND latitude::float <> 0 AND longitude::float <> 0
           GROUP BY assigned_to`);
         for (const r of ((rl.rows || rl) as any[])) somar(r.assigned_to, Number(r.qtd) || 0);
       } catch (e: any) { console.warn('[MAP-SELLERS] leads:', e?.message); }
