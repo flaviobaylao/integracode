@@ -98,6 +98,12 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // automaticamente para "Pedido" na data escolhida.
   const [isScheduledOrder, setIsScheduledOrder] = useState(false);
   const [scheduledOrderDate, setScheduledOrderDate] = useState('');
+  // Aviso de possível duplicação (trava suave): quando o backend detecta um pedido
+  // do mesmo cliente + mesmo valor + mesmos produtos nos últimos 15 dias, abre este
+  // popup com os detalhes e exige justificativa para prosseguir (registrada no histórico).
+  const [dupWarnOpen, setDupWarnOpen] = useState(false);
+  const [dupMatch, setDupMatch] = useState<any>(null);
+  const [dupJust, setDupJust] = useState('');
   const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   
   // Verificar se usuário pode editar recorrência e dia da rota
@@ -268,13 +274,24 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   });
 
   const sendToOmieMutation = useMutation({
-    mutationFn: async (cardId: string) => {
+    mutationFn: async (opts: string | { cardId: string; checkDuplicate?: boolean; dupJustificativa?: string }) => {
+      const o = typeof opts === 'string' ? { cardId: opts } : opts;
       const scheduledBillingDate = (isScheduledOrder && scheduledOrderDate) ? scheduledOrderDate : undefined;
-      await apiRequest('POST', `/api/sales-cards/${cardId}/send-to-omie`, { scheduledBillingDate });
+      await apiRequest('POST', `/api/sales-cards/${o.cardId}/send-to-omie`, {
+        scheduledBillingDate,
+        // Só na 1ª tentativa pedimos a checagem de duplicidade; ao prosseguir
+        // enviamos a justificativa (que dispensa nova checagem no backend).
+        checkDuplicate: (o as any).checkDuplicate || undefined,
+        dupJustificativa: (o as any).dupJustificativa || undefined,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      // Fecha o aviso de duplicação (se estava aberto) e limpa a justificativa.
+      setDupWarnOpen(false);
+      setDupMatch(null);
+      setDupJust('');
       if (isScheduledOrder && scheduledOrderDate) {
         const d = new Date(`${scheduledOrderDate}T12:00:00-03:00`);
         toast({
@@ -288,7 +305,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         });
       }
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      // Trava suave: o backend respondeu 409 sinalizando possível duplicação.
+      // Em vez de erro, abrimos o aviso com os detalhes e o campo de justificativa.
+      if (error?.status === 409 && error?.duplicateWarning) {
+        setDupMatch(error?.match || null);
+        setDupJust('');
+        setDupWarnOpen(true);
+        return;
+      }
       toast({
         title: "Erro ao Enviar",
         description: error.message,
@@ -643,8 +668,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       // Aguardar um pouco para garantir que a venda foi salva
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Depois enviar para faturamento
-      sendToOmieMutation.mutate(card.id);
+      // Depois enviar para faturamento (com checagem de duplicação na 1ª tentativa)
+      sendToOmieMutation.mutate({ cardId: card.id, checkDuplicate: true });
     } catch (error: any) {
       console.error('Erro ao finalizar venda antes de enviar para Omie:', error);
       toast({
@@ -1836,6 +1861,104 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               Não — apenas os itens (quantidades em branco)
             </Button>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Aviso de possível duplicação (trava suave) */}
+    <Dialog open={dupWarnOpen} onOpenChange={(o) => { if (!o) { setDupWarnOpen(false); } }}>
+      <DialogContent className="max-w-lg p-0 overflow-hidden">
+        <div className="bg-amber-50 border-b border-amber-200 px-5 py-4 flex items-start gap-3">
+          <div className="text-2xl leading-none mt-0.5">⚠️</div>
+          <div>
+            <DialogTitle className="text-amber-900 text-base font-bold">Possível pedido duplicado</DialogTitle>
+            <p className="text-sm text-amber-800 mt-1">
+              Já existe no pipeline um pedido com as <strong>mesmas condições</strong> deste cliente nos últimos 15 dias.
+              Confira antes de incluir.
+            </p>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Chips do que coincide */}
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">✓ Mesmo cliente</Badge>
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">✓ Mesmo valor</Badge>
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">✓ Mesmos produtos</Badge>
+          </div>
+
+          {/* Comparação lado a lado */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Já no pipeline</div>
+              <div className="text-sm font-medium text-gray-800">
+                {dupMatch?.orderNumber || 'Pedido existente'}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">{dupMatch?.origem || 'Pipeline'}{dupMatch?.stage ? ` · ${dupMatch.stage}` : ''}</div>
+              <div className="text-sm font-semibold text-gray-800 mt-2">{brl(Number(dupMatch?.valor || 0))}</div>
+              {dupMatch?.vendedor ? <div className="text-xs text-gray-500 mt-0.5">Vendedor: {dupMatch.vendedor}</div> : null}
+              {dupMatch?.entrada ? (
+                <div className="text-xs text-gray-500 mt-0.5">
+                  Entrada: {new Date(dupMatch.entrada).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                </div>
+              ) : null}
+              {dupMatch?.nf ? <div className="text-xs text-gray-500 mt-0.5">NF: {dupMatch.nf}</div> : null}
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 mb-1">Nova inclusão</div>
+              <div className="text-sm font-medium text-gray-800">
+                {(card as any)?.customer?.name || (card as any)?.customerName || 'Este pedido'}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">Enviando agora</div>
+              <div className="text-sm font-semibold text-gray-800 mt-2">
+                {brl(products.reduce((s, p) => s + (Number(p.totalPrice) || 0), 0))}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {products.length} {products.length === 1 ? 'produto' : 'produtos'}
+              </div>
+            </div>
+          </div>
+
+          {/* Justificativa obrigatória */}
+          <div>
+            <Label className="text-sm font-semibold text-gray-700">
+              Justificativa <span className="text-red-500">*</span>
+            </Label>
+            <Textarea
+              value={dupJust}
+              onChange={(e) => setDupJust(e.target.value)}
+              placeholder="Descreva o motivo de incluir este pedido mesmo havendo um semelhante no pipeline (ex.: segundo pedido do cliente na quinzena, reposição, pedido separado…)."
+              className="mt-1 min-h-[84px] text-sm"
+              data-testid="textarea-dup-justificativa"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {dupJust.trim().length < 10
+                ? `Mínimo de 10 caracteres (${dupJust.trim().length}/10). `
+                : ''}
+              Ficará registrada no histórico do pedido.
+            </p>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-200 px-5 py-3 flex justify-end gap-2 bg-gray-50">
+          <Button
+            variant="outline"
+            onClick={() => { setDupWarnOpen(false); setDupMatch(null); setDupJust(''); }}
+            data-testid="button-dup-cancelar"
+          >
+            Cancelar
+          </Button>
+          <Button
+            className="bg-amber-600 hover:bg-amber-700 text-white"
+            disabled={dupJust.trim().length < 10 || sendToOmieMutation.isPending}
+            onClick={() => {
+              if (dupJust.trim().length < 10 || !card?.id) return;
+              sendToOmieMutation.mutate({ cardId: card.id, dupJustificativa: dupJust.trim() });
+            }}
+            data-testid="button-dup-prosseguir"
+          >
+            {sendToOmieMutation.isPending ? 'Incluindo…' : 'Prosseguir e incluir'}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
