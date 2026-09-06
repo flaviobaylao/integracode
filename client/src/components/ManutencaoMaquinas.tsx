@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { carimbarFoto, agoraBR } from '@/lib/fotoCarimbo';
-import { Plus, Pencil, Trash2, RefreshCw, Wrench, Camera, Loader2, Search, AlertTriangle, CalendarClock, ImageIcon, StickyNote, ChevronLeft } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, Wrench, Camera, Loader2, Search, AlertTriangle, CalendarClock, ImageIcon, StickyNote, ChevronLeft, Paperclip, FileText, Download, X } from 'lucide-react';
 
 const jfetch = async (url: string, opts: any = {}) => {
   const r = await fetch(url, { credentials: 'include', headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined, ...opts });
@@ -28,6 +28,15 @@ const hojeISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Americ
 const fmtData = (v: any) => { if (!v) return '-'; const [y, m, d] = String(v).slice(0, 10).split('-'); return d ? `${d}/${m}/${y}` : String(v); };
 const fmtHora = (v: any) => v ? new Date(v).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 const fmtBRL = (v: any) => v == null ? '-' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtBytes = (n: number) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+// Sobe um arquivo (qualquer tipo, até 25MB) para a máquina; maintenanceId opcional
+const uploadArquivo = async (maquinaId: string, file: File, extra: { maintenanceId?: string | null; description?: string } = {}) => {
+  const fd = new FormData();
+  fd.append('arquivo', file, file.name);
+  if (extra.maintenanceId) fd.append('maintenanceId', extra.maintenanceId);
+  if (extra.description?.trim()) fd.append('description', extra.description.trim());
+  return jfetch(`/api/industria/maquinas/${maquinaId}/arquivos`, { method: 'POST', body: fd });
+};
 const diasAte = (iso: string | null) => { if (!iso) return null; return Math.round((new Date(iso + 'T00:00:00Z').getTime() - new Date(hojeISO() + 'T00:00:00Z').getTime()) / 86400000); };
 
 const STATUS_MAQ: Record<string, { label: string; cls: string }> = {
@@ -118,7 +127,7 @@ function MaquinasLista({ onOpen }: { onOpen: (id: string) => void }) {
                       </span>
                     ) : <span className="text-gray-400">-</span>}
                   </TableCell>
-                  <TableCell className="text-center text-xs text-gray-500"><span title="manutenções"><Wrench className="inline h-3 w-3" /> {m.manutencoes}</span> · <span title="fotos"><ImageIcon className="inline h-3 w-3" /> {m.fotos}</span> · <span title="observações"><StickyNote className="inline h-3 w-3" /> {m.observacoes}</span></TableCell>
+                  <TableCell className="text-center text-xs text-gray-500"><span title="manutenções"><Wrench className="inline h-3 w-3" /> {m.manutencoes}</span> · <span title="fotos"><ImageIcon className="inline h-3 w-3" /> {m.fotos}</span> · <span title="observações"><StickyNote className="inline h-3 w-3" /> {m.observacoes}</span> · <span title="arquivos"><Paperclip className="inline h-3 w-3" /> {m.arquivos}</span></TableCell>
                   <TableCell className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <Button variant="ghost" size="sm" title="Editar" onClick={() => setDialog(m)}><Pencil className="h-4 w-4 text-blue-500" /></Button>
                     <Button variant="ghost" size="sm" title="Excluir" className="text-red-500" onClick={() => remover(m)}><Trash2 className="h-4 w-4" /></Button>
@@ -145,13 +154,21 @@ function MaquinaDialog({ maquina, onClose, onDone }: any) {
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const [saving, setSaving] = useState(false);
+  const [anexos, setAnexos] = useState<File[]>([]); // enviados depois de salvar (precisa do id)
+  const anexoRef = useRef<HTMLInputElement | null>(null);
   const save = async () => {
     if (!f.name.trim()) { toast({ title: 'Informe o nome da máquina', variant: 'destructive' }); return; }
     setSaving(true);
     try {
-      if (isNew) await jfetch('/api/industria/maquinas', { method: 'POST', body: JSON.stringify(f) });
+      let mid = maquina.id;
+      if (isNew) { const j = await jfetch('/api/industria/maquinas', { method: 'POST', body: JSON.stringify(f) }); mid = j?.maquina?.id; }
       else await jfetch(`/api/industria/maquinas/${maquina.id}`, { method: 'PATCH', body: JSON.stringify(f) });
-      toast({ title: isNew ? 'Máquina cadastrada' : 'Máquina atualizada' }); onDone();
+      let enviados = 0; const falhas: string[] = [];
+      for (const file of anexos) {
+        try { await uploadArquivo(mid, file); enviados++; } catch (e: any) { falhas.push(`${file.name}: ${e.message || e}`); }
+      }
+      toast({ title: isNew ? 'Máquina cadastrada' : 'Máquina atualizada', description: anexos.length ? `${enviados} arquivo(s) anexado(s)${falhas.length ? ` · falhou: ${falhas.join('; ')}` : ''}` : undefined, variant: falhas.length ? 'destructive' : undefined });
+      onDone();
     } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
     finally { setSaving(false); }
   };
@@ -181,6 +198,20 @@ function MaquinaDialog({ maquina, onClose, onDone }: any) {
           </div>
           <div className="space-y-1.5"><Label>Dados técnicos</Label><Textarea rows={4} value={f.technicalData} onChange={(e) => set('technicalData', e.target.value)} placeholder="Potência, tensão, capacidade, lubrificantes, peças de reposição, fornecedor de assistência..." /></div>
           <div className="space-y-1.5"><Label>Observações gerais</Label><Textarea rows={2} value={f.notes} onChange={(e) => set('notes', e.target.value)} /></div>
+          <div className="space-y-1.5">
+            <Label>Anexar arquivos <span className="text-gray-400 font-normal">(manual, NF de compra, laudo, planilha, PDF... até 25MB cada)</span></Label>
+            <input type="file" multiple className="hidden" ref={anexoRef} onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setAnexos((p) => [...p, ...fs]); e.target.value = ''; }} />
+            <div className="flex flex-wrap gap-2 items-center">
+              <Button type="button" variant="outline" size="sm" onClick={() => anexoRef.current?.click()}><Paperclip className="h-4 w-4 mr-1" /> Escolher arquivos</Button>
+              {anexos.map((a, i) => (
+                <span key={i} className="inline-flex items-center gap-1 rounded border bg-gray-50 px-2 py-1 text-xs max-w-[260px]">
+                  <FileText className="h-3 w-3 shrink-0" /><span className="truncate">{a.name}</span><span className="text-gray-400">{fmtBytes(a.size)}</span>
+                  <button type="button" className="text-gray-400 hover:text-red-500" onClick={() => setAnexos((p) => p.filter((_, j) => j !== i))}><X className="h-3 w-3" /></button>
+                </span>
+              ))}
+            </div>
+            {anexos.length > 0 && <p className="text-[11px] text-gray-400">Os arquivos são enviados ao {isNew ? 'cadastrar' : 'salvar'}. Depois, na ficha da máquina, dá para anexar mais e ligar arquivos a uma manutenção.</p>}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
@@ -245,6 +276,23 @@ function MaquinaDetalhe({ id, onBack }: { id: string; onBack: () => void }) {
     } catch (e: any) { toast({ title: 'Erro ao anexar foto', description: String(e.message || e), variant: 'destructive' }); }
     finally { setBusy(null); }
   };
+  // Arquivos (qualquer tipo) — da máquina ou de uma manutenção
+  const arqRef = useRef<HTMLInputElement | null>(null);
+  const [arqManutId, setArqManutId] = useState<string | null>(null);
+  const [descArquivo, setDescArquivo] = useState('');
+  const pedirArquivo = (manutId: string | null) => { setArqManutId(manutId); arqRef.current?.click(); };
+  const enviarArquivos = async (files: FileList | null) => {
+    const lista = Array.from(files || []); if (!lista.length) return;
+    setBusy('arquivo');
+    let okN = 0; const falhas: string[] = [];
+    for (const file of lista) { try { await uploadArquivo(id, file, { maintenanceId: arqManutId, description: descArquivo }); okN++; } catch (e: any) { falhas.push(`${file.name}: ${e.message || e}`); } }
+    setBusy(null); setArqManutId(null); setDescArquivo(''); invalidate();
+    toast({ title: `${okN} arquivo(s) anexado(s)`, description: falhas.length ? falhas.join('; ') : undefined, variant: falhas.length ? 'destructive' : undefined });
+  };
+  const delArquivo = async (a: any) => {
+    if (!window.confirm(`Remover o arquivo "${a.fileName}"?`)) return;
+    try { await jfetch(`/api/industria/maquinas/arquivos/${a.id}`, { method: 'DELETE' }); invalidate(); } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
+  };
   const delFoto = async (f: any) => {
     if (!window.confirm('Remover esta foto?')) return;
     try { await jfetch(`/api/industria/maquinas/fotos/${f.id}`, { method: 'DELETE' }); setFotoAberta(null); invalidate(); } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
@@ -257,6 +305,21 @@ function MaquinaDetalhe({ id, onBack }: { id: string; onBack: () => void }) {
   const observacoes: any[] = data?.observacoes || [];
   const fotosDaManut = (mid: string) => fotos.filter((f) => f.maintenanceId === mid);
   const fotosGerais = fotos.filter((f) => !f.maintenanceId);
+  const arquivos: any[] = data?.arquivos || [];
+  const arquivosDaManut = (mid: string) => arquivos.filter((a) => a.maintenanceId === mid);
+  const arquivosGerais = arquivos.filter((a) => !a.maintenanceId);
+
+  const Arquivo = ({ a }: { a: any }) => (
+    <div className="flex items-center gap-2 rounded border px-2 py-1.5 text-xs bg-white">
+      <FileText className="h-4 w-4 text-gray-500 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <a href={`/api/industria/maquinas/arquivos/${a.id}/download`} target="_blank" rel="noreferrer" className="font-medium text-blue-700 hover:underline truncate block" title={a.fileName}>{a.fileName}</a>
+        <div className="text-[10px] text-gray-400 truncate">{a.description ? `${a.description} · ` : ''}{fmtBytes(a.fileSize)} · {fmtHora(a.createdAt)}{a.createdBy ? ` · ${a.createdBy}` : ''}</div>
+      </div>
+      <a href={`/api/industria/maquinas/arquivos/${a.id}/download?download=1`} title="Baixar"><Button size="sm" variant="ghost" className="h-6 px-1"><Download className="h-3 w-3" /></Button></a>
+      <Button size="sm" variant="ghost" className="h-6 px-1 text-red-500" title="Remover" onClick={() => delArquivo(a)}><Trash2 className="h-3 w-3" /></Button>
+    </div>
+  );
 
   const Foto = ({ f }: { f: any }) => (
     <button type="button" onClick={() => setFotoAberta(f)} className="text-left" title={`${fmtHora(f.takenAt)}${f.createdBy ? ' · ' + f.createdBy : ''}`}>
@@ -269,6 +332,7 @@ function MaquinaDetalhe({ id, onBack }: { id: string; onBack: () => void }) {
   return (
     <div className="space-y-4">
       <input type="file" accept="image/*" capture="environment" className="hidden" ref={fotoRef} onChange={(e) => { enviarFoto(e.target.files?.[0]); e.target.value = ''; }} />
+      <input type="file" multiple className="hidden" ref={arqRef} onChange={(e) => { enviarArquivos(e.target.files); e.target.value = ''; }} />
       <div className="flex items-center gap-2 flex-wrap">
         <Button variant="outline" size="sm" onClick={onBack}><ChevronLeft className="h-4 w-4 mr-1" /> Máquinas</Button>
         <h2 className="text-lg font-bold">{m.name}</h2>
@@ -316,12 +380,14 @@ function MaquinaDetalhe({ id, onBack }: { id: string; onBack: () => void }) {
                     <div className="flex-1" />
                     {x.status !== 'realizada' && x.status !== 'cancelada' && <Button size="sm" variant="outline" onClick={() => concluirMan(x)}>Concluir hoje</Button>}
                     <Button size="sm" variant="ghost" onClick={() => pedirFoto(x.id)} disabled={busy === 'foto'} title="Foto desta manutenção"><Camera className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => pedirArquivo(x.id)} disabled={busy === 'arquivo'} title="Anexar arquivo a esta manutenção (laudo, NF, relatório...)"><Paperclip className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => setManDialog(x)}><Pencil className="h-4 w-4 text-blue-500" /></Button>
                     <Button size="sm" variant="ghost" className="text-red-500" onClick={() => delMan(x)}><Trash2 className="h-4 w-4" /></Button>
                   </div>
                   {x.description && <p className="text-xs mt-1 whitespace-pre-wrap">{x.description}</p>}
                   {x.notes && <p className="text-xs mt-1 text-gray-500 whitespace-pre-wrap">{x.notes}</p>}
                   {fm.length > 0 && <div className="flex gap-2 flex-wrap mt-2">{fm.map((f) => <Foto key={f.id} f={f} />)}</div>}
+                  {arquivosDaManut(x.id).length > 0 && <div className="space-y-1 mt-2">{arquivosDaManut(x.id).map((a) => <Arquivo key={a.id} a={a} />)}</div>}
                   <div className="text-[10px] text-gray-400 mt-1">Registrado {fmtHora(x.createdAt)}{x.createdBy ? ` por ${x.createdBy}` : ''}</div>
                 </div>
               );
@@ -330,7 +396,7 @@ function MaquinaDetalhe({ id, onBack }: { id: string; onBack: () => void }) {
         </CardContent></Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card><CardContent className="p-4 space-y-3">
           <div className="font-semibold text-sm flex items-center gap-2"><StickyNote className="h-4 w-4" /> Observações / dados técnicos ({observacoes.length})</div>
           <div className="space-y-2">
@@ -356,6 +422,17 @@ function MaquinaDetalhe({ id, onBack }: { id: string; onBack: () => void }) {
           </div>
           {fotosGerais.length === 0 && <p className="text-xs text-gray-400">Nenhuma foto. Fotos das manutenções ficam junto de cada manutenção.</p>}
           <div className="flex gap-2 flex-wrap">{fotosGerais.map((f) => <Foto key={f.id} f={f} />)}</div>
+        </CardContent></Card>
+
+        <Card><CardContent className="p-4 space-y-3">
+          <div className="font-semibold text-sm flex items-center gap-2"><Paperclip className="h-4 w-4" /> Arquivos ({arquivosGerais.length})</div>
+          <div className="flex gap-2">
+            <Input value={descArquivo} onChange={(e) => setDescArquivo(e.target.value)} placeholder="Descrição (ex.: manual, NF de compra, laudo)" className="text-sm" />
+            <Button variant="outline" onClick={() => pedirArquivo(null)} disabled={busy === 'arquivo'}>{busy === 'arquivo' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Paperclip className="h-4 w-4 mr-1" />} Anexar</Button>
+          </div>
+          <p className="text-[11px] text-gray-400">Qualquer tipo de arquivo, até 25MB cada. Arquivos de uma manutenção: use o clipe na linha da manutenção.</p>
+          {arquivosGerais.length === 0 && <p className="text-xs text-gray-400">Nenhum arquivo anexado.</p>}
+          <div className="space-y-1">{arquivosGerais.map((a) => <Arquivo key={a.id} a={a} />)}</div>
         </CardContent></Card>
       </div>
 
