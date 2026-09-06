@@ -4,7 +4,7 @@ import { ensureEntregaTempoSchema, registrarTempoEntregaCliente, notifyRotaInici
 import { createServer, type Server } from "http";
 import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated } from "./session";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess, gone, rateLimitPorIp } from "./authMiddleware";
 import { requirePermission } from "./delegations-routes";
@@ -14,7 +14,7 @@ import { optimizeRouteAdvanced, type RouteLocation } from "../shared/routeOptimi
 import { receitaService } from "./receitaIntegration";
 import { validarDocumentosDoPayload, normalizarDocumento } from "./documentValidation";
 import { evolutionAPIService } from "./evolution-api-service";
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { registerObjectStorageRoutes } from "./object-storage";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
 import { registerCustomerStatementRoutes } from "./customer-statement-routes";
@@ -71,7 +71,6 @@ import path from 'path';
 import fs from 'fs';
 import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
-import { objectStorageClient } from './replit_integrations/object_storage/objectStorage';
 import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
 import { handlerDebitosVencidosPorCliente } from "./overdue-debts-por-cliente";
 
@@ -81,10 +80,9 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// Helper function to upload photo to Object Storage
+// Guarda a foto no banco (tabela photo_media) e serve via GET /api/photo-media/:id.
+// Mesmo padrao usado pela midia do chat (chat_media).
 async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: string): Promise<string | null> {
-  // Fallback duravel no banco (Railway nao tem Object Storage do Replit: objectStorageClient e null sem REPL_ID).
-  // Serve via GET /api/photo-media/:id. Mesmo padrao usado pela midia do chat (chat_media).
   const saveToDb = async (): Promise<string | null> => {
     try {
       await db.execute(sql`CREATE TABLE IF NOT EXISTS photo_media (id text PRIMARY KEY, mimetype text, folder text, data text, created_at timestamptz DEFAULT now())`);
@@ -92,36 +90,14 @@ async function uploadPhotoToStorage(buffer: Buffer, mimetype: string, folder: st
       const b64 = buffer.toString('base64');
       await db.execute(sql`INSERT INTO photo_media (id, mimetype, folder, data) VALUES (${id}, ${mimetype}, ${folder}, ${b64})`);
       const url = `/api/photo-media/${id}`;
-      console.log(`[PHOTO-UPLOAD] Salvo no banco (fallback): ${url}`);
+      console.log(`[PHOTO-UPLOAD] Salvo no banco: ${url}`);
       return url;
     } catch (e: any) {
-      console.error('[PHOTO-UPLOAD] Falha no fallback DB:', e?.message || e);
+      console.error('[PHOTO-UPLOAD] Falha ao salvar no banco:', e?.message || e);
       return null;
     }
   };
-  try {
-    const publicPaths = process.env.PUBLIC_OBJECT_SEARCH_PATHS;
-    const privateDir = process.env.PRIVATE_OBJECT_DIR;
-    let baseDirEnv = publicPaths || privateDir;
-    if (!baseDirEnv || !objectStorageClient) {
-      console.log('[PHOTO-UPLOAD] Object Storage nao configurado - usando fallback no banco');
-      return await saveToDb();
-    }
-    const baseDir = baseDirEnv.split(',')[0].trim();
-    const { bucketName, objectName: basePath } = parseObjectStoragePath(baseDir);
-    const photoId = nanoid(12);
-    const ext = mimetype.includes('png') ? 'png' : (mimetype.includes('gif') ? 'gif' : (mimetype.includes('webp') ? 'webp' : 'jpg'));
-    const objectName = `${basePath}/${folder}/${photoId}.${ext}`;
-    const bucket = objectStorageClient.bucket(bucketName);
-    const file = bucket.file(objectName);
-    await file.save(buffer, { contentType: mimetype, resumable: false });
-    const serverUrl = `/api/storage-image/${bucketName}/${objectName}`;
-    console.log(`[PHOTO-UPLOAD] Foto salva: ${serverUrl}`);
-    return serverUrl;
-  } catch (error) {
-    console.error('[PHOTO-UPLOAD] Erro no Object Storage, tentando fallback no banco:', error);
-    return await saveToDb();
-  }
+  return await saveToDb();
 }
 
 // Normaliza latitude/longitude para valor numérico aceito pela coluna `numeric`.
@@ -148,16 +124,6 @@ function normalizeCoord(v: any): string | null | undefined {
   const n = Number(s);
   if (!Number.isFinite(n)) return null;
   return String(n);
-}
-
-// Helper to parse object storage path
-function parseObjectStoragePath(path: string): { bucketName: string; objectName: string } {
-  if (!path.startsWith('/')) path = `/${path}`;
-  const parts = path.split('/').filter(p => p);
-  return {
-    bucketName: parts[0],
-    objectName: parts.slice(1).join('/')
-  };
 }
 
 
@@ -438,7 +404,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Configure webhook for receiving messages
     // IMPORTANT: Only reconfigure webhook in PRODUCTION mode to avoid overwriting production URL
-    // Environment detection (E4, 06/set/2026 — saiu do Replit, roda no Railway):
+    // Environment detection (E4, 06/set/2026 — roda no Railway):
     // - Development: DON'T reconfigure webhook - let production handle it
     // - Production (NODE_ENV=production): use BASE_URL/APP_URL (the public domain)
     const isProduction = process.env.NODE_ENV === 'production';
@@ -462,10 +428,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Helper function to check if URL is pointing to an old/temporary deployment
     const isStaleUrl = (url: string): boolean => {
       if (!url) return true;
-      return url.includes('.spock.') || 
-             url.includes('.prod.repl.run') || 
+      // URL de deploy antigo/efemero (inclui os dominios da hospedagem anterior).
+      return url.includes('.spock.') ||
+             url.includes('.prod.repl.run') ||
              url.includes('.repl.co') ||
-             (url.includes('replit') && !url.includes(expectedProdDomain));
+             !url.includes(expectedProdDomain);
     };
     
     // Run webhook validation/configuration in background to avoid blocking startup
@@ -803,7 +770,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Definir primeira senha (usuário deve estar autenticado via Replit Auth ou ser criado por admin)
+  // Definir primeira senha (usuário deve estar autenticado ou ser criado por admin)
   app.post('/api/auth/set-password', async (req, res) => {
     try {
       const { email, newPassword } = req.body;
@@ -927,43 +894,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Fall back to Replit auth
-      if (!req.isAuthenticated() || !req.user?.claims?.sub) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      
-      const userId = req.user.claims.sub;
-      const userEmail = req.user.claims.email;
-      
-      // First try to find user by ID
-      let user = await storage.getUser(userId);
-      
-      // CRITICAL FIX: Verify that the user's email matches the Replit email
-      // If there's a mismatch, the userId is mapped to the wrong account
-      if (user && userEmail && user.email !== userEmail) {
-        // Find the correct user by email
-        const correctUser = await storage.getUserByEmail(userEmail);
-        if (correctUser) {
-          user = correctUser;
-        } else {
-          user = null;
-        }
-      }
-      
-      // If not found by ID or email didn't match, try to find by email
-      if (!user && userEmail) {
-        user = await storage.getUserByEmail(userEmail);
-      }
-      
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      
-      // 🏭 Perfil "Indústria": acesso total — o front recebe role 'admin' (crachá continua "Indústria").
-      if (user.role === 'industria') {
-        return res.json({ ...user, role: 'admin', _perfilIndustria: true });
-      }
-      res.json(user);
+      return res.status(401).json({ message: "Unauthorized" });
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -1274,7 +1205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/users/:id', authenticateUser, async (req: any, res) => {
     try {
       const userId = req.params.id;
-      const currentUserId = req.user?.claims?.sub || req.session?.user?.claims?.sub;
+      const currentUserId = req.session?.user?.claims?.sub;
       const currentUser = req.currentUser;
       
       const canEditOthers = ['admin', 'coordinator', 'administrative'].includes(currentUser?.role);
@@ -1321,7 +1252,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.params.id;
       const currentUser = req.currentUser;
-      const currentUserId = req.user?.claims?.sub || req.session?.user?.claims?.sub;
+      const currentUserId = req.session?.user?.claims?.sub;
 
       // Não permitir excluir a si mesmo
       if (userId === currentUserId || userId === currentUser?.id) {
@@ -3378,52 +3309,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Proxy endpoint to serve images from Object Storage
-  // This works with both /api/storage-image/{bucket}/{path} format
-  app.get('/api/storage-image/*', async (req, res) => {
-    try {
-      const fullPath = req.params[0];
-      if (!fullPath) {
-        return res.status(400).json({ message: "Path não informado" });
-      }
-      
-      // Parse bucket and object path from the URL
-      const parts = fullPath.split('/');
-      if (parts.length < 2) {
-        return res.status(400).json({ message: "Path inválido" });
-      }
-      
-      const bucketName = parts[0];
-      const objectPath = parts.slice(1).join('/');
-      
-      console.log(`📸 [STORAGE-IMAGE] Buscando: bucket=${bucketName}, path=${objectPath}`);
-      
-      const bucket = objectStorageClient.bucket(bucketName);
-      const file = bucket.file(objectPath);
-      
-      const [exists] = await file.exists();
-      if (!exists) {
-        console.log(`❌ [STORAGE-IMAGE] Arquivo não encontrado: ${fullPath}`);
-        return res.status(404).json({ message: "Imagem não encontrada" });
-      }
-      
-      // Get metadata for content-type
-      const [metadata] = await file.getMetadata();
-      const contentType = metadata.contentType || 'image/jpeg';
-      
-      // Set cache headers
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=31536000');
-      
-      // Stream the file
-      file.createReadStream().pipe(res);
-    } catch (error) {
-      console.error('❌ [STORAGE-IMAGE] Erro ao servir imagem:', error);
-      res.status(500).json({ message: "Erro ao carregar imagem" });
-    }
+  // URLs /api/storage-image/... sao de midia antiga guardada em object storage externo, que
+  // saiu do ar junto com a hospedagem anterior. Responde 410 (e nao o HTML do SPA) para a tela
+  // mostrar "imagem indisponivel" em vez de quebrar. A midia nova fica em chat_media/photo_media.
+  app.get('/api/storage-image/*', (_req, res) => {
+    res.status(410).json({ message: 'Imagem antiga indisponivel (armazenamento externo desativado).' });
   });
 
-  // Serve fotos guardadas no banco (entregas/check-in) - fallback do Railway sem Object Storage do Replit.
+  // Serve fotos guardadas no banco (entregas/check-in).
   // Espelha /api/chat-media/:id. Sem auth para permitir <img src> direto (cookie same-origin acompanha).
   app.get('/api/photo-media/:id', async (req: any, res: any) => {
     try {
@@ -8131,7 +8024,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/message-templates', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = (req.session as any)?.user?.claims?.sub;
       const user = await storage.getUser(userId);
       
       if (!['admin', 'coordinator', 'administrative', 'vendedor'].includes(user?.role || '')) {
@@ -8151,7 +8044,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/whatsapp/send', isAuthenticated, async (req: any, res) => {
     try {
       const { customerId, message, templateId } = req.body;
-      const userId = req.user.claims.sub;
+      const userId = (req.session as any)?.user?.claims?.sub;
       
       // Log the message in history
       await storage.createMessageHistory({
@@ -13523,7 +13416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Listar cards de telemarketing para um atendente
   app.get('/api/telemarketing/my-cards', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = (req.session as any)?.user?.claims?.sub;
       
       // Buscar cards de telemarketing atribuídos ao usuário atual
       const telemarketingCards = await db.execute(sql`
@@ -14676,20 +14569,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const notBeforeMatch = certDetails.match(/notBefore\s*=\s*(.*)/i);
       const notAfterMatch = certDetails.match(/notAfter\s*=\s*(.*)/i);
 
-      // [2.0] Railway sem object storage do Replit: guarda o PFX no banco (pfx_data cifrado), igual ao /api/digital-certificates.
-      let storageKey = 'db';
-      try {
-        const privateDir = process.env.PRIVATE_OBJECT_DIR;
-        const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-        if (privateDir && bucketId) {
-          const { objectStorageClient } = await import('./replit_integrations/object_storage/objectStorage');
-          storageKey = `${privateDir}/certificates/${cryptoMod.randomUUID()}.pfx`;
-          await objectStorageClient.bucket(bucketId).file(storageKey).save(file.buffer, { contentType: 'application/x-pkcs12' });
-        }
-      } catch (e: any) {
-        console.warn('[CERT] Object storage indisponivel, usando pfx no banco:', e?.message);
-        storageKey = 'db';
-      }
+      // O PFX fica cifrado no banco (pfx_data), igual ao /api/digital-certificates.
+      const storageKey = 'db';
       const pfxData = encPwd(file.buffer.toString('base64'));
 
       if (cnpj && !instance.cnpj) {
@@ -22296,10 +22177,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId = (req.session as any).user.claims.sub;
         userEmail = (req.session as any).user.claims.email;
         console.log(`✅ [CHECK-IN] Autenticado via claims: ${userEmail}`);
-      } else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
-        userId = (req.user as any).claims.sub;
-        userEmail = (req.user as any).claims.email;
-        console.log(`✅ [CHECK-IN] Autenticado via Passport: ${userEmail}`);
       }
       
       if (!userId) {

@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { storage } from './storage';
 
-// Middleware que funciona tanto com Replit Auth quanto com autenticação local
+// Middleware de autenticação por sessão local (email + senha)
 export const authenticateUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // (E1, 05/set/2026) Removido o bypass de /api/customers/map-data: a tela do Mapa roda dentro
@@ -19,7 +19,6 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
         console.log(`🔍 [AUTH-CHECK-IN] Session userId: ${(req.session as any)?.userId}`);
         console.log(`🔍 [AUTH-CHECK-IN] Session user: ${JSON.stringify((req.session as any)?.user)}`);
       }
-      console.log(`🔍 [AUTH-CHECK-IN] isAuthenticated: ${req.isAuthenticated?.()}`);
       console.log(`🔍 [AUTH-CHECK-IN] req.user: ${JSON.stringify((req as any).user)}\n`);
     }
     
@@ -34,12 +33,6 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
       userId = (req.session as any).user.claims.sub;
       userEmail = (req.session as any).user.claims.email;
       console.log(`✅ [AUTH] Local session with claims: ${userEmail}`);
-    }
-    // Verificar autenticação Replit com Passport
-    else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
-      userId = (req.user as any).claims.sub;
-      userEmail = (req.user as any).claims.email;
-      console.log(`✅ [AUTH] Replit auth: ${userEmail}`);
     }
     
     if (!userId) {
@@ -131,11 +124,6 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
     else if ((req.session as any)?.user?.claims?.sub) {
       userId = (req.session as any).user.claims.sub;
       userEmail = (req.session as any).user.claims.email;
-    }
-    // Verificar autenticação Replit com Passport
-    else if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) {
-      userId = (req.user as any).claims.sub;
-      userEmail = (req.user as any).claims.email;
     }
     
     if (!userId) {

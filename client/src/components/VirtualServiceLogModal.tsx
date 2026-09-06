@@ -143,7 +143,7 @@ export default function VirtualServiceLogModal({
   });
 
   // Comprime a imagem no cliente e a guarda como data URL (base64) embutida no
-  // próprio registro (campo images). O Object Storage (Replit) não está disponível
+  // próprio registro (campo images). Não há object storage externo disponível
   // neste ambiente (Railway), então evitamos o upload externo. Redimensiona p/ 1280px
   // e usa JPEG q=0.72 com fundo branco, mantendo o tamanho enxuto no banco.
   const fileToCompressedDataUrl = (file: File): Promise<string> =>

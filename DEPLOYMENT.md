@@ -1,226 +1,98 @@
-# Guia de Publicação (Deployment) - Sistema Integra
+# Guia de publicação (deploy) — Integra 2.0
 
-## ⚠️ Problema: Tela em Branco Após Publicação
+_Atualizado em set/2026 (etapa E6). O sistema roda no **Railway**; a hospedagem antiga e o
+Integra 1.0 saíram do ar._
 
-Se após publicar o app a tela ficar em branco, siga este guia passo a passo.
+## Como o deploy acontece
 
-## 🔍 PRIMEIRO PASSO: Verificar Status do Sistema
+Push/merge na branch `main` do GitHub → o Railway builda (`npm run build`: vite + esbuild) e
+reinicia o serviço. O banco (serviço Postgres separado) não é tocado — ver
+`PERSISTENCIA_E_BACKUP.md`.
 
-Acesse este endpoint para ver o diagnóstico completo:
+## Primeiro passo em qualquer suspeita: health check
 
 ```
-https://SEU-DOMINIO.replit.app/api/health
+https://integracode-production.up.railway.app/api/health
 ```
-
-Substitua `SEU-DOMINIO` pelo seu domínio real. Você verá informações como:
 
 ```json
 {
   "status": "ok",
-  "hostname": "seu-app.replit.app",
-  "checks": {
-    "database": true,
-    "session": true,
-    "replitDomains": true,
-    "omieConfig": true
-  },
+  "checks": { "database": true, "session": true },
   "config": {
-    "replitDomains": ["seu-app.replit.app"],
+    "baseUrl": "https://integracode-production.up.railway.app",
     "hasSessionSecret": true,
-    "hasDatabaseUrl": true,
-    "hasOmieKey": true,
-    "hasOmieSecret": true
+    "hasDatabaseUrl": true
   }
 }
 ```
 
-**Se algum check estiver `false`, esse é o problema!**
+Qualquer check em `false` é o problema. `status: "degraded"` = falta `SESSION_SECRET`.
 
-## 🔧 Variáveis de Ambiente Obrigatórias
+## Variáveis de ambiente
 
-### ✅ 1. SESSION_SECRET (MAIS IMPORTANTE!)
+Railway → serviço da aplicação → aba **Variables**.
 
-Esta variável **DEVE** ser configurada manualmente para produção.
+### Obrigatórias
 
-**Como configurar:**
+| Variável | O que é | Observação |
+|---|---|---|
+| `SESSION_SECRET` | segredo do cookie de sessão | string aleatória longa; **trocar derruba todas as sessões** |
+| `DATABASE_URL` | conexão com o Postgres | injetada pelo Railway ao referenciar o serviço Postgres |
+| `NODE_ENV` | `production` | define cookie seguro e o modo de build servido |
+| `BASE_URL` | domínio público | usado em links, upload e webhooks |
 
-1. Vá para a aba **Secrets** no Replit (ícone de cadeado)
-2. Clique em **+ New Secret**
-3. Configure:
-   - **Key**: `SESSION_SECRET`
-   - **Value**: Uma string aleatória longa (mínimo 32 caracteres)
-
-**Gerar um secret seguro:**
-```bash
-# Cole isso no terminal do Replit:
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Copie o resultado e cole como valor do `SESSION_SECRET`.
-
-### ✅ 2. DATABASE_URL
-
-Esta variável é configurada automaticamente quando você provisiona um banco PostgreSQL.
-
-**Verificar:**
-1. Vá na aba **Database** no Replit
-2. Confirme que há um banco PostgreSQL provisionado
-3. Na aba **Secrets**, deve aparecer `DATABASE_URL` automaticamente
-
-**Se não tiver:**
-- Clique em **Create Database** na aba Database
-- Escolha **PostgreSQL**
-
-### ⚠️ 3. REPLIT_DOMAINS
-
-**IMPORTANTE: Você NÃO precisa configurar isso manualmente!**
-
-O Replit fornece essa variável automaticamente em produção com:
-- Domínio de desenvolvimento: `seu-app-usuario.repl.co`
-- Domínio publicado: `seu-app-usuario.replit.app`
-
-Se você configurou manualmente, pode **remover** essa secret.
-
-### 🔧 4. Variáveis da API Omie (Opcionais)
-
-Se você usa integração com Omie ERP:
-
-- `OMIE_APP_KEY`: Chave da aplicação Omie
-- `OMIE_APP_SECRET`: Secret da aplicação Omie
-
-Estas devem ser configuradas manualmente na aba Secrets.
-
-## 📋 Checklist de Publicação
-
-Antes de publicar, verifique:
-
-- [ ] Banco de dados PostgreSQL provisionado
-- [ ] `SESSION_SECRET` configurada manualmente (string aleatória)
-- [ ] `DATABASE_URL` aparece automaticamente nos Secrets
-- [ ] **NÃO** configure `REPLIT_DOMAINS` manualmente (é automática)
-- [ ] Todas as secrets da API Omie configuradas (se usar)
-- [ ] Código sem erros no console
-
-## 🚀 Como Publicar
-
-1. Clique no botão **Deploy** no topo do Replit
-2. Configure as opções:
-   - **Deployment Type**: Escolha **Autoscale** ou **Reserved VM**
-   - **NÃO use Static Deployment** (o app precisa de backend)
-3. Clique em **Deploy**
-4. Aguarde o deploy completar
-
-## 🐛 Diagnóstico de Problemas
-
-### Método 1: Endpoint de Health Check
-
-Acesse: `https://seu-dominio.replit.app/api/health`
-
-Isso mostrará exatamente qual variável está faltando.
-
-### Método 2: Logs do Servidor
-
-1. No Replit, vá para **Deployments**
-2. Clique no deployment ativo
-3. Abra a aba **Logs**
-4. Procure por mensagens como:
-   - `❌ ERRO CRÍTICO: SESSION_SECRET não configurada!`
-   - `❌ ERRO CRÍTICO: DATABASE_URL não configurada!`
-
-### Método 3: Console do Navegador
-
-1. Abra o app publicado
-2. Pressione **F12** para abrir Developer Tools
-3. Vá na aba **Console**
-4. Procure por erros em vermelho
-
-## 🔥 Erros Comuns e Soluções
-
-### Erro: "SESSION_SECRET must be provided"
-
-**Solução:**
-1. Vá em Secrets
-2. Crie `SESSION_SECRET` com valor aleatório longo
-3. Redeploy o app
-
-### Erro: "DATABASE_URL must be provided"
-
-**Solução:**
-1. Vá na aba Database
-2. Provisione um banco PostgreSQL
-3. Aguarde alguns minutos
-4. Redeploy o app
-
-### Erro: "REPLIT_DOMAINS not provided in production"
-
-**Solução:**
-- Este erro NÃO deveria acontecer em produção
-- O Replit fornece essa variável automaticamente
-- Se acontecer, contacte o suporte do Replit
-
-### Tela em branco sem erros nos logs
-
-**Possíveis causas:**
-
-1. **JavaScript não carregando**: Verifique se há erros 404 no Console do navegador
-2. **Tipo de deployment errado**: Use Autoscale ou Reserved VM, não Static
-3. **Porta incorreta**: O app deve servir na porta 5000 (já configurado)
-
-**Soluções:**
-1. Limpe o cache do navegador (Ctrl + Shift + Delete)
-2. Tente em modo anônimo/privado
-3. Verifique se escolheu Autoscale/Reserved VM ao publicar
-
-## 🔄 Atualizar App Publicado
-
-Após fazer alterações no código:
-
-1. As mudanças são deployadas **automaticamente**
-2. Não precisa republicar manualmente
-3. Aguarde 1-2 minutos para o deploy completar
-4. Recarregue a página do app
-
-## ⚡ Teste Antes de Publicar
-
-Teste no ambiente de desenvolvimento primeiro:
+Gerar um `SESSION_SECRET`:
 
 ```bash
-# No terminal do Replit
-npm run dev
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-Acesse pelo domínio `.repl.co` e verifique se:
-- Login funciona
-- Dashboard carrega
-- Não há erros no console
+### Integrações (conforme o que estiver em uso)
 
-Se funcionar em desenvolvimento mas não em produção:
-- O problema é com variáveis de ambiente
-- Use o endpoint `/api/health` para diagnosticar
+`EVOLUTION_API_BASE_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE_NAME` (WhatsApp),
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (IA), credenciais do Banco do Brasil e da Cielo
+(financeiro), `REDIS_URL` (filas BullMQ — opcional; sem ela as filas ficam desligadas),
+`UPLOAD_DIR` (opcional: volume persistente para arquivos; sem ela, arquivos vão para o banco).
 
-## 📞 Checklist Final
+### Variáveis que NÃO devem existir mais
 
-Se a tela continuar em branco:
+`OMIE_APP_KEY`, `OMIE_APP_SECRET`, `OMIE_CADASTRO_SYNC`, `SYNC_ENABLED`, `SYNC_20_ENABLED`,
+`SYNC_INTERVAL_MINUTES`, `REPLIT_DATABASE_URL`, `PRIVATE_OBJECT_DIR`,
+`PUBLIC_OBJECT_SEARCH_PATHS`, `DEFAULT_OBJECT_STORAGE_BUCKET_ID`. O código que as lia foi
+removido nas etapas E5/E6 do desligamento do Omie. Se alguma ainda estiver no Railway, apagar.
 
-1. ✅ Acesse `/api/health` e verifique todos os checks
-2. ✅ Confirme que `SESSION_SECRET` está nos Secrets
-3. ✅ Confirme que banco PostgreSQL está provisionado
-4. ✅ Verifique os Logs do deployment por erros
-5. ✅ Verifique o Console do navegador (F12)
-6. ✅ Confirme que usou Autoscale/Reserved VM (não Static)
+## Checklist antes de publicar
 
-Se todos os checks passarem e ainda tiver tela branca:
-- Copie a URL do `/api/health`
-- Copie os logs do servidor
-- Copie os erros do Console do navegador
-- Entre em contato com suporte
+- [ ] `npx tsc` não introduziu erro novo (a base tem erros pré-existentes conhecidos).
+- [ ] `npm run build` termina com exit 0.
+- [ ] Migração de dados (quando houver) rodou **antes** do deploy, com backup.
+- [ ] `SESSION_SECRET` e `DATABASE_URL` presentes no Railway.
 
-## 🎯 Resumo em 3 Passos
+## Depois do deploy
 
-**Para resolver tela em branco:**
+1. `/api/health` responde `status: "ok"`.
+2. Login com email + senha funciona (a autenticação é local — `server/localAuth.ts`).
+3. Abrir uma tela de cada área: Rota do Dia, Pipeline de Faturamento, Contas a Receber,
+   ChatCenter.
+4. Logs do Railway sem `relation ... does not exist` e sem erro repetido no boot.
 
-1. **Configure SESSION_SECRET** nos Secrets (valor aleatório longo)
-2. **Provisione PostgreSQL** na aba Database
-3. **Use Autoscale ou Reserved VM** ao publicar (não Static)
+## Problemas comuns
 
-Isso resolve 99% dos casos!
+**Tela em branco.** Abra o console do navegador. Quase sempre é build antigo em cache:
+Ctrl+Shift+R. Se persistir, veja se o build do Railway terminou com sucesso.
+
+**401 em tudo / cai para a tela de login.** `SESSION_SECRET` mudou ou está ausente, ou a
+tabela `sessions` sumiu. Ela é criada fora do Drizzle (`createTableIfMissing: false`) —
+confira que existe.
+
+**`SESSION_SECRET must be provided` no boot.** Variável ausente; adicione e redeploy.
+
+**Erro de conexão com o banco.** Verifique se o serviço Postgres do Railway está de pé e se
+a `DATABASE_URL` referencia o serviço (e não uma URL colada à mão que expirou).
+
+## Rollback
+
+Railway → serviço → **Deployments** → escolha o deploy anterior → **Redeploy**. Isso volta
+só o código. Se a versão nova rodou migração destrutiva, reverta a migração pelo bloco R do
+arquivo SQL correspondente antes de voltar o código.

@@ -136,7 +136,7 @@ if (!existingUnknown) {
 2. `server/routes.ts` - Validação de sellerId na importação
 3. `server/localAuth.ts` - Criação automática do vendedor desconhecido
 4. `server/fix-orphan-cards.ts` - Script de correção (one-time)
-5. `replit.md` - Documentação atualizada
+5. Documentação atualizada
 
 ## 🎉 Conclusão
 

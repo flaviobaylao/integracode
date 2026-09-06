@@ -140,7 +140,7 @@ Após importar uma planilha, verifique se há problemas:
 
 2. **Via API:**
    ```bash
-   curl -X POST https://integrahonest.replit.app/api/admin/validate-cards \
+   curl -X POST https://integracode-production.up.railway.app/api/admin/validate-cards \
      -H "Content-Type: application/json" \
      -d '{"autoFix": false}'
    ```
@@ -150,7 +150,7 @@ Após importar uma planilha, verifique se há problemas:
 Se o diagnóstico detectar problemas, corrija automaticamente:
 
 ```bash
-curl -X POST https://integrahonest.replit.app/api/admin/validate-cards \
+curl -X POST https://integracode-production.up.railway.app/api/admin/validate-cards \
   -H "Content-Type: application/json" \
   -d '{"autoFix": true}'
 ```
@@ -162,7 +162,7 @@ curl -X POST https://integrahonest.replit.app/api/admin/validate-cards \
 Se preferir recalcular tudo do zero:
 
 ```bash
-curl -X POST https://integrahonest.replit.app/api/admin/sync-agenda
+curl -X POST https://integracode-production.up.railway.app/api/admin/sync-agenda
 ```
 
 Isso vai:
