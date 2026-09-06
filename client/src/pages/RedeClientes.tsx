@@ -242,8 +242,11 @@ export default function RedeClientes() {
         </Card>
       ) : (
         <>
-          {/* Consolidado de todas as redes */}
-          <Card>
+          {/* Consolidado de todas as redes — CONGELADO no topo. É a referência
+              contra a qual se lê cada rede; rolar a lista e perder o total de
+              vista obrigava a subir toda hora. O container de rolagem é o
+              <main> do Layout, então `top-0` cola no topo da área útil. */}
+          <Card className="sticky top-0 z-30 shadow-sm">
             <CardContent className="py-3 px-4 flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
               <span className="font-semibold">{NUM(totalGeral.redes)} {totalGeral.redes === 1 ? "rede" : "redes"}</span>
               <span className="text-muted-foreground">
