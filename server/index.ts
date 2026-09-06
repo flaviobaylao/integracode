@@ -5019,6 +5019,17 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   app.all('/api/omie/*', gone('Omie — codigo removido em set/2026, etapa E5'));
   app.all('/api/admin/sync/*', gone('sync com o Integra 1.0 — codigo removido em set/2026, etapa E6'));
 
+  // Ultima palavra para /api: qualquer caminho /api/... que nao casou com nenhuma rota viva
+  // responde 404 em JSON. Sem isto ele cairia no fallback do SPA logo abaixo (app.use("*")),
+  // que devolve 200 + index.html — e o cliente, ao fazer res.json(), estoura
+  // "Unexpected token '<'" em vez de mostrar um erro legivel. Importa na transicao da Fase 3:
+  // o PWA e o APK rodam o bundle antigo em cache ate o service worker trocar, e chamam rotas
+  // que sairam (ex.: /api/admin/sync-status, /api/sales-cards/pending-omie).
+  // Fica DEPOIS de todas as rotas /api (as ultimas sao as coringas 410 acima) e ANTES do SPA.
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({ message: 'Rota nao encontrada', path: req.originalUrl });
+  });
+
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";

@@ -19,3 +19,28 @@ export function resolveMenuHref(id: string): string {
   if (ROUTE_PAGES.has(id)) return '/' + id.replace(/_/g, '-');
   return `/?ir=${encodeURIComponent(id)}`;
 }
+
+// (E6, set/2026) Ids de menu renomeados quando as telas perderam o nome do ERP antigo.
+// Favorito e gravado POR ID (localStorage + PUT /api/user/favorites); sem esta traducao o
+// atalho de quem ja tinha "Empresas do Grupo" ou "Ambiente Fiscal" salvo sumiria em silencio.
+const MENU_ID_RENAMES: Record<string, string> = {
+  "omie-instances": "empresas-grupo",
+  "sync-monitor": "ambiente-fiscal",
+};
+
+/** Traduz um id de menu antigo para o atual (id desconhecido volta como veio). */
+export function normalizeMenuId(id: string): string {
+  return MENU_ID_RENAMES[id] || id;
+}
+
+/** Aplica normalizeMenuId numa lista de favoritos, sem duplicar. */
+export function normalizeFavorites(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return [];
+  const out: string[] = [];
+  for (const raw of ids) {
+    if (typeof raw !== "string") continue;
+    const id = normalizeMenuId(raw);
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}

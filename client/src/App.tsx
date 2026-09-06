@@ -221,7 +221,7 @@ function Router() {
                 Recarregar Página
               </button>
               <button
-                onClick={() => window.location.href = '/api/login'}
+                onClick={() => window.location.href = '/login'}
                 className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors text-sm"
                 data-testid="button-login"
               >

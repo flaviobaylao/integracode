@@ -43,12 +43,16 @@ export function getSession() {
   });
 }
 
-// Instala a sessao. `/api/login` e `/api/callback` do OIDC sairam junto com a hospedagem
-// antiga; o login e feito por POST /api/auth/login (localAuth). `/api/logout` continua
-// existindo porque o front antigo (e atalhos salvos) ainda batem nele.
+// Instala a sessao. O fluxo OIDC (`/api/callback`, estrategia por dominio) saiu junto com a
+// hospedagem antiga; o login e feito por POST /api/auth/login (localAuth). `/api/login` e
+// `/api/logout` continuam existindo porque o front antigo (e atalhos salvos) ainda batem neles.
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   app.use(getSession());
+
+  // `/api/login` existia no modulo antigo (redirecionava para a tela de login). Mantido como
+  // redirect para nao devolver o HTML do SPA (e um 404 dentro dele) a quem tem link/atalho antigo.
+  app.get("/api/login", (_req, res) => res.redirect("/login"));
 
   app.get("/api/logout", (req, res) => {
     (req.session as any).user = null;

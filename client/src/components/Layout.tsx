@@ -9,6 +9,7 @@ import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
+import { normalizeFavorites } from "@/lib/menuItems";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/lib/permissions";
@@ -115,18 +116,25 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   const MAX_FAVORITES = 10;
   const [favorites, setFavorites] = useState<string[]>([]);
   useEffect(() => {
+    // normalizeFavorites traduz ids de menu renomeados (E6): quem tinha "omie-instances" ou
+    // "sync-monitor" salvo continua vendo o atalho, agora sob o id novo.
     let local: string[] = [];
-    try { local = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]"); } catch { /* noop */ }
-    if (Array.isArray(local)) setFavorites(local);
+    try { local = normalizeFavorites(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]")); } catch { /* noop */ }
+    if (local.length > 0) setFavorites(local);
     // Persistência por USUÁRIO (servidor): sobrevive a logout/login e troca de dispositivo.
     fetch('/api/user/favorites', { credentials: 'include' })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => {
         if (!d || !Array.isArray(d.favorites)) return;
-        if (d.favorites.length > 0) {
-          setFavorites(d.favorites);
-          try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(d.favorites)); } catch { /* noop */ }
-        } else if (Array.isArray(local) && local.length > 0) {
+        const remotos = normalizeFavorites(d.favorites);
+        if (remotos.length > 0) {
+          setFavorites(remotos);
+          try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(remotos)); } catch { /* noop */ }
+          // Se algum id foi traduzido, regrava no servidor para nao repetir a traducao sempre.
+          if (JSON.stringify(remotos) !== JSON.stringify(d.favorites)) {
+            fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: remotos }) }).catch(() => { /* noop */ });
+          }
+        } else if (local.length > 0) {
           // servidor ainda vazio, mas já existem favoritos locais → migra pro servidor (não apaga)
           fetch('/api/user/favorites', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ favorites: local }) }).catch(() => { /* noop */ });
         }
