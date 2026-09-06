@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import type { Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
+import { MultiSelect, multiMatch } from "@/lib/tableTools";
 
 // Cores dos pins baseadas no dia da semana
 const WEEKDAY_COLORS = {
@@ -96,8 +97,20 @@ function getWeekdayName(weekdays: string): string {
   return 'N/A';
 }
 
-// Cor do pin por situação: inativado = cinza, perdido = cinza escuro; ativo = cor do dia.
-const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563' };
+// Situações do mapa (múltipla escolha). Cada uma vem de uma consulta própria do
+// /api/customers/map-data e pode aparecer no mapa junto com as outras.
+const SITUACOES: Array<{ label: string; param: string; sit: string; color: string }> = [
+  { label: 'Ativos',     param: 'ativos',     sit: 'ativo',     color: '#16a34a' },
+  { label: 'Inativados', param: 'inativados', sit: 'inativado', color: '#9ca3af' },
+  { label: 'Perdidos',   param: 'perdidos',   sit: 'perdido',   color: '#4b5563' },
+  { label: 'Leads',      param: 'leads',      sit: 'lead',      color: '#eda100' },
+];
+const SITUACAO_OPTIONS = SITUACOES.map((x) => x.label);
+const DIAS_OPTIONS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+const PERIODICIDADE_OPTIONS = ['Semanal', 'Quinzenal', 'Mensal'];
+
+// Cor do pin por situação: inativado = cinza, perdido = cinza escuro, lead = âmbar; ativo = cor do dia.
+const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563', lead: '#eda100' };
 function pinColorFor(c: any): string {
   const s = c?.situacao;
   if (s && SITUACAO_COLORS[s]) return SITUACAO_COLORS[s];
@@ -141,23 +154,51 @@ export default function ClientsMap() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedDay, setSelectedDay] = useState<string>("all");
-  const [selectedSeller, setSelectedSeller] = useState<string>("all");
-  const [situacao, setSituacao] = useState<string>("ativos"); // ativos | inativados | perdidos
-  const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("all"); // all | semanal | quinzenal | mensal
+  // Filtros de múltipla escolha (vazio = todos, padrão do MultiSelect do sistema).
+  const [dias, setDias] = useState<string[]>([]);
+  const [sellers, setSellers] = useState<string[]>([]);
+  const [situacoes, setSituacoes] = useState<string[]>(["Ativos"]);
+  const [periodicidades, setPeriodicidades] = useState<string[]>([]);
 
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
   const canAccess = user && ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'].includes(user.role);
   const canEditCustomer = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
 
-  // Query para buscar clientes mapeados (sincroniza Clientes Ativos com coordenadas)
-  const { data: customers = [], isLoading } = useQuery<Customer[]>({
-    queryKey: ['/api/customers/map-data', situacao],
-    queryFn: () => apiRequest('GET', `/api/customers/map-data?situacao=${situacao}`),
-    enabled: !!canAccess,
-    refetchInterval: 30000,
+  // Uma consulta por situação: só busca a situação marcada (vazio = todas).
+  const situacaoOn = (label: string) => situacoes.length === 0 || situacoes.includes(label);
+  const qAtivos = useQuery<Customer[]>({
+    queryKey: ['/api/customers/map-data', 'ativos'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=ativos'),
+    enabled: !!canAccess && situacaoOn('Ativos'),
+    refetchInterval: 60000,
   });
+  const qInativados = useQuery<Customer[]>({
+    queryKey: ['/api/customers/map-data', 'inativados'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=inativados'),
+    enabled: !!canAccess && situacaoOn('Inativados'),
+    refetchInterval: 60000,
+  });
+  const qPerdidos = useQuery<Customer[]>({
+    queryKey: ['/api/customers/map-data', 'perdidos'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=perdidos'),
+    enabled: !!canAccess && situacaoOn('Perdidos'),
+    refetchInterval: 60000,
+  });
+  const qLeads = useQuery<Customer[]>({
+    queryKey: ['/api/customers/map-data', 'leads'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=leads'),
+    enabled: !!canAccess && situacaoOn('Leads'),
+    refetchInterval: 60000,
+  });
+  const queryPorSituacao: Record<string, any> = {
+    Ativos: qAtivos, Inativados: qInativados, Perdidos: qPerdidos, Leads: qLeads,
+  };
+  const isLoading = SITUACAO_OPTIONS.some((l) => situacaoOn(l) && queryPorSituacao[l].isLoading);
+  // Junta as situações selecionadas num conjunto só de pontos.
+  const customers: Customer[] = SITUACAO_OPTIONS.flatMap((l) =>
+    situacaoOn(l) && Array.isArray(queryPorSituacao[l].data) ? (queryPorSituacao[l].data as Customer[]) : []
+  );
 
   const { data: usersForType } = useQuery<any[]>({
     queryKey: ['/api/users'],
@@ -190,17 +231,18 @@ export default function ClientsMap() {
     );
   }
 
-  // Aplicar filtro de vendedor
-  if (selectedSeller && selectedSeller !== "all") {
+  // Aplicar filtro de vendedor (múltipla escolha; vazio = todos)
+  if (sellers.length > 0) {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => (c as any).sellerName === selectedSeller
+      (c) => multiMatch(sellers, (c as any).sellerName || '')
     );
   }
 
-  // Aplicar filtro de periodicidade de visita (semanal | quinzenal | mensal)
-  if (selectedPeriodicity && selectedPeriodicity !== "all") {
+  // Aplicar filtro de periodicidade de visita (múltipla escolha; vazio = todas)
+  if (periodicidades.length > 0) {
+    const alvo = periodicidades.map((p) => p.toLowerCase());
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => String((c as any).visitPeriodicity || '').toLowerCase() === selectedPeriodicity
+      (c) => alvo.includes(String((c as any).visitPeriodicity || '').toLowerCase())
     );
   }
 
@@ -221,19 +263,23 @@ export default function ClientsMap() {
     sellerTypeByName,
   );
 
-  // Agrupar clientes por dia da semana (ANTES de aplicar filtro de dia, para atualizar a legenda)
+  // Agrupar por dia da semana (ANTES do filtro de dia, para a legenda). Conta só os ATIVOS,
+  // que são os pintados por dia — as demais situações têm cor própria.
+  const ativosParaLegenda = activeCustomersWithCoords.filter(
+    (c) => ((c as any).situacao || 'ativo') === 'ativo'
+  );
   const customersByDay = {
-    Segunda: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
-    Terça: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Terça'),
-    Quarta: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Quarta'),
-    Quinta: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Quinta'),
-    Sexta: activeCustomersWithCoords.filter((c) => getWeekdayName(c.weekdays) === 'Sexta'),
+    Segunda: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
+    Terça: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Terça'),
+    Quarta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Quarta'),
+    Quinta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Quinta'),
+    Sexta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Sexta'),
   };
 
-  // Aplicar filtro de dia da semana
-  if (selectedDay && selectedDay !== "all") {
+  // Aplicar filtro de dia da semana (múltipla escolha; vazio = todos)
+  if (dias.length > 0) {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => getWeekdayName(c.weekdays) === selectedDay
+      (c) => dias.includes(getWeekdayName(c.weekdays))
     );
   }
 
@@ -296,8 +342,9 @@ export default function ClientsMap() {
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              <span>
-                {activeCustomersWithCoords.length} clientes {situacao} mapeados
+              <span data-testid="text-map-count">
+                {activeCustomersWithCoords.length} pontos mapeados
+                {situacoes.length > 0 ? ` (${situacoes.join(', ')})` : ' (todas as situações)'}
               </span>
             </div>
           </div>
@@ -313,77 +360,55 @@ export default function ClientsMap() {
                 data-testid="input-search-customers"
               />
             </div>
-            <div className="flex-1 min-w-[150px]">
-              <label className="text-sm font-medium mb-2 block">Situação</label>
-              <Select value={situacao} onValueChange={setSituacao}>
-                <SelectTrigger data-testid="select-situacao-map">
-                  <SelectValue placeholder="Ativos" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ativos">Ativos</SelectItem>
-                  <SelectItem value="inativados">Inativados</SelectItem>
-                  <SelectItem value="perdidos">Perdidos</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="pt-[21px]">
+              <MultiSelect
+                label="Situação"
+                options={SITUACAO_OPTIONS}
+                selected={situacoes}
+                onChange={setSituacoes}
+                testId="select-situacao-map"
+              />
             </div>
             {!isVendedor && (
-              <div className="flex-1 min-w-[150px]">
-                <label className="text-sm font-medium mb-2 block">Vendedor</label>
-                <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                  <SelectTrigger data-testid="select-seller-map">
-                    <SelectValue placeholder="Todos os vendedores" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos os vendedores</SelectItem>
-                    {uniqueSellers.map((seller) => (
-                      <SelectItem key={seller} value={seller}>
-                        {seller}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="pt-[21px]">
+                <MultiSelect
+                  label="Vendedor"
+                  options={uniqueSellers}
+                  selected={sellers}
+                  onChange={setSellers}
+                  testId="select-seller-map"
+                />
               </div>
             )}
-            <div className="flex-1 min-w-[150px]">
-              <label className="text-sm font-medium mb-2 block">Dia da Semana</label>
-              <Select value={selectedDay} onValueChange={setSelectedDay}>
-                <SelectTrigger data-testid="select-day-map">
-                  <SelectValue placeholder="Todos os dias" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os dias</SelectItem>
-                  <SelectItem value="Segunda">Segunda</SelectItem>
-                  <SelectItem value="Terça">Terça</SelectItem>
-                  <SelectItem value="Quarta">Quarta</SelectItem>
-                  <SelectItem value="Quinta">Quinta</SelectItem>
-                  <SelectItem value="Sexta">Sexta</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="pt-[21px]">
+              <MultiSelect
+                label="Dia da Semana"
+                options={DIAS_OPTIONS}
+                selected={dias}
+                onChange={setDias}
+                testId="select-day-map"
+              />
             </div>
-            <div className="flex-1 min-w-[150px]">
-              <label className="text-sm font-medium mb-2 block">Periodicidade</label>
-              <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
-                <SelectTrigger data-testid="select-periodicity-map">
-                  <SelectValue placeholder="Todas" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas</SelectItem>
-                  <SelectItem value="semanal">Semanal</SelectItem>
-                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                  <SelectItem value="mensal">Mensal</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="pt-[21px]">
+              <MultiSelect
+                label="Periodicidade"
+                options={PERIODICIDADE_OPTIONS}
+                selected={periodicidades}
+                onChange={setPeriodicidades}
+                testId="select-periodicity-map"
+              />
             </div>
-            {(searchTerm || (selectedDay && selectedDay !== "all") || (selectedSeller && selectedSeller !== "all") || (selectedPeriodicity && selectedPeriodicity !== "all") || situacao !== "ativos") && (
+            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 ||
+              situacoes.length !== 1 || situacoes[0] !== "Ativos") && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => {
                   setSearchTerm("");
-                  setSelectedDay("all");
-                  setSelectedSeller("all");
-                  setSelectedPeriodicity("all");
-                  setSituacao("ativos");
+                  setDias([]);
+                  setSellers([]);
+                  setPeriodicidades([]);
+                  setSituacoes(["Ativos"]);
                 }}
                 data-testid="button-clear-filters"
               >
@@ -398,46 +423,61 @@ export default function ClientsMap() {
       {/* Legenda */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
-            {situacao === 'inativados' ? 'Legenda - Inativados' : situacao === 'perdidos' ? 'Legenda - Perdidos' : 'Legenda - Dias de Visita'}
-          </CardTitle>
+          <CardTitle className="text-base">Legenda</CardTitle>
         </CardHeader>
-        <CardContent>
-          {situacao === 'ativos' ? (
-            <div className="flex flex-wrap gap-3">
-              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#22c55e', color: 'white' }}>
+        <CardContent className="space-y-3">
+          {/* Situações visíveis (uma cor por situação; ativos são coloridos pelo dia) */}
+          <div className="flex flex-wrap gap-3 items-center">
+            {SITUACOES.filter((x) => situacaoOn(x.label)).map((x) => (
+              <Badge
+                key={x.param}
+                className="flex items-center gap-2 px-3 py-1.5"
+                style={{ backgroundColor: x.color, color: 'white' }}
+              >
                 <div className="w-3 h-3 rounded-full bg-white"></div>
-                Segunda ({customersByDay.Segunda.length})
+                {x.label} ({activeCustomersWithCoords.filter((c) => ((c as any).situacao || 'ativo') === x.sit).length})
               </Badge>
-              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#3b82f6', color: 'white' }}>
-                <div className="w-3 h-3 rounded-full bg-white"></div>
-                Terça ({customersByDay.Terça.length})
-              </Badge>
-              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#eab308', color: 'white' }}>
-                <div className="w-3 h-3 rounded-full bg-white"></div>
-                Quarta ({customersByDay.Quarta.length})
-              </Badge>
-              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#ef4444', color: 'white' }}>
-                <div className="w-3 h-3 rounded-full bg-white"></div>
-                Quinta ({customersByDay.Quinta.length})
-              </Badge>
-              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#a855f7', color: 'white' }}>
-                <div className="w-3 h-3 rounded-full bg-white"></div>
-                Sexta ({customersByDay.Sexta.length})
-              </Badge>
+            ))}
+          </div>
+          {/* Dias de visita: vale para os clientes ATIVOS, que são pintados pelo dia */}
+          {situacaoOn('Ativos') && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Clientes ativos são pintados pelo dia de visita:
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#22c55e', color: 'white' }}>
+                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  Segunda ({customersByDay.Segunda.length})
+                </Badge>
+                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#3b82f6', color: 'white' }}>
+                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  Terça ({customersByDay.Terça.length})
+                </Badge>
+                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#eab308', color: 'white' }}>
+                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  Quarta ({customersByDay.Quarta.length})
+                </Badge>
+                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#ef4444', color: 'white' }}>
+                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  Quinta ({customersByDay.Quinta.length})
+                </Badge>
+                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#a855f7', color: 'white' }}>
+                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  Sexta ({customersByDay.Sexta.length})
+                </Badge>
+              </div>
             </div>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: situacao === 'perdidos' ? '#4b5563' : '#9ca3af', color: 'white' }}>
-                <div className="w-3 h-3 rounded-full bg-white"></div>
-                {situacao === 'perdidos' ? 'Perdidos' : 'Inativados'} ({activeCustomersWithCoords.length})
-              </Badge>
-              <span className="text-xs text-muted-foreground self-center">
-                {situacao === 'perdidos'
-                  ? 'Cadastro ativo, mas há 3+ meses sem comprar (comprava com regularidade).'
-                  : 'Clientes com cadastro desativado.'}
-              </span>
-            </div>
+          )}
+          {situacaoOn('Leads') && (
+            <p className="text-xs text-muted-foreground">
+              Em Leads, o dia é o do próximo contato programado.
+            </p>
+          )}
+          {situacaoOn('Perdidos') && (
+            <p className="text-xs text-muted-foreground">
+              Perdidos: cadastro ativo, mas há 3+ meses sem comprar (comprava com regularidade).
+            </p>
           )}
         </CardContent>
       </Card>
@@ -522,7 +562,7 @@ export default function ClientsMap() {
               <div className="text-center space-y-2">
                 <MapPin className="h-12 w-12 mx-auto text-gray-300" />
                 <p className="text-muted-foreground">
-                  Nenhum cliente {situacao} com coordenadas disponíveis
+                  Nenhum ponto com coordenadas para os filtros selecionados
                 </p>
               </div>
             </div>
