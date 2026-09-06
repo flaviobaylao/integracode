@@ -1795,11 +1795,31 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; })
         .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string }));
       if (rows.length === 0) return res.json([]);
-      // Nomes de quem recebeu (para o dono ver "em repescagem com X").
-      const assigneeIds = Array.from(new Set(rows.map(r => r.assignedUserId).filter(Boolean) as string[]));
-      const assigneeUsers = assigneeIds.length ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName }).from(users).where(inArray(users.id, assigneeIds)) : [];
-      const assigneeNameById = new Map(assigneeUsers.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
       const cids = Array.from(new Set(rows.map(r => r.customerId)));
+      // FASE 4 — "quem colocar o pedido fica com a venda": mapeia o vendedor que IMPLANTOU
+      // o PEDIDO (venda) do cliente HOJE. O card na rota de quem NÃO colocou o pedido fica
+      // inativo/desabilitado e não entra na justificativa do fechamento de rota.
+      const orderWinnerByCustomer = new Map<string, string>();
+      try {
+        const owArr = cids.join(',');
+        const owRes: any = await db.execute(sql`
+          SELECT customer_id, seller_id FROM billing_pipeline
+          WHERE COALESCE(operation_type,'venda') = 'venda'
+            AND seller_id IS NOT NULL
+            AND customer_id = ANY(string_to_array(${owArr}, ','))
+            AND COALESCE(scheduled_billing_date::date,
+                (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) = ${date}::date`);
+        for (const r of ((owRes.rows || []) as any[])) {
+          if (r.customer_id && r.seller_id && !orderWinnerByCustomer.has(String(r.customer_id))) orderWinnerByCustomer.set(String(r.customer_id), String(r.seller_id));
+        }
+      } catch (e) { console.warn('[route-overlay][order-winner]', (e as any)?.message); }
+      // Nomes de quem recebeu (para o dono ver "em repescagem com X") + de quem colocou o pedido.
+      const nameIds = Array.from(new Set([
+        ...(rows.map(r => r.assignedUserId).filter(Boolean) as string[]),
+        ...Array.from(orderWinnerByCustomer.values()),
+      ]));
+      const assigneeUsers = nameIds.length ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName }).from(users).where(inArray(users.id, nameIds)) : [];
+      const assigneeNameById = new Map(assigneeUsers.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
       const cs = await db.select({
         id: customers.id,
         name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
@@ -1845,6 +1865,13 @@ export function registerRepescagemRoutes(app: Express, opts: {
           // Cópia do DONO: o card aparece na rota do dono, mas está atribuído a outro habilitado.
           isOwnerCopy: r.assignedUserId !== sellerId,
           assignedToName: r.assignedUserId !== sellerId ? (assigneeNameById.get(r.assignedUserId) || null) : null,
+          // FASE 4 — atribuição do pedido: quem colocou o pedido (venda) do cliente hoje fica
+          // com a venda; o card na rota de quem NÃO colocou fica inativo/desabilitado.
+          orderPlaced: !!orderWinnerByCustomer.get(r.customerId),
+          orderWinnerUserId: orderWinnerByCustomer.get(r.customerId) || null,
+          orderWinnerName: orderWinnerByCustomer.get(r.customerId) ? (assigneeNameById.get(orderWinnerByCustomer.get(r.customerId)!) || null) : null,
+          // inativo = houve pedido do cliente hoje, mas não foi o dono desta rota (sellerId) quem colocou.
+          inactive: !!orderWinnerByCustomer.get(r.customerId) && orderWinnerByCustomer.get(r.customerId) !== sellerId,
         };
       }));
     } catch (e: any) {
