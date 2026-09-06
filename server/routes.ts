@@ -1410,7 +1410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // 🔠 PADRONIZAÇÃO DE NOME (INTEGRA vira dono do nome): UPPERCASE + colapsa espaços + trim,
   // aplicado a name/companyName/fantasyName no INTEGRA (auditado em customer_change_history)
-  // e propagado ao Omie via AlterarCliente. Marca name_locked p/ blindar contra futura sync.
+  // Marca name_locked p/ blindar o nome contra sobrescrita automatica.
   // Execução em lotes: o front envia { ids: [...] }. Admin/coord/administrativo.
   app.post('/api/admin/padronizar-nomes/lote', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res: any) => {
     try {
@@ -1431,13 +1431,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (c.fantasyName != null && norm(c.fantasyName) !== c.fantasyName) changes.fantasyName = norm(c.fantasyName);
           if (Object.keys(changes).length === 0) {
             await db.execute(sql`UPDATE customers SET name_locked = true WHERE id = ${id}`);
-            results.push({ id, name: c.name, changed: false, integraOk: true, omieOk: null });
+            results.push({ id, name: c.name, changed: false, integraOk: true });
             continue;
           }
           await storage.updateCustomer(id, changes);
           try { await logCustomerChanges({ customerId: id, before: c, changes, actor, source: 'padronizacao-nome' }); } catch {}
           await db.execute(sql`UPDATE customers SET name_locked = true WHERE id = ${id}`);
-          results.push({ id, name: c.name, novo: changes, integraOk: true, omieOk: null, omieErr: null });
+          results.push({ id, name: c.name, novo: changes, integraOk: true });
         } catch (e: any) {
           results.push({ id, ok: false, error: String(e?.message || e).slice(0, 200) });
         }
@@ -1446,8 +1446,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         total: ids.length,
         alterados: results.filter((r) => r.novo).length,
         jaPadronizados: results.filter((r) => r.changed === false).length,
-        omieOk: results.filter((r) => r.omieOk === true).length,
-        omieFalha: results.filter((r) => r.omieOk === false || r.omieErr).length,
         erros: results.filter((r) => r.ok === false).length,
       };
       res.json({ ok: true, resumo, results });
