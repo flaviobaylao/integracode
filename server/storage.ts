@@ -8897,6 +8897,45 @@ export class DatabaseStorage implements IStorage {
         }
       }
     } catch {}
+
+    // ── REDE: pedido de um LOCAL DE ENTREGA ───────────────────────────────────
+    // O card precisa avisar, ANTES de faturar, que a nota deste pedido nao sai no
+    // CNPJ do cliente e sim no do destinatario da rede. Uma consulta so' para o
+    // quadro inteiro. Tabela ausente ou sem ninguem marcado: o catch engole e o
+    // card fica como sempre foi.
+    try {
+      const idsRede = Array.from(new Set(
+        (rows as any[]).map((r) => String(r.customerId || '')).filter(Boolean)
+      ));
+      if (idsRede.length) {
+        const lista = idsRede.map((i) => `'${String(i).replace(/'/g, "''")}'`).join(',');
+        const res: any = await db.execute(sql.raw(`
+          SELECT m.customer_id AS entrega_id,
+                 r.nome AS rede_nome,
+                 COALESCE(NULLIF(d.company_name,''), d.name, d.fantasy_name) AS dest_nome,
+                 NULLIF(regexp_replace(COALESCE(NULLIF(d.cnpj,''),NULLIF(d.cpf,''),''),'[^0-9]','','g'),'') AS dest_doc,
+                 d.city AS dest_cidade, d.state AS dest_uf
+          FROM cliente_rede_membros m
+          JOIN cliente_rede_membros dm ON dm.rede_id = m.rede_id AND dm.papel = 'destinatario'
+          JOIN cliente_redes r ON r.id = m.rede_id
+          JOIN customers d ON d.id = dm.customer_id
+          WHERE m.papel = 'entrega'
+            AND dm.customer_id <> m.customer_id
+            AND m.customer_id IN (${lista})`));
+        const porCliente = new Map<string, any>();
+        for (const x of ((res?.rows ?? res ?? []) as any[])) porCliente.set(String(x.entrega_id), x);
+        for (const r of rows as any[]) {
+          const d = porCliente.get(String(r.customerId || ''));
+          if (!d) continue;
+          (r as any).redeNome = d.rede_nome || null;
+          (r as any).redeDestinatarioNome = d.dest_nome || null;
+          (r as any).redeDestinatarioDoc = d.dest_doc || null;
+          (r as any).redeDestinatarioCidade = d.dest_cidade || null;
+          (r as any).redeDestinatarioUf = d.dest_uf || null;
+        }
+      }
+    } catch {}
+
     return rows as any;
   }
 
