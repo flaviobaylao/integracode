@@ -1450,7 +1450,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           WHERE o.status = 'completed'
             AND o.seller_id IS NOT NULL
             AND o.seller_id NOT IN ('system','unknown-vendor','instagram','chatgpt-ai')
-          ORDER BY o.sales_card_id, o.order_date DESC, o.completed_at DESC NULLS LAST
+          ORDER BY o.sales_card_id, o.order_date DESC, o.created_at DESC NULLS LAST
         )
         SELECT bp.id, bp.order_number, bp.customer_name, bp.sale_value, bp.created_at,
                bp.seller_id AS atual, bp.seller_name AS atual_nome,
