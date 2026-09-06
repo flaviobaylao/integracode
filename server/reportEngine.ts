@@ -5,6 +5,7 @@ import { VIRADA_FUSO_UTC } from '@shared/tempo';
 import { sql } from 'drizzle-orm';
 import { savedReports } from '@shared/schema';
 import { eq } from 'drizzle-orm';
+import { whereDebitoVivoText, diasAtrasoText } from './divida-viva';
 
 export interface ReportFieldDef {
   key: string;
@@ -97,19 +98,62 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'created_at', label: 'Data Criação', type: 'date', category: 'Datas', dbColumn: 'sc.created_at' },
     ],
   },
+  // E4 (06/set/2026): "Faturamentos" passou a ler o faturamento VIGENTE do 2.0 —
+  // billing_pipeline (estágio faturado ou posterior) + fiscal_invoices (número, valor,
+  // CFOP e situação da NF-e autorizada). A tabela `billings` é histórico do Omie
+  // (termina em 22/jun/2026) e NÃO é mais lida aqui. Chave e campos preservados para
+  // os relatórios salvos continuarem funcionando (campos que só existiam no Omie —
+  // omie_invoice_id, omie_order_id, omie_customer_code, due_date, exclusive_vehicle —
+  // foram removidos; o engine ignora colunas desconhecidas de relatórios antigos).
+  // `stage` é enum billing_pipeline_stage: comparado como texto.
   billings: {
     key: 'billings',
     label: 'Faturamentos',
-    description: 'Notas fiscais e faturamentos do Omie',
-    baseQuery: `SELECT b.* FROM billings b`,
+    description: 'Pedidos faturados no Integra (pipeline de faturamento + NF-e)',
+    baseQuery: `SELECT b.* FROM (
+      SELECT bp.id,
+             bp.sales_card_id,
+             bp.customer_id,
+             bp.order_number,
+             COALESCE(fi.invoice_number::text, NULLIF(regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g'), ''), bp.invoice_number) AS invoice_number,
+             bp.customer_name AS customer_fantasy_name,
+             bp.customer_document,
+             bp.seller_name,
+             bp.seller_id AS vendor_code,
+             COALESCE(fi.total_invoice, bp.sale_value, 0) AS total_value,
+             bp.payment_method,
+             bp.operation_type AS billing_type,
+             ((bp.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date AS order_date,
+             COALESCE(
+               (SELECT MIN(LEFT(h->>'changedAt', 10)::date)
+                  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(bp.stage_history) = 'array' THEN bp.stage_history ELSE '[]'::jsonb END) h
+                 WHERE h->>'stage' = 'faturado' AND (h->>'changedAt') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'),
+               ((bp.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date
+             ) AS invoice_date,
+             bp.created_at,
+             bp.updated_at,
+             fi.status AS invoice_status,
+             bp.stage::text AS invoice_stage,
+             bp.stage::text AS stage_name,
+             bp.is_priority AS is_urgent,
+             fi.cfop,
+             bp.omie_instance_id
+      FROM billing_pipeline bp
+      LEFT JOIN LATERAL (
+        SELECT fi.invoice_number, fi.total_invoice, fi.status, fi.cfop
+        FROM fiscal_invoices fi
+        WHERE fi.status = 'authorized'
+          AND fi.invoice_number = NULLIF(regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint
+        ORDER BY fi.created_at DESC
+        LIMIT 1
+      ) fi ON true
+      WHERE bp.stage::text IN ('faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue')
+    ) b`,
     fields: [
       { key: 'order_number', label: 'Nº Pedido', type: 'text', category: 'Identificação', dbColumn: 'b.order_number' },
       { key: 'invoice_number', label: 'Nº NF', type: 'text', category: 'Identificação', dbColumn: 'b.invoice_number' },
-      { key: 'omie_invoice_id', label: 'ID NF Omie', type: 'text', category: 'Identificação', dbColumn: 'b.omie_invoice_id' },
-      { key: 'omie_order_id', label: 'ID Pedido Omie', type: 'text', category: 'Identificação', dbColumn: 'b.omie_order_id' },
       { key: 'customer_fantasy_name', label: 'Cliente', type: 'text', category: 'Cliente', dbColumn: 'b.customer_fantasy_name' },
       { key: 'customer_document', label: 'CPF/CNPJ', type: 'text', category: 'Cliente', dbColumn: 'b.customer_document' },
-      { key: 'omie_customer_code', label: 'Cód. Cliente Omie', type: 'text', category: 'Cliente', dbColumn: 'b.omie_customer_code' },
       { key: 'seller_name', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'b.seller_name' },
       { key: 'vendor_code', label: 'Código Vendedor', type: 'text', category: 'Comercial', dbColumn: 'b.vendor_code' },
       { key: 'total_value', label: 'Valor Total', type: 'currency', category: 'Valores', dbColumn: 'b.total_value' },
@@ -117,31 +161,44 @@ const DATA_SOURCES: Record<string, DataSourceDef> = {
       { key: 'billing_type', label: 'Tipo', type: 'text', category: 'Operação', dbColumn: 'b.billing_type' },
       { key: 'order_date', label: 'Data Pedido', type: 'date', category: 'Datas', dbColumn: 'b.order_date' },
       { key: 'invoice_date', label: 'Data Faturamento', type: 'date', category: 'Datas', dbColumn: 'b.invoice_date' },
-      { key: 'due_date', label: 'Data Vencimento', type: 'date', category: 'Datas', dbColumn: 'b.due_date' },
       { key: 'created_at', label: 'Data Criação', type: 'date', category: 'Datas', dbColumn: 'b.created_at' },
       { key: 'updated_at', label: 'Última Atualização', type: 'date', category: 'Datas', dbColumn: 'b.updated_at' },
       { key: 'invoice_status', label: 'Status NF', type: 'text', category: 'Status', dbColumn: 'b.invoice_status' },
       { key: 'invoice_stage', label: 'Etapa', type: 'text', category: 'Status', dbColumn: 'b.invoice_stage' },
       { key: 'stage_name', label: 'Nome Etapa', type: 'text', category: 'Status', dbColumn: 'b.stage_name' },
-      { key: 'is_cancelled', label: 'Cancelada?', type: 'boolean', category: 'Status', dbColumn: 'b.is_cancelled' },
       { key: 'is_urgent', label: 'Urgente?', type: 'boolean', category: 'Status', dbColumn: 'b.is_urgent' },
-      { key: 'exclusive_vehicle', label: 'Veículo Exclusivo?', type: 'boolean', category: 'Entrega', dbColumn: 'b.exclusive_vehicle' },
       { key: 'cfop', label: 'CFOP', type: 'text', category: 'Fiscal', dbColumn: 'b.cfop' },
       { key: 'omie_instance_id', label: 'Instância Omie', type: 'text', category: 'Integração', dbColumn: 'b.omie_instance_id' },
     ],
   },
+  // E4 (06/set/2026): "Débitos Vencidos" lê `receivables` com a REGRA ÚNICA de débito
+  // vivo (server/divida-viva.ts — whereDebitoVivoText), agrupado por cliente com as
+  // MESMAS colunas que a tabela `overdue_debts` (sync do Omie, congelada em 26/ago) tinha.
   overdue_debts: {
     key: 'overdue_debts',
     label: 'Débitos Vencidos',
-    description: 'Títulos e débitos em atraso',
-    baseQuery: `SELECT od.*, c.name as customer_name_join, c.city as customer_city, c.state as customer_state, u.name as seller_name_join FROM overdue_debts od LEFT JOIN customers c ON od.client_id = c.id LEFT JOIN users u ON c.seller_id = u.id`,
+    description: 'Títulos e débitos em atraso (Contas a Receber, agrupado por cliente)',
+    baseQuery: `SELECT od.*, c.name as customer_name_join, c.city as customer_city, c.state as customer_state, u.name as seller_name_join FROM (
+      SELECT COALESCE(r.customer_id, NULLIF(regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g'), ''), r.customer_name) AS client_id,
+             MAX(r.customer_name) AS client_name,
+             MAX(r.customer_document) AS client_document,
+             SUM(r.amount - COALESCE(r.amount_paid, 0)) AS total_amount,
+             MAX(${diasAtrasoText('r')}) AS max_days_overdue,
+             COUNT(*)::int AS titles_count,
+             MAX(r.omie_instance_id) AS omie_instance_id
+      FROM receivables r
+      WHERE ${whereDebitoVivoText('r')}
+      GROUP BY 1
+    ) od LEFT JOIN customers c ON od.client_id = c.id LEFT JOIN users u ON c.seller_id = u.id`,
     fields: [
       { key: 'client_name', label: 'Cliente', type: 'text', category: 'Cliente', dbColumn: 'od.client_name' },
+      { key: 'client_document', label: 'CNPJ/CPF', type: 'text', category: 'Cliente', dbColumn: 'od.client_document' },
       { key: 'customer_city', label: 'Cidade', type: 'text', category: 'Cliente', dbColumn: 'c.city' },
       { key: 'customer_state', label: 'UF', type: 'text', category: 'Cliente', dbColumn: 'c.state' },
       { key: 'seller_name_join', label: 'Vendedor', type: 'text', category: 'Comercial', dbColumn: 'u.name', sqlExpr: "TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, ''))" },
       { key: 'total_amount', label: 'Valor Total Débito', type: 'currency', category: 'Valores', dbColumn: 'od.total_amount' },
       { key: 'max_days_overdue', label: 'Dias em Atraso (Máx)', type: 'number', category: 'Atraso', dbColumn: 'od.max_days_overdue' },
+      { key: 'titles_count', label: 'Qtd. Títulos', type: 'number', category: 'Atraso', dbColumn: 'od.titles_count' },
       { key: 'omie_instance_id', label: 'Instância Omie', type: 'text', category: 'Integração', dbColumn: 'od.omie_instance_id' },
     ],
   },

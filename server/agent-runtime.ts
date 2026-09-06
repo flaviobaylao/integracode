@@ -5,6 +5,7 @@
 //                          consultar_ficha_tecnica.
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { whereDebitoVivoSql } from './divida-viva';
 
 const APP_URL = process.env.APP_URL || 'https://integracode-production.up.railway.app';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -344,9 +345,9 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
       const cid = await resolveCustomerId(ctx, input?.documento);
       const d = onlyDigits(input?.documento);
       let row: any = null;
-      // Fonte 2.0 (Contas a Receber), NAO mais overdue_debts (Omie desligado). Mesma regra de "vencida".
-      if (cid) { const r: any = await db.execute(sql`SELECT max(customer_name) AS client_name, sum(amount - coalesce(amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_days_overdue FROM receivables WHERE customer_id=${cid} AND deleted_at IS NULL AND (amount - coalesce(amount_paid,0)) > 0 AND coalesce(import_origin,'') <> 'omie_historico' AND (status IN ('a_vencer','vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date) HAVING sum(amount - coalesce(amount_paid,0)) > 0`); row = r.rows?.[0]; }
-      if (!row && d) { const r: any = await db.execute(sql`SELECT max(customer_name) AS client_name, sum(amount - coalesce(amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (due_date)::date)) AS max_days_overdue FROM receivables WHERE regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g')=${d} AND deleted_at IS NULL AND (amount - coalesce(amount_paid,0)) > 0 AND coalesce(import_origin,'') <> 'omie_historico' AND (status IN ('a_vencer','vencida') AND (due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date) HAVING sum(amount - coalesce(amount_paid,0)) > 0`); row = r.rows?.[0]; }
+      // Fonte 2.0 (Contas a Receber), NAO mais overdue_debts (Omie desligado). REGRA ÚNICA: divida-viva.ts.
+      if (cid) { const r: any = await db.execute(sql`SELECT max(r.customer_name) AS client_name, sum(r.amount - coalesce(r.amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (r.due_date)::date)) AS max_days_overdue FROM receivables r WHERE r.customer_id=${cid} AND ${whereDebitoVivoSql('r')} HAVING sum(r.amount - coalesce(r.amount_paid,0)) > 0`); row = r.rows?.[0]; }
+      if (!row && d) { const r: any = await db.execute(sql`SELECT max(r.customer_name) AS client_name, sum(r.amount - coalesce(r.amount_paid,0)) AS total_amount, max(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (r.due_date)::date)) AS max_days_overdue FROM receivables r WHERE regexp_replace(COALESCE(r.customer_document,''),'[^0-9]','','g')=${d} AND ${whereDebitoVivoSql('r')} HAVING sum(r.amount - coalesce(r.amount_paid,0)) > 0`); row = r.rows?.[0]; }
       if (!row) return 'Nenhum débito vencido encontrado para este cliente.';
       return `Débitos em aberto: total ${brl(row.total_amount)}; atraso máximo ${row.max_days_overdue || 0} dias.`;
     }

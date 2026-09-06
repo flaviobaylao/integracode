@@ -926,6 +926,11 @@ cron.schedule('0 0 * * *', async () => {
   console.log('📅 [SCHEDULER] Iniciando geração de próximas 3 visitas para clientes ativos às 00:00h...');
   
   try {
+    // (E2-D leve) cadastro ativo ⇒ lista de Clientes Ativos, antes de gerar visitas
+    try {
+      const s = await storage.syncActiveCustomersFromCadastro();
+      console.log(`   - lista de ativos: ${s.foraDaLista} fora, ${s.religados} religados, ${s.criados} criados, ${s.semDocumento} sem documento`);
+    } catch (e: any) { console.error('   - syncActiveCustomersFromCadastro falhou (segue):', e?.message || e); }
     const result = await storage.generateNextVisitsForActiveCustomers();
     console.log(`✅ [SCHEDULER] Geração de visitas concluída:`);
     console.log(`   - ${result.processed} clientes processados`);
@@ -1262,5 +1267,44 @@ cron.schedule('10 7 * * *', async () => {
     if (!/does not exist|relation .* does not exist/i.test(m)) {
       console.error('[MKT-CONTEUDO] cron falhou:', m);
     }
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
+// ============================================================================
+// (E2-E, 06/set/2026) Relatório semanal de INATIVAÇÕES/REATIVAÇÕES de clientes
+// para o gestor — segunda 07:00 BRT. Lê customer_change_history (trilha do app
+// + trigger do banco). Destino: system_settings 'telefone_gestor_relatorios'
+// (fallback: número do gestor já usado nos relatórios de entrega). Sem lock de
+// instância: em dupla réplica pode sair 2x (aceitável para um resumo semanal).
+// ============================================================================
+cron.schedule('0 7 * * 1', async () => {
+  try {
+    const rows: any = await db.execute(sql`
+      SELECT COALESCE(h.changed_by_name, 'Sistema') AS quem, COALESCE(h.source, '-') AS origem,
+             SUM(CASE WHEN h.new_value = 'Não' THEN 1 ELSE 0 END)::int AS inat,
+             SUM(CASE WHEN h.new_value = 'Sim' THEN 1 ELSE 0 END)::int AS reat
+      FROM customer_change_history h
+      WHERE h.field = 'isActive' AND h.created_at >= now() - interval '7 days'
+      GROUP BY 1, 2 ORDER BY inat DESC, reat DESC LIMIT 15`);
+    const lst: any[] = (rows.rows || rows) as any[];
+    const tot: any = await db.execute(sql`
+      SELECT (SELECT count(*) FROM customers WHERE is_active) AS ativos,
+             (SELECT count(*) FROM customers WHERE NOT is_active AND inactivated_at >= now() - interval '7 days') AS inat_7d,
+             (SELECT count(*) FROM customers c WHERE c.is_active AND NOT EXISTS (
+                SELECT 1 FROM active_customers a WHERE a.is_active AND a.customer_id = c.id)) AS ativos_fora_lista`);
+    const t: any = ((tot.rows || tot) as any[])[0] || {};
+    const linhas = lst.length
+      ? lst.map((r) => `• ${r.quem} (${r.origem}): ${r.inat} inativ., ${r.reat} reativ.`).join('\n')
+      : '• nenhuma inativação/reativação registrada';
+    const texto = `📋 *Clientes — resumo semanal*\n` +
+      `Ativos: ${t.ativos} · inativados nos últimos 7 dias: ${t.inat_7d} · ativos fora da lista de Clientes Ativos: ${t.ativos_fora_lista}\n\n` +
+      `${linhas}\n\n_Integra 2.0 — trilha em Gestão de Clientes > histórico_`;
+    const cfg: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'telefone_gestor_relatorios' LIMIT 1`);
+    const fone = String(((cfg.rows || cfg) as any[])[0]?.value || '').replace(/^"|"$/g, '').replace(/\D/g, '') || '5562994511997';
+    const { enviarInterno } = await import('./envio-texto');
+    const r = await enviarInterno(fone, texto);
+    console.log(`[CLIENTES-SEMANAL] enviado=${r?.success} para ${fone}`);
+  } catch (e: any) {
+    console.error('[CLIENTES-SEMANAL] falhou:', e?.message || e);
   }
 }, { timezone: 'America/Sao_Paulo' });

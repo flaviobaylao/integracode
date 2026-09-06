@@ -268,7 +268,7 @@ export function registerAgendaCarteira(app: Express) {
         ) va ON TRUE
         WHERE COALESCE(c.is_supplier,false) = false
           AND (
-            (c.is_active = true AND COALESCE(c.omie_status,'ativo') = 'ativo')
+            c.is_active = true
             OR EXISTS (SELECT 1 FROM visit_agenda vj
                         WHERE vj.customer_id = c.id
                           AND vj.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date)

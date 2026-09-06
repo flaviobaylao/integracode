@@ -513,7 +513,7 @@ export default function CustomerManagement() {
             </Button>
           )}
           {perms.can(CARD_CLIENTES, "exportar") && (
-          <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: c.omieStatus, Periodicidade: c.visitPeriodicity, Segmento: c.segmentoPrincipal, 'Coordenadas (Lat,Long)': (() => { const la = c.latitude, lo = c.longitude; if (la == null || la === '' || lo == null || lo === '') return ''; const nla = Number(la), nlo = Number(lo); return (isNaN(nla) || isNaN(nlo)) ? `${la},${lo}` : `${nla.toFixed(6)},${nlo.toFixed(6)}`; })() })), "clientes")} />
+          <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: (c.isActive === false ? 'inativo' : 'ativo'), Periodicidade: c.visitPeriodicity, Segmento: c.segmentoPrincipal, 'Coordenadas (Lat,Long)': (() => { const la = c.latitude, lo = c.longitude; if (la == null || la === '' || lo == null || lo === '') return ''; const nla = Number(la), nlo = Number(lo); return (isNaN(nla) || isNaN(nlo)) ? `${la},${lo}` : `${nla.toFixed(6)},${nlo.toFixed(6)}`; })() })), "clientes")} />
           )}
           {perms.can(CARD_CLIENTES, "criar") && (
           <Button

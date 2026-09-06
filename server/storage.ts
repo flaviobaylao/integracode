@@ -187,8 +187,7 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
-import { naoEFantasma } from "./ghost-receivables";
-import { ehDividaViva } from "./divida-viva";
+import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
 
 export interface IStorage {
   getAgentDetailedStats(): Promise<Array<{ 
@@ -818,17 +817,14 @@ export class DatabaseStorage implements IStorage {
       .from(customers)
       .leftJoin(users, eq(customers.sellerId, users.id));
     
-    // 🔒 Um cadastro só é "Cliente Ativo" quando OS DOIS campos concordam: is_active (fonte da
-    // verdade do Integra, controlada por Inativar/Reativar) E omie_status='ativo'. Antes o filtro
-    // usava só omie_status, então: (a) inativados via botão (is_active=false, omie ainda 'ativo')
-    // continuavam aparecendo, e (b) excluídos (omie='inativo', is_active=true) sumiam. Exigir os
-    // dois resolve os dois casos sem reexibir excluídos.
+    // 🔒 (E2-C, 06/set/2026) `customers.is_active` é a ÚNICA regra de "Cliente Ativo".
+    // omie_status deixou de ter função (migração 2026-09-06_e2c consolidou os dois campos).
     // (E2-A, 05/set/2026) `incluirInativos`: a Gestão de Clientes precisa VER os inativos (badge
     // "Inativo", filtro "Inativo", Reativar). Desde 01/set (e57c8ffd) o filtro duplo escondia todos
     // os inativos da Gestão — "clientes desaparecidos". As demais telas continuam só com ativos.
     const whereConditions = opts?.incluirInativos
       ? []
-      : [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
+      : [eq(customers.isActive, true)];
     if (sellerId) {
       whereConditions.push(eq(customers.sellerId, sellerId));
     }
@@ -844,91 +840,34 @@ export class DatabaseStorage implements IStorage {
     // Extrair IDs dos clientes
     const customerIds = result.map(row => row.customers!.id);
     
-    // Buscar positivações do mês atual através dos faturamentos (billings)
-    const currentMonthStart = dataCalendario(hojeBR());
-    currentMonthStart.setDate(1);
-    currentMonthStart.setHours(0, 0, 0, 0);
-    
-    const currentMonthEnd = dataCalendario(hojeBR());
-    currentMonthEnd.setMonth(currentMonthEnd.getMonth() + 1);
-    currentMonthEnd.setDate(0);
-    currentMonthEnd.setHours(23, 59, 59, 999);
-    
-    // Buscar códigos Omie dos clientes (filtrar nulls e garantir tipo string[])
-    const customerOmieCodes = result
-      .map(row => row.customers?.omieClientCode)
-      .filter((code): code is string => !!code);
-    
-    let positivationMap = new Map();
-    
-    if (customerOmieCodes.length > 0) {
-      const positivations = await db
-        .select({
-          omieCustomerCode: billings.omieCustomerCode,
-          count: sql<number>`COUNT(*)`.mapWith(Number),
-        })
-        .from(billings)
-        .where(
-          and(
-            inArray(billings.omieCustomerCode, customerOmieCodes),
-            isNotNull(billings.invoiceDate),
-            gte(billings.invoiceDate, currentMonthStart),
-            sql`${billings.invoiceDate} <= ${currentMonthEnd}`,
-            eq(billings.isCancelled, false),
-            sql`${billings.totalValue} > 0`
-          )
-        )
-        .groupBy(billings.omieCustomerCode);
-      
-      // Criar mapa: omieCustomerCode -> true/false
-      const omieCodeMap = new Map(
-        positivations.map(p => [p.omieCustomerCode, p.count > 0])
-      );
-      
-      // Converter para customerId -> true/false
-      positivationMap = new Map(
-        result.map(row => [
-          row.customers!.id,
-          row.customers!.omieClientCode ? omieCodeMap.get(row.customers!.omieClientCode) || false : false
-        ])
-      );
-    }
-    
-    // Buscar última venda real de todos os clientes através dos faturamentos (billings)
+    // E4 (06/set/2026): "positivado no mês" e "última venda" passaram a vir do
+    // faturamento VIGENTE do 2.0 — billing_pipeline (customer_id, created_at, estágio
+    // faturado ou posterior). A tabela `billings` é histórico do Omie (termina em
+    // 22/jun/2026) e NÃO é mais lida aqui. `stage` é enum: comparado como texto.
+    // Mês corrente por dia-calendário no fuso Brasil (created_at é instante UTC).
+    let positivationMap = new Map<string, boolean>();
     let lastActivityMap = new Map<string, Date>();
-    
-    if (customerOmieCodes.length > 0) {
-      const lastBillings = await db
-        .select()
-        .from(billings)
-        .where(
-          and(
-            inArray(billings.omieCustomerCode, customerOmieCodes),
-            isNotNull(billings.invoiceDate),
-            eq(billings.isCancelled, false),
-            sql`${billings.totalValue} > 0`
-          )
-        )
-        .orderBy(billings.omieCustomerCode, desc(billings.invoiceDate));
-      
-      // Agrupar por omieCustomerCode e pegar a primeira (mais recente)
-      const omieLastActivityMap = new Map<string, Date>();
-      for (const billing of lastBillings) {
-        if (billing.omieCustomerCode && billing.invoiceDate && !omieLastActivityMap.has(billing.omieCustomerCode)) {
-          omieLastActivityMap.set(billing.omieCustomerCode, billing.invoiceDate);
-        }
+    try {
+      const agg: any = await db.execute(sql`
+        SELECT bp.customer_id,
+               MAX(bp.created_at) AS last_sale_at,
+               BOOL_OR(
+                 date_trunc('month', (bp.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')
+                 = date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')
+               ) AS positivado_mes
+        FROM billing_pipeline bp
+        WHERE bp.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
+          AND bp.stage::text IN ('faturado', 'impresso', 'aguardando_rota', 'em_rota', 'entregue')
+          AND COALESCE(bp.sale_value, 0) > 0
+        GROUP BY bp.customer_id
+      `);
+      for (const row of ((agg.rows || []) as any[])) {
+        if (!row.customer_id) continue;
+        positivationMap.set(String(row.customer_id), row.positivado_mes === true);
+        if (row.last_sale_at) lastActivityMap.set(String(row.customer_id), new Date(row.last_sale_at));
       }
-      
-      // Converter de omieCustomerCode para customerId
-      lastActivityMap = new Map(
-        result
-          .filter(row => row.customers?.omieClientCode)
-          .map(row => [
-            row.customers!.id,
-            omieLastActivityMap.get(row.customers!.omieClientCode!) || null
-          ])
-          .filter((entry): entry is [string, Date] => entry[1] !== null)
-      );
+    } catch (e: any) {
+      console.warn('[STORAGE] getCustomers: falha ao ler positivação/última venda do billing_pipeline:', e?.message);
     }
     
     // Montar resultado final
@@ -999,9 +938,15 @@ export class DatabaseStorage implements IStorage {
       prevSellerId = (prev[0]?.sellerId ?? undefined) as any;
     }
 
+    // (E2-E, 06/set/2026) Invariante: inativo sempre com inactivated_at (CHECK no banco);
+    // reativado limpa a data. Vale para qualquer caminho que passe por aqui (PATCH/PUT/IA).
+    const extra: any = {};
+    if ((customer as any).isActive === false && !(customer as any).inactivatedAt) extra.inactivatedAt = agora();
+    if ((customer as any).isActive === true) extra.inactivatedAt = null;
+
     const [updatedCustomer] = await db
       .update(customers)
-      .set({ ...customer, updatedAt: agora() })
+      .set({ ...customer, ...extra, updatedAt: agora() })
       .where(eq(customers.id, id))
       .returning();
 
@@ -1079,7 +1024,6 @@ export class DatabaseStorage implements IStorage {
       .update(customers)
       .set({
         isActive: false,
-        omieStatus: 'inativo', // mantém os dois campos em sincronia (some de Clientes Ativos)
         inactivatedAt: agora(),
         updatedAt: agora()
       })
@@ -1141,10 +1085,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, true)));
     const inactivatedIds = activeBefore.map((r) => r.id);
 
-    // 1. customers.isActive = false (+ omie_status='inativo' p/ manter os dois campos alinhados)
+    // 1. customers.isActive = false
     await db
       .update(customers)
-      .set({ isActive: false, omieStatus: 'inativo', inactivatedAt: agora(), updatedAt: agora() })
+      .set({ isActive: false, inactivatedAt: agora(), updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Remover da lista de Clientes Ativos (active_customers)
@@ -1177,7 +1121,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  // Reativação em massa: inverso da inativação. Volta isActive=true, omie_status='ativo',
+  // Reativação em massa: inverso da inativação. Volta isActive=true,
   // limpa inactivatedAt e reabilita a linha em active_customers (se existir). NAO recria cards.
   async bulkReactivateCustomers(ids: string[]): Promise<{ processed: number; reactivated: number; alreadyActive: number; reactivatedIds: string[] }> {
     if (!ids || ids.length === 0) return { processed: 0, reactivated: 0, alreadyActive: 0, reactivatedIds: [] };
@@ -1189,10 +1133,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, false)));
     const reactivatedIds = inactiveBefore.map((r) => r.id);
 
-    // 1. customers: isActive=true, omie_status='ativo', limpa inactivatedAt
+    // 1. customers: isActive=true, limpa inactivatedAt
     await db
       .update(customers)
-      .set({ isActive: true, omieStatus: 'ativo', inactivatedAt: null, updatedAt: agora() })
+      .set({ isActive: true, inactivatedAt: null, updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Reabilita na lista de Clientes Ativos (inverso da inativacao); afeta so quem tinha linha
@@ -1230,7 +1174,7 @@ export class DatabaseStorage implements IStorage {
     const [c] = await db.select().from(customers).where(eq(customers.id, id));
     if (!c) return;
     await db.update(customers)
-      .set({ omieStatus: 'inativo', isActive: false, inactivatedAt: agora(), updatedAt: agora() })
+      .set({ isActive: false, inactivatedAt: agora(), updatedAt: agora() })
       .where(eq(customers.id, id));
     const doc = String((c as any).cnpj || (c as any).cpf || (c as any).document || '').replace(/\D/g, '');
     await db.execute(sql`
@@ -1243,18 +1187,18 @@ export class DatabaseStorage implements IStorage {
     return await db
       .select()
       .from(customers)
-      .where(and(eq(customers.route, route), eq(customers.omieStatus, 'ativo')));
+      .where(and(eq(customers.route, route), eq(customers.isActive, true)));
   }
 
   async getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]> {
     let whereConditions = and(
-      eq(customers.omieStatus, 'ativo'),
+      eq(customers.isActive, true),
       sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
     );
     
     if (sellerId) {
       whereConditions = and(
-        eq(customers.omieStatus, 'ativo'),
+        eq(customers.isActive, true),
         eq(customers.sellerId, sellerId),
         sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
       );
@@ -1301,7 +1245,6 @@ export class DatabaseStorage implements IStorage {
         and(
           inArray(customers.id, scheduledIds),
           eq(customers.sellerId, sellerId),
-          eq(customers.omieStatus, 'ativo'),
           eq(customers.isActive, true), // cliente desativado no cadastro nao entra na rota (02/jul/2026)
           // 🗓️ NÃO entra na rota antes da DATA DE INÍCIO DO FORNECIMENTO (service_start_date).
           // A agenda podia ter datas anteriores ao início (cadência ancorada antes do começo),
@@ -1357,7 +1300,6 @@ export class DatabaseStorage implements IStorage {
           inArray(customers.id, customerIds),
           eq(customers.sellerId, sellerId),
           eq(customers.isActive, true),
-          eq(customers.omieStatus, 'ativo'),
           // 🗓️ Mesmo guard do presencial: não entra na rota antes da DATA DE INÍCIO
           // DO FORNECIMENTO (service_start_date). (31/jul/2026)
           sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`,
@@ -1489,7 +1431,7 @@ export class DatabaseStorage implements IStorage {
           and(
             inArray(customers.id, customerIds),
             eq(customers.sellerId, sellerId),
-            eq(customers.omieStatus, 'ativo')
+            eq(customers.isActive, true)
           )
         );
       
@@ -3231,7 +3173,7 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(customers.sellerId, user.id),
-            eq(customers.omieStatus, 'ativo')
+            eq(customers.isActive, true)
           )
         );
 
@@ -3947,7 +3889,7 @@ export class DatabaseStorage implements IStorage {
           .from(customers)
           .where(
             and(
-              eq(customers.omieStatus, 'ativo'),
+              eq(customers.isActive, true),
               or(
                 eq(customers.cpf, location.cpfCnpj),
                 eq(customers.cnpj, location.cpfCnpj)
@@ -4302,10 +4244,7 @@ export class DatabaseStorage implements IStorage {
           )
           WHERE c.seller_id = ${userSellerId}
             AND coalesce(c.is_active, true) = true
-            AND r.deleted_at IS NULL
-            AND (r.amount - coalesce(r.amount_paid, 0)) > 0
-            AND coalesce(r.import_origin, '') <> 'omie_historico'
-            AND (r.status IN ('a_vencer', 'vencida') AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+            AND ${whereDebitoVivoSql('r')}
         `);
 
         totalOverdueDebt = overdueDebtsResult.rows.reduce((sum: number, debt: any) => {
@@ -5540,39 +5479,25 @@ export class DatabaseStorage implements IStorage {
     // FASE 3.4r - Fonte de verdade dos débitos vencidos passou a ser a aba Contas a
     // Receber (tabela `receivables`), NAO mais a tabela `overdueDebts` (sync do Omie,
     // defasada) — que estava soltando no bloqueio E na liberação automática clientes
-    // que de fato tinham débito vencido. Replica EXATAMENTE a regra de "vencida" do
-    // getReceivables({status:'vencida'}) / aba Contas a Receber: título EM ABERTO
-    // (status IN ('a_vencer','vencida')) E vencimento < hoje no fuso Brasil. A régua é a
-    // DATA, não o flag: 'vencida' com vencimento repostergado p/ hoje/futuro NÃO é débito
-    // vivo (não bloqueia). Só em aberto (amount - amount_paid > 0).
+    // que de fato tinham débito vencido.
+    // E4 (06/set/2026): a condição de "débito vivo" (em aberto, vencido por
+    // dia-calendário BRT, sem fantasma, sem devolução/outra praça, sem histórico
+    // Omie) é a REGRA ÚNICA de server/divida-viva.ts (whereDebitoVivoSql) —
+    // a mesma da tela de Débitos Vencidos, do alerta e dos relatórios.
     const result: any = await db.execute(sql`
       SELECT MAX(r.customer_name) AS client_name,
              SUM(r.amount - COALESCE(r.amount_paid, 0)) AS saldo,
              MAX(((now() AT TIME ZONE 'America/Sao_Paulo')::date - (r.due_date)::date)) AS max_dias,
              COUNT(*)::int AS n
       FROM receivables r
-      WHERE r.deleted_at IS NULL
-        AND (r.amount - COALESCE(r.amount_paid, 0)) > 0
-        -- Duplicata de reparo de orfaos nao bloqueia venda: ver ghost-receivables.ts
-        AND ${naoEFantasma('r')}
-        -- Devolucao / outra praca / troca / amostra / CFOP 5949: ver divida-viva.ts
-        AND ${ehDividaViva('r')}
-        -- Títulos HISTÓRICOS da migração Omie (import_origin='omie_historico') NÃO são
-        -- dívida viva para fins de bloqueio de crédito — são dados migrados (tratados como
-        -- conciliados). Sem esta exclusão, uma dívida de 2020-2025 importada travaria uma
-        -- venda atual (bloqueio indevido). Só entram no cálculo os recebíveis correntes.
-        AND COALESCE(r.import_origin, '') <> 'omie_historico'
-        AND (
-          r.status IN ('a_vencer', 'vencida')
-          AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
-        )
+      WHERE ${whereDebitoVivoSql('r')}
         AND regexp_replace(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') = ${normalizedSearchDocument}`);
     const row: any = (result.rows || [])[0] || {};
     const n = Number(row.n || 0);
     const saldoNum = Number(row.saldo || 0);
     // Piso de tolerância: débitos vencidos totais de até R$ 50,00 NÃO bloqueiam a venda
     // (evita travar pedido por centavos / 1 dia de atraso). Só bloqueia acima do piso.
-    const DEBT_BLOCK_TOLERANCE = 50;
+    const DEBT_BLOCK_TOLERANCE = PISO_DEBITO_BLOQUEIO;
     if (n > 0 && saldoNum > DEBT_BLOCK_TOLERANCE) {
       const totalAmount = saldoNum.toFixed(2);
       const maxDaysOverdue = Number(row.max_dias || 0);
@@ -7714,6 +7639,39 @@ export class DatabaseStorage implements IStorage {
   async createActiveCustomerUpload(uploadData: InsertActiveCustomerUpload): Promise<ActiveCustomerUpload> {
     const [upload] = await db.insert(activeCustomerUploads).values(uploadData).returning();
     return upload;
+  }
+
+  // (E2-D leve, 06/set/2026) Fonte única: cadastro ativo ⇒ está na lista de Clientes Ativos.
+  // Religa linha inativa (por id ou documento) ou cria a linha. Nunca desativa ninguém.
+  // Roda todo dia 00:00 antes da geração de visitas e é idempotente.
+  async syncActiveCustomersFromCadastro(): Promise<{ foraDaLista: number; religados: number; criados: number; semDocumento: number }> {
+    const r: any = await db.execute(sql`
+      WITH ativos AS (
+        SELECT c.id, regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc,
+               CASE WHEN COALESCE(c.cpf,'')<>'' THEN 'cpf' ELSE 'cnpj' END AS tipo,
+               COALESCE(NULLIF(c.fantasy_name,''),c.name) AS nome, c.omie_instance_id, c.latitude, c.longitude
+        FROM customers c
+        WHERE c.is_active=true
+          AND COALESCE(c.is_lead,false)=false AND COALESCE(c.is_supplier,false)=false AND COALESCE(c.virtual_service,false)=false
+          AND NOT EXISTS (SELECT 1 FROM active_customers a WHERE a.is_active=true
+                          AND (a.customer_id=c.id OR regexp_replace(COALESCE(a.document,''),'[^0-9]','','g')=regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g')))
+      ), religa AS (
+        UPDATE active_customers a SET is_active=true, deactivated_at=NULL, updated_at=now(), match_status='matched', customer_id=x.id
+        FROM ativos x
+        WHERE a.is_active=false AND (a.customer_id=x.id OR (x.doc<>'' AND regexp_replace(COALESCE(a.document,''),'[^0-9]','','g')=x.doc))
+        RETURNING a.customer_id
+      ), cria AS (
+        INSERT INTO active_customers (document, document_type, fantasy_name_imported, customer_id, omie_instance_id, upload_id, match_status, is_active, latitude, longitude)
+        SELECT x.doc, x.tipo, x.nome, x.id, x.omie_instance_id, 'sync-gestao', 'matched', true, x.latitude, x.longitude
+        FROM ativos x
+        WHERE x.doc<>'' AND NOT EXISTS (SELECT 1 FROM religa r WHERE r.customer_id=x.id)
+          AND NOT EXISTS (SELECT 1 FROM active_customers a WHERE a.customer_id=x.id)
+        RETURNING id
+      )
+      SELECT (SELECT count(*) FROM ativos)::int AS fora_da_lista, (SELECT count(*) FROM religa)::int AS religados,
+             (SELECT count(*) FROM cria)::int AS criados, (SELECT count(*) FROM ativos WHERE doc='')::int AS sem_documento`);
+    const row: any = ((r.rows || r) as any[])[0] || {};
+    return { foraDaLista: Number(row.fora_da_lista || 0), religados: Number(row.religados || 0), criados: Number(row.criados || 0), semDocumento: Number(row.sem_documento || 0) };
   }
 
   async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number; corrected?: number }> {

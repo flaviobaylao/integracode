@@ -58,7 +58,7 @@ const LABELS: Record<string, string> = {
   deliveryWeekdays: 'Dias de entrega',
   deliveryTimeSlots: 'Horários de recebimento',
   deliverySaturdayTimeSlots: 'Horários de recebimento (sáb)',
-  omieStatus: 'Status Omie',
+  omieStatus: 'Status Omie', // E2-C: campo sem função (mantido só para exibir histórico antigo)
   situacao: 'Situação',
   omieInstanceId: 'Empresa emissora (instância)',
   icmsCsosn: 'CSOSN',
@@ -159,6 +159,22 @@ export async function logCustomerChanges(params: {
       } else {
         oldV = fmt(c.field, c.oldRaw);
         newV = fmt(c.field, c.newRaw);
+      }
+      // (E2-E) A trigger do banco (trg_customers_audit) já pode ter gravado esta mesma mudança
+      // com source='trigger' segundos antes (o UPDATE roda antes deste log). Nesse caso, em vez
+      // de duplicar, ASSUMIMOS a linha da trigger, preenchendo ator e origem reais.
+      const dedupField = c.field === 'sellerId' || c.field === 'isActive' || c.field === 'cnpj' || c.field === 'cpf' || c.field === 'name' || c.field === 'fantasyName';
+      if (dedupField) {
+        const upd: any = await db.execute(sql`
+          UPDATE customer_change_history SET old_value = ${oldV}, new_value = ${newV},
+                 changed_by_user_id = ${actorId}, changed_by_name = ${actorName}, source = ${source || 'edit'}
+          WHERE id = (SELECT id FROM customer_change_history
+                      WHERE customer_id = ${customerId} AND field = ${c.field} AND source = 'trigger'
+                        AND created_at > now() - interval '20 seconds'
+                      ORDER BY created_at DESC LIMIT 1)
+          RETURNING id`);
+        const n = (upd.rowCount ?? (upd.rows ? upd.rows.length : 0)) as number;
+        if (n > 0) continue;
       }
       await db.execute(sql`
         INSERT INTO customer_change_history

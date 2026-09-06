@@ -69,9 +69,7 @@ export async function handleIncomingMessage(
     if (result.response.action === 'redirect_to_store') {
       console.log(`📋 [AI-SERVICE] Enviando link de pedido rápido...`);
       // SEMPRE usar URL de PRODUÇÃO para links enviados aos clientes
-      const baseUrl = process.env.REPLIT_DOMAINS 
-        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-        : 'https://integrahonest.replit.app';
+      const baseUrl = (process.env.BASE_URL || process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/\/+$/, '');
       const storeLink = `${baseUrl}/pedido-rapido?telefone=${encodeURIComponent(conversation.customerPhone)}`;
       console.log(`🔗 [AI-SERVICE] Link gerado: ${storeLink}`);
       finalReply = result.response.reply + `\n\n📋 *Faça seu pedido aqui:*\n${storeLink}`;

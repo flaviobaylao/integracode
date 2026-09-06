@@ -417,19 +417,19 @@ export function registerChangeRequestsRoutes(app: Express) {
     const rows = rowsOf(await db.execute(sql`
       SELECT c.id,
              COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
-             c.cpf, c.cnpj, c.omie_status, c.seller_id,
+             c.cpf, c.cnpj, c.seller_id,
              MAX(h.created_at) AS ultima_inativacao,
              COUNT(*) AS eventos_inativacao
       FROM customers c
       JOIN customer_change_history h ON h.customer_id = c.id
       WHERE h.field = 'isActive' AND h.new_value = 'Não' AND c.is_active = true
-      GROUP BY c.id, nome, c.cpf, c.cnpj, c.omie_status, c.seller_id
+      GROUP BY c.id, nome, c.cpf, c.cnpj, c.seller_id
       ORDER BY ultima_inativacao DESC`));
     res.json({
       total: rows.length,
       clientes: rows.map((r: any) => ({
         id: r.id, nome: r.nome, cpf: r.cpf, cnpj: r.cnpj,
-        omieStatus: r.omie_status, sellerId: r.seller_id,
+        sellerId: r.seller_id,
         ultimaInativacao: r.ultima_inativacao, eventosInativacao: Number(r.eventos_inativacao) || 0,
       })),
     });

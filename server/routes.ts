@@ -77,8 +77,8 @@ import fs from 'fs';
 import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
 import { objectStorageClient } from './replit_integrations/object_storage/objectStorage';
-import { naoEFantasma } from "./ghost-receivables";
-import { ehDividaViva } from "./divida-viva";
+import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
+import { handlerDebitosVencidosPorCliente } from "./overdue-debts-por-cliente";
 
 // 🔌 DESLIGAMENTO DO OMIE NO CADASTRO DE CLIENTES (o 2.0 vira o dono do cadastro).
 // Controla APENAS a sincronização de CADASTRO de cliente com o Omie — as duas direções:
@@ -560,21 +560,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Configure webhook for receiving messages
     // IMPORTANT: Only reconfigure webhook in PRODUCTION mode to avoid overwriting production URL
-    // Environment detection:
-    // - Development (workspace): DON'T reconfigure webhook - let production handle it
-    // - Production (Autoscale): use REPLIT_DOMAINS (the public domain)
-    const isDevelopment = process.env.NODE_ENV === 'development';
-    const devDomain = process.env.REPLIT_DEV_DOMAIN;
-    // Autoscale/Production uses REPLIT_DOMAINS (e.g., "integrahonest.replit.app")
-    const domainsArray = process.env.REPLIT_DOMAINS ? process.env.REPLIT_DOMAINS.split(',') : [];
-    const prodDomainPlural = domainsArray[0]?.replace('https://', '').replace('http://', '');
+    // Environment detection (E4, 06/set/2026 — saiu do Replit, roda no Railway):
+    // - Development: DON'T reconfigure webhook - let production handle it
+    // - Production (NODE_ENV=production): use BASE_URL/APP_URL (the public domain)
+    const isProduction = process.env.NODE_ENV === 'production';
+    const baseUrlEnv = (process.env.BASE_URL || process.env.APP_URL || '').trim();
+    const prodDomainPlural = baseUrlEnv ? baseUrlEnv.replace(/^https?:\/\//, '').replace(/\/+$/, '') : '';
     
     console.log('🔍 [WEBHOOK-ENV] NODE_ENV:', process.env.NODE_ENV);
-    console.log('🔍 [WEBHOOK-ENV] REPLIT_DEV_DOMAIN:', devDomain || 'não definido');
-    console.log('🔍 [WEBHOOK-ENV] REPLIT_DOMAINS:', prodDomainPlural || 'não definido');
+    console.log('🔍 [WEBHOOK-ENV] BASE_URL:', prodDomainPlural || 'não definido');
     
     // Expected production URL for webhook - always use the stable production domain
-    const expectedProdDomain = prodDomainPlural || 'integrahonest.replit.app';
+    const expectedProdDomain = prodDomainPlural || 'integracode-production.up.railway.app';
     const expectedWebhookUrl = `https://${expectedProdDomain}/api/chat/webhook/messages`;
     const webhookEvents = [
       'MESSAGES_UPSERT',
@@ -623,7 +620,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else {
             console.warn('⚠️  [WEBHOOK-FIX] Erro ao corrigir webhook:', webhookResult.error);
           }
-        } else if (!isDevelopment) {
+        } else if (isProduction) {
           // Production mode: always configure webhook to ensure it's correct
           console.log('🔧 [WEBHOOK] Modo PRODUÇÃO - configurando webhook para:', expectedWebhookUrl);
           console.log('🪞 [WEBHOOK-CONFIG] Eventos:', webhookEvents);
@@ -1600,20 +1597,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           latitude: c.latitude,
           longitude: c.longitude,
           weekdays: c.weekdays,
-          omieStatus: c.omieStatus,
           sellerId: c.sellerId,
         }));
         return res.json(result);
       }
       
       // (E2-A, 05/set/2026) Gestão de Clientes pede ?incluirInativos=true para listar TODOS os
-      // cadastrados (fonte única). Um cadastro só é "ativo" se is_active E omie_status='ativo';
-      // os demais vêm marcados isActive=false para a tela mostrar o badge "Inativo" e permitir Reativar.
+      // cadastrados (fonte única). (E2-C) is_active é a ÚNICA regra de ativo: a resposta vai como está.
       const incluirInativos = String(req.query.incluirInativos || '') === 'true';
       const customers = await storage.getCustomers(sellerId, { incluirInativos });
-      if (incluirInativos) {
-        return res.json(customers.map((c: any) => (c.isActive === true && c.omieStatus === 'ativo') ? c : { ...c, isActive: false }));
-      }
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);
@@ -1702,7 +1694,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: c.latitude,
         longitude: c.longitude,
         weekdays: c.weekdays,
-        omieStatus: c.omieStatus,
         sellerId: c.sellerId,
       }));
       
@@ -2029,8 +2020,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
       const _isDriver = ['motorista', 'entregador'].includes(user.role);
       const _isAdmin = user.role === 'admin';
-      const _wantsInactivate = req.body.isActive === false || req.body.omieStatus === 'inativo';
-      const _wantsActivate = req.body.isActive === true || req.body.omieStatus === 'ativo';
+      // (E2-C) omie_status deixou de ter função: o payload pode até trazer o campo, mas nunca é gravado.
+      delete req.body.omieStatus;
+      const _wantsInactivate = req.body.isActive === false;
+      const _wantsActivate = req.body.isActive === true;
       // 🔒 INATIVAR cliente é exclusivo do Admin (nem coordinator/administrative inativam pelo cadastro).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
@@ -2599,7 +2592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _nasceAtivo = (customer as any).isActive !== false;
         if (_nasceAtivo) {
           // Garante status ATIVO no cadastro (cliente comum às vezes vem sem esses campos definidos).
-          await db.execute(sql`UPDATE customers SET is_active = true, omie_status = 'ativo' WHERE id = ${customer.id} AND (is_active IS DISTINCT FROM true OR omie_status IS DISTINCT FROM 'ativo')`);
+          await db.execute(sql`UPDATE customers SET is_active = true WHERE id = ${customer.id} AND is_active IS DISTINCT FROM true`);
           // Garante presença em active_customers (Clientes Ativos), sem duplicar.
           const _acExists: any = await db.execute(sql`SELECT 1 FROM active_customers WHERE customer_id = ${customer.id} AND is_active = true LIMIT 1`);
           if (!_acExists?.rows?.length) {
@@ -2789,8 +2782,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
       const _isDriver = ['motorista', 'entregador'].includes(user.role);
       const _isAdmin = user.role === 'admin';
-      const _wantsInactivate = req.body.isActive === false || req.body.omieStatus === 'inativo';
-      const _wantsActivate = req.body.isActive === true || req.body.omieStatus === 'ativo';
+      // (E2-C) omie_status deixou de ter função: o payload pode até trazer o campo, mas nunca é gravado.
+      delete req.body.omieStatus;
+      const _wantsInactivate = req.body.isActive === false;
+      const _wantsActivate = req.body.isActive === true;
       // 🔒 INATIVAR cliente é exclusivo do Admin (mesma regra do PATCH).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
@@ -3850,133 +3845,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // 🔎 AUDITORIA (somente leitura): por que um cadastro "ativo" não aparece em Clientes Ativos.
-  // A lista de Clientes Ativos (storage.getCustomers) filtra APENAS por omie_status = 'ativo'.
-  // Já o botão Inativar/Reativar e a Gestão de Clientes usam customers.is_active.
-  // Quando os dois campos divergem, o cadastro some da lista (ou aparece indevidamente).
-  app.get('/api/admin/customers/audit-clientes-ativos', authenticateUser, requireRole(['admin']), async (_req: any, res) => {
-    try {
-      const all = await storage.getAllCustomers();
-      const norm = (s: any) => String(s == null ? '' : s);
-      const doc = (c: any) => c.cnpj || c.cpf || c.document || '';
-      const nome = (c: any) => c.fantasyName || c.name || '';
-      const pick = (c: any) => ({
-        id: c.id,
-        nome: nome(c),
-        documento: doc(c),
-        isActive: (c as any).isActive,
-        omieStatus: (c as any).omieStatus,
-        isLead: (c as any).isLead === true,
-        sellerId: (c as any).sellerId || null,
-        city: (c as any).city || '',
-      });
-
-      // Distribuição de omie_status (bruto, para revelar casing/espaços/nulos)
-      const distStatus: Record<string, number> = {};
-      for (const c of all) {
-        const k = (c as any).omieStatus === null || (c as any).omieStatus === undefined
-          ? '(null)'
-          : ((c as any).omieStatus === '' ? '(vazio)' : JSON.stringify((c as any).omieStatus));
-        distStatus[k] = (distStatus[k] || 0) + 1;
-      }
-
-      const aparece = (c: any) => (c as any).omieStatus === 'ativo'; // regra EXATA usada por getCustomers
-
-      // PROBLEMA PRINCIPAL: ativo no sistema (is_active=true) mas NÃO aparece em Clientes Ativos
-      const ativoNaoAparece = all.filter((c: any) => (c as any).isActive === true && !aparece(c));
-      // Recorte do anterior sem leads (clientes reais)
-      const ativoNaoApareceClientes = ativoNaoAparece.filter((c: any) => (c as any).isLead !== true);
-      const ativoNaoApareceLeads = ativoNaoAparece.filter((c: any) => (c as any).isLead === true);
-
-      // PROBLEMA INVERSO: inativo (is_active=false) mas AINDA aparece em Clientes Ativos
-      const inativoAparece = all.filter((c: any) => (c as any).isActive === false && aparece(c));
-
-      // Subcategorias do problema principal (causa provável)
-      const causaStatusNulo = ativoNaoApareceClientes.filter((c: any) => (c as any).omieStatus == null || (c as any).omieStatus === '');
-      const causaStatusInativo = ativoNaoApareceClientes.filter((c: any) => String((c as any).omieStatus).trim().toLowerCase() === 'inativo');
-      const causaCasingEspaco = ativoNaoApareceClientes.filter((c: any) => {
-        const s = (c as any).omieStatus;
-        return s != null && s !== '' && s !== 'ativo' && String(s).trim().toLowerCase() === 'ativo';
-      });
-      const causaOutro = ativoNaoApareceClientes.filter((c: any) =>
-        !(( c as any).omieStatus == null || (c as any).omieStatus === '') &&
-        String((c as any).omieStatus).trim().toLowerCase() !== 'inativo' &&
-        String((c as any).omieStatus).trim().toLowerCase() !== 'ativo'
-      );
-
-      res.json({
-        totalCadastros: all.length,
-        aparecemEmClientesAtivos: all.filter(aparece).length,
-        distribuicaoOmieStatus: distStatus,
-        problemaPrincipal: {
-          descricao: "is_active=true porém omie_status != 'ativo' (ativo no sistema, mas fora de Clientes Ativos)",
-          total: ativoNaoAparece.length,
-          clientes: ativoNaoApareceClientes.length,
-          leads: ativoNaoApareceLeads.length,
-          porCausa: {
-            omieStatusInativo: causaStatusInativo.length,
-            omieStatusNuloOuVazio: causaStatusNulo.length,
-            omieStatusCasingOuEspaco: causaCasingEspaco.length,
-            omieStatusOutroValor: causaOutro.length,
-          },
-        },
-        problemaInverso: {
-          descricao: "is_active=false porém omie_status='ativo' (inativado no sistema, mas ainda aparece em Clientes Ativos)",
-          total: inativoAparece.length,
-        },
-        listas: {
-          ativoNaoApareceClientes: ativoNaoApareceClientes.map(pick),
-          ativoNaoApareceLeads: ativoNaoApareceLeads.map(pick),
-          inativoAparece: inativoAparece.map(pick),
-        },
-      });
-    } catch (error: any) {
-      console.error('Error auditing clientes-ativos:', error);
-      res.status(500).json({ message: 'Falha na auditoria: ' + String(error?.message || error) });
-    }
-  });
-
-  // 🔧 SANEAMENTO (só Admin): alinha os cadastros divergentes achados pela auditoria, para que
-  // is_active e omie_status concordem. Um cadastro é ativo só se AMBOS forem "ativos".
-  //  • is_active=false & omie_status='ativo'  → omie_status='inativo'  (inativados via botão que ainda apareciam)
-  //  • is_active=true  & omie_status='inativo' → só é tocado se body.incluirExcluidos===true
-  //    (são cadastros EXCLUÍDOS; alinhar zera is_active para refletir Inativo na Gestão).
-  // POST { dryRun?: boolean, incluirExcluidos?: boolean }. Idempotente.
-  app.post('/api/admin/customers/reconciliar-ativos', gone('reconciliação is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'), async (req: any, res) => {
-    try {
-      const { customers } = await import('../shared/schema');
-      const dryRun = req.body?.dryRun === true;
-      const incluirExcluidos = req.body?.incluirExcluidos === true;
-      const all = await storage.getAllCustomers();
-      const ghosts = all.filter((c: any) => c.isActive === false && c.omieStatus === 'ativo');
-      const excluidos = all.filter((c: any) => c.isActive === true && c.omieStatus === 'inativo');
-      let ghostsAtualizados = 0, excluidosAtualizados = 0; const errors: string[] = [];
-      if (!dryRun) {
-        for (const c of ghosts) {
-          try { await db.update(customers).set({ omieStatus: 'inativo', updatedAt: agora() } as any).where(eq(customers.id, String(c.id))); ghostsAtualizados++; }
-          catch (e: any) { if (errors.length < 8) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
-        }
-        if (incluirExcluidos) {
-          for (const c of excluidos) {
-            try { await db.update(customers).set({ isActive: false, updatedAt: agora() } as any).where(eq(customers.id, String(c.id))); excluidosAtualizados++; }
-            catch (e: any) { if (errors.length < 8) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
-          }
-        }
-      }
-      res.json({
-        dryRun,
-        incluirExcluidos,
-        ghostsInativadosDetectados: ghosts.length,
-        excluidosDetectados: excluidos.length,
-        ghostsAtualizados,
-        excluidosAtualizados,
-        errors,
-      });
-    } catch (error: any) {
-      console.error('Error reconciling clientes-ativos:', error);
-      res.status(500).json({ message: 'Falha no saneamento: ' + String(error?.message || error) });
-    }
-  });
+  // (E2-C, 06/set/2026) Auditoria e saneamento is_active × omie_status foram desativados:
+  // customers.is_active passou a ser a ÚNICA regra de ativo (omie_status sem função).
+  app.get('/api/admin/customers/audit-clientes-ativos', gone('auditoria is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'));
+  app.post('/api/admin/customers/reconciliar-ativos', gone('reconciliação is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'));
 
   // 🔧 REPARO (só Admin): restaura o vendedor de cada cliente para a ÚLTIMA ALTERAÇÃO MANUAL.
   // Motivo do bug: a devolução automática de delegação de carteira (a cada 15 min) regravava
@@ -4068,7 +3940,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // 🔧 SINCRONIZA a lista "Clientes Ativos" (tabela active_customers) com quem está ATIVO na
-  // Gestão (customers.is_active=true, omie_status='ativo', não-lead, não-fornecedor, com documento).
+  // Gestão (customers.is_active=true, não-lead, não-fornecedor, com documento). (E2-C: só is_active)
   // REGRA (pedido do Flavio): quem foi retirado por INATIVAÇÃO (linha de active_customers com
   // is_active=false) NÃO volta. Então:
   //   • sem linha na carteira  → cria (entra na lista)
@@ -4134,7 +4006,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const dryRun = req.body?.dryRun === true;
       const all = await storage.getAllCustomers();
       const elegiveis = all.filter((c: any) =>
-        c.isActive === true && c.omieStatus === 'ativo' && c.isLead !== true && (c as any).isSupplier !== true
+        c.isActive === true && c.isLead !== true && (c as any).isSupplier !== true
       );
       let adicionados = 0, religados = 0, jaOk = 0, ignoradosInativados = 0, semDocumento = 0;
       const errors: string[] = [];
@@ -4238,7 +4110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ✅ Reativação em massa — liberada a TODOS os papéis, EXCETO entrega (motorista/entregador).
-  // customers.isActive=true, omie_status='ativo', volta para a lista de Clientes Ativos.
+  // customers.isActive=true, volta para a lista de Clientes Ativos.
   app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req: any, res) => {
     try {
       const { ids } = req.body || {};
@@ -9667,7 +9539,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   // ✅ CORREÇÃO: Usar sellerId resolvido em vez de converted.sellerId
                   sellerId: (existingCustomer.sellerId && String(existingCustomer.sellerId).trim() !== '') ? existingCustomer.sellerId : resolvedSellerId, // FIX(01/jul): preserva vendedor existente (nao reverter p/ default Omie)
                   isActive: systemClient.isActive,
-                  omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao,
                   // ✅ MULTI-TENANT: Atualizar omieInstanceId se não definido
                   omieInstanceId: existingCustomer.omieInstanceId || systemClient.omieInstanceId
@@ -12640,110 +12511,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Rota para buscar débitos salvos no banco (carregamento rápido)
-  app.get('/api/omie/overdue-debts/cached', authenticateUser, async (req: any, res) => {
-    try {
-      console.log(`[OVERDUE-DEBTS-CACHED] Request from user: ${req.currentUser?.email}, ID: ${req.currentUser?.id}`);
-      const savedDebts = await storage.getOverdueDebts();
-      console.log(`[OVERDUE-DEBTS-CACHED] Found ${savedDebts?.length || 0} debts in database`);
-      
-      if (!savedDebts || savedDebts.length === 0) {
-        return res.json({
-          debts: [],
-          totalAmount: 0,
-          totalClients: 0,
-          message: "Nenhum débito salvo. Execute a sincronização."
-        });
-      }
-
-      // Buscar todos os clientes para mapear telefones e vendedores
-      const allCustomers = await storage.getAllCustomers();
-      const customerDataMap = new Map<string, { phone?: string; sellerId?: string }>();
-      
-      // Buscar todos os usuários para mapear sellerId -> omieVendorCode
-      const allUsers = await storage.getUsers();
-      const userVendorCodeMap = new Map<string, string>();
-      allUsers.forEach((user: any) => {
-        if (user.id && user.omieVendorCode) {
-          userVendorCodeMap.set(user.id, user.omieVendorCode);
-        }
-      });
-      
-      allCustomers.forEach(customer => {
-        if (customer.omieClientCode) {
-          // Obter código do vendedor do Omie via sellerId do cliente
-          let vendorCode = '';
-          if (customer.sellerId && userVendorCodeMap.has(customer.sellerId)) {
-            vendorCode = userVendorCodeMap.get(customer.sellerId) || '';
-          }
-          
-          // Filtrar telefones inválidos/placeholder
-          const validPhone = customer.phone && 
-            customer.phone !== '(00) 00000-0000' && 
-            !customer.phone.includes('00000-0000') 
-              ? customer.phone 
-              : '';
-          
-          customerDataMap.set(customer.omieClientCode, {
-            phone: validPhone,
-            sellerId: vendorCode
-          });
-        }
-      });
-
-      // Transformar dados do banco para o formato esperado pelo frontend
-      // Cada linha já representa UM cliente com TODOS os seus débitos
-      const debts = savedDebts.map(debt => {
-        const customerData = customerDataMap.get(debt.omieClientId);
-        
-        // Se não temos vendedores dos títulos, usar o vendedor do cliente
-        let vendedoresFinais = debt.vendedores || [];
-        if (vendedoresFinais.length === 0 && customerData?.sellerId) {
-          const vendorCode = parseInt(customerData.sellerId);
-          if (!isNaN(vendorCode)) {
-            vendedoresFinais = [vendorCode];
-          }
-        }
-        
-        return {
-          cliente: {
-            codigo_cliente_omie: parseInt(debt.omieClientId),
-            nome_fantasia: debt.clientName,
-            cnpj_cpf: debt.clientDocument || '',
-            telefone: customerData?.phone || ''
-          },
-          debitos: debt.debts || [],
-          valorTotal: parseFloat(debt.totalAmount),
-          diasMaximoAtraso: debt.maxDaysOverdue,
-          vendedores: vendedoresFinais,
-          omieInstanceId: debt.omieInstanceId || null // Tag multi-tenant
-        };
-      });
-
-      const totalAmount = debts.reduce((sum, d) => sum + d.valorTotal, 0);
-
-      // Obter data da última sincronização (usar a mais recente dos débitos)
-      const lastSyncAt = savedDebts.length > 0 && savedDebts[0].lastSyncAt 
-        ? savedDebts[0].lastSyncAt 
-        : null;
-
-      res.json({
-        debts,
-        totalAmount,
-        totalClients: debts.length,
-        lastSyncAt
-      });
-    } catch (error) {
-      console.error("Error fetching cached overdue debts:", error);
-      console.error("Error stack:", error instanceof Error ? error.stack : 'No stack trace');
-      res.status(500).json({ 
-        message: "Erro ao buscar débitos salvos: " + (error instanceof Error ? error.message : 'Erro desconhecido'),
-        debts: [],
-        totalAmount: 0,
-        totalClients: 0
-      });
-    }
-  });
+  // Débitos vencidos por cliente — path ANTIGO mantido até a E5. Desde a E4 (06/set/2026)
+  // NÃO lê mais `overdue_debts` (sync do Omie, congelado em 26/ago): é o MESMO handler de
+  // /api/financial/overdue-debts[/por-cliente], lendo `receivables` com a regra única de
+  // débito vivo (server/divida-viva.ts). Formato de resposta preservado.
+  app.get('/api/omie/overdue-debts/cached', authenticateUser, handlerDebitosVencidosPorCliente);
 
   // Rota para sincronizar débitos do Omie (operação demorada) - Apenas usuários administrativos
   app.get('/api/omie/overdue-debts', gone('Omie — desligado em 05/set/2026, etapa E3'), authenticateUser, async (req: any, res) => {
@@ -15391,73 +15163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
 
-        // ✅ SINCRONIZAÇÃO OMIE: Alterar etapa das NFs para "Em Rota" (código 20)
-        try {
-          console.log(`🔄 [OMIE-SYNC] Iniciando sincronização de etapas para ${allBillingIds.length} billings...`);
-          
-          const billingsData = await db.select({
-            id: billings.id,
-            omieOrderId: billings.omieOrderId,
-            orderNumber: billings.orderNumber,
-            invoiceNumber: billings.invoiceNumber,
-            customerFantasyName: billings.customerFantasyName,
-          }).from(billingsTable).where(inArray(billingsTable.id, allBillingIds));
-          
-          console.log(`📋 [OMIE-SYNC] Billings encontrados: ${billingsData.length}, com omieOrderId: ${billingsData.filter(b => b.omieOrderId).length}`);
-          billingsData.forEach(b => {
-            console.log(`  - billing ${b.id}: omieOrderId=${b.omieOrderId || 'NENHUM'}, invoice=${b.invoiceNumber || 'NENHUM'}, customer=${b.customerFantasyName || 'NENHUM'}`);
-          });
-          
-          const ordersToUpdate = billingsData
-            .filter(b => b.omieOrderId && !isNaN(parseInt(b.omieOrderId)))
-            .map(b => ({
-              codigoPedido: parseInt(b.omieOrderId!),
-              novaEtapa: OmieService.STAGE_EM_ROTA,
-              billingId: b.id,
-              invoiceNumber: b.invoiceNumber || '',
-              customerName: b.customerFantasyName || '',
-            }));
-          
-          if (ordersToUpdate.length > 0) {
-            console.log(`📤 [OMIE-SYNC] Atualizando ${ordersToUpdate.length} pedidos para etapa "Em Rota" (20)...`);
-            console.log(`📤 [OMIE-SYNC] Pedidos: ${JSON.stringify(ordersToUpdate.map(o => o.codigoPedido))}`);
-            
-            const instanceGroups = await getOmieServicesGroupedByInstance(storage, allBillingIds);
-            const triggeredBy = (req as any).currentUser?.email || 'system';
-            
-            for (const [instanceKey, group] of instanceGroups) {
-              const instanceOrders = ordersToUpdate.filter(o => group.billingIds.includes(o.billingId));
-              if (instanceOrders.length === 0) continue;
-              
-              console.log(`📤 [OMIE-SYNC] Instance ${instanceKey}: ${instanceOrders.length} pedidos`);
-              const resultado = await group.service.trocarEtapasPedidosEmLote(
-                instanceOrders.map(o => ({ codigoPedido: o.codigoPedido, novaEtapa: o.novaEtapa }))
-              );
-              console.log(`✅ [OMIE-SYNC] Instance ${instanceKey}: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
-              
-              for (const orderInfo of instanceOrders) {
-                const resultItem = resultado.results.find(r => r.codigoPedido === orderInfo.codigoPedido);
-                await logOmieStageChange({
-                  omieOrderId: orderInfo.codigoPedido,
-                  orderNumber: orderInfo.invoiceNumber,
-                  customerName: orderInfo.customerName,
-                  newStage: OmieService.STAGE_EM_ROTA,
-                  trigger: 'send_to_driver',
-                  triggerDetail: `Rota salva e enviada automaticamente`,
-                  billingId: orderInfo.billingId,
-                  triggeredBy,
-                  success: resultItem?.success ?? false,
-                  errorMessage: resultItem?.success === false ? resultItem.message : undefined,
-                  omieResponse: resultItem || null,
-                });
-              }
-            }
-          } else {
-            console.log(`⚠️ [OMIE-SYNC] Nenhum billing com omieOrderId válido encontrado`);
-          }
-        } catch (omieError: any) {
-          console.error(`⚠️ [OMIE-SYNC] Erro ao sincronizar com Omie:`, omieError?.message || omieError);
-        }
+        // (E4) Bloco [OMIE-SYNC] de "Em Rota" removido — Omie desligado, omieOrderId sempre NULL.
       }
 
       console.log(`✅ [SAVE-ROUTES] ${savedRoutes.length} rotas salvas com sucesso`);
@@ -16180,24 +15886,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Billing não encontrado" });
       }
       
-      // Buscar o omieOrderId no Omie
-      const omie = getOmieService(storage);
-      let omieOrderId: string | null = null;
-      
-      if (omie) {
-        const searchResult = await omie.buscarPedidoPorNumero(orderNumber);
-        if (searchResult && searchResult.nCodPed) {
-          omieOrderId = String(searchResult.nCodPed);
-          console.log(`✅ [SET-ORDER] Encontrado omieOrderId ${omieOrderId} para pedido ${orderNumber}`);
-        }
-      }
+      // (E4) Omie desligado: não há mais busca de omieOrderId. Só grava o número do pedido.
+      const omieOrderId: string | null = null;
       
       // Atualizar o billing
       await db.update(billingsTable)
-        .set({ 
-          orderNumber,
-          ...(omieOrderId ? { omieOrderId } : {})
-        })
+        .set({ orderNumber })
         .where(eq(billingsTable.id, billingId));
       
       res.json({
@@ -16205,9 +15899,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         billingId,
         orderNumber,
         omieOrderId,
-        message: omieOrderId 
-          ? `Billing atualizado com orderNumber ${orderNumber} e omieOrderId ${omieOrderId}`
-          : `Billing atualizado com orderNumber ${orderNumber}, mas omieOrderId não encontrado no Omie`
+        message: `Billing atualizado com orderNumber ${orderNumber}`
       });
     } catch (error: any) {
       console.error("Error setting order number:", error);
@@ -16216,7 +15908,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Enviar rota para o motorista (muda status de 'rota salva' para 'rota_enviada')
-  // Também altera etapas das NFs no Omie para "Em Rota" (20)
   app.post("/api/delivery-routes/:routeId/send-to-driver", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { routeId } = req.params;
@@ -16232,95 +15923,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Rota não encontrada" });
       }
       
-      // Buscar todas as paradas da rota para obter os omieOrderIds
-      const stops = await db.select().from(deliveryRouteStops)
-        .where(eq(deliveryRouteStops.routeId, routeId));
-      
-      // Coletar omieOrderIds dos billings relacionados às paradas
-      const orderInfos: Array<{ orderId: number; billingId: string; customerName: string; orderNumber: string; stopId: string }> = [];
-      for (const stop of stops) {
-        if (stop.billingId) {
-          const billing = await db.select().from(billingsTable)
-            .where(eq(billingsTable.id, stop.billingId))
-            .limit(1);
-          if (billing.length > 0 && billing[0].omieOrderId) {
-            const orderId = parseInt(billing[0].omieOrderId);
-            if (!isNaN(orderId)) {
-              orderInfos.push({
-                orderId,
-                billingId: stop.billingId,
-                customerName: billing[0].customerFantasyName || stop.customerName || '',
-                orderNumber: billing[0].invoiceNumber || '',
-                stopId: stop.id,
-              });
-            }
-          }
-        }
-      }
-      
-      const triggeredBy = (req as any).currentUser?.email || 'system';
-      
-      // Alterar etapas no Omie para "Em Rota" - SÍNCRONO para garantir execução
-      if (orderInfos.length > 0) {
-        console.log(`🔄 [SEND-ROUTE] Alterando ${orderInfos.length} pedidos para etapa "Em Rota" no Omie...`);
-        
-        try {
-          console.log(`🔍 [SEND-ROUTE] Inicializando OmieService por instância...`);
-          const billingIdsForSync = orderInfos.map(info => info.billingId);
-          const instanceGroups = await getOmieServicesGroupedByInstance(storage, billingIdsForSync);
-          
-          for (const [instanceKey, group] of instanceGroups) {
-            const instanceInfos = orderInfos.filter(info => group.billingIds.includes(info.billingId));
-            if (instanceInfos.length === 0) continue;
-            
-            const pedidosParaAlterar = instanceInfos.map(info => ({
-              codigoPedido: info.orderId,
-              novaEtapa: OmieService.STAGE_EM_ROTA
-            }));
-            
-            console.log(`📋 [SEND-ROUTE] Instance ${instanceKey}: ${pedidosParaAlterar.length} pedidos`);
-            const resultado = await group.service.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-            console.log(`✅ [SEND-ROUTE] Instance ${instanceKey}: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
-            
-            for (const info of instanceInfos) {
-              const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
-              await logOmieStageChange({
-                omieOrderId: info.orderId,
-                orderNumber: info.orderNumber,
-                customerName: info.customerName,
-                newStage: OmieService.STAGE_EM_ROTA,
-                trigger: 'send_to_driver',
-                triggerDetail: `Rota enviada para motorista`,
-                routeId,
-                stopId: info.stopId,
-                billingId: info.billingId,
-                driverEmail: route[0].driverEmail || undefined,
-                triggeredBy,
-                success: resultItem?.success ?? true,
-                errorMessage: resultItem?.success === false ? resultItem.message : undefined,
-                omieResponse: resultItem || null,
-              });
-            }
-          }
-        } catch (error: any) {
-          console.error(`❌ [SEND-ROUTE] Erro ao alterar etapas no Omie:`, error?.message || error);
-          for (const info of orderInfos) {
-            await logOmieStageChange({
-              omieOrderId: info.orderId,
-              orderNumber: info.orderNumber,
-              customerName: info.customerName,
-              newStage: OmieService.STAGE_EM_ROTA,
-              trigger: 'send_to_driver',
-              triggerDetail: `Rota enviada para motorista`,
-              routeId,
-              billingId: info.billingId,
-              triggeredBy,
-              success: false,
-              errorMessage: error?.message || 'Erro desconhecido',
-            });
-          }
-        }
-      }
+      // (E4) Bloco de sincronização de etapa "Em Rota" no Omie removido — Omie desligado.
       
       // Atualizar status da rota para 'rota_enviada'
       const updatedRoute = await db.update(deliveryRoutes)
@@ -16336,7 +15939,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ 
         message: "Rota enviada para o motorista com sucesso", 
         route: updatedRoute[0],
-        omieUpdates: orderInfos.length > 0 ? `${orderInfos.length} pedidos sendo atualizados para "Em Rota"` : null
+        omieUpdates: null
       });
     } catch (error: any) {
       console.error("Error sending route to driver:", error);
@@ -16493,36 +16096,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ message: "Nenhuma rota para enviar", sent: 0 });
       }
       
-      // Coletar todos os orderInfos de todas as rotas
-      const allOrderInfos: Array<{ orderId: number; billingId: string; customerName: string; orderNumber: string; routeId: string; driverEmail: string }> = [];
-      for (const route of routesToSend) {
-        const stops = await db.select().from(deliveryRouteStops)
-          .where(eq(deliveryRouteStops.routeId, route.id));
-        
-        for (const stop of stops) {
-          if (stop.billingId) {
-            const billing = await db.select().from(billingsTable)
-              .where(eq(billingsTable.id, stop.billingId))
-              .limit(1);
-            if (billing.length > 0 && billing[0].omieOrderId) {
-              const orderId = parseInt(billing[0].omieOrderId);
-              if (!isNaN(orderId) && !allOrderInfos.some(o => o.orderId === orderId)) {
-                allOrderInfos.push({
-                  orderId,
-                  billingId: stop.billingId,
-                  customerName: billing[0].customerFantasyName || stop.customerName || '',
-                  orderNumber: billing[0].invoiceNumber || '',
-                  routeId: route.id,
-                  driverEmail: route.driverEmail || '',
-                });
-              }
-            }
-          }
-        }
-      }
-      
-      const triggeredBy = (req as any).currentUser?.email || 'system';
-      
       // Atualizar todas para 'rota_enviada'
       const routeIds = routesToSend.map(r => r.id);
       await db.update(deliveryRoutes)
@@ -16533,73 +16106,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(inArray(deliveryRoutes.id, routeIds));
       
-      // Alterar etapas no Omie para "Em Rota" - SÍNCRONO para garantir execução
-      if (allOrderInfos.length > 0) {
-        console.log(`🔄 [SEND-ALL-ROUTES] Alterando ${allOrderInfos.length} pedidos para etapa "Em Rota" no Omie...`);
-        
-        try {
-          const billingIdsForSync = allOrderInfos.filter(i => i.billingId).map(i => i.billingId);
-          const instanceGroups = billingIdsForSync.length > 0
-            ? await getOmieServicesGroupedByInstance(storage, billingIdsForSync)
-            : new Map();
-          
-          for (const [instanceKey, group] of instanceGroups) {
-            const instanceInfos = allOrderInfos.filter(info => group.billingIds.includes(info.billingId));
-            if (instanceInfos.length === 0) continue;
-            
-            const pedidosParaAlterar = instanceInfos.map(info => ({
-              codigoPedido: info.orderId,
-              novaEtapa: OmieService.STAGE_EM_ROTA
-            }));
-            
-            console.log(`📋 [SEND-ALL-ROUTES] Instance ${instanceKey}: ${pedidosParaAlterar.length} pedidos`);
-            const resultado = await group.service.trocarEtapasPedidosEmLote(pedidosParaAlterar);
-            console.log(`✅ [SEND-ALL-ROUTES] Instance ${instanceKey}: ${resultado.successCount} sucesso, ${resultado.errorCount} erros`);
-            
-            for (const info of instanceInfos) {
-              const resultItem = resultado.results.find(r => r.codigoPedido === info.orderId);
-              await logOmieStageChange({
-                omieOrderId: info.orderId,
-                orderNumber: info.orderNumber,
-                customerName: info.customerName,
-                newStage: OmieService.STAGE_EM_ROTA,
-                trigger: 'send_all_to_drivers',
-                triggerDetail: `Envio em lote de rotas do dia ${targetDate}`,
-                routeId: info.routeId,
-                billingId: info.billingId,
-                driverEmail: info.driverEmail,
-                triggeredBy,
-                success: resultItem?.success ?? true,
-                errorMessage: resultItem?.success === false ? resultItem.message : undefined,
-                omieResponse: resultItem || null,
-              });
-            }
-          }
-        } catch (error: any) {
-          console.error(`❌ [SEND-ALL-ROUTES] Erro ao alterar etapas no Omie:`, error?.message || error);
-          for (const info of allOrderInfos) {
-            await logOmieStageChange({
-              omieOrderId: info.orderId,
-              orderNumber: info.orderNumber,
-              customerName: info.customerName,
-              newStage: OmieService.STAGE_EM_ROTA,
-              trigger: 'send_all_to_drivers',
-              triggerDetail: `Envio em lote de rotas do dia ${targetDate}`,
-              routeId: info.routeId,
-              billingId: info.billingId,
-              triggeredBy,
-              success: false,
-              errorMessage: error?.message || 'Erro desconhecido',
-            });
-          }
-        }
-      }
+      // (E4) Bloco de sincronização de etapa "Em Rota" no Omie removido — Omie desligado.
       
       console.log(`✅ [SEND-ALL-ROUTES] ${routesToSend.length} rotas enviadas`);
       res.json({ 
         message: `${routesToSend.length} rotas enviadas para os motoristas`,
         sent: routesToSend.length,
-        omieUpdates: allOrderInfos.length > 0 ? `${allOrderInfos.length} pedidos sendo atualizados para "Em Rota"` : null
+        omieUpdates: null
       });
     } catch (error: any) {
       console.error("Error sending all routes:", error);
@@ -16879,77 +16392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
       
-      // Alterar etapa no Omie para "Entregue" (70) usando omieOrderId direto da parada
-      const stopOmieOrderId = stop[0].omieOrderId;
-      const stopOrderNumber = stop[0].orderNumber;
-      console.log(`📋 [DRIVER-CHECKOUT] Pedido: ${stopOrderNumber || 'N/A'}, omieOrderId: ${stopOmieOrderId || 'NENHUM'}`);
-      
-      if (stopOmieOrderId) {
-        const orderId = parseInt(stopOmieOrderId);
-        if (!isNaN(orderId)) {
-          try {
-            const omieService = stop[0].billingId 
-              ? await getOmieServiceForBilling(storage, stop[0].billingId)
-              : getOmieService(storage);
-            if (!omieService) {
-              console.error('❌ [DRIVER-CHECKOUT] OmieService não configurado');
-            } else {
-              console.log(`🔄 [DRIVER-CHECKOUT] Alterando pedido ${stopOrderNumber || orderId} para "Entregue" (${OmieService.STAGE_ENTREGUE})...`);
-              const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
-              console.log(`📋 [DRIVER-CHECKOUT] Resultado: success=${result.success}, message=${result.message}`);
-              try {
-                await logOmieStageChange({
-                  omieOrderId: orderId,
-                  orderNumber: stopOrderNumber || undefined,
-                  customerName: stop[0].customerName || undefined,
-                  previousStage: OmieService.STAGE_EM_ROTA,
-                  newStage: OmieService.STAGE_ENTREGUE,
-                  trigger: 'driver_checkout',
-                  triggerDetail: `Motorista confirmou entrega - Pedido ${stopOrderNumber || orderId}`,
-                  routeId: stop[0].routeId,
-                  stopId,
-                  billingId: stop[0].billingId || undefined,
-                  driverEmail: userEmail,
-                  triggeredBy: userEmail,
-                  success: result.success,
-                  errorMessage: result.success ? undefined : result.message,
-                  omieResponse: result.data || null,
-                });
-              } catch (logErr: any) {
-                console.error(`⚠️ [DRIVER-CHECKOUT] Erro ao gravar log (não afeta entrega):`, logErr?.message);
-              }
-              if (result.success) {
-                console.log(`✅ [DRIVER-CHECKOUT] Etapa alterada para "Entregue" no Omie`);
-              } else {
-                console.log(`⚠️ [DRIVER-CHECKOUT] Falha ao alterar etapa: ${result.message}`);
-              }
-            }
-          } catch (error: any) {
-            console.error(`❌ [DRIVER-CHECKOUT] Erro ao alterar etapa no Omie:`, error?.message || error);
-            try {
-              await logOmieStageChange({
-                omieOrderId: orderId,
-                orderNumber: stopOrderNumber || undefined,
-                customerName: stop[0].customerName || undefined,
-                newStage: OmieService.STAGE_ENTREGUE,
-                trigger: 'driver_checkout',
-                triggerDetail: `Erro na tentativa de alterar etapa`,
-                routeId: stop[0].routeId,
-                stopId,
-                billingId: stop[0].billingId || undefined,
-                driverEmail: userEmail,
-                triggeredBy: userEmail,
-                success: false,
-                errorMessage: error?.message || 'Erro desconhecido',
-              });
-            } catch (logErr: any) {
-              console.error(`⚠️ [DRIVER-CHECKOUT] Erro ao gravar log de erro:`, logErr?.message);
-            }
-          }
-        }
-      } else {
-        console.log(`⚠️ [DRIVER-CHECKOUT] Parada sem omieOrderId - etapa Omie não será alterada`);
-      }
+      // (E4) Bloco de troca de etapa "Entregue" no Omie removido — Omie desligado (omieOrderId sempre NULL).
       
       // Verificar se todas as paradas da rota foram concluídas
       const allStops = await db.select().from(deliveryRouteStops)
@@ -17091,112 +16534,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         duracaoSeg,
       }).catch(() => {});
 
-      // Alterar etapa no Omie para "Entregue" (70) - SÍNCRONO
-      // Estratégia: tentar via billingId primeiro, depois via omieOrderId direto da parada
-      let omieStageChanged = false;
-      
-      // Estratégia 1: Via billingId (quando a parada tem um billing associado)
-      if (stop[0].billingId) {
-        try {
-          const omieService = await getOmieServiceForBilling(storage, stop[0].billingId!);
-          if (!omieService) {
-            console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado via billingId');
-          } else {
-            const billing = await db.select().from(billingsTable)
-              .where(eq(billingsTable.id, stop[0].billingId!))
-              .limit(1);
-            
-            if (billing.length === 0) {
-              console.warn(`⚠️ [COMPLETE-DELIVERY] billingId ${stop[0].billingId} não encontrado na tabela billings - motorista: ${userEmail}`);
-            } else if (!billing[0].omieOrderId) {
-              console.warn(`⚠️ [COMPLETE-DELIVERY] Billing ${stop[0].billingId} existe mas sem omieOrderId (NF sem pedido Omie?) - motorista: ${userEmail}, cliente: ${billing[0].customerFantasyName}, NF: ${billing[0].invoiceNumber}`);
-            }
-            if (billing.length > 0 && billing[0].omieOrderId) {
-              const orderId = parseInt(billing[0].omieOrderId);
-              if (!isNaN(orderId)) {
-                console.log(`🔄 [COMPLETE-DELIVERY] Alterando pedido ${orderId} para "Entregue" no Omie (via billingId)...`);
-                const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
-                console.log(`📋 [COMPLETE-DELIVERY] Resultado: success=${result.success}, message=${result.message}`);
-                if (result.success) {
-                  omieStageChanged = true;
-                }
-                try {
-                  await logOmieStageChange({
-                    omieOrderId: orderId,
-                    orderNumber: billing[0].invoiceNumber || stop[0].orderNumber || undefined,
-                    customerName: billing[0].customerFantasyName || stop[0].customerName || undefined,
-                    previousStage: OmieService.STAGE_EM_ROTA,
-                    newStage: OmieService.STAGE_ENTREGUE,
-                    trigger: 'complete_delivery',
-                    triggerDetail: `Entrega direta confirmada pelo motorista (via billingId)`,
-                    routeId: stop[0].routeId,
-                    stopId,
-                    billingId: stop[0].billingId!,
-                    driverEmail: userEmail,
-                    triggeredBy: userEmail,
-                    success: result.success,
-                    errorMessage: result.success ? undefined : result.message,
-                    omieResponse: result.data || null,
-                  });
-                } catch (logErr: any) {
-                  console.error(`⚠️ [COMPLETE-DELIVERY] Erro ao gravar log (não afeta entrega):`, logErr?.message);
-                }
-              }
-            }
-          }
-        } catch (error: any) {
-          console.error(`❌ [COMPLETE-DELIVERY] Erro ao alterar etapa via billingId:`, error?.message || error);
-        }
-      }
-      
-      // Estratégia 2: Fallback via omieOrderId direto da parada (quando não tem billingId ou falhou)
-      if (!omieStageChanged && stop[0].omieOrderId) {
-        const orderId = parseInt(stop[0].omieOrderId);
-        if (!isNaN(orderId)) {
-          try {
-            const omieService = stop[0].billingId 
-              ? await getOmieServiceForBilling(storage, stop[0].billingId)
-              : getOmieService(storage);
-            if (!omieService) {
-              console.error('❌ [COMPLETE-DELIVERY] OmieService não configurado (fallback)');
-            } else {
-              console.log(`🔄 [COMPLETE-DELIVERY] Alterando pedido ${stop[0].orderNumber || orderId} para "Entregue" no Omie (via omieOrderId direto)...`);
-              const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_ENTREGUE);
-              console.log(`📋 [COMPLETE-DELIVERY] Resultado fallback: success=${result.success}, message=${result.message}`);
-              try {
-                await logOmieStageChange({
-                  omieOrderId: orderId,
-                  orderNumber: stop[0].orderNumber || undefined,
-                  customerName: stop[0].customerName || undefined,
-                  previousStage: OmieService.STAGE_EM_ROTA,
-                  newStage: OmieService.STAGE_ENTREGUE,
-                  trigger: 'complete_delivery',
-                  triggerDetail: `Entrega direta confirmada pelo motorista (via omieOrderId direto)`,
-                  routeId: stop[0].routeId,
-                  stopId,
-                  billingId: stop[0].billingId || undefined,
-                  driverEmail: userEmail,
-                  triggeredBy: userEmail,
-                  success: result.success,
-                  errorMessage: result.success ? undefined : result.message,
-                  omieResponse: result.data || null,
-                });
-              } catch (logErr: any) {
-                console.error(`⚠️ [COMPLETE-DELIVERY] Erro ao gravar log (não afeta entrega):`, logErr?.message);
-              }
-            }
-          } catch (error: any) {
-            console.error(`❌ [COMPLETE-DELIVERY] Erro ao alterar etapa via omieOrderId direto:`, error?.message || error);
-          }
-        }
-      }
-      
-      if (!omieStageChanged) {
-        console.warn(`⚠️ [COMPLETE-DELIVERY] Etapa Omie NÃO foi alterada para parada ${stopId} | motorista: ${userEmail} | billingId: ${stop[0].billingId || 'NENHUM'} | omieOrderId: ${stop[0].omieOrderId || 'NENHUM'}`);
-      }
-      if (!omieStageChanged && !stop[0].omieOrderId && !stop[0].billingId) {
-        console.log(`⚠️ [COMPLETE-DELIVERY] Parada ${stopId} sem billingId e sem omieOrderId - etapa Omie NÃO será alterada`);
-      }
+      // (E4) Bloco de troca de etapa "Entregue" no Omie removido — Omie desligado (omieOrderId sempre NULL).
       
       // Verificar se rota foi totalmente concluída
       const allStops = await db.select().from(deliveryRouteStops)
@@ -17331,47 +16669,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         motivo: reason.trim(),
       }).catch(() => {});
       
-      // Alterar etapa no Omie para "Aguardando Rota" (80) usando omieOrderId da parada
-      const returnStopOmieOrderId = stop[0].omieOrderId;
-      const returnStopOrderNumber = stop[0].orderNumber;
-      console.log(`📋 [RETURN-DELIVERY] Pedido: ${returnStopOrderNumber || 'N/A'}, omieOrderId: ${returnStopOmieOrderId || 'NENHUM'}`);
-      
-      if (returnStopOmieOrderId) {
-        const orderId = parseInt(returnStopOmieOrderId);
-        if (!isNaN(orderId)) {
-          try {
-            const omieService = stop[0].billingId
-              ? await getOmieServiceForBilling(storage, stop[0].billingId)
-              : getOmieService(storage);
-            if (!omieService) {
-              console.error('❌ [RETURN-DELIVERY] OmieService não configurado');
-            } else {
-              console.log(`🔄 [RETURN-DELIVERY] Alterando pedido ${returnStopOrderNumber || orderId} para "Aguardando Rota" (80)...`);
-              const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_AGUARDANDO_ROTA);
-              console.log(`📋 [RETURN-DELIVERY] Resultado: success=${result.success}, message=${result.message}`);
-              await logOmieStageChange({
-                omieOrderId: orderId,
-                orderNumber: returnStopOrderNumber || undefined,
-                customerName: stop[0].customerName || undefined,
-                previousStage: OmieService.STAGE_EM_ROTA,
-                newStage: OmieService.STAGE_AGUARDANDO_ROTA,
-                trigger: 'return_delivery',
-                triggerDetail: `Devolução: ${reason.trim()} - Pedido ${returnStopOrderNumber || orderId}`,
-                routeId: stop[0].routeId,
-                stopId,
-                billingId: stop[0].billingId || undefined,
-                driverEmail: userEmail,
-                triggeredBy: userEmail,
-                success: result.success,
-                errorMessage: result.success ? undefined : result.message,
-                omieResponse: result.data || null,
-              });
-            }
-          } catch (error: any) {
-            console.error(`❌ [RETURN-DELIVERY] Erro ao alterar etapa no Omie:`, error?.message || error);
-          }
-        }
-      }
+      // (E4) Bloco de troca de etapa "Aguardando Rota" no Omie removido — Omie desligado.
       
       // ↩️ PIPELINE: card volta para "Aguardando Rota" ou "Ag. Rota BSB",
       // conforme a etapa de origem do pedido. Best-effort.
@@ -17404,7 +16702,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Atualizar status de uma parada (pausar, devolvida, etc)
-  // Quando devolução, altera etapa da NF no Omie para "Aguardando Rota" (80)
   app.patch("/api/delivery-routes/stops/:stopId/status", authenticateUser, async (req: any, res) => {
     try {
       const { stopId } = req.params;
@@ -17458,33 +16755,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
       
-      // Se for devolução, alterar etapa no Omie para "Aguardando Rota" (80) - SÍNCRONO
-      if (status === 'devolvida' && stop[0].billingId) {
-        try {
-          const omieService = await getOmieServiceForBilling(storage, stop[0].billingId!);
-          if (!omieService) {
-            console.error('❌ [UPDATE-STOP-STATUS] OmieService não configurado');
-          } else {
-            const billing = await db.select().from(billingsTable)
-              .where(eq(billingsTable.id, stop[0].billingId!))
-              .limit(1);
-            
-            if (billing.length > 0 && billing[0].omieOrderId) {
-              const orderId = parseInt(billing[0].omieOrderId);
-              if (!isNaN(orderId)) {
-                console.log(`🔄 [UPDATE-STOP-STATUS] Devolução - Alterando pedido ${orderId} para etapa "Aguardando Rota" no Omie...`);
-                const result = await omieService.trocarEtapaPedido(orderId, OmieService.STAGE_AGUARDANDO_ROTA);
-                console.log(`📋 [UPDATE-STOP-STATUS] Resultado: success=${result.success}, message=${result.message}`);
-                if (result.success) {
-                  console.log(`✅ [UPDATE-STOP-STATUS] Etapa alterada para "Aguardando Rota" no Omie`);
-                }
-              }
-            }
-          }
-        } catch (error: any) {
-          console.error(`❌ [UPDATE-STOP-STATUS] Erro ao alterar etapa no Omie:`, error?.message || error);
-        }
-      }
+      // (E4) Bloco de troca de etapa "Aguardando Rota" no Omie (devolução) removido — Omie desligado.
       
       console.log(`✅ [UPDATE-STOP-STATUS] Parada ${stopId} atualizada para ${status}`);
       // 📦 PIPELINE: mesma automacao dos endpoints do entregador, para quando o
@@ -21399,7 +20670,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
-      // ✅ CORREÇÃO: Filtrar apenas clientes ativos (omieStatus = 'ativo')
+      // ✅ Filtrar apenas clientes ativos (E2-C: is_active é a única regra)
       const allVisits: any[] = await Promise.all(
         (route.optimizedOrder || []).map(async (customerId: string) => {
           // optimizedOrder agora contém IDs de clientes, não de sales_cards
@@ -21414,7 +20685,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isVirtual: customers.virtualService,
             weekdays: customers.weekdays, // Dias da semana de cadastro do cliente
             visitPeriodicity: customers.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
-            omieStatus: customers.omieStatus, // Status do cliente para filtragem
             isActive: customers.isActive // "Inativo" no cadastro (isActive=false) não entra na rota
           })
             .from(customers)
@@ -21425,8 +20695,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      // Filtrar apenas clientes ativos (omieStatus 'ativo' E não desativados no cadastro)
-      const visits: any[] = allVisits.filter(v => v && v.omieStatus === 'ativo' && v.isActive !== false);
+      // Filtrar apenas clientes ativos (não desativados no cadastro)
+      const visits: any[] = allVisits.filter(v => v && v.isActive !== false);
 
       // ✅ CORREÇÃO: Buscar clientes virtuais programados para hoje
       // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
@@ -22196,7 +21466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { db } = await import('./db');
       
       // Buscar customers (apenas ativos)
-      // ✅ CORREÇÃO: Filtrar apenas clientes ativos (omieStatus = 'ativo')
+      // ✅ Filtrar apenas clientes ativos (E2-C: is_active é a única regra)
       let customersData: any[] = [];
       if (customerIds.length > 0) {
         customersData = await db
@@ -22204,7 +21474,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .from(customers)
           .where(and(
             inArray(customers.id, customerIds),
-            eq(customers.omieStatus, 'ativo'),
             eq(customers.isActive, true), // cliente "Inativo" no cadastro (isActive=false) NÃO entra na rota do dia
             // 🗓️ DATA DE INÍCIO DO FORNECIMENTO: o cliente só entra na rota a partir do
             // service_start_date. A rota (optimizedOrder) e a agenda podiam ter sido geradas
@@ -23832,7 +23101,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // ✅ VALIDAÇÃO: Verificar se cliente está ativo
-      if (customer.omieStatus !== 'ativo') {
+      if (customer.isActive === false) {
         return res.status(400).json({ 
           message: `Cliente "${customer.fantasyName || customer.name}" está inativo e não pode ser adicionado à rota.`
         });
@@ -24482,7 +23751,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // (débito vencido total até R$50 não conta), para badge e bloqueio ficarem coerentes.
       const documents = Object.values(customerDocuments).filter(d => d);
       let debtsMap: Record<string, number> = {};
-      const DEBT_BADGE_TOLERANCE = 50;
+      const DEBT_BADGE_TOLERANCE = PISO_DEBITO_BLOQUEIO;
 
       {
         // CASA POR customer_id (vínculo direto do título) OU por documento normalizado.
@@ -24496,17 +23765,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                  REGEXP_REPLACE(COALESCE(r.customer_document,''), '[^0-9]', '', 'g') AS ndoc,
                  (r.amount - COALESCE(r.amount_paid, 0)) AS saldo
           FROM receivables r
-          WHERE r.deleted_at IS NULL
-            AND (r.amount - COALESCE(r.amount_paid, 0)) > 0
-            AND COALESCE(r.import_origin, '') <> 'omie_historico'
-            AND (
-              r.status IN ('a_vencer', 'vencida')
-              AND (r.due_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
-            )
-            -- Duplicata de reparo de orfaos nao e divida: ver ghost-receivables.ts
-            AND ${naoEFantasma('r')}
-            -- Devolucao / outra praca / troca / amostra / CFOP 5949: ver divida-viva.ts
-            AND ${ehDividaViva('r')}
+          -- Regra UNICA de debito vivo (E4): server/divida-viva.ts (whereDebitoVivoSql)
+          WHERE ${whereDebitoVivoSql('r')}
             AND (
               r.customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
               ${documents.length > 0
