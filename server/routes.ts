@@ -1600,20 +1600,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           latitude: c.latitude,
           longitude: c.longitude,
           weekdays: c.weekdays,
-          omieStatus: c.omieStatus,
           sellerId: c.sellerId,
         }));
         return res.json(result);
       }
       
       // (E2-A, 05/set/2026) Gestão de Clientes pede ?incluirInativos=true para listar TODOS os
-      // cadastrados (fonte única). Um cadastro só é "ativo" se is_active E omie_status='ativo';
-      // os demais vêm marcados isActive=false para a tela mostrar o badge "Inativo" e permitir Reativar.
+      // cadastrados (fonte única). (E2-C) is_active é a ÚNICA regra de ativo: a resposta vai como está.
       const incluirInativos = String(req.query.incluirInativos || '') === 'true';
       const customers = await storage.getCustomers(sellerId, { incluirInativos });
-      if (incluirInativos) {
-        return res.json(customers.map((c: any) => (c.isActive === true && c.omieStatus === 'ativo') ? c : { ...c, isActive: false }));
-      }
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);
@@ -1702,7 +1697,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         latitude: c.latitude,
         longitude: c.longitude,
         weekdays: c.weekdays,
-        omieStatus: c.omieStatus,
         sellerId: c.sellerId,
       }));
       
@@ -2029,8 +2023,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
       const _isDriver = ['motorista', 'entregador'].includes(user.role);
       const _isAdmin = user.role === 'admin';
-      const _wantsInactivate = req.body.isActive === false || req.body.omieStatus === 'inativo';
-      const _wantsActivate = req.body.isActive === true || req.body.omieStatus === 'ativo';
+      // (E2-C) omie_status deixou de ter função: o payload pode até trazer o campo, mas nunca é gravado.
+      delete req.body.omieStatus;
+      const _wantsInactivate = req.body.isActive === false;
+      const _wantsActivate = req.body.isActive === true;
       // 🔒 INATIVAR cliente é exclusivo do Admin (nem coordinator/administrative inativam pelo cadastro).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
@@ -2599,7 +2595,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _nasceAtivo = (customer as any).isActive !== false;
         if (_nasceAtivo) {
           // Garante status ATIVO no cadastro (cliente comum às vezes vem sem esses campos definidos).
-          await db.execute(sql`UPDATE customers SET is_active = true, omie_status = 'ativo' WHERE id = ${customer.id} AND (is_active IS DISTINCT FROM true OR omie_status IS DISTINCT FROM 'ativo')`);
+          await db.execute(sql`UPDATE customers SET is_active = true WHERE id = ${customer.id} AND is_active IS DISTINCT FROM true`);
           // Garante presença em active_customers (Clientes Ativos), sem duplicar.
           const _acExists: any = await db.execute(sql`SELECT 1 FROM active_customers WHERE customer_id = ${customer.id} AND is_active = true LIMIT 1`);
           if (!_acExists?.rows?.length) {
@@ -2789,8 +2785,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _isCadastroEditor = ['vendedor', 'telemarketing'].includes(user.role);
       const _isDriver = ['motorista', 'entregador'].includes(user.role);
       const _isAdmin = user.role === 'admin';
-      const _wantsInactivate = req.body.isActive === false || req.body.omieStatus === 'inativo';
-      const _wantsActivate = req.body.isActive === true || req.body.omieStatus === 'ativo';
+      // (E2-C) omie_status deixou de ter função: o payload pode até trazer o campo, mas nunca é gravado.
+      delete req.body.omieStatus;
+      const _wantsInactivate = req.body.isActive === false;
+      const _wantsActivate = req.body.isActive === true;
       // 🔒 INATIVAR cliente é exclusivo do Admin (mesma regra do PATCH).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
@@ -3850,133 +3848,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // 🔎 AUDITORIA (somente leitura): por que um cadastro "ativo" não aparece em Clientes Ativos.
-  // A lista de Clientes Ativos (storage.getCustomers) filtra APENAS por omie_status = 'ativo'.
-  // Já o botão Inativar/Reativar e a Gestão de Clientes usam customers.is_active.
-  // Quando os dois campos divergem, o cadastro some da lista (ou aparece indevidamente).
-  app.get('/api/admin/customers/audit-clientes-ativos', authenticateUser, requireRole(['admin']), async (_req: any, res) => {
-    try {
-      const all = await storage.getAllCustomers();
-      const norm = (s: any) => String(s == null ? '' : s);
-      const doc = (c: any) => c.cnpj || c.cpf || c.document || '';
-      const nome = (c: any) => c.fantasyName || c.name || '';
-      const pick = (c: any) => ({
-        id: c.id,
-        nome: nome(c),
-        documento: doc(c),
-        isActive: (c as any).isActive,
-        omieStatus: (c as any).omieStatus,
-        isLead: (c as any).isLead === true,
-        sellerId: (c as any).sellerId || null,
-        city: (c as any).city || '',
-      });
-
-      // Distribuição de omie_status (bruto, para revelar casing/espaços/nulos)
-      const distStatus: Record<string, number> = {};
-      for (const c of all) {
-        const k = (c as any).omieStatus === null || (c as any).omieStatus === undefined
-          ? '(null)'
-          : ((c as any).omieStatus === '' ? '(vazio)' : JSON.stringify((c as any).omieStatus));
-        distStatus[k] = (distStatus[k] || 0) + 1;
-      }
-
-      const aparece = (c: any) => (c as any).omieStatus === 'ativo'; // regra EXATA usada por getCustomers
-
-      // PROBLEMA PRINCIPAL: ativo no sistema (is_active=true) mas NÃO aparece em Clientes Ativos
-      const ativoNaoAparece = all.filter((c: any) => (c as any).isActive === true && !aparece(c));
-      // Recorte do anterior sem leads (clientes reais)
-      const ativoNaoApareceClientes = ativoNaoAparece.filter((c: any) => (c as any).isLead !== true);
-      const ativoNaoApareceLeads = ativoNaoAparece.filter((c: any) => (c as any).isLead === true);
-
-      // PROBLEMA INVERSO: inativo (is_active=false) mas AINDA aparece em Clientes Ativos
-      const inativoAparece = all.filter((c: any) => (c as any).isActive === false && aparece(c));
-
-      // Subcategorias do problema principal (causa provável)
-      const causaStatusNulo = ativoNaoApareceClientes.filter((c: any) => (c as any).omieStatus == null || (c as any).omieStatus === '');
-      const causaStatusInativo = ativoNaoApareceClientes.filter((c: any) => String((c as any).omieStatus).trim().toLowerCase() === 'inativo');
-      const causaCasingEspaco = ativoNaoApareceClientes.filter((c: any) => {
-        const s = (c as any).omieStatus;
-        return s != null && s !== '' && s !== 'ativo' && String(s).trim().toLowerCase() === 'ativo';
-      });
-      const causaOutro = ativoNaoApareceClientes.filter((c: any) =>
-        !(( c as any).omieStatus == null || (c as any).omieStatus === '') &&
-        String((c as any).omieStatus).trim().toLowerCase() !== 'inativo' &&
-        String((c as any).omieStatus).trim().toLowerCase() !== 'ativo'
-      );
-
-      res.json({
-        totalCadastros: all.length,
-        aparecemEmClientesAtivos: all.filter(aparece).length,
-        distribuicaoOmieStatus: distStatus,
-        problemaPrincipal: {
-          descricao: "is_active=true porém omie_status != 'ativo' (ativo no sistema, mas fora de Clientes Ativos)",
-          total: ativoNaoAparece.length,
-          clientes: ativoNaoApareceClientes.length,
-          leads: ativoNaoApareceLeads.length,
-          porCausa: {
-            omieStatusInativo: causaStatusInativo.length,
-            omieStatusNuloOuVazio: causaStatusNulo.length,
-            omieStatusCasingOuEspaco: causaCasingEspaco.length,
-            omieStatusOutroValor: causaOutro.length,
-          },
-        },
-        problemaInverso: {
-          descricao: "is_active=false porém omie_status='ativo' (inativado no sistema, mas ainda aparece em Clientes Ativos)",
-          total: inativoAparece.length,
-        },
-        listas: {
-          ativoNaoApareceClientes: ativoNaoApareceClientes.map(pick),
-          ativoNaoApareceLeads: ativoNaoApareceLeads.map(pick),
-          inativoAparece: inativoAparece.map(pick),
-        },
-      });
-    } catch (error: any) {
-      console.error('Error auditing clientes-ativos:', error);
-      res.status(500).json({ message: 'Falha na auditoria: ' + String(error?.message || error) });
-    }
-  });
-
-  // 🔧 SANEAMENTO (só Admin): alinha os cadastros divergentes achados pela auditoria, para que
-  // is_active e omie_status concordem. Um cadastro é ativo só se AMBOS forem "ativos".
-  //  • is_active=false & omie_status='ativo'  → omie_status='inativo'  (inativados via botão que ainda apareciam)
-  //  • is_active=true  & omie_status='inativo' → só é tocado se body.incluirExcluidos===true
-  //    (são cadastros EXCLUÍDOS; alinhar zera is_active para refletir Inativo na Gestão).
-  // POST { dryRun?: boolean, incluirExcluidos?: boolean }. Idempotente.
-  app.post('/api/admin/customers/reconciliar-ativos', gone('reconciliação is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'), async (req: any, res) => {
-    try {
-      const { customers } = await import('../shared/schema');
-      const dryRun = req.body?.dryRun === true;
-      const incluirExcluidos = req.body?.incluirExcluidos === true;
-      const all = await storage.getAllCustomers();
-      const ghosts = all.filter((c: any) => c.isActive === false && c.omieStatus === 'ativo');
-      const excluidos = all.filter((c: any) => c.isActive === true && c.omieStatus === 'inativo');
-      let ghostsAtualizados = 0, excluidosAtualizados = 0; const errors: string[] = [];
-      if (!dryRun) {
-        for (const c of ghosts) {
-          try { await db.update(customers).set({ omieStatus: 'inativo', updatedAt: agora() } as any).where(eq(customers.id, String(c.id))); ghostsAtualizados++; }
-          catch (e: any) { if (errors.length < 8) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
-        }
-        if (incluirExcluidos) {
-          for (const c of excluidos) {
-            try { await db.update(customers).set({ isActive: false, updatedAt: agora() } as any).where(eq(customers.id, String(c.id))); excluidosAtualizados++; }
-            catch (e: any) { if (errors.length < 8) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
-          }
-        }
-      }
-      res.json({
-        dryRun,
-        incluirExcluidos,
-        ghostsInativadosDetectados: ghosts.length,
-        excluidosDetectados: excluidos.length,
-        ghostsAtualizados,
-        excluidosAtualizados,
-        errors,
-      });
-    } catch (error: any) {
-      console.error('Error reconciling clientes-ativos:', error);
-      res.status(500).json({ message: 'Falha no saneamento: ' + String(error?.message || error) });
-    }
-  });
+  // (E2-C, 06/set/2026) Auditoria e saneamento is_active × omie_status foram desativados:
+  // customers.is_active passou a ser a ÚNICA regra de ativo (omie_status sem função).
+  app.get('/api/admin/customers/audit-clientes-ativos', gone('auditoria is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'));
+  app.post('/api/admin/customers/reconciliar-ativos', gone('reconciliação is_active × omie_status — substituída pela regra única de ativo, etapa E2-C'));
 
   // 🔧 REPARO (só Admin): restaura o vendedor de cada cliente para a ÚLTIMA ALTERAÇÃO MANUAL.
   // Motivo do bug: a devolução automática de delegação de carteira (a cada 15 min) regravava
@@ -4068,7 +3943,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // 🔧 SINCRONIZA a lista "Clientes Ativos" (tabela active_customers) com quem está ATIVO na
-  // Gestão (customers.is_active=true, omie_status='ativo', não-lead, não-fornecedor, com documento).
+  // Gestão (customers.is_active=true, não-lead, não-fornecedor, com documento). (E2-C: só is_active)
   // REGRA (pedido do Flavio): quem foi retirado por INATIVAÇÃO (linha de active_customers com
   // is_active=false) NÃO volta. Então:
   //   • sem linha na carteira  → cria (entra na lista)
@@ -4134,7 +4009,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const dryRun = req.body?.dryRun === true;
       const all = await storage.getAllCustomers();
       const elegiveis = all.filter((c: any) =>
-        c.isActive === true && c.omieStatus === 'ativo' && c.isLead !== true && (c as any).isSupplier !== true
+        c.isActive === true && c.isLead !== true && (c as any).isSupplier !== true
       );
       let adicionados = 0, religados = 0, jaOk = 0, ignoradosInativados = 0, semDocumento = 0;
       const errors: string[] = [];
@@ -4238,7 +4113,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ✅ Reativação em massa — liberada a TODOS os papéis, EXCETO entrega (motorista/entregador).
-  // customers.isActive=true, omie_status='ativo', volta para a lista de Clientes Ativos.
+  // customers.isActive=true, volta para a lista de Clientes Ativos.
   app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req: any, res) => {
     try {
       const { ids } = req.body || {};
@@ -9667,7 +9542,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   // ✅ CORREÇÃO: Usar sellerId resolvido em vez de converted.sellerId
                   sellerId: (existingCustomer.sellerId && String(existingCustomer.sellerId).trim() !== '') ? existingCustomer.sellerId : resolvedSellerId, // FIX(01/jul): preserva vendedor existente (nao reverter p/ default Omie)
                   isActive: systemClient.isActive,
-                  omieStatus: systemClient.omieStatus,
                   situacao: systemClient.situacao,
                   // ✅ MULTI-TENANT: Atualizar omieInstanceId se não definido
                   omieInstanceId: existingCustomer.omieInstanceId || systemClient.omieInstanceId
@@ -21399,7 +21273,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Buscar detalhes das visitas na ordem otimizada (DIRETO de customers - fonte única)
-      // ✅ CORREÇÃO: Filtrar apenas clientes ativos (omieStatus = 'ativo')
+      // ✅ Filtrar apenas clientes ativos (E2-C: is_active é a única regra)
       const allVisits: any[] = await Promise.all(
         (route.optimizedOrder || []).map(async (customerId: string) => {
           // optimizedOrder agora contém IDs de clientes, não de sales_cards
@@ -21414,7 +21288,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isVirtual: customers.virtualService,
             weekdays: customers.weekdays, // Dias da semana de cadastro do cliente
             visitPeriodicity: customers.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
-            omieStatus: customers.omieStatus, // Status do cliente para filtragem
             isActive: customers.isActive // "Inativo" no cadastro (isActive=false) não entra na rota
           })
             .from(customers)
@@ -21425,8 +21298,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      // Filtrar apenas clientes ativos (omieStatus 'ativo' E não desativados no cadastro)
-      const visits: any[] = allVisits.filter(v => v && v.omieStatus === 'ativo' && v.isActive !== false);
+      // Filtrar apenas clientes ativos (não desativados no cadastro)
+      const visits: any[] = allVisits.filter(v => v && v.isActive !== false);
 
       // ✅ CORREÇÃO: Buscar clientes virtuais programados para hoje
       // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
@@ -22196,7 +22069,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { db } = await import('./db');
       
       // Buscar customers (apenas ativos)
-      // ✅ CORREÇÃO: Filtrar apenas clientes ativos (omieStatus = 'ativo')
+      // ✅ Filtrar apenas clientes ativos (E2-C: is_active é a única regra)
       let customersData: any[] = [];
       if (customerIds.length > 0) {
         customersData = await db
@@ -22204,7 +22077,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .from(customers)
           .where(and(
             inArray(customers.id, customerIds),
-            eq(customers.omieStatus, 'ativo'),
             eq(customers.isActive, true), // cliente "Inativo" no cadastro (isActive=false) NÃO entra na rota do dia
             // 🗓️ DATA DE INÍCIO DO FORNECIMENTO: o cliente só entra na rota a partir do
             // service_start_date. A rota (optimizedOrder) e a agenda podiam ter sido geradas
@@ -23832,7 +23704,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // ✅ VALIDAÇÃO: Verificar se cliente está ativo
-      if (customer.omieStatus !== 'ativo') {
+      if (customer.isActive === false) {
         return res.status(400).json({ 
           message: `Cliente "${customer.fantasyName || customer.name}" está inativo e não pode ser adicionado à rota.`
         });

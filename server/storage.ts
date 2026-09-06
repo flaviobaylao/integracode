@@ -818,17 +818,14 @@ export class DatabaseStorage implements IStorage {
       .from(customers)
       .leftJoin(users, eq(customers.sellerId, users.id));
     
-    // 🔒 Um cadastro só é "Cliente Ativo" quando OS DOIS campos concordam: is_active (fonte da
-    // verdade do Integra, controlada por Inativar/Reativar) E omie_status='ativo'. Antes o filtro
-    // usava só omie_status, então: (a) inativados via botão (is_active=false, omie ainda 'ativo')
-    // continuavam aparecendo, e (b) excluídos (omie='inativo', is_active=true) sumiam. Exigir os
-    // dois resolve os dois casos sem reexibir excluídos.
+    // 🔒 (E2-C, 06/set/2026) `customers.is_active` é a ÚNICA regra de "Cliente Ativo".
+    // omie_status deixou de ter função (migração 2026-09-06_e2c consolidou os dois campos).
     // (E2-A, 05/set/2026) `incluirInativos`: a Gestão de Clientes precisa VER os inativos (badge
     // "Inativo", filtro "Inativo", Reativar). Desde 01/set (e57c8ffd) o filtro duplo escondia todos
     // os inativos da Gestão — "clientes desaparecidos". As demais telas continuam só com ativos.
     const whereConditions = opts?.incluirInativos
       ? []
-      : [eq(customers.isActive, true), eq(customers.omieStatus, 'ativo')];
+      : [eq(customers.isActive, true)];
     if (sellerId) {
       whereConditions.push(eq(customers.sellerId, sellerId));
     }
@@ -1079,7 +1076,6 @@ export class DatabaseStorage implements IStorage {
       .update(customers)
       .set({
         isActive: false,
-        omieStatus: 'inativo', // mantém os dois campos em sincronia (some de Clientes Ativos)
         inactivatedAt: agora(),
         updatedAt: agora()
       })
@@ -1141,10 +1137,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, true)));
     const inactivatedIds = activeBefore.map((r) => r.id);
 
-    // 1. customers.isActive = false (+ omie_status='inativo' p/ manter os dois campos alinhados)
+    // 1. customers.isActive = false
     await db
       .update(customers)
-      .set({ isActive: false, omieStatus: 'inativo', inactivatedAt: agora(), updatedAt: agora() })
+      .set({ isActive: false, inactivatedAt: agora(), updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Remover da lista de Clientes Ativos (active_customers)
@@ -1177,7 +1173,7 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  // Reativação em massa: inverso da inativação. Volta isActive=true, omie_status='ativo',
+  // Reativação em massa: inverso da inativação. Volta isActive=true,
   // limpa inactivatedAt e reabilita a linha em active_customers (se existir). NAO recria cards.
   async bulkReactivateCustomers(ids: string[]): Promise<{ processed: number; reactivated: number; alreadyActive: number; reactivatedIds: string[] }> {
     if (!ids || ids.length === 0) return { processed: 0, reactivated: 0, alreadyActive: 0, reactivatedIds: [] };
@@ -1189,10 +1185,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(inArray(customers.id, ids), eq(customers.isActive, false)));
     const reactivatedIds = inactiveBefore.map((r) => r.id);
 
-    // 1. customers: isActive=true, omie_status='ativo', limpa inactivatedAt
+    // 1. customers: isActive=true, limpa inactivatedAt
     await db
       .update(customers)
-      .set({ isActive: true, omieStatus: 'ativo', inactivatedAt: null, updatedAt: agora() })
+      .set({ isActive: true, inactivatedAt: null, updatedAt: agora() })
       .where(inArray(customers.id, ids));
 
     // 2. Reabilita na lista de Clientes Ativos (inverso da inativacao); afeta so quem tinha linha
@@ -1230,7 +1226,7 @@ export class DatabaseStorage implements IStorage {
     const [c] = await db.select().from(customers).where(eq(customers.id, id));
     if (!c) return;
     await db.update(customers)
-      .set({ omieStatus: 'inativo', isActive: false, inactivatedAt: agora(), updatedAt: agora() })
+      .set({ isActive: false, inactivatedAt: agora(), updatedAt: agora() })
       .where(eq(customers.id, id));
     const doc = String((c as any).cnpj || (c as any).cpf || (c as any).document || '').replace(/\D/g, '');
     await db.execute(sql`
@@ -1243,18 +1239,18 @@ export class DatabaseStorage implements IStorage {
     return await db
       .select()
       .from(customers)
-      .where(and(eq(customers.route, route), eq(customers.omieStatus, 'ativo')));
+      .where(and(eq(customers.route, route), eq(customers.isActive, true)));
   }
 
   async getCustomersByWeekday(weekday: string, sellerId?: string): Promise<Customer[]> {
     let whereConditions = and(
-      eq(customers.omieStatus, 'ativo'),
+      eq(customers.isActive, true),
       sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
     );
     
     if (sellerId) {
       whereConditions = and(
-        eq(customers.omieStatus, 'ativo'),
+        eq(customers.isActive, true),
         eq(customers.sellerId, sellerId),
         sql`${customers.weekdays} LIKE ${`%${weekday}%`}`
       );
@@ -1301,7 +1297,6 @@ export class DatabaseStorage implements IStorage {
         and(
           inArray(customers.id, scheduledIds),
           eq(customers.sellerId, sellerId),
-          eq(customers.omieStatus, 'ativo'),
           eq(customers.isActive, true), // cliente desativado no cadastro nao entra na rota (02/jul/2026)
           // 🗓️ NÃO entra na rota antes da DATA DE INÍCIO DO FORNECIMENTO (service_start_date).
           // A agenda podia ter datas anteriores ao início (cadência ancorada antes do começo),
@@ -1357,7 +1352,6 @@ export class DatabaseStorage implements IStorage {
           inArray(customers.id, customerIds),
           eq(customers.sellerId, sellerId),
           eq(customers.isActive, true),
-          eq(customers.omieStatus, 'ativo'),
           // 🗓️ Mesmo guard do presencial: não entra na rota antes da DATA DE INÍCIO
           // DO FORNECIMENTO (service_start_date). (31/jul/2026)
           sql`(${customers.serviceStartDate} IS NULL OR ${customers.serviceStartDate} <= ${endOfDay})`,
@@ -1489,7 +1483,7 @@ export class DatabaseStorage implements IStorage {
           and(
             inArray(customers.id, customerIds),
             eq(customers.sellerId, sellerId),
-            eq(customers.omieStatus, 'ativo')
+            eq(customers.isActive, true)
           )
         );
       
@@ -3231,7 +3225,7 @@ export class DatabaseStorage implements IStorage {
         .where(
           and(
             eq(customers.sellerId, user.id),
-            eq(customers.omieStatus, 'ativo')
+            eq(customers.isActive, true)
           )
         );
 
@@ -3947,7 +3941,7 @@ export class DatabaseStorage implements IStorage {
           .from(customers)
           .where(
             and(
-              eq(customers.omieStatus, 'ativo'),
+              eq(customers.isActive, true),
               or(
                 eq(customers.cpf, location.cpfCnpj),
                 eq(customers.cnpj, location.cpfCnpj)

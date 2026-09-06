@@ -32,7 +32,7 @@ export async function enviarAlertaNaoVisitados(
            c.virtual_service AS virtual, COALESCE(sc.seller_id, c.seller_id) AS sid
     FROM sales_cards sc
     JOIN customers c ON c.id = sc.customer_id
-    WHERE c.is_active = true AND COALESCE(c.omie_status, 'ativo') = 'ativo'
+    WHERE c.is_active = true
       AND (
         (sc.is_permanent = true
           AND (sc.next_visit_date)::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date

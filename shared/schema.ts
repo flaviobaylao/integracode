@@ -276,7 +276,7 @@ export const customers = pgTable("customers", {
   deliverySaturdayTimeSlots: jsonb("delivery_saturday_time_slots").$type<string[]>().default([]), // Horários de recebimento aos sábados - quando cliente aceita receber
   
   // Status no Omie (ativo/inativo)
-  omieStatus: varchar("omie_status").default('ativo'), // 'ativo' ou 'inativo'
+  omieStatus: varchar("omie_status").default('ativo'), // sem função desde E2-C (06/set/2026): is_active é a única regra de ativo; coluna será dropada na E7
   situacao: varchar("situacao"), // Campo direto do Omie (ativo/inativo/suspenso/etc)
   omieClientCode: varchar("omie_client_code"), // Código numérico do cliente no Omie (codigo_cliente_omie)
   

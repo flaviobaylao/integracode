@@ -828,7 +828,7 @@ run();
     try {
       const raw = String(req.query.date || hojeBR());
       const dateStr = raw.replace(/[^0-9-]/g, '');
-      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n, COUNT(DISTINCT va.customer_id) FILTER (WHERE va.is_virtual IS TRUE)::int AS virt FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 12";
+      const q = "SELECT c.seller_id AS sid, COUNT(DISTINCT va.customer_id)::int AS n, COUNT(DISTINCT va.customer_id) FILTER (WHERE va.is_virtual IS TRUE)::int AS virt FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + dateStr + " 00:00:00' AND va.scheduled_date <= '" + dateStr + " 23:59:59' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id ORDER BY n DESC LIMIT 12";
       const ag: any = await db.execute(sql.raw(q));
       const rowsAg = (ag.rows || ag) as any[];
       const out: any[] = [];
@@ -933,7 +933,7 @@ run();
               await db.execute(sql.raw("DELETE FROM daily_routes WHERE id = '" + String(r.id).replace(/[^0-9a-fA-F-]/g, '') + "'"));
               day.deleted++;
             }
-            const sq = "SELECT c.seller_id AS sid FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + ds + " 00:00:00' AND va.scheduled_date <= '" + ds + " 23:59:59' AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.seller_id IS NOT NULL GROUP BY c.seller_id";
+            const sq = "SELECT c.seller_id AS sid FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + ds + " 00:00:00' AND va.scheduled_date <= '" + ds + " 23:59:59' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND c.seller_id IS NOT NULL GROUP BY c.seller_id";
             const sr: any = await db.execute(sql.raw(sq));
             for (const s of ((sr.rows || sr) as any[])) {
               const sid = String(s.sid || '');
@@ -976,7 +976,7 @@ run();
       const sellerId = String(req.query.sellerId || '');
       const dateStr = String(req.query.date || '').replace(/[^0-9-]/g, '');
       if (!sellerId || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) { res.status(400).json({ error: 'sellerId e date (YYYY-MM-DD) obrigatorios' }); return; }
-      const r: any = await db.execute(sql`SELECT DISTINCT c.id, c.name, c.city FROM visit_agenda va JOIN customers c ON c.id = va.customer_id LEFT JOIN users u ON u.id = ${sellerId} WHERE va.visit_status = 'pending' AND va.scheduled_date >= ${dateStr + ' 00:00:00'}::timestamp AND va.scheduled_date <= ${dateStr + ' 23:59:59'}::timestamp AND (va.is_virtual IS NOT TRUE) AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.latitude IS NULL OR c.longitude IS NULL) AND (c.seller_id = ${sellerId} OR (u.omie_vendor_code IS NOT NULL AND (c.seller_id = u.omie_vendor_code OR c.seller_id = ('omie-vendor-' || u.omie_vendor_code)))) ORDER BY c.name`);
+      const r: any = await db.execute(sql`SELECT DISTINCT c.id, c.name, c.city FROM visit_agenda va JOIN customers c ON c.id = va.customer_id LEFT JOIN users u ON u.id = ${sellerId} WHERE va.visit_status = 'pending' AND va.scheduled_date >= ${dateStr + ' 00:00:00'}::timestamp AND va.scheduled_date <= ${dateStr + ' 23:59:59'}::timestamp AND (va.is_virtual IS NOT TRUE) AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND (c.latitude IS NULL OR c.longitude IS NULL) AND (c.seller_id = ${sellerId} OR (u.omie_vendor_code IS NOT NULL AND (c.seller_id = u.omie_vendor_code OR c.seller_id = ('omie-vendor-' || u.omie_vendor_code)))) ORDER BY c.name`);
       const rows = ((r.rows || r) as any[]).map((x) => ({ id: x.id, name: x.name, city: x.city }));
       res.json({ count: rows.length, customers: rows });
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 200) }); }
@@ -1178,7 +1178,7 @@ run();
       const evWin = (col: string) => "(" + col + " >= '" + d + " 03:00:00' AND " + col + " < " + t1s + ")";
       const ex = async (q: string) => { const r: any = await db.execute(sql.raw(q)); return (r.rows || r) as any[]; };
 
-      const qPlan = "SELECT c.seller_id AS sid, va.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + d + " 00:00:00' AND va.scheduled_date <= '" + d + " 23:59:59' AND (va.is_virtual IS NOT TRUE) AND c.omie_status = 'ativo' AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id, va.customer_id";
+      const qPlan = "SELECT c.seller_id AS sid, va.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM visit_agenda va JOIN customers c ON c.id = va.customer_id WHERE va.visit_status = 'pending' AND va.scheduled_date >= '" + d + " 00:00:00' AND va.scheduled_date <= '" + d + " 23:59:59' AND (va.is_virtual IS NOT TRUE) AND c.is_active IS TRUE AND c.is_supplier IS NOT TRUE AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY c.seller_id, va.customer_id";
       const qChk = "SELECT DISTINCT customer_id AS cid FROM sales_cards WHERE " + evWin('check_in_time') + " UNION SELECT DISTINCT customer_id AS cid FROM route_checkpoints WHERE checkpoint_type = 'check_in' AND " + evWin('checkpoint_time');
       const qVen = "SELECT seller_id AS sid, COALESCE(seller_name,'') AS snome, customer_id AS cid, COALESCE(sale_value::numeric,0) AS valor FROM billing_pipeline WHERE " + evWin('created_at');
       const qNos = "SELECT sc.customer_id AS cid, sc.seller_id AS sid, MAX(sc.no_sale_reason) AS motivo, MAX(c.name) AS nome FROM sales_cards sc LEFT JOIN customers c ON c.id = sc.customer_id WHERE sc.no_sale_reason IS NOT NULL AND (" + evWin('sc.check_in_time') + " OR " + evWin('sc.completed_date') + ") GROUP BY sc.customer_id, sc.seller_id";
@@ -2732,7 +2732,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const enc = (row: any, c: string) => { let v = row[c]; if (v !== null && jsonCols.has(c) && typeof v === 'object') return JSON.stringify(v); return v; };
       // DEDUP no 1.0: quando o mesmo documento aparece em >1 linha do 1.0, escolhe a MELHOR (ativa + mais campos preenchidos).
       const nonEmpty = (r: any) => cols.reduce((n: number, c: string) => { const v = r[c]; const t = (v === null || v === undefined) ? '' : String(v).trim(); return n + ((t !== '' && t !== '[]' && t !== '{}') ? 1 : 0); }, 0);
-      const activeScore = (r: any) => ((String(r.omie_status || '').toLowerCase() === 'ativo' ? 1 : 0) + ((r.is_active === true || String(r.is_active) === 'true') ? 1 : 0));
+      const activeScore = (r: any) => ((r.is_active === true || String(r.is_active) === 'true') ? 1 : 0); // E2-C: só is_active
       const bestByDoc = new Map<string, any>(); const noDocRows: any[] = [];
       for (const row of s1) {
         const dc0 = dg(row.cnpj), dp0 = dg(row.cpf);
@@ -2894,7 +2894,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
               try { const u: any = await db.execute(sql`UPDATE ${sql.identifier(t)} SET customer_id = ${primary.id} WHERE customer_id = ${dup.id}`); result.repointed[t] = (result.repointed[t] || 0) + (u.rowCount || 0); }
               catch (e2: any) { result.errors.push(t + ': ' + String(e2.message).slice(0, 60)); }
             }
-            try { await db.execute(sql`UPDATE customers SET is_active = false, omie_status = 'inativo', updated_at = now() WHERE id = ${dup.id}`); result.deactivated++; } catch (e: any) { result.errors.push('deact ' + String(dup.id).slice(0, 8) + ': ' + String(e.message).slice(0, 60)); }
+            try { await db.execute(sql`UPDATE customers SET is_active = false, updated_at = now() WHERE id = ${dup.id}`); result.deactivated++; } catch (e: any) { result.errors.push('deact ' + String(dup.id).slice(0, 8) + ': ' + String(e.message).slice(0, 60)); }
           }
           result.merged++;
         }

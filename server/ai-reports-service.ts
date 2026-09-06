@@ -50,7 +50,7 @@ export async function generateCustomersReport(): Promise<ReportResult> {
       lines.push(`- Última compra: ${lastSaleDate} (R$ ${customer.lastSaleValue || '0'})`);
     }
     
-    lines.push(`- Status Omie: ${customer.omieStatus || 'ativo'}`);
+    lines.push(`- Ativo: ${customer.isActive === false ? 'não' : 'sim'}`);
     lines.push(``);
   }
 

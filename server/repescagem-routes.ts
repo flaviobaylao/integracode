@@ -115,7 +115,6 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     serviceStartDate: customers.serviceStartDate,
     omieClientCode: customers.omieClientCode,
     isActive: customers.isActive,
-    omieStatus: customers.omieStatus,
     situacao: customers.situacao,
   }).from(customers).where(inArray(customers.id, customerIds));
 
@@ -343,9 +342,8 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     // Clientes de telemarketing (ou sem dono/outro papel) NÃO caem em repescagem.
     if (candSellerRoleById.get(c.sellerId || '') !== 'vendedor') continue;
     // Clientes INATIVOS nao entram em repescagem (cobre dessincronizacao entre
-    // customers.isActive e active_customers, alem de status vindo do Omie).
+    // customers.isActive e active_customers). E2-C: is_active e a unica regra de ativo.
     if ((c as any).isActive === false
-      || String((c as any).omieStatus || '').toLowerCase() === 'inativo'
       || String((c as any).situacao || '').toLowerCase() === 'inativo') continue;
     const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr).sort();
     if (scheduled.length === 0) continue;

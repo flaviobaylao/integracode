@@ -58,7 +58,7 @@ const LABELS: Record<string, string> = {
   deliveryWeekdays: 'Dias de entrega',
   deliveryTimeSlots: 'Horários de recebimento',
   deliverySaturdayTimeSlots: 'Horários de recebimento (sáb)',
-  omieStatus: 'Status Omie',
+  omieStatus: 'Status Omie', // E2-C: campo sem função (mantido só para exibir histórico antigo)
   situacao: 'Situação',
   omieInstanceId: 'Empresa emissora (instância)',
   icmsCsosn: 'CSOSN',

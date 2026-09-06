@@ -350,7 +350,7 @@ export default function ActiveCustomers() {
 
   const inactivateMutation = useMutation({
     // UNIFICADO: todo botão "Inativar" usa a MESMA ação (bulk-inactivate) — marca isActive=false
-    // e omie_status='inativo', tira o cliente da lista de Clientes Ativos E muda a situação para
+    // (E2-C: is_active é a única regra de ativo), tira o cliente da lista de Clientes Ativos E muda a situação para
     // "Inativo" na Gestão de Clientes. Antes este caminho usava /inactivate (exigia cardId) e só
     // atualizava a lista de ativos, deixando a Gestão desatualizada (mostrando "Ativo").
     mutationFn: async ({ customerId }: { customerId: string; activeCustomerId?: string }) => {
