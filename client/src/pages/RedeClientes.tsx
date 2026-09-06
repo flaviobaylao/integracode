@@ -29,6 +29,8 @@ type ClienteRede = {
   id: string; nome: string; doc: string | null; cidade: string; bairro: string;
   ativo: boolean; conquista: string | null; cadastroEm: string | null; inativadoEm: string | null;
   vendedor: string; sellerId: string;
+  /** 'destinatario' | 'entrega' | 'nenhum' — papel do integrante na NF-e. */
+  papel?: string;
   fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
 };
 type Rede = {
@@ -154,6 +156,28 @@ export default function RedeClientes() {
       });
     }
     exportToExcel(linhas, `redes-de-clientes-${mes || "atual"}`);
+  };
+
+  // ── Papel na NF-e ──────────────────────────────────────────────────────────
+  // Clicar no papel que o integrante ja' tem o desmarca (volta a 'nenhum'), que
+  // e' como se desfaz um arranjo sem precisar de outro botao.
+  const [salvandoPapel, setSalvandoPapel] = useState<string | null>(null);
+  const definirPapel = async (redeId: string, c: ClienteRede, papel: string) => {
+    const alvo = (c.papel || "nenhum") === papel ? "nenhum" : papel;
+    setSalvandoPapel(c.id);
+    try {
+      const resp = await fetch(`/api/carteira/redes/${redeId}/papel`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clienteId: c.id, papel: alvo }),
+      });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok || j?.ok === false) { window.alert(j?.error || "Não deu para definir o papel."); return; }
+      recarrega();
+    } finally {
+      setSalvandoPapel(null);
+    }
   };
 
   const excluir = async (r: Rede) => {
@@ -336,6 +360,7 @@ export default function RedeClientes() {
                             <TableHead>Cidade</TableHead>
                             <TableHead>Bairro</TableHead>
                             <TableHead className="w-24">Status</TableHead>
+                            <TableHead className="w-56 whitespace-nowrap">Papel na NF-e</TableHead>
                             <TableHead className="w-32 whitespace-nowrap">Data da conquista</TableHead>
                             <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnoAnt)}</TableHead>
                             <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnt)}</TableHead>
@@ -360,6 +385,34 @@ export default function RedeClientes() {
                                 <span className={`text-xs px-1.5 py-0.5 rounded ${c.ativo ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"}`}>
                                   {c.ativo ? "Ativo" : "Inativo"}
                                 </span>
+                              </TableCell>
+                              <TableCell>
+                                {/* Destinatário: recebe a NF-e e paga. Local de entrega: mantém
+                                    pedidos próprios, mas a nota dele sai no CNPJ do destinatário. */}
+                                <div className="flex gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant={c.papel === "destinatario" ? "default" : "outline"}
+                                    className="h-7 px-2 text-[11px]"
+                                    disabled={!podeEditar || salvandoPapel === c.id}
+                                    onClick={() => definirPapel(r.id, c, "destinatario")}
+                                    title="Recebe a NF-e e o título de todos os locais de entrega da rede"
+                                    data-testid={`btn-papel-destinatario-${c.id}`}
+                                  >
+                                    Destinatário
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant={c.papel === "entrega" ? "default" : "outline"}
+                                    className="h-7 px-2 text-[11px]"
+                                    disabled={!podeEditar || salvandoPapel === c.id}
+                                    onClick={() => definirPapel(r.id, c, "entrega")}
+                                    title="Faz pedidos próprios; a nota sai no CNPJ do destinatário e a mercadoria desce aqui"
+                                    data-testid={`btn-papel-entrega-${c.id}`}
+                                  >
+                                    Local de entrega
+                                  </Button>
+                                </div>
                               </TableCell>
                               <TableCell className="text-sm whitespace-nowrap">{dataBR(c.conquista)}</TableCell>
                               <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(c.fatMesAnoAnt)}</TableCell>
@@ -389,6 +442,7 @@ export default function RedeClientes() {
                               {r.totais.ativos} ativos
                             </TableCell>
                             <TableCell />
+                            <TableCell />
                             <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(r.totais.fatMesAnoAnt)}</TableCell>
                             <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(r.totais.fatMesAnt)}</TableCell>
                             <TableCell className="text-right whitespace-nowrap">{BRL(r.totais.fatMes)}</TableCell>
@@ -400,6 +454,18 @@ export default function RedeClientes() {
                         </TableBody>
                       </Table>
                     </div>
+                    {r.clientes.some((c) => c.papel === "entrega") && !r.clientes.some((c) => c.papel === "destinatario") ? (
+                      <p className="mt-2 text-xs text-amber-700">
+                        Esta rede tem local de entrega mas nenhum destinatário marcado — enquanto isso,
+                        cada CNPJ continua faturando no próprio nome.
+                      </p>
+                    ) : r.clientes.some((c) => c.papel === "destinatario") ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Pedidos dos locais de entrega são faturados individualmente, mas a NF-e sai no CNPJ do
+                        destinatário — com a condição de pagamento dele — e a mercadoria desce no endereço do
+                        CNPJ que fez o pedido.
+                      </p>
+                    ) : null}
                   </CardContent>
                 ) : null}
               </Card>
