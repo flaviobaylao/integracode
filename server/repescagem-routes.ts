@@ -1773,12 +1773,24 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // Fecha os atendidos do dia (throttled) para que saiam da lista de cards.
       maybeAutoCloseRepescagem();
 
-      const rows = await db.select().from(repescagemAssignments).where(and(
-        eq(repescagemAssignments.assignedUserId, sellerId),
-        eq(repescagemAssignments.drawDate, date),
-        eq(repescagemAssignments.status, 'in_route'),
-      ));
+      // CARD DUPLO: mostra a repescagem do dia tanto para o ATENDENTE que recebeu
+      // (assigned_user_id = sellerId) quanto para o DONO da carteira do cliente
+      // (customers.seller_id = sellerId), mesmo que atribuída a outro habilitado.
+      const rowsRes: any = await db.execute(sql`
+        SELECT ra.id, ra.customer_id, ra.assigned_user_id, ra.phase
+        FROM repescagem_assignments ra
+        JOIN customers c ON c.id = ra.customer_id
+        WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
+          AND (ra.assigned_user_id = ${sellerId} OR c.seller_id = ${sellerId})`);
+      const seenRowIds = new Set<string>();
+      const rows = ((rowsRes.rows || []) as any[])
+        .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; })
+        .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string }));
       if (rows.length === 0) return res.json([]);
+      // Nomes de quem recebeu (para o dono ver "em repescagem com X").
+      const assigneeIds = Array.from(new Set(rows.map(r => r.assignedUserId).filter(Boolean) as string[]));
+      const assigneeUsers = assigneeIds.length ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName }).from(users).where(inArray(users.id, assigneeIds)) : [];
+      const assigneeNameById = new Map(assigneeUsers.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
       const cids = Array.from(new Set(rows.map(r => r.customerId)));
       const cs = await db.select({
         id: customers.id,
@@ -1821,6 +1833,10 @@ export function registerRepescagemRoutes(app: Express, opts: {
           repescagemCount: countReds(r.customerId, per),
           repescagemWindowMonths: per === 'mensal' ? 3 : 2,
           phase: r.phase, isVirtualClient: !!c?.virtualService,
+          assignedUserId: r.assignedUserId,
+          // Cópia do DONO: o card aparece na rota do dono, mas está atribuído a outro habilitado.
+          isOwnerCopy: r.assignedUserId !== sellerId,
+          assignedToName: r.assignedUserId !== sellerId ? (assigneeNameById.get(r.assignedUserId) || null) : null,
         };
       }));
     } catch (e: any) {
