@@ -17766,10 +17766,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const user = (req as any).currentUser || (req as any).user;
           // Agendamento opcional: data (YYYY-MM-DD) enviada pelo popup de pedido -> item entra em 'agendado'.
           const scheduledBillingDate = (req as any).body?.scheduledBillingDate || null;
+          const _dupJust = String((req as any).body?.dupJustificativa || '').trim();
+
+          // ── AVISO DE POSSÍVEL DUPLICAÇÃO (trava suave) ──────────────────────────────
+          // A trava rígida (1 card = 1 item) continua no autoSend. AQUI, quando o card de
+          // vendas pede (checkDuplicate) e ainda não há justificativa, avisamos se já existe
+          // no pipeline/bloqueados um pedido do MESMO cliente + MESMO valor + MESMOS produtos
+          // nos últimos 15 dias (fora da Lixeira). O usuário decide: prosseguir com
+          // justificativa (registrada no histórico) ou cancelar. Falha na checagem NÃO bloqueia.
+          if ((req as any).body?.checkDuplicate && !_dupJust) {
+            try {
+              const _norm = (v: any) => (parseFloat(String(v || 0)) || 0).toFixed(2);
+              const _sig = (prods: any) => (Array.isArray(prods) ? prods : [])
+                .map((p: any) => `${String(p?.name || p?.productName || p?.id || '').trim().toLowerCase()}x${Number(p?.quantity ?? p?.qty ?? 0) || 0}`)
+                .sort().join('|');
+              const _cutoff = Date.now() - 15 * 86400000;
+              const _inWin = (d: any) => { const t = d ? new Date(d).getTime() : 0; return t > 0 && t >= _cutoff; };
+              const _val = _norm((card as any).saleValue);
+              const _psig = _sig((card as any).products);
+              let _match: any = null;
+              if ((card as any).customerId && _val !== '0.00') {
+                const _items = await storage.getBillingPipelineItems();
+                for (const it of _items as any[]) {
+                  if (String(it.stage) === 'lixeira') continue;
+                  if (String(it.salesCardId || '') === String(card.id)) continue;
+                  if (String(it.customerId || '') !== String((card as any).customerId)) continue;
+                  if (_norm(it.saleValue) !== _val) continue;
+                  if (_sig(it.products) !== _psig) continue;
+                  if (!_inWin(it.createdAt)) continue;
+                  _match = { origem: 'Pipeline', orderNumber: it.orderNumber || ('INT-' + String(it.salesCardId || '').slice(0, 8)), stage: it.stage, valor: it.saleValue, entrada: it.createdAt, vendedor: it.sellerName || null, nf: it.invoiceNumber || null };
+                  break;
+                }
+                if (!_match) {
+                  const _blk = await db.select().from(blockedOrders).where(eq(blockedOrders.status, 'blocked'));
+                  for (const b of _blk as any[]) {
+                    if (String(b.salesCardId || '') === String(card.id)) continue;
+                    if (String(b.customerId || '') !== String((card as any).customerId)) continue;
+                    if (_norm(b.totalAmount) !== _val) continue;
+                    if (_sig(b.products) !== _psig) continue;
+                    if (!_inWin(b.createdAt || b.blockedAt)) continue;
+                    _match = { origem: 'Bloqueados', orderNumber: 'INT-' + String(b.salesCardId || '').slice(0, 8), stage: 'bloqueado', valor: b.totalAmount, entrada: b.createdAt || b.blockedAt, vendedor: null, nf: null };
+                    break;
+                  }
+                }
+              }
+              if (_match) {
+                return res.status(409).json({ duplicateWarning: true, match: _match });
+              }
+            } catch (e: any) {
+              console.warn('[DUP-CHECK] falha (segue sem aviso):', e?.message);
+            }
+          }
+
           const result = await autoSendToBillingPipeline(card, user?.email || 'system', { scheduledBillingDate });
           if (result) {
-            return res.json({ 
-              success: true, 
+            // Registra a justificativa da duplicação no histórico do pedido (campo notes).
+            if (_dupJust) {
+              try {
+                const _who = (`${user?.firstName || ''} ${user?.lastName || ''}`.trim()) || user?.email || 'Usuário';
+                const _p = paredeBR(agora());
+                const _dt = `${_p.slice(8, 10)}/${_p.slice(5, 7)}/${_p.slice(0, 4)} ${_p.slice(11, 16)}`;
+                const _entry = `[${_dt} — ${_who}] DUPLICAÇÃO INCLUÍDA apesar de pedido semelhante no pipeline (mesmo cliente/valor/produtos, últimos 15 dias). Justificativa: ${_dupJust}`;
+                const _it = await storage.getBillingPipelineItem(result.id);
+                const _newNotes = (_it?.notes ? String(_it.notes) + '\n' : '') + _entry;
+                await storage.updateBillingPipelineItem(result.id, { notes: _newNotes } as any);
+              } catch (e: any) { console.warn('[DUP-OVERRIDE] falha ao registrar justificativa (segue):', e?.message); }
+            }
+            return res.json({
+              success: true,
               message: 'Pedido enviado para faturamento interno',
               internalBilling: true,
               pipelineItemId: result.id
