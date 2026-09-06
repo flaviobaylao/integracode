@@ -20,7 +20,7 @@ import {
 import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDowsCycle } from './repescagem-cycles';
 import { whatsappService } from './whatsapp-service';
 import { storage } from './storage';
-import { logCustomerChanges } from './customerAudit';
+import { logCustomerChanges, logCustomerNote } from './customerAudit';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -1357,23 +1357,33 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
         assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
         action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
       });
-      // Item 1 (revisado): a migração de carteira só é SUGERIDA quando o MESMO vendedor teve
-      // PEDIDO IMPLANTADO (venda) para o cliente 2x em repescagem — não basta registro de
-      // atendimento. Conta apenas alocações fechadas por pedido (closed_by_order = true).
-      // Continua sendo SUGESTÃO pendente (admin aprova/rejeita); nada é gravado sem clique.
+      // MIGRAÇÃO AUTOMÁTICA DE CARTEIRA (repescagem): se o cliente caiu em repescagem em
+      // 3+ CICLOS (last_red_date distintos) com o MESMO habilitado e este fez venda (pedido
+      // implantado) para o cliente, a carteira migra IMEDIATAMENTE para o habilitado e fica
+      // registrado no histórico do cliente. Sem fluxo de sugestão/aprovação.
       const migSeller = a.assignedUserId;
-      if (migSeller && hadOrder) {
-        const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller} AND status = 'completed' AND closed_by_order = true`);
-        const nDone = Number(((cnt.rows || cnt)[0] as any)?.n || 0);
-        if (nDone >= 2) {
+      if (migSeller && hadOrder && !REPESCAGEM_EXCLUDED_USER_IDS.has(migSeller)) {
+        const cyc: any = await db.execute(sql`SELECT COUNT(DISTINCT last_red_date)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller}`);
+        const nCiclos = Number(((cyc.rows || cyc)[0] as any)?.n || 0);
+        if (nCiclos >= 3) {
           const cur: any = await db.execute(sql`SELECT seller_id FROM customers WHERE id = ${a.customerId} LIMIT 1`);
           const curSeller = ((cur.rows || cur)[0] as any)?.seller_id || null;
           if (curSeller !== migSeller) {
-            await ensureCarteiraMigrations();
-            // Cria sugestão pendente só se ainda não existir uma pendente igual (dedup).
-            await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia, status)
-              SELECT ${a.customerId}, ${curSeller}, ${migSeller}, ${'2 pedidos implantados em repescagem pelo mesmo vendedor'}, 'pendente'
-              WHERE NOT EXISTS (SELECT 1 FROM carteira_migrations m WHERE m.customer_id = ${a.customerId} AND m.to_seller_id = ${migSeller} AND m.status = 'pendente')`);
+            try {
+              const nameOf = async (uid: string | null): Promise<string> => {
+                if (!uid) return '—';
+                const u: any = await db.execute(sql`SELECT first_name, last_name FROM users WHERE id = ${uid} LIMIT 1`);
+                const r = (u.rows || u)[0]; return r ? (`${r.first_name || ''} ${r.last_name || ''}`.trim() || uid) : uid;
+              };
+              const fromName = await nameOf(curSeller);
+              const toName = await nameOf(migSeller);
+              await storage.updateCustomer(a.customerId, { sellerId: migSeller } as any);
+              await ensureCarteiraMigrations();
+              await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia, status, decided_by, decided_at)
+                VALUES (${a.customerId}, ${curSeller}, ${migSeller}, ${`Migração automática: ${nCiclos} ciclos em repescagem + venda`}, 'aprovada', 'sistema', now())`);
+              await logCustomerNote({ customerId: a.customerId, label: 'Migração de carteira (repescagem)', text: `Cliente migrado automaticamente de ${fromName} para ${toName} após ${nCiclos} ciclos em repescagem com venda do atendente.`, actor: { id: 'system', name: 'Sistema (Repescagem)' } as any, source: 'repescagem' });
+              await db.insert(repescagemAssignmentHistory).values({ assignmentId: a.id, customerId: a.customerId, fromUserId: curSeller, toUserId: migSeller, action: 'reassigned', reason: `Migração automática de carteira (${nCiclos} ciclos + venda)` });
+            } catch (e) { console.error('[repescagem][migracao-auto]', (e as any)?.message); }
           }
         }
       }
