@@ -91,6 +91,26 @@ function formatPeriodicity(periodicity: string | null | undefined): string {
   return periodicityMap[periodicity] || periodicity;
 }
 
+// 🟢🔴 Bolinhas de "Efetividade em vendas" (mesma régua do Resumo de Visitas):
+// um ponto por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1). Verde = houve faturamento
+// no ciclo; vermelho = sem faturamento. Fica na MESMA linha do nome do cliente.
+type SalesCycle = { anchor?: string; start?: string; end?: string; green: boolean; isPast?: boolean };
+function SalesCycleDots({ cycles }: { cycles?: SalesCycle[] | null }) {
+  if (!cycles || cycles.length === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-[3px] align-middle" title="Efetividade em vendas por ciclo: verde = houve venda; vermelho = sem venda">
+      {cycles.map((cy, ci) => (
+        <span
+          key={ci}
+          title={`${cy.start || ''}${cy.start && cy.end ? ' a ' : ''}${cy.end || ''}: ${cy.green ? 'houve venda' : 'sem venda'}`}
+          className="inline-block rounded-full"
+          style={{ width: 10, height: 10, background: cy.green ? '#22c55e' : '#ef4444' }}
+        />
+      ))}
+    </span>
+  );
+}
+
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -327,6 +347,28 @@ export default function RotaDoDia() {
     enabled: !!routeId && !!selectedDate,
     staleTime: 60000, // Cache por 1 minuto
   });
+
+  // 🟢🔴 Efetividade em vendas (bolinhas por ciclo) — reaproveita a mesma fonte do
+  // Resumo de Visitas (/api/visit-summary), que já calcula os ciclos por cliente a
+  // partir dos faturamentos (~130 dias). Buscamos só a data selecionada (janela de
+  // visitas mínima) — os ciclos vêm completos de qualquer forma. Mapa customerId → ciclos.
+  const { data: cyclesSummary } = useQuery<{ rows?: Array<{ customerId: string; cycles?: SalesCycle[] }> }>({
+    queryKey: ['/api/visit-summary', 'rota-do-dia-cycles', selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/visit-summary?startDate=${selectedDate}&endDate=${selectedDate}`, { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) return { rows: [] };
+      return res.json();
+    },
+    enabled: !!selectedDate,
+    staleTime: 5 * 60 * 1000, // ciclos mudam devagar — cache 5 min
+  });
+  const cyclesByCustomer = useMemo(() => {
+    const m = new Map<string, SalesCycle[]>();
+    for (const r of (cyclesSummary?.rows || [])) {
+      if (r && r.customerId && Array.isArray(r.cycles) && r.cycles.length > 0) m.set(String(r.customerId), r.cycles);
+    }
+    return m;
+  }, [cyclesSummary]);
 
   // Query para contagem de atendimentos virtuais por vendedor na data
   interface VirtualServiceData {
@@ -2302,6 +2344,7 @@ export default function RotaDoDia() {
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
                                 {visit.customerName}
                               </p>
+                              {!isLead && <SalesCycleDots cycles={cyclesByCustomer.get(String(visit.customerId))} />}
                               {isExpanded && (<>
                               <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                               {(() => {
@@ -2716,6 +2759,7 @@ export default function RotaDoDia() {
                                         <Copy className="h-3 w-3" />
                                       </button>
                                     </p>
+                                    <SalesCycleDots cycles={cyclesByCustomer.get(String(visit.customerId))} />
                                     {vExpanded && (<>
                                     <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                                     {/* Mostrar pedidos do dia */}
