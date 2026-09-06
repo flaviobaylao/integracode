@@ -12,6 +12,7 @@
 //  - (06/set) "permita anexar arquivos": qualquer arquivo (manual, NF de compra,
 //    laudo, planilha, PDF) na máquina ou numa manutenção — tabela machine_files,
 //    até 25MB, rotas /api/industria/maquinas/:id/arquivos e /maquinas/arquivos/:id.
+//    Idem nos itens do checklist: production_checklist_files, /checklist/itens/:id/arquivos.
 //
 // Mesmo desenho de company-documents-routes.ts / anexos de MP: binário em
 // base64 numa coluna própria, listagem NUNCA devolve a coluna data, arquivo
@@ -63,6 +64,14 @@ export function ensureFabricaSchema(): Promise<void> {
         created_by varchar, created_by_name varchar,
         created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
       await run(`CREATE INDEX IF NOT EXISTS idx_pci_checklist ON production_checklist_items (checklist_id, position)`).catch(() => {});
+      // Arquivos de qualquer tipo anexados a um item do checklist (laudo, planilha, PDF...) — além da foto carimbada
+      await run(`CREATE TABLE IF NOT EXISTS production_checklist_files (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid()::varchar,
+        item_id varchar NOT NULL,
+        description text,
+        file_name text NOT NULL, mimetype text, file_size integer NOT NULL DEFAULT 0, data text,
+        created_by varchar, created_by_name varchar, created_at timestamptz DEFAULT now())`);
+      await run(`CREATE INDEX IF NOT EXISTS idx_pcf_item ON production_checklist_files (item_id, created_at)`).catch(() => {});
 
       await run(`CREATE TABLE IF NOT EXISTS machines (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::varchar,
@@ -148,6 +157,19 @@ function servirBinario(res: any, row: any, campo = "data", nomeCampo = "file_nam
   res.end(buf);
 }
 
+// Qualquer tipo: PDF/imagem inline, o resto attachment; ?download=1 força attachment. Nome UTF-8 (filename*).
+function servirArquivo(res: any, row: any, forcarDownload = false) {
+  if (!row || !row.data) return res.status(404).json({ message: "Arquivo não encontrado" });
+  const buf = Buffer.from(String(row.data), "base64");
+  const inline = /^(image\/|application\/pdf)/.test(String(row.mimetype || "")) && !forcarDownload;
+  res.setHeader("Content-Type", String(row.mimetype || "application/octet-stream"));
+  res.setHeader("Content-Length", String(buf.length));
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(String(row.file_name || "arquivo"))}`);
+  res.setHeader("Cache-Control", "private, max-age=600");
+  res.end(buf);
+}
+const mapArquivoItem = (f: any) => ({ id: f.id, itemId: f.item_id, description: f.description || "", fileName: f.file_name, mimetype: f.mimetype, fileSize: Number(f.file_size || 0), createdBy: f.created_by_name, createdAt: f.created_at });
+
 const mapItem = (r: any) => ({
   id: r.id, checklistId: r.checklist_id, position: Number(r.position || 0), description: r.description,
   status: r.status, notes: r.notes || "",
@@ -193,7 +215,10 @@ export function registerFabricaRoutes(app: Express) {
       const ck = (c.rows || [])[0];
       if (!ck) return res.json({ checklist: null, items: [] });
       const it: any = await db.execute(sql`SELECT id, checklist_id, position, description, status, notes, checked_at, checked_by, checked_by_name, photo_name, photo_taken_at, photo_by, photo_by_name, created_at, created_by, created_by_name, updated_at FROM production_checklist_items WHERE checklist_id = ${ck.id} ORDER BY position, created_at`);
-      res.json({ checklist: { id: ck.id, date: toISO(ck.checklist_date), notes: ck.notes || "", createdBy: ck.created_by_name, createdAt: ck.created_at }, items: (it.rows || []).map(mapItem) });
+      const fs: any = await db.execute(sql`SELECT f.id, f.item_id, f.description, f.file_name, f.mimetype, f.file_size, f.created_by_name, f.created_at FROM production_checklist_files f JOIN production_checklist_items i ON i.id = f.item_id WHERE i.checklist_id = ${ck.id} ORDER BY f.created_at`);
+      const porItem: Record<string, any[]> = {};
+      for (const f of (fs.rows || [])) (porItem[f.item_id] ||= []).push(mapArquivoItem(f));
+      res.json({ checklist: { id: ck.id, date: toISO(ck.checklist_date), notes: ck.notes || "", createdBy: ck.created_by_name, createdAt: ck.created_at }, items: (it.rows || []).map((r: any) => ({ ...mapItem(r), arquivos: porItem[r.id] || [] })) });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
@@ -337,9 +362,39 @@ export function registerFabricaRoutes(app: Express) {
     try {
       await ensureFabricaSchema();
       if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" });
+      await db.execute(sql`DELETE FROM production_checklist_files WHERE item_id = ${req.params.id}`);
       await db.execute(sql`DELETE FROM production_checklist_items WHERE id = ${req.params.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
+  // Arquivos (qualquer tipo, até 25MB) de um item do checklist
+  app.post("/api/industria/checklist/itens/:id/arquivos", multerArquivo, async (req: any, res) => {
+    try {
+      await ensureFabricaSchema();
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ message: "Envie o arquivo no campo 'arquivo'" });
+      const it: any = await db.execute(sql`SELECT id FROM production_checklist_items WHERE id = ${req.params.id}`);
+      if (!(it.rows || [])[0]) return res.status(404).json({ message: "Item não encontrado" });
+      const u = quem(req);
+      const nome = Buffer.from(file.originalname || "arquivo", "latin1").toString("utf8").slice(0, 200);
+      const r: any = await db.execute(sql`
+        INSERT INTO production_checklist_files (item_id, description, file_name, mimetype, file_size, data, created_by, created_by_name)
+        VALUES (${req.params.id}, ${str(req.body?.description, 300)}, ${nome}, ${file.mimetype || "application/octet-stream"}, ${file.size}, ${file.buffer.toString("base64")}, ${u.id}, ${u.nome})
+        RETURNING id, item_id, description, file_name, mimetype, file_size, created_by_name, created_at`);
+      res.status(201).json({ ok: true, arquivo: mapArquivoItem((r.rows || [])[0]) });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.get("/api/industria/checklist/arquivos/:id/download", async (req: any, res) => {
+    try {
+      await ensureFabricaSchema();
+      const r: any = await db.execute(sql`SELECT file_name, mimetype, data FROM production_checklist_files WHERE id = ${req.params.id}`);
+      servirArquivo(res, (r.rows || [])[0], req.query.download === "1");
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+  app.delete("/api/industria/checklist/arquivos/:id", async (req: any, res) => {
+    try { await ensureFabricaSchema(); if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" }); await db.execute(sql`DELETE FROM production_checklist_files WHERE id = ${req.params.id}`); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
   // ============================= MÁQUINAS ==============================
@@ -550,15 +605,7 @@ export function registerFabricaRoutes(app: Express) {
     try {
       await ensureFabricaSchema();
       const r: any = await db.execute(sql`SELECT file_name, mimetype, data FROM machine_files WHERE id = ${req.params.id}`);
-      const row = (r.rows || [])[0];
-      if (!row || !row.data) return res.status(404).json({ message: "Arquivo não encontrado" });
-      const buf = Buffer.from(String(row.data), "base64");
-      const inline = /^(image\/|application\/pdf)/.test(String(row.mimetype || "")) && req.query.download !== "1";
-      res.setHeader("Content-Type", String(row.mimetype || "application/octet-stream"));
-      res.setHeader("Content-Length", String(buf.length));
-      res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(String(row.file_name || "arquivo"))}`);
-      res.setHeader("Cache-Control", "private, max-age=600");
-      res.end(buf);
+      servirArquivo(res, (r.rows || [])[0], req.query.download === "1");
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
   app.patch("/api/industria/maquinas/arquivos/:id", async (req: any, res) => {
