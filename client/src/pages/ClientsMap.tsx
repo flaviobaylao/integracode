@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import type { Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
-import { MultiSelect, multiMatch } from "@/lib/tableTools";
+import { MultiSelect, SEM_VENDEDOR } from "@/lib/tableTools";
 
 // Cores dos pins baseadas no dia da semana
 const WEEKDAY_COLORS = {
@@ -100,17 +100,18 @@ function getWeekdayName(weekdays: string): string {
 // Situações do mapa (múltipla escolha). Cada uma vem de uma consulta própria do
 // /api/customers/map-data e pode aparecer no mapa junto com as outras.
 const SITUACOES: Array<{ label: string; param: string; sit: string; color: string }> = [
-  { label: 'Ativos',     param: 'ativos',     sit: 'ativo',     color: '#16a34a' },
+  // Ativos NÃO tem cor própria: seus pins são coloridos pelo DIA DA SEMANA (legenda abaixo).
+  { label: 'Ativos',     param: 'ativos',     sit: 'ativo',     color: '' },
   { label: 'Inativados', param: 'inativados', sit: 'inativado', color: '#9ca3af' },
   { label: 'Perdidos',   param: 'perdidos',   sit: 'perdido',   color: '#4b5563' },
-  { label: 'Leads',      param: 'leads',      sit: 'lead',      color: '#eda100' },
+  { label: 'Leads',      param: 'leads',      sit: 'lead',      color: '#7b4b2a' },
 ];
 const SITUACAO_OPTIONS = SITUACOES.map((x) => x.label);
 const DIAS_OPTIONS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 const PERIODICIDADE_OPTIONS = ['Semanal', 'Quinzenal', 'Mensal'];
 
-// Cor do pin por situação: inativado = cinza, perdido = cinza escuro, lead = âmbar; ativo = cor do dia.
-const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563', lead: '#eda100' };
+// Cor do pin por situação: inativado = cinza, perdido = cinza escuro, lead = marrom; ativo = cor do dia.
+const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563', lead: '#7b4b2a' };
 function pinColorFor(c: any): string {
   const s = c?.situacao;
   if (s && SITUACAO_COLORS[s]) return SITUACAO_COLORS[s];
@@ -206,6 +207,15 @@ export default function ClientsMap() {
     enabled: !!canAccess,
   });
 
+  // Lista de vendedores do FILTRO: vem dos cadastros de clientes (endpoint próprio), não dos
+  // pontos carregados — assim as opções não mudam quando se liga/desliga uma situação.
+  const { data: mapSellers } = useQuery<{ vendedores: { nome: string; qtd: number }[]; semVendedor: number }>({
+    queryKey: ['/api/customers/map-sellers'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-sellers'),
+    enabled: !!canAccess,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Clientes com coordenadas válidas (o backend já devolve o conjunto certo por situação).
   let activeCustomersWithCoords = customers.filter(
     (customer) =>
@@ -231,10 +241,12 @@ export default function ClientsMap() {
     );
   }
 
-  // Aplicar filtro de vendedor (múltipla escolha; vazio = todos)
+  // Aplicar filtro de vendedor (múltipla escolha; vazio = todos).
+  // Cadastro sem vendedor entra como "Sem Vendedor", para dar para achá-lo e corrigir.
+  const nomeDoVendedor = (c: any) => c?.sellerName || SEM_VENDEDOR;
   if (sellers.length > 0) {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => multiMatch(sellers, (c as any).sellerName || '')
+      (c) => sellers.includes(nomeDoVendedor(c))
     );
   }
 
@@ -252,16 +264,18 @@ export default function ClientsMap() {
     const n = `${u.firstName || ''} ${u.lastName || ''}`.trim();
     if (n && !(n in sellerTypeByName)) sellerTypeByName[n] = u.sellerType || (u.role === 'telemarketing' ? 'telemarketing' : '');
   }
+  // Opções do filtro: todos os vendedores que constam em cadastro de cliente/lead (lista fixa),
+  // com "Sem Vendedor" no fim quando há cadastro sem vendedor atribuído.
+  const nomesDoCadastro = (mapSellers?.vendedores || []).map((v) => v.nome);
   const uniqueSellers = sortSellerNamesByType(
-    Array.from(
-      new Set(
-        customers
-          .filter((c) => c.latitude && c.longitude && Number(c.latitude) !== 0 && Number(c.longitude) !== 0 && (c as any).sellerName)
-          .map((c) => (c as any).sellerName)
-      )
-    ) as string[],
+    nomesDoCadastro.length
+      ? nomesDoCadastro
+      : (Array.from(new Set(customers.map((c) => (c as any).sellerName).filter(Boolean))) as string[]),
     sellerTypeByName,
   );
+  const opcoesVendedor = (mapSellers?.semVendedor || 0) > 0 || activeCustomersWithCoords.some((c) => !(c as any).sellerName)
+    ? [...uniqueSellers, SEM_VENDEDOR]
+    : uniqueSellers;
 
   // Agrupar por dia da semana (ANTES do filtro de dia, para a legenda). Conta só os ATIVOS,
   // que são os pintados por dia — as demais situações têm cor própria.
@@ -373,7 +387,7 @@ export default function ClientsMap() {
               <div className="pt-[21px]">
                 <MultiSelect
                   label="Vendedor"
-                  options={uniqueSellers}
+                  options={opcoesVendedor}
                   selected={sellers}
                   onChange={setSellers}
                   testId="select-seller-map"
@@ -428,16 +442,27 @@ export default function ClientsMap() {
         <CardContent className="space-y-3">
           {/* Situações visíveis (uma cor por situação; ativos são coloridos pelo dia) */}
           <div className="flex flex-wrap gap-3 items-center">
-            {SITUACOES.filter((x) => situacaoOn(x.label)).map((x) => (
-              <Badge
-                key={x.param}
-                className="flex items-center gap-2 px-3 py-1.5"
-                style={{ backgroundColor: x.color, color: 'white' }}
-              >
-                <div className="w-3 h-3 rounded-full bg-white"></div>
-                {x.label} ({activeCustomersWithCoords.filter((c) => ((c as any).situacao || 'ativo') === x.sit).length})
-              </Badge>
-            ))}
+            {SITUACOES.filter((x) => situacaoOn(x.label)).map((x) => {
+              const qtd = activeCustomersWithCoords.filter((c) => ((c as any).situacao || 'ativo') === x.sit).length;
+              // Sem cor própria (Ativos) = badge neutro, porque a cor do ponto é a do dia da semana.
+              if (!x.color) {
+                return (
+                  <Badge key={x.param} variant="outline" className="flex items-center gap-2 px-3 py-1.5">
+                    {x.label} ({qtd})
+                  </Badge>
+                );
+              }
+              return (
+                <Badge
+                  key={x.param}
+                  className="flex items-center gap-2 px-3 py-1.5"
+                  style={{ backgroundColor: x.color, color: 'white' }}
+                >
+                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  {x.label} ({qtd})
+                </Badge>
+              );
+            })}
           </div>
           {/* Dias de visita: vale para os clientes ATIVOS, que são pintados pelo dia */}
           {situacaoOn('Ativos') && (
