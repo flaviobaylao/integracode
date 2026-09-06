@@ -360,7 +360,12 @@ export default function RedeClientes() {
                             <TableHead>Cidade</TableHead>
                             <TableHead>Bairro</TableHead>
                             <TableHead className="w-24">Status</TableHead>
-                            <TableHead className="w-56 whitespace-nowrap">Papel na NF-e</TableHead>
+                            <TableHead className="w-56 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                Papel na NF-e
+                                <AjudaPapelNFe />
+                              </span>
+                            </TableHead>
                             <TableHead className="w-32 whitespace-nowrap">Data da conquista</TableHead>
                             <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnoAnt)}</TableHead>
                             <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnt)}</TableHead>
@@ -699,6 +704,68 @@ export function SeloRedeDoCliente(props: { customerId?: string | null; className
         </p>
         <p className="text-muted-foreground text-xs">
           O faturamento e o débito consolidados ficam em <b>Gestão de Carteiras → Rede de Cliente</b>.
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * O "i" ao lado de "Papel na NF-e". Explica em ACAO -> RESULTADO, porque quem
+ * marca o papel precisa saber o que muda no faturamento ANTES de clicar — a
+ * marcacao redireciona nota e boleto para outro CNPJ.
+ */
+function AjudaPapelNFe() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Como funciona o papel na NF-e"
+          className="inline-flex items-center justify-center h-4 w-4 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition"
+          data-testid="ajuda-papel-nfe"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-96 text-sm space-y-3">
+        <div>
+          <p className="font-semibold">Papel na NF-e</p>
+          <p className="text-xs text-muted-foreground">
+            Use quando a rede fatura tudo num CNPJ só, mas recebe a mercadoria em cada unidade.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="rounded border p-2">
+            <p className="text-xs font-semibold">1. Marcar <span className="text-emerald-700">Destinatário</span></p>
+            <p className="text-xs text-muted-foreground">
+              No CNPJ que recebe a nota e paga — normalmente a matriz. Só um por rede;
+              marcar outro desmarca o anterior.
+            </p>
+            <p className="text-xs mt-1">
+              <b>Resultado:</b> a NF-e e o boleto de todos os locais de entrega passam a sair
+              nesse CNPJ, com a condição de pagamento dele.
+            </p>
+          </div>
+
+          <div className="rounded border p-2">
+            <p className="text-xs font-semibold">2. Marcar <span className="text-emerald-700">Local de entrega</span></p>
+            <p className="text-xs text-muted-foreground">
+              Em cada unidade que recebe mercadoria. Ela mantém cadastro, rota e pedidos próprios.
+            </p>
+            <p className="text-xs mt-1">
+              <b>Resultado:</b> o pedido continua sendo faturado individualmente, no seu tempo, mas
+              a nota sai no CNPJ do destinatário e o endereço da unidade vai no quadro
+              <b> LOCAL DE ENTREGA</b> da DANFE (grupo <code>&lt;entrega&gt;</code> do XML), que é
+              onde o entregador descarrega e colhe a assinatura.
+            </p>
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground border-t pt-2">
+          Clicar de novo no mesmo botão desmarca. Sem nenhuma marcação — e enquanto a rede não
+          tiver um destinatário — cada CNPJ fatura no próprio nome, exatamente como antes.
         </p>
       </PopoverContent>
     </Popover>
