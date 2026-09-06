@@ -81,6 +81,7 @@ import PurchaseRadar from "@/pages/PurchaseRadar";
 import RelatoriosIA from "@/pages/RelatoriosIA";
 import RelatoriosGraficos from "@/pages/RelatoriosGraficos";
 import GestaoCarteiras from "@/pages/GestaoCarteiras";
+import GestaoDebitoVendas from "@/pages/GestaoDebitoVendas";
 import PagamentoClientes from "@/pages/PagamentoClientes";
 import DashboardFinanceiro from "@/pages/DashboardFinanceiro";
 import AuditoriaFinanceira from "@/pages/AuditoriaFinanceira";
@@ -329,6 +330,7 @@ function Router() {
           <Route path="/billing-pipeline" component={BillingPipeline} />
           <Route path="/fluxo-entregas" component={FluxoEntregas} />
           <Route path="/gestao-produtos" component={GestaoProdutos} />
+          <Route path="/gestao-debito-vendas" component={GestaoDebitoVendas} />
           <Route path="/financeiro" component={Financial} />
           <Route path="/industria" component={Industry} />
           <Route path="/relatorios" component={Reports} />
