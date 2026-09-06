@@ -1810,6 +1810,225 @@ export default function RotaDoDia() {
             </Card>
           )}
 
+          {/* Repescagem2 (Fase 3): clientes de repescagem sorteados para o dia.
+              Box BEGE (distinto do amarelo/ouro de lead) + tag "Repescagem". Paradas
+              travadas: ficam fora da rota otimizada, então não são movidas/removidas
+              pela otimização nem pela auto-regeneração. Só admin pode remover. */}
+          {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
+            <Card className="border-[#d6c7a1]">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
+                    Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
+                  </CardTitle>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={expandAllRep}
+                      className="flex items-center gap-1"
+                      data-testid="button-expand-all-repescagem"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                      Expandir Tudo
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={collapseAllRep}
+                      className="flex items-center gap-1"
+                      data-testid="button-collapse-all-repescagem"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                      Recolher Tudo
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {filteredRepescagem.map((r: any) => {
+                  const repKey = String(r.assignmentId);
+                  const repIsExpanded = repExpanded.has(repKey);
+                  return (
+                  <div
+                    key={r.assignmentId}
+                    className={`flex items-start justify-between p-2 rounded-lg border ${
+                      crEfetuadaByKey(crKey('repescagem', String(r.assignmentId)))
+                        ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
+                        : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
+                          // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
+                          // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
+                          // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
+                          ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                          : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
+                    }`}
+                    data-testid={`card-repescagem-${r.customerId}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                        <span className="font-medium truncate">{r.customerName}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); const n = r.customerName || ''; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(n); toast({ title: 'Nome copiado', description: n }); } }}
+                          title="Copiar nome fantasia"
+                          aria-label="Copiar nome fantasia"
+                          className="shrink-0 text-gray-400 opacity-50 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                          data-testid={`copy-fantasy-${r.customerId}`}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                        {r.isOwnerCopy && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#8a6d3b] text-white" title="Cliente da sua carteira em repescagem com outro atendente">
+                            Em repescagem{r.assignedToName ? ` · ${r.assignedToName}` : ''}
+                          </span>
+                        )}
+                        {repIsExpanded && (<>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                          {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
+                        </span>
+                        {typeof r.repescagemCount === 'number' && r.repescagemCount > 0 && (
+                          <span
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#9a3b3b] text-white"
+                            title={`Este cliente caiu em repescagem ${r.repescagemCount}x nos últimos ${r.repescagemWindowMonths} meses`}
+                            data-testid={`repescagem-count-${r.customerId}`}
+                          >
+                            {r.repescagemCount}x em repescagem ({r.repescagemWindowMonths}m)
+                          </span>
+                        )}
+                        {r.customerId && customerInfo?.orders?.[r.customerId]?.map((order: any, orderIdx: number) => (
+                          <Badge key={orderIdx} variant="default" className="text-xs bg-green-600 hover:bg-green-700">
+                            <ShoppingCart className="h-3 w-3 mr-1" />
+                            {order.omieOrderId || order.cardNumber || 'Pedido'}
+                            {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
+                          </Badge>
+                        ))}
+                        {r.customerId && customerInfo?.trocasBloqueadas?.[r.customerId] && (
+                          <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`repescagem-troca-bloqueada-badge-${r.customerId}`}>
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Troca bloqueada
+                          </Badge>
+                        )}
+                        {r.customerId && customerInfo?.debts?.[r.customerId] && customerInfo.debts[r.customerId] > 0 && (
+                          <Badge variant="destructive" className="text-xs">
+                            <DollarSign className="h-3 w-3 mr-1" />
+                            R$ {customerInfo.debts[r.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </Badge>
+                        )}
+                        </>)}
+                      </div>
+                      {repIsExpanded && (<>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
+                        <MapPin className="h-3 w-3" />
+                        {r.address || 'Endereço não informado'}
+                      </p>
+                      {(customerInfo?.phones?.[r.customerId] || (r as any).phone) && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-1">
+                          <Phone className="h-3 w-3" />
+                          {customerInfo?.phones?.[r.customerId] || (r as any).phone}
+                        </p>
+                      )}
+                      {r.customerId && (
+                        <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
+                          🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
+                          {' • '}
+                          🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
+                          {' • '}
+                          💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </p>
+                      )}
+                      {((r.weekdays && r.weekdays.length) || r.visitPeriodicity) && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-1 font-medium">
+                          <Calendar className="h-3 w-3" />
+                          {formatWeekdaysLocal(r.weekdays)}
+                          {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
+                          {formatPeriodicity(r.visitPeriodicity)}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
+                      </p>
+                      </>)}
+                    </div>
+                    <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
+                      {/* Botao Expandir/Recolher card */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        onClick={(e) => { e.stopPropagation(); toggleRepCard(repKey); }}
+                        title={repIsExpanded ? 'Recolher' : 'Expandir'}
+                        aria-label={repIsExpanded ? 'Recolher' : 'Expandir'}
+                        data-testid={`toggle-repescagem-${r.customerId || r.assignmentId}`}
+                      >
+                        {repIsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                      {/* Botões só para repescagem que caiu no telemarketing */}
+                      {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
+                          onClick={(e) => { e.stopPropagation(); openWhatsappCentral(r.customerId, r.phone); }}
+                          title="Abrir WhatsApp na Central de Atendimento"
+                          data-testid={`button-repescagem-central-${r.customerId}`}
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.customerId && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+                          onClick={(e) => { e.stopPropagation(); setVirtualServiceCustomer({ id: r.customerId, name: r.customerName }); }}
+                          title="Registrar Pedido/Atendimento"
+                          data-testid={`button-repescagem-registro-${r.customerId}`}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.latitude && r.longitude && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                          onClick={(e) => { e.stopPropagation(); window.open(`https://waze.com/ul?ll=${r.latitude},${r.longitude}&navigate=yes`, '_blank'); }}
+                          title="Abrir no Waze"
+                          data-testid={`button-repescagem-waze-${r.customerId}`}
+                        >
+                          <Navigation className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Remover ${r.customerName} da repescagem de hoje? O cliente volta para o bolo (novo sorteio).`)) {
+                              returnRepescagemMutation.mutate(r.assignmentId);
+                            }
+                          }}
+                          disabled={returnRepescagemMutation.isPending}
+                          title="Remover da repescagem (volta ao bolo)"
+                          data-testid={`button-repescagem-remove-${r.customerId}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {/* Solicitar Alteração REMOVIDO para Repescagem — somente clientes ativos têm o botão. */}
+                    </div>
+                  </div>
+                  );
+                })}
+                {filteredRepescagem.length === 0 && repescagemOverlay.length > 0 && (
+                  <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400" data-testid="repescagem-empty">
+                    Nenhum cliente de repescagem corresponde à busca.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2810,219 +3029,6 @@ export default function RotaDoDia() {
             </CardContent>
           </Card>
 
-          {/* Repescagem2 (Fase 3): clientes de repescagem sorteados para o dia.
-              Box BEGE (distinto do amarelo/ouro de lead) + tag "Repescagem". Paradas
-              travadas: ficam fora da rota otimizada, então não são movidas/removidas
-              pela otimização nem pela auto-regeneração. Só admin pode remover. */}
-          {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
-            <Card className="border-[#d6c7a1]">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
-                    Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
-                  </CardTitle>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={expandAllRep}
-                      className="flex items-center gap-1"
-                      data-testid="button-expand-all-repescagem"
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                      Expandir Tudo
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={collapseAllRep}
-                      className="flex items-center gap-1"
-                      data-testid="button-collapse-all-repescagem"
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                      Recolher Tudo
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {filteredRepescagem.map((r: any) => {
-                  const repKey = String(r.assignmentId);
-                  const repIsExpanded = repExpanded.has(repKey);
-                  return (
-                  <div
-                    key={r.assignmentId}
-                    className={`flex items-start justify-between p-2 rounded-lg border ${
-                      crEfetuadaByKey(crKey('repescagem', String(r.assignmentId)))
-                        ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
-                        : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
-                          // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
-                          // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
-                          // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
-                          ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
-                          : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
-                    }`}
-                    data-testid={`card-repescagem-${r.customerId}`}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                        <span className="font-medium truncate">{r.customerName}</span>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); const n = r.customerName || ''; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(n); toast({ title: 'Nome copiado', description: n }); } }}
-                          title="Copiar nome fantasia"
-                          aria-label="Copiar nome fantasia"
-                          className="shrink-0 text-gray-400 opacity-50 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
-                          data-testid={`copy-fantasy-${r.customerId}`}
-                        >
-                          <Copy className="h-3 w-3" />
-                        </button>
-                        {repIsExpanded && (<>
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                          {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
-                        </span>
-                        {typeof r.repescagemCount === 'number' && r.repescagemCount > 0 && (
-                          <span
-                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#9a3b3b] text-white"
-                            title={`Este cliente caiu em repescagem ${r.repescagemCount}x nos últimos ${r.repescagemWindowMonths} meses`}
-                            data-testid={`repescagem-count-${r.customerId}`}
-                          >
-                            {r.repescagemCount}x em repescagem ({r.repescagemWindowMonths}m)
-                          </span>
-                        )}
-                        {r.customerId && customerInfo?.orders?.[r.customerId]?.map((order: any, orderIdx: number) => (
-                          <Badge key={orderIdx} variant="default" className="text-xs bg-green-600 hover:bg-green-700">
-                            <ShoppingCart className="h-3 w-3 mr-1" />
-                            {order.omieOrderId || order.cardNumber || 'Pedido'}
-                            {order.saleValue != null && Number(order.saleValue) > 0 ? ` • R$ ${Number(order.saleValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : ''}
-                          </Badge>
-                        ))}
-                        {r.customerId && customerInfo?.trocasBloqueadas?.[r.customerId] && (
-                          <Badge className="text-xs bg-amber-500 hover:bg-amber-600 text-white border-transparent" data-testid={`repescagem-troca-bloqueada-badge-${r.customerId}`}>
-                            <AlertCircle className="h-3 w-3 mr-1" />
-                            Troca bloqueada
-                          </Badge>
-                        )}
-                        {r.customerId && customerInfo?.debts?.[r.customerId] && customerInfo.debts[r.customerId] > 0 && (
-                          <Badge variant="destructive" className="text-xs">
-                            <DollarSign className="h-3 w-3 mr-1" />
-                            R$ {customerInfo.debts[r.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </Badge>
-                        )}
-                        </>)}
-                      </div>
-                      {repIsExpanded && (<>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
-                        <MapPin className="h-3 w-3" />
-                        {r.address || 'Endereço não informado'}
-                      </p>
-                      {(customerInfo?.phones?.[r.customerId] || (r as any).phone) && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-1">
-                          <Phone className="h-3 w-3" />
-                          {customerInfo?.phones?.[r.customerId] || (r as any).phone}
-                        </p>
-                      )}
-                      {r.customerId && (
-                        <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                          🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
-                          {' • '}
-                          🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
-                          {' • '}
-                          💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
-                      )}
-                      {((r.weekdays && r.weekdays.length) || r.visitPeriodicity) && (
-                        <p className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 mb-1 font-medium">
-                          <Calendar className="h-3 w-3" />
-                          {formatWeekdaysLocal(r.weekdays)}
-                          {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
-                          {formatPeriodicity(r.visitPeriodicity)}
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
-                      </p>
-                      </>)}
-                    </div>
-                    <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
-                      {/* Botao Expandir/Recolher card */}
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                        onClick={(e) => { e.stopPropagation(); toggleRepCard(repKey); }}
-                        title={repIsExpanded ? 'Recolher' : 'Expandir'}
-                        aria-label={repIsExpanded ? 'Recolher' : 'Expandir'}
-                        data-testid={`toggle-repescagem-${r.customerId || r.assignmentId}`}
-                      >
-                        {repIsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                      </Button>
-                      {/* Botões só para repescagem que caiu no telemarketing */}
-                      {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
-                        <Button
-                          size="icon" variant="ghost"
-                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
-                          onClick={(e) => { e.stopPropagation(); openWhatsappCentral(r.customerId, r.phone); }}
-                          title="Abrir WhatsApp na Central de Atendimento"
-                          data-testid={`button-repescagem-central-${r.customerId}`}
-                        >
-                          <MessageCircle className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {r.customerId && (
-                        <Button
-                          size="icon" variant="ghost"
-                          className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
-                          onClick={(e) => { e.stopPropagation(); setVirtualServiceCustomer({ id: r.customerId, name: r.customerName }); }}
-                          title="Registrar Pedido/Atendimento"
-                          data-testid={`button-repescagem-registro-${r.customerId}`}
-                        >
-                          <FileText className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {r.latitude && r.longitude && (
-                        <Button
-                          size="icon" variant="ghost"
-                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
-                          onClick={(e) => { e.stopPropagation(); window.open(`https://waze.com/ul?ll=${r.latitude},${r.longitude}&navigate=yes`, '_blank'); }}
-                          title="Abrir no Waze"
-                          data-testid={`button-repescagem-waze-${r.customerId}`}
-                        >
-                          <Navigation className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {isAdmin && (
-                        <Button
-                          size="icon" variant="ghost"
-                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (confirm(`Remover ${r.customerName} da repescagem de hoje? O cliente volta para o bolo (novo sorteio).`)) {
-                              returnRepescagemMutation.mutate(r.assignmentId);
-                            }
-                          }}
-                          disabled={returnRepescagemMutation.isPending}
-                          title="Remover da repescagem (volta ao bolo)"
-                          data-testid={`button-repescagem-remove-${r.customerId}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {/* Solicitar Alteração REMOVIDO para Repescagem — somente clientes ativos têm o botão. */}
-                    </div>
-                  </div>
-                  );
-                })}
-                {filteredRepescagem.length === 0 && repescagemOverlay.length > 0 && (
-                  <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400" data-testid="repescagem-empty">
-                    Nenhum cliente de repescagem corresponde à busca.
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
         </>
       )}
 
