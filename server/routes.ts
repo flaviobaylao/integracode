@@ -1544,7 +1544,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         nomePorId.set(u.id, (fn || ln) ? `${fn} ${ln}`.trim() : (u.email?.split('@')[0] || u.email || 'Desconhecido'));
       }
       // 🔒 Vendedor so ve a propria carteira no mapa: a lista de vendedores dele tem so ele.
-      const soDoVendedor: string | null = req.user?.role === 'vendedor' ? String(req.user.id) : null;
+      // ⚠️ O authenticateUser publica o usuario em req.currentUser (NAO em req.user).
+      const _u: any = (req as any).currentUser || (req as any).user;
+      const soDoVendedor: string | null = _u?.role === 'vendedor' ? String(_u.id) : null;
       const andVend = (col: string) => soDoVendedor ? sql` AND ${sql.raw(col)} = ${soDoVendedor}` : sql``;
       const contagem = new Map<string, number>();
       let semVendedor = 0;
@@ -1596,7 +1598,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // (customers.seller_id / leads.assigned_to = ele). Admin, coordenacao e administrativo
       // continuam vendo o mapa inteiro. O filtro e SERVER-SIDE de proposito: nao adianta esconder
       // na tela se o endpoint devolve a base toda.
-      const soDoVendedor: string | null = req.user?.role === 'vendedor' ? String(req.user.id) : null;
+      // ⚠️ authenticateUser publica o usuario em req.currentUser (NAO em req.user).
+      const _u: any = (req as any).currentUser || (req as any).user;
+      const soDoVendedor: string | null = _u?.role === 'vendedor' ? String(_u.id) : null;
       const andVend = (col: string) => soDoVendedor ? sql` AND ${sql.raw(col)} = ${soDoVendedor}` : sql``;
       const buildSellerMap = async () => {
         const allSellers = await db.select().from(users);
