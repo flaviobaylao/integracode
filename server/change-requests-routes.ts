@@ -559,6 +559,39 @@ export function registerChangeRequestsRoutes(app: Express) {
     res.json({ ok: true, ...(await scanInbox(dryRun, limit)) });
   }));
 
+  // --------------------------------------------------------------------------
+  // POST /api/admin/regularize-orphans — regulariza o PASSIVO de órfãos (cliente
+  // inexistente): cancela sales_cards pendentes, rejeita pedidos bloqueados e faz
+  // soft-cancel (deleted_at) dos recebíveis em aberto órfãos. dryRun por padrão.
+  // Depois disso, só órfãos NOVOS voltam a ser detectados pelo scan do Inbox.
+  // --------------------------------------------------------------------------
+  app.post("/api/admin/regularize-orphans", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    const dryRun = req.body?.dryRun !== false;
+    const naoExiste = (col: string) => sql.raw(`NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = ${col})`);
+    // contagens
+    const cCards = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM sales_cards sc WHERE sc.status IN ('pending','overdue') AND sc.customer_id IS NOT NULL AND ${naoExiste("sc.customer_id")}`))[0]?.n || 0;
+    const cBlocked = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM blocked_orders bo WHERE bo.status='blocked' AND bo.customer_id IS NOT NULL AND ${naoExiste("bo.customer_id")}`))[0]?.n || 0;
+    const cReceb = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM receivables r WHERE r.deleted_at IS NULL AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND r.customer_id IS NOT NULL AND ${naoExiste("r.customer_id")}`))[0]?.n || 0;
+    if (dryRun) return res.json({ ok: true, dryRun: true, salesCards: cCards, pedidosBloqueados: cBlocked, recebiveis: cReceb, total: cCards + cBlocked + cReceb });
+    await db.execute(sql`UPDATE sales_cards SET status='cancelled', updated_at=now() WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL AND ${naoExiste("sales_cards.customer_id")}`);
+    await db.execute(sql`UPDATE blocked_orders SET status='rejected', updated_at=now() WHERE status='blocked' AND customer_id IS NOT NULL AND ${naoExiste("blocked_orders.customer_id")}`);
+    await db.execute(sql`UPDATE receivables SET deleted_at=now() WHERE deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0 AND customer_id IS NOT NULL AND ${naoExiste("receivables.customer_id")}`);
+    res.json({ ok: true, dryRun: false, salesCardsCancelados: cCards, pedidosRejeitados: cBlocked, recebiveisSoftCancel: cReceb, total: cCards + cBlocked + cReceb });
+  }));
+
+  // GET /api/admin/suppliers-sem-documento — lista os clientes marcados como
+  // Fornecedor que estão SEM CNPJ/CPF (não migram por documento). Para revisão.
+  app.get("/api/admin/suppliers-sem-documento", authenticateUser, requireRole(["admin"]), safe(async (_req, res) => {
+    const rows = rowsOf(await db.execute(sql`
+      SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, cnpj, cpf, city, phone, seller_id
+        FROM customers
+       WHERE is_supplier = true
+         AND COALESCE(NULLIF(regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g'),''),
+                      NULLIF(regexp_replace(COALESCE(cpf,''),'[^0-9]','','g'),'')) IS NULL
+       ORDER BY nome`));
+    res.json({ total: rows.length, clientes: rows });
+  }));
+
   // Job periódico. No BOOT roda só em dry-run (apenas conta/loga, não cria) para
   // não inundar o Inbox num deploy; a criação real acontece a cada 6h e no endpoint manual.
   const rodarScan = (dry: boolean) => { scanInbox(dry, 1000).then((r) => console.log(`[inbox-scan] dry=${dry} incompletos=${r.incompletosEncontrados} orfaos=${r.orfaosEncontrados} criados=${r.criadosIncompletos}+${r.criadosOrfaos}`)).catch((e) => console.error("[inbox-scan] erro:", e?.message)); };
