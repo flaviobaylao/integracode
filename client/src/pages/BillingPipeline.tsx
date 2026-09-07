@@ -872,15 +872,37 @@ export default function BillingPipeline() {
     finally { setIsPrintingCompleto(false); }
   }, [selectedItems]);
 
+  // "Faturar em" no agendamento tem de ser FUTURA. Um pedido agendado com data de hoje/passado
+  // é promovido na hora para "Pedido" (regra do backend) e "some" de Agendado — então travamos
+  // aqui na data mínima = amanhã (dia-calendário no fuso de São Paulo).
+  const hojeISObr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const amanhaISObr = (() => {
+    const [y, m, d] = hojeISObr.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+    dt.setUTCDate(dt.getUTCDate() + 1);
+    return dt.toISOString().slice(0, 10);
+  })();
   // Abre o modal p/ capturar a data "Faturar em" antes de mover o pedido para "Agendado".
   const openSchedule = (item: BillingPipelineItem, stage: string) => {
     setScheduleTarget({ item, stage });
-    setScheduleDate(item.scheduledBillingDate ? String(item.scheduledBillingDate).slice(0, 10) : '');
+    // Só pré-preenche a data já gravada se ela for futura; hoje/passado não serve para agendar.
+    const _cur = item.scheduledBillingDate ? String(item.scheduledBillingDate).slice(0, 10) : '';
+    setScheduleDate(_cur && _cur >= amanhaISObr ? _cur : '');
   };
   const closeSchedule = () => { setScheduleTarget(null); setScheduleDate(''); };
   const confirmSchedule = () => {
     if (!scheduleTarget) return;
     if (!scheduleDate) return; // "Faturar em" e obrigatoria para agendar
+    // Trava: data de agendamento tem de ser futura (>= amanhã). Hoje/passado faria o card
+    // pular direto para "Pedido" ao recarregar (promoção automática), parecendo que sumiu.
+    if (scheduleDate < amanhaISObr) {
+      toast({
+        title: 'Data de agendamento inválida',
+        description: 'A data "Faturar em" deve ser futura (a partir de amanhã). Para faturar hoje, deixe o pedido na etapa "Pedido".',
+        variant: 'destructive',
+      });
+      return;
+    }
     moveStageMutation.mutate({ id: scheduleTarget.item.id, stage: scheduleTarget.stage, scheduledBillingDate: scheduleDate });
     closeSchedule();
   };
@@ -1856,11 +1878,12 @@ export default function BillingPipeline() {
           </DialogHeader>
           <div className="py-2">
             <label className="text-[11px] uppercase tracking-wider text-gray-500 font-medium">Faturar em</label>
-            <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" data-testid="input-agendar-faturar-em" />
+            <Input type="date" min={amanhaISObr} value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" data-testid="input-agendar-faturar-em" />
+            <p className="text-[11px] text-gray-500 mt-1">A data deve ser futura (a partir de amanhã). Para faturar hoje, mantenha o pedido na etapa "Pedido".</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeSchedule}>Cancelar</Button>
-            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending || !scheduleDate} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
+            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending || !scheduleDate || scheduleDate < amanhaISObr} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
               {moveStageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Clock className="h-4 w-4 mr-1" />}
               Agendar
             </Button>
