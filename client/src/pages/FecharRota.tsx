@@ -28,10 +28,6 @@ import { useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/compon
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
 type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number };
 
-// Vendedores/TMK cujo fechamento também exige justificar a REPESCAGEM (além de presencial/virtual/lead).
-// Maria E. (omie-vendor-4323360115) e Natalia B. (omie-vendor-4317814615) — telemarketing.
-const REPESCAGEM_FECHA_SELLERS = new Set<string>(["omie-vendor-4323360115", "omie-vendor-4317814615"]);
-
 const MOTIVOS: [string, string][] = [
   ["sem_tempo", "Não deu tempo / rota grande"],
   ["remarcou", "Cliente avisou / remarcou"],
@@ -90,14 +86,18 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (visitOk && !debito) continue;
     out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined });
   }
-  // Repescagem (somente para vendedores habilitados): cada cliente da repescagem não atendido também precisa de justificativa.
+  // Repescagem: cada cliente da repescagem NÃO atendido precisa de justificativa — mas SOMENTE
+  // do VENDEDOR DE CADASTRO (dono da carteira). O atendente habilitado que recebeu o cliente
+  // como repescagem NÃO justifica. Por isso só entram os cards do dono (r.isOwner).
   if (includeRepescagem) {
     for (const r of (Array.isArray(overlay) ? overlay : [])) {
       const cid = r?.customerId ? String(r.customerId) : "";
       if (!cid || out.some((o) => o.customerId === cid)) continue;
+      // Só o vendedor de cadastro (dono) justifica; o habilitado não.
+      if (!r?.isOwner) continue;
       if (crEfet.has(cid)) continue;
-      // FASE 4: card inativo = o pedido do cliente foi colocado pela outra pessoa (dono/habilitado).
-      // Quem NÃO colocou o pedido não precisa justificar — o card está isento.
+      // Card inativo = o cliente já foi atendido/vendido pela outra pessoa (dono ou habilitado).
+      // O card não fica mais apto a vendas ao outro e não precisa de justificativa.
       if (r?.inactive) continue;
       const done = checkedIn.has(cid) || attended.has(cid) || hasOrder(cid);
       const debito = (!exigirDebito || suspDebito.has(cid)) ? 0 : debtOf(cid);
@@ -141,11 +141,10 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const route = routeData?.route;
   const { data: overlayData } = useQuery<any>({ queryKey: ["/api/repescagem/route-overlay", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/repescagem/route-overlay?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
   const overlay = Array.isArray(overlayData) ? overlayData : (overlayData?.overlay || []);
-  // FASE 4 (reformulação): os clientes em repescagem TAMBÉM estão sujeitos a justificativa no
-  // fechamento — para QUALQUER vendedor/atendente que tenha card de repescagem no dia (dono e
-  // habilitado, card duplo), não mais só a whitelist antiga de TMK. Mantemos a whitelist como
-  // reforço, mas basta ter card de repescagem hoje.
-  const incluiRepescagem = (Array.isArray(overlay) && overlay.length > 0) || REPESCAGEM_FECHA_SELLERS.has(String(sellerId));
+  // Repescagem no fechamento: SOMENTE o VENDEDOR DE CADASTRO (dono da carteira) justifica os
+  // clientes em repescagem não atendidos. O atendente habilitado que recebeu o cliente NÃO
+  // justifica. Logo, só entra quando o vendedor tem cards de repescagem em que ele é o dono.
+  const incluiRepescagem = (Array.isArray(overlay) ? overlay : []).some((r: any) => r?.isOwner);
   const routeCustomerIds = useMemo(() => {
     const s = new Set<string>();
     (route?.visits || []).forEach((v: any) => { const c = v?.customerId || v?.entityId; if (c) s.add(String(c)); });
