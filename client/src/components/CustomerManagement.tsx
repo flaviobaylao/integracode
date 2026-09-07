@@ -750,6 +750,14 @@ export default function CustomerManagement() {
                           >
                             {(customer as any).fantasyName || customer.name}
                           </button>
+                          {(customer as any).isColaborador && (
+                            <span
+                              className="ml-1.5 text-[10px] font-normal italic text-slate-400 align-middle"
+                              title="Colaborador — não entra em rota/agenda de visitas"
+                            >
+                              colaborador
+                            </span>
+                          )}
                           <SobDelegacaoBadge show={delegMarks.has(customer.id)} />
                         </div>
                       </td>

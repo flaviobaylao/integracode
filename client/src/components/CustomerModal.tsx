@@ -171,6 +171,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       icmsCsosn: '102',
       omieInstanceId: '',
       isSupplier: false,
+      isColaborador: false,
       paymentMethod: undefined,
       boletoDays: null,
       collectionDiscount: null,
@@ -227,6 +228,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         icmsCsosn: (customer as any).icmsCsosn || '102',
         omieInstanceId: (customer as any).omieInstanceId || '',
         isSupplier: (customer as any).isSupplier || false,
+        isColaborador: (customer as any).isColaborador || false,
         paymentMethod: (customer as any).paymentMethod || undefined,
         boletoDays: (customer as any).boletoDays ?? null,
         collectionDiscount: (customer as any).collectionDiscount ?? null,
@@ -267,6 +269,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       icmsCsosn: '102',
       omieInstanceId: '',
       isSupplier: false,
+      isColaborador: false,
       paymentMethod: undefined,
       boletoDays: null,
       collectionDiscount: null,
@@ -1457,6 +1460,40 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                               onChange={field.onChange}
                               className="rounded border-gray-300 text-amber-600 focus:ring-amber-600"
                               data-testid="checkbox-is-supplier"
+                            />
+                          </div>
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Colaborador - não entra em rota/agenda de visitas, mas fica em Clientes Ativos */}
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="isColaborador"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base flex items-center space-x-2">
+                            <i className="fas fa-user-tie text-slate-500"></i>
+                            <span>Colaborador</span>
+                          </FormLabel>
+                          <FormDescription>
+                            Marque se este cadastro é um COLABORADOR (não é cliente).
+                            Colaboradores permanecem no cadastro e continuam em Clientes Ativos com a tag "colaborador",
+                            mas NÃO entram em rota nem em agenda de visitas.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              checked={field.value}
+                              onChange={field.onChange}
+                              className="rounded border-gray-300 text-slate-600 focus:ring-slate-600"
+                              data-testid="checkbox-is-colaborador"
                             />
                           </div>
                         </FormControl>
