@@ -530,6 +530,11 @@ export default function ClientsMap() {
                 const lng = Number(customer.longitude);
                 const color = pinColorFor(customer);
                 const dayName = getWeekdayName(customer.weekdays);
+                const ehLead = (customer as any).situacao === 'lead';
+                // Nome e vendedor sao os dois dados que identificam o ponto — nunca podem sair vazios
+                // da caixa de descricao (lead sem vendedor aparece como "Sem vendedor", nao some).
+                const nomePonto = customer.fantasyName || customer.name || (ehLead ? 'Lead sem nome' : 'Cliente sem nome');
+                const vendedorPonto = (customer as any).sellerName || 'Sem vendedor';
 
                 return (
                   <Marker
@@ -541,9 +546,13 @@ export default function ClientsMap() {
                       <div className="space-y-3 min-w-[220px]">
                         <div className="flex items-center gap-2">
                           <h3 className="font-bold text-base">
-                            {customer.fantasyName || customer.name}
+                            {nomePonto}
                           </h3>
-                          <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
+                          {ehLead ? (
+                            <Badge style={{ backgroundColor: '#7b4b2a' }} className="text-white">Lead</Badge>
+                          ) : (
+                            <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
+                          )}
                         </div>
                         <div className="space-y-1 text-sm">
                           <p className="flex items-center gap-1">
@@ -551,14 +560,12 @@ export default function ClientsMap() {
                             {customer.address}
                           </p>
                           <p className="font-medium">
-                            📅 Dia de Visita: <span style={{ color }}>{dayName}</span>
+                            📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
                           </p>
-                          <p>📞 {customer.phone}</p>
-                          {(customer as any).sellerName && (
-                            <p className="font-medium">
-                              👤 Vendedor: {(customer as any).sellerName}
-                            </p>
-                          )}
+                          {!!customer.phone && <p>📞 {customer.phone}</p>}
+                          <p className="font-medium">
+                            👤 Vendedor: {vendedorPonto}
+                          </p>
                           {(customer as any).visitPeriodicity && (
                             <p className="font-medium">
                               🔁 Periodicidade: {String((customer as any).visitPeriodicity).charAt(0).toUpperCase() + String((customer as any).visitPeriodicity).slice(1)}
