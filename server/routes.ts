@@ -2247,6 +2247,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CNPJ duplicado: lookup para o popup do cadastro (Nome Fantasia + Vendedor)
+  // Normaliza o CNPJ (só dígitos) para pegar duplicatas mesmo com máscara diferente.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get('/api/customers/cnpj-lookup', authenticateUser, async (req: any, res) => {
+    try {
+      const raw = String(req.query.cnpj || '').replace(/\D/g, '');
+      const excludeId = String(req.query.excludeId || '');
+      if (raw.length !== 14) {
+        return res.json({ ok: true, cnpj: raw, exists: false, matches: [] });
+      }
+      const rows = (await db.execute(sql`
+        SELECT c.id,
+               COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
+               c.is_active, c.omie_status,
+               (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '')
+                  FROM users u
+                 WHERE u.omie_vendor_code = c.seller_id
+                    OR u.omie_vendor_code = replace(COALESCE(c.seller_id, ''), 'omie-vendor-', '')
+                    OR u.id = c.seller_id
+                 LIMIT 1) AS vendedor
+          FROM customers c
+         WHERE regexp_replace(COALESCE(c.cnpj, ''), '[^0-9]', '', 'g') = ${raw}
+           ${excludeId ? sql`AND c.id <> ${excludeId}` : sql``}
+         ORDER BY c.is_active DESC NULLS LAST
+         LIMIT 10
+      `)).rows as any[];
+      res.json({
+        ok: true,
+        cnpj: raw,
+        exists: rows.length > 0,
+        matches: rows.map(r => ({
+          id: r.id,
+          nome: r.nome || '(sem nome)',
+          vendedor: r.vendedor || 'Sem vendedor',
+          isActive: r.is_active === true,
+          omieStatus: r.omie_status || null,
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Visitas-fantasma: visitas pendentes de clientes inativos ou inexistentes.
+  // audit = diagnóstico (read-only). clean = cancela (dryRun por padrão).
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get('/api/admin/ghost-visits/audit', authenticateUser, requireRole(['admin']), async (_req: any, res) => {
+    try {
+      const totals = (await db.execute(sql`
+        SELECT COUNT(*)::int AS visitas, COUNT(DISTINCT va.customer_id)::int AS clientes
+          FROM visit_agenda va
+          LEFT JOIN customers c ON c.id = va.customer_id
+         WHERE va.visit_status = 'pending'
+           AND (c.id IS NULL OR c.is_active = false OR c.omie_status = 'inativo')
+      `)).rows[0];
+      const porMotivo = (await db.execute(sql`
+        SELECT CASE WHEN c.id IS NULL THEN 'cliente_inexistente'
+                    WHEN c.is_active = false THEN 'cliente_inativo'
+                    ELSE 'omie_inativo' END AS motivo,
+               COUNT(*)::int AS visitas,
+               COUNT(DISTINCT va.customer_id)::int AS clientes
+          FROM visit_agenda va
+          LEFT JOIN customers c ON c.id = va.customer_id
+         WHERE va.visit_status = 'pending'
+           AND (c.id IS NULL OR c.is_active = false OR c.omie_status = 'inativo')
+         GROUP BY 1 ORDER BY 2 DESC
+      `)).rows;
+      const topClientes = (await db.execute(sql`
+        SELECT va.customer_id, MAX(va.customer_name) AS nome, COUNT(*)::int AS visitas,
+               BOOL_OR(c.id IS NULL) AS inexistente,
+               BOOL_OR(c.is_active = false) AS inativo
+          FROM visit_agenda va
+          LEFT JOIN customers c ON c.id = va.customer_id
+         WHERE va.visit_status = 'pending'
+           AND (c.id IS NULL OR c.is_active = false OR c.omie_status = 'inativo')
+         GROUP BY va.customer_id ORDER BY 3 DESC LIMIT 50
+      `)).rows;
+      res.json({ ok: true, totals, porMotivo, topClientes });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/admin/ghost-visits/clean', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false; // padrão: dry-run
+      const customerId = req.body?.customerId ? String(req.body.customerId) : null;
+      const scope = customerId ? sql`AND visit_agenda.customer_id = ${customerId}` : sql``;
+      const predicate = sql`visit_agenda.visit_status = 'pending' ${scope}
+        AND (
+          NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = visit_agenda.customer_id)
+          OR EXISTS (SELECT 1 FROM customers c WHERE c.id = visit_agenda.customer_id AND (c.is_active = false OR c.omie_status = 'inativo'))
+        )`;
+      const n = ((await db.execute(sql`SELECT COUNT(*)::int AS n FROM visit_agenda WHERE ${predicate}`)).rows[0] as any).n;
+      if (dryRun) return res.json({ ok: true, dryRun: true, afetadas: n });
+      await db.execute(sql`UPDATE visit_agenda SET visit_status = 'cancelled', updated_at = now() WHERE ${predicate}`);
+      res.json({ ok: true, dryRun: false, canceladas: n });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
   app.post('/api/customers', authenticateUser, requirePermission("Clientes / Carteira", "criar"), async (req: any, res) => {
     try {
       // 🔍 LOG 1: Payload recebido do frontend
@@ -2345,19 +2449,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Verificar duplicidade de CNPJ
+      // Verificar duplicidade de CNPJ (normalizado — pega máscara diferente: "13.021.212/0004-40" vs "13021212000440")
       if (data.cnpj) {
-        const existingCustomer = await storage.getCustomerByCnpj(data.cnpj);
-        if (existingCustomer) {
-          return res.status(409).json({ 
-            message: "CNPJ já cadastrado", 
-            field: "cnpj",
-            existingCustomer: {
-              id: existingCustomer.id,
-              name: existingCustomer.name,
-              cnpj: existingCustomer.cnpj
-            }
-          });
+        const _cnpjDigits = String(data.cnpj).replace(/\D/g, '');
+        if (_cnpjDigits.length === 14) {
+          const dup = (await db.execute(sql`
+            SELECT c.id, COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome, c.cnpj,
+                   (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '')
+                      FROM users u
+                     WHERE u.omie_vendor_code = c.seller_id
+                        OR u.omie_vendor_code = replace(COALESCE(c.seller_id, ''), 'omie-vendor-', '')
+                        OR u.id = c.seller_id LIMIT 1) AS vendedor
+              FROM customers c
+             WHERE regexp_replace(COALESCE(c.cnpj, ''), '[^0-9]', '', 'g') = ${_cnpjDigits}
+             LIMIT 1
+          `)).rows[0] as any;
+          if (dup) {
+            return res.status(409).json({
+              message: `CNPJ já cadastrado sob "${dup.nome}"${dup.vendedor ? ' — vendedor: ' + dup.vendedor : ''}`,
+              field: "cnpj",
+              existingCustomer: { id: dup.id, name: dup.nome, cnpj: dup.cnpj, seller: dup.vendedor || null }
+            });
+          }
         }
       }
       
