@@ -417,21 +417,151 @@ export function registerChangeRequestsRoutes(app: Express) {
     const rows = rowsOf(await db.execute(sql`
       SELECT c.id,
              COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
-             c.cpf, c.cnpj, c.seller_id,
+             c.cpf, c.cnpj, c.omie_status, c.seller_id,
              MAX(h.created_at) AS ultima_inativacao,
              COUNT(*) AS eventos_inativacao
       FROM customers c
       JOIN customer_change_history h ON h.customer_id = c.id
       WHERE h.field = 'isActive' AND h.new_value = 'Não' AND c.is_active = true
-      GROUP BY c.id, nome, c.cpf, c.cnpj, c.seller_id
+      GROUP BY c.id, nome, c.cpf, c.cnpj, c.omie_status, c.seller_id
       ORDER BY ultima_inativacao DESC`));
     res.json({
       total: rows.length,
       clientes: rows.map((r: any) => ({
         id: r.id, nome: r.nome, cpf: r.cpf, cnpj: r.cnpj,
-        sellerId: r.seller_id,
+        omieStatus: r.omie_status, sellerId: r.seller_id,
         ultimaInativacao: r.ultima_inativacao, eventosInativacao: Number(r.eventos_inativacao) || 0,
       })),
     });
   }));
+
+  // --------------------------------------------------------------------------
+  // GET /api/admin/order-customer/:customerId — recupera o NOME/DOCUMENTO do
+  // cliente preservado em pedidos/recebíveis, mesmo quando o cadastro foi removido
+  // (pedidos "Cliente não encontrado"). Fonte: billing_pipeline → receivables.
+  // --------------------------------------------------------------------------
+  app.get("/api/admin/order-customer/:customerId", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    const cid = String(req.params.customerId || "");
+    if (!cid) return res.status(400).json({ error: "customerId obrigatório" });
+    const existe = rowsOf(await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''),name) AS nome, cnpj, cpf, is_active FROM customers WHERE id = ${cid} LIMIT 1`));
+    let nome: string | null = null, documento: string | null = null, fonte: string | null = null;
+    const bp = rowsOf(await db.execute(sql`SELECT customer_name, customer_document FROM billing_pipeline WHERE customer_id = ${cid} AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1`));
+    if (bp.length) { nome = bp[0].customer_name; documento = bp[0].customer_document || null; fonte = "billing_pipeline"; }
+    if (!nome) {
+      const rc = rowsOf(await db.execute(sql`SELECT customer_name, customer_document FROM receivables WHERE customer_id = ${cid} AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1`));
+      if (rc.length) { nome = rc[0].customer_name; documento = rc[0].customer_document || null; fonte = "receivables"; }
+    }
+    res.json({
+      customerId: cid,
+      existeNoCadastro: existe.length > 0,
+      cadastro: existe.length ? { nome: existe[0].nome, cnpj: existe[0].cnpj, cpf: existe[0].cpf, isActive: existe[0].is_active } : null,
+      nomePreservado: nome,
+      documentoPreservado: documento,
+      fonte,
+    });
+  }));
+
+  // --------------------------------------------------------------------------
+  // Item 1 — Verificações automáticas no Inbox:
+  //   (a) cadastros ATIVOS sem vendedor resolvível, sem dia de rota ou sem periodicidade;
+  //   (b) ÓRFÃOS: pedido/recebível órfão apontando p/ cliente que não existe mais.
+  // Cria change_requests do "Sistema" (dedup pelo índice ux_cr_pending).
+  // --------------------------------------------------------------------------
+  const SISTEMA = { id: null, firstName: "Sistema", lastName: "", email: "sistema" };
+  async function criarVerificacaoSistema(opts: {
+    entityId: string; entityName: string | null; sellerId: string | null; sellerName: string | null;
+    types: string[]; note: string; customerId: string | null;
+  }): Promise<boolean> {
+    const jaTem = rowsOf(await db.execute(sql`SELECT 1 FROM change_requests WHERE entity_type='customer' AND entity_id=${opts.entityId} AND status='pending' LIMIT 1`));
+    if (jaTem.length) return false;
+    const types = (opts.types || []).filter((t) => VALID_TYPES.has(t));
+    const details = { outro: opts.note.slice(0, 4000) };
+    const seed = mkMsg("admin", SISTEMA, opts.note, "system");
+    try {
+      await db.execute(sql`
+        INSERT INTO change_requests
+          (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+           types, details, status, requested_by, requested_by_name, messages)
+        VALUES
+          ('customer', ${opts.entityId}, ${opts.customerId}, ${opts.entityName}, ${opts.sellerId}, ${opts.sellerName},
+           ${JSON.stringify(types.length ? types : ["outro"])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending',
+           NULL, 'Sistema', ${JSON.stringify([seed])}::jsonb)`);
+      return true;
+    } catch (e: any) {
+      if (String(e?.message || "").includes("ux_cr_pending")) return false;
+      throw e;
+    }
+  }
+
+  async function scanInbox(dryRun: boolean, limit: number): Promise<any> {
+    await ensureTables();
+    const semVendedorSql = sql`NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.seller_id OR u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-',''))`;
+    const semDiaSql = sql`(c.weekdays IS NULL OR btrim(c.weekdays::text) IN ('', '[]', 'null', '""'))`;
+    const semPerSql = sql`(c.visit_periodicity IS NULL)`;
+    // (a) cadastros incompletos
+    const incompletos = rowsOf(await db.execute(sql`
+      SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.seller_id,
+             ${semDiaSql} AS sem_dia, ${semPerSql} AS sem_per, ${semVendedorSql} AS sem_vend,
+             (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u
+               WHERE u.id = c.seller_id OR u.omie_vendor_code = c.seller_id
+                  OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') LIMIT 1) AS vendedor
+        FROM customers c
+       WHERE c.is_active = true AND c.is_lead IS NOT TRUE AND c.is_supplier IS NOT TRUE
+         AND ( ${semDiaSql} OR ${semPerSql} OR ${semVendedorSql} )
+         AND NOT EXISTS (SELECT 1 FROM change_requests cr WHERE cr.entity_type='customer' AND cr.entity_id=c.id AND cr.status='pending')
+       ORDER BY c.updated_at DESC NULLS LAST
+       LIMIT ${limit}`));
+    // (b) órfãos: referenciados por pedido bloqueado, sales_card pendente ou recebível em aberto, mas sem cadastro
+    const orfaos = rowsOf(await db.execute(sql`
+      WITH refs AS (
+        SELECT DISTINCT customer_id FROM blocked_orders WHERE status='blocked' AND customer_id IS NOT NULL
+        UNION SELECT DISTINCT customer_id FROM sales_cards WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL
+        UNION SELECT DISTINCT customer_id FROM receivables WHERE customer_id IS NOT NULL AND deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0
+      )
+      SELECT r.customer_id AS cid,
+             (SELECT customer_name FROM billing_pipeline WHERE customer_id = r.customer_id AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS nome_bp,
+             (SELECT customer_name FROM receivables WHERE customer_id = r.customer_id AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS nome_rc
+        FROM refs r
+       WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = r.customer_id)
+         AND NOT EXISTS (SELECT 1 FROM change_requests cr WHERE cr.entity_type='customer' AND cr.entity_id=r.customer_id AND cr.status='pending')
+       LIMIT ${limit}`));
+
+    let criadosIncompletos = 0, criadosOrfaos = 0;
+    if (!dryRun) {
+      for (const c of incompletos) {
+        const falta: string[] = [];
+        const types: string[] = [];
+        if (c.sem_vend === true) { falta.push("vendedor"); }
+        if (c.sem_dia === true) { falta.push("dia de rota"); types.push("dia_rota"); }
+        if (c.sem_per === true) { falta.push("periodicidade"); types.push("periodicidade"); }
+        const note = `⚠️ Verificação automática: cadastro incompleto — faltando ${falta.join(", ")}. Revisar e completar.`;
+        if (await criarVerificacaoSistema({ entityId: c.id, entityName: c.nome, sellerId: c.seller_id, sellerName: c.vendedor || null, types, note, customerId: c.id })) criadosIncompletos++;
+      }
+      for (const o of orfaos) {
+        const nome = o.nome_bp || o.nome_rc || "(nome não recuperado)";
+        const note = `⚠️ Cadastro ÓRFÃO: existe pedido/recebível/visita em aberto, mas o cliente não está mais cadastrado. Nome preservado: "${nome}". Regularizar (recriar cadastro ou cancelar/inativar as pendências).`;
+        if (await criarVerificacaoSistema({ entityId: o.cid, entityName: nome, sellerId: null, sellerName: null, types: ["inativar"], note, customerId: o.cid })) criadosOrfaos++;
+      }
+    }
+    return {
+      dryRun,
+      incompletosEncontrados: incompletos.length,
+      orfaosEncontrados: orfaos.length,
+      criadosIncompletos, criadosOrfaos,
+      amostraIncompletos: incompletos.slice(0, 10).map((c: any) => ({ id: c.id, nome: c.nome, semDia: c.sem_dia, semPer: c.sem_per, semVend: c.sem_vend })),
+      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome_bp || o.nome_rc })),
+    };
+  }
+
+  app.post("/api/admin/inbox-scan", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    const dryRun = req.body?.dryRun !== false;
+    const limit = Math.min(Math.max(parseInt(String(req.body?.limit || "500"), 10) || 500, 1), 2000);
+    res.json({ ok: true, ...(await scanInbox(dryRun, limit)) });
+  }));
+
+  // Job periódico. No BOOT roda só em dry-run (apenas conta/loga, não cria) para
+  // não inundar o Inbox num deploy; a criação real acontece a cada 6h e no endpoint manual.
+  const rodarScan = (dry: boolean) => { scanInbox(dry, 1000).then((r) => console.log(`[inbox-scan] dry=${dry} incompletos=${r.incompletosEncontrados} orfaos=${r.orfaosEncontrados} criados=${r.criadosIncompletos}+${r.criadosOrfaos}`)).catch((e) => console.error("[inbox-scan] erro:", e?.message)); };
+  setTimeout(() => rodarScan(true), 60_000);
+  setInterval(() => rodarScan(false), 6 * 60 * 60 * 1000);
 }
