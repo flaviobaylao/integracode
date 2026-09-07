@@ -92,6 +92,7 @@ export default function CustomerManagement() {
   const [bulkSeller, setBulkSeller] = useState<string>('');
   const [bulkPeriodicity, setBulkPeriodicity] = useState<string>('');
   const [bulkSituacao, setBulkSituacao] = useState<string>(''); // '' | 'ativo' | 'inativo'
+  const [bulkTipo, setBulkTipo] = useState<string>(''); // '' (não alterar) | 'cliente' | 'fornecedor'
   const [bulkSaving, setBulkSaving] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -202,6 +203,8 @@ export default function CustomerManagement() {
     if (bulkSeller) fields.sellerId = bulkSeller;
     if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
     if (bulkWeekdays.length > 0) fields.weekdays = bulkWeekdays;
+    if (bulkTipo === 'fornecedor') fields.isSupplier = true;
+    else if (bulkTipo === 'cliente') fields.isSupplier = false;
     const nada = Object.keys(fields).length === 0 && !bulkSituacao;
     if (nada) { toast({ title: "Escolha ao menos um campo para alterar." }); return; }
     setBulkSaving(true);
@@ -229,8 +232,9 @@ export default function CustomerManagement() {
       toast({ title: "Edição em massa concluída", description: `${ids.length} cliente(s): ${msg.join(' · ') || 'sem alterações'}.` });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/suppliers'] });
       setShowBulkEdit(false); setSelectedIds(new Set());
-      setBulkWeekdays([]); setBulkSeller(''); setBulkPeriodicity(''); setBulkSituacao('');
+      setBulkWeekdays([]); setBulkSeller(''); setBulkPeriodicity(''); setBulkSituacao(''); setBulkTipo('');
     } catch (e: any) {
       toast({ title: "Erro na edição em massa", description: e?.message || String(e), variant: "destructive" });
     } finally {
@@ -963,6 +967,19 @@ export default function CustomerManagement() {
                 </SelectContent>
               </Select>
               {bulkSituacao === 'inativo' && <p className="text-xs text-amber-600 mt-1">Ao aplicar, será pedido o motivo da inativação.</p>}
+            </div>
+
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cliente / Fornecedor</label>
+              <Select value={bulkTipo} onValueChange={setBulkTipo}>
+                <SelectTrigger className="w-full h-9" data-testid="bulk-tipo"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cliente">Cliente</SelectItem>
+                  <SelectItem value="fornecedor">Fornecedor</SelectItem>
+                </SelectContent>
+              </Select>
+              {bulkTipo === 'fornecedor' && <p className="text-xs text-orange-600 mt-1">Recebem a tag <b>FORNECEDOR</b>, saem da Rota do Dia e passam a ser gerenciados no módulo Fornecedores.</p>}
+              {bulkTipo === 'cliente' && <p className="text-xs text-blue-600 mt-1">Remove a marcação de Fornecedor e volta a tratar como Cliente comum.</p>}
             </div>
 
             <div className="flex justify-end gap-2">
