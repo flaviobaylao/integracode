@@ -1142,5 +1142,47 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  // --------------------------------------------------------------------------
+  // Item 3 — Migrar clientes marcados como Fornecedor (customers.is_supplier)
+  // para a tabela `suppliers` (centralização no módulo Fornecedores).
+  // NÃO apaga o cadastro de cliente (evita órfãos); só garante o registro em suppliers.
+  // dryRun por padrão.
+  // --------------------------------------------------------------------------
+  app.post("/api/admin/migrate-suppliers", authenticateUser, requireRole(["admin"]), async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const cust = supRows(await db.execute(sql`
+        SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, name, company_name,
+               cnpj, cpf, email, phone, neighborhood, city, state, address
+          FROM customers WHERE is_supplier = true`));
+      let jaEmSuppliers = 0, migrados = 0, semDocumento = 0;
+      const amostra: string[] = [];
+      for (const c of cust) {
+        const cnpj = supDigits(c.cnpj);
+        const cpf = supDigits(c.cpf);
+        if (!cnpj && !cpf) { semDocumento++; continue; }
+        const ex = supRows(await db.execute(sql`
+          SELECT id FROM suppliers
+           WHERE (${cnpj} <> '' AND regexp_replace(COALESCE(cnpj,''),'\D','','g') = ${cnpj})
+              OR (${cpf}  <> '' AND regexp_replace(COALESCE(cpf,''), '\D','','g') = ${cpf})
+           LIMIT 1`));
+        if (ex[0]) { jaEmSuppliers++; continue; }
+        if (!dryRun) {
+          await db.execute(sql`
+            INSERT INTO suppliers (id, name, company_name, cnpj, cpf, email, phone,
+              neighborhood, city, state, address, notes, is_active, created_at, updated_at)
+            VALUES (gen_random_uuid(), ${c.nome || c.name}, ${c.company_name || null}, ${cnpj || null}, ${cpf || null},
+              ${c.email || null}, ${c.phone || null}, ${c.neighborhood || null}, ${c.city || null}, ${c.state || null},
+              ${c.address || null}, ${'Migrado de Clientes (is_supplier) — cliente ' + c.id}, true, NOW(), NOW())`);
+          if (amostra.length < 20) amostra.push(String(c.nome || c.name));
+        }
+        migrados++;
+      }
+      res.json({ ok: true, dryRun, totalFornecedoresEmClientes: cust.length, jaEmSuppliers, migrados, semDocumento, amostra });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   console.log("✅ Purchase/Radar routes registered");
 }
