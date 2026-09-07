@@ -361,6 +361,10 @@ export default function BillingPipeline() {
   // Agendamento de faturamento ("Faturar em"): ao mover p/ "Agendado" pedimos a data antes de mover.
   const [scheduleTarget, setScheduleTarget] = useState<{ item: BillingPipelineItem; stage: string } | null>(null);
   const [scheduleDate, setScheduleDate] = useState('');
+  // Arrastar-e-soltar (mouse): mover card de uma raia para outra. Reaproveita moveToStage,
+  // que já trata confirmações (Lixeira/Bloqueados), o popup de agendamento e as travas.
+  const [dragItem, setDragItem] = useState<BillingPipelineItem | null>(null);
+  const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   const [isPrintingDanfe, setIsPrintingDanfe] = useState(false);
   const [isPrintingCobranca, setIsPrintingCobranca] = useState(false);
   const [isPrintingCompleto, setIsPrintingCompleto] = useState(false);
@@ -932,6 +936,18 @@ export default function BillingPipeline() {
     moveStageMutation.mutate({ id: item.id, stage });
   };
 
+  // Soltar um card arrastado sobre a raia `targetStage`. Só admins/coordenação (canEdit)
+  // arrastam; o backend também barra os demais. Ignora soltar na mesma raia. Toda a lógica
+  // (confirmar exclusão/bloqueio, popup de agendamento) fica em moveToStage.
+  const handleDropOnStage = (targetStage: string) => {
+    const it = dragItem;
+    setDragOverStage(null);
+    setDragItem(null);
+    if (!it || !canEdit) return;
+    if (String(it.stage) === String(targetStage)) return;
+    moveToStage(it, targetStage);
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -1319,7 +1335,23 @@ export default function BillingPipeline() {
             const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedIds.has(id));
             const someStageSelected = stageIds.some(id => selectedIds.has(id));
             return (
-              <div key={stage.key} className="flex-shrink-0 w-72 flex flex-col min-h-0 max-h-full">
+              <div
+                key={stage.key}
+                className="flex-shrink-0 w-72 flex flex-col min-h-0 max-h-full"
+                onDragOver={canEdit ? (e) => {
+                  // Só aceita soltar em raia DIFERENTE da origem do card arrastado.
+                  if (!dragItem || String(dragItem.stage) === String(stage.key)) return;
+                  e.preventDefault();
+                  try { e.dataTransfer.dropEffect = 'move'; } catch {}
+                  if (dragOverStage !== stage.key) setDragOverStage(stage.key);
+                } : undefined}
+                onDragLeave={canEdit ? (e) => {
+                  // Só limpa o destaque quando o mouse sai de fato da coluna (não ao passar sobre filhos).
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setDragOverStage((cur) => (cur === stage.key ? null : cur));
+                  }
+                } : undefined}
+                onDrop={canEdit ? (e) => { e.preventDefault(); handleDropOnStage(stage.key); } : undefined}>
                 <div className={`rounded-t-lg px-3 py-2 ${stage.color} text-white flex items-center justify-between flex-shrink-0 z-20`}>
                   <div className="flex items-center gap-2">
                     {canEdit && stageItems.length > 0 && (
@@ -1337,7 +1369,7 @@ export default function BillingPipeline() {
                     <span className="text-[10px] font-semibold text-white/90 mt-0.5">{formatCurrency(stageTotal)}</span>
                   </div>
                 </div>
-                <div className="bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 flex-1 min-h-0 overflow-y-auto">
+                <div className={`bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 flex-1 min-h-0 overflow-y-auto transition-colors ${dragOverStage === stage.key ? 'ring-2 ring-inset ring-blue-500 bg-blue-50 dark:bg-blue-950/40' : ''}`}>
                   {/* Seletor de classificação por data de criação (A-Z / Z-A) */}
                   <div className="flex items-center justify-end">
                     <button
@@ -1358,8 +1390,23 @@ export default function BillingPipeline() {
                     </div>
                   )}
                   {sortedStageItems.map((item) => (
-                    <KanbanCard
+                    <div
                       key={item.id}
+                      draggable={canEdit}
+                      onDragStart={canEdit ? (e) => {
+                        // Não iniciar o arraste a partir de botões/checkbox/menus dentro do card.
+                        const t = e.target as HTMLElement;
+                        if (t && t.closest('button, input, a, textarea, select, [role="checkbox"], [role="menuitem"]')) {
+                          e.preventDefault();
+                          return;
+                        }
+                        setDragItem(item);
+                        try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', item.id); } catch {}
+                      } : undefined}
+                      onDragEnd={() => { setDragItem(null); setDragOverStage(null); }}
+                      className={`${canEdit ? 'cursor-grab active:cursor-grabbing' : ''} ${dragItem?.id === item.id ? 'opacity-40' : ''}`}
+                    >
+                    <KanbanCard
                       item={item}
                       stage={stage}
                       selected={selectedIds.has(item.id)}
@@ -1385,6 +1432,7 @@ export default function BillingPipeline() {
                       canPriority={canEdit && STAGES_PRIORIZAVEIS.has(item.stage)}
                       onTogglePriority={() => priorityMutation.mutate({ id: item.id, isPriority: !item.isPriority })}
                     />
+                    </div>
                   ))}
                 </div>
               </div>
