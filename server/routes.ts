@@ -16546,6 +16546,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   AND (ac.customer_id = ${customers.id}
                     OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g')))
               )
+            )`,
+            // 🗓️ MENSAL JÁ COMPROU NO MÊS: cliente com periodicidade MENSAL que já tem
+            // compra (pedido de venda) dentro do mês vigente da rota NÃO aparece de novo
+            // na rota do dia — já foi atendido no ciclo mensal.
+            sql`NOT (
+              lower(COALESCE(${customers.visitPeriodicity}, '')) = 'mensal'
+              AND EXISTS (
+                SELECT 1 FROM billing_pipeline bp
+                WHERE bp.customer_id = ${customers.id}
+                  AND COALESCE(bp.operation_type, 'venda') = 'venda'
+                  AND date_trunc('month', COALESCE(bp.scheduled_billing_date::date,
+                        (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date))
+                      = date_trunc('month', ${date}::date)
+              )
             )`
           ));
 
