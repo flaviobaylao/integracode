@@ -16551,7 +16551,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // compra (pedido de venda) dentro do mês vigente da rota NÃO aparece de novo
             // na rota do dia — já foi atendido no ciclo mensal.
             sql`NOT (
-              lower(COALESCE(${customers.visitPeriodicity}, '')) = 'mensal'
+              lower(COALESCE(${customers.visitPeriodicity}::text, '')) = 'mensal'
               AND EXISTS (
                 SELECT 1 FROM billing_pipeline bp
                 WHERE bp.customer_id = ${customers.id}
