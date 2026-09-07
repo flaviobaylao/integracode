@@ -24,6 +24,16 @@ import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
+
+// 🛡️ REDE DE SEGURANCA (07/set/2026): uma promise rejeitada sem tratamento derrubava o processo
+// inteiro. Foi o que aconteceu com o job de boot do phonebook (coluna is_colaborador ausente):
+// 10 restarts, healthcheck falhou e o Integra + hotsite ficaram quase uma hora fora do ar.
+// Erro de job de fundo agora vira LOG, nao queda. Erro sincrono nao tratado continua derrubando
+// (uncaughtException) de proposito: esse sim indica estado corrompido.
+process.on('unhandledRejection', (motivo: any) => {
+  console.error('🛑 [UNHANDLED-REJECTION] promise rejeitada sem tratamento:', motivo?.stack || motivo?.message || motivo);
+});
+
 import "./scheduler";
 import { db } from "./db";
 import { registerOfficialDispatch } from "./official-dispatch";
