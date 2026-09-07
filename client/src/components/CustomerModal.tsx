@@ -113,6 +113,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 export default function CustomerModal({ isOpen, onClose, customer, initialData, onCreated }: CustomerModalProps) {
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
+  const [cnpjDuplicate, setCnpjDuplicate] = useState<{ nome: string; vendedor: string; isActive: boolean } | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const { toast } = useToast();
@@ -382,6 +383,20 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
 
     setCnpjLoading(true);
     try {
+      // ⚠️ Checagem de duplicidade — avisa se o CNPJ já está cadastrado no sistema
+      try {
+        const _dig = cnpj.replace(/\D/g, '');
+        const _exclude = (customer as any)?.id ? `&excludeId=${encodeURIComponent((customer as any).id)}` : '';
+        const dupResp = await fetch(`/api/customers/cnpj-lookup?cnpj=${encodeURIComponent(_dig)}${_exclude}`, { credentials: 'same-origin' });
+        if (dupResp.ok) {
+          const dup = await dupResp.json();
+          if (dup?.exists && Array.isArray(dup.matches) && dup.matches.length) {
+            const m = dup.matches[0];
+            setCnpjDuplicate({ nome: m.nome, vendedor: m.vendedor, isActive: !!m.isActive });
+          }
+        }
+      } catch { /* não bloqueia a busca da Receita */ }
+
       const response = await fetch('/api/receita/cnpj', {
         method: 'POST',
         headers: {
@@ -601,6 +616,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -1822,5 +1838,25 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
+
+    <AlertDialog open={!!cnpjDuplicate} onOpenChange={(o) => { if (!o) setCnpjDuplicate(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>⚠️ CNPJ já cadastrado</AlertDialogTitle>
+          <AlertDialogDescription>
+            Este CNPJ já está cadastrado no sistema. Verifique se não é o mesmo cliente antes de continuar — o cadastro com CNPJ duplicado será bloqueado ao salvar.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-1 text-sm rounded-md border p-3 bg-muted/40">
+          <p><strong>Nome Fantasia:</strong> {cnpjDuplicate?.nome}</p>
+          <p><strong>Vendedor:</strong> {cnpjDuplicate?.vendedor}</p>
+          <p><strong>Situação:</strong> {cnpjDuplicate?.isActive ? 'Ativo' : 'Inativo'}</p>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogAction onClick={() => setCnpjDuplicate(null)}>Entendi</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
