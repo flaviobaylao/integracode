@@ -1796,7 +1796,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // (assigned_user_id = sellerId) quanto para o DONO da carteira do cliente
       // (customers.seller_id = sellerId), mesmo que atribuída a outro habilitado.
       const rowsRes: any = await db.execute(sql`
-        SELECT ra.id, ra.customer_id, ra.assigned_user_id, ra.phase
+        SELECT ra.id, ra.customer_id, ra.assigned_user_id, ra.phase, c.seller_id AS owner_seller_id
         FROM repescagem_assignments ra
         JOIN customers c ON c.id = ra.customer_id
         WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
@@ -1804,7 +1804,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const seenRowIds = new Set<string>();
       const rows = ((rowsRes.rows || []) as any[])
         .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; })
-        .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string }));
+        .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string, ownerSellerId: (r.owner_seller_id as string) || null }));
       if (rows.length === 0) return res.json([]);
       const cids = Array.from(new Set(rows.map(r => r.customerId)));
       // FASE 4 — "quem colocar o pedido fica com a venda": mapeia o vendedor que IMPLANTOU
@@ -1893,6 +1893,11 @@ export function registerRepescagemRoutes(app: Express, opts: {
           phase: r.phase, isVirtualClient: !!c?.virtualService,
           ownerSellerName: (c?.sellerId ? (ownerNameBySellerId.get(String(c.sellerId)) || null) : null),
           assignedUserId: r.assignedUserId,
+          // DONO da carteira (vendedor de cadastro) do cliente. isOwner = este sellerId é o dono.
+          // Regra de fechamento: SOMENTE o vendedor de cadastro justifica repescagem não atendida;
+          // o atendente habilitado (que recebeu o cliente) não justifica.
+          ownerSellerId: r.ownerSellerId,
+          isOwner: !!r.ownerSellerId && r.ownerSellerId === sellerId,
           // Cópia do DONO: o card aparece na rota do dono, mas está atribuído a outro habilitado.
           isOwnerCopy: r.assignedUserId !== sellerId,
           assignedToName: r.assignedUserId !== sellerId ? (assigneeNameById.get(r.assignedUserId) || null) : null,
