@@ -16299,12 +16299,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
             .filter(Boolean)));
           const _routeCities = new Set<string>();
+          const _routeCoords: { lat: number; lng: number }[] = [];
           if (_custIds.length > 0) {
             try {
-              const _cc: any = await _dbLR.select({ city: _custTbl.city }).from(_custTbl).where(_inArr(_custTbl.id, _custIds));
-              for (const r of (_cc || [])) { const c = _norm((r as any).city); if (c) _routeCities.add(c); }
+              const _cc: any = await _dbLR.select({ city: _custTbl.city, latitude: _custTbl.latitude, longitude: _custTbl.longitude }).from(_custTbl).where(_inArr(_custTbl.id, _custIds));
+              for (const r of (_cc || [])) { const c = _norm((r as any).city); if (c) _routeCities.add(c); const _la = Number((r as any).latitude), _lo = Number((r as any).longitude); if (Number.isFinite(_la) && Number.isFinite(_lo) && !(_la === 0 && _lo === 0)) _routeCoords.push({ lat: _la, lng: _lo }); }
             } catch (_ce) { /* sem cidades da rota */ }
           }
+          // Raio p/ o lead entrar na rota do dia: 3 km de ALGUM cliente presencial da rota (set/2026).
+          const _LEAD_MAX_KM = 3;
+          const _minKmToRoute = (la: number, lo: number): number => { if (!_routeCoords.length) return Infinity; let m = Infinity; for (const p of _routeCoords) { const d = __haversineKm(la, lo, p.lat, p.lng); if (d < m) m = d; } return m; };
+          const _withinRange = (la: number, lo: number): boolean => _routeCoords.length === 0 ? true : (_minKmToRoute(la, lo) <= _LEAD_MAX_KM);
 
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
           const curStops: any = (route.visitStops as any) || {};
@@ -16313,7 +16318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // EXATAMENTE na data (sem atrasados), do vendedor, NÃO prospecção, com coordenadas.
           // Regra (30/ago/2026): o lead só aparece na rota no DIA do próximo contato — nada de vencidos.
           const leadRet: any = await _dbLR.execute(sql`
-            SELECT id, city FROM leads
+            SELECT id, city, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng FROM leads
             WHERE status = 'scheduled'
               AND next_contact_date IS NOT NULL
               AND (next_contact_date)::date = ${date}::date
@@ -16322,8 +16327,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
           const _leadCityById: Record<string, string> = {};
-          const _candidates: { id: string; city: string }[] = [];
-          for (const lr of (leadRet?.rows || [])) { const id = String((lr as any).id); const c = _norm((lr as any).city); _candidates.push({ id, city: c }); _leadCityById[id] = c; }
+          const _candidates: { id: string; city: string; lat: number; lng: number }[] = [];
+          for (const lr of (leadRet?.rows || [])) { const id = String((lr as any).id); const c = _norm((lr as any).city); _candidates.push({ id, city: c, lat: Number((lr as any).lat), lng: Number((lr as any).lng) }); _leadCityById[id] = c; }
           const _candidateIds = new Set(_candidates.map((c) => c.id));
           const _existingLeadIds = curOrder.filter((s) => String(s).startsWith('lead:')).map((s) => String(s).slice(5));
           const _missing = _existingLeadIds.filter((id) => !(id in _leadCityById));
@@ -16348,17 +16353,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           // (B) Regra de CIDADE (só quando dá para determinar as cidades da rota): remove candidatos de
           // OUTRA cidade e adiciona os retornos da MESMA cidade que ainda não estão na rota.
-          if (_routeCities.size > 0) {
+          {
+            const _candById: Record<string, { id: string; lat: number; lng: number }> = {};
+            for (const _cd of _candidates) _candById[_cd.id] = _cd;
             const _kept2: string[] = [];
             for (const s of _kept) {
               if (!String(s).startsWith('lead:')) { _kept2.push(s); continue; }
               const id = String(s).slice(5);
-              const c = _leadCityById[id];
-              if (!!c && _routeCities.has(c)) { _kept2.push(s); }
+              const cd = _candById[id];
+              if (cd && _withinRange(cd.lat, cd.lng)) { _kept2.push(s); }
               else { delete curStops[s]; changed = true; }
             }
             for (const cand of _candidates) {
-              if (!cand.city || !_routeCities.has(cand.city)) continue;
+              if (!_withinRange(cand.lat, cand.lng)) continue;
               const stopId = `lead:${cand.id}`;
               if (!_kept2.includes(stopId) && !curStops[stopId]) { _kept2.push(stopId); curStops[stopId] = { entityType: 'lead', entityId: cand.id }; changed = true; }
             }
