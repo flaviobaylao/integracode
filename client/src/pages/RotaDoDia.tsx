@@ -1444,8 +1444,8 @@ export default function RotaDoDia() {
       )}
 
       {/* 🎨 Legenda das cores dos cards */}
-      <div className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3">
-        <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Legenda das cores</p>
+      <details className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3">
+        <summary className="text-xs font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none">Legenda das cores</summary>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-700 dark:text-gray-300">
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-gray-300 bg-gray-100 dark:bg-gray-700"></span>Aguardando (sem check-in)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-100 dark:bg-green-900"></span>Visita concluída (check-in realizado)</span>
@@ -1454,8 +1454,10 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e]"></span>Repescagem</span>
           <span className="flex items-center gap-1.5"><span className="text-[10px] font-semibold text-amber-700 border border-amber-300 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded-full whitespace-nowrap">sob delegação</span>Cliente em delegação temporária de carteira (volta ao titular quando a delegação encerra)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#22c55e' }}></span>Venda no ciclo (efetividade em vendas)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#ef4444' }}></span>Sem venda no ciclo</span>
         </div>
-      </div>
+      </details>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <Card>
@@ -1928,9 +1930,14 @@ export default function RotaDoDia() {
                         </button>
                         {r.isOwnerCopy && (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#8a6d3b] text-white" title="Cliente da sua carteira em repescagem com outro atendente">
-                            Em repescagem{r.assignedToName ? ` · ${r.assignedToName}` : ''}
+                            Em repescagem
                           </span>
                         )}
+                        {!r.isOwnerCopy && (r as any).ownerSellerName ? (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#8a6d3b] text-white" title="Vendedor titular da carteira deste cliente">
+                            Vendedor: {(r as any).ownerSellerName}
+                          </span>
+                        ) : null}
                         {r.inactive && (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-500 text-white" title={`O pedido deste cliente foi colocado por ${r.orderWinnerName || 'outro atendente'}. Este card ficou inativo e não precisa de justificativa.`} data-testid={`repescagem-inativo-${r.customerId}`}>
                             Pedido de {r.orderWinnerName || 'outro'} · inativo
