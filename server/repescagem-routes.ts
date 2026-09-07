@@ -128,6 +128,15 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     : [];
   const candSellerRoleById = new Map(candSellerRoleRows.map(u => [u.id, u.role]));
 
+  // Clientes vinculados a uma REDE de clientes (cliente_rede_membros) NÃO entram em
+  // repescagem — a negociação/atendimento da rede é conduzido pelo destinatário da rede,
+  // não pelo fluxo de repescagem individual. (Set global; a tabela tem 1 linha por membro.)
+  const redeMemberIds = new Set<string>();
+  try {
+    const rm: any = await db.execute(sql`SELECT customer_id FROM cliente_rede_membros`);
+    for (const r of ((rm.rows || []) as any[])) if (r.customer_id) redeMemberIds.add(String(r.customer_id));
+  } catch (e) { console.warn('[computeRedCandidates][rede] tabela ausente/erro:', (e as any)?.message); }
+
   // 2) Visitas registradas (visit_schedule_history) — usado para marcar "efetuada"
   const visits = await db.select({
     customerId: visitScheduleHistory.customerId,
@@ -339,6 +348,8 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   for (const c of cs) {
     // Carteiras de canal/sistema (Honest 1/2/3, HOTSITE, INSTAGRAM) NAO entram em repescagem.
     if (REPESCAGEM_EXCLUDED_SELLER_IDS.has(c.sellerId || '')) continue;
+    // Clientes vinculados a uma REDE de clientes NAO caem em repescagem.
+    if (redeMemberIds.has(c.id)) continue;
     // SOMENTE clientes de carteira de VENDEDOR EXTERNO (role 'vendedor') entram em repescagem.
     // Clientes de telemarketing (ou sem dono/outro papel) NÃO caem em repescagem.
     if (candSellerRoleById.get(c.sellerId || '') !== 'vendedor') continue;
