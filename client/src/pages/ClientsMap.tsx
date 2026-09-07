@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect, useCallback, memo } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -121,6 +121,15 @@ function pinColorFor(c: any): string {
   return getPinColor(c?.weekdays || '');
 }
 
+// ⚡ Um divIcon POR COR, criado uma vez e reaproveitado. Antes cada render criava 1000+ ícones
+// novos e o Leaflet trocava o DOM de todos os pins — era o que travava a tela ao digitar na busca.
+const ICONES_POR_COR = new Map<string, any>();
+function iconeDaCor(color: string) {
+  let ic = ICONES_POR_COR.get(color);
+  if (!ic) { ic = createCustomIcon(color); ICONES_POR_COR.set(color, ic); }
+  return ic;
+}
+
 // Criar ícone customizado do Leaflet
 function createCustomIcon(color: string) {
   return L.divIcon({
@@ -153,6 +162,82 @@ function createCustomIcon(color: string) {
   });
 }
 
+
+// ⚡ Um ponto do mapa. memo() para que mudanças de estado da tela (copiar um nome, abrir um
+// filtro, o botão Atualizar) não reconstruam os 1000+ marcadores — só o que realmente mudou.
+type PropsPonto = {
+  customer: any;
+  podeEditar: boolean;
+  copiado: boolean;
+  aoCopiar: (id: string, nome: string) => void;
+  aoEditar: (c: any) => void;
+};
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, aoCopiar, aoEditar }: PropsPonto) {
+  const lat = Number(customer.latitude);
+  const lng = Number(customer.longitude);
+  const color = pinColorFor(customer);
+  const dayName = getWeekdayName(customer.weekdays);
+  const ehLead = customer.situacao === 'lead';
+  // Nome e vendedor sao os dois dados que identificam o ponto — nunca podem sair vazios
+  // da caixa de descricao (lead sem vendedor aparece como "Sem vendedor", nao some).
+  const nomePonto = customer.fantasyName || customer.name || (ehLead ? 'Lead sem nome' : 'Cliente sem nome');
+  const vendedorPonto = customer.sellerName || 'Sem vendedor';
+  return (
+    <Marker position={[lat, lng]} icon={iconeDaCor(color)}>
+      <Popup>
+        <div className="space-y-3 min-w-[220px]">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-base">{nomePonto}</h3>
+            <button
+              type="button"
+              onClick={() => aoCopiar(String(customer.id), nomePonto)}
+              title="Copiar nome do cliente"
+              aria-label="Copiar nome do cliente"
+              className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+              data-testid={`button-copy-name-${customer.id}`}
+            >
+              {copiado ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-500" />}
+            </button>
+            {ehLead ? (
+              <Badge style={{ backgroundColor: '#7b4b2a' }} className="text-white">Lead</Badge>
+            ) : (
+              <OmieInstanceBadge instanceId={customer.omieInstanceId} />
+            )}
+          </div>
+          <div className="space-y-1 text-sm">
+            <p className="flex items-center gap-1">
+              <MapPin className="h-3 w-3" />
+              {customer.address}
+            </p>
+            <p className="font-medium">
+              📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
+            </p>
+            {!!customer.phone && <p>📞 {customer.phone}</p>}
+            <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
+            {customer.visitPeriodicity && (
+              <p className="font-medium">
+                🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}
+              </p>
+            )}
+          </div>
+          {/* Lead nao e cliente: o modal de edicao de cliente nao serve para ele. */}
+          {podeEditar && !ehLead && (
+            <Button
+              size="sm"
+              className="w-full"
+              onClick={() => aoEditar(customer)}
+              data-testid={`button-edit-customer-${customer.id}`}
+            >
+              <Pencil className="h-3 w-3 mr-2" />
+              Editar Cliente
+            </Button>
+          )}
+        </div>
+      </Popup>
+    </Marker>
+  );
+});
+
 export default function ClientsMap() {
   const { user } = useAuth();
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -164,6 +249,13 @@ export default function ClientsMap() {
   const [situacoes, setSituacoes] = useState<string[]>(["Ativos"]);
   const [periodicidades, setPeriodicidades] = useState<string[]>([]);
   const [bairros, setBairros] = useState<string[]>([]);
+  // ⚡ A busca só entra no filtro depois de 300ms parado. Sem isso cada TECLA re-renderizava os
+  // 1000+ pins do mapa e a aba congelava por dezenas de segundos.
+  const [buscaAplicada, setBuscaAplicada] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaAplicada(searchTerm), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
@@ -176,25 +268,25 @@ export default function ClientsMap() {
     queryKey: ['/api/customers/map-data', 'ativos'],
     queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=ativos'),
     enabled: !!canAccess && situacaoOn('Ativos'),
-    refetchInterval: 60000,
+    refetchInterval: 300000,
   });
   const qInativados = useQuery<Customer[]>({
     queryKey: ['/api/customers/map-data', 'inativados'],
     queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=inativados'),
     enabled: !!canAccess && situacaoOn('Inativados'),
-    refetchInterval: 60000,
+    refetchInterval: 300000,
   });
   const qPerdidos = useQuery<Customer[]>({
     queryKey: ['/api/customers/map-data', 'perdidos'],
     queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=perdidos'),
     enabled: !!canAccess && situacaoOn('Perdidos'),
-    refetchInterval: 60000,
+    refetchInterval: 300000,
   });
   const qLeads = useQuery<Customer[]>({
     queryKey: ['/api/customers/map-data', 'leads'],
     queryFn: () => apiRequest('GET', '/api/customers/map-data?situacao=leads'),
     enabled: !!canAccess && situacaoOn('Leads'),
-    refetchInterval: 60000,
+    refetchInterval: 300000,
   });
   const queryPorSituacao: Record<string, any> = {
     Ativos: qAtivos, Inativados: qInativados, Perdidos: qPerdidos, Leads: qLeads,
@@ -207,7 +299,7 @@ export default function ClientsMap() {
   // 📋 Copiar o nome do cliente direto do card do pin (para colar no WhatsApp, no Omie etc.).
   // navigator.clipboard exige HTTPS/permissao; o textarea + execCommand cobre o resto.
   const [copiadoId, setCopiadoId] = useState<string | null>(null);
-  const copiarNome = async (id: string, nome: string) => {
+  const copiarNome = useCallback(async (id: string, nome: string) => {
     try {
       await navigator.clipboard.writeText(nome);
     } catch {
@@ -222,7 +314,7 @@ export default function ClientsMap() {
     }
     setCopiadoId(id);
     setTimeout(() => setCopiadoId((atual) => (atual === id ? null : atual)), 1500);
-  };
+  }, []);
   const atualizarTudo = async () => {
     setAtualizando(true);
     try {
@@ -234,9 +326,10 @@ export default function ClientsMap() {
     }
   };
   // Junta as situações selecionadas num conjunto só de pontos.
-  const customers: Customer[] = SITUACAO_OPTIONS.flatMap((l) =>
+  const customers: Customer[] = useMemo(() => SITUACAO_OPTIONS.flatMap((l) =>
     situacaoOn(l) && Array.isArray(queryPorSituacao[l].data) ? (queryPorSituacao[l].data as Customer[]) : []
-  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [qAtivos.data, qInativados.data, qPerdidos.data, qLeads.data, situacoes]);
 
   const { data: usersForType } = useQuery<any[]>({
     queryKey: ['/api/users'],
@@ -244,106 +337,103 @@ export default function ClientsMap() {
     enabled: !!canAccess,
   });
 
-  // Clientes com coordenadas válidas (o backend já devolve o conjunto certo por situação).
-  let baseDoMapa = customers.filter(
-    (customer) =>
-      customer.latitude &&
-      customer.longitude &&
-      Number(customer.latitude) !== 0 &&
-      Number(customer.longitude) !== 0
-  );
-
-  // Vendedores veem apenas seus próprios clientes
-  if (isVendedor && user) {
-    baseDoMapa = baseDoMapa.filter((c) => c.sellerId === user.id);
-  }
-
-  // Aplicar filtro de busca por nome/telefone
-  if (searchTerm.trim()) {
-    baseDoMapa = baseDoMapa.filter(
-      (c) =>
-        (c.fantasyName || c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (searchTerm.replace(/\D/g, '').length > 0 && (c.phone || '').includes(searchTerm.replace(/\D/g, '')))
-    );
-  }
-
-  // Chave de cada filtro no ponto. Cadastro em branco vira "Sem Vendedor"/"Sem Bairro/Setor",
-  // para dar para achá-lo e corrigir.
-  const nomeDoVendedor = (c: any) => c?.sellerName || SEM_VENDEDOR;
-  const bairroDoPonto = (c: any) => c?.bairroPadrao || SEM_BAIRRO;
-  const periodicidadeDoPonto = (c: any) => String(c?.visitPeriodicity || '').toLowerCase();
-
-  const passaVendedor = (c: any) => sellers.length === 0 || sellers.includes(nomeDoVendedor(c));
-  const passaBairro = (c: any) => bairros.length === 0 || bairros.includes(bairroDoPonto(c));
-  const passaDia = (c: any) => dias.length === 0 || dias.includes(getWeekdayName(c.weekdays));
-  const passaPeriodicidade = (c: any) =>
-    periodicidades.length === 0 || periodicidades.map((x) => x.toLowerCase()).includes(periodicidadeDoPonto(c));
-
-  // 🔎 FILTROS DINÂMICOS (facetados): as opções de cada filtro saem dos pontos que estão NA TELA,
-  // já com os OUTROS filtros aplicados — nunca de uma lista fixa de cadastro. Assim vendedor que
-  // não tem nenhum cliente na situação marcada simplesmente não aparece na lista.
-  // O próprio filtro fica de fora do seu cálculo, senão marcar um valor apagaria os demais.
-  const paraOpcoes = (exceto: 'vendedor' | 'bairro' | 'dia' | 'periodicidade') =>
-    baseDoMapa.filter(
-      (c) =>
-        (exceto === 'vendedor' || passaVendedor(c)) &&
-        (exceto === 'bairro' || passaBairro(c)) &&
-        (exceto === 'dia' || passaDia(c)) &&
-        (exceto === 'periodicidade' || passaPeriodicidade(c))
+  // ⚡ TODO o pipeline de filtro/faceta num useMemo só: sem isso ele rodava (e reconstruía os
+  // 1000+ marcadores) a cada mudança de estado da tela — inclusive ao copiar um nome.
+  const {
+    activeCustomersWithCoords, opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, customersByDay,
+  } = useMemo(() => {
+    // Clientes com coordenadas válidas (o backend já devolve o conjunto certo por situação).
+    let baseDoMapa = customers.filter(
+      (customer) =>
+        customer.latitude &&
+        customer.longitude &&
+        Number(customer.latitude) !== 0 &&
+        Number(customer.longitude) !== 0
     );
 
-  // Tipo do vendedor (CLT, PJ, Telemarketing, Canal) só para ORDENAR a lista.
-  const sellerTypeByName: Record<string, string> = {};
-  for (const u of (Array.isArray(usersForType) ? usersForType : [])) {
-    const n = `${u.firstName || ''} ${u.lastName || ''}`.trim();
-    if (n && !(n in sellerTypeByName)) sellerTypeByName[n] = u.sellerType || (u.role === 'telemarketing' ? 'telemarketing' : '');
-  }
+    // Vendedores veem apenas seus próprios clientes
+    if (isVendedor && user) {
+      baseDoMapa = baseDoMapa.filter((c) => c.sellerId === user.id);
+    }
 
-  const pontosParaVendedor = paraOpcoes('vendedor');
-  const opcoesVendedor = [
-    ...sortSellerNamesByType(
-      Array.from(new Set(pontosParaVendedor.map((c) => (c as any).sellerName).filter(Boolean))) as string[],
-      sellerTypeByName,
-    ),
-    ...(pontosParaVendedor.some((c) => !(c as any).sellerName) ? [SEM_VENDEDOR] : []),
-  ];
+    // Aplicar filtro de busca por nome/telefone
+    if (buscaAplicada.trim()) {
+      const alvo = buscaAplicada.toLowerCase();
+      const soDigitos = buscaAplicada.replace(/\D/g, '');
+      baseDoMapa = baseDoMapa.filter(
+        (c) =>
+          (c.fantasyName || c.name || '').toLowerCase().includes(alvo) ||
+          (soDigitos.length > 0 && (c.phone || '').includes(soDigitos))
+      );
+    }
 
-  const pontosParaBairro = paraOpcoes('bairro');
-  const opcoesBairro = [
-    ...(Array.from(new Set(pontosParaBairro.map((c) => (c as any).bairroPadrao).filter(Boolean))) as string[])
-      .sort((a, b) => a.localeCompare(b, 'pt-BR')),
-    ...(pontosParaBairro.some((c) => !(c as any).bairroPadrao) ? [SEM_BAIRRO] : []),
-  ];
+    const passaVendedor = (c: any) => sellers.length === 0 || sellers.includes(c?.sellerName || SEM_VENDEDOR);
+    const passaBairro = (c: any) => bairros.length === 0 || bairros.includes(c?.bairroPadrao || SEM_BAIRRO);
+    const passaDia = (c: any) => dias.length === 0 || dias.includes(getWeekdayName(c.weekdays));
+    const alvoPeriodicidade = periodicidades.map((x) => x.toLowerCase());
+    const passaPeriodicidade = (c: any) =>
+      periodicidades.length === 0 || alvoPeriodicidade.includes(String(c?.visitPeriodicity || '').toLowerCase());
 
-  const pontosParaDia = paraOpcoes('dia');
-  const opcoesDia = DIAS_OPTIONS.filter((d) => pontosParaDia.some((c) => getWeekdayName(c.weekdays) === d));
+    // 🔎 FILTROS DINÂMICOS (facetados): as opções de cada filtro saem dos pontos que estão NA TELA,
+    // já com os OUTROS filtros aplicados — nunca de uma lista fixa de cadastro. Assim vendedor que
+    // não tem nenhum cliente na situação marcada simplesmente não aparece na lista.
+    // O próprio filtro fica de fora do seu cálculo, senão marcar um valor apagaria os demais.
+    const paraOpcoes = (exceto: 'vendedor' | 'bairro' | 'dia' | 'periodicidade') =>
+      baseDoMapa.filter(
+        (c) =>
+          (exceto === 'vendedor' || passaVendedor(c)) &&
+          (exceto === 'bairro' || passaBairro(c)) &&
+          (exceto === 'dia' || passaDia(c)) &&
+          (exceto === 'periodicidade' || passaPeriodicidade(c))
+      );
 
-  const pontosParaPeriodicidade = paraOpcoes('periodicidade');
-  const opcoesPeriodicidade = PERIODICIDADE_OPTIONS.filter((pp) =>
-    pontosParaPeriodicidade.some((c) => periodicidadeDoPonto(c) === pp.toLowerCase())
-  );
+    // Tipo do vendedor (CLT, PJ, Telemarketing, Canal) só para ORDENAR a lista.
+    const sellerTypeByName: Record<string, string> = {};
+    for (const u of (Array.isArray(usersForType) ? usersForType : [])) {
+      const n = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+      if (n && !(n in sellerTypeByName)) sellerTypeByName[n] = u.sellerType || (u.role === 'telemarketing' ? 'telemarketing' : '');
+    }
 
-  // Pontos exibidos. O filtro de DIA entra depois da legenda (a legenda mostra a distribuição
-  // por dia do que sobrou dos demais filtros).
-  let activeCustomersWithCoords = baseDoMapa.filter(
-    (c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c)
-  );
+    const pontosParaVendedor = paraOpcoes('vendedor');
+    const opcoesVendedor = [
+      ...sortSellerNamesByType(
+        Array.from(new Set(pontosParaVendedor.map((c) => (c as any).sellerName).filter(Boolean))) as string[],
+        sellerTypeByName,
+      ),
+      ...(pontosParaVendedor.some((c) => !(c as any).sellerName) ? [SEM_VENDEDOR] : []),
+    ];
 
-  // Agrupar por dia da semana (ANTES do filtro de dia, para a legenda). Conta só os ATIVOS,
-  // que são os pintados por dia — as demais situações têm cor própria.
-  const ativosParaLegenda = activeCustomersWithCoords.filter(
-    (c) => ((c as any).situacao || 'ativo') === 'ativo'
-  );
-  const customersByDay = {
-    Segunda: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
-    Terça: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Terça'),
-    Quarta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Quarta'),
-    Quinta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Quinta'),
-    Sexta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Sexta'),
-  };
+    const pontosParaBairro = paraOpcoes('bairro');
+    const opcoesBairro = [
+      ...(Array.from(new Set(pontosParaBairro.map((c) => (c as any).bairroPadrao).filter(Boolean))) as string[])
+        .sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      ...(pontosParaBairro.some((c) => !(c as any).bairroPadrao) ? [SEM_BAIRRO] : []),
+    ];
 
-  // Aplicar filtro de dia da semana (múltipla escolha; vazio = todos)
-  activeCustomersWithCoords = activeCustomersWithCoords.filter(passaDia);
+    const pontosParaDia = paraOpcoes('dia');
+    const opcoesDia = DIAS_OPTIONS.filter((d) => pontosParaDia.some((c) => getWeekdayName(c.weekdays) === d));
+
+    const pontosParaPeriodicidade = paraOpcoes('periodicidade');
+    const opcoesPeriodicidade = PERIODICIDADE_OPTIONS.filter((pp) =>
+      pontosParaPeriodicidade.some((c) => String((c as any).visitPeriodicity || '').toLowerCase() === pp.toLowerCase())
+    );
+
+    // Legenda: distribuição por dia dos ATIVOS que sobraram dos OUTROS filtros (antes do filtro de dia).
+    const semFiltroDeDia = baseDoMapa.filter((c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c));
+    const ativosParaLegenda = semFiltroDeDia.filter((c) => ((c as any).situacao || 'ativo') === 'ativo');
+    const customersByDay = {
+      Segunda: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
+      Terça: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Terça'),
+      Quarta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Quarta'),
+      Quinta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Quinta'),
+      Sexta: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Sexta'),
+    };
+
+    return {
+      activeCustomersWithCoords: semFiltroDeDia.filter(passaDia),
+      opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, customersByDay,
+    };
+  }, [customers, isVendedor, user, buscaAplicada, sellers, bairros, dias, periodicidades, usersForType]);
 
   // Centro do mapa (São Paulo como padrão, ou centro dos clientes)
   const defaultCenter: [number, number] = [-23.55052, -46.633308];
@@ -355,10 +445,22 @@ export default function ClientsMap() {
         ]
       : defaultCenter;
 
-  const handleEditCustomer = (customer: Customer) => {
+  const handleEditCustomer = useCallback((customer: Customer) => {
     setSelectedCustomer(customer);
     setIsEditModalOpen(true);
-  };
+  }, []);
+
+  // ⚡ Os marcadores só são reconstruídos quando o conjunto de pontos (ou a permissão/cópia) muda.
+  const marcadores = useMemo(() => activeCustomersWithCoords.map((customer) => (
+    <PontoDoMapa
+      key={customer.id}
+      customer={customer}
+      podeEditar={!!canEditCustomer}
+      copiado={copiadoId === String(customer.id)}
+      aoCopiar={copiarNome}
+      aoEditar={handleEditCustomer}
+    />
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, copiarNome, handleEditCustomer]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
@@ -601,82 +703,7 @@ export default function ClientsMap() {
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-              {activeCustomersWithCoords.map((customer) => {
-                const lat = Number(customer.latitude);
-                const lng = Number(customer.longitude);
-                const color = pinColorFor(customer);
-                const dayName = getWeekdayName(customer.weekdays);
-                const ehLead = (customer as any).situacao === 'lead';
-                // Nome e vendedor sao os dois dados que identificam o ponto — nunca podem sair vazios
-                // da caixa de descricao (lead sem vendedor aparece como "Sem vendedor", nao some).
-                const nomePonto = customer.fantasyName || customer.name || (ehLead ? 'Lead sem nome' : 'Cliente sem nome');
-                const vendedorPonto = (customer as any).sellerName || 'Sem vendedor';
-
-                return (
-                  <Marker
-                    key={customer.id}
-                    position={[lat, lng]}
-                    icon={createCustomIcon(color)}
-                  >
-                    <Popup>
-                      <div className="space-y-3 min-w-[220px]">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-base">
-                            {nomePonto}
-                          </h3>
-                          <button
-                            type="button"
-                            onClick={() => copiarNome(String(customer.id), nomePonto)}
-                            title="Copiar nome do cliente"
-                            aria-label="Copiar nome do cliente"
-                            className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                            data-testid={`button-copy-name-${customer.id}`}
-                          >
-                            {copiadoId === String(customer.id)
-                              ? <Check className="h-4 w-4 text-green-600" />
-                              : <Copy className="h-4 w-4 text-gray-500" />}
-                          </button>
-                          {ehLead ? (
-                            <Badge style={{ backgroundColor: '#7b4b2a' }} className="text-white">Lead</Badge>
-                          ) : (
-                            <OmieInstanceBadge instanceId={(customer as any).omieInstanceId} />
-                          )}
-                        </div>
-                        <div className="space-y-1 text-sm">
-                          <p className="flex items-center gap-1">
-                            <MapPin className="h-3 w-3" />
-                            {customer.address}
-                          </p>
-                          <p className="font-medium">
-                            📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
-                          </p>
-                          {!!customer.phone && <p>📞 {customer.phone}</p>}
-                          <p className="font-medium">
-                            👤 Vendedor: {vendedorPonto}
-                          </p>
-                          {(customer as any).visitPeriodicity && (
-                            <p className="font-medium">
-                              🔁 Periodicidade: {String((customer as any).visitPeriodicity).charAt(0).toUpperCase() + String((customer as any).visitPeriodicity).slice(1)}
-                            </p>
-                          )}
-                        </div>
-                        {/* Lead nao e cliente: o modal de edicao de cliente nao serve para ele. */}
-                        {canEditCustomer && !ehLead && (
-                          <Button
-                            size="sm"
-                            className="w-full"
-                            onClick={() => handleEditCustomer(customer)}
-                            data-testid={`button-edit-customer-${customer.id}`}
-                          >
-                            <Pencil className="h-3 w-3 mr-2" />
-                            Editar Cliente
-                          </Button>
-                        )}
-                      </div>
-                    </Popup>
-                  </Marker>
-                );
-              })}
+              {marcadores}
             </MapContainer>
           ) : (
             <div className="h-[calc(100vh-320px)] min-h-[600px] flex items-center justify-center">
