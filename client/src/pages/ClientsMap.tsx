@@ -572,7 +572,8 @@ export default function ClientsMap() {
                             </p>
                           )}
                         </div>
-                        {canEditCustomer && (
+                        {/* Lead nao e cliente: o modal de edicao de cliente nao serve para ele. */}
+                        {canEditCustomer && !ehLead && (
                           <Button
                             size="sm"
                             className="w-full"
