@@ -630,7 +630,7 @@ run();
       }
       // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
       const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address, service_start_date
-        FROM customers WHERE (is_supplier IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
+        FROM customers WHERE (is_supplier IS NOT TRUE) AND (is_colaborador IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
       const cust = (custR.rows || custR) as any[];
       const ABBR: any = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6, dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
       const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
@@ -2887,6 +2887,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE raw_material_movements ALTER COLUMN new_quantity      TYPE numeric(14,3) USING new_quantity::numeric`).catch(() => {});
   // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
+  // Flag Colaborador: cadastro que e um COLABORADOR (nao e cliente) -> fica em Clientes Ativos com tag,
+  // mas NAO entra em rota/agenda de visitas. Idempotente.
+  db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_colaborador boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
   // ==========================================================================

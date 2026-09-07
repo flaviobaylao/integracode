@@ -916,6 +916,22 @@ export class DatabaseStorage implements IStorage {
       .where(eq(customers.id, id))
       .returning();
 
+    // 🚫 Marcou como FORNECEDOR/COLABORADOR? Some da rota já — remove as visitas FUTURAS pendentes
+    // (não toca em visitas passadas/realizadas). Assim o cadastro fica em Clientes Ativos com a tag,
+    // mas não aparece mais na Rota do Dia nem na agenda.
+    if (customer.isColaborador === true || customer.isSupplier === true) {
+      try {
+        const hoje = new Date(); hoje.setUTCHours(0, 0, 0, 0);
+        await db.delete(visitAgenda).where(and(
+          eq(visitAgenda.customerId, id),
+          eq(visitAgenda.visitStatus, 'pending'),
+          gte(visitAgenda.scheduledDate, hoje),
+        ));
+      } catch (e: any) {
+        console.warn('updateCustomer: falha ao limpar agenda de fornecedor/colaborador:', e?.message);
+      }
+    }
+
     // 🔁 REZONEAMENTO: se o vendedor MUDOU, a agenda PENDENTE acompanha o novo dono.
     // Sem isso, as linhas antigas de visit_agenda ficavam com o seller_id anterior e o cliente
     // continuava aparecendo na rota do vendedor ANTIGO (e sumia da do NOVO até a próxima regen).

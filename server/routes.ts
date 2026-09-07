@@ -3671,6 +3671,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 🏭 Cliente ⇄ Fornecedor em massa: true = marca como Fornecedor (ganha a tag e some da Rota do Dia),
       // false = volta a ser Cliente comum. A migração p/ tabela `suppliers` continua exigindo CNPJ/CPF (endpoint próprio).
       if (typeof fields?.isSupplier === 'boolean') patch.isSupplier = fields.isSupplier;
+      // 👷 Colaborador em massa: true = marca como Colaborador (tag + sai de rota/agenda, fica em Clientes Ativos).
+      if (typeof fields?.isColaborador === 'boolean') patch.isColaborador = fields.isColaborador;
       if (Object.keys(patch).length === 0) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
       const __bulkUser = req.currentUser;
       const __bulkActor = { id: __bulkUser?.id, name: [__bulkUser?.firstName, __bulkUser?.lastName].filter(Boolean).join(' ').trim() || __bulkUser?.email };

@@ -506,7 +506,7 @@ export function registerChangeRequestsRoutes(app: Express) {
                WHERE u.id = c.seller_id OR u.omie_vendor_code = c.seller_id
                   OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') LIMIT 1) AS vendedor
         FROM customers c
-       WHERE c.is_active = true AND c.is_lead IS NOT TRUE AND c.is_supplier IS NOT TRUE
+       WHERE c.is_active = true AND c.is_lead IS NOT TRUE AND c.is_supplier IS NOT TRUE AND c.is_colaborador IS NOT TRUE
          AND ( ${semDiaSql} OR ${semPerSql} OR ${semVendedorSql} )
          AND NOT EXISTS (SELECT 1 FROM change_requests cr WHERE cr.entity_type='customer' AND cr.entity_id=c.id AND cr.status='pending')
        ORDER BY c.updated_at DESC NULLS LAST

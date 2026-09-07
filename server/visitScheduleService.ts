@@ -287,6 +287,8 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
   const c: any = rows[0];
   // 🚫 LEADS não geram agenda por periodicidade — aparecem só pela DATA do próximo contato.
   if (c.isLead === true) return 0;
+  // 🚫 FORNECEDOR / COLABORADOR não entram em rota nem em agenda de visitas.
+  if (c.isSupplier === true || c.isColaborador === true) return 0;
 
   // Dias cadastrados: versão bruta (p/ o motor calculateNextVisitDate) + numérica (p/ checagem).
   let weekdaysRaw: any[] = [];
