@@ -1535,7 +1535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // independente das situações marcadas na tela — senão o filtro mudaria de opções conforme
   // o usuário liga/desliga camadas. Devolve também quantos cadastros estão SEM vendedor.
   // Definido ANTES de :id para evitar conflito de rota.
-  app.get('/api/customers/map-sellers', authenticateUser, async (_req: any, res) => {
+  app.get('/api/customers/map-sellers', authenticateUser, async (req: any, res) => {
     try {
       const allSellers = await db.select().from(users);
       const nomePorId = new Map<string, string>();
@@ -1543,6 +1543,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const fn = u.firstName?.trim() || ''; const ln = u.lastName?.trim() || '';
         nomePorId.set(u.id, (fn || ln) ? `${fn} ${ln}`.trim() : (u.email?.split('@')[0] || u.email || 'Desconhecido'));
       }
+      // 🔒 Vendedor so ve a propria carteira no mapa: a lista de vendedores dele tem so ele.
+      const soDoVendedor: string | null = req.user?.role === 'vendedor' ? String(req.user.id) : null;
+      const andVend = (col: string) => soDoVendedor ? sql` AND ${sql.raw(col)} = ${soDoVendedor}` : sql``;
       const contagem = new Map<string, number>();
       let semVendedor = 0;
       const somar = (sid: any, qtd: number) => {
@@ -1557,7 +1560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         FROM customers
         WHERE (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
           AND latitude IS NOT NULL AND longitude IS NOT NULL
-          AND latitude::float <> 0 AND longitude::float <> 0
+          AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}
         GROUP BY seller_id`);
       for (const r of ((rc.rows || rc) as any[])) somar(r.seller_id, Number(r.qtd) || 0);
       try {
@@ -1566,7 +1569,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           FROM leads
           WHERE COALESCE(status::text,'') NOT IN ('converted','discarded')
             AND latitude IS NOT NULL AND longitude IS NOT NULL
-            AND latitude::float <> 0 AND longitude::float <> 0
+            AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('assigned_to')}
           GROUP BY assigned_to`);
         for (const r of ((rl.rows || rl) as any[])) somar(r.assigned_to, Number(r.qtd) || 0);
       } catch (e: any) { console.warn('[MAP-SELLERS] leads:', e?.message); }
@@ -1589,6 +1592,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       //   comprou em 3+ meses distintos e esta ha 3+ meses sem comprar).
       // - leads: prospects em aberto da tabela leads (dia = dia do proximo contato).
       const situacao = String(req.query.situacao || 'ativos').toLowerCase();
+      // 🔒 CARTEIRA DO VENDEDOR: quem tem role 'vendedor' so enxerga os PROPRIOS clientes e leads
+      // (customers.seller_id / leads.assigned_to = ele). Admin, coordenacao e administrativo
+      // continuam vendo o mapa inteiro. O filtro e SERVER-SIDE de proposito: nao adianta esconder
+      // na tela se o endpoint devolve a base toda.
+      const soDoVendedor: string | null = req.user?.role === 'vendedor' ? String(req.user.id) : null;
+      const andVend = (col: string) => soDoVendedor ? sql` AND ${sql.raw(col)} = ${soDoVendedor}` : sql``;
       const buildSellerMap = async () => {
         const allSellers = await db.select().from(users);
         const m = new Map<string, string>();
@@ -1619,7 +1628,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       if (situacao === 'inativados') {
         const sellerMap = await buildSellerMap();
-        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, visit_periodicity, seller_id FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0`);
+        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, visit_periodicity, seller_id FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
@@ -1652,7 +1661,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND b.doc NOT IN ('28295493000153','28295493000234','28295493000315','52921727000105','14877972000173')
             AND b.meses >= 3
             AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
-                  - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3`);
+                  - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3
+            ${andVend('c.seller_id')}`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
@@ -1669,7 +1679,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SELECT * FROM leads
           WHERE COALESCE(status::text,'') NOT IN ('converted','discarded')
             AND latitude IS NOT NULL AND longitude IS NOT NULL
-            AND latitude::float <> 0 AND longitude::float <> 0`);
+            AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('assigned_to')}`);
         const rows = ((r.rows || r) as any[]).map((l) => {
           // Dia do lead = dia da semana do PROXIMO CONTATO (equivalente ao dia de rota do cliente).
           let dia = '';
@@ -1714,6 +1724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(customers.isActive, true),
           sql`(${customers.isSupplier} IS NOT TRUE)`,
           sql`(${customers.isLead} IS NOT TRUE)`,
+          ...(soDoVendedor ? [eq(customers.sellerId, soDoVendedor)] : []),
           isNotNull(customers.latitude),
           isNotNull(customers.longitude),
           sql`(
