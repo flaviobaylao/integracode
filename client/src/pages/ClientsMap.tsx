@@ -387,7 +387,7 @@ export default function ClientsMap() {
     <div className="space-y-6" data-testid="clients-map-page">
       {/* 🧊 CABECALHO CONGELADO: titulo + contador + filtros ficam fixos enquanto o mapa rola.
           z acima de 1000 porque os panes do Leaflet usam ate 1000 e passariam por cima. */}
-      <div className="sticky top-0 z-[1100] bg-background pt-2 pb-4 space-y-4 shadow-[0_2px_6px_rgba(0,0,0,0.06)]">
+      <div className="sticky top-0 z-[1100] bg-background pt-2 pb-2 space-y-3 shadow-[0_2px_6px_rgba(0,0,0,0.06)]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Mapa de Clientes</h2>
@@ -508,22 +508,21 @@ export default function ClientsMap() {
           </div>
         </CardContent>
       </Card>
-      </div>
 
-      {/* Legenda */}
+      {/* Legenda — compacta, e faz parte do bloco congelado (o mapa rola por baixo dela) */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Legenda</CardTitle>
+        <CardHeader className="py-2 px-4">
+          <CardTitle className="text-sm">Legenda</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-2 py-2 px-4">
           {/* Situações visíveis (uma cor por situação; ativos são coloridos pelo dia) */}
-          <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex flex-wrap gap-2 items-center">
             {SITUACOES.filter((x) => situacaoOn(x.label)).map((x) => {
               const qtd = activeCustomersWithCoords.filter((c) => ((c as any).situacao || 'ativo') === x.sit).length;
               // Sem cor própria (Ativos) = badge neutro, porque a cor do ponto é a do dia da semana.
               if (!x.color) {
                 return (
-                  <Badge key={x.param} variant="outline" className="flex items-center gap-2 px-3 py-1.5">
+                  <Badge key={x.param} variant="outline" className="flex items-center gap-1.5 px-2 py-0.5 text-xs">
                     {x.label} ({qtd})
                   </Badge>
                 );
@@ -531,10 +530,10 @@ export default function ClientsMap() {
               return (
                 <Badge
                   key={x.param}
-                  className="flex items-center gap-2 px-3 py-1.5"
+                  className="flex items-center gap-1.5 px-2 py-0.5 text-xs"
                   style={{ backgroundColor: x.color, color: 'white' }}
                 >
-                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                  <div className="w-2 h-2 rounded-full bg-white"></div>
                   {x.label} ({qtd})
                 </Badge>
               );
@@ -543,28 +542,28 @@ export default function ClientsMap() {
           {/* Dias de visita: vale para os clientes ATIVOS, que são pintados pelo dia */}
           {situacaoOn('Ativos') && (
             <div>
-              <p className="text-xs text-muted-foreground mb-2">
+              <p className="text-xs text-muted-foreground mb-1">
                 Clientes ativos são pintados pelo dia de visita:
               </p>
-              <div className="flex flex-wrap gap-3">
-                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#22c55e', color: 'white' }}>
-                  <div className="w-3 h-3 rounded-full bg-white"></div>
+              <div className="flex flex-wrap gap-2">
+                <Badge className="flex items-center gap-1.5 px-2 py-0.5 text-xs" style={{ backgroundColor: '#22c55e', color: 'white' }}>
+                  <div className="w-2 h-2 rounded-full bg-white"></div>
                   Segunda ({customersByDay.Segunda.length})
                 </Badge>
-                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#3b82f6', color: 'white' }}>
-                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                <Badge className="flex items-center gap-1.5 px-2 py-0.5 text-xs" style={{ backgroundColor: '#3b82f6', color: 'white' }}>
+                  <div className="w-2 h-2 rounded-full bg-white"></div>
                   Terça ({customersByDay.Terça.length})
                 </Badge>
-                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#eab308', color: 'white' }}>
-                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                <Badge className="flex items-center gap-1.5 px-2 py-0.5 text-xs" style={{ backgroundColor: '#eab308', color: 'white' }}>
+                  <div className="w-2 h-2 rounded-full bg-white"></div>
                   Quarta ({customersByDay.Quarta.length})
                 </Badge>
-                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#ef4444', color: 'white' }}>
-                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                <Badge className="flex items-center gap-1.5 px-2 py-0.5 text-xs" style={{ backgroundColor: '#ef4444', color: 'white' }}>
+                  <div className="w-2 h-2 rounded-full bg-white"></div>
                   Quinta ({customersByDay.Quinta.length})
                 </Badge>
-                <Badge className="flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: '#a855f7', color: 'white' }}>
-                  <div className="w-3 h-3 rounded-full bg-white"></div>
+                <Badge className="flex items-center gap-1.5 px-2 py-0.5 text-xs" style={{ backgroundColor: '#a855f7', color: 'white' }}>
+                  <div className="w-2 h-2 rounded-full bg-white"></div>
                   Sexta ({customersByDay.Sexta.length})
                 </Badge>
               </div>
@@ -582,6 +581,7 @@ export default function ClientsMap() {
           )}
         </CardContent>
       </Card>
+      </div>
 
       {/* Mapa */}
       <Card>
