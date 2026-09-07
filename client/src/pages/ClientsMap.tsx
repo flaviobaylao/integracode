@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Users, Pencil, AlertCircle, X } from "lucide-react";
+import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -196,6 +196,20 @@ export default function ClientsMap() {
     Ativos: qAtivos, Inativados: qInativados, Perdidos: qPerdidos, Leads: qLeads,
   };
   const isLoading = SITUACAO_OPTIONS.some((l) => situacaoOn(l) && queryPorSituacao[l].isLoading);
+  // 🔄 ATUALIZAR: refaz as consultas das situacoes visiveis + a lista de vendedores dos cadastros.
+  // Refetch direto (nao invalidate) para o botao so voltar ao normal quando o dado ja chegou.
+  const [atualizando, setAtualizando] = useState(false);
+  const atualizarTudo = async () => {
+    setAtualizando(true);
+    try {
+      await Promise.all([
+        ...SITUACAO_OPTIONS.filter((l) => situacaoOn(l)).map((l) => queryPorSituacao[l].refetch()),
+        refetchMapSellers(),
+      ]);
+    } finally {
+      setAtualizando(false);
+    }
+  };
   // Junta as situações selecionadas num conjunto só de pontos.
   const customers: Customer[] = SITUACAO_OPTIONS.flatMap((l) =>
     situacaoOn(l) && Array.isArray(queryPorSituacao[l].data) ? (queryPorSituacao[l].data as Customer[]) : []
@@ -209,7 +223,7 @@ export default function ClientsMap() {
 
   // Lista de vendedores do FILTRO: vem dos cadastros de clientes (endpoint próprio), não dos
   // pontos carregados — assim as opções não mudam quando se liga/desliga uma situação.
-  const { data: mapSellers } = useQuery<{ vendedores: { nome: string; qtd: number }[]; semVendedor: number }>({
+  const { data: mapSellers, refetch: refetchMapSellers } = useQuery<{ vendedores: { nome: string; qtd: number }[]; semVendedor: number }>({
     queryKey: ['/api/customers/map-sellers'],
     queryFn: () => apiRequest('GET', '/api/customers/map-sellers'),
     enabled: !!canAccess,
@@ -337,6 +351,9 @@ export default function ClientsMap() {
 
   return (
     <div className="space-y-6" data-testid="clients-map-page">
+      {/* 🧊 CABECALHO CONGELADO: titulo + contador + filtros ficam fixos enquanto o mapa rola.
+          z acima de 1000 porque os panes do Leaflet usam ate 1000 e passariam por cima. */}
+      <div className="sticky top-0 z-[1100] bg-background pt-2 pb-4 space-y-4 shadow-[0_2px_6px_rgba(0,0,0,0.06)]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Mapa de Clientes</h2>
@@ -347,9 +364,22 @@ export default function ClientsMap() {
       </div>
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MapPin className="h-6 w-6 text-blue-600" />
-            Localização dos Clientes
+          <CardTitle className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <MapPin className="h-6 w-6 text-blue-600" />
+              Localização dos Clientes
+            </span>
+            {/* Recarrega do zero as situacoes visiveis E a lista de vendedores dos cadastros. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={atualizarTudo}
+              disabled={atualizando}
+              data-testid="button-refresh-map"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${atualizando ? 'animate-spin' : ''}`} />
+              {atualizando ? 'Atualizando...' : 'Atualizar'}
+            </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -433,6 +463,7 @@ export default function ClientsMap() {
           </div>
         </CardContent>
       </Card>
+      </div>
 
       {/* Legenda */}
       <Card>
