@@ -1531,6 +1531,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🏘️ BAIRRO/SETOR PADRONIZADO: o cadastro tem 800+ grafias para ~580 bairros ("SET BUENO",
+  // "SETOR BUENO", "Setor Bueno"). Esta funcao e a UNICA fonte do nome padrao — usada tanto na
+  // lista do filtro quanto em cada ponto do mapa, senao o filtro nao casa com o dado.
+  const ABREV_BAIRRO: Record<string, string> = {
+    SET: 'SETOR', ST: 'SETOR', STR: 'SETOR', SETOR: 'SETOR',
+    JD: 'JARDIM', JDM: 'JARDIM', JRD: 'JARDIM',
+    BRO: '', BAIRRO: '',
+    PRQ: 'PARQUE', PQ: 'PARQUE', PARQ: 'PARQUE',
+    LOT: 'LOTEAMENTO', LT: 'LOTEAMENTO',
+    RES: 'RESIDENCIAL', RESID: 'RESIDENCIAL',
+    VL: 'VILA', CJ: 'CONJUNTO', CONJ: 'CONJUNTO',
+    CH: 'CHACARA', CHAC: 'CHACARA', CD: 'CIDADE', COND: 'CONDOMINIO',
+    NUC: 'NUCLEO', DIST: 'DISTRITO',
+  };
+  const MINUSCULAS_BAIRRO = new Set(['DE', 'DO', 'DA', 'DOS', 'DAS', 'E']);
+  const normBairro = (v: any): string => {
+    let t = String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+    t = t.replace(/\([^)]*\)/g, ' ');          // "(CEILANDIA)" = RA/cidade, nao faz parte do bairro
+    t = t.replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    const partes = t.split(' ');
+    const expandido = ABREV_BAIRRO[partes[0]];   // so o PREFIXO e abreviado no cadastro
+    if (expandido !== undefined) partes[0] = expandido;
+    const limpo = partes.filter(Boolean);
+    if (!limpo.length) return '';
+    return limpo
+      .map((w, i) => (i > 0 && MINUSCULAS_BAIRRO.has(w) ? w.toLowerCase() : w.charAt(0) + w.slice(1).toLowerCase()))
+      .join(' ');
+  };
+
+  // 🏘️ Bairros/Setores do MAPA: mesma logica do map-sellers (lista fixa dos cadastros com
+  // coordenada, respeitando o escopo do vendedor). Definido ANTES de :id.
+  app.get('/api/customers/map-neighborhoods', authenticateUser, async (req: any, res) => {
+    try {
+      const _u: any = (req as any).currentUser || (req as any).user;
+      const soDoVendedor: string | null = _u?.role === 'vendedor' ? String(_u.id) : null;
+      const andVend = (col: string) => soDoVendedor ? sql` AND ${sql.raw(col)} = ${soDoVendedor}` : sql``;
+      const contagem = new Map<string, number>();
+      let semBairro = 0;
+      const somar = (b: any, qtd: number) => {
+        const nome = normBairro(b);
+        if (!nome) { semBairro += qtd; return; }
+        contagem.set(nome, (contagem.get(nome) || 0) + qtd);
+      };
+      const rc: any = await db.execute(sql`
+        SELECT neighborhood, COUNT(*)::int AS qtd
+        FROM customers
+        WHERE (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}
+        GROUP BY neighborhood`);
+      for (const r of ((rc.rows || rc) as any[])) somar(r.neighborhood, Number(r.qtd) || 0);
+      try {
+        const rl: any = await db.execute(sql`
+          SELECT neighborhood, COUNT(*)::int AS qtd
+          FROM leads
+          WHERE COALESCE(status::text,'') NOT IN ('converted','discarded')
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+            AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('assigned_to')}
+          GROUP BY neighborhood`);
+        for (const r of ((rl.rows || rl) as any[])) somar(r.neighborhood, Number(r.qtd) || 0);
+      } catch (e: any) { console.warn('[MAP-BAIRROS] leads:', e?.message); }
+      const bairros = Array.from(contagem.entries())
+        .map(([nome, qtd]) => ({ nome, qtd }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      res.json({ bairros, semBairro });
+    } catch (error: any) {
+      console.error('Erro ao listar bairros do mapa:', error);
+      res.json({ bairros: [], semBairro: 0 });
+    }
+  });
+
   // 🧑‍💼 Vendedores do MAPA: lista fixa, tirada dos CADASTROS de clientes (e dos leads),
   // independente das situações marcadas na tela — senão o filtro mudaria de opções conforme
   // o usuário liga/desliga camadas. Devolve também quantos cadastros estão SEM vendedor.
@@ -1627,7 +1699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           latitude: parseFloat(String(c.latitude)), longitude: parseFloat(String(c.longitude)),
           weekdays: pw.join(', '), isActive: sit === 'ativo', visitDay: pw.length ? pw[0] : 'Seg',
           customerId: c.id, sellerId: sid, sellerName: sid ? (sellerMap.get(String(sid)) || null) : null, situacao: sit,
-          visitPeriodicity: c.visit_periodicity ?? null,
+          visitPeriodicity: c.visit_periodicity ?? null, bairroPadrao: normBairro(c.neighborhood),
         };
       };
       if (situacao === 'inativados') {
@@ -1699,6 +1771,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             phone: l.phone || '',
             address: [l.neighborhood, l.city].filter(Boolean).join(' - '),
             neighborhood: l.neighborhood || '',
+            bairroPadrao: normBairro(l.neighborhood),
             document: '',
             latitude: parseFloat(String(l.latitude)),
             longitude: parseFloat(String(l.longitude)),
@@ -1789,6 +1862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             phone: c.phone || '',
             address: c.address || '',
             neighborhood: c.neighborhood || '',
+            bairroPadrao: normBairro(c.neighborhood),
             document: c.document,
             latitude: parseFloat(String(c.latitude)),
             longitude: parseFloat(String(c.longitude)),
