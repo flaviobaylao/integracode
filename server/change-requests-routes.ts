@@ -573,10 +573,12 @@ export function registerChangeRequestsRoutes(app: Express) {
     const cBlocked = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM blocked_orders bo WHERE bo.status='blocked' AND bo.customer_id IS NOT NULL AND ${naoExiste("bo.customer_id")}`))[0]?.n || 0;
     const cReceb = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM receivables r WHERE r.deleted_at IS NULL AND (r.amount - COALESCE(r.amount_paid,0)) > 0 AND r.customer_id IS NOT NULL AND ${naoExiste("r.customer_id")}`))[0]?.n || 0;
     if (dryRun) return res.json({ ok: true, dryRun: true, salesCards: cCards, pedidosBloqueados: cBlocked, recebiveis: cReceb, total: cCards + cBlocked + cReceb });
-    await db.execute(sql`UPDATE sales_cards SET status='cancelled', updated_at=now() WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL AND ${naoExiste("sales_cards.customer_id")}`);
-    await db.execute(sql`UPDATE blocked_orders SET status='rejected', updated_at=now() WHERE status='blocked' AND customer_id IS NOT NULL AND ${naoExiste("blocked_orders.customer_id")}`);
-    await db.execute(sql`UPDATE receivables SET deleted_at=now() WHERE deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0 AND customer_id IS NOT NULL AND ${naoExiste("receivables.customer_id")}`);
-    res.json({ ok: true, dryRun: false, salesCardsCancelados: cCards, pedidosRejeitados: cBlocked, recebiveisSoftCancel: cReceb, total: cCards + cBlocked + cReceb });
+    const erros: string[] = [];
+    try { await db.execute(sql`UPDATE sales_cards SET status='cancelled', updated_at=now() WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL AND ${naoExiste("sales_cards.customer_id")}`); } catch (e: any) { erros.push("sales_cards: " + (e?.message || e)); }
+    // Pedido bloqueado órfão: o enum blocked_order_status não tem "cancelado" — como o cliente não existe, removemos o registro.
+    try { await db.execute(sql`DELETE FROM blocked_orders WHERE status='blocked' AND customer_id IS NOT NULL AND ${naoExiste("blocked_orders.customer_id")}`); } catch (e: any) { erros.push("blocked_orders: " + (e?.message || e)); }
+    try { await db.execute(sql`UPDATE receivables SET deleted_at=now() WHERE deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0 AND customer_id IS NOT NULL AND ${naoExiste("receivables.customer_id")}`); } catch (e: any) { erros.push("receivables: " + (e?.message || e)); }
+    res.json({ ok: erros.length === 0, dryRun: false, salesCardsCancelados: cCards, pedidosRemovidos: cBlocked, recebiveisSoftCancel: cReceb, total: cCards + cBlocked + cReceb, erros });
   }));
 
   // GET /api/admin/suppliers-sem-documento — lista os clientes marcados como
