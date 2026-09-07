@@ -1811,6 +1811,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // CNPJ duplicado: lookup para o popup do cadastro (Nome Fantasia + Vendedor).
+  // Registrado ANTES de '/api/customers/:id' para não ser capturado como :id.
+  app.get('/api/customers/cnpj-lookup', authenticateUser, async (req: any, res) => {
+    try {
+      const raw = String(req.query.cnpj || '').replace(/\D/g, '');
+      const excludeId = String(req.query.excludeId || '');
+      if (raw.length !== 14) {
+        return res.json({ ok: true, cnpj: raw, exists: false, matches: [] });
+      }
+      const rows = (await db.execute(sql`
+        SELECT c.id,
+               COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
+               c.is_active, c.omie_status,
+               (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '')
+                  FROM users u
+                 WHERE u.omie_vendor_code = c.seller_id
+                    OR u.omie_vendor_code = replace(COALESCE(c.seller_id, ''), 'omie-vendor-', '')
+                    OR u.id = c.seller_id
+                 LIMIT 1) AS vendedor
+          FROM customers c
+         WHERE regexp_replace(COALESCE(c.cnpj, ''), '[^0-9]', '', 'g') = ${raw}
+           ${excludeId ? sql`AND c.id <> ${excludeId}` : sql``}
+         ORDER BY c.is_active DESC NULLS LAST
+         LIMIT 10
+      `)).rows as any[];
+      res.json({
+        ok: true,
+        cnpj: raw,
+        exists: rows.length > 0,
+        matches: rows.map(r => ({
+          id: r.id,
+          nome: r.nome || '(sem nome)',
+          vendedor: r.vendedor || 'Sem vendedor',
+          isActive: r.is_active === true,
+          omieStatus: r.omie_status || null,
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
   app.get('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -2244,50 +2286,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error inactivating customer:", error);
       res.status(500).json({ message: "Falha ao inativar cliente" });
-    }
-  });
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // CNPJ duplicado: lookup para o popup do cadastro (Nome Fantasia + Vendedor)
-  // Normaliza o CNPJ (só dígitos) para pegar duplicatas mesmo com máscara diferente.
-  // ─────────────────────────────────────────────────────────────────────────
-  app.get('/api/customers/cnpj-lookup', authenticateUser, async (req: any, res) => {
-    try {
-      const raw = String(req.query.cnpj || '').replace(/\D/g, '');
-      const excludeId = String(req.query.excludeId || '');
-      if (raw.length !== 14) {
-        return res.json({ ok: true, cnpj: raw, exists: false, matches: [] });
-      }
-      const rows = (await db.execute(sql`
-        SELECT c.id,
-               COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
-               c.is_active, c.omie_status,
-               (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '')
-                  FROM users u
-                 WHERE u.omie_vendor_code = c.seller_id
-                    OR u.omie_vendor_code = replace(COALESCE(c.seller_id, ''), 'omie-vendor-', '')
-                    OR u.id = c.seller_id
-                 LIMIT 1) AS vendedor
-          FROM customers c
-         WHERE regexp_replace(COALESCE(c.cnpj, ''), '[^0-9]', '', 'g') = ${raw}
-           ${excludeId ? sql`AND c.id <> ${excludeId}` : sql``}
-         ORDER BY c.is_active DESC NULLS LAST
-         LIMIT 10
-      `)).rows as any[];
-      res.json({
-        ok: true,
-        cnpj: raw,
-        exists: rows.length > 0,
-        matches: rows.map(r => ({
-          id: r.id,
-          nome: r.nome || '(sem nome)',
-          vendedor: r.vendedor || 'Sem vendedor',
-          isActive: r.is_active === true,
-          omieStatus: r.omie_status || null,
-        })),
-      });
-    } catch (e: any) {
-      res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
 
