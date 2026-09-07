@@ -568,6 +568,19 @@ export default function BillingPipeline() {
       });
       return;
     }
+    // "Faturar em" alterada tem de ser futura (mesma regra do agendamento por arraste).
+    // Só valida quando o usuário MUDOU a data para hoje/passado — não força corrigir
+    // datas antigas já gravadas quando ele nem toca no campo.
+    const _origSched = detailItem.scheduledBillingDate ? String(detailItem.scheduledBillingDate).slice(0, 10) : '';
+    const _newSched = editData.scheduledBillingDate ? String(editData.scheduledBillingDate).slice(0, 10) : '';
+    if (_newSched && _newSched !== _origSched && _newSched < amanhaISObr) {
+      toast({
+        title: 'Data "Faturar em" inválida',
+        description: 'A data de faturamento deve ser futura (a partir de amanhã). Para faturar hoje, deixe o pedido na etapa "Pedido".',
+        variant: 'destructive',
+      });
+      return;
+    }
     const restricted = !canEdit && isSellerRole; // vendedor/telemarketing dono
     const data = restricted
       ? { products: editData.products, paymentMethod: editData.paymentMethod, scheduledBillingDate: editData.scheduledBillingDate, notes: editData.notes }
@@ -1619,7 +1632,7 @@ export default function BillingPipeline() {
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Faturar em</label>
                     {editMode ? (
-                      <input type="date" value={editData?.scheduledBillingDate ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, scheduledBillingDate: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm" data-testid="input-faturar-em" />
+                      <input type="date" min={amanhaISObr} value={editData?.scheduledBillingDate ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, scheduledBillingDate: e.target.value }))} className="w-full border rounded px-2 py-1 text-sm" data-testid="input-faturar-em" />
                     ) : (<p className="text-sm">{detailItem.scheduledBillingDate ? new Date(detailItem.scheduledBillingDate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-'}</p>)}
                   </div>
                   {(detailItem.invoiceNumber || (editMode && canEdit)) && (
