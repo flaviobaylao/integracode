@@ -200,7 +200,8 @@ export default function ClientsMap() {
     Ativos: qAtivos, Inativados: qInativados, Perdidos: qPerdidos, Leads: qLeads,
   };
   const isLoading = SITUACAO_OPTIONS.some((l) => situacaoOn(l) && queryPorSituacao[l].isLoading);
-  // 🔄 ATUALIZAR: refaz as consultas das situacoes visiveis + a lista de vendedores dos cadastros.
+  // 🔄 ATUALIZAR: refaz as consultas das situacoes visiveis. As opcoes dos filtros saem desses
+  // mesmos dados, entao recarregar os pontos ja recarrega os filtros.
   // Refetch direto (nao invalidate) para o botao so voltar ao normal quando o dado ja chegou.
   const [atualizando, setAtualizando] = useState(false);
   const atualizarTudo = async () => {
@@ -208,8 +209,6 @@ export default function ClientsMap() {
     try {
       await Promise.all([
         ...SITUACAO_OPTIONS.filter((l) => situacaoOn(l)).map((l) => queryPorSituacao[l].refetch()),
-        refetchMapSellers(),
-        refetchMapBairros(),
       ]);
     } finally {
       setAtualizando(false);
@@ -226,23 +225,8 @@ export default function ClientsMap() {
     enabled: !!canAccess,
   });
 
-  // Lista de vendedores do FILTRO: vem dos cadastros de clientes (endpoint próprio), não dos
-  // pontos carregados — assim as opções não mudam quando se liga/desliga uma situação.
-  const { data: mapSellers, refetch: refetchMapSellers } = useQuery<{ vendedores: { nome: string; qtd: number }[]; semVendedor: number }>({
-    queryKey: ['/api/customers/map-sellers'],
-    queryFn: () => apiRequest('GET', '/api/customers/map-sellers'),
-    enabled: !!canAccess,
-    staleTime: 5 * 60 * 1000,
-  });
-  const { data: mapBairros, refetch: refetchMapBairros } = useQuery<{ bairros: { nome: string; qtd: number }[]; semBairro: number }>({
-    queryKey: ['/api/customers/map-neighborhoods'],
-    queryFn: () => apiRequest('GET', '/api/customers/map-neighborhoods'),
-    enabled: !!canAccess,
-    staleTime: 5 * 60 * 1000,
-  });
-
   // Clientes com coordenadas válidas (o backend já devolve o conjunto certo por situação).
-  let activeCustomersWithCoords = customers.filter(
+  let baseDoMapa = customers.filter(
     (customer) =>
       customer.latitude &&
       customer.longitude &&
@@ -252,68 +236,79 @@ export default function ClientsMap() {
 
   // Vendedores veem apenas seus próprios clientes
   if (isVendedor && user) {
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => c.sellerId === user.id
-    );
+    baseDoMapa = baseDoMapa.filter((c) => c.sellerId === user.id);
   }
 
   // Aplicar filtro de busca por nome/telefone
   if (searchTerm.trim()) {
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+    baseDoMapa = baseDoMapa.filter(
       (c) =>
         (c.fantasyName || c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (searchTerm.replace(/\D/g, '').length > 0 && (c.phone || '').includes(searchTerm.replace(/\D/g, '')))
     );
   }
 
-  // Aplicar filtro de vendedor (múltipla escolha; vazio = todos).
-  // Cadastro sem vendedor entra como "Sem Vendedor", para dar para achá-lo e corrigir.
-  // Bairro/Setor PADRONIZADO: o nome vem pronto do servidor (campo bairroPadrao), a mesma
-  // funcao que monta a lista do filtro — por isso filtro e ponto sempre casam.
-  const bairroDoPonto = (c: any) => c?.bairroPadrao || SEM_BAIRRO;
-  if (bairros.length > 0) {
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => bairros.includes(bairroDoPonto(c))
-    );
-  }
-
+  // Chave de cada filtro no ponto. Cadastro em branco vira "Sem Vendedor"/"Sem Bairro/Setor",
+  // para dar para achá-lo e corrigir.
   const nomeDoVendedor = (c: any) => c?.sellerName || SEM_VENDEDOR;
-  if (sellers.length > 0) {
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => sellers.includes(nomeDoVendedor(c))
-    );
-  }
+  const bairroDoPonto = (c: any) => c?.bairroPadrao || SEM_BAIRRO;
+  const periodicidadeDoPonto = (c: any) => String(c?.visitPeriodicity || '').toLowerCase();
 
-  // Aplicar filtro de periodicidade de visita (múltipla escolha; vazio = todas)
-  if (periodicidades.length > 0) {
-    const alvo = periodicidades.map((p) => p.toLowerCase());
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => alvo.includes(String((c as any).visitPeriodicity || '').toLowerCase())
-    );
-  }
+  const passaVendedor = (c: any) => sellers.length === 0 || sellers.includes(nomeDoVendedor(c));
+  const passaBairro = (c: any) => bairros.length === 0 || bairros.includes(bairroDoPonto(c));
+  const passaDia = (c: any) => dias.length === 0 || dias.includes(getWeekdayName(c.weekdays));
+  const passaPeriodicidade = (c: any) =>
+    periodicidades.length === 0 || periodicidades.map((x) => x.toLowerCase()).includes(periodicidadeDoPonto(c));
 
-  // Extrair vendedores únicos, ordenados por tipo (CLT, PJ, Telemarketing, Canal)
+  // 🔎 FILTROS DINÂMICOS (facetados): as opções de cada filtro saem dos pontos que estão NA TELA,
+  // já com os OUTROS filtros aplicados — nunca de uma lista fixa de cadastro. Assim vendedor que
+  // não tem nenhum cliente na situação marcada simplesmente não aparece na lista.
+  // O próprio filtro fica de fora do seu cálculo, senão marcar um valor apagaria os demais.
+  const paraOpcoes = (exceto: 'vendedor' | 'bairro' | 'dia' | 'periodicidade') =>
+    baseDoMapa.filter(
+      (c) =>
+        (exceto === 'vendedor' || passaVendedor(c)) &&
+        (exceto === 'bairro' || passaBairro(c)) &&
+        (exceto === 'dia' || passaDia(c)) &&
+        (exceto === 'periodicidade' || passaPeriodicidade(c))
+    );
+
+  // Tipo do vendedor (CLT, PJ, Telemarketing, Canal) só para ORDENAR a lista.
   const sellerTypeByName: Record<string, string> = {};
   for (const u of (Array.isArray(usersForType) ? usersForType : [])) {
     const n = `${u.firstName || ''} ${u.lastName || ''}`.trim();
     if (n && !(n in sellerTypeByName)) sellerTypeByName[n] = u.sellerType || (u.role === 'telemarketing' ? 'telemarketing' : '');
   }
-  // Opções do filtro: todos os vendedores que constam em cadastro de cliente/lead (lista fixa),
-  // com "Sem Vendedor" no fim quando há cadastro sem vendedor atribuído.
-  const nomesDoCadastro = (mapSellers?.vendedores || []).map((v) => v.nome);
-  const uniqueSellers = sortSellerNamesByType(
-    nomesDoCadastro.length
-      ? nomesDoCadastro
-      : (Array.from(new Set(customers.map((c) => (c as any).sellerName).filter(Boolean))) as string[]),
-    sellerTypeByName,
-  );
-  const opcoesVendedor = (mapSellers?.semVendedor || 0) > 0 || activeCustomersWithCoords.some((c) => !(c as any).sellerName)
-    ? [...uniqueSellers, SEM_VENDEDOR]
-    : uniqueSellers;
 
-  // Opções de Bairro/Setor: lista fixa dos cadastros (não muda com as situações marcadas).
-  const nomesDeBairro = (mapBairros?.bairros || []).map((b) => b.nome);
-  const opcoesBairro = (mapBairros?.semBairro || 0) > 0 ? [...nomesDeBairro, SEM_BAIRRO] : nomesDeBairro;
+  const pontosParaVendedor = paraOpcoes('vendedor');
+  const opcoesVendedor = [
+    ...sortSellerNamesByType(
+      Array.from(new Set(pontosParaVendedor.map((c) => (c as any).sellerName).filter(Boolean))) as string[],
+      sellerTypeByName,
+    ),
+    ...(pontosParaVendedor.some((c) => !(c as any).sellerName) ? [SEM_VENDEDOR] : []),
+  ];
+
+  const pontosParaBairro = paraOpcoes('bairro');
+  const opcoesBairro = [
+    ...(Array.from(new Set(pontosParaBairro.map((c) => (c as any).bairroPadrao).filter(Boolean))) as string[])
+      .sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    ...(pontosParaBairro.some((c) => !(c as any).bairroPadrao) ? [SEM_BAIRRO] : []),
+  ];
+
+  const pontosParaDia = paraOpcoes('dia');
+  const opcoesDia = DIAS_OPTIONS.filter((d) => pontosParaDia.some((c) => getWeekdayName(c.weekdays) === d));
+
+  const pontosParaPeriodicidade = paraOpcoes('periodicidade');
+  const opcoesPeriodicidade = PERIODICIDADE_OPTIONS.filter((pp) =>
+    pontosParaPeriodicidade.some((c) => periodicidadeDoPonto(c) === pp.toLowerCase())
+  );
+
+  // Pontos exibidos. O filtro de DIA entra depois da legenda (a legenda mostra a distribuição
+  // por dia do que sobrou dos demais filtros).
+  let activeCustomersWithCoords = baseDoMapa.filter(
+    (c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c)
+  );
 
   // Agrupar por dia da semana (ANTES do filtro de dia, para a legenda). Conta só os ATIVOS,
   // que são os pintados por dia — as demais situações têm cor própria.
@@ -329,11 +324,7 @@ export default function ClientsMap() {
   };
 
   // Aplicar filtro de dia da semana (múltipla escolha; vazio = todos)
-  if (dias.length > 0) {
-    activeCustomersWithCoords = activeCustomersWithCoords.filter(
-      (c) => dias.includes(getWeekdayName(c.weekdays))
-    );
-  }
+  activeCustomersWithCoords = activeCustomersWithCoords.filter(passaDia);
 
   // Centro do mapa (São Paulo como padrão, ou centro dos clientes)
   const defaultCenter: [number, number] = [-23.55052, -46.633308];
@@ -461,7 +452,7 @@ export default function ClientsMap() {
             <div className="pt-[21px]">
               <MultiSelect
                 label="Dia da Semana"
-                options={DIAS_OPTIONS}
+                options={opcoesDia}
                 selected={dias}
                 onChange={setDias}
                 testId="select-day-map"
@@ -470,7 +461,7 @@ export default function ClientsMap() {
             <div className="pt-[21px]">
               <MultiSelect
                 label="Periodicidade"
-                options={PERIODICIDADE_OPTIONS}
+                options={opcoesPeriodicidade}
                 selected={periodicidades}
                 onChange={setPeriodicidades}
                 testId="select-periodicity-map"
