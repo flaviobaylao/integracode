@@ -191,15 +191,35 @@ cron.schedule('50 7-20 * * 1-5', async () => {
     console.log(`⚠️ [BB-BOLETO] alerta de varredura: ${problema} (WhatsApp enviados=${enviados})`);
   } catch (e: any) { console.error('[BB-BOLETO] alerta erro:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
-(async () => { await _promoteAgendados('boot'); })();
+(async () => {
+  try { await _promoteAgendados('boot'); }
+  catch (e: any) { console.error('[STARTUP] _promoteAgendados falhou (app segue de pé):', e?.message || e); }
+})();
 
 // Sincronizar usuários como agentes e clientes para agenda na inicialização
+//
+// ⚠️ 07/set/2026 — ESTE BLOCO JÁ DERRUBOU O APP INTEIRO. Ele roda no IMPORT do scheduler
+// (server/index.ts linha 27), ou seja ANTES das migrações idempotentes do index.ts. A coluna
+// customers.is_colaborador sumiu do banco, o `select().from(customers)` do phonebook estourou,
+// a rejeição ficou SEM TRATAMENTO e o Node matou o processo: 10 restarts, healthcheck falhou,
+// 502 em tudo (Integra e hotsite) por quase uma hora. Duas travas ficam aqui:
+//   1) as colunas de flag são garantidas AQUI, aguardadas, antes de qualquer SELECT em customers;
+//   2) NENHUM erro de job de boot escapa — job de inicialização não pode derrubar o servidor.
 (async () => {
-  await storage.syncUsersAsAgents();
-  
-  // Sincronizar clientes ativos para agenda do Chat Center
-  console.log(`📞 [STARTUP] Iniciando sincronização de clientes ativos para agenda...`);
-  await storage.syncActiveCustomersToPhonebook();
+  try {
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`);
+    await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_colaborador boolean DEFAULT false`);
+  } catch (e: any) {
+    console.error('[STARTUP] nao foi possivel garantir as colunas de flag de customers:', e?.message || e);
+  }
+  try {
+    await storage.syncUsersAsAgents();
+    // Sincronizar clientes ativos para agenda do Chat Center
+    console.log(`📞 [STARTUP] Iniciando sincronização de clientes ativos para agenda...`);
+    await storage.syncActiveCustomersToPhonebook();
+  } catch (e: any) {
+    console.error('[STARTUP] sync inicial de agentes/agenda falhou (app segue de pé):', e?.message || e);
+  }
 })();
 
 // Job para encerrar conversas inativas a cada 5 minutos
