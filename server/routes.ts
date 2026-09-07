@@ -2570,6 +2570,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } catch (_epv) {}
 
+      // 🚫 DEDUP (2.2): cliente NOVO (não-lead) recém-criado descarta o lead correspondente
+      // (já cadastrado e ativo). Critério coordenada+nome / nome / telefone. Não bloqueia.
+      try {
+        if (!req.body.isLead) {
+          const { discardLeadsForCustomer } = await import('./lead-dedup');
+          void discardLeadsForCustomer(String(customer.id)).catch(() => {});
+        }
+      } catch (_ded: any) { console.warn('[lead-dedup] hook criar cliente:', _ded?.message); }
+
       // Cronograma de parcelas (coluna aditiva): grava via SQL bruto no cliente recem-criado.
       if (Object.prototype.hasOwnProperty.call(req.body, 'installmentSchedule')) {
         try {
