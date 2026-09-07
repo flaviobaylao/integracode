@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw } from "lucide-react";
+import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw, Copy, Check } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -204,6 +204,25 @@ export default function ClientsMap() {
   // mesmos dados, entao recarregar os pontos ja recarrega os filtros.
   // Refetch direto (nao invalidate) para o botao so voltar ao normal quando o dado ja chegou.
   const [atualizando, setAtualizando] = useState(false);
+  // 📋 Copiar o nome do cliente direto do card do pin (para colar no WhatsApp, no Omie etc.).
+  // navigator.clipboard exige HTTPS/permissao; o textarea + execCommand cobre o resto.
+  const [copiadoId, setCopiadoId] = useState<string | null>(null);
+  const copiarNome = async (id: string, nome: string) => {
+    try {
+      await navigator.clipboard.writeText(nome);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = nome;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* noop */ }
+      ta.remove();
+    }
+    setCopiadoId(id);
+    setTimeout(() => setCopiadoId((atual) => (atual === id ? null : atual)), 1500);
+  };
   const atualizarTudo = async () => {
     setAtualizando(true);
     try {
@@ -605,6 +624,18 @@ export default function ClientsMap() {
                           <h3 className="font-bold text-base">
                             {nomePonto}
                           </h3>
+                          <button
+                            type="button"
+                            onClick={() => copiarNome(String(customer.id), nomePonto)}
+                            title="Copiar nome do cliente"
+                            aria-label="Copiar nome do cliente"
+                            className="shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                            data-testid={`button-copy-name-${customer.id}`}
+                          >
+                            {copiadoId === String(customer.id)
+                              ? <Check className="h-4 w-4 text-green-600" />
+                              : <Copy className="h-4 w-4 text-gray-500" />}
+                          </button>
                           {ehLead ? (
                             <Badge style={{ backgroundColor: '#7b4b2a' }} className="text-white">Lead</Badge>
                           ) : (
