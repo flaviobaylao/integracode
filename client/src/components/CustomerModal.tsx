@@ -663,6 +663,17 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
           </DialogTitle>
         </DialogHeader>
 
+        {(customer as any)?.isSupplier && (
+          <div className="rounded-md border border-orange-300 bg-orange-50 text-orange-900 px-3 py-2 text-sm flex items-start gap-2">
+            <span className="font-bold">Fornecedor:</span>
+            <span>
+              Este cadastro é de um <strong>Fornecedor</strong> e deve ser gerenciado no módulo{" "}
+              <a href="/fornecedores" className="underline font-medium text-orange-800 hover:text-orange-900">Fornecedores</a>.
+              Evite usá-lo como cliente (rota, dia de visita, periodicidade).
+            </span>
+          </div>
+        )}
+
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             {/* Tipo de Cliente */}
