@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Loader2, Search, AlertTriangle, RefreshCw, Calendar, Headphones,
   Users as UsersIcon, History, BarChart3, UserCheck, Lock, LockOpen,
+  ChevronUp, ChevronDown,
 } from 'lucide-react';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { Button } from '@/components/ui/button';
@@ -109,6 +110,8 @@ export default function Repescagem() {
   // usava o fuso do navegador e, a leste de UTC, virava dia 31 do mes anterior.
   const [statsStart, setStatsStart] = useState(inicioDoMes(hojeBR()));
   const [statsEnd, setStatsEnd] = useState(hojeBR());
+  // Recolher/expandir a seção de Atendentes habilitados (a lista é grande).
+  const [attendantsCollapsed, setAttendantsCollapsed] = useState(false);
 
   const { data: attendants = [], isLoading: loadingAttendants } = useQuery<Attendant[]>({
     queryKey: ['/api/repescagem/attendants'],
@@ -324,11 +327,24 @@ export default function Repescagem() {
       {/* Painel de habilitação + atendentes */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <UserCheck className="h-4 w-4" />
-            Atendentes habilitados ({enabledAttendants.length})
-          </CardTitle>
+          <button
+            type="button"
+            onClick={() => setAttendantsCollapsed(v => !v)}
+            className="w-full flex items-center justify-between gap-2 text-left"
+            aria-expanded={!attendantsCollapsed}
+            title={attendantsCollapsed ? 'Expandir atendentes habilitados' : 'Recolher atendentes habilitados'}
+            data-testid="toggle-attendants-collapse"
+          >
+            <CardTitle className="text-base flex items-center gap-2">
+              <UserCheck className="h-4 w-4" />
+              Atendentes habilitados ({enabledAttendants.length})
+            </CardTitle>
+            {attendantsCollapsed
+              ? <ChevronDown className="h-4 w-4 text-gray-500 shrink-0" />
+              : <ChevronUp className="h-4 w-4 text-gray-500 shrink-0" />}
+          </button>
         </CardHeader>
+        {!attendantsCollapsed && (
         <CardContent className="pt-0 space-y-3">
           {loadingAttendants ? (
             <div className="text-sm text-gray-500"><Loader2 className="inline h-3 w-3 animate-spin mr-1" /> Carregando...</div>
@@ -381,6 +397,7 @@ export default function Repescagem() {
             </div>
           )}
         </CardContent>
+        )}
       </Card>
 
       {/* Filtros */}
