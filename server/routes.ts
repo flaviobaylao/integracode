@@ -7387,8 +7387,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Gerar próximas 3 visitas para clientes ativos (admin only)
-  app.post('/api/admin/generate-next-visits', async (req: any, res) => {
+  // Gerar próximas 3 visitas para clientes ativos (admin only).
+  // A guarda estava só no comentário até set/2026: a rota aceitava POST anônimo e gerava
+  // agenda em massa (ver DIAGNOSTICO_orfaos_customer_id.md — os lotes de 20 e 28/ago).
+  app.post('/api/admin/generate-next-visits', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       console.log(`📅 [MANUAL] Iniciando geração manual de próximas 3 visitas para clientes ativos...`);
       const result = await storage.generateNextVisitsForActiveCustomers();
@@ -12148,7 +12150,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // 🧪 Teste dos avisos de rota/entrega: envia as 3 mensagens de exemplo SOMENTE para o
   // número de teste (system_settings 'automations_test_number', padrão 5562995782812).
-  app.post("/api/admin/rota-notificacoes/test", async (_req: any, res) => {
+  // (era anonima ate set/2026: qualquer POST disparava envio de WhatsApp)
+  app.post("/api/admin/rota-notificacoes/test", authenticateUser, requireRole(['admin']), async (_req: any, res) => {
     try {
       const r = await testarNotificacoesRota();
       res.json(r);

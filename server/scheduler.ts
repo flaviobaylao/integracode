@@ -627,7 +627,7 @@ cron.schedule('0 0 * * *', async () => {
     // (E2-D leve) cadastro ativo ⇒ lista de Clientes Ativos, antes de gerar visitas
     try {
       const s = await storage.syncActiveCustomersFromCadastro();
-      console.log(`   - lista de ativos: ${s.foraDaLista} fora, ${s.religados} religados, ${s.criados} criados, ${s.semDocumento} sem documento`);
+      console.log(`   - lista de ativos: ${s.foraDaLista} fora, ${s.religados} religados, ${s.criados} criados, ${s.semDocumento} sem documento, ${s.ponteirosMortos} ponteiros mortos desativados`);
     } catch (e: any) { console.error('   - syncActiveCustomersFromCadastro falhou (segue):', e?.message || e); }
     const result = await storage.generateNextVisitsForActiveCustomers();
     console.log(`✅ [SCHEDULER] Geração de visitas concluída:`);
