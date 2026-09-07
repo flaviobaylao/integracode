@@ -1828,8 +1828,27 @@ export function registerRepescagemRoutes(app: Express, opts: {
         visitPeriodicity: customers.visitPeriodicity,
         virtualService: customers.virtualService,
         latitude: customers.latitude, longitude: customers.longitude,
+        sellerId: customers.sellerId,
       }).from(customers).where(inArray(customers.id, cids));
       const byId = new Map(cs.map(c => [c.id, c]));
+      // Nome do VENDEDOR TITULAR (dono da carteira) de cada cliente — p/ o card do HABILITADO
+      // mostrar "Vendedor: <titular>". Resolve por id direto OU pelo código omie do vendedor. (set/2026)
+      const ownerNameBySellerId = new Map<string, string>();
+      try {
+        const _own: any = await db.execute(sql`
+          SELECT DISTINCT c.seller_id AS sid,
+                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))), '') AS nm
+          FROM customers c
+          LEFT JOIN users u ON (u.id = c.seller_id
+                             OR u.omie_vendor_code = c.seller_id
+                             OR u.omie_vendor_code = replace(c.seller_id, 'omie-vendor-', ''))
+          WHERE c.id IN (${sql.join(cids.map((x: any) => sql`${x}`), sql`, `)})
+            AND c.seller_id IS NOT NULL
+        `);
+        for (const row of ((_own.rows || []) as any[])) {
+          if (row.sid && row.nm) ownerNameBySellerId.set(String(row.sid), String(row.nm));
+        }
+      } catch (e) { console.warn('[route-overlay][owner-name]', (e as any)?.message); }
 
       // Quantas vezes o cliente caiu em repescagem (distinct last_red_date).
       // Janela por periodicidade: mensal = últimos 3 meses; semanal/quinzenal = últimos 2 meses.
@@ -1861,6 +1880,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           repescagemCount: countReds(r.customerId, per),
           repescagemWindowMonths: per === 'mensal' ? 3 : 2,
           phase: r.phase, isVirtualClient: !!c?.virtualService,
+          ownerSellerName: (c?.sellerId ? (ownerNameBySellerId.get(String(c.sellerId)) || null) : null),
           assignedUserId: r.assignedUserId,
           // Cópia do DONO: o card aparece na rota do dono, mas está atribuído a outro habilitado.
           isOwnerCopy: r.assignedUserId !== sellerId,
