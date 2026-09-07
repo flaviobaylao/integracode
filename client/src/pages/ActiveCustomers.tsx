@@ -1473,6 +1473,9 @@ export default function ActiveCustomers() {
                                 <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
                                   {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
                                 </div>
+                                {(ac.customer as any)?.isColaborador && (
+                                  <span className="text-[10px] font-normal italic text-slate-400 whitespace-nowrap" title="Colaborador — não entra em rota/agenda de visitas">colaborador</span>
+                                )}
                                 <OmieInstanceBadge instanceId={(ac.customer as any)?.omieInstanceId} />
                                 {ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude) && (
                                   <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap" title="Sem coordenadas no cadastro - nao entra na rota do dia">SEM COORDENADA</span>
