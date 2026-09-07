@@ -728,6 +728,14 @@ export default function CustomerManagement() {
                       </td>
                       <td className="px-6 py-4">
                         <div>
+                          {(customer as any).isSupplier && (
+                            <span
+                              className="inline-flex items-center rounded bg-orange-100 text-orange-800 border border-orange-300 text-[10px] font-bold px-1.5 py-0.5 mr-1 align-middle"
+                              title="Cadastro de Fornecedor — deve ser gerenciado no módulo Fornecedores"
+                            >
+                              FORNECEDOR
+                            </span>
+                          )}
                           <button
                             className="font-medium text-blue-600 hover:text-blue-800 hover:underline text-left"
                             onClick={() => {
