@@ -113,7 +113,8 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 export default function CustomerModal({ isOpen, onClose, customer, initialData, onCreated }: CustomerModalProps) {
   const [cnpjLoading, setCnpjLoading] = useState(false);
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
-  const [cnpjDuplicate, setCnpjDuplicate] = useState<{ nome: string; vendedor: string; isActive: boolean } | null>(null);
+  const [cnpjDuplicate, setCnpjDuplicate] = useState<{ id: string; nome: string; vendedor: string; isActive: boolean } | null>(null);
+  const [reactivating, setReactivating] = useState(false);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const { toast } = useToast();
@@ -392,7 +393,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
           const dup = await dupResp.json();
           if (dup?.exists && Array.isArray(dup.matches) && dup.matches.length) {
             const m = dup.matches[0];
-            setCnpjDuplicate({ nome: m.nome, vendedor: m.vendedor, isActive: !!m.isActive });
+            setCnpjDuplicate({ id: m.id, nome: m.nome, vendedor: m.vendedor, isActive: !!m.isActive });
           }
         }
       } catch { /* não bloqueia a busca da Receita */ }
@@ -613,6 +614,42 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       return phone.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
     }
     return phone.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+  };
+
+  const reactivateExisting = async () => {
+    if (!cnpjDuplicate?.id) return;
+    setReactivating(true);
+    try {
+      const r = await fetch('/api/customers/bulk-reactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ ids: [cnpjDuplicate.id] }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.message || 'Falha ao reativar');
+      }
+      // Garante que volta para a lista de Clientes Ativos
+      try {
+        await fetch(`/api/active-customers/add/${encodeURIComponent(cnpjDuplicate.id)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({}),
+        });
+      } catch { /* best-effort */ }
+      toast({ title: 'Cliente reativado', description: `"${cnpjDuplicate.nome}" foi reativado e voltou para Clientes Ativos.` });
+      const nome = cnpjDuplicate.nome;
+      setCnpjDuplicate(null);
+      try { queryClient.invalidateQueries(['/api/customers']); } catch {}
+      try { queryClient.invalidateQueries(['/api/active-customers']); } catch {}
+      onClose();
+    } catch (e: any) {
+      toast({ title: 'Erro', description: e?.message || 'Não foi possível reativar', variant: 'destructive' });
+    } finally {
+      setReactivating(false);
+    }
   };
 
   return (
@@ -1839,12 +1876,16 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       </AlertDialog>
     </Dialog>
 
-    <AlertDialog open={!!cnpjDuplicate} onOpenChange={(o) => { if (!o) setCnpjDuplicate(null); }}>
+    <AlertDialog open={!!cnpjDuplicate} onOpenChange={(o) => { if (!o && !reactivating) setCnpjDuplicate(null); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>⚠️ CNPJ já cadastrado</AlertDialogTitle>
+          <AlertDialogTitle>
+            {cnpjDuplicate?.isActive ? '⚠️ CNPJ já cadastrado' : '♻️ CNPJ cadastrado (inativo)'}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            Este CNPJ já está cadastrado no sistema. Verifique se não é o mesmo cliente antes de continuar — o cadastro com CNPJ duplicado será bloqueado ao salvar.
+            {cnpjDuplicate?.isActive
+              ? 'Este CNPJ já está cadastrado e ATIVO no sistema. O cadastro com CNPJ duplicado será bloqueado ao salvar — verifique se não é o mesmo cliente.'
+              : 'Este CNPJ já existe no sistema, mas o cadastro está INATIVO. Deseja reativar o cliente existente?'}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-1 text-sm rounded-md border p-3 bg-muted/40">
@@ -1853,7 +1894,16 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
           <p><strong>Situação:</strong> {cnpjDuplicate?.isActive ? 'Ativo' : 'Inativo'}</p>
         </div>
         <AlertDialogFooter>
-          <AlertDialogAction onClick={() => setCnpjDuplicate(null)}>Entendi</AlertDialogAction>
+          {cnpjDuplicate?.isActive ? (
+            <AlertDialogAction onClick={() => setCnpjDuplicate(null)}>Entendi</AlertDialogAction>
+          ) : (
+            <>
+              <AlertDialogCancel disabled={reactivating} onClick={() => setCnpjDuplicate(null)}>Cancelar</AlertDialogCancel>
+              <Button onClick={reactivateExisting} disabled={reactivating}>
+                {reactivating ? 'Reativando...' : 'Reativar cliente'}
+              </Button>
+            </>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
