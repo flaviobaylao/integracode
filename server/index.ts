@@ -2888,7 +2888,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Flag Fornecedor: cadastro que nao e cliente -> nao entra em rota/agenda de visitas. Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`).catch(() => {});
   // Flag Colaborador: cadastro que e um COLABORADOR (nao e cliente) -> fica em Clientes Ativos com tag,
-  // mas NAO entra em rota/agenda de visitas. Idempotente.
+  // mas NAO entra em rota/agenda de visitas. Idempotente. (redeploy limpo p/ recuperar servico apos churn de builds)
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_colaborador boolean DEFAULT false`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS collection_discount numeric DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_installments integer DEFAULT 1`).catch(() => {});
