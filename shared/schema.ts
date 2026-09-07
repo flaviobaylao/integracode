@@ -289,6 +289,10 @@ export const customers = pgTable("customers", {
   // Fornecedor: cadastro que NÃO é cliente. Fica no cadastro, mas NÃO entra em rota de visitas.
   isSupplier: boolean("is_supplier").default(false),
 
+  // Colaborador: cadastro que é um COLABORADOR (não é cliente). Permanece no cadastro e segue
+  // visível em Clientes Ativos com a tag "colaborador", mas NÃO entra em rota nem em agenda de visitas.
+  isColaborador: boolean("is_colaborador").default(false),
+
   // Condição de pagamento do cliente (sobrepõe forma/prazo da venda ao gerar cobrança).
   // Colunas garantidas no boot por ALTER ... IF NOT EXISTS.
   paymentMethod: varchar("payment_method"),
