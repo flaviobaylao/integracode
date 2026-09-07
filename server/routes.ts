@@ -2336,15 +2336,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const dryRun = req.body?.dryRun !== false; // padrão: dry-run
       const customerId = req.body?.customerId ? String(req.body.customerId) : null;
-      const scope = customerId ? sql`AND visit_agenda.customer_id = ${customerId}` : sql``;
-      const predicate = sql`visit_agenda.visit_status = 'pending' ${scope}
-        AND (
-          NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = visit_agenda.customer_id)
-          OR EXISTS (SELECT 1 FROM customers c WHERE c.id = visit_agenda.customer_id AND (c.is_active = false OR c.omie_status = 'inativo'))
-        )`;
-      const n = ((await db.execute(sql`SELECT COUNT(*)::int AS n FROM visit_agenda WHERE ${predicate}`)).rows[0] as any).n;
+      const scope = customerId ? sql`AND va.customer_id = ${customerId}` : sql``;
+      // Conjunto de fantasmas: pendentes de cliente inexistente OU inativo (LEFT JOIN, rápido/indexado).
+      const n = ((await db.execute(sql`
+        SELECT COUNT(*)::int AS n
+          FROM visit_agenda va
+          LEFT JOIN customers c ON c.id = va.customer_id
+         WHERE va.visit_status = 'pending' ${scope}
+           AND (c.id IS NULL OR c.is_active = false OR c.omie_status = 'inativo')
+      `)).rows[0] as any).n;
       if (dryRun) return res.json({ ok: true, dryRun: true, afetadas: n });
-      await db.execute(sql`UPDATE visit_agenda SET visit_status = 'cancelled', updated_at = now() WHERE ${predicate}`);
+      // UPDATE baseado em conjunto: coleta os ids uma vez e atualiza por chave primária (evita subconsulta por linha).
+      await db.execute(sql`
+        UPDATE visit_agenda AS vu
+           SET visit_status = 'cancelled', updated_at = now()
+          FROM (
+            SELECT va.id
+              FROM visit_agenda va
+              LEFT JOIN customers c ON c.id = va.customer_id
+             WHERE va.visit_status = 'pending' ${scope}
+               AND (c.id IS NULL OR c.is_active = false OR c.omie_status = 'inativo')
+          ) t
+         WHERE vu.id = t.id
+      `);
       res.json({ ok: true, dryRun: false, canceladas: n });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: String(e?.message || e) });
