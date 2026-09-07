@@ -20,6 +20,9 @@ import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
 import { MultiSelect, SEM_VENDEDOR } from "@/lib/tableTools";
 
+// Opção do filtro para cadastro sem bairro preenchido (dá para achar e corrigir).
+const SEM_BAIRRO = "Sem Bairro/Setor";
+
 // Cores dos pins baseadas no dia da semana
 const WEEKDAY_COLORS = {
   'SEG': '#22c55e', // Verde
@@ -160,6 +163,7 @@ export default function ClientsMap() {
   const [sellers, setSellers] = useState<string[]>([]);
   const [situacoes, setSituacoes] = useState<string[]>(["Ativos"]);
   const [periodicidades, setPeriodicidades] = useState<string[]>([]);
+  const [bairros, setBairros] = useState<string[]>([]);
 
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
@@ -205,6 +209,7 @@ export default function ClientsMap() {
       await Promise.all([
         ...SITUACAO_OPTIONS.filter((l) => situacaoOn(l)).map((l) => queryPorSituacao[l].refetch()),
         refetchMapSellers(),
+        refetchMapBairros(),
       ]);
     } finally {
       setAtualizando(false);
@@ -226,6 +231,12 @@ export default function ClientsMap() {
   const { data: mapSellers, refetch: refetchMapSellers } = useQuery<{ vendedores: { nome: string; qtd: number }[]; semVendedor: number }>({
     queryKey: ['/api/customers/map-sellers'],
     queryFn: () => apiRequest('GET', '/api/customers/map-sellers'),
+    enabled: !!canAccess,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: mapBairros, refetch: refetchMapBairros } = useQuery<{ bairros: { nome: string; qtd: number }[]; semBairro: number }>({
+    queryKey: ['/api/customers/map-neighborhoods'],
+    queryFn: () => apiRequest('GET', '/api/customers/map-neighborhoods'),
     enabled: !!canAccess,
     staleTime: 5 * 60 * 1000,
   });
@@ -257,6 +268,15 @@ export default function ClientsMap() {
 
   // Aplicar filtro de vendedor (múltipla escolha; vazio = todos).
   // Cadastro sem vendedor entra como "Sem Vendedor", para dar para achá-lo e corrigir.
+  // Bairro/Setor PADRONIZADO: o nome vem pronto do servidor (campo bairroPadrao), a mesma
+  // funcao que monta a lista do filtro — por isso filtro e ponto sempre casam.
+  const bairroDoPonto = (c: any) => c?.bairroPadrao || SEM_BAIRRO;
+  if (bairros.length > 0) {
+    activeCustomersWithCoords = activeCustomersWithCoords.filter(
+      (c) => bairros.includes(bairroDoPonto(c))
+    );
+  }
+
   const nomeDoVendedor = (c: any) => c?.sellerName || SEM_VENDEDOR;
   if (sellers.length > 0) {
     activeCustomersWithCoords = activeCustomersWithCoords.filter(
@@ -290,6 +310,10 @@ export default function ClientsMap() {
   const opcoesVendedor = (mapSellers?.semVendedor || 0) > 0 || activeCustomersWithCoords.some((c) => !(c as any).sellerName)
     ? [...uniqueSellers, SEM_VENDEDOR]
     : uniqueSellers;
+
+  // Opções de Bairro/Setor: lista fixa dos cadastros (não muda com as situações marcadas).
+  const nomesDeBairro = (mapBairros?.bairros || []).map((b) => b.nome);
+  const opcoesBairro = (mapBairros?.semBairro || 0) > 0 ? [...nomesDeBairro, SEM_BAIRRO] : nomesDeBairro;
 
   // Agrupar por dia da semana (ANTES do filtro de dia, para a legenda). Conta só os ATIVOS,
   // que são os pintados por dia — as demais situações têm cor própria.
@@ -426,6 +450,16 @@ export default function ClientsMap() {
             )}
             <div className="pt-[21px]">
               <MultiSelect
+                label="Bairro/Setor"
+                options={opcoesBairro}
+                selected={bairros}
+                onChange={setBairros}
+                searchable
+                testId="select-bairro-map"
+              />
+            </div>
+            <div className="pt-[21px]">
+              <MultiSelect
                 label="Dia da Semana"
                 options={DIAS_OPTIONS}
                 selected={dias}
@@ -442,7 +476,7 @@ export default function ClientsMap() {
                 testId="select-periodicity-map"
               />
             </div>
-            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 ||
+            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 || bairros.length > 0 ||
               situacoes.length !== 1 || situacoes[0] !== "Ativos") && (
               <Button
                 variant="outline"
@@ -452,6 +486,7 @@ export default function ClientsMap() {
                   setDias([]);
                   setSellers([]);
                   setPeriodicidades([]);
+                  setBairros([]);
                   setSituacoes(["Ativos"]);
                 }}
                 data-testid="button-clear-filters"
