@@ -96,9 +96,13 @@ export function MultiSelect(props: {
   onChange: (v: string[]) => void;
   testId?: string;
   groups?: { label: string; options: string[] }[];
+  /** Mostra um campo de busca dentro do dropdown (para listas longas, ex.: bairros). */
+  searchable?: boolean;
 }) {
-  const { label, options, selected, onChange, testId, groups } = props;
+  const { label, options, selected, onChange, testId, groups, searchable } = props;
   const [open, setOpen] = useState(false);
+  const [busca, setBusca] = useState("");
+  const casa = (o: string) => !searchable || !busca.trim() || o.toLowerCase().includes(busca.trim().toLowerCase());
   const all = selected.length === 0 || selected.length === options.length;
   const toggle = (o: string) =>
     onChange(selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o]);
@@ -129,6 +133,15 @@ export function MultiSelect(props: {
               />
               Selecionar Tudo
             </label>
+            {searchable && (
+              <input
+                autoFocus
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar..."
+                className="w-full mb-1 px-2 py-1 text-sm border rounded dark:bg-gray-900 dark:border-gray-700"
+              />
+            )}
             <div className="border-t my-1 dark:border-gray-700" />
             {groups && groups.length
               ? groups.map((g) => (
@@ -140,10 +153,10 @@ export function MultiSelect(props: {
                     ) : (
                       <div className="border-t my-1 dark:border-gray-700" />
                     )}
-                    {g.options.map(renderOption)}
+                    {g.options.filter(casa).map(renderOption)}
                   </div>
                 ))
-              : options.map(renderOption)}
+              : options.filter(casa).map(renderOption)}
           </div>
         </>
       )}
