@@ -37,7 +37,7 @@ const fmtDate = (s?: string) => {
 };
 
 // 📋 Botão de copiar a razão social do cliente para a área de transferência
-// (facilita colar a busca no sistema ao efetuar a alteração manual). (30/jul/2026)
+// (facilita colar a busca no Omie/sistema ao efetuar a alteração manual). (30/jul/2026)
 function CopyBtn({ text }: { text: string }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -113,7 +113,26 @@ function PendingCard({ r }: { r: any }) {
     },
     onError: (e: any) => toast({ title: "Erro ao resolver", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
-  const busy = resolveMut.isPending;
+  // Item 2 — botão Inativar direto no Inbox: inativa o cliente e fecha a solicitação.
+  const inativarMut = useMutation({
+    mutationFn: async () => {
+      const cid = r.customerId || r.entityId;
+      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid] });
+      return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, {
+        status: "efetuadas",
+        note: (note.trim() ? note.trim() + " • " : "") + "Cliente inativado via Inbox.",
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Cliente inativado", description: "Saiu dos Clientes Ativos e a solicitação foi fechada." });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const busy = resolveMut.isPending || inativarMut.isPending;
 
   return (
     <Card className="p-4 space-y-3">
@@ -157,6 +176,19 @@ function PendingCard({ r }: { r: any }) {
         <Button size="sm" variant="destructive" disabled={busy} onClick={() => resolveMut.mutate("rejeitadas")}>
           <XCircle className="h-4 w-4 mr-1" /> Rejeitar
         </Button>
+        {r.entityType === "customer" && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-red-400 text-red-700 hover:bg-red-50"
+            disabled={busy}
+            onClick={() => {
+              if (window.confirm("Inativar este cliente? Ele sai dos Clientes Ativos e esta solicitação será fechada como Efetuada.")) inativarMut.mutate();
+            }}
+          >
+            {inativarMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar cliente</>}
+          </Button>
+        )}
       </div>
     </Card>
   );
