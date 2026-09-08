@@ -104,6 +104,21 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [dupWarnOpen, setDupWarnOpen] = useState(false);
   const [dupMatch, setDupMatch] = useState<any>(null);
   const [dupJust, setDupJust] = useState('');
+  // Ponto de entrega (Rede de Clientes): locais de entrega sem CNPJ vinculados à rede do
+  // cliente. O escolhido vai no quadro LOCAL DE ENTREGA da NF-e; o destinatário continua
+  // sendo o CNPJ do cliente do pedido. Vazio = entrega no endereço do cadastro.
+  const [deliveryPointId, setDeliveryPointId] = useState<string>('');
+  const { data: pontosRede } = useQuery<any>({
+    queryKey: ['/api/carteira/redes/pontos-do-cliente', card?.customerId],
+    enabled: !!card?.customerId && isOpen,
+    staleTime: 60000,
+    queryFn: async () => {
+      const r = await fetch(`/api/carteira/redes/pontos-do-cliente/${card?.customerId}`, { credentials: 'include' });
+      if (!r.ok) return { pontos: [] };
+      return r.json();
+    },
+  });
+  const pontosEntrega: any[] = pontosRede?.pontos || [];
   const todayISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   
   // Verificar se usuário pode editar recorrência e dia da rota
@@ -133,6 +148,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setBoletoDays((card as any).boletoDays || 7);
       setIsScheduledOrder(false);
       setScheduledOrderDate('');
+      setDeliveryPointId((card as any).deliveryPointId || '');
 
       // Se o card tem configurações de entrega, usa elas, senão usa os valores padrão
       const defaultWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
@@ -567,7 +583,12 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           customerLatitude: customerLatitude || null,
           customerLongitude: customerLongitude || null,
           boletoDays: boletoDays,
-          scheduledDate: nextScheduledDate || undefined
+          scheduledDate: nextScheduledDate || undefined,
+          // Ponto de entrega (rede de clientes) escolhido no box abaixo; vazio = endereço do cadastro.
+          deliveryPointId: deliveryPointId || null,
+          // Não enviar ao pipeline aqui: quem envia é o /send-to-omie logo em seguida
+          // (emissor único, com a trava suave de duplicação e a regra de card-filho por pedido).
+          deferPipeline: true,
         }
       });
     } catch (error) {
@@ -1577,6 +1598,47 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                       <SelectItem value="35">35 dias</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              )}
+
+              {/* Ponto de entrega (Rede de Clientes): só aparece quando o cliente tem locais de
+                  entrega vinculados à rede. O escolhido vira o LOCAL DE ENTREGA da NF-e; o
+                  destinatário continua sendo o CNPJ do cliente. Vazio = endereço do cadastro. */}
+              {pontosEntrega.length > 0 && (
+                <div className="space-y-2 border border-sky-200 bg-sky-50/60 rounded-lg p-3">
+                  <Label className="text-sm flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-sky-700" />
+                    Ponto de entrega (rede{pontosRede?.redeNome ? `: ${pontosRede.redeNome}` : ''})
+                  </Label>
+                  <Select value={deliveryPointId || 'cadastro'} onValueChange={(v) => setDeliveryPointId(v === 'cadastro' ? '' : v)}>
+                    <SelectTrigger className="w-full bg-white" data-testid="select-ponto-entrega">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cadastro">Endereço do cadastro (padrão)</SelectItem>
+                      {pontosEntrega.map((p: any) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.nome} — {p.cidade}{p.uf ? `/${p.uf}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {deliveryPointId ? (() => {
+                    const p = pontosEntrega.find((x: any) => x.id === deliveryPointId);
+                    if (!p) return null;
+                    return (
+                      <div className="text-xs bg-white border border-sky-200 rounded p-2 space-y-0.5">
+                        <p className="text-sky-900">
+                          <b>Entrega em:</b> {[p.endereco, p.numero].filter(Boolean).join(', ')}
+                          {p.complemento ? ` — ${p.complemento}` : ''}{p.bairro ? ` — ${p.bairro}` : ''}
+                        </p>
+                        {p.observacao ? <p className="text-sky-800">{p.observacao}</p> : null}
+                        <p className="text-sky-700">A nota continua no CNPJ do cliente; este endereço vai no quadro LOCAL DE ENTREGA.</p>
+                      </div>
+                    );
+                  })() : (
+                    <p className="text-xs text-muted-foreground">Sem escolher, a entrega é no endereço do cadastro e a nota sai como sempre.</p>
+                  )}
                 </div>
               )}
 
