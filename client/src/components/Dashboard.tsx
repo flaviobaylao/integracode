@@ -457,9 +457,20 @@ export default function Dashboard() {
               }
               const todayIdx = occ.length - 1;
               const vals = occ.map((o) => pipelineDailyMap[o.iso] || 0);
-              const mx = Math.max(1, ...vals);
+              const prevInfo: any = (data as any)?.efetivoMesAnterior;
+              const showPrev = occ.length === 1 && !!(prevInfo && prevInfo.iso);
+              const prevVal = showPrev ? (Number(prevInfo.value) || 0) : 0;
+              const mx = Math.max(1, ...vals, prevVal);
               return (
                 <div className="mt-4 flex items-end justify-around gap-3 h-36 overflow-x-auto">
+                  {showPrev && (
+                    <div className="flex flex-col items-center flex-1 min-w-[42px]">
+                      <div className="text-[11px] font-semibold text-gray-700 mb-1 whitespace-nowrap">{brl(prevVal)}</div>
+                      <div className="w-9 rounded-t" style={{ height: Math.max(6, Math.round((prevVal / mx) * 58)), backgroundColor: "#9ca3af" }} />
+                      <div className="text-[10px] text-gray-500 mt-1 whitespace-nowrap">Últ. sem.</div>
+                      <div className="text-[9px] text-gray-400 whitespace-nowrap">{prevInfo.iso.slice(8, 10) + "/" + prevInfo.iso.slice(5, 7)}</div>
+                    </div>
+                  )}
                   {occ.map((o, i) => {
                     const v = vals[i];
                     const isToday = i === todayIdx;
