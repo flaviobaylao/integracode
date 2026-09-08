@@ -532,6 +532,9 @@ export const salesCards = pgTable("sales_cards", {
   customerLatitude: decimal("customer_latitude", { precision: 10, scale: 8 }), // Latitude da localização do cliente
   customerLongitude: decimal("customer_longitude", { precision: 11, scale: 8 }), // Longitude da localização do cliente
   customerAddress: text("customer_address"), // Endereço de entrega informado pelo cliente (usado principalmente no hotsite)
+  // PONTO DE ENTREGA sem CNPJ escolhido pelo vendedor no pedido (rede de clientes).
+  // ⚠️ Coluna criada no boot (server/index.ts) — sem o ALTER, todo SELECT quebra.
+  deliveryPointId: varchar("delivery_point_id"),
   
   // Controle de check-in e check-out do vendedor
   checkInTime: timestamp("check_in_time"), // Horário de check-in do vendedor
@@ -3039,6 +3042,10 @@ export const billingPipeline = pgTable("billing_pipeline", {
   notes: text("notes"),
   omieInstanceId: varchar("omie_instance_id"),
   omieInstanceName: varchar("omie_instance_name"),
+  // PONTO DE ENTREGA sem CNPJ (rede de clientes): o pedido é do CNPJ do cliente,
+  // mas a mercadoria desce neste endereço, que vai no grupo <entrega> da NF-e.
+  // ⚠️ Coluna criada no boot (server/index.ts) — sem o ALTER, todo SELECT quebra.
+  deliveryPointId: varchar("delivery_point_id"),
   // Prioridade na roteirização: marcada no card quando ele está aguardando rota.
   // Vira `isUrgent` no planejamento (entra primeiro na rota) e `is_priority` na parada.
   isPriority: boolean("is_priority").notNull().default(false),
