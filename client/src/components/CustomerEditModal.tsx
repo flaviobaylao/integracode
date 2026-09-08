@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { CidadePicker } from "@/components/CidadePicker";
 import ParticularidadesField from "@/components/ParticularidadesField";
 import { sortSellersByType } from "@/lib/sellerOrder";
@@ -217,6 +217,9 @@ export default function CustomerEditModal({
     },
   });
 
+  // FIX 08/set/2026 — guarda o registro carregado para submeter so o diff.
+  const loadedRef = useRef<any>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const payload: any = {
@@ -233,6 +236,18 @@ export default function CustomerEditModal({
       sendPedidoEmail: !!(formData as any).sendPedidoEmail,
       omieInstanceId: (formData as any).omieInstanceId || null,
     };
+    // FIX 08/set/2026 — nao mandar campo que a tela nao carregou. Se o valor e vazio e o
+    // cadastro tinha algo, some do payload: quem nao carregou nao pode apagar.
+    if (customer?.id && loadedRef.current) {
+      for (const k of Object.keys(payload)) {
+        const novo = (payload as any)[k];
+        if (novo !== '' && novo !== null && novo !== undefined) continue;
+        const tinha = (loadedRef.current as any)[k];
+        if (tinha === null || tinha === undefined || tinha === '') continue;
+        if (Array.isArray(tinha) && tinha.length === 0) continue;
+        delete (payload as any)[k];
+      }
+    }
     // Os 5 campos de WhatsApp NÃO vão para /api/customers (as colunas não existem no
     // schema drizzle) — salvam pela rota dedicada, em paralelo e sem travar o submit.
     delete payload.notificationWhatsapp;
@@ -397,6 +412,7 @@ export default function CustomerEditModal({
         }
       }
 
+      loadedRef.current = customer;
       setFormData({
         name: customer.name || "",
         fantasyName: customer.fantasyName || "",
