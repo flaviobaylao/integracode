@@ -19350,10 +19350,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           continue;
         }
 
-        // Calcular distância total
-        const totalDistance = checkpoints.reduce((sum, cp) => {
-          return sum + parseFloat(cp.distanceFromPrevious || '0');
-        }, 0);
+        // Distância total pela regra canônica (1º check-in → … → casa do vendedor),
+        // a MESMA do cálculo ao vivo do check-in. Antes somava distanceFromPrevious dos
+        // checkpoints (incluía a ida casa→1º cliente e NÃO incluía a volta pra casa),
+        // então um "recalcular" revertia a km para a regra antiga. (set/2026)
+        const { calculateActualRouteDistance } = await import('./actualRouteService');
+        const _stats = await calculateActualRouteDistance(storage, route.id);
+        const totalDistance = _stats.totalDistance;
 
         // Contar visitas completadas (check-outs)
         const completedVisits = checkpoints.filter(cp => cp.checkpointType === 'check_out').length;
