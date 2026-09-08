@@ -79,6 +79,37 @@ const variacao = (atual: number, base: number): number | null => {
 const pct = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(0)}%`);
 const corVar = (v: number | null) => (v === null ? "text-muted-foreground" : v > 0 ? "text-emerald-700" : v < 0 ? "text-destructive" : "text-muted-foreground");
 
+/** 74810100 -> "74810-100". Mascara enquanto digita, sem atrapalhar o apagar. */
+const cepBR = (v: any) => {
+  const d = String(v || "").replace(/\D/g, "").slice(0, 8);
+  return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+};
+
+/**
+ * Lê um par de coordenadas colado de qualquer jeito e devolve {lat, lng}.
+ * Aceita "-16.708, -49.239", "-16.708 -49.239", "-16.708;-49.239" e o link do
+ * Google Maps (".../@-16.708,-49.239,17z"). Devolve null quando não reconhece —
+ * melhor deixar o usuário digitar do que chutar coordenada errada.
+ */
+const parseCoordenadas = (txt: any): { lat: string; lng: string } | null => {
+  const bruto = String(txt || "").trim();
+  if (!bruto) return null;
+  // Link do Google Maps: o par que interessa vem depois do "@".
+  const arroba = bruto.match(/@(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)/);
+  const alvo = arroba ? `${arroba[1]},${arroba[2]}` : bruto;
+  const nums = alvo.match(/-?\d{1,3}(?:[.,]\d+)?/g);
+  if (!nums || nums.length !== 2) return null;
+  // Vírgula decimal ("-16,708") vira ponto; o separador do par já foi consumido
+  // pelo split, então não há ambiguidade aqui.
+  let [a, b] = nums.map((n) => Number(n.replace(",", ".")));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  // Colou invertido (longitude primeiro)? Só corrige quando é inequívoco: o
+  // primeiro número está fora da faixa de latitude e o segundo está dentro.
+  if (Math.abs(a) > 90 && Math.abs(b) <= 90) [a, b] = [b, a];
+  if (Math.abs(a) > 90 || Math.abs(b) > 180) return null;
+  return { lat: String(a), lng: String(b) };
+};
+
 /** CNPJ/CPF com pontuação, para conferir raiz de CNPJ a olho. */
 const docBR = (d: any) => {
   const s = String(d || "").replace(/\D/g, "");
@@ -989,7 +1020,69 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
   });
   const [erro, setErro] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const [avisoCep, setAvisoCep] = useState("");
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
+  const setMuitos = (novos: Record<string, string>) => setF((x) => ({ ...x, ...novos }));
+
+  /**
+   * Lupa do CEP: preenche Endereço, Bairro, Cidade e UF.
+   * NÃO preenche Número nem Complemento — o CEP não sabe (o "complemento" dos
+   * Correios é faixa de numeração, "de 2496 ao fim - lado par", e no quadro de
+   * entrega da NF-e isso vira lixo). Depois de achar, o foco vai para o Número,
+   * que é justamente o que falta.
+   */
+  const buscarCep = async () => {
+    const digitos = String(f.cep || "").replace(/\D/g, "");
+    setErro(""); setAvisoCep("");
+    if (digitos.length !== 8) { setAvisoCep("Digite os 8 dígitos do CEP."); return; }
+    setBuscandoCep(true);
+    try {
+      const r = await fetch(`/api/util/cep/${digitos}`, { credentials: "include" });
+      const j: any = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) {
+        setAvisoCep(j?.error || "Não deu para buscar o CEP — preencha à mão.");
+        if (j?.uf) set("uf", j.uf);
+        return;
+      }
+      setMuitos({
+        cep: cepBR(j.cep || digitos),
+        endereco: j.endereco || f.endereco,
+        bairro: j.bairro || f.bairro,
+        cidade: j.cidade || f.cidade,
+        uf: j.uf || f.uf,
+      });
+      setAvisoCep(
+        j.parcial
+          ? "Correios fora do ar: veio só a UF pela faixa do CEP. Confira o resto."
+          : `Endereço preenchido.${j.faixa ? ` Correios: ${j.faixa}.` : ""} Falta o número${f.complemento ? "" : " e o complemento"}.`,
+      );
+      setTimeout(() => {
+        const el = document.querySelector('[data-testid="input-ponto-numero"]') as HTMLInputElement | null;
+        el?.focus();
+      }, 0);
+    } catch {
+      setAvisoCep("Não deu para buscar o CEP — preencha à mão.");
+    } finally {
+      setBuscandoCep(false);
+    }
+  };
+
+  /** Colar "-16.708, -49.239" (ou o link do Maps) em qualquer um dos dois
+   *  campos preenche os DOIS. Só entra no caminho normal se não reconhecer. */
+  const colarCoordenadas = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const txt = e.clipboardData?.getData("text") || "";
+    const par = parseCoordenadas(txt);
+    if (!par) return;
+    e.preventDefault();
+    setMuitos({ latitude: par.lat, longitude: par.lng });
+  };
+  /** Rede de segurança: digitou/colou o par por outro caminho, separa também. */
+  const digitouCoordenada = (campo: "latitude" | "longitude", v: string) => {
+    const par = /[,;\s]/.test(v.trim()) || v.includes("@") ? parseCoordenadas(v) : null;
+    if (par) { setMuitos({ latitude: par.lat, longitude: par.lng }); return; }
+    set(campo, v);
+  };
 
   // Coordenada do próprio aparelho: quem cadastra costuma estar no ponto.
   const pegarGPS = () => {
@@ -1035,13 +1128,50 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
             <label className="text-xs text-muted-foreground">Nome do ponto *</label>
             <Input value={f.nome} onChange={(e) => set("nome", e.target.value)} placeholder="Ex.: Loja Shopping Flamboyant" data-testid="input-ponto-nome" />
           </div>
+          {/* CEP vem ANTES do endereço: é por ele que se começa a preencher. */}
+          <div className="col-span-3">
+            <label className="text-xs text-muted-foreground">CEP</label>
+            <div className="flex gap-1">
+              <Input
+                value={f.cep}
+                onChange={(e) => { set("cep", cepBR(e.target.value)); setAvisoCep(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); buscarCep(); } }}
+                onBlur={() => { if (String(f.cep).replace(/\D/g, "").length === 8 && !f.endereco) buscarCep(); }}
+                placeholder="74810-100"
+                inputMode="numeric"
+                data-testid="input-ponto-cep"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                onClick={buscarCep}
+                disabled={buscandoCep}
+                aria-label="Buscar endereço pelo CEP"
+                title="Buscar endereço pelo CEP"
+                data-testid="btn-buscar-cep"
+              >
+                <Search className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="col-span-3 flex items-end">
+            {buscandoCep ? (
+              <p className="text-xs text-muted-foreground pb-2">Buscando nos Correios…</p>
+            ) : avisoCep ? (
+              <p className="text-xs text-muted-foreground pb-2" data-testid="aviso-cep">{avisoCep}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground pb-2">Preenche endereço, bairro, cidade e UF.</p>
+            )}
+          </div>
           <div className="col-span-4">
             <label className="text-xs text-muted-foreground">Endereço *</label>
             <Input value={f.endereco} onChange={(e) => set("endereco", e.target.value)} placeholder="Av. Deputado Jamel Cecílio" data-testid="input-ponto-endereco" />
           </div>
           <div className="col-span-2">
             <label className="text-xs text-muted-foreground">Número</label>
-            <Input value={f.numero} onChange={(e) => set("numero", e.target.value)} placeholder="3300" />
+            <Input value={f.numero} onChange={(e) => set("numero", e.target.value)} placeholder="3300" data-testid="input-ponto-numero" />
           </div>
           <div className="col-span-3">
             <label className="text-xs text-muted-foreground">Complemento</label>
@@ -1055,22 +1185,32 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
             <label className="text-xs text-muted-foreground">Cidade *</label>
             <Input value={f.cidade} onChange={(e) => set("cidade", e.target.value)} placeholder="Goiânia" data-testid="input-ponto-cidade" />
           </div>
-          <div className="col-span-1">
+          <div className="col-span-3">
             <label className="text-xs text-muted-foreground">UF *</label>
             <Input value={f.uf} maxLength={2} onChange={(e) => set("uf", e.target.value.toUpperCase())} placeholder="GO" data-testid="input-ponto-uf" />
           </div>
-          <div className="col-span-2">
-            <label className="text-xs text-muted-foreground">CEP</label>
-            <Input value={f.cep} onChange={(e) => set("cep", e.target.value)} placeholder="74810-100" />
-          </div>
 
+          {/* Colar o par em QUALQUER um dos dois campos preenche os dois. É assim
+              que a coordenada chega na prática: copiada do Google Maps de uma vez. */}
           <div className="col-span-2">
             <label className="text-xs text-muted-foreground">Latitude</label>
-            <Input value={f.latitude} onChange={(e) => set("latitude", e.target.value)} placeholder="-16.708" data-testid="input-ponto-lat" />
+            <Input
+              value={f.latitude}
+              onPaste={colarCoordenadas}
+              onChange={(e) => digitouCoordenada("latitude", e.target.value)}
+              placeholder="-16.708 (ou cole o par)"
+              data-testid="input-ponto-lat"
+            />
           </div>
           <div className="col-span-2">
             <label className="text-xs text-muted-foreground">Longitude</label>
-            <Input value={f.longitude} onChange={(e) => set("longitude", e.target.value)} placeholder="-49.239" data-testid="input-ponto-lng" />
+            <Input
+              value={f.longitude}
+              onPaste={colarCoordenadas}
+              onChange={(e) => digitouCoordenada("longitude", e.target.value)}
+              placeholder="-49.239 (ou cole o par)"
+              data-testid="input-ponto-lng"
+            />
           </div>
           <div className="col-span-2 flex items-end">
             <Button type="button" variant="outline" className="w-full" onClick={pegarGPS} data-testid="btn-ponto-gps">
@@ -1094,7 +1234,8 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
 
         <p className="text-xs text-muted-foreground">
           A coordenada é o que coloca o ponto na rota certa — sem ela, a roteirização cai no
-          endereço do cadastro do cliente.
+          endereço do cadastro do cliente. Dá para colar o par direto do Google Maps
+          (<span className="font-mono">-16.708, -49.239</span> ou o link do mapa) em qualquer um dos dois campos.
         </p>
         {erro ? <p className="text-sm text-destructive">{erro}</p> : null}
 
