@@ -377,6 +377,24 @@ run();
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
 
+  // 🛡️ CRÍTICO (fix loop Rota do Dia): estas colunas estão no schema Drizzle, então SEM o
+  // ALTER todo SELECT da tabela quebra (500 → o front fica re-tentando = "loop"). Rodam
+  // ISOLADAS, cada uma com catch INDIVIDUAL, para que a falha de um ALTER anterior nunca
+  // aborte a criação das demais (era o que deixava sales_cards.delivery_point_id sem criar).
+  (async () => {
+    const _critCols = [
+      'ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS delivery_point_id varchar',
+      'ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS check_in_notes text',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS delivery_point_id varchar',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS is_priority boolean NOT NULL DEFAULT false',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true',
+    ];
+    for (const _stmt of _critCols) {
+      try { await db.execute(sql.raw(_stmt)); }
+      catch (e: any) { console.warn('[CRIT-MIGRATION] falha (ignorada):', _stmt, e?.message); }
+    }
+  })();
+
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
   (async () => {
     try {
