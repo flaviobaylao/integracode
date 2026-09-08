@@ -30,6 +30,7 @@ interface BillingPipelineItem {
   customerId: string;
   customerName: string;
   customerAltName?: string | null; // nome alternativo (ex.: razão social) — usado só na busca
+  customerCity?: string | null; // cidade/município do cadastro do cliente (exibida no card)
   customerDocument: string | null;
   sellerId: string | null;
   sellerName: string | null;
@@ -434,9 +435,13 @@ export default function BillingPipeline() {
   const items = useMemo(() => (rawItems as BillingPipelineItem[]).map((i) => {
     const c = resolveCustomer(i);
     const fantasy = ((c?.fantasyName || '').trim()) || ((c?.name || '').trim());
-    return (fantasy && fantasy !== i.customerName)
+    // Cidade/município do cadastro do cliente — exibida no card ao lado do vendedor.
+    const cidade = ((c?.city || '') as string).trim() || null;
+    const base: any = (fantasy && fantasy !== i.customerName)
       ? { ...i, customerName: fantasy, customerAltName: i.customerName }
-      : i;
+      : { ...i };
+    base.customerCity = cidade;
+    return base as BillingPipelineItem;
   }), [rawItems, customerById, customerByDoc]);
 
   const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
@@ -2116,10 +2121,20 @@ function KanbanCard({
           )}
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm truncate">{item.customerName}</p>
-            {item.sellerName && (
-              <p className="text-xs text-gray-500 flex items-center gap-1">
-                <User className="h-3 w-3" />
-                {item.sellerName}
+            {(item.sellerName || item.customerCity) && (
+              <p className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
+                {item.sellerName && (
+                  <span className="flex items-center gap-1">
+                    <User className="h-3 w-3" />
+                    {item.sellerName}
+                  </span>
+                )}
+                {item.customerCity && (
+                  <span className="flex items-center gap-1" title="Cidade do cliente">
+                    <MapPin className="h-3 w-3" />
+                    {item.customerCity}
+                  </span>
+                )}
               </p>
             )}
           </div>
