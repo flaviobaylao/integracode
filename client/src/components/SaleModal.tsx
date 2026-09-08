@@ -96,6 +96,23 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
 
   const customerId = salesCard?.customerId;
+
+  // ── PONTO DE ENTREGA sem CNPJ (rede de clientes) ──────────────────────────
+  // Cliente de CNPJ unico que recebe em varios enderecos. A lista so' vem cheia
+  // para quem tem pontos cadastrados na rede; para todo o resto o seletor nem
+  // aparece e o pedido segue como sempre.
+  const [deliveryPointId, setDeliveryPointId] = useState<string>('');
+  const { data: pontosRede } = useQuery<any>({
+    queryKey: ['/api/carteira/redes/pontos-do-cliente', customerId],
+    enabled: !!customerId && isOpen,
+    staleTime: 60000,
+    queryFn: async () => {
+      const r = await fetch(`/api/carteira/redes/pontos-do-cliente/${customerId}`, { credentials: 'include' });
+      if (!r.ok) return { pontos: [] };
+      return r.json();
+    },
+  });
+  const pontosEntrega: any[] = pontosRede?.pontos || [];
   const { data: debtCheck } = useQuery<{ hasDebt: boolean; debtAmount?: number; daysOverdue?: number; message?: string }>({
     queryKey: ['/api/customers', customerId, 'check-debt'],
     queryFn: async () => {
@@ -725,6 +742,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       shouldBlock: shouldBlockOrder,
       exclusiveVehicle,
       vehicleTypes,
+      // Ponto de entrega sem CNPJ escolhido acima (vazio = entrega no endereço do cadastro)
+      deliveryPointId: deliveryPointId || null,
       // Salvar configurações para reutilização
       saveForReuse: true
     };
@@ -750,6 +769,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       shouldBlock: shouldBlockOrder,
       exclusiveVehicle,
       vehicleTypes,
+      deliveryPointId: deliveryPointId || null,
       status: 'rascunho'
     };
 
@@ -774,6 +794,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       shouldBlock: shouldBlockOrder,
       exclusiveVehicle,
       vehicleTypes,
+      deliveryPointId: deliveryPointId || null,
       saveForReuse: true
     };
 
@@ -789,6 +810,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     setPaymentMethod('a_vista');
     setOperationType('venda');
     setBoletoDays(7);
+    setDeliveryPointId('');
     setEnableSaturdayDelivery(false);
     setSelectedSaturdaySlots([]);
     setSelectedWeekdaySlots([]);
@@ -1262,6 +1284,51 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* PONTO DE ENTREGA sem CNPJ — só aparece para clientes que têm pontos
+                    cadastrados na rede. O pedido continua no CNPJ do cliente; isto diz
+                    apenas onde a mercadoria desce (e vai no LOCAL DE ENTREGA da NF-e). */}
+                {pontosEntrega.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-sky-700" />
+                      Ponto de entrega
+                    </Label>
+                    <Select value={deliveryPointId || 'cadastro'} onValueChange={(v) => setDeliveryPointId(v === 'cadastro' ? '' : v)}>
+                      <SelectTrigger className="w-full" data-testid="select-ponto-entrega">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cadastro">Endereço do cadastro (padrão)</SelectItem>
+                        {pontosEntrega.map((p: any) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.nome} — {p.cidade}{p.uf ? `/${p.uf}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {deliveryPointId ? (() => {
+                      const p = pontosEntrega.find((x: any) => x.id === deliveryPointId);
+                      if (!p) return null;
+                      return (
+                        <div className="text-xs bg-sky-50 border border-sky-200 rounded p-2 space-y-0.5">
+                          <p className="text-sky-900">
+                            <b>Entrega em:</b> {[p.endereco, p.numero].filter(Boolean).join(', ')}
+                            {p.complemento ? ` — ${p.complemento}` : ''}{p.bairro ? ` — ${p.bairro}` : ''}
+                          </p>
+                          {p.observacao ? <p className="text-sky-800">{p.observacao}</p> : null}
+                          <p className="text-sky-700">
+                            A nota continua no CNPJ do cliente; este endereço vai no quadro LOCAL DE ENTREGA.
+                          </p>
+                        </div>
+                      );
+                    })() : (
+                      <p className="text-xs text-muted-foreground">
+                        Sem escolher, a entrega é no endereço do cadastro e a nota sai como sempre.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Localização do Cliente */}
                 <div className="space-y-2">
