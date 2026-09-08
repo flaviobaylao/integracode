@@ -2147,7 +2147,12 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
         const y = new Date(Date.now() - 86400000);
         date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(y);
       }
-      const q = "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id WHERE sc.seller_id = '" + seller.replace(/'/g, "") + "' AND (sc.scheduled_date)::date = '" + date + "'::date AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) GROUP BY sc.customer_id ORDER BY MAX(c.name)";
+      const _sellerSafe = seller.replace(/'/g, "");
+      const q = "SELECT cid, nome, cidade FROM ( "
+        + "SELECT sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id WHERE sc.seller_id = '" + _sellerSafe + "' AND (sc.scheduled_date)::date = '" + date + "'::date AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) GROUP BY sc.customer_id "
+        + "UNION ALL "
+        + "SELECT l.id AS cid, l.fantasy_name AS nome, COALESCE(l.city, '') AS cidade FROM leads l WHERE l.assigned_to = '" + _sellerSafe + "' AND l.status = 'scheduled' AND l.next_contact_date IS NOT NULL AND (l.next_contact_date)::date = '" + date + "'::date AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL AND NOT EXISTS (SELECT 1 FROM lead_visits lv WHERE lv.lead_id = l.id AND (lv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = '" + date + "'::date) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = l.id AND vj.seller_id = l.assigned_to) "
+        + ") t ORDER BY nome";
       const r: any = await db.execute(sql.raw(q));
       const rows = ((r.rows || r) as any[]).map((x: any) => ({ customerId: String(x.cid), nome: x.nome, cidade: x.cidade || '' }));
       res.json({ ok: true, date, sellerId: seller, total: rows.length, pendentes: rows, motivos: JUSTIF_MOTIVOS });
@@ -2167,14 +2172,13 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       }
       const nomeSub = "(SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1)";
       const foneSub = "(SELECT u.phone FROM users u WHERE u.omie_vendor_code = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') OR u.id = sc.seller_id LIMIT 1)";
-      const q = "SELECT sc.seller_id AS sid, " + nomeSub + " AS vendedor, " + foneSub + " AS telefone, "
-        + "sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade "
-        + "FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id "
-        + "WHERE (sc.scheduled_date)::date = '" + date + "'::date "
-        + "AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 "
-        + "AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) "
-        + "AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) "
-        + "GROUP BY sc.seller_id, sc.customer_id ORDER BY vendedor NULLS LAST, MAX(c.name)";
+      const leadNomeSub = "(SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = l.assigned_to OR u.omie_vendor_code = replace(COALESCE(l.assigned_to,''),'omie-vendor-','') OR u.id = l.assigned_to LIMIT 1)";
+      const leadFoneSub = "(SELECT u.phone FROM users u WHERE u.omie_vendor_code = l.assigned_to OR u.omie_vendor_code = replace(COALESCE(l.assigned_to,''),'omie-vendor-','') OR u.id = l.assigned_to LIMIT 1)";
+      const q = "SELECT sid, vendedor, telefone, cid, nome, cidade FROM ( "
+        + "SELECT sc.seller_id AS sid, " + nomeSub + " AS vendedor, " + foneSub + " AS telefone, sc.customer_id AS cid, MAX(c.name) AS nome, MAX(c.city) AS cidade FROM sales_cards sc JOIN customers c ON c.id = sc.customer_id WHERE (sc.scheduled_date)::date = '" + date + "'::date AND sc.check_in_time IS NULL AND COALESCE(sc.sale_value::numeric, 0) = 0 AND c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = sc.customer_id AND vj.seller_id = sc.seller_id) GROUP BY sc.seller_id, sc.customer_id "
+        + "UNION ALL "
+        + "SELECT l.assigned_to AS sid, " + leadNomeSub + " AS vendedor, " + leadFoneSub + " AS telefone, l.id AS cid, l.fantasy_name AS nome, COALESCE(l.city, '') AS cidade FROM leads l WHERE l.assigned_to IS NOT NULL AND l.status = 'scheduled' AND l.next_contact_date IS NOT NULL AND (l.next_contact_date)::date = '" + date + "'::date AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL AND NOT EXISTS (SELECT 1 FROM lead_visits lv WHERE lv.lead_id = l.id AND (lv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = '" + date + "'::date) AND NOT EXISTS (SELECT 1 FROM visit_justifications vj WHERE vj.visit_date = '" + date + "'::date AND vj.customer_id = l.id AND vj.seller_id = l.assigned_to) "
+        + ") t ORDER BY vendedor NULLS LAST, nome";
       const r: any = await db.execute(sql.raw(q));
       const rows = (r.rows || r) as any[];
       const bySeller: Record<string, any> = {};
