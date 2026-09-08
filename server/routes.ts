@@ -18460,7 +18460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0).sort((a, b) => b.total - a.total);
       // Tarifas R$/km por regiao (GO e DF) em config_global + status do mes atual:
       // FECHADO no ultimo dia do mes apos as 20h (SP). ratePerKm legado = fallback.
-      let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0;
+      let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0, ratePerKmPSN = 0;
       try {
         const cr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_payment_config' LIMIT 1`);
         const v = cr?.rows?.[0]?.valor;
@@ -18469,6 +18469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ratePerKm = Number(parsed?.ratePerKm || 0) || 0;
           ratePerKmGO = Number(parsed?.ratePerKmGO ?? parsed?.ratePerKm ?? 0) || 0;
           ratePerKmDF = Number(parsed?.ratePerKmDF ?? parsed?.ratePerKm ?? 0) || 0;
+          ratePerKmPSN = Number(parsed?.ratePerKmPSN ?? 0) || 0;
         }
       } catch (e) { /* sem tarifa configurada ainda */ }
       // Tarifa R$/km por vendedor (editavel direto na linha). Se o vendedor ainda
@@ -18479,10 +18480,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const rv = rg?.rows?.[0]?.valor;
         if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') sellerRateMap = pm; }
       } catch (e) { /* sem tarifas por vendedor ainda */ }
+      // Regiao/tarifa escolhida por vendedor (GO | DF | PSN). Persistido em config_global
+      // (mapa sellerId -> regiao). Sem isto o seletor da tela caia SEMPRE em GO. (set/2026)
+      let sellerRegionMap: Record<string, string> = {};
+      try {
+        const rgr: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_regions' LIMIT 1`);
+        const rvr = rgr?.rows?.[0]?.valor;
+        if (rvr) { const pm = JSON.parse(String(rvr)); if (pm && typeof pm === 'object') sellerRegionMap = pm; }
+      } catch (e) { /* sem regioes por vendedor ainda */ }
+      const _normRg = (x: any): string => { const u = String(x || '').toUpperCase(); return (u === 'DF' || u === 'PSN') ? u : 'GO'; };
       for (const s of sellers) {
         const has = Object.prototype.hasOwnProperty.call(sellerRateMap, s.sellerId);
         const v = Number(sellerRateMap[s.sellerId]);
         s.sellerRate = has && isFinite(v) && v >= 0 ? v : ratePerKmGO;
+        // Regiao do seletor: usa a escolha salva; se ainda nao houver, INFERE pela tarifa
+        // propria ja salva do vendedor (bate DF -> DF, bate PSN -> PSN), senao GO. Assim os
+        // vendedores que ja estavam com a tarifa DF (ex.: Cleber/Radilton) aparecem em DF.
+        if (Object.prototype.hasOwnProperty.call(sellerRegionMap, s.sellerId)) {
+          s.region = _normRg(sellerRegionMap[s.sellerId]);
+        } else if (has && isFinite(v) && ratePerKmDF > 0 && Math.abs(v - ratePerKmDF) < 1e-9) {
+          s.region = 'DF';
+        } else if (has && isFinite(v) && ratePerKmPSN > 0 && Math.abs(v - ratePerKmPSN) < 1e-9) {
+          s.region = 'PSN';
+        } else {
+          s.region = 'GO';
+        }
       }
       let mesAtual = ''; let mesFechado = false;
       try {
@@ -18495,7 +18517,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mesAtual = String(nrow.mes_atual || '');
         mesFechado = nrow.fechado === true || nrow.fechado === 't';
       } catch (e) { /* fallback */ }
-      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, ratePerKmGO, ratePerKmDF, mesAtual, mesFechado });
+      res.json({ months, sellers, geradoEm: getBrazilDateString(), ratePerKm, ratePerKmGO, ratePerKmDF, ratePerKmPSN, mesAtual, mesFechado });
     } catch (error: any) {
       console.error('Erro ao montar km de vendedores:', error);
       res.status(500).json({ message: 'Erro ao montar km de vendedores', error: error?.message });
@@ -18513,14 +18535,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const df = Number(b.ratePerKmDF ?? b.ratePerKm);
       if (!isFinite(go) || go < 0 || !isFinite(df) || df < 0) return res.status(400).json({ message: 'Valor por km invalido' });
       await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
+      // PSN: usa o enviado; se nao vier, PRESERVA a tarifa PSN ja salva (nao zera). (set/2026)
+      let psn = Number(b.ratePerKmPSN);
+      if (!isFinite(psn) || psn < 0) {
+        try { const cr0: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_payment_config' LIMIT 1`); const p0 = cr0?.rows?.[0]?.valor ? JSON.parse(String(cr0.rows[0].valor)) : null; psn = Number(p0?.ratePerKmPSN || 0) || 0; } catch { psn = 0; }
+      }
       // ratePerKm legado = tarifa GO, para nao quebrar leitores antigos do campo.
       const ratePerKm = isFinite(legacy) && legacy >= 0 ? legacy : go;
-      const valor = JSON.stringify({ ratePerKm, ratePerKmGO: go, ratePerKmDF: df });
-      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor (GO e DF)') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
-      res.json({ ok: true, ratePerKm, ratePerKmGO: go, ratePerKmDF: df });
+      const valor = JSON.stringify({ ratePerKm, ratePerKmGO: go, ratePerKmDF: df, ratePerKmPSN: psn });
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_payment_config', ${valor}, 'Valor R$ por km pago ao vendedor (GO, DF e PSN)') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, ratePerKm, ratePerKmGO: go, ratePerKmDF: df, ratePerKmPSN: psn });
     } catch (error: any) {
       console.error('Erro ao salvar tarifa km:', error);
       res.status(500).json({ message: 'Erro ao salvar tarifa', error: error?.message });
+    }
+  });
+
+  // Salva a REGIAO/tarifa escolhida do vendedor (GO | DF | PSN) na coluna da tela.
+  // Persistido em config_global (mapa sellerId -> regiao). Sem este endpoint o seletor
+  // nao gravava e a tela caia SEMPRE em GO (subpagando quem e DF). (set/2026)
+  app.post('/api/admin/km-vendedores/region', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const sellerId = String(req.body?.sellerId || '').trim();
+      const region = String(req.body?.region || '').toUpperCase();
+      if (!sellerId) return res.status(400).json({ message: 'sellerId obrigatorio' });
+      if (region !== 'GO' && region !== 'DF' && region !== 'PSN') return res.status(400).json({ message: 'regiao invalida (GO|DF|PSN)' });
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL, descricao text, updated_at timestamp DEFAULT now())"));
+      let map: Record<string, string> = {};
+      try {
+        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_seller_regions' LIMIT 1`);
+        const rv = rg?.rows?.[0]?.valor;
+        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') map = pm; }
+      } catch (e) { /* primeiro registro */ }
+      map[sellerId] = region;
+      const valor = JSON.stringify(map);
+      await db.execute(sql`INSERT INTO config_global (chave, valor, descricao) VALUES ('km_seller_regions', ${valor}, 'Regiao/tarifa (GO|DF|PSN) por vendedor') ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`);
+      res.json({ ok: true, sellerId, region });
+    } catch (error: any) {
+      console.error('Erro ao salvar regiao km:', error);
+      res.status(500).json({ message: 'Erro ao salvar regiao', error: error?.message });
     }
   });
 
