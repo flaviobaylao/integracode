@@ -1988,6 +1988,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // FIX 08/set/2026 — CADASTRO APAGADO EM BRANCO.
+  // Uma tela que abre com o cliente parcial submetia CNPJ/cidade/IE como "" e o update
+  // gravava NULL por cima do que existia. Regra: string vazia NAO apaga campo de
+  // identidade/fiscal que ja tem valor. Para apagar de proposito, mande null explicito.
+  const CADASTRO_CAMPOS_PROTEGIDOS = [
+    'cnpj', 'cpf', 'document', 'stateRegistration', 'companyName', 'fantasyName',
+    'city', 'state', 'zipCode', 'address', 'email', 'omieInstanceId', 'sellerId', 'icmsCsosn',
+  ];
+  function protegerCadastroContraBranco(body: any, atual: any, ctx: string) {
+    if (!body || !atual) return body;
+    for (const f of CADASTRO_CAMPOS_PROTEGIDOS) {
+      const novo = body[f];
+      if (novo === undefined || novo === null) continue;
+      if (String(novo).trim() !== '') continue;
+      const tinha = String((atual as any)[f] ?? '').trim();
+      if (!tinha) continue;
+      console.warn('[CADASTRO-GUARD] ' + ctx + ' ' + atual.id + ': ignorado vazio em ' + f);
+      delete body[f];
+    }
+    return body;
+  }
+
   app.patch('/api/customers/:id', authenticateUser, requirePermission("Clientes / Carteira", "editar"), async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -2164,6 +2186,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         req.body.exclusiveVehicle = Boolean(req.body.exclusiveVehicle);
       }
       
+      const __atualGuard = await storage.getCustomer(id).catch(() => null);
+      protegerCadastroContraBranco(req.body, __atualGuard, 'PATCH');
+
       // Clean data: transform empty strings to null for numeric fields
       // 🔒 VALIDAÇÃO DE CPF/CNPJ — barra documento invalido no CADASTRO, e nao so
       // na emissao da NF-e. Recupera zeros a esquerda perdidos e move o valor
@@ -2836,6 +2861,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`✅ [CUSTOMER-UPDATE-PUT] exclusiveVehicle:`, req.body.exclusiveVehicle);
       }
       
+      const __atualGuardPut = await storage.getCustomer(id).catch(() => null);
+      protegerCadastroContraBranco(req.body, __atualGuardPut, 'PUT');
+
       // Transformar strings vazias em null para campos numéricos
       const __blankDoc = (v: any) => (String(v ?? '').replace(/\D/g, '').length ? v : null);
       // 🔒 VALIDAÇÃO DE CPF/CNPJ — barra documento invalido no CADASTRO, e nao so
