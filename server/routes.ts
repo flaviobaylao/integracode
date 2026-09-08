@@ -18616,12 +18616,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recalc-actual-distances', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const minKm = Number(req.query.minKm || 300);
-      const found: any = await db.execute(sql`
-        SELECT id, seller_id, route_date, COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) AS km
-        FROM daily_routes
-        WHERE COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) > ${minKm}
-           OR COALESCE(start_latitude::text, '') !~ '[1-9]'
-      `);
+      const _from = String(req.query.from || '').trim();
+      const _to = String(req.query.to || '').trim();
+      let found: any;
+      if (_from && _to) {
+        // Recálculo retroativo por intervalo de datas [from, to] (YYYY-MM-DD): recalcula
+        // TODAS as rotas do período aplicando a regra atual de km (1º check-in → … →
+        // casa do vendedor). Usado quando a regra de km muda. (set/2026)
+        found = await db.execute(sql`
+          SELECT id, seller_id, route_date, COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) AS km
+          FROM daily_routes
+          WHERE route_date >= ${_from}::date AND route_date < (${_to}::date + interval '1 day')
+        `);
+      } else {
+        found = await db.execute(sql`
+          SELECT id, seller_id, route_date, COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) AS km
+          FROM daily_routes
+          WHERE COALESCE(NULLIF(total_actual_distance::text, '')::numeric, 0) > ${minKm}
+             OR COALESCE(start_latitude::text, '') !~ '[1-9]'
+        `);
+      }
       const routes = (found?.rows || []) as any[];
       const { recalculateRouteDistance } = await import('./actualRouteService');
       const changed: any[] = [];
