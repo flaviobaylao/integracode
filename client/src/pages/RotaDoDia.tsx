@@ -191,6 +191,7 @@ export default function RotaDoDia() {
   const [presExpanded, setPresExpanded] = useState<Set<string>>(new Set());
   const [virtExpanded, setVirtExpanded] = useState<Set<string>>(new Set());
   const [repExpanded, setRepExpanded] = useState<Set<string>>(new Set());
+  const [repBoxOpen, setRepBoxOpen] = useState(false); // Box de repescagem começa SEMPRE recolhido; usuário expande.
 
   // Estado para modal de ações de cliente virtual (escolher entre atendimento ou pedido)
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
@@ -1863,34 +1864,64 @@ export default function RotaDoDia() {
             <Card className="border-[#d6c7a1]">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
-                    Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
-                  </CardTitle>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={expandAllRep}
-                      className="flex items-center gap-1"
-                      data-testid="button-expand-all-repescagem"
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* 🔻 Seletor Recolher/Expandir do BOX INTEIRO de repescagem. Começa SEMPRE
+                        recolhido; o usuário clica para expandir os clientes que caíram em repescagem. */}
+                    <button
+                      type="button"
+                      onClick={() => setRepBoxOpen((v) => !v)}
+                      aria-expanded={repBoxOpen}
+                      title={repBoxOpen ? 'Recolher repescagem' : 'Expandir repescagem'}
+                      className="flex items-center justify-center h-6 w-6 rounded border-2 border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors shrink-0 animate-pulse"
+                      data-testid="button-toggle-repescagem-box"
                     >
-                      <ChevronDown className="h-4 w-4" />
-                      Expandir Tudo
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={collapseAllRep}
-                      className="flex items-center gap-1"
-                      data-testid="button-collapse-all-repescagem"
+                      {repBoxOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </button>
+                    <CardTitle
+                      className="text-base flex items-center gap-2 cursor-pointer select-none"
+                      onClick={() => setRepBoxOpen((v) => !v)}
                     >
-                      <ChevronUp className="h-4 w-4" />
-                      Recolher Tudo
-                    </Button>
+                      <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
+                      Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
+                    </CardTitle>
+                    {!repBoxOpen && (
+                      <span
+                        onClick={() => setRepBoxOpen(true)}
+                        className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 animate-pulse cursor-pointer"
+                        data-testid="hint-expand-repescagem"
+                      >
+                        <span className="text-base leading-none">←</span>
+                        Clique aqui para expandir os clientes que caíram em repescagem
+                      </span>
+                    )}
                   </div>
+                  {repBoxOpen && (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={expandAllRep}
+                        className="flex items-center gap-1"
+                        data-testid="button-expand-all-repescagem"
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                        Expandir Tudo
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={collapseAllRep}
+                        className="flex items-center gap-1"
+                        data-testid="button-collapse-all-repescagem"
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                        Recolher Tudo
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </CardHeader>
+              {repBoxOpen && (
               <CardContent className="space-y-2">
                 {filteredRepescagem.map((r: any) => {
                   const repKey = String(r.assignmentId);
@@ -2087,6 +2118,7 @@ export default function RotaDoDia() {
                   </div>
                 )}
               </CardContent>
+              )}
             </Card>
           )}
 
