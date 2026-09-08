@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Network, Plus, Search, Trash2, Pencil, ChevronDown, ChevronRight, Download, Info, X,
+  MapPin, Crosshair,
 } from "lucide-react";
 import { exportToExcel } from "@/lib/tableTools";
 
@@ -33,9 +34,18 @@ type ClienteRede = {
   papel?: string;
   fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
 };
+/** Endereço de entrega SEM CNPJ pendurado na rede — não é cliente, não tem carteira. */
+type PontoEntrega = {
+  id: string; redeId: string; nome: string;
+  endereco: string; numero: string; complemento: string; bairro: string;
+  cidade: string; uf: string; cep: string;
+  latitude: number | null; longitude: number | null;
+  contato: string; telefone: string; observacao: string;
+};
 type Rede = {
   id: string; nome: string; observacao: string; criadaPor: string; criadaEm: string;
   clientes: ClienteRede[];
+  pontos?: PontoEntrega[];
   totais: {
     clientes: number; ativos: number; inativos: number;
     fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
@@ -474,6 +484,8 @@ export default function RedeClientes() {
                         CNPJ que fez o pedido.
                       </p>
                     ) : null}
+
+                    <PontosDeEntrega rede={r} podeEditar={podeEditar} onMudou={recarrega} />
                   </CardContent>
                 ) : null}
               </Card>
@@ -785,5 +797,314 @@ function AjudaPapelNFe() {
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * PONTOS DE ENTREGA SEM CNPJ.
+ *
+ * O caso: cliente de UM CNPJ so' que recebe em varios enderecos (lojas de
+ * shopping, quiosques, cozinhas, obras). Esses pontos NAO sao clientes — nao
+ * entram em clientes ativos, nao tem carteira, vendedor nem faturamento. Sao
+ * enderecos com coordenada, pendurados na rede, que o vendedor escolhe no
+ * pedido. A nota continua saindo no CNPJ do cliente; muda so' o quadro LOCAL DE
+ * ENTREGA (grupo <entrega> da NF-e), que leva o endereco do ponto.
+ */
+function PontosDeEntrega(props: { rede: Rede; podeEditar: boolean; onMudou: () => void }) {
+  const { rede, podeEditar, onMudou } = props;
+  const pontos = rede.pontos || [];
+  const [editando, setEditando] = useState<PontoEntrega | null>(null);
+  const [criando, setCriando] = useState(false);
+
+  const excluir = async (p: PontoEntrega) => {
+    if (!window.confirm(`Remover o ponto de entrega "${p.nome}"? Pedidos e notas antigos continuam mostrando este endereço.`)) return;
+    const resp = await fetch(`/api/carteira/redes/pontos/${p.id}`, { method: "DELETE", credentials: "include" });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok || j?.ok === false) { window.alert(j?.error || "Não deu para remover o ponto."); return; }
+    onMudou();
+  };
+
+  return (
+    <div className="mt-4 border-t pt-3">
+      <div className="flex items-center gap-2 mb-2">
+        <MapPin className="h-4 w-4 text-sky-700" />
+        <span className="text-sm font-semibold">Pontos de entrega sem CNPJ</span>
+        <span className="text-xs text-muted-foreground">
+          {pontos.length ? `${NUM(pontos.length)} ${pontos.length === 1 ? "ponto" : "pontos"}` : "nenhum"}
+        </span>
+        <AjudaPontosEntrega />
+        {podeEditar ? (
+          <Button size="sm" variant="outline" className="ml-auto h-7 text-xs" onClick={() => setCriando(true)} data-testid={`btn-novo-ponto-${rede.id}`}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Novo ponto
+          </Button>
+        ) : null}
+      </div>
+
+      {pontos.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Endereços de entrega que não têm CNPJ próprio — lojas de shopping, quiosques, cozinhas, obras.
+          Não viram cliente: o pedido continua no CNPJ da matriz e o vendedor só escolhe onde descarregar.
+        </p>
+      ) : (
+        <div className="border rounded-md overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow>
+                <TableHead className="w-8">#</TableHead>
+                <TableHead>Ponto</TableHead>
+                <TableHead>Endereço</TableHead>
+                <TableHead className="w-40">Cidade / UF</TableHead>
+                <TableHead className="w-36">Coordenadas</TableHead>
+                <TableHead className="w-40">Contato</TableHead>
+                {podeEditar ? <TableHead className="w-20" /> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pontos.map((p, i) => (
+                <TableRow key={p.id} data-testid={`row-ponto-${i}`}>
+                  <TableCell className="text-muted-foreground text-xs">{i + 1}</TableCell>
+                  <TableCell className="font-medium leading-tight">
+                    {p.nome}
+                    {p.observacao ? <span className="block text-xs text-muted-foreground">{p.observacao}</span> : null}
+                  </TableCell>
+                  <TableCell className="text-sm leading-tight">
+                    {[p.endereco, p.numero].filter(Boolean).join(", ")}
+                    <span className="block text-xs text-muted-foreground">
+                      {[p.complemento, p.bairro, p.cep ? `CEP ${p.cep}` : ""].filter(Boolean).join(" · ") || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">{p.cidade}{p.uf ? `/${p.uf}` : ""}</TableCell>
+                  <TableCell className="text-xs font-mono whitespace-nowrap">
+                    {p.latitude != null && p.longitude != null
+                      ? `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}`
+                      : <span className="text-amber-700 font-sans">sem coordenada</span>}
+                  </TableCell>
+                  <TableCell className="text-sm leading-tight">
+                    {p.contato || "—"}
+                    {p.telefone ? <span className="block text-xs text-muted-foreground">{p.telefone}</span> : null}
+                  </TableCell>
+                  {podeEditar ? (
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditando(p)} data-testid={`btn-editar-ponto-${p.id}`}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => excluir(p)} data-testid={`btn-excluir-ponto-${p.id}`}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {(criando || editando) ? (
+        <ModalPonto
+          redeId={rede.id}
+          ponto={editando}
+          onFechar={() => { setCriando(false); setEditando(null); }}
+          onSalvo={() => { setCriando(false); setEditando(null); onMudou(); }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** O "i" dos pontos de entrega: o que é, o que não é, e o que muda na nota. */
+function AjudaPontosEntrega() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Como funcionam os pontos de entrega"
+          className="inline-flex items-center justify-center h-4 w-4 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition"
+          data-testid="ajuda-pontos-entrega"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-96 text-sm space-y-3">
+        <div>
+          <p className="font-semibold">Pontos de entrega sem CNPJ</p>
+          <p className="text-xs text-muted-foreground">
+            Para o cliente de <b>um CNPJ só</b> que recebe em vários endereços.
+            É o caso irmão do destinatário/local de entrega — só que aqui os pontos não têm documento próprio.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="rounded border p-2">
+            <p className="text-xs font-semibold">1. Cadastrar o ponto</p>
+            <p className="text-xs text-muted-foreground">
+              Nome, endereço, cidade/UF e, de preferência, as coordenadas — é a coordenada que
+              coloca o ponto na rota certa.
+            </p>
+            <p className="text-xs mt-1">
+              <b>Resultado:</b> o ponto passa a aparecer no seletor <b>Ponto de entrega</b> do pedido
+              desse cliente. Ele <b>não</b> vira cliente: não entra em clientes ativos, não tem
+              carteira, vendedor, meta nem faturamento próprio.
+            </p>
+          </div>
+
+          <div className="rounded border p-2">
+            <p className="text-xs font-semibold">2. Escolher o ponto no pedido</p>
+            <p className="text-xs text-muted-foreground">
+              O vendedor lança o pedido normalmente no CNPJ do cliente e escolhe para qual ponto vai.
+            </p>
+            <p className="text-xs mt-1">
+              <b>Resultado:</b> a NF-e sai com <b>os dois boxes</b> — destinatário no CNPJ do cliente
+              (que paga) e <b>LOCAL DE ENTREGA</b> com o endereço do ponto. Como o ponto não tem
+              documento, o grupo <code>&lt;entrega&gt;</code> leva o próprio CNPJ do cliente com o
+              endereço do ponto, que é o que o layout da NF-e prevê para descarga em outro endereço
+              da mesma empresa.
+            </p>
+          </div>
+
+          <div className="rounded border p-2 bg-muted/40">
+            <p className="text-xs font-semibold">3. Sem escolher ponto <span className="font-normal text-muted-foreground">(situação padrão)</span></p>
+            <p className="text-xs mt-1">
+              <b>Resultado:</b> nada muda. A nota sai só com o endereço do cadastro do cliente,
+              sem quadro de local de entrega — como sempre foi.
+            </p>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Cadastro de um ponto. Endereço, cidade e UF são obrigatórios: sem eles a SEFAZ recusa o <entrega>. */
+function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFechar: () => void; onSalvo: () => void }) {
+  const p = props.ponto;
+  const [f, setF] = useState({
+    nome: p?.nome || "", endereco: p?.endereco || "", numero: p?.numero || "",
+    complemento: p?.complemento || "", bairro: p?.bairro || "", cidade: p?.cidade || "",
+    uf: p?.uf || "", cep: p?.cep || "",
+    latitude: p?.latitude != null ? String(p.latitude) : "",
+    longitude: p?.longitude != null ? String(p.longitude) : "",
+    contato: p?.contato || "", telefone: p?.telefone || "", observacao: p?.observacao || "",
+  });
+  const [erro, setErro] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
+
+  // Coordenada do próprio aparelho: quem cadastra costuma estar no ponto.
+  const pegarGPS = () => {
+    if (!navigator.geolocation) { setErro("Este navegador não informa a localização."); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { set("latitude", pos.coords.latitude.toFixed(6)); set("longitude", pos.coords.longitude.toFixed(6)); },
+      () => setErro("Não deu para ler a localização — digite as coordenadas ou tente de novo."),
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
+  const salvar = async () => {
+    setErro(""); setSalvando(true);
+    try {
+      const url = p ? `/api/carteira/redes/pontos/${p.id}` : `/api/carteira/redes/${props.redeId}/pontos`;
+      const resp = await fetch(url, {
+        method: p ? "PATCH" : "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(f),
+      });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok || j?.ok === false) { setErro(j?.error || "Não deu para salvar o ponto."); return; }
+      props.onSalvo();
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) props.onFechar(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{p ? "Editar ponto de entrega" : "Novo ponto de entrega"}</DialogTitle>
+          <DialogDescription>
+            Endereço sem CNPJ próprio. Não vira cliente — só passa a aparecer no seletor do pedido
+            e no quadro LOCAL DE ENTREGA da nota.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-6 gap-3">
+          <div className="col-span-6">
+            <label className="text-xs text-muted-foreground">Nome do ponto *</label>
+            <Input value={f.nome} onChange={(e) => set("nome", e.target.value)} placeholder="Ex.: Loja Shopping Flamboyant" data-testid="input-ponto-nome" />
+          </div>
+          <div className="col-span-4">
+            <label className="text-xs text-muted-foreground">Endereço *</label>
+            <Input value={f.endereco} onChange={(e) => set("endereco", e.target.value)} placeholder="Av. Deputado Jamel Cecílio" data-testid="input-ponto-endereco" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-muted-foreground">Número</label>
+            <Input value={f.numero} onChange={(e) => set("numero", e.target.value)} placeholder="3300" />
+          </div>
+          <div className="col-span-3">
+            <label className="text-xs text-muted-foreground">Complemento</label>
+            <Input value={f.complemento} onChange={(e) => set("complemento", e.target.value)} placeholder="Piso L2, quiosque 14" />
+          </div>
+          <div className="col-span-3">
+            <label className="text-xs text-muted-foreground">Bairro</label>
+            <Input value={f.bairro} onChange={(e) => set("bairro", e.target.value)} placeholder="Jardim Goiás" />
+          </div>
+          <div className="col-span-3">
+            <label className="text-xs text-muted-foreground">Cidade *</label>
+            <Input value={f.cidade} onChange={(e) => set("cidade", e.target.value)} placeholder="Goiânia" data-testid="input-ponto-cidade" />
+          </div>
+          <div className="col-span-1">
+            <label className="text-xs text-muted-foreground">UF *</label>
+            <Input value={f.uf} maxLength={2} onChange={(e) => set("uf", e.target.value.toUpperCase())} placeholder="GO" data-testid="input-ponto-uf" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-muted-foreground">CEP</label>
+            <Input value={f.cep} onChange={(e) => set("cep", e.target.value)} placeholder="74810-100" />
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-xs text-muted-foreground">Latitude</label>
+            <Input value={f.latitude} onChange={(e) => set("latitude", e.target.value)} placeholder="-16.708" data-testid="input-ponto-lat" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-muted-foreground">Longitude</label>
+            <Input value={f.longitude} onChange={(e) => set("longitude", e.target.value)} placeholder="-49.239" data-testid="input-ponto-lng" />
+          </div>
+          <div className="col-span-2 flex items-end">
+            <Button type="button" variant="outline" className="w-full" onClick={pegarGPS} data-testid="btn-ponto-gps">
+              <Crosshair className="h-4 w-4 mr-1" /> Usar minha localização
+            </Button>
+          </div>
+
+          <div className="col-span-3">
+            <label className="text-xs text-muted-foreground">Contato no local</label>
+            <Input value={f.contato} onChange={(e) => set("contato", e.target.value)} placeholder="Gerente da loja" />
+          </div>
+          <div className="col-span-3">
+            <label className="text-xs text-muted-foreground">Telefone</label>
+            <Input value={f.telefone} onChange={(e) => set("telefone", e.target.value)} placeholder="(62) 90000-0000" />
+          </div>
+          <div className="col-span-6">
+            <label className="text-xs text-muted-foreground">Observação para a entrega</label>
+            <Textarea value={f.observacao} onChange={(e) => set("observacao", e.target.value)} rows={2} placeholder="Recebe até as 10h pela doca de serviço." />
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          A coordenada é o que coloca o ponto na rota certa — sem ela, a roteirização cai no
+          endereço do cadastro do cliente.
+        </p>
+        {erro ? <p className="text-sm text-destructive">{erro}</p> : null}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={props.onFechar}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando} data-testid="btn-salvar-ponto">
+            {salvando ? "Salvando…" : p ? "Salvar" : "Cadastrar ponto"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

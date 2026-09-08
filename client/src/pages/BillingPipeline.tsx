@@ -49,6 +49,13 @@ interface BillingPipelineItem {
   redeDestinatarioDoc?: string | null;
   redeDestinatarioCidade?: string | null;
   redeDestinatarioUf?: string | null;
+  // PONTO DE ENTREGA sem CNPJ escolhido pelo vendedor no pedido: a nota continua
+  // no CNPJ do cliente e a mercadoria desce neste endereço.
+  pontoEntregaNome?: string | null;
+  pontoEntregaEndereco?: string | null;
+  pontoEntregaBairro?: string | null;
+  pontoEntregaCidade?: string | null;
+  pontoEntregaUf?: string | null;
   deliveryDriverName?: string | null; // entregador da rota (cards em_rota/em_rota_bsb)
   deliveryRouteDate?: string | null;  // data programada da rota (YYYY-MM-DD)
   paymentMethod: string | null;
@@ -1537,6 +1544,35 @@ export default function BillingPipeline() {
                   o cliente do pedido está marcado como LOCAL DE ENTREGA de uma rede
                   que já tem destinatário: quem fatura precisa ver para quem a nota
                   vai sair antes de emitir. */}
+              {/* Ponto de entrega sem CNPJ: os dois boxes que vao sair na nota. */}
+              {detailItem.pontoEntregaNome && (
+                <div className="rounded-lg p-4 border border-sky-200 bg-sky-50 dark:bg-sky-950/30">
+                  <div className="flex items-center gap-2 mb-3">
+                    <MapPin className="h-4 w-4 text-sky-700" />
+                    <span className="font-semibold text-sm text-sky-900 dark:text-sky-200">Ponto de entrega</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="text-[10px] uppercase tracking-wider text-sky-500 font-medium">A nota sai para</label>
+                      <p className="font-semibold text-sm">{detailItem.customerName}</p>
+                      <p className="text-xs font-mono text-gray-600">{detailItem.customerDocument || '-'}</p>
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="text-[10px] uppercase tracking-wider text-sky-500 font-medium">A mercadoria desce em</label>
+                      <p className="font-semibold text-sm">{detailItem.pontoEntregaNome}</p>
+                      <p className="text-xs text-gray-600">
+                        {[detailItem.pontoEntregaEndereco, detailItem.pontoEntregaBairro, detailItem.pontoEntregaCidade].filter(Boolean).join(', ')}
+                        {detailItem.pontoEntregaUf ? `/${detailItem.pontoEntregaUf}` : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-sky-800 mt-3">
+                    O ponto não tem CNPJ próprio: a NF-e sai com o <b>destinatário</b> no CNPJ do cliente e o
+                    endereço acima no quadro <b>LOCAL DE ENTREGA</b>.
+                  </p>
+                </div>
+              )}
+
               {detailItem.redeDestinatarioNome && (
                 <div className="rounded-lg p-4 border border-violet-200 bg-violet-50 dark:bg-violet-950/30">
                   <div className="flex items-center gap-2 mb-3">
@@ -2206,6 +2242,19 @@ function KanbanCard({
           {item.invoiceNumber && (
             <Badge variant="outline" className="text-[10px] border-green-300 text-green-700 bg-green-50">
               NF {item.invoiceNumber}
+            </Badge>
+          )}
+          {/* PONTO DE ENTREGA sem CNPJ: mesma nota, outro endereco de descarga.
+              O entregador e' quem mais precisa dessa linha. */}
+          {item.pontoEntregaNome && (
+            <Badge
+              variant="outline"
+              className="text-[10px] border-sky-300 text-sky-800 bg-sky-50"
+              title={`Entregar em ${item.pontoEntregaNome} — ${[item.pontoEntregaEndereco, item.pontoEntregaBairro, item.pontoEntregaCidade].filter(Boolean).join(', ')}${item.pontoEntregaUf ? `/${item.pontoEntregaUf}` : ''}. A NF-e sai no CNPJ do cliente, com este endereço no quadro LOCAL DE ENTREGA.`}
+              data-testid={`badge-ponto-entrega-${item.id}`}
+            >
+              <MapPin className="h-2.5 w-2.5 mr-0.5" />
+              Entrega: {item.pontoEntregaNome}
             </Badge>
           )}
           {/* REDE: este pedido entrega aqui, mas a nota sai em outro CNPJ. Quem
