@@ -607,6 +607,67 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
   }
 }
 
+// ── FINALIZAR PEDIDO (card-filho por pedido) ────────────────────────────────
+// Um CLIENTE tem UM card permanente reutilizado. A trava do pipeline é por
+// salesCardId (1 card = 1 item): sem isto, um 2º pedido no mesmo cliente (com o
+// 1º ainda não faturado) seria recusado como duplicado e sumiria.
+// Solução: cada pedido de um card PERMANENTE vira um CARD-FILHO com id próprio
+// (número/NF independentes), e o card permanente é ZERADO para liberar o próximo
+// pedido. A trava suave (cliente+valor+produtos, 15 dias) continua no handler.
+// Idempotência: após enviar, o card permanente fica sem venda (saleValue null),
+// então um reenvio acidental é barrado pela checagem "sem venda registrada".
+// Cards NÃO permanentes seguem o fluxo antigo (enviam a si mesmos).
+export async function finalizarPedidoParaPipeline(
+  card: any,
+  createdByEmail: string,
+  opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null; skipHistoryGuard?: boolean },
+): Promise<{ item: any; alvo: any }> {
+  if (!card?.isPermanent) {
+    // Fluxo antigo: o próprio card entra no pipeline.
+    const item = await autoSendToBillingPipeline(card, createdByEmail, opts);
+    return { item, alvo: card };
+  }
+  // Card permanente → cria o card-filho do pedido (id próprio) e envia o FILHO.
+  const filho = await storage.createSalesCard({
+    customerId: card.customerId,
+    sellerId: card.sellerId,
+    status: 'completed',
+    isPermanent: false,
+    isRecurring: false,
+    parentCardId: card.id,
+    routeDay: card.routeDay || 'Seg',
+    recurrenceType: card.recurrenceType || 'semanal',
+    scheduledDate: card.scheduledDate || agora(),
+    completedDate: agora(),
+    saleValue: card.saleValue,
+    products: card.products as any,
+    paymentMethod: card.paymentMethod || 'a_vista',
+    operationType: card.operationType || 'venda',
+    boletoDays: card.boletoDays ?? 7,
+    deliveryPointId: (card as any).deliveryPointId ?? null,
+    customerLatitude: card.customerLatitude ?? null,
+    customerLongitude: card.customerLongitude ?? null,
+    deliveryWeekdays: (card.deliveryWeekdays as any) ?? [],
+    deliveryTimeSlots: (card.deliveryTimeSlots as any) ?? [],
+    deliverySaturdayTimeSlots: (card.deliverySaturdayTimeSlots as any) ?? [],
+    exclusiveVehicle: card.exclusiveVehicle ?? false,
+    vehicleTypes: (card.vehicleTypes as any) ?? [],
+    notes: card.notes ?? null,
+    source: card.source ?? 'integra',
+  } as any);
+  const item = await autoSendToBillingPipeline(filho, createdByEmail, opts);
+  // ZERA o card permanente para permitir um novo pedido — SOMENTE se o pedido entrou
+  // (item criado). Se foi bloqueado/duplicado, mantém o card como está.
+  if (item) {
+    try {
+      await storage.updateSalesCard(card.id, {
+        products: [], saleValue: null, completedDate: null, deliveryPointId: null, status: 'pending',
+      } as any);
+    } catch (e: any) { console.warn('[FINALIZAR-PEDIDO] falha ao zerar card permanente (segue):', e?.message); }
+  }
+  return { item, alvo: filho };
+}
+
 // 03/ago/2026 — DIAGNOSTICO HONESTO DO DRY-RUN.
 // Antes, o dry-run das redes de seguranca respondia sempre 'would_route'/'would_recover',
 // inclusive para pedidos que a trava anti-historico iria descartar em silencio. Resultado:
