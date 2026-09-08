@@ -8679,6 +8679,35 @@ export class DatabaseStorage implements IStorage {
       }
     } catch {}
 
+    // ── PONTO DE ENTREGA sem CNPJ escolhido no pedido ─────────────────────────
+    // O card mostra onde a mercadoria desce. Uma consulta para o quadro inteiro.
+    try {
+      const idsPontos = Array.from(new Set(
+        (rows as any[]).map((r) => String((r as any).deliveryPointId || '')).filter(Boolean)
+      ));
+      if (idsPontos.length) {
+        const lista = idsPontos.map((i) => `'${String(i).replace(/'/g, "''")}'`).join(',');
+        const res: any = await db.execute(sql.raw(`
+          SELECT id, nome, endereco, numero, bairro, cidade, uf, latitude, longitude
+          FROM cliente_rede_pontos WHERE id IN (${lista})`));
+        const porPonto = new Map<string, any>();
+        for (const x of ((res?.rows ?? res ?? []) as any[])) porPonto.set(String(x.id), x);
+        for (const r of rows as any[]) {
+          const p = porPonto.get(String((r as any).deliveryPointId || ''));
+          if (!p) continue;
+          (r as any).pontoEntregaNome = p.nome || null;
+          (r as any).pontoEntregaEndereco = [p.endereco, p.numero].filter(Boolean).join(', ') || null;
+          (r as any).pontoEntregaBairro = p.bairro || null;
+          (r as any).pontoEntregaCidade = p.cidade || null;
+          (r as any).pontoEntregaUf = p.uf || null;
+          const la = p.latitude == null || p.latitude === '' ? null : Number(p.latitude);
+          const lo = p.longitude == null || p.longitude === '' ? null : Number(p.longitude);
+          (r as any).pontoEntregaLat = Number.isFinite(la as any) ? la : null;
+          (r as any).pontoEntregaLng = Number.isFinite(lo as any) ? lo : null;
+        }
+      }
+    } catch {}
+
     return rows as any;
   }
 

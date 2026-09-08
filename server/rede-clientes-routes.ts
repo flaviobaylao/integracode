@@ -140,6 +140,34 @@ async function ensureRedes(): Promise<void> {
   // Dois destinatarios na mesma rede deixariam o faturamento ambiguo.
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_rede_um_destinatario
                        ON cliente_rede_membros (rede_id) WHERE papel = 'destinatario'`);
+  // ── PONTOS DE ENTREGA SEM CNPJ ────────────────────────────────────────────
+  // Cliente de CNPJ unico que recebe em varios enderecos (lojas em shopping,
+  // quiosques, obras, cozinhas). O ponto NAO e' cliente: nao entra em clientes
+  // ativos, nao tem carteira, nao tem faturamento proprio. E' so' um endereco
+  // com coordenada, pendurado na rede, que o vendedor escolhe no pedido.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS cliente_rede_pontos (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      rede_id varchar NOT NULL,
+      nome varchar NOT NULL,
+      endereco text,
+      numero varchar,
+      complemento varchar,
+      bairro varchar,
+      cidade varchar,
+      uf varchar,
+      cep varchar,
+      latitude numeric,
+      longitude numeric,
+      contato varchar,
+      telefone varchar,
+      observacao text,
+      ativo boolean NOT NULL DEFAULT true,
+      criado_por_nome varchar,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now()
+    )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_rede_ponto_rede ON cliente_rede_pontos (rede_id)`);
   __redesProntas = true;
 }
 
@@ -210,6 +238,94 @@ export async function resolveDestinoFiscal(customerId: string | null | undefined
     // Rede e' um refinamento do faturamento, nao um pre-requisito dele: se esta
     // consulta falhar, a nota sai no formato de sempre em vez de nao sair.
     console.error("[resolveDestinoFiscal]", err);
+    return null;
+  }
+}
+
+/**
+ * Sanitiza e critica o cadastro de um ponto. Endereco, cidade e UF sao
+ * obrigatorios porque sem eles a SEFAZ recusa o grupo <entrega> — melhor barrar
+ * no cadastro do que descobrir na emissao.
+ */
+function validaPonto(b: any): any {
+  const txt = (v: any, n: number) => String(v ?? "").trim().slice(0, n);
+  const num = (v: any) => {
+    if (v === null || v === undefined || String(v).trim() === "") return null;
+    const n = Number(String(v).replace(",", "."));
+    return Number.isFinite(n) ? n : null;
+  };
+  const nome = txt(b.nome, 120);
+  const endereco = txt(b.endereco, 240);
+  const cidade = txt(b.cidade, 80);
+  const uf = txt(b.uf, 2).toUpperCase();
+  if (!nome) return { erro: "Dê um nome ao ponto de entrega (ex.: Loja Shopping Flamboyant)." };
+  if (!endereco) return { erro: "Informe o endereço do ponto de entrega." };
+  if (!cidade || uf.length !== 2) return { erro: "Informe cidade e UF do ponto de entrega." };
+  const lat = num(b.latitude), lng = num(b.longitude);
+  if (lat !== null && (lat < -34 || lat > 6)) return { erro: "Latitude fora do Brasil — confira o valor." };
+  if (lng !== null && (lng < -74 || lng > -33)) return { erro: "Longitude fora do Brasil — confira o valor." };
+  return {
+    nome, endereco, cidade, uf,
+    numero: txt(b.numero, 10),
+    complemento: txt(b.complemento, 60),
+    bairro: txt(b.bairro, 60),
+    cep: txt(b.cep, 12).replace(/\D/g, ""),
+    latitude: lat, longitude: lng,
+    contato: txt(b.contato, 80),
+    telefone: txt(b.telefone, 20),
+    observacao: txt(b.observacao, 500),
+  };
+}
+
+/** Ponto de entrega sem CNPJ, no formato que o faturamento consome. */
+export type PontoEntrega = {
+  id: string; redeId: string; nome: string;
+  endereco: string; numero: string; complemento: string; bairro: string;
+  cidade: string; uf: string; cep: string;
+  latitude: number | null; longitude: number | null;
+  contato: string; telefone: string; observacao: string;
+};
+
+const mapPonto = (r: any): PontoEntrega => ({
+  id: String(r.id),
+  redeId: String(r.rede_id),
+  nome: String(r.nome || "").trim(),
+  endereco: String(r.endereco || ""),
+  numero: String(r.numero || ""),
+  complemento: String(r.complemento || ""),
+  bairro: String(r.bairro || ""),
+  cidade: String(r.cidade || ""),
+  uf: String(r.uf || "").toUpperCase(),
+  cep: String(r.cep || "").replace(/\D/g, ""),
+  latitude: r.latitude == null || r.latitude === "" ? null : Number(r.latitude),
+  longitude: r.longitude == null || r.longitude === "" ? null : Number(r.longitude),
+  contato: String(r.contato || ""),
+  telefone: String(r.telefone || ""),
+  observacao: String(r.observacao || ""),
+});
+
+/**
+ * O ponto de entrega escolhido no pedido.
+ *
+ * Diferente do caso "filial com CNPJ proprio": aqui o ponto NAO tem documento,
+ * entao no grupo <entrega> da NF-e vai o CNPJ do PROPRIO destinatario com o
+ * endereco do ponto — que e' o que o layout 4.0 prevê para descarga em endereco
+ * diferente da mesma empresa (obra, loja sem inscricao). Quem monta a nota pega
+ * o documento do cliente do pedido; aqui so' devolvemos o endereco.
+ */
+export async function resolvePontoEntrega(pontoId: string | null | undefined): Promise<PontoEntrega | null> {
+  const id = limpaId(pontoId);
+  if (!id) return null;
+  try {
+    await ensureRedes();
+    const rows = (await db.execute(sql`
+      SELECT * FROM cliente_rede_pontos WHERE id = ${id} LIMIT 1`)).rows as any[];
+    if (!rows.length) return null;
+    return mapPonto(rows[0]);
+  } catch (err) {
+    // Ponto de entrega e' refinamento do endereco, nao pre-requisito da nota:
+    // falhou a consulta, a nota sai sem <entrega> em vez de nao sair.
+    console.error("[resolvePontoEntrega]", err);
     return null;
   }
 }
@@ -347,6 +463,16 @@ export function registerRedesClientes(app: Express) {
         if (arr) arr.push(cli); else porRede.set(String(m.rede_id), [cli]);
       }
 
+      // Pontos de entrega sem CNPJ de todas as redes, numa consulta so'.
+      const pontosTodos = (await db.execute(sql`
+        SELECT * FROM cliente_rede_pontos WHERE ativo = true ORDER BY nome`)).rows as any[];
+      const pontosPorRede = new Map<string, any[]>();
+      for (const p of pontosTodos) {
+        const k = String(p.rede_id);
+        const arr = pontosPorRede.get(k);
+        if (arr) arr.push(mapPonto(p)); else pontosPorRede.set(k, [mapPonto(p)]);
+      }
+
       const saida = redes.map((r) => {
         // Ordem DENTRO da rede: faturamento do mes vigente do maior para o menor —
         // e' o que responde "quem esta puxando a rede agora". Empate (varias
@@ -363,6 +489,7 @@ export function registerRedesClientes(app: Express) {
           criadaPor: r.criado_por_nome || "—",
           criadaEm: r.criada_em || "",
           clientes: cls,
+          pontos: pontosPorRede.get(String(r.id)) || [],
           totais: {
             clientes: cls.length,
             ativos: cls.filter((c) => c.ativo).length,
@@ -631,6 +758,128 @@ export function registerRedesClientes(app: Express) {
       res.json({ ok: true });
     } catch (err: any) {
       console.error("[redes papel]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ===========================================================================
+  // PONTOS DE ENTREGA (sem CNPJ)
+  // ===========================================================================
+
+  // GET /api/carteira/redes/:id/pontos
+  app.get("/api/carteira/redes/:id/pontos", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const id = limpaId(req.params.id);
+      const rows = (await db.execute(sql`
+        SELECT * FROM cliente_rede_pontos
+        WHERE rede_id = ${id} AND ativo = true
+        ORDER BY nome`)).rows as any[];
+      res.json(rows.map(mapPonto));
+    } catch (err: any) {
+      console.error("[redes pontos GET]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // GET /api/carteira/redes/pontos-do-cliente/:customerId
+  // Alimenta o seletor "Ponto de entrega" da tela de pedido. Devolve os pontos
+  // da rede do cliente — so' faz sentido quando ELE e' o destinatario (ou quando
+  // a rede nao tem papel nenhum marcado e ele e' o unico CNPJ).
+  // ---------------------------------------------------------------------------
+  app.get("/api/carteira/redes/pontos-do-cliente/:customerId", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const cid = limpaId(req.params.customerId);
+      if (!cid) return res.json({ pontos: [] });
+      const rows = (await db.execute(sql`
+        SELECT p.*, r.nome AS rede_nome
+        FROM cliente_rede_membros m
+        JOIN cliente_redes r ON r.id = m.rede_id
+        JOIN cliente_rede_pontos p ON p.rede_id = m.rede_id AND p.ativo = true
+        WHERE m.customer_id = ${cid}
+          AND COALESCE(m.papel,'nenhum') <> 'entrega'
+        ORDER BY p.nome`)).rows as any[];
+      res.json({
+        redeNome: rows.length ? String(rows[0].rede_nome || "") : null,
+        pontos: rows.map(mapPonto),
+      });
+    } catch (err: any) {
+      console.error("[redes pontos-do-cliente]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/carteira/redes/:id/pontos   { nome, endereco, ... }
+  // ---------------------------------------------------------------------------
+  app.post("/api/carteira/redes/:id/pontos", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const e = escopo(req);
+      if (!podeEditar(e.papel)) return res.status(403).json({ ok: false, error: "Cadastrar ponto de entrega é restrito ao Admin, Coordenação e Administrativo." });
+      const id = limpaId(req.params.id);
+      const existe = (await db.execute(sql`SELECT id FROM cliente_redes WHERE id = ${id} LIMIT 1`)).rows as any[];
+      if (!existe.length) return res.status(404).json({ ok: false, error: "Rede não encontrada." });
+      const b: any = req.body || {};
+      const p = validaPonto(b);
+      if (p.erro) return res.status(400).json({ ok: false, error: p.erro });
+      const ins = (await db.execute(sql`
+        INSERT INTO cliente_rede_pontos
+          (rede_id, nome, endereco, numero, complemento, bairro, cidade, uf, cep,
+           latitude, longitude, contato, telefone, observacao, criado_por_nome)
+        VALUES (${id}, ${p.nome}, ${p.endereco}, ${p.numero}, ${p.complemento}, ${p.bairro},
+                ${p.cidade}, ${p.uf}, ${p.cep}, ${p.latitude}, ${p.longitude},
+                ${p.contato}, ${p.telefone}, ${p.observacao}, ${e.nome})
+        RETURNING id`)).rows as any[];
+      res.json({ ok: true, id: String(ins[0]?.id || "") });
+    } catch (err: any) {
+      console.error("[redes pontos POST]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // PATCH /api/carteira/redes/pontos/:pontoId
+  // ---------------------------------------------------------------------------
+  app.patch("/api/carteira/redes/pontos/:pontoId", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const e = escopo(req);
+      if (!podeEditar(e.papel)) return res.status(403).json({ ok: false, error: "Editar ponto de entrega é restrito ao Admin, Coordenação e Administrativo." });
+      const pid = limpaId(req.params.pontoId);
+      const p = validaPonto(req.body || {});
+      if (p.erro) return res.status(400).json({ ok: false, error: p.erro });
+      await db.execute(sql`
+        UPDATE cliente_rede_pontos SET
+          nome = ${p.nome}, endereco = ${p.endereco}, numero = ${p.numero},
+          complemento = ${p.complemento}, bairro = ${p.bairro}, cidade = ${p.cidade},
+          uf = ${p.uf}, cep = ${p.cep}, latitude = ${p.latitude}, longitude = ${p.longitude},
+          contato = ${p.contato}, telefone = ${p.telefone}, observacao = ${p.observacao},
+          updated_at = now()
+        WHERE id = ${pid}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[redes pontos PATCH]", err);
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // DELETE /api/carteira/redes/pontos/:pontoId — inativa, nao apaga: pedidos e
+  // notas antigas apontam para este ponto e precisam continuar legiveis.
+  // ---------------------------------------------------------------------------
+  app.delete("/api/carteira/redes/pontos/:pontoId", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureRedes();
+      const e = escopo(req);
+      if (!podeEditar(e.papel)) return res.status(403).json({ ok: false, error: "Excluir ponto de entrega é restrito ao Admin, Coordenação e Administrativo." });
+      const pid = limpaId(req.params.pontoId);
+      await db.execute(sql`UPDATE cliente_rede_pontos SET ativo = false, updated_at = now() WHERE id = ${pid}`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[redes pontos DELETE]", err);
       res.status(500).json({ ok: false, error: err?.message || String(err) });
     }
   });

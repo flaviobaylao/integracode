@@ -401,6 +401,12 @@ run();
       ]) {
         await db.execute(sql.raw(`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS ${col}`));
       }
+      // ── PONTO DE ENTREGA sem CNPJ (rede de clientes) ───────────────────────
+      // Cliente de CNPJ unico que recebe em varios enderecos: o vendedor escolhe
+      // o ponto no pedido e ele viaja card → pipeline → grupo <entrega> da NF-e.
+      // ⚠️ Colunas no schema drizzle → o ALTER PRECISA ficar aqui no boot.
+      await db.execute(sql.raw("ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS delivery_point_id varchar"));
+      await db.execute(sql.raw("ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS delivery_point_id varchar"));
       // Prioridade do card na roteirização (checkbox nas etapas "Aguardando Rota").
       // ⚠️ Coluna adicionada ao schema drizzle → o ALTER PRECISA ficar aqui no boot,
       // senão todo SELECT de billing_pipeline quebra entre o deploy e o ALTER.

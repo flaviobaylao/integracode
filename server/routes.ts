@@ -14325,7 +14325,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         boletoDays,
         saveForReuse,
         exclusiveVehicle,
-        vehicleTypes
+        vehicleTypes,
+        deliveryPointId
       } = req.body;
       
       // Use items as products for backward compatibility
@@ -14409,6 +14410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customerLongitude: customerLongitude,
           exclusiveVehicle: exclusiveVehicle || false,
           vehicleTypes: vehicleTypes || [],
+          deliveryPointId: deliveryPointId || null,
           notes: (salesCard.notes || '') + `\n\nPedido bloqueado: ${blockDetails}`
         };
 
@@ -14453,7 +14455,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerLatitude: customerLatitude,
         customerLongitude: customerLongitude,
         exclusiveVehicle: exclusiveVehicle || false,
-        vehicleTypes: vehicleTypes || []
+        vehicleTypes: vehicleTypes || [],
+        // PONTO DE ENTREGA sem CNPJ (rede de clientes): o pedido e' do CNPJ do
+        // cliente, mas a mercadoria desce neste endereco. Pedido comum manda null.
+        deliveryPointId: deliveryPointId || null
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);
@@ -14542,7 +14547,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerLongitude,
         boletoDays,
         exclusiveVehicle,
-        vehicleTypes
+        vehicleTypes,
+        deliveryPointId
       } = req.body;
       
       const products = items || req.body.products;
@@ -14563,7 +14569,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerLatitude: customerLatitude,
         customerLongitude: customerLongitude,
         exclusiveVehicle: exclusiveVehicle || false,
-        vehicleTypes: vehicleTypes || []
+        vehicleTypes: vehicleTypes || [],
+        deliveryPointId: deliveryPointId || null
       };
 
       const salesCard = await storage.updateSalesCard(id, updateData);

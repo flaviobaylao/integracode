@@ -15,7 +15,7 @@ import { sql, eq, and, gte, isNull } from 'drizzle-orm';
 import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
-import { resolveDestinoFiscal } from './rede-clientes-routes';
+import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
 
 // Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
 // sai com CFOP incorreto e é REJEITADA pela SEFAZ. Barramos ANTES da trava/baixa de estoque/criação
@@ -557,6 +557,8 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       paymentMethod: salesCard.paymentMethod || null,
       operationType: salesCard.operationType || null,
       products: salesCard.products as any || null,
+      // Ponto de entrega sem CNPJ escolhido no pedido: viaja com o card ate' a NF-e.
+      deliveryPointId: (salesCard as any).deliveryPointId || null,
       notes: salesCard.notes || null,
       omieInstanceId: customer?.omieInstanceId || null,
       omieInstanceName: omieInstanceName || null,
@@ -2754,6 +2756,19 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     phone: __destino.destinatario.telefone,
   } : customer;
 
+  // ── PONTO DE ENTREGA SEM CNPJ ──────────────────────────────────────────────
+  // Cliente de CNPJ unico que recebe em varios enderecos. O destinatario NAO muda
+  // (e' o proprio cliente do pedido); muda so' onde a mercadoria desce. Como o
+  // ponto nao tem documento e o grupo <entrega> exige CNPJ/CPF, vai o documento do
+  // PROPRIO destinatario com o endereco do ponto — o caso "mesma empresa, outro
+  // endereco de descarga" previsto no layout 4.0.
+  // Tem precedencia sobre a rede de CNPJs: se o vendedor escolheu um ponto, foi
+  // ali que ele combinou a entrega.
+  const __ponto = await resolvePontoEntrega((item as any).deliveryPointId);
+  if (__ponto) {
+    console.log(`[NFE-PONTO] Pedido de "${item.customerName}" entrega no ponto "${__ponto.nome}" (${__ponto.cidade}/${__ponto.uf}); a nota continua no CNPJ do cliente.`);
+  }
+
   let issuerName = '', issuerCnpj = '', issuerIe = '', issuerAddress = '', issuerUf = '', issuerCityCode = '', issuerCity = '', issuerPhone = '';
 
   if (item.omieInstanceId) {
@@ -2954,18 +2969,24 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
     customerPhone: __cliFiscal?.phone || '',
     // LOCAL DE ENTREGA — so' existe no caso de rede; nota comum grava tudo NULL e
     // o XML sai sem o grupo <entrega>, identico ao de hoje.
-    deliveryCustomerId: __destino ? __destino.entrega.id : null,
-    deliveryName: __destino ? __destino.entrega.nome : null,
-    deliveryCnpjCpf: __destino ? __destino.entrega.doc : null,
-    deliveryIe: __destino ? (__destino.entrega.ie || null) : null,
-    deliveryAddress: __destino ? __destino.entrega.endereco : null,
-    deliveryNumber: null, // o numero e' extraido do endereco na montagem do XML
-    deliveryBairro: __destino ? __destino.entrega.bairro : null,
-    deliveryCep: __destino ? String(__destino.entrega.cep || '').replace(/\D/g, '') : null,
-    deliveryCity: __destino ? __destino.entrega.cidade : null,
+    // Ponto sem CNPJ vence a rede de CNPJs: o vendedor combinou a entrega ali.
+    // Sem documento proprio, o <entrega> leva o CNPJ do proprio destinatario.
+    deliveryCustomerId: __ponto ? null : (__destino ? __destino.entrega.id : null),
+    deliveryName: __ponto ? __ponto.nome : (__destino ? __destino.entrega.nome : null),
+    deliveryCnpjCpf: __ponto ? __docFiscal : (__destino ? __destino.entrega.doc : null),
+    deliveryIe: __ponto ? null : (__destino ? (__destino.entrega.ie || null) : null),
+    deliveryAddress: __ponto
+      ? [__ponto.endereco, __ponto.complemento].filter(Boolean).join(' - ')
+      : (__destino ? __destino.entrega.endereco : null),
+    deliveryNumber: __ponto ? (__ponto.numero || null) : null, // sem numero, e' extraido do endereco no XML
+    deliveryBairro: __ponto ? __ponto.bairro : (__destino ? __destino.entrega.bairro : null),
+    deliveryCep: __ponto
+      ? String(__ponto.cep || '').replace(/\D/g, '')
+      : (__destino ? String(__destino.entrega.cep || '').replace(/\D/g, '') : null),
+    deliveryCity: __ponto ? __ponto.cidade : (__destino ? __destino.entrega.cidade : null),
     deliveryCityCode: null, // resolvido pela UF+cidade na montagem do XML
-    deliveryUf: __destino ? __destino.entrega.uf : null,
-    deliveryPhone: __destino ? __destino.entrega.telefone : null,
+    deliveryUf: __ponto ? __ponto.uf : (__destino ? __destino.entrega.uf : null),
+    deliveryPhone: __ponto ? (__ponto.telefone || null) : (__destino ? __destino.entrega.telefone : null),
     natureOfOperation,
     cfop,
     fiscalScenarioId,
