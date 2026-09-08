@@ -8637,6 +8637,11 @@ export class DatabaseStorage implements IStorage {
           (r as any).customerState = c.uf || null;
           (r as any).customerZipCode = c.zip || null;
           (r as any).customerPhone = c.phone || null;
+          // FIX 08/set/2026 — documento congelado na criacao do pedido. Se nasceu vazio
+          // (cadastro sem CNPJ na epoca), cai no cadastro atual em vez de mostrar "-".
+          if (!String((r as any).customerDocument || '').trim()) {
+            (r as any).customerDocument = c.cnpj || c.cpf || null;
+          }
         }
       }
     } catch {}
