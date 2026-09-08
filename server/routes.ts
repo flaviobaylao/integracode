@@ -16295,7 +16295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const meta: any = (route.visitStops as any)?.[st];
               if (meta && meta.entityType && meta.entityType !== 'customer') return '';
               const cid = (meta && meta.entityId) ? String(meta.entityId) : (st.includes(':') ? String(st.split(':').pop()) : st);
-              return _isUuid(cid) ? cid : '';
+              return (_isUuid(cid) || cid.startsWith('omie-client')) ? cid : '';
             })
             .filter(Boolean)));
           const _routeCities = new Set<string>();
