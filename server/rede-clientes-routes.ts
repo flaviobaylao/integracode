@@ -21,6 +21,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { nfVendaWhere } from "./faturamento-oficial";
 import { authenticateUser } from "./authMiddleware";
+import { normalizeUf, ufFromCep } from "./cep-uf";
 
 const TZ = "America/Sao_Paulo";
 
@@ -331,6 +332,49 @@ export async function resolvePontoEntrega(pontoId: string | null | undefined): P
 }
 
 export function registerRedesClientes(app: Express) {
+  // ---------------------------------------------------------------------------
+  // GET /api/util/cep/:cep — a lupa do CEP.
+  //
+  // Consulta os Correios pelo ViaCEP a partir do SERVIDOR, nao do navegador:
+  // assim nao depende de CORS nem da politica de conteudo da pagina, e o dia em
+  // que o ViaCEP sair do ar a troca acontece num lugar so'.
+  //
+  // NAO devolve `complemento`: o que o ViaCEP chama de complemento e' faixa de
+  // numeracao ("de 2496 ao fim - lado par"), nao o complemento do endereco.
+  // Escrever isso no campo Complemento colocaria lixo no quadro de entrega da
+  // NF-e. Numero e complemento sao do cadastrante — o CEP nao sabe.
+  // ---------------------------------------------------------------------------
+  app.get("/api/util/cep/:cep", authenticateUser, async (req: Request, res: Response) => {
+    const digitos = String(req.params.cep || "").replace(/\D/g, "");
+    if (digitos.length !== 8) return res.status(400).json({ ok: false, error: "CEP precisa ter 8 dígitos." });
+    // Faixa dos Correios: serve de reserva quando o ViaCEP nao responde.
+    const ufFaixa = ufFromCep(digitos);
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`https://viacep.com.br/ws/${digitos}/json/`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!r.ok) throw new Error(`ViaCEP respondeu ${r.status}`);
+      const j: any = await r.json();
+      if (j?.erro) return res.status(404).json({ ok: false, error: "CEP não encontrado.", uf: ufFaixa });
+      return res.json({
+        ok: true,
+        cep: digitos,
+        endereco: String(j.logradouro || "").trim(),
+        bairro: String(j.bairro || "").trim(),
+        cidade: String(j.localidade || "").trim(),
+        uf: normalizeUf(j.uf) || ufFaixa || "",
+        // So' para exibir como dica; nao e' para gravar em Complemento.
+        faixa: String(j.complemento || "").trim(),
+      });
+    } catch (err: any) {
+      console.warn("[cep]", err?.message);
+      // Sem o ViaCEP ainda dá para adiantar a UF pela faixa do CEP.
+      if (ufFaixa) return res.json({ ok: true, cep: digitos, endereco: "", bairro: "", cidade: "", uf: ufFaixa, parcial: true });
+      return res.status(502).json({ ok: false, error: "Busca de CEP indisponível agora — preencha à mão." });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // GET /api/carteira/redes
   // Redes + membros + numeros consolidados. Uma varredura por assunto, nao uma
