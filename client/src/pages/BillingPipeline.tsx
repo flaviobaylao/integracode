@@ -337,6 +337,7 @@ export default function BillingPipeline() {
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
   const [driverFilter, setDriverFilter] = useState<Set<string>>(new Set()); // entregador (cards em rota)
+  const [cityFilter, setCityFilter] = useState<Set<string>>(new Set()); // cidade/município do cliente
   // Filtro de datas (por data de criação do pedido). Vazios = sem filtro; só executa quando preenchidos.
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
@@ -709,6 +710,7 @@ export default function BillingPipeline() {
           // Rotula o card bloqueado pelo NOME FANTASIA (igual ao resto do board), com fallback p/ razão social.
           customerName: (customerById.get(b.customerId)?.fantasyName || '').trim() || b.customer?.fantasyName || b.customer?.name || b.customerName || 'Cliente',
           customerAltName: b.customer?.name ?? customerById.get(b.customerId)?.name ?? null, // razão social — para a busca também encontrar
+          customerCity: ((customerById.get(b.customerId)?.city || b.customer?.city || '') as string).trim() || null, // cidade também no card bloqueado
           customerDocument: b.customer?.cnpj ?? b.customer?.cpf ?? b.customer?.document ?? null,
           sellerId: b.sellerId ?? null,
           sellerName: b.seller ? ((b.seller.firstName || '') + ' ' + (b.seller.lastName || '')).trim() : (b.sellerId ?? null),
@@ -1056,6 +1058,15 @@ export default function BillingPipeline() {
     .sort((a, b) => a.localeCompare(b))
     .map((v) => ({ value: v, label: v }));
 
+  // Cidades presentes nos cards — inclui os bloqueados (montados à parte), para o filtro
+  // cobrir TODO o pipeline, não só os cards do fluxo normal.
+  const cityOptions = Array.from(new Set([
+    ...((items || []).map((i: any) => String(i.customerCity || '').trim()).filter(Boolean) as string[]),
+    ...((blockedOrders as any[]).map((b: any) => String((customerById.get(b.customerId)?.city || b.customer?.city || '')).trim()).filter(Boolean) as string[]),
+  ]))
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+    .map((v) => ({ value: v, label: v }));
+
   const toggleInSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (v: string) =>
     setter((prev) => { const n = new Set(prev); n.has(v) ? n.delete(v) : n.add(v); return n; });
 
@@ -1152,6 +1163,14 @@ export default function BillingPipeline() {
             testid="select-instance-pipeline"
           />
           <MultiSelectFilter
+            label="Cidade"
+            options={cityOptions}
+            selected={cityFilter}
+            onToggle={toggleInSet(setCityFilter)}
+            onClear={() => setCityFilter(new Set())}
+            testid="select-city-pipeline"
+          />
+          <MultiSelectFilter
             label="Entregador"
             options={driverOptions}
             selected={driverFilter}
@@ -1182,9 +1201,9 @@ export default function BillingPipeline() {
               aria-label="Data final"
             />
           </div>
-          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || driverFilter.size > 0 || search || dateFrom || dateTo) && (
+          {(sellerFilter.size > 0 || opFilter.size > 0 || instanceFilter.size > 0 || driverFilter.size > 0 || cityFilter.size > 0 || search || dateFrom || dateTo) && (
             <button
-              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); setDriverFilter(new Set()); setDateFrom(''); setDateTo(''); }}
+              onClick={() => { setSearch(''); setSellerFilter(new Set()); setOpFilter(new Set()); setInstanceFilter(new Set()); setDriverFilter(new Set()); setCityFilter(new Set()); setDateFrom(''); setDateTo(''); }}
               className="text-gray-400 hover:text-gray-600 text-sm"
               data-testid="clear-all-filters-pipeline"
             >Limpar filtros ×</button>
@@ -1355,6 +1374,8 @@ export default function BillingPipeline() {
               // (4b) Entregador — múltipla seleção (só cards em rota têm deliveryDriverName;
               // com o filtro ativo, cards sem entregador ficam de fora)
               const matchesDriver = driverFilter.size === 0 || (!!i.deliveryDriverName && driverFilter.has(i.deliveryDriverName));
+              // (4c) Cidade do cliente — múltipla seleção (cards sem cidade ficam de fora quando o filtro está ativo).
+              const matchesCity = cityFilter.size === 0 || (!!i.customerCity && cityFilter.has(String(i.customerCity)));
               // (5) Datas de/até — por data de criação (America/Sao_Paulo). Só filtra quando preenchido.
               let matchesDate = true;
               if (dateFrom || dateTo) {
@@ -1367,7 +1388,7 @@ export default function BillingPipeline() {
                   if (dateTo && dISO > dateTo) matchesDate = false;
                 }
               }
-              return matchesText && matchesSeller && matchesOp && matchesInstance && matchesDriver && matchesDate;
+              return matchesText && matchesSeller && matchesOp && matchesInstance && matchesDriver && matchesCity && matchesDate;
             });
             const stageTotal = stageItems.reduce((sum, i) => sum + (i.saleValue ? parseFloat(i.saleValue) : 0), 0);
             // Classificação por data de criação (A-Z = mais antigos primeiro / Z-A = mais recentes primeiro).
