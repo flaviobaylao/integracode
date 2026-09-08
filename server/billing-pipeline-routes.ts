@@ -1997,7 +1997,7 @@ export function registerBillingPipelineRoutes(app: Express) {
           req.body = { paymentMethod: req.body?.paymentMethod, scheduledBillingDate: req.body?.scheduledBillingDate, notes: req.body?.notes };
         }
       }
-      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate } = req.body;
+      const { notes, invoiceNumber, saleValue, paymentMethod, operationType, sellerId, sellerName, products, customerName, customerDocument, scheduledBillingDate, omieInstanceId, omieInstanceName } = req.body;
       const updates: any = {};
       if (notes !== undefined) updates.notes = notes;
       if (invoiceNumber !== undefined) updates.invoiceNumber = invoiceNumber;
@@ -2024,6 +2024,13 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
       if (customerName !== undefined) updates.customerName = customerName;
       if (customerDocument !== undefined) updates.customerDocument = customerDocument;
+      // INSTÂNCIA (filial emitente da NF): só managers alteram. Antes o backend IGNORAVA este
+      // campo, então o seletor "Instância" do card não salvava e o item ficava "sem instância"
+      // (a NF caía no fallback GYN). Agora persiste — corrige pedidos que entraram sem instância.
+      if (omieInstanceId !== undefined && _isManager) {
+        updates.omieInstanceId = omieInstanceId || null;
+        if (omieInstanceName !== undefined) updates.omieInstanceName = omieInstanceName || null;
+      }
 
       // "Faturar em" (scheduled_billing_date): data em que o pedido deve seguir para a etapa
       // "Pedido". Editavel no pipeline. Reavalia a etapa entre 'agendado'/'pedido':
