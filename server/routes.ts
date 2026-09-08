@@ -2178,7 +2178,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         Object.assign(req.body, __doc.campos);
       }
       const cleanedData: any = {};
+      // Campos somente-leitura: o modal às vezes reenvia o objeto inteiro do cliente (com id/datas de
+      // auditoria). Nunca aceitar do cliente — o updateCustomer já carimba updatedAt sozinho.
+      const READONLY_KEYS = new Set(['id', 'createdAt', 'updatedAt']);
       Object.keys(req.body).forEach(key => {
+        if (READONLY_KEYS.has(key)) return;
         const value = req.body[key];
         if (['latitude', 'longitude'].includes(key)) {
           cleanedData[key] = normalizeCoord(value);
@@ -2193,6 +2197,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Coluna timestamp: o drizzle espera Date. Converte a string 'YYYY-MM-DD' (ou vazio -> null).
           const d = value ? new Date(value) : null;
           cleanedData[key] = (d && !isNaN(d.getTime())) ? d : null;
+        } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d/.test(value)) {
+          // Coluna timestamp recebida como string ISO (ex.: lastSaleDate, inactivatedAt). O drizzle
+          // chama value.toISOString() no set — string crua estoura "value.toISOString is not a function".
+          const d = new Date(value);
+          cleanedData[key] = isNaN(d.getTime()) ? null : d;
         } else {
           cleanedData[key] = value;
         }
@@ -2853,11 +2862,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...(req.body.cpf !== undefined && { cpf: __blankDoc(req.body.cpf) }),
         ...(req.body.cnpj !== undefined && { cnpj: __blankDoc(req.body.cnpj) }),
         ...(req.body.document !== undefined && { document: __blankDoc(req.body.document) }),
-        serviceStartDate: req.body.serviceStartDate 
+        serviceStartDate: req.body.serviceStartDate
           ? (typeof req.body.serviceStartDate === 'string' ? new Date(req.body.serviceStartDate) : req.body.serviceStartDate)
           : undefined,
       };
-      
+      // Campos somente-leitura nunca vêm do cliente; e colunas timestamp mandadas como string ISO
+      // (ex.: lastSaleDate) precisam virar Date, senão o drizzle estoura "value.toISOString is not a function".
+      delete (data as any).id; delete (data as any).createdAt; delete (data as any).updatedAt;
+      for (const __k of Object.keys(data)) {
+        const __v = (data as any)[__k];
+        if (typeof __v === 'string' && /^\d{4}-\d{2}-\d{2}T\d/.test(__v)) {
+          const __d = new Date(__v); (data as any)[__k] = isNaN(__d.getTime()) ? null : __d;
+        }
+      }
+
       console.log('📍 PUT /api/customers/:id - Data após transformação:', {
         latitude: data.latitude,
         longitude: data.longitude,
