@@ -431,19 +431,58 @@ export default function BillingPipeline() {
   }, [customersList]);
   const resolveCustomer = (i: any) => customerById.get(i?.customerId) || customerByDoc.get(onlyDigits(i?.customerDocument));
 
+  // ── PADRONIZAÇÃO DE CIDADE ──────────────────────────────────────────────────
+  // O cadastro tem a mesma cidade grafada de formas diferentes ("BRASILIA" vs
+  // "Brasília", "APARECIDA DE GOIANIA" vs "Aparecida de Goiânia"). Colapsamos por
+  // uma chave sem acento/caixa e exibimos SEMPRE em Título, preservando o acento
+  // quando ao menos um cadastro tem a versão acentuada.
+  const cidadeKey = (s: any) => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+  const PALAVRAS_MINUSCULAS_CIDADE = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'di', 'du']);
+  const tituloCidade = (s: any) => String(s || '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+    .map((w, i) => (i > 0 && PALAVRAS_MINUSCULAS_CIDADE.has(w.normalize('NFD').replace(/[\u0300-\u036f]/g, '')))
+      ? w : (w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+  // Nota de qualidade de uma grafia: prefere a que TEM acento e a que não é toda em maiúsculas.
+  const _grafiaScore = (v: string) => {
+    const temAcento = v.normalize('NFD').replace(/[\u0300-\u036f]/g, '') !== v ? 2 : 0;
+    const temMinuscula = v !== v.toUpperCase() ? 1 : 0;
+    return temAcento + temMinuscula;
+  };
+  // Chave -> melhor rótulo (Título, com acento quando existe em algum cadastro).
+  const cidadeLabelByKey = useMemo(() => {
+    const melhor = new Map<string, string>();
+    for (const c of (customersList as any[])) {
+      const raw = String(c?.city || '').trim();
+      if (!raw) continue;
+      const k = cidadeKey(raw);
+      const prev = melhor.get(k);
+      if (!prev || _grafiaScore(raw) > _grafiaScore(prev) || (_grafiaScore(raw) === _grafiaScore(prev) && raw.length > prev.length)) {
+        melhor.set(k, raw);
+      }
+    }
+    const m = new Map<string, string>();
+    for (const [k, v] of melhor) m.set(k, tituloCidade(v));
+    return m;
+  }, [customersList]);
+  const cidadeDisplay = (s: any): string | null => {
+    const raw = String(s || '').trim();
+    if (!raw) return null;
+    return cidadeLabelByKey.get(cidadeKey(raw)) || tituloCidade(raw);
+  };
+
   // Regra: TODO card do pipeline exibe o NOME FANTASIA do cliente (fallback: razão social do cadastro;
   // depois o que veio gravado). O nome original vira customerAltName, para a busca também encontrá-lo.
   const items = useMemo(() => (rawItems as BillingPipelineItem[]).map((i) => {
     const c = resolveCustomer(i);
     const fantasy = ((c?.fantasyName || '').trim()) || ((c?.name || '').trim());
-    // Cidade/município do cadastro do cliente — exibida no card ao lado do vendedor.
-    const cidade = ((c?.city || '') as string).trim() || null;
+    // Cidade/município do cadastro do cliente — PADRONIZADA (Título, sem duplicar por caixa/acento).
+    const cidade = cidadeDisplay(c?.city);
     const base: any = (fantasy && fantasy !== i.customerName)
       ? { ...i, customerName: fantasy, customerAltName: i.customerName }
       : { ...i };
     base.customerCity = cidade;
     return base as BillingPipelineItem;
-  }), [rawItems, customerById, customerByDoc]);
+  }), [rawItems, customerById, customerByDoc, cidadeLabelByKey]);
 
   const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
     queryKey: ['/api/billing-pipeline/mode'],
@@ -710,7 +749,7 @@ export default function BillingPipeline() {
           // Rotula o card bloqueado pelo NOME FANTASIA (igual ao resto do board), com fallback p/ razão social.
           customerName: (customerById.get(b.customerId)?.fantasyName || '').trim() || b.customer?.fantasyName || b.customer?.name || b.customerName || 'Cliente',
           customerAltName: b.customer?.name ?? customerById.get(b.customerId)?.name ?? null, // razão social — para a busca também encontrar
-          customerCity: ((customerById.get(b.customerId)?.city || b.customer?.city || '') as string).trim() || null, // cidade também no card bloqueado
+          customerCity: cidadeDisplay(customerById.get(b.customerId)?.city || b.customer?.city), // cidade PADRONIZADA também no card bloqueado
           customerDocument: b.customer?.cnpj ?? b.customer?.cpf ?? b.customer?.document ?? null,
           sellerId: b.sellerId ?? null,
           sellerName: b.seller ? ((b.seller.firstName || '') + ' ' + (b.seller.lastName || '')).trim() : (b.sellerId ?? null),
@@ -737,7 +776,7 @@ export default function BillingPipeline() {
       }
     }
     return groups;
-  }, [items, blockedOrders, customerById]);
+  }, [items, blockedOrders, customerById, cidadeLabelByKey]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -1062,7 +1101,7 @@ export default function BillingPipeline() {
   // cobrir TODO o pipeline, não só os cards do fluxo normal.
   const cityOptions = Array.from(new Set([
     ...((items || []).map((i: any) => String(i.customerCity || '').trim()).filter(Boolean) as string[]),
-    ...((blockedOrders as any[]).map((b: any) => String((customerById.get(b.customerId)?.city || b.customer?.city || '')).trim()).filter(Boolean) as string[]),
+    ...((blockedOrders as any[]).map((b: any) => cidadeDisplay(customerById.get(b.customerId)?.city || b.customer?.city) || '').filter(Boolean) as string[]),
   ]))
     .sort((a, b) => a.localeCompare(b, 'pt-BR'))
     .map((v) => ({ value: v, label: v }));
