@@ -54,11 +54,31 @@ export async function calculateActualRouteDistance(
   let offRouteVisits = 0;
   let cancelledVisits = 0;
 
-  // Ponto de partida: casa do vendedor
-  let previousLat = parseFloat(route.startLatitude);
-  let previousLon = parseFloat(route.startLongitude);
+  // Casa do vendedor = ponto de RETORNO (fim do km). Se a rota nao tem coordenada de casa
+  // valida (start (0,0)/nula — casa nao configurada quando a rota foi gerada), cai para a
+  // casa do cadastro do vendedor (users.home_*). Sem um destino de casa valido, a PERNA DE
+  // RETORNO (ultimo check-in -> casa) sumia e o km ficava sem a volta pra casa. (set/2026)
+  let homeLat = parseFloat(route.startLatitude);
+  let homeLon = parseFloat(route.startLongitude);
+  if (!coordOk(homeLat, homeLon) && (route as any).sellerId) {
+    try {
+      const { db } = await import('./db');
+      const { sql } = await import('drizzle-orm');
+      const _sid = String((route as any).sellerId);
+      const rr: any = await db.execute(sql`SELECT home_latitude AS lat, home_longitude AS lon FROM users WHERE id = ${_sid} OR omie_vendor_code = ${_sid} OR omie_vendor_code = replace(${_sid}, 'omie-vendor-', '') LIMIT 1`);
+      const hr = (rr && (rr.rows || rr))[0];
+      if (hr) { const hl = parseFloat(hr.lat), ho = parseFloat(hr.lon); if (coordOk(hl, ho)) { homeLat = hl; homeLon = ho; } }
+    } catch (e) { /* mantem o start da rota */ }
+  }
+
+  // REGRA (set/2026): o km conta A PARTIR DO 1o CHECK-IN — NAO conta o trecho casa -> 1o
+  // cliente (deslocamento de ida) — e fecha na CASA do vendedor (ultimo check-in -> casa).
+  // Por isso a origem NAO comeca na casa: o 1o check-in valido vira a origem SEM gerar
+  // perna; do 2o check-in em diante as pernas somam; no fim, soma a volta ate a casa.
+  let previousLat: number | null = null;
+  let previousLon: number | null = null;
   let previousName = 'Casa do Vendedor';
-  let haveOrigin = coordOk(previousLat, previousLon);
+  let haveOrigin = false;
 
   for (const checkpoint of checkIns) {
     const currentLat = parseFloat(checkpoint.checkpointLatitude as any);
@@ -93,8 +113,8 @@ export async function calculateActualRouteDistance(
     if (checkpoint.validationStatus !== 'cancelled' && haveOrigin && coordOk(currentLat, currentLon)) {
       try {
         const distanceMeters = await calculateRealDistance(
-          previousLat,
-          previousLon,
+          previousLat as number,
+          previousLon as number,
           currentLat,
           currentLon
         );
@@ -123,17 +143,13 @@ export async function calculateActualRouteDistance(
     }
   }
 
-  // Distancia de retorno para casa (so se a casa tiver coordenada valida; casa (0,0)
-  // nao gera perna de retorno - era metade da km fantasma).
-  const homeLatChk = parseFloat(route.startLatitude);
-  const homeLonChk = parseFloat(route.startLongitude);
-  if (validatedVisits > 0 && haveOrigin && coordOk(homeLatChk, homeLonChk)) {
+  // Distancia de RETORNO para casa (ultimo check-in -> casa do vendedor). So conta se
+  // houve visita valida e a casa (resolvida acima, com fallback p/ cadastro) e valida.
+  if (validatedVisits > 0 && haveOrigin && coordOk(homeLat, homeLon)) {
     try {
-      const homeLat = parseFloat(route.startLatitude);
-      const homeLon = parseFloat(route.startLongitude);
       const returnDistanceMeters = await calculateRealDistance(
-        previousLat,
-        previousLon,
+        previousLat as number,
+        previousLon as number,
         homeLat,
         homeLon
       );
