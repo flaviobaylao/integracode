@@ -2280,6 +2280,7 @@ export default function RotaDoDia() {
                   const hasOffsite = checkInOffsite || checkOutOffsite;
                   // Check-out desligado: a visita fica CONCLUÍDA (verde) já no check-in.
                   const isCompleted = !!checkInCheckpoint;
+                  const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                   const isInProgress = false;
                   const isLead = (visit as any).visitType === 'lead';
                   // Estado do desfecho do lead — mesma lógica de "atendido" dos clientes presenciais.
@@ -2310,7 +2311,7 @@ export default function RotaDoDia() {
                   } else if (hasOffsite) {
                     statusColor = 'text-red-600 dark:text-red-400';
                     borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
-                  } else if (isCompleted) {
+                  } else if (isCompleted || hasOrderToday) {
                     statusColor = 'text-green-600 dark:text-green-400';
                     borderColor = 'border-green-200 dark:border-green-800';
                   } else if (isInProgress) {
