@@ -6955,7 +6955,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // REDE DE SEGURANÇA (08/jul): pedido do vendedor (PUT sales-card) deve entrar no pipeline de faturamento.
         // Antes o PUT nao enviava ao pipeline -> pedidos ficavam fora do pipeline. Envia ao registrar a venda (autoSend dedup por salesCardId).
         try {
-          if (isStatusChanging && data.status === 'completed' && Number((data as any).saleValue) > 0 && salesCard) {
+          // deferPipeline: o cliente vai chamar /send-to-omie logo em seguida (fluxo do SaleEditModal),
+          // que é o emissor único e com a trava suave de duplicação + card-filho. Sem isto, este
+          // "rede de segurança" criaria o item ANTES, furando o popup de aviso e a lógica de 2º pedido.
+          if (isStatusChanging && data.status === 'completed' && Number((data as any).saleValue) > 0 && salesCard && !(data as any).deferPipeline) {
             const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
             const cardForPipeline: any = { ...salesCard, saleValue: (salesCard as any).saleValue ?? (data as any).saleValue };
             // REGRA: o pedido IMPLANTADO pertence a QUEM implantou (vendedor/telemarketing logado), e NAO ao
@@ -13614,7 +13617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!card.saleValue || parseFloat(card.saleValue) === 0) {
         return res.status(400).json({ message: 'Este card não possui uma venda registrada para enviar ao faturamento' });
       }
-      const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+      const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
       const user = (req as any).currentUser || (req as any).user;
       // Agendamento opcional: data (YYYY-MM-DD) enviada pelo popup de pedido -> item entra em 'agendado'.
       const scheduledBillingDate = (req as any).body?.scheduledBillingDate || null;
@@ -13670,7 +13673,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const result = await autoSendToBillingPipeline(card, user?.email || 'system', { scheduledBillingDate });
+      // Card permanente → cada pedido vira um card-filho (id próprio) e o card permanente
+      // volta a vazio, liberando um 2º pedido; card não-permanente segue enviando a si mesmo.
+      const { item: result } = await finalizarPedidoParaPipeline(card, user?.email || 'system', { scheduledBillingDate });
       if (result) {
         // Registra a justificativa da duplicação no histórico do pedido (campo notes).
         if (_dupJust) {
@@ -14527,10 +14532,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // (dedup por sales_card_id) e com regras de bloqueio. Nenhuma chamada ao ERP antigo.
       let pipelineInfo: any = null;
       try {
-        const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+        const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
         const currentUser = (req as any).currentUser || req.user;
         const who = currentUser?.email || currentUser?.claims?.email || 'finalize-sale';
-        pipelineInfo = await autoSendToBillingPipeline(salesCard as any, who);
+        // Card permanente → card-filho por pedido + zera o permanente (libera 2º pedido).
+        pipelineInfo = (await finalizarPedidoParaPipeline(salesCard as any, who)).item;
       } catch (e: any) {
         console.error('[FINALIZE-SALE] autoSend pipeline (venda já gravada; entra pela varredura):', e?.message);
         pipelineInfo = { error: String(e?.message || e) };
