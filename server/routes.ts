@@ -3878,6 +3878,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Sem documento: não dá para entrar (active_customers exige documento) — apenas conta.
   // POST { dryRun?: boolean }.
 
+  // 🔁 Reconciliação Clientes Ativos ⇔ Gestão (cadastro = fonte única, regra E2-A 05/set).
+  // Cadastro ativo com documento ⇒ deve estar na lista de ativos. Reativa vínculos desligados e
+  // religa duplicados. Usada pelo job diário automático (18h BRT). Nunca lança — devolve os contadores.
+  async function reconciliarAtivosGestaoJob(dryRun: boolean) {
+    const all = await storage.getAllCustomers();
+    const elegiveis = all.filter((c: any) =>
+      c.isActive === true && c.isLead !== true && (c as any).isSupplier !== true
+    );
+    let adicionados = 0, religados = 0, jaOk = 0, semDocumento = 0;
+    const errors: string[] = [];
+    for (const c of elegiveis) {
+      const doc = String((c as any).cpf || '').replace(/\D/g, '') || String((c as any).cnpj || '').replace(/\D/g, '');
+      if (!doc) { semDocumento++; continue; }
+      try {
+        const existing = await storage.getActiveCustomerByDocument(doc);
+        if (!existing) {
+          if (!dryRun) {
+            await storage.createActiveCustomer({
+              document: doc,
+              documentType: (c as any).cpf ? 'cpf' : 'cnpj',
+              fantasyNameImported: (c as any).fantasyName || (c as any).name,
+              customerId: String(c.id),
+              omieInstanceId: (c as any).omieInstanceId || null,
+              uploadId: 'sync-gestao-cron',
+              matchStatus: 'matched',
+              latitude: (c as any).latitude ?? null,
+              longitude: (c as any).longitude ?? null,
+              isActive: true,
+            } as any);
+          }
+          adicionados++;
+        } else if (existing.isActive === false || String(existing.customerId || '') !== String(c.id)) {
+          if (!dryRun) {
+            await storage.updateActiveCustomer(existing.id, {
+              customerId: String(c.id), matchStatus: 'matched', isActive: true, deactivatedAt: null,
+              fantasyNameImported: (c as any).fantasyName || (c as any).name,
+            } as any);
+          }
+          religados++;
+        } else {
+          jaOk++;
+        }
+      } catch (e: any) { if (errors.length < 10) errors.push(String(c.id).slice(0, 8) + ': ' + String(e?.message || e).slice(0, 60)); }
+    }
+    return { elegiveis: elegiveis.length, adicionados, religados, jaNaLista: jaOk, semDocumento, errors };
+  }
+
   app.post('/api/admin/active-customers/sync-gestao', authenticateUser, requireRole(['admin']), async (req: any, res) => {
     try {
       const dryRun = req.body?.dryRun === true;
@@ -23826,6 +23873,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Registrar rotas do Módulo Financeiro
   const { registerFinancialRoutes } = await import('./financial-routes.js');
   registerFinancialRoutes(app);
+
+  // 🔁 Reconciliação DIÁRIA automática de Clientes Ativos ⇔ Gestão.
+  // Roda todo dia às 21:00 UTC (18:00 BRT, após o expediente). Mantém a lista de ativos igual ao
+  // cadastro sem ninguém precisar rodar à mão. O setTimeout se reagenda sozinho e o try/catch
+  // garante que uma falha aqui NUNCA derruba o processo.
+  {
+    const agendarReconciliacaoDiaria = () => {
+      const agora = new Date();
+      const prox = new Date(agora);
+      prox.setUTCHours(21, 0, 0, 0); // 18:00 BRT
+      if (prox.getTime() <= agora.getTime()) prox.setUTCDate(prox.getUTCDate() + 1);
+      const ms = prox.getTime() - agora.getTime();
+      setTimeout(async () => {
+        try {
+          const r = await reconciliarAtivosGestaoJob(false);
+          console.log('🔁 [RECONCILIA-ATIVOS] diária 18h BRT:', JSON.stringify({
+            elegiveis: r.elegiveis, adicionados: r.adicionados, religados: r.religados,
+            jaNaLista: r.jaNaLista, semDocumento: r.semDocumento, errors: r.errors.length,
+          }));
+        } catch (e: any) {
+          console.error('🔁 [RECONCILIA-ATIVOS] falhou:', e?.message || e);
+        }
+        agendarReconciliacaoDiaria(); // reagenda para o próximo dia
+      }, ms);
+      console.log(`🔁 [RECONCILIA-ATIVOS] próxima execução automática em ${Math.round(ms / 60000)} min (21:00 UTC / 18:00 BRT).`);
+    };
+    agendarReconciliacaoDiaria();
+  }
 
   const httpServer = createServer(app);
 
