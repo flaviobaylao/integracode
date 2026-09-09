@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type Row = { seller: string; potencial: number; realizado: number; pct: number; expected: number; bought: number };
+type Row = { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number };
 type Resp = { asOf: string; weekday: number; sellers: Row[] };
 
 const DOWLBL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -15,30 +15,37 @@ const DOWLBL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "S�
 function brl(n: number): string {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
-function colorFor(pct: number): string {
+function colorFor(pct: number | null): string {
+  if (pct == null) return "#9ca3af";
   if (pct >= 90) return "#16a34a";
   if (pct >= 60) return "#f59e0b";
   return "#dc2626";
 }
-function statusFor(pct: number): string {
+function statusFor(pct: number | null): string {
+  if (pct == null) return "Sem meta hoje";
   if (pct >= 90) return "No alvo";
   if (pct >= 60) return "Chegando";
   return "Abaixo";
 }
-function emojiFor(pct: number): string {
+function emojiFor(pct: number | null): string {
+  if (pct == null) return "";
   if (pct >= 90) return "🟢";
   if (pct >= 60) return "🟡";
   return "🔴";
+}
+function pctLabel(pct: number | null): string {
+  return pct == null ? "s/ meta" : pct + "%";
 }
 function fmtDate(iso: string): string {
   return iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(0, 4) : "";
 }
 
 // Termômetro vertical (SVG) para a tela.
-function ThermoSVG({ pct }: { pct: number }) {
+function ThermoSVG({ pct }: { pct: number | null }) {
   const c = colorFor(pct);
   const H = 96; // altura útil da coluna
-  const fill = Math.max(4, Math.round((Math.min(pct, 100) / 100) * H));
+  const p = pct == null ? 0 : Math.min(pct, 100);
+  const fill = Math.max(4, Math.round((p / 100) * H));
   const top = 12 + (H - fill);
   return (
     <svg width="46" height="150" viewBox="0 0 46 150" aria-hidden="true">
@@ -68,12 +75,12 @@ function buildShareSVG(rows: Row[], weekdayLabel: string, dateLbl: string): { sv
   rows.forEach((r, i) => {
     const y = top + i * rowH;
     const c = colorFor(r.pct);
-    const fillW = Math.round((Math.min(r.pct, 100) / 100) * barW);
+    const fillW = r.pct == null ? 0 : Math.round((Math.min(r.pct, 100) / 100) * barW);
     parts.push('<text x="28" y="' + (y + 18) + '" fill="#0f172a" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="600">' + esc(r.seller) + "</text>");
     parts.push('<text x="28" y="' + (y + 37) + '" fill="#64748b" font-family="Arial,Helvetica,sans-serif" font-size="11">' + r.bought + "/" + r.expected + " clientes</text>");
     parts.push('<rect x="' + barX + '" y="' + (y + 8) + '" width="' + barW + '" height="18" rx="9" fill="#e5e7eb"/>');
     parts.push('<rect x="' + barX + '" y="' + (y + 8) + '" width="' + fillW + '" height="18" rx="9" fill="' + c + '"/>');
-    parts.push('<text x="' + (barX + barW + 12) + '" y="' + (y + 22) + '" fill="' + c + '" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700">' + r.pct + "%</text>");
+    parts.push('<text x="' + (barX + barW + 12) + '" y="' + (y + 22) + '" fill="' + c + '" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="700">' + pctLabel(r.pct) + "</text>");
     parts.push('<text x="' + (w - 28) + '" y="' + (y + 40) + '" text-anchor="end" fill="#475569" font-family="Arial,Helvetica,sans-serif" font-size="12">' + esc(brl(r.realizado)) + " / " + esc(brl(r.potencial)) + "</text>");
   });
   parts.push('<text x="28" y="' + (h - 16) + '" fill="#94a3b8" font-family="Arial,Helvetica,sans-serif" font-size="11">Integra 2.0 · potencial por carteira (periodicidade + dia de rota)</text>');
@@ -101,7 +108,7 @@ function svgToPng(svg: string, w: number, h: number): Promise<Blob> {
 
 function buildText(rows: Row[], weekdayLabel: string, dateLbl: string): string {
   const head = "*Termômetro de Alcance* — " + weekdayLabel + " " + dateLbl;
-  const lines = rows.map((r) => emojiFor(r.pct) + " " + r.seller + ": " + r.pct + "% (" + brl(r.realizado) + " / " + brl(r.potencial) + ")");
+  const lines = rows.map((r) => emojiFor(r.pct) + " " + r.seller + ": " + pctLabel(r.pct) + " (" + brl(r.realizado) + " / " + brl(r.potencial) + ")");
   return head + "\n" + lines.join("\n");
 }
 
@@ -168,7 +175,7 @@ export default function Termometro() {
               <div key={r.seller} className="flex flex-col items-center rounded-xl border border-gray-200 bg-white p-3">
                 <div className="text-sm font-semibold text-gray-800 text-center truncate w-full" title={r.seller}>{r.seller}</div>
                 <ThermoSVG pct={r.pct} />
-                <div className="text-lg font-bold" style={{ color: colorFor(r.pct) }}>{r.pct}%</div>
+                <div className="text-lg font-bold" style={{ color: colorFor(r.pct) }}>{r.pct == null ? "-" : r.pct + "%"}</div>
                 <div className="text-[11px] font-medium mb-1" style={{ color: colorFor(r.pct) }}>{statusFor(r.pct)}</div>
                 <div className="text-[11px] text-gray-600 text-center leading-tight">
                   {brl(r.realizado)}<span className="text-gray-400"> / {brl(r.potencial)}</span>
