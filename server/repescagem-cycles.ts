@@ -111,20 +111,18 @@ export function computeCycles(dows: number[], periodicity: string, saleDates: Se
 export function evaluateRepescagem(
   cycles: Cycle[], periodicity: string, todayStr: string
 ): { falls: boolean; lastRedAnchor: string | null; redStreak: number } {
-  const p = String(periodicity || 'semanal').toLowerCase();
   if (cycles.length === 0) return { falls: false, lastRedAnchor: null, redStreak: 0 };
-  // streak de vermelhos consecutivos terminando no ciclo mais recente
+  // streak de vermelhos consecutivos terminando no ciclo mais recente (informativo)
   let streak = 0;
   for (let i = cycles.length - 1; i >= 0; i--) { if (!cycles[i].green) streak++; else break; }
   const lastCycle = cycles[cycles.length - 1];
   const daysSinceAnchor = Math.floor((mkUTC(todayStr).getTime() - mkUTC(lastCycle.anchor).getTime()) / 864e5);
 
-  if (p.indexOf('mens') >= 0 || p.indexOf('bime') >= 0) {
-    // Mensal: 1 vermelho + 2 dias de tolerancia -> cai no 3o dia
-    const falls = streak >= 1 && daysSinceAnchor >= 3;
-    return { falls, lastRedAnchor: falls ? lastCycle.anchor : null, redStreak: streak };
-  }
-  // Semanal/Quinzenal: 2 vermelhos consecutivos -> cai no dia seguinte a 2a visita
-  const falls = streak >= 2 && daysSinceAnchor >= 1;
+  // REGRA UNICA (igual ao Resumo de Visitas): o cliente cai em repescagem SE E SOMENTE SE a
+  // ULTIMA bolinha (ciclo mais recente, por periodicidade/dia de rota) estiver VERMELHA — ou seja,
+  // a visita agendada mais recente nao teve venda na janela do ciclo. Cai no dia seguinte a essa
+  // visita (daysSinceAnchor >= 1, dando o proprio dia de rota para vender). Assim que houver venda
+  // na janela (ultima bolinha verde), o cliente sai. Vale para semanal, quinzenal e mensal.
+  const falls = !lastCycle.green && daysSinceAnchor >= 1;
   return { falls, lastRedAnchor: falls ? lastCycle.anchor : null, redStreak: streak };
 }

@@ -17,7 +17,7 @@ import {
   dailyRoutes,
   leads,
 } from '@shared/schema';
-import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDowsCycle } from './repescagem-cycles';
+import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDowsCycle, isPlanned as isPlannedCycle } from './repescagem-cycles';
 import { whatsappService } from './whatsapp-service';
 import { storage } from './storage';
 import { logCustomerChanges, logCustomerNote } from './customerAudit';
@@ -185,29 +185,20 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       return [];
     } catch { return []; }
   }
+  // MESMA logica do Resumo de Visitas: uma data e "dia de rota" (agendada) via isPlanned
+  // (semanal = todo dia da semana marcado; quinzenal = semana de indice par; mensal = 1a
+  // ocorrencia do dia no mes). Antes usava intervalo de ~14/28 dias a partir do inicio da janela,
+  // o que divergia do Resumo de Visitas para quinzenal/mensal.
   function getScheduledDates(weekdays: string[], periodicity: string, startStr: string, endStr: string): string[] {
-    const wn = weekdays.map(w => WEEKDAY_MAP[w]).filter(n => n !== undefined);
-    if (wn.length === 0) return [];
-    const start = new Date(startStr + 'T00:00:00');
-    const end = new Date(endStr + 'T00:00:00');
+    const dows = parseDowsCycle(weekdays as any);
+    if (dows.length === 0) return [];
     const dates: string[] = [];
-    const current = new Date(start);
+    const current = new Date(startStr + 'T12:00:00Z');
+    const end = new Date(endStr + 'T12:00:00Z');
     while (current <= end) {
-      if (wn.includes(current.getDay())) dates.push(current.toISOString().split('T')[0]);
-      current.setDate(current.getDate() + 1);
-    }
-    const interval = PERIODICITY_DAYS[periodicity] || 7;
-    if (interval > 7 && dates.length > 0) {
-      const filtered: string[] = [];
-      let lastIncluded: Date | null = null;
-      for (const d of dates) {
-        const dt = new Date(d + 'T00:00:00');
-        if (!lastIncluded || (dt.getTime() - lastIncluded.getTime()) / 86400000 >= interval - 2) {
-          filtered.push(d);
-          lastIncluded = dt;
-        }
-      }
-      return filtered;
+      const ds = current.toISOString().split('T')[0];
+      if (isPlannedCycle(ds, dows, periodicity)) dates.push(ds);
+      current.setUTCDate(current.getUTCDate() + 1);
     }
     return dates;
   }
@@ -391,81 +382,15 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const dows = parseDowsCycle(c.weekdays);
     const saleDates = saleDatesByCustomer.get(c.id) || new Set<string>();
 
-    // ===== REGRA (desde o 1o do mes corrente): teve DIA DE ROTA no mes, mas SEM atendimento
-    // (check-in de rota, atendimento virtual OU visita concluida) e SEM compra -> ENTRA e
-    // PERMANECE em repescagem continuamente (nao sai por tempo); so sai quando comprar ou for
-    // atendido. Se comprou OU foi atendido no mes, cai na regra PADRAO de periodicidade/ciclo
-    // abaixo. Vale para todas as carteiras elegiveis (vendedores externos + telemarketing).
-    {
-      const monthStart = todayStr.slice(0, 7) + '-01';
-      const routeDaysThisMonth = scheduled.filter(d => d >= monthStart); // 'scheduled' ja e < hoje
-      if (routeDaysThisMonth.length > 0) {
-        const inMonth = (set?: Set<string>): boolean => {
-          if (!set) return false;
-          for (const d of set) if (d >= monthStart && d <= todayStr) return true;
-          return false;
-        };
-        const atendidoNoMes = inMonth(checkpointDatesByCustomer.get(c.id))
-          || inMonth(virtualLogDatesByCustomer.get(c.id))
-          || inMonth(completedVisitDatesByCustomer.get(c.id));
-        const comprouNoMes = inMonth(saleDates);
-        if (!atendidoNoMes && !comprouNoMes) {
-          const lastRouteThisMonth = routeDaysThisMonth[routeDaysThisMonth.length - 1];
-          const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRouteThisMonth).getTime()) / 86400000);
-          candidates.push({
-            customerId: c.id,
-            customerName: c.name || 'Sem nome',
-            sellerId: c.sellerId || null,
-            periodicity: c.periodicity || 'semanal',
-            weekdays: (c.weekdays as unknown as string[]) || [],
-            lastRedDate: lastRouteThisMonth,
-            daysSince: days,
-          });
-          continue;
-        }
-      }
-    }
-
-    // ===== REGRA PADRAO: CICLOS de efetividade em vendas (quando comprou/atendeu no mes) =====
-    //  - Semanal/Quinzenal: 2 ciclos vermelhos CONSECUTIVOS (sem venda na semana/quinzena).
-    //  - Mensal: 1 ciclo vermelho (sem venda no mes) + 2 dias de tolerancia (visita/atendimento salva).
+    // ===== REGRA UNICA (igual ao Resumo de Visitas): cai em repescagem SE E SOMENTE SE a ULTIMA
+    // bolinha (ciclo mais recente, por periodicidade e dia de rota via isPlanned) estiver VERMELHA
+    // — visita agendada mais recente SEM venda na janela do ciclo. Cai no dia seguinte a essa
+    // visita. Assim que houver venda (ultima bolinha verde), sai. Sem regra por atendimento e sem
+    // sair por tempo: enquanto a ultima bolinha estiver vermelha, permanece. =====
     const n = cyclesToShow(c.periodicity || 'semanal');
     const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n);
     const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
     if (!ev.falls || !ev.lastRedAnchor) continue;
-
-    const pLow = String(c.periodicity || 'semanal').toLowerCase();
-    const isMensal = pLow.indexOf('mens') >= 0 || pLow.indexOf('bime') >= 0;
-    if (isMensal) {
-      // Tolerancia mensal: check-in / atendimento virtual / visita concluida em [anchor, anchor+2] salva.
-      const graceStart = ev.lastRedAnchor;
-      const graceEnd = (() => { const d = new Date(graceStart + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 2); return d.toISOString().slice(0, 10); })();
-      const attended = [checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer].some(map => {
-        const set = map.get(c.id); if (!set) return false;
-        for (const d of set) if (d >= graceStart && d <= graceEnd) return true; return false;
-      });
-      if (attended) continue;
-    }
-
-    // NOVA REGRA: se o cliente caiu na repescagem e ficou 2 dias na lista SEM
-    // registro de atendimento (check-in de rota pelo vendedor OU atendimento
-    // virtual/visita concluida pelo telemarketing), ele SAI da repescagem e so
-    // volta em um NOVO ciclo (nova visita vermelha muda o anchor e reabre a janela).
-    // Janela de 2 dias a partir do dia em que o cliente caiu na lista:
-    //  - Semanal/Quinzenal: cai no dia seguinte a visita (anchor + 1).
-    //  - Mensal: cai no 3o dia apos a visita (anchor + 3), ja passada a tolerancia.
-    {
-      const addDays = (base: string, k: number) => { const d = new Date(base + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + k); return d.toISOString().slice(0, 10); };
-      const fallDate = addDays(ev.lastRedAnchor, isMensal ? 3 : 1);
-      const windowEnd = addDays(fallDate, 1); // 2 dias: fallDate e fallDate+1
-      if (todayStr > windowEnd) {
-        const attendedInWindow = [checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer].some(map => {
-          const set = map.get(c.id); if (!set) return false;
-          for (const d of set) if (d >= fallDate && d <= windowEnd) return true; return false;
-        });
-        if (!attendedInWindow) continue; // 2 dias sem atendimento -> sai; volta so em novo ciclo
-      }
-    }
 
     const lastRedDate = ev.lastRedAnchor;
     const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
