@@ -16412,10 +16412,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               for (const r of (_cc || [])) { const c = _norm((r as any).city); if (c) _routeCities.add(c); const _la = Number((r as any).latitude), _lo = Number((r as any).longitude); if (Number.isFinite(_la) && Number.isFinite(_lo) && !(_la === 0 && _lo === 0)) _routeCoords.push({ lat: _la, lng: _lo }); }
             } catch (_ce) { /* sem cidades da rota */ }
           }
-          // Raio p/ o lead entrar na rota do dia: 3 km de ALGUM cliente presencial da rota (set/2026).
+          // (set/2026) REGRA: TODOS os leads com contato do dia entram na rota do dia, SEM filtro de
+          // distancia/cidade. Antes o lead so entrava se estivesse a <=3km de algum cliente presencial
+          // da rota (_LEAD_MAX_KM), o que deixava de fora leads do dia mais distantes. _withinRange
+          // agora e sempre true; _minKmToRoute/_LEAD_MAX_KM ficam apenas para referencia historica.
           const _LEAD_MAX_KM = 3;
           const _minKmToRoute = (la: number, lo: number): number => { if (!_routeCoords.length) return Infinity; let m = Infinity; for (const p of _routeCoords) { const d = __haversineKm(la, lo, p.lat, p.lng); if (d < m) m = d; } return m; };
-          const _withinRange = (la: number, lo: number): boolean => _routeCoords.length === 0 ? true : (_minKmToRoute(la, lo) <= _LEAD_MAX_KM);
+          const _withinRange = (_la: number, _lo: number): boolean => true;
+          void _LEAD_MAX_KM; void _minKmToRoute;
 
           const curOrder = Array.from(new Set((route.optimizedOrder as string[]) || []));
           const curStops: any = (route.visitStops as any) || {};
