@@ -16289,9 +16289,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
               AND latitude IS NOT NULL AND longitude IS NOT NULL
           `);
           const pIds = (pRows?.rows || []).map((r: any) => r.id);
+          // ➕ Cada LEAD IMPLANTADO (registrado) pelo vendedor na data da prospecção deve
+          // aparecer na rota como um registro/card — mesma base dos "check-ins" do km.
+          // Une aos leads planejados (next_contact) os leads criados no dia, sem status
+          // (um lead recém-implantado, mesmo já convertido/descartado, é um registro). (set/2026)
+          let regIds: string[] = [];
+          try {
+            const regRows: any = await _dbP.execute(sql`
+              SELECT id FROM leads
+              WHERE (assigned_to = ${sellerId} OR created_by = ${sellerId})
+                AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                AND latitude IS NOT NULL AND longitude IS NOT NULL
+            `);
+            regIds = (regRows?.rows || []).map((r: any) => r.id);
+          } catch (e) { regIds = []; }
+          const allProspIds = Array.from(new Set([...pIds, ...regIds]));
           let pLeads: any[] = [];
-          if (pIds.length > 0) {
-            pLeads = await _dbP.select().from(_leadsTbl).where(_inArrayP(_leadsTbl.id, pIds));
+          if (allProspIds.length > 0) {
+            pLeads = await _dbP.select().from(_leadsTbl).where(_inArrayP(_leadsTbl.id, allProspIds));
           }
           // 🧭 Ordem da rota de prospecção:
           // 1) Se há ordem OTIMIZADA persistida (botão "Otimizar Rota" na prospecção), respeita essa ordem.
