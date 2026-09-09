@@ -65,21 +65,33 @@ const REP_ROUTE = {
 // Roteamento especial por carteira (dono). SEM janela de dias: todo cliente destas
 // carteiras que cair em repescagem vai para o atendente-alvo (e também para o próprio
 // dono — "card duplo" na rota do dia, tratado na camada de rota).
-//  - Carlos, Gilmar, Radilton -> Letícia
-//  - Jhonatan, Cleber          -> Robson
-const REP_TO_LETICIA = new Set<string>([REP_ROUTE.CARLOS, REP_ROUTE.GILMAR, REP_ROUTE.RADILTON]);
+//  - Carlos, Radilton -> Letícia
+//  - Jhonatan, Cleber -> Robson
+//  - Gilmar           -> 50/50 entre Letícia e Robson (split determinístico por cliente)
+const REP_TO_LETICIA = new Set<string>([REP_ROUTE.CARLOS, REP_ROUTE.RADILTON]);
 const REP_TO_ROBSON = new Set<string>([REP_ROUTE.JHONATAN, REP_ROUTE.CLEBER]);
+// Carteiras cujo destino é dividido 50/50 entre Letícia e Robson (além do próprio dono).
+const REP_SPLIT_LR = new Set<string>([REP_ROUTE.GILMAR]);
 // Retorna o atendente-alvo (telemarketing) do roteamento especial, ou null.
-// (params daysSince/carlosTarget mantidos por compat. de assinatura; não usados.)
-function repescagemSpecialTarget(ownerId: string | null, _daysSince?: number, _customerId?: string, _carlosTarget?: string): string | null {
+// splitTarget = alvo pré-calculado do split 50/50 (usado só para as carteiras de REP_SPLIT_LR).
+function repescagemSpecialTarget(ownerId: string | null, _daysSince?: number, _customerId?: string, splitTarget?: string): string | null {
   if (!ownerId) return null;
   if (REP_TO_LETICIA.has(ownerId)) return REP_ROUTE.LETICIA;
   if (REP_TO_ROBSON.has(ownerId)) return REP_ROUTE.ROBSON;
+  if (REP_SPLIT_LR.has(ownerId)) return splitTarget || REP_ROUTE.LETICIA;
   return null;
 }
-// Compat.: split não é mais usado (sem 50/50). Retorna mapa vazio.
-function repescagemCarlosSplit(_cands: Array<{ customerId: string; daysSince?: number }>, _ownerOf: (id: string) => string | null): Map<string, string> {
-  return new Map<string, string>();
+// Split 50/50 determinístico dos clientes das carteiras de REP_SPLIT_LR (hoje: Gilmar)
+// entre Letícia e Robson. Ordena por customerId e alterna (índice par -> Letícia, ímpar -> Robson),
+// garantindo divisão estável e ~metade para cada, independente da ordem de entrada.
+function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: string) => string | null): Map<string, string> {
+  const out = new Map<string, string>();
+  const ids = cands
+    .map(c => c.customerId)
+    .filter(id => { const o = ownerOf(id); return !!o && REP_SPLIT_LR.has(o); })
+    .sort();
+  ids.forEach((id, i) => out.set(id, i % 2 === 0 ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON));
+  return out;
 }
 
 function brTodayStr(): string {
@@ -504,12 +516,12 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     lng: c.lng != null ? Number(c.lng) : null,
     sellerId: (c.sellerId as string | null) || null,
   }]));
-  // Split 50/50 exato dos clientes do Carlos e helper de alvo especial deste ciclo.
-  const carlosSplit = repescagemCarlosSplit(candidates as any, (id) => coordById.get(id)?.sellerId || null);
+  // Split 50/50 (Letícia/Robson) dos clientes das carteiras de REP_SPLIT_LR (Gilmar) e helper de alvo.
+  const splitLR = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null);
   const specialTargetFor = (customerId: string) => repescagemSpecialTarget(
     coordById.get(customerId)?.sellerId || null,
     (candidateByCustomerId.get(customerId) as any)?.daysSince ?? 999,
-    customerId, carlosSplit.get(customerId));
+    customerId, splitLR.get(customerId));
   const ownerSellerIds = Array.from(new Set(custInfo.map(c => c.sellerId).filter(Boolean) as string[]));
   const ownerRoleRows = ownerSellerIds.length > 0
     ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, ownerSellerIds))
@@ -1139,11 +1151,11 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   // ROTEAMENTO ESPECIAL (rota do dia): carteiras Gilmar/Jhonatan/Carlos dentro de 3 dias vão
   // para Letícia/Robson (telemarketing) e travadas — não entram na alocação por perímetro.
   const teleSet = new Set(telemarketers);
-  const carlosSplitDraw = repescagemCarlosSplit(candidates as any, (id) => coordById.get(id)?.sellerId || null);
+  const splitLRDraw = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null);
   for (const cand of candidates) {
     if (allocated.has(cand.customerId)) continue; // já preservado (travado) ou alocado
     const owner = coordById.get(cand.customerId)?.sellerId || null;
-    const target = repescagemSpecialTarget(owner, (cand as any).daysSince ?? 999, cand.customerId, carlosSplitDraw.get(cand.customerId));
+    const target = repescagemSpecialTarget(owner, (cand as any).daysSince ?? 999, cand.customerId, splitLRDraw.get(cand.customerId));
     if (!target || !teleSet.has(target)) continue;
     allocated.add(cand.customerId);
     preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
