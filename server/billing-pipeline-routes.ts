@@ -636,11 +636,81 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
 // fazendo os pedidos se "fundirem" (ex.: venda R$197,80 + troca R$98 no mesmo card do NSA: a
 // troca sumia do funil e reescrevia a venda). Nesse caso também geramos um CARD-FILHO por pedido
 // (item/NF próprios) e zeramos o card de origem, liberando-o para o próximo pedido.
+// ─────────────────────────────────────────────────────────────────────────────
+// 09/set/2026 — TRAVA ANTI-DUPLICIDADE DO CARD-FILHO.
+// Sintoma: pedidos chegando em DOBRO no funil (ex.: AROMA CAFE R$293,10 e THE BANGLA
+// MINI MERCADO R$194,40, dois cards idênticos no mesmo minuto). Causa: desde o
+// REAPROVEITAMENTO, todo finalize num card com item vivo cria um card-filho NOVO —
+// e a trava dura do autoSend (1 salesCardId = 1 item) nunca dispara, porque o id do
+// filho é sempre inédito. Dois POSTs /send-to-billing do mesmo card (duplo clique no
+// botão "Finalizar e Enviar p/ Faturamento", que ficava reabilitado durante o envio,
+// ou um retry de rede) geravam DOIS filhos e DOIS itens.
+// Duas camadas, ambas necessárias:
+//  1) LOCK POR CARD (em memória): serializa chamadas concorrentes do mesmo card.
+//     Sem ele, as duas requisições leem "não existe" antes de qualquer insert.
+//  2) JANELA CURTA: mesmo cliente + mesmo valor + mesmos produtos, item vivo criado
+//     há menos de FINALIZE_DEDUP_WINDOW_MIN (default 10) minutos ⇒ é reenvio, devolve
+//     o item que já existe em vez de criar outro. Pedido legítimo repetido no mesmo
+//     dia continua passando: basta estar fora da janela ou ter valor/produtos diferentes.
+const _finalizeLocks = new Map<string, Promise<any>>();
+
+function _prodSig(prods: any): string {
+  return (Array.isArray(prods) ? prods : [])
+    .map((p: any) => `${String(p?.name || p?.productName || p?.id || '').trim().toLowerCase()}x${Number(p?.quantity ?? p?.qty ?? 0) || 0}`)
+    .sort().join('|');
+}
+
+async function _acharItemRecenteIgual(card: any): Promise<any | null> {
+  try {
+    const janelaMs = (parseInt(process.env.FINALIZE_DEDUP_WINDOW_MIN || '10', 10) || 10) * 60000;
+    const val = (parseFloat(String(card?.saleValue || 0)) || 0).toFixed(2);
+    if (!card?.customerId || val === '0.00') return null;
+    const sig = _prodSig(card?.products);
+    const paiId = String(card?.parentCardId || card?.id || '');
+    const itens = await storage.getBillingPipelineItems();
+    for (const it of itens as any[]) {
+      if (String(it.stage) === 'lixeira') continue;
+      if (String(it.customerId || '') !== String(card.customerId)) continue;
+      if ((parseFloat(String(it.saleValue || 0)) || 0).toFixed(2) !== val) continue;
+      if (_prodSig(it.products) !== sig) continue;
+      const t = it.createdAt ? new Date(it.createdAt).getTime() : 0;
+      if (!t || (Date.now() - t) > janelaMs) continue;
+      console.warn(`⛔ [FINALIZAR-PEDIDO] Reenvio detectado (card pai ${paiId}, cliente ${it.customerName}, R$ ${val}) — devolvendo item existente ${it.id} em vez de criar duplicata.`);
+      return it;
+    }
+  } catch (e: any) {
+    console.warn('[FINALIZAR-PEDIDO] falha na trava de janela (segue):', e?.message);
+  }
+  return null;
+}
+
 export async function finalizarPedidoParaPipeline(
   card: any,
   createdByEmail: string,
   opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null; skipHistoryGuard?: boolean },
 ): Promise<{ item: any; alvo: any }> {
+  // Camada 1: serializa por card de origem. Chamadas concorrentes esperam a primeira
+  // terminar e, ao rodar, já enxergam o item criado (camada 2 barra).
+  const chave = String(card?.id || '');
+  const anterior = _finalizeLocks.get(chave);
+  if (anterior) { try { await anterior; } catch { /* a anterior já reportou o erro */ } }
+  const execucao = _finalizarPedidoParaPipelineInterno(card, createdByEmail, opts);
+  _finalizeLocks.set(chave, execucao);
+  try { return await execucao; }
+  finally { if (_finalizeLocks.get(chave) === execucao) _finalizeLocks.delete(chave); }
+}
+
+async function _finalizarPedidoParaPipelineInterno(
+  card: any,
+  createdByEmail: string,
+  opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null; skipHistoryGuard?: boolean },
+): Promise<{ item: any; alvo: any }> {
+  // Camada 2: reenvio do mesmo pedido dentro da janela → devolve o item existente.
+  const jaEnviado = await _acharItemRecenteIgual(card);
+  if (jaEnviado) {
+    try { await logOrderAudit(card.id, 'skipped_duplicate'); } catch { /* auditoria é best-effort */ }
+    return { item: null, alvo: card };
+  }
   // O card já carrega um pedido vivo no funil? (lixeira não conta). Se sim, é reaproveitamento.
   let jaTemItemVivo = false;
   try {
