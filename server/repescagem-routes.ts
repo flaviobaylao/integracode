@@ -781,7 +781,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     if (a.assignedUserId !== target) {
       const oldUser = a.assignedUserId;
       await db.update(repescagemAssignments).set({
-        assignedUserId: target, phase: 'telemarketing', locked: true, lockedDate: today, assignedAt: new Date(), updatedAt: new Date(),
+        assignedUserId: target, phase: 'telemarketing', locked: false, lockedDate: null, assignedAt: new Date(), updatedAt: new Date(),
       }).where(eq(repescagemAssignments.id, a.id));
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId: a.id, customerId: a.customerId, fromUserId: oldUser, toUserId: target,
@@ -791,9 +791,9 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       else if (internalSet.has(oldUser)) internalLoad.set(oldUser, Math.max(0, (internalLoad.get(oldUser) || 0) - 1));
       internalLoad.set(target, (internalLoad.get(target) || 0) + 1);
       validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: target } as any);
-    } else if (!isLockedToday(a)) {
-      await db.update(repescagemAssignments).set({ locked: true, lockedDate: today, updatedAt: new Date() }).where(eq(repescagemAssignments.id, a.id));
     }
+    // (removida a trava automatica das carteiras especiais — as linhas ficam livres;
+    //  o roteamento especial continua autoritativo e é reaplicado a cada reconcile.)
   }
 
   // 3.5) Promover para o vendedor externo: clientes de carteira externa que hoje
@@ -963,7 +963,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         status: 'pending',
         phase: target.phase,
         carteiraSellerId: coordById.get(cand.customerId)?.sellerId || null,
-        ...(isSpecial ? { locked: true, lockedDate: today } : {}),
+        locked: false, lockedDate: null,
       }).returning();
       const newAssign = inserted[0];
       await db.insert(repescagemAssignmentHistory).values({
@@ -1205,7 +1205,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
     rows.push({ customerId: cand.customerId, lastRedDate: cand.lastRedDate, assignedUserId: target,
       carteiraSellerId: owner, phase: 'telemarketing', drawDate, status: 'in_route',
-      locked: true, lockedDate: drawDate });
+      locked: false, lockedDate: null });
   }
 
   const anchorsBySeller = new Map<string, Array<{ lat: number; lng: number }>>();
