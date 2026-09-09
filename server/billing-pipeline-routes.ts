@@ -439,6 +439,11 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     let registeringUser: any = null;
     const _cbe = String(createdByEmail || '').trim();
     if (_cbe && !/^(system|auto|reconcile)/i.test(_cbe)) { try { registeringUser = await storage.getUserByEmail(_cbe); } catch {} }
+    // REGRA (Flavio, 11/set/2026): o pedido IMPLANTADO é SEMPRE de quem o colocou no sistema
+    // (um vendedor/telemarketing). Admin, coordenação, sistema e varredura só EMPURRAM o pedido —
+    // NUNCA herdam a venda/comissão. Por isso o "registrante atual" só é dono do pedido quando ele
+    // é vendedor/telemarketing; caso contrário buscamos o implantador durável (order_history/card).
+    const registeringIsSeller = !!registeringUser && ['vendedor', 'telemarketing'].includes(String(registeringUser.role));
 
     // ── IMPLANTADOR DURÁVEL (order_history) ─────────────────────────────────────
     // order_history.sellerId guarda QUEM REGISTROU o pedido — "pode ser diferente do
@@ -449,9 +454,15 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     // implantador humano no createdByEmail (esse já é o registrante da ação atual).
     let histSellerId: string | null = null;
     let histSellerName: string | null = null;
-    if (!registeringUser) {
+    if (!registeringIsSeller) {
       try {
-        const _hist = await storage.getOrderHistoryByCard(salesCard.id);
+        // Card-filho (por pedido) não tem order_history próprio — herda o implantador do card de
+        // origem (parentCardId). Assim o crédito continua sendo de QUEM LANÇOU, e não do dono da
+        // carteira nem de quem apenas empurrou o pedido (admin/sistema/varredura).
+        let _hist = await storage.getOrderHistoryByCard(salesCard.id);
+        if ((!_hist || !_hist.length) && (salesCard as any).parentCardId) {
+          try { _hist = await storage.getOrderHistoryByCard((salesCard as any).parentCardId); } catch {}
+        }
         const _h = (_hist || []).find((h: any) => String(h.status) === 'completed'
           && h.sellerId && !['system', 'unknown-vendor', 'instagram', 'chatgpt-ai'].includes(String(h.sellerId)));
         if (_h) {
@@ -467,8 +478,10 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
         }
       } catch (e: any) { console.warn('[BILLING-PIPELINE] order_history lookup (segue):', e?.message); }
     }
-    const effectiveSellerId = registeringUser ? registeringUser.id : (salesCard.sellerId || null);
-    const seller = registeringUser || (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
+    // Quando o registrante atual NÃO é vendedor (admin/coord/sistema), NÃO o usamos aqui — caímos
+    // no vendedor gravado no card (o implantador), nunca em quem só empurrou o pedido.
+    const effectiveSellerId = registeringIsSeller ? registeringUser.id : (salesCard.sellerId || null);
+    const seller = registeringIsSeller ? registeringUser : (salesCard.sellerId ? await storage.getUser(salesCard.sellerId) : null);
 
     // ROTEAMENTO POR CARTEIRA (Honest): SOMENTE para pedido de canal digital (Instagram /
     // Hotsite / IA / rotinas), onde nao existe um usuario humano implantando. Nesse caso o
@@ -510,12 +523,12 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     // Precedência: 1) humano que ESTÁ enviando agora (registeringUser)  2) implantador
     //   registrado no order_history (histSeller) — quem lançou a venda, mesmo em varredura
     //   3) canal digital -> dono da carteira  4) vendedor do card.
-    const pedidoSellerId = registeringUser
+    const pedidoSellerId = registeringIsSeller
       ? registeringUser.id
       : (histSellerId
           ? histSellerId
           : (_isDigitalChannel ? (walletSellerId || (isInstagram ? 'instagram' : effectiveSellerId)) : effectiveSellerId));
-    const pedidoSellerName = registeringUser
+    const pedidoSellerName = registeringIsSeller
       ? `${registeringUser.firstName || ''} ${registeringUser.lastName || ''}`.trim()
       : (histSellerId
           ? histSellerName
