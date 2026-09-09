@@ -210,7 +210,7 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
   const docNames = await rawq("SELECT regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') AS doc, name FROM customers WHERE regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') <> ''");
   const docName: Record<string, string> = {};
   for (const r of docNames) { const d = String(r.doc); if (d && !(d in docName)) docName[d] = String(r.name || ''); }
-  const agg: Record<string, { potencial: number; realizado: number; expected: number; bought: number; clientes: { nome: string; potencial: number; comprou: boolean; hoje: number }[] }> = {};
+  const agg: Record<string, { potencial: number; realizado: number; expected: number; bought: number; clientes: { nome: string; potencial: number; comprou: boolean; hoje: number; ultValor: number; ultData: string }[] }> = {};
   const ensure = (s: string) => (agg[s] = agg[s] || { potencial: 0, realizado: 0, expected: 0, bought: 0, clientes: [] });
   for (const doc of Object.keys(byDoc)) {
     const rows = byDoc[doc].filter((x) => x.v > 0).sort((a, b) => a.d.localeCompare(b.d));
@@ -242,7 +242,8 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
       const hojeV = rows.filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
       const comprou = hojeV > 0;
       if (comprou) a.bought += 1;
-      a.clientes.push({ nome: docName[doc] || doc, potencial: Math.round(T * 100) / 100, comprou, hoje: Math.round(hojeV * 100) / 100 });
+      const _prev = rows.filter((x) => x.d < today); const _ult = _prev.length ? _prev[_prev.length - 1] : null;
+      a.clientes.push({ nome: docName[doc] || doc, potencial: Math.round(T * 100) / 100, comprou, hoje: Math.round(hojeV * 100) / 100, ultValor: _ult ? Math.round(_ult.v * 100) / 100 : 0, ultData: _ult ? _ult.d : "" });
     }
   }
   for (const doc of Object.keys(byDoc)) {
