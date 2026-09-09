@@ -24,9 +24,13 @@
 //   * PEDIDO       = billing_pipeline fora da lixeira, operation_type venda,
 //                    dia = COALESCE(scheduled_billing_date, dia BR de created_at)
 //                    — mesma regua da repescagem. Valor = SUM(sale_value).
-//   * REPESCAGEM   = repescagem_assignments status='completed' com completed_at
-//                    no dia, por completed_by_user_id (fallback assigned_user_id)
-//                    — identico a GET /api/repescagem/stats.
+//   * REPESCAGEM   = clientes EM REPESCAGEM no dia (alocacao do sorteio do dia
+//                    — draw_date — ou alocacao legada aberta no dia) que foram
+//                    ATENDIDOS nesse dia (visita, virtual ou pedido), contados
+//                    por QUEM atendeu. `repescagemAlocados` = quantos clientes
+//                    do sorteio do dia cairam com cada vendedor.
+//                    Nao usa completed_at: o fechamento automatico conclui em
+//                    lote alocacoes antigas e inflaria o numero do dia.
 //   * FATURADO     = sqlFaturamentoPorVendedor(dia, dia+1) de faturamento-oficial.ts
 //                    (NF-e autorizada de venda, deduplicada, vendedor = quem
 //                    implantou o pedido).
@@ -96,6 +100,7 @@ export type LinhaVendedor = {
   pedidos: number;
   valorPedidos: number;
   repescagem: number;
+  repescagemAlocados: number;
   faturado: number;
   notas: number;
   km: number | null;
@@ -161,7 +166,20 @@ export function registerPainelAtendimento(app: Express) {
           WHERE ${sqlDiaBR("vl.attendance_date")} = ${D}
         )`;
 
-        const [visitas, atendimentos, pedidos, repescagem, faturado, km, vendedores, evolutivo] = await Promise.all([
+        // ── Clientes em repescagem no dia ──────────────────────────────────────
+        const CTE_REPESC = `repesc AS (
+          SELECT DISTINCT ra.customer_id AS cid, ra.assigned_user_id AS uid_aloc
+          FROM repescagem_assignments ra
+          WHERE ra.status <> 'cancelled'
+            AND (
+              (ra.draw_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND ra.draw_date::date = ${D})
+              OR (COALESCE(ra.draw_date,'') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                  AND ${sqlDiaBR("ra.assigned_at")} <= ${D}
+                  AND (ra.completed_at IS NULL OR ${sqlDiaBR("ra.completed_at")} >= ${D}))
+            )
+        )`;
+
+        const [visitas, atendimentos, pedidos, repescagem, faturado, km, vendedores, evolutivo, alocados] = await Promise.all([
           // 1) Visitas + 1o/ultimo check-in
           q(`WITH ${CTE_CHECKINS}
              SELECT uid,
@@ -183,14 +201,13 @@ export function registerPainelAtendimento(app: Express) {
              SELECT uid, COUNT(*)::int AS pedidos, COALESCE(SUM(valor),0)::float AS valor
              FROM pedidos GROUP BY uid`),
 
-          // 4) Repescagem atendida (concluida) no dia
-          q(`SELECT COALESCE(ra.completed_by_user_id, ra.assigned_user_id) AS uid,
-                    COUNT(*)::int AS repescagem
-             FROM repescagem_assignments ra
-             WHERE ra.status = 'completed'
-               AND ra.completed_at IS NOT NULL
-               AND ${sqlDiaBR("ra.completed_at")} = ${D}
-             GROUP BY 1`),
+          // 4) Repescagem atendida no dia: cliente em repescagem + atendimento no dia, por quem atendeu
+          q(`WITH ${CTE_CHECKINS}, ${CTE_PEDIDOS}, ${CTE_VIRTUAIS}, ${CTE_REPESC}
+             SELECT t.uid, COUNT(DISTINCT t.cid)::int AS repescagem FROM (
+               SELECT uid, cid FROM checkins WHERE cid IS NOT NULL
+               UNION SELECT uid, cid FROM virtuais WHERE cid IS NOT NULL
+               UNION SELECT uid, cid FROM pedidos  WHERE cid IS NOT NULL
+             ) t JOIN repesc r ON r.cid = t.cid GROUP BY t.uid`),
 
           // 5) Faturado (NF-e de venda) — regua oficial
           q(sqlFaturamentoPorVendedor(dia, diaSeguinte)),
@@ -229,6 +246,11 @@ export function registerPainelAtendimento(app: Express) {
                     COUNT(DISTINCT ra.cid) FILTER (WHERE ra.status = 'completed')::int AS atendidos
              FROM dias LEFT JOIN ra ON ra.d = dias.d
              GROUP BY dias.d ORDER BY dias.d`),
+
+          // 9) Repescagem alocada no dia, por vendedor (assigned_user_id ja e users.id)
+          q(`WITH ${CTE_REPESC}
+             SELECT uid_aloc AS uid, COUNT(DISTINCT cid)::int AS alocados FROM repesc
+             WHERE uid_aloc IS NOT NULL GROUP BY 1`),
         ]);
 
         // ── Merge em memoria ───────────────────────────────────────────────────
@@ -238,7 +260,7 @@ export function registerPainelAtendimento(app: Express) {
           if (!l) {
             l = {
               vendedorId: uid, vendedor: uid === "sem-vendedor" ? "Sem vendedor" : uid, papel: null, ativo: true,
-              visitas: 0, atendimentos: 0, pedidos: 0, valorPedidos: 0, repescagem: 0, faturado: 0, notas: 0,
+              visitas: 0, atendimentos: 0, pedidos: 0, valorPedidos: 0, repescagem: 0, repescagemAlocados: 0, faturado: 0, notas: 0,
               km: null, kmFonte: null, primeiroCheckIn: null, ultimoCheckIn: null,
             };
             linhas.set(uid, l);
@@ -265,6 +287,7 @@ export function registerPainelAtendimento(app: Express) {
           l.valorPedidos = Number(r.valor) || 0;
         }
         for (const r of repescagem) if (r.uid) linha(r.uid).repescagem = Number(r.repescagem) || 0;
+        for (const r of alocados) if (r.uid) linha(r.uid).repescagemAlocados = Number(r.alocados) || 0;
         for (const r of faturado) {
           const l = linha(r.vendedor_id || "sem-vendedor");
           l.faturado = Number(r.faturamento) || 0;
@@ -299,7 +322,7 @@ export function registerPainelAtendimento(app: Express) {
 
         const rows = Array.from(linhas.values())
           // Sem atividade e sem cadastro de vendedor: nao polui o painel.
-          .filter((l) => l.papel !== null || l.visitas || l.atendimentos || l.pedidos || l.faturado || l.repescagem || l.km)
+          .filter((l) => l.papel !== null || l.visitas || l.atendimentos || l.pedidos || l.faturado || l.repescagem || l.repescagemAlocados || l.km)
           .sort((a, b) =>
             (a.vendedorId === "sem-vendedor" ? 1 : 0) - (b.vendedorId === "sem-vendedor" ? 1 : 0)
             || b.faturado - a.faturado || b.valorPedidos - a.valorPedidos || b.visitas - a.visitas
@@ -313,10 +336,11 @@ export function registerPainelAtendimento(app: Express) {
           pedidos: t.pedidos + l.pedidos,
           valorPedidos: t.valorPedidos + l.valorPedidos,
           repescagem: t.repescagem + l.repescagem,
+          repescagemAlocados: t.repescagemAlocados + l.repescagemAlocados,
           faturado: t.faturado + l.faturado,
           notas: t.notas + l.notas,
           km: t.km + (l.km || 0),
-        }), { vendedores: 0, emCampo: 0, visitas: 0, atendimentos: 0, pedidos: 0, valorPedidos: 0, repescagem: 0, faturado: 0, notas: 0, km: 0 });
+        }), { vendedores: 0, emCampo: 0, visitas: 0, atendimentos: 0, pedidos: 0, valorPedidos: 0, repescagem: 0, repescagemAlocados: 0, faturado: 0, notas: 0, km: 0 });
 
         // O middleware global ja e no-cache; reforca para o polling nunca pegar
         // resposta velha de proxy.
