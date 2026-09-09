@@ -188,7 +188,7 @@ export async function computeForecast(only?: string): Promise<{ asOf: string; mo
 // periodicidade, geram um "potencial" (ticket medio ponderado por recencia).
 // Compara com o realizado de hoje (NF-e de venda) da carteira. 1 registro por vendedor.
 // ============================================================================
-export async function computeDailyThermometer(only?: string): Promise<{ asOf: string; weekday: number; sellers: { seller: string; potencial: number; realizado: number; pct: number; expected: number; bought: number }[] }> {
+export async function computeDailyThermometer(only?: string): Promise<{ asOf: string; weekday: number; sellers: { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number }[] }> {
   const today = todayBrt();
   const todayW = weekdayOf(today);
   const dow0 = todayW === 0 ? 7 : todayW;
@@ -244,7 +244,9 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
     const tv = byDoc[doc].filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
     if (tv > 0) { ensure(seller).realizado += tv; }
   }
-  const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : (a.realizado > 0 ? 999 : 0); return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought }; }).filter((x) => x.potencial > 0 || x.realizado > 0).sort((a, b) => b.potencial - a.potencial);
+  const adminRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role = 'admin'");
+  const adminSet = new Set(adminRows.map((r: any) => String(r.nome || '')));
+  const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : null; return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought }; }).filter((x) => (x.potencial > 0 || x.realizado > 0) && !adminSet.has(x.seller)).sort((a, b) => b.potencial - a.potencial);
   return { asOf: today, weekday: todayW, sellers };
 }
 
