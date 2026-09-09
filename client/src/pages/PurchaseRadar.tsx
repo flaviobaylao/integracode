@@ -268,6 +268,20 @@ export default function PurchaseRadar() {
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
 
+  const uncancelInvoice = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/purchases/${id}/uncancel`, {});
+      return res;
+    },
+    onSuccess: (data: any) => {
+      toast({ title: `Cancelamento revertido — status: ${STATUS_MAP[data.status]?.label || data.status}` });
+      setSelectedInvoice(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+    },
+    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
+
   const deleteInvoice = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/purchases/${id}`);
@@ -1071,6 +1085,17 @@ export default function PurchaseRadar() {
                     disabled={updateStatus.isPending}
                   >
                     <XCircle className="h-4 w-4 mr-1" /> Cancelar
+                  </Button>
+                )}
+                {selectedInvoice.status === "cancelled" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                    onClick={() => uncancelInvoice.mutate(selectedInvoice.id)}
+                    disabled={uncancelInvoice.isPending}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-1" /> {uncancelInvoice.isPending ? "Revertendo..." : "Reverter cancelamento"}
                   </Button>
                 )}
                 <Button
