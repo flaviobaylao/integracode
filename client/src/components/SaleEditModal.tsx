@@ -93,6 +93,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [customerPhone, setCustomerPhone] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 09/set/2026: cobre TODO o "Finalizar e Enviar p/ Faturamento" (finalizar + espera +
+  // envio ao faturamento). O isSubmitting e liberado no finally do handleFinalizeSale e
+  // deixava uma janela em que o botao aceitava um 2o clique -> pedido duplicado no funil.
+  const [enviando, setEnviando] = useState(false);
   const [boletoDays, setBoletoDays] = useState(7);
   // Agendamento de pedido: quando marcado, o pedido entra na etapa "Agendado" do faturamento e migra
   // automaticamente para "Pedido" na data escolhida.
@@ -600,6 +604,19 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   };
 
   const handleSendToFaturamento = async () => {
+    if (!card?.id) return;
+    // Reentrancia: um 2o clique (ou toque duplo no celular) enquanto o 1o envio esta
+    // em andamento criava um segundo pedido identico no funil.
+    if (enviando || sendToOmieMutation.isPending) return;
+    setEnviando(true);
+    try {
+      await _executarEnvioParaFaturamento();
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const _executarEnvioParaFaturamento = async () => {
     if (!card?.id) return;
 
     // 🔒 TRAVA Troca/Amostra: justificativa obrigatória no campo Observações (pode ditar por voz).
@@ -1865,7 +1882,10 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </Button>
             </div>
 
-            {/* Botão de Finalizar e Enviar para Faturamento (ou Agendar) */}
+            {/* Botão de Finalizar e Enviar para Faturamento (ou Agendar).
+                09/set/2026: o disabled inclui `enviando` e `sendToOmieMutation.isPending` —
+                sem eles o botão voltava a ficar clicável entre o fim do handleFinalizeSale
+                e a resposta do /send-to-billing, e o 2º clique duplicava o pedido no funil. */}
             <div className={`${isScheduledOrder ? 'bg-cyan-50 border-cyan-200' : 'bg-orange-50 border-orange-200'} border rounded-lg p-3`}>
               <p className={`text-sm mb-2 ${isScheduledOrder ? 'text-cyan-800' : 'text-orange-800'}`}>
                 {isScheduledOrder ? (
@@ -1876,11 +1896,11 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
               </p>
               <Button
                 onClick={handleSendToFaturamento}
-                disabled={isSubmitting || products.length === 0 || (isScheduledOrder && !scheduledOrderDate)}
+                disabled={isSubmitting || enviando || sendToOmieMutation.isPending || products.length === 0 || (isScheduledOrder && !scheduledOrderDate)}
                 className={`w-full ${isScheduledOrder ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-orange-500 hover:bg-orange-600'}`}
                 data-testid="button-finalize-billing"
               >
-                {isSubmitting ? (
+                {(isSubmitting || enviando || sendToOmieMutation.isPending) ? (
                   <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
                 ) : isScheduledOrder ? (
                   <Calendar className="h-4 w-4 mr-2" />
