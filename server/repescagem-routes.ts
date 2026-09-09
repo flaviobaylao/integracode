@@ -1891,6 +1891,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         id: customers.id,
         name: sql<string>`COALESCE(${customers.fantasyName}, ${customers.name})`,
         phone: customers.phone, city: customers.city, uf: customers.state,
+        neighborhood: customers.neighborhood,
         address: customers.address, weekdays: customers.weekdays,
         visitPeriodicity: customers.visitPeriodicity,
         virtualService: customers.virtualService,
@@ -1941,6 +1942,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         return {
           assignmentId: r.id, customerId: r.customerId, customerName: c?.name || r.customerId,
           phone: c?.phone || null, city: c?.city || null, uf: c?.uf || null,
+          neighborhood: c?.neighborhood || null,
           address: c?.address || null, weekdays: (c?.weekdays as any) || [],
           latitude: c?.latitude ?? null, longitude: c?.longitude ?? null,
           visitPeriodicity: per,
