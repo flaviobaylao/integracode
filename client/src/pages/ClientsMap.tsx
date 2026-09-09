@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, memo } from "react";
-import { useQuery } from "@/lib/queryClient";
+import { useQuery, useQueryClient } from "@/lib/queryClient";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +121,19 @@ function pinColorFor(c: any): string {
   return getPinColor(c?.weekdays || '');
 }
 
+// 📅 Dia de rota do LEAD = dia da semana do PRÓXIMO CONTATO (next_contact_date). Trocar o dia
+// grava a PRÓXIMA data com aquele dia da semana (hoje conta, se hoje já for o dia escolhido).
+const INDICE_DO_DIA: Record<string, number> = { Domingo: 0, Segunda: 1, 'Terça': 2, Quarta: 3, Quinta: 4, Sexta: 5, 'Sábado': 6 };
+function proximaDataDoDia(diaLabel: string): string {
+  const alvo = INDICE_DO_DIA[diaLabel];
+  // Data de calendário em São Paulo — o servidor ancora 'YYYY-MM-DD' ao meio-dia UTC.
+  const agoraSP = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const d = new Date(agoraSP.getFullYear(), agoraSP.getMonth(), agoraSP.getDate());
+  d.setDate(d.getDate() + ((alvo - d.getDay() + 7) % 7));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // ⚡ Um divIcon POR COR, criado uma vez e reaproveitado. Antes cada render criava 1000+ ícones
 // novos e o Leaflet trocava o DOM de todos os pins — era o que travava a tela ao digitar na busca.
 const ICONES_POR_COR = new Map<string, any>();
@@ -169,10 +182,12 @@ type PropsPonto = {
   customer: any;
   podeEditar: boolean;
   copiado: boolean;
+  salvandoDia: boolean;
   aoCopiar: (id: string, nome: string) => void;
   aoEditar: (c: any) => void;
+  aoMudarDia: (leadId: string, diaLabel: string) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, aoCopiar, aoEditar }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, aoCopiar, aoEditar, aoMudarDia }: PropsPonto) {
   const lat = Number(customer.latitude);
   const lng = Number(customer.longitude);
   const color = pinColorFor(customer);
@@ -209,9 +224,25 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, a
               <MapPin className="h-3 w-3" />
               {customer.address}
             </p>
-            <p className="font-medium">
-              📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
-            </p>
+            {ehLead && podeEditar ? (
+              <p className="font-medium flex items-center gap-2">
+                📅 Dia de rota:
+                <select
+                  value={DIAS_OPTIONS.includes(dayName) ? dayName : ''}
+                  disabled={salvandoDia}
+                  onChange={(e) => e.target.value && aoMudarDia(String(customer.id), e.target.value)}
+                  className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                  data-testid={`select-lead-day-${customer.id}`}
+                >
+                  <option value="">{salvandoDia ? 'salvando...' : 'Sem dia'}</option>
+                  {DIAS_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </p>
+            ) : (
+              <p className="font-medium">
+                📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
+              </p>
+            )}
             {!!customer.phone && <p>📞 {customer.phone}</p>}
             <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
             {customer.visitPeriodicity && (
@@ -445,6 +476,23 @@ export default function ClientsMap() {
         ]
       : defaultCenter;
 
+  // 📅 Trocar o dia de rota do LEAD: grava a próxima data com aquele dia da semana em
+  // next_contact_date (o PATCH /api/leads/:id já ancora 'YYYY-MM-DD' ao meio-dia UTC).
+  const queryClient = useQueryClient();
+  const [salvandoDiaId, setSalvandoDiaId] = useState<string | null>(null);
+  const mudarDiaDoLead = useCallback(async (leadId: string, diaLabel: string) => {
+    setSalvandoDiaId(leadId);
+    try {
+      await apiRequest('PATCH', `/api/leads/${leadId}`, { nextContactDate: proximaDataDoDia(diaLabel) });
+      await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data', 'leads'] });
+    } catch (e: any) {
+      console.error('[MAPA] falha ao mudar o dia do lead:', e);
+      alert('Não foi possível alterar o dia do lead: ' + (e?.message || e));
+    } finally {
+      setSalvandoDiaId(null);
+    }
+  }, [queryClient]);
+
   const handleEditCustomer = useCallback((customer: Customer) => {
     setSelectedCustomer(customer);
     setIsEditModalOpen(true);
@@ -457,10 +505,12 @@ export default function ClientsMap() {
       customer={customer}
       podeEditar={!!canEditCustomer}
       copiado={copiadoId === String(customer.id)}
+      salvandoDia={salvandoDiaId === String(customer.id)}
       aoCopiar={copiarNome}
       aoEditar={handleEditCustomer}
+      aoMudarDia={mudarDiaDoLead}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, copiarNome, handleEditCustomer]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, copiarNome, handleEditCustomer, mudarDiaDoLead]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
