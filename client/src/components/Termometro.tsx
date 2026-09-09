@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type Row = { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number; clientes?: { nome: string; potencial: number; comprou: boolean; hoje: number }[] };
+type Row = { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number; clientes?: { nome: string; potencial: number; comprou: boolean; hoje: number; ultValor: number; ultData: string }[] };
 type Resp = { asOf: string; weekday: number; sellers: Row[] };
 
 const DOWLBL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -189,13 +189,13 @@ export default function Termometro() {
                 )}
                 {openMap[r.seller] && r.clientes && (
                   <div className="mt-2 w-full border-t border-gray-100 pt-2 space-y-1 text-left">
-                    {r.clientes.map((cl, ci) => (
-                      <div key={ci} className="flex items-start justify-between gap-1 text-[10px]">
-                        <span className={cl.comprou ? "truncate text-gray-900 flex-1" : "truncate text-gray-900 flex-1"} title={cl.nome}>{cl.nome}</span>
-                        <span className="text-right whitespace-nowrap">
-                          <span className={cl.comprou ? "text-emerald-600 font-medium" : "text-gray-900"}>{cl.comprou ? brl(cl.hoje) : "não comprou"}</span>
-                          <span className="block text-gray-700">ref {brl(cl.potencial)}</span>
-                        </span>
+                    {[...r.clientes].sort((a, b) => (a.comprou === b.comprou ? b.potencial - a.potencial : a.comprou ? 1 : -1)).map((cl, ci) => (
+                      <div key={ci} className="text-[10px] border-b border-gray-50 pb-1">
+                        <div className="flex items-start justify-between gap-1">
+                          <span className="truncate text-gray-900 flex-1" title={cl.nome}>{cl.nome}</span>
+                          <span className={cl.comprou ? "text-emerald-600 font-medium whitespace-nowrap" : "text-red-500 whitespace-nowrap"}>{cl.comprou ? "hoje " + brl(cl.hoje) : "ainda não comprou"}</span>
+                        </div>
+                        <div className="text-gray-500">última: {cl.ultValor > 0 ? brl(cl.ultValor) + " em " + cl.ultData.slice(8, 10) + "/" + cl.ultData.slice(5, 7) : "-"}</div>
                       </div>
                     ))}
                   </div>
