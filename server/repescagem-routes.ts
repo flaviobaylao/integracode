@@ -79,6 +79,10 @@ function repescagemSpecialTarget(ownerId: string | null, _daysSince?: number, _c
   if (REP_TO_LETICIA.has(ownerId)) return REP_ROUTE.LETICIA;
   if (REP_TO_ROBSON.has(ownerId)) return REP_ROUTE.ROBSON;
   if (REP_SPLIT_LR.has(ownerId)) return splitTarget || REP_ROUTE.LETICIA;
+  // Carteiras de TELEMARKETING: os proprios clientes da Leticia/Robson em repescagem ficam
+  // com eles mesmos (nao sao redistribuidos para o outro).
+  if (ownerId === REP_ROUTE.LETICIA) return REP_ROUTE.LETICIA;
+  if (ownerId === REP_ROUTE.ROBSON) return REP_ROUTE.ROBSON;
   return null;
 }
 // Split 50/50 determinístico dos clientes das carteiras de REP_SPLIT_LR (hoje: Gilmar)
@@ -362,9 +366,10 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     if (REPESCAGEM_EXCLUDED_SELLER_IDS.has(c.sellerId || '')) continue;
     // Clientes vinculados a uma REDE de clientes NAO caem em repescagem.
     if (redeMemberIds.has(c.id)) continue;
-    // SOMENTE clientes de carteira de VENDEDOR EXTERNO (role 'vendedor') entram em repescagem.
-    // Clientes de telemarketing (ou sem dono/outro papel) NÃO caem em repescagem.
-    if (candSellerRoleById.get(c.sellerId || '') !== 'vendedor') continue;
+    // Elegiveis: carteira de VENDEDOR EXTERNO ('vendedor') OU TELEMARKETING ('telemarketing').
+    // (A pedido: as carteiras da Leticia/Robson tambem entram; seus clientes ficam com eles.)
+    // Carteiras de canal/sistema e sem dono continuam de fora.
+    { const _role = candSellerRoleById.get(c.sellerId || ''); if (_role !== 'vendedor' && _role !== 'telemarketing') continue; }
     // Clientes INATIVOS nao entram em repescagem (cobre dessincronizacao entre
     // customers.isActive e active_customers). E2-C: is_active e a unica regra de ativo.
     if ((c as any).isActive === false
@@ -383,11 +388,47 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       }
     }
 
-    // ===== NOVA REGRA: CICLOS de efetividade em vendas =====
-    //  - Semanal/Quinzenal: 2 ciclos vermelhos CONSECUTIVOS (sem venda na semana/quinzena).
-    //  - Mensal: 1 ciclo vermelho (sem venda no mes) + 2 dias de tolerancia (visita/atendimento salva).
     const dows = parseDowsCycle(c.weekdays);
     const saleDates = saleDatesByCustomer.get(c.id) || new Set<string>();
+
+    // ===== REGRA (desde o 1o do mes corrente): teve DIA DE ROTA no mes, mas SEM atendimento
+    // (check-in de rota, atendimento virtual OU visita concluida) e SEM compra -> ENTRA e
+    // PERMANECE em repescagem continuamente (nao sai por tempo); so sai quando comprar ou for
+    // atendido. Se comprou OU foi atendido no mes, cai na regra PADRAO de periodicidade/ciclo
+    // abaixo. Vale para todas as carteiras elegiveis (vendedores externos + telemarketing).
+    {
+      const monthStart = todayStr.slice(0, 7) + '-01';
+      const routeDaysThisMonth = scheduled.filter(d => d >= monthStart); // 'scheduled' ja e < hoje
+      if (routeDaysThisMonth.length > 0) {
+        const inMonth = (set?: Set<string>): boolean => {
+          if (!set) return false;
+          for (const d of set) if (d >= monthStart && d <= todayStr) return true;
+          return false;
+        };
+        const atendidoNoMes = inMonth(checkpointDatesByCustomer.get(c.id))
+          || inMonth(virtualLogDatesByCustomer.get(c.id))
+          || inMonth(completedVisitDatesByCustomer.get(c.id));
+        const comprouNoMes = inMonth(saleDates);
+        if (!atendidoNoMes && !comprouNoMes) {
+          const lastRouteThisMonth = routeDaysThisMonth[routeDaysThisMonth.length - 1];
+          const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRouteThisMonth).getTime()) / 86400000);
+          candidates.push({
+            customerId: c.id,
+            customerName: c.name || 'Sem nome',
+            sellerId: c.sellerId || null,
+            periodicity: c.periodicity || 'semanal',
+            weekdays: (c.weekdays as unknown as string[]) || [],
+            lastRedDate: lastRouteThisMonth,
+            daysSince: days,
+          });
+          continue;
+        }
+      }
+    }
+
+    // ===== REGRA PADRAO: CICLOS de efetividade em vendas (quando comprou/atendeu no mes) =====
+    //  - Semanal/Quinzenal: 2 ciclos vermelhos CONSECUTIVOS (sem venda na semana/quinzena).
+    //  - Mensal: 1 ciclo vermelho (sem venda no mes) + 2 dias de tolerancia (visita/atendimento salva).
     const n = cyclesToShow(c.periodicity || 'semanal');
     const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n);
     const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
@@ -950,7 +991,10 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
 // é validável por API/log. Não interfere na lista antiga (status 'pending').
 // ============================================================================
 const REPESCAGEM_PERIMETER_KM = 2;
-const EXTERNAL_MAX_PER_SELLER = 3;
+// SEM teto por vendedor externo (a pedido): cada vendedor recebe TODOS os seus clientes em
+// repescagem dentro do perimetro da rota do dia. (Antes era 3/dia.) Infinity remove o limite
+// em todas as comparacoes `< EXTERNAL_MAX_PER_SELLER`.
+const EXTERNAL_MAX_PER_SELLER = Number.POSITIVE_INFINITY;
 let __drawRunning = false;
 let __lastDrawCheckMs = 0;
 
