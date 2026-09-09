@@ -4890,7 +4890,16 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           bp.customer_name            AS customer_name,
           c.city                      AS customer_city,
           bp.seller_name              AS seller_name,
-          bp.omie_instance_name       AS instance_name,
+          -- Instancia do pedido. omie_instance_name esta nulo em boa parte do
+          -- pipeline (pedidos criados sem instância), então cai para a instância
+          -- referenciada pelo próprio pedido e, depois, para a do cadastro do
+          -- cliente. O que sobrar sem instância vira o bucket "sem instância"
+          -- na tela (que agora é filtrável).
+          COALESCE(
+            NULLIF(btrim(bp.omie_instance_name), ''),
+            oi.display_name, oi.name,
+            oic.display_name, oic.name
+          )                           AS instance_name,
           bp.order_number             AS order_number,
           bp.invoice_number           AS invoice_number,
           fi.cfop                     AS cfop,
@@ -4907,6 +4916,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           CASE WHEN jsonb_typeof(bp.products) = 'array' THEN bp.products ELSE '[]'::jsonb END
         ) AS p
         LEFT JOIN customers c ON c.id = bp.customer_id
+        LEFT JOIN omie_instances oi  ON oi.id  = bp.omie_instance_id
+        LEFT JOIN omie_instances oic ON oic.id = c.omie_instance_id
         LEFT JOIN products pr ON pr.id = p->>'id'
         LEFT JOIN (
           -- 1 NF por sales_card (prefere a autorizada, depois a mais recente).

@@ -261,9 +261,12 @@ const normProd = (s: string) => String(s || '').trim().toUpperCase().replace(/\s
 // o item não tem código. Sem isso, "…350ml" e "…350mL" (mesmo PRD-FV-350) viravam
 // DUAS linhas na tabela, rachando quantidade, valor, % do valor, preço médio,
 // pedidos, clientes e Saída D.U., e repetindo o mesmo estoque nas duas.
+// Bucket dos pedidos sem instância gravada — precisa de um valor próprio para
+// poder ser marcado no filtro (string vazia não serve como chave de opção).
+const SEM_INST = '__sem_instancia__';
+const instKeyOf = (r: { instance_name: string | null }) => String(r.instance_name || '') || SEM_INST;
+
 const normCode = (s: string | null | undefined) => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
-const prodKeyOf = (r: { product_code?: string | null; product_name: string }) =>
-  normCode(r.product_code) || normProd(r.product_name);
 
 interface ProdAgg {
   key: string;
@@ -332,6 +335,42 @@ export default function GestaoProdutos() {
     return idx;
   }, [estoqueRows]);
 
+  // Apelidos de produto → código canônico. Um item cujo `products.id` não casou
+  // com o cadastro (produto recriado/renomeado, id antigo no jsonb do pedido) vem
+  // com product_code nulo e caía numa chave própria (o nome), virando uma SEGUNDA
+  // linha do mesmo produto — a de "Código —" da tela. Aqui, todo nome/id que
+  // aparece em ALGUM item ou lote COM código passa a apontar para esse código, e
+  // os itens sem código entram na linha certa. Nome usado por dois códigos
+  // diferentes vira ambíguo (null) e não apelida ninguém, para não fundir
+  // produtos distintos que só compartilham o nome.
+  const prodAlias = useMemo(() => {
+    const m = new Map<string, string | null>();
+    const add = (k: string, code: string) => {
+      if (!k || k === code) return;
+      if (!m.has(k)) { m.set(k, code); return; }
+      if (m.get(k) !== code) m.set(k, null); // ambíguo
+    };
+    const feed = (nome: string, id: string | null | undefined, cod: string | null | undefined) => {
+      const code = normCode(cod);
+      if (!code) return;
+      add(normProd(nome), code);
+      add(normCode(id), code);
+    };
+    for (const r of rows) feed(r.product_name, r.product_id, r.product_code);
+    for (const e of estoqueRows) feed(e.product_name, e.product_id, e.product_code);
+    return m;
+  }, [rows, estoqueRows]);
+
+  // Chave canônica do produto já com os apelidos aplicados.
+  const keyOf = useMemo(() => (r: { product_code?: string | null; product_id?: string | null; product_name: string }) => {
+    const code = normCode(r.product_code);
+    if (code) return code;
+    const porId = prodAlias.get(normCode(r.product_id));
+    if (porId) return porId;
+    const nome = normProd(r.product_name);
+    return prodAlias.get(nome) || nome;
+  }, [prodAlias]);
+
   const stockInstOptions = useMemo(
     () => Array.from(new Set(estoqueRows.map((e) => e.instance_name).filter(Boolean)))
       .sort((a, b) => a.localeCompare(b, 'pt-BR')),
@@ -361,7 +400,15 @@ export default function GestaoProdutos() {
       .sort((a, b) => (labels?.[a] || a).localeCompare(labels?.[b] || b, 'pt-BR'))
       .map((v) => ({ value: v, label: labels?.[v] || v }));
 
-  const instOptions = useMemo(() => opts(rows.map((r) => r.instance_name)), [rows]);
+  // Boa parte do pipeline não tem instância gravada — era o maior bloco do
+  // relatório (a barra "—" do gráfico) e não aparecia no filtro, porque `opts`
+  // descarta valor vazio. Sem essa opção, marcar uma instância derrubava esses
+  // pedidos sem que houvesse como trazê-los de volta: o filtro parecia quebrado.
+  const instOptions = useMemo(() => {
+    const lista = opts(rows.map((r) => r.instance_name));
+    if (rows.some((r) => !r.instance_name)) lista.push({ value: SEM_INST, label: '— sem instância' });
+    return lista;
+  }, [rows]);
   const sellerOptions = useMemo(() => opts(rows.map((r) => r.seller_name)), [rows]);
   const customerOptions = useMemo(() => opts(rows.map((r) => r.customer_name)), [rows]);
   const opOptions = useMemo(() => opts(rows.map((r) => r.operation_type), OPERATION_LABELS), [rows]);
@@ -381,7 +428,7 @@ export default function GestaoProdutos() {
     const nomes = new Map<string, Map<string, number>>();
     const codigos = new Map<string, string | null>();
     for (const r of rows) {
-      const k = prodKeyOf(r);
+      const k = keyOf(r);
       const m = nomes.get(k) || new Map<string, number>();
       const nome = String(r.product_name || '').trim();
       m.set(nome, (m.get(nome) || 0) + 1);
@@ -395,7 +442,7 @@ export default function GestaoProdutos() {
       out.set(k, { name, code: codigos.get(k) || null });
     }
     return out;
-  }, [rows]);
+  }, [rows, keyOf]);
   const prodName = (k: string) => prodCanon.get(k)?.name || k;
 
   const prodOptions = useMemo(
@@ -435,7 +482,7 @@ export default function GestaoProdutos() {
 
   const matches = (r: ItemRow, q: string, ignoreCfop: boolean) => {
     if (!incluirTransf && isTransferencia(r)) return false;
-    if (instFilter.size && !instFilter.has(String(r.instance_name || ''))) return false;
+    if (instFilter.size && !instFilter.has(instKeyOf(r))) return false;
     if (sellerFilter.size && !sellerFilter.has(String(r.seller_name || ''))) return false;
     if (customerFilter.size && !customerFilter.has(String(r.customer_name || ''))) return false;
     if (opFilter.size && !opFilter.has(String(r.operation_type || ''))) return false;
@@ -443,7 +490,7 @@ export default function GestaoProdutos() {
     if (!ignoreCfop && cfopFilter.size && !cfopFilter.has(cfopKeyOf(r))) return false;
     if (cityFilter.size && !cityFilter.has(cidadeCanonica(r.customer_city))) return false;
     if (payFilter.size && !payFilter.has(String(r.payment_method || ''))) return false;
-    if (prodFilter.size && !prodFilter.has(prodKeyOf(r))) return false;
+    if (prodFilter.size && !prodFilter.has(keyOf(r))) return false;
     if (q) {
       const hay = [
         r.product_name, r.product_code, r.ncm, r.customer_name, r.seller_name,
@@ -457,14 +504,14 @@ export default function GestaoProdutos() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => matches(r, q, false));
-  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cfopFilter, cityFilter, payFilter, prodFilter, incluirTransf]);
+  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cfopFilter, cityFilter, payFilter, prodFilter, incluirTransf, keyOf]);
 
   // Base dos chips de CFOP: todos os filtros MENOS o próprio filtro de CFOP —
   // senão, ao selecionar um chip, os demais sumiriam e a multi-seleção morre.
   const filteredExceptCfop = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => matches(r, q, true));
-  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cityFilter, payFilter, prodFilter, incluirTransf]);
+  }, [rows, search, instFilter, sellerFilter, customerFilter, opFilter, stageFilter, cityFilter, payFilter, prodFilter, incluirTransf, keyOf]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -475,13 +522,13 @@ export default function GestaoProdutos() {
     for (const r of filtered) {
       orders.add(r.pipeline_id);
       customers.add(r.customer_id);
-      products.add(prodKeyOf(r));
+      products.add(keyOf(r));
       const q = qtyOf(r), v = valOf(r);
       qty += q; value += v;
       if (r.operation_type === 'troca') { trocaQty += q; trocaValue += v; }
     }
     return { orders: orders.size, customers: customers.size, products: products.size, qty, value, trocaQty, trocaValue };
-  }, [filtered]);
+  }, [filtered, keyOf]);
 
   // Dias úteis (seg–sex) do período De→Até, limitado a hoje — divisor da
   // coluna "Saída D.U.". Feriados não entram na conta (simplificação).
@@ -549,7 +596,7 @@ export default function GestaoProdutos() {
   const prodAgg = useMemo(() => {
     const map = new Map<string, ProdAgg>();
     for (const r of filtered) {
-      const k = prodKeyOf(r);
+      const k = keyOf(r);
       let a = map.get(k);
       if (!a) {
         const canon = prodCanon.get(k);
@@ -564,7 +611,7 @@ export default function GestaoProdutos() {
       if (r.operation_type === 'troca') { a.trocaQty += q; a.trocaValue += v; }
     }
     return Array.from(map.values());
-  }, [filtered, prodCanon]);
+  }, [filtered, prodCanon, keyOf]);
 
   const topProducts = useMemo(
     () => [...prodAgg].sort((a, b) => (metric === 'valor' ? b.value - a.value : b.qty - a.qty)).slice(0, 10)
@@ -601,8 +648,8 @@ export default function GestaoProdutos() {
 
   // ── Detalhe de um produto (dialog) ───────────────────────────────────────
   const detailRows = useMemo(
-    () => (detailProduct ? filtered.filter((r) => prodKeyOf(r) === detailProduct) : []),
-    [filtered, detailProduct],
+    () => (detailProduct ? filtered.filter((r) => keyOf(r) === detailProduct) : []),
+    [filtered, detailProduct, keyOf],
   );
   const detailAgg = (keyFn: (r: ItemRow) => string, labels?: Record<string, string>) => {
     const map = new Map<string, { valor: number; qtd: number }>();
