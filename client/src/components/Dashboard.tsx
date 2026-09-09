@@ -424,7 +424,7 @@ export default function Dashboard() {
         <button type="button" onClick={() => setHistView("historico")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "historico" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Histórico</button>
         <button type="button" onClick={() => setHistView("diario")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "diario" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Histórico Diário</button>
         <button type="button" onClick={() => setHistView("termometro")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "termometro" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Termômetro</button>
-        <button type="button" onClick={() => setHistView("clientes")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "clientes" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Clientes Ativos</button>
+        <button type="button" onClick={() => setHistView("clientes")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "clientes" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Variação de Vendas</button>
       </div>
       {histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "termometro" ? <Termometro /> : histView === "clientes" ? <ClientesAtivos /> : <>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
