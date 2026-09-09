@@ -16978,6 +16978,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('⚠️ [LEAD-ORDER] Falha ao posicionar leads por coordenada:', leadOrderErr);
       }
 
+      // 🔁 DEDUP FINAL por identidade da entidade. O optimizedOrder pode conter o MESMO
+      // cliente sob dois formatos de stopId ("customer:X" e "X") e o Set de strings acima
+      // não os unifica — o mesmo cliente aparecia 2x (cards repetidos na rota do dia).
+      // Colapsa por identidade resolvida (lead:leadId | customer:customerId), mantendo a
+      // 1ª ocorrência. NÃO une clientes distintos que só compartilham o nome (customerId
+      // diferente permanece como cards separados). (set/2026)
+      try {
+        const _seen = new Set<string>();
+        const _dedup: any[] = [];
+        for (const v of (visits as any[])) {
+          if (!v) continue;
+          const _key = v.visitType === 'lead'
+            ? `lead:${v.leadId || v.entityId || v.id}`
+            : `customer:${v.customerId || v.entityId || v.id}`;
+          if (_seen.has(_key)) continue;
+          _seen.add(_key);
+          _dedup.push(v);
+        }
+        const _removed = (visits as any[]).length - _dedup.length;
+        if (_removed > 0) {
+          console.log(`🔁 [DEDUP] Rota ${date}: ${_removed} card(s) duplicado(s) removido(s)`);
+          visits.length = 0;
+          (visits as any[]).push(..._dedup);
+        }
+      } catch (dedupErr) {
+        console.warn('⚠️ [DEDUP] Falha ao deduplicar visitas (mantendo lista):', dedupErr);
+      }
+
       // Calcular distâncias estimadas entre pontos
       const { calculateDistance } = await import('./routeOptimizationService');
       const segments = [];
