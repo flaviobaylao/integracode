@@ -207,8 +207,11 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
   for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) docSeller[d] = r.seller || "Sem vendedor"; }
   const byDoc: Record<string, { d: string; v: number }[]> = {};
   for (const r of purchases) { const doc = String(r.doc); (byDoc[doc] = byDoc[doc] || []).push({ d: String(r.d).slice(0, 10), v: Number(r.v) || 0 }); }
-  const agg: Record<string, { potencial: number; realizado: number; expected: number; bought: number }> = {};
-  const ensure = (s: string) => (agg[s] = agg[s] || { potencial: 0, realizado: 0, expected: 0, bought: 0 });
+  const docNames = await rawq("SELECT regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') AS doc, name FROM customers WHERE regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') <> ''");
+  const docName: Record<string, string> = {};
+  for (const r of docNames) { const d = String(r.doc); if (d && !(d in docName)) docName[d] = String(r.name || ''); }
+  const agg: Record<string, { potencial: number; realizado: number; expected: number; bought: number; clientes: { nome: string; potencial: number; comprou: boolean; hoje: number }[] }> = {};
+  const ensure = (s: string) => (agg[s] = agg[s] || { potencial: 0, realizado: 0, expected: 0, bought: 0, clientes: [] });
   for (const doc of Object.keys(byDoc)) {
     const rows = byDoc[doc].filter((x) => x.v > 0).sort((a, b) => a.d.localeCompare(b.d));
     if (rows.length < 2) continue;
@@ -236,7 +239,10 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
     }
     if (expectedThisWeek) {
       const a = ensure(seller); a.potencial += T; a.expected += 1;
-      if (rows.some((r) => r.d === today)) a.bought += 1;
+      const hojeV = rows.filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
+      const comprou = hojeV > 0;
+      if (comprou) a.bought += 1;
+      a.clientes.push({ nome: docName[doc] || doc, potencial: Math.round(T * 100) / 100, comprou, hoje: Math.round(hojeV * 100) / 100 });
     }
   }
   for (const doc of Object.keys(byDoc)) {
@@ -246,7 +252,7 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
   }
   const adminRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role = 'admin'");
   const adminSet = new Set(adminRows.map((r: any) => String(r.nome || '')));
-  const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : null; return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought }; }).filter((x) => (x.potencial > 0 || x.realizado > 0) && !adminSet.has(x.seller)).sort((a, b) => b.potencial - a.potencial);
+  const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : null; return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought, clientes: (a.clientes || []).slice().sort((x, y) => y.potencial - x.potencial) }; }).filter((x) => (x.potencial > 0 || x.realizado > 0) && !adminSet.has(x.seller)).sort((a, b) => b.potencial - a.potencial);
   return { asOf: today, weekday: todayW, sellers };
 }
 
