@@ -257,6 +257,68 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
   return { asOf: today, weekday: todayW, sellers };
 }
 
+// ============================================================================
+// CLIENTES ATIVOS (aba do dashboard) - lista com penultimo/ultimo pedido (NF-e de
+// venda), periodicidade, variacao % e serie mensal Jan/26 -> hoje (minigrafico).
+// Rede via cliente_rede_membros + cliente_redes (Gestao de Carteiras). Filtro de
+// data (de/para) restringe pedidos considerados E a lista de clientes.
+// ============================================================================
+export async function computeClientesAtivos(de?: string, para?: string, only?: string): Promise<{ asOf: string; months: string[]; rows: any[] }> {
+  const today = todayBrt();
+  const jan = "2026-01-01";
+  const months: string[] = [];
+  {
+    const [Y, M] = today.split("-").map(Number);
+    let cy = 2026, cm = 1;
+    while (cy < Y || (cy === Y && cm <= M)) { months.push(cy + "-" + String(cm).padStart(2, "0")); cm++; if (cm > 12) { cm = 1; cy++; } }
+  }
+  const custs = await rawq(
+    "SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name, '(sem nome)') AS nome, COALESCE(c.city,'') AS municipio," +
+    " regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc, COALESCE(c.visit_periodicity::text,'') AS periodicidade," +
+    " NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))),'') AS vendedor, rd.id AS rede_id, rd.nome AS rede_nome" +
+    " FROM customers c" +
+    " LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id)" +
+    " LEFT JOIN cliente_rede_membros m ON m.customer_id = c.id" +
+    " LEFT JOIN cliente_redes rd ON rd.id = m.rede_id" +
+    " WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)" +
+    " AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)"
+  );
+  const dcol = nfData("fi");
+  const nfe = await rawq(
+    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, " + dcol + "::date::text AS d, COALESCE(SUM(fi.total_invoice),0) AS v" +
+    " FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") +
+    " AND " + dcol + "::date >= '" + jan + "' AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2"
+  );
+  const byDoc: Record<string, { d: string; v: number }[]> = {};
+  for (const r of nfe) { const d = String(r.doc); (byDoc[d] = byDoc[d] || []).push({ d: String(r.d).slice(0, 10), v: Number(r.v) || 0 }); }
+  for (const k of Object.keys(byDoc)) byDoc[k].sort((a, b) => a.d.localeCompare(b.d));
+  const monthIdx: Record<string, number> = {}; months.forEach((m, i) => (monthIdx[m] = i));
+  const useRange = !!(de || para);
+  const lo = de || "0000-01-01", hi = para || "9999-12-31";
+  const rows: any[] = [];
+  for (const c of custs) {
+    if (only && String(c.vendedor || "Sem vendedor") !== only) continue;
+    const doc = String(c.doc || "");
+    const all = doc ? (byDoc[doc] || []) : [];
+    const serie = months.map(() => 0);
+    for (const o of all) { const idx = monthIdx[o.d.slice(0, 7)]; if (idx != null) serie[idx] += o.v; }
+    const inRange = useRange ? all.filter((o) => o.d >= lo && o.d <= hi) : all;
+    if (useRange && inRange.length === 0) continue;
+    const n = inRange.length;
+    const ult = n >= 1 ? inRange[n - 1] : null;
+    const pen = n >= 2 ? inRange[n - 2] : null;
+    const variacao = ult && pen && pen.v > 0 ? Math.round(((ult.v - pen.v) / pen.v) * 1000) / 10 : null;
+    rows.push({
+      id: String(c.id), nome: c.nome || "(sem nome)", municipio: c.municipio || "", vendedor: c.vendedor || "Sem vendedor",
+      periodicidade: c.periodicidade || "", redeId: c.rede_id ? String(c.rede_id) : "", redeNome: c.rede_nome || "",
+      ultimo: ult ? Math.round(ult.v * 100) / 100 : 0, ultimoData: ult ? ult.d : "",
+      penultimo: pen ? Math.round(pen.v * 100) / 100 : 0, penultimoData: pen ? pen.d : "",
+      variacao, serie: serie.map((x) => Math.round(x * 100) / 100),
+    });
+  }
+  return { asOf: today, months, rows };
+}
+
 // Resolve o NOME do vendedor logado (para escopo de carteira) — vazio p/ admin e demais papeis.
 async function scopeSellerName(req: any): Promise<string> {
   try {
@@ -313,6 +375,16 @@ export function registerDashboardHistoryRoutes(app: Express): void {
   app.get("/api/dashboard2/termometro", async (req, res) => {
     try { const scopeName = await scopeSellerName(req); const r = await computeDailyThermometer(scopeName || undefined); res.json(r); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
+
+  app.get("/api/dashboard2/clientes-ativos", async (req, res) => {
+    try {
+      const de = String((req.query as any).de || "").slice(0, 10);
+      const para = String((req.query as any).para || "").slice(0, 10);
+      const scopeName = await scopeSellerName(req);
+      const r = await computeClientesAtivos(de || undefined, para || undefined, scopeName || undefined);
+      res.json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
   // Snapshot diario automatico as 23:30 (BRT).
