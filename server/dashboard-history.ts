@@ -182,6 +182,72 @@ export async function computeForecast(only?: string): Promise<{ asOf: string; mo
   return { asOf: today, monthEnd, forecast, total, clients };
 }
 
+// ============================================================================
+// TERMOMETRO DE ALCANCE DO DIA (por vendedor) --- mesma logica da projecao/comparativo:
+// clientes da carteira com padrao de compra no DIA DA SEMANA de hoje, dentro da
+// periodicidade, geram um "potencial" (ticket medio ponderado por recencia).
+// Compara com o realizado de hoje (NF-e de venda) da carteira. 1 registro por vendedor.
+// ============================================================================
+export async function computeDailyThermometer(only?: string): Promise<{ asOf: string; weekday: number; sellers: { seller: string; potencial: number; realizado: number; pct: number; expected: number; bought: number }[] }> {
+  const today = todayBrt();
+  const todayW = weekdayOf(today);
+  const dow0 = todayW === 0 ? 7 : todayW;
+  const weekStart = addDays(today, -(dow0 - 1));
+  const weekEnd = addDays(weekStart, 6);
+  const dcol = nfData("fi");
+  const lookbackStart = addDays(today, -100);
+  const purchases = await rawq(
+    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, " + dcol + "::date::text AS d, COALESCE(SUM(fi.total_invoice),0) AS v" +
+    " FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") +
+    " AND " + dcol + "::date >= '" + lookbackStart + "'::date AND " + dcol + "::date <= '" + today + "'::date" +
+    " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2"
+  );
+  const carteira = await rawq("SELECT doc, seller FROM " + CARTEIRA_SELLER);
+  const docSeller: Record<string, string> = {};
+  for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) docSeller[d] = r.seller || "Sem vendedor"; }
+  const byDoc: Record<string, { d: string; v: number }[]> = {};
+  for (const r of purchases) { const doc = String(r.doc); (byDoc[doc] = byDoc[doc] || []).push({ d: String(r.d).slice(0, 10), v: Number(r.v) || 0 }); }
+  const agg: Record<string, { potencial: number; realizado: number; expected: number; bought: number }> = {};
+  const ensure = (s: string) => (agg[s] = agg[s] || { potencial: 0, realizado: 0, expected: 0, bought: 0 });
+  for (const doc of Object.keys(byDoc)) {
+    const rows = byDoc[doc].filter((x) => x.v > 0).sort((a, b) => a.d.localeCompare(b.d));
+    if (rows.length < 2) continue;
+    let gs = 0, gw = 0; for (let i = 1; i < rows.length; i++) { const g = diffDays(rows[i - 1].d, rows[i].d); if (g > 0) { const w = i; gs += g * w; gw += w; } }
+    if (gw === 0) continue;
+    let P = Math.round(gs / gw); if (P < 3) P = 3; if (P > 45) P = 45;
+    const wc: Record<number, number> = {}; for (const r of rows) { const wd = weekdayOf(r.d); if (wd >= 1 && wd <= 6) wc[wd] = (wc[wd] || 0) + 1; }
+    let W = 1, best = -1; for (const k of Object.keys(wc)) { const wd = Number(k); if (wc[wd] > best) { best = wc[wd]; W = wd; } }
+    let ts = 0, tw = 0; rows.forEach((r, i) => { const w = i + 1; ts += r.v * w; tw += w; }); const T = tw > 0 ? ts / tw : 0;
+    if (T <= 0) continue;
+    const seller = docSeller[doc] || "Sem vendedor";
+    if (only && seller !== only) continue;
+    if (W !== todayW) continue;
+    const L = rows[rows.length - 1].d;
+    const daysSince = diffDays(L, today);
+    let expectedThisWeek = false;
+    if (daysSince > 0) {
+      const kbase = Math.max(1, Math.round(daysSince / P));
+      for (const kk of [kbase, kbase - 1, kbase + 1]) {
+        if (kk < 1) continue;
+        let cand = addDays(L, kk * P), snapped = cand, bd = 99;
+        for (let off = -3; off <= 3; off++) { const cd = addDays(cand, off); if (weekdayOf(cd) === W && Math.abs(off) < bd) { bd = Math.abs(off); snapped = cd; } }
+        if (snapped >= weekStart && snapped <= weekEnd) { expectedThisWeek = true; break; }
+      }
+    }
+    if (expectedThisWeek) {
+      const a = ensure(seller); a.potencial += T; a.expected += 1;
+      if (rows.some((r) => r.d === today)) a.bought += 1;
+    }
+  }
+  for (const doc of Object.keys(byDoc)) {
+    const seller = docSeller[doc]; if (!seller) continue; if (only && seller !== only) continue;
+    const tv = byDoc[doc].filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
+    if (tv > 0) { ensure(seller).realizado += tv; }
+  }
+  const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : (a.realizado > 0 ? 999 : 0); return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought }; }).filter((x) => x.potencial > 0 || x.realizado > 0).sort((a, b) => b.potencial - a.potencial);
+  return { asOf: today, weekday: todayW, sellers };
+}
+
 // Resolve o NOME do vendedor logado (para escopo de carteira) — vazio p/ admin e demais papeis.
 async function scopeSellerName(req: any): Promise<string> {
   try {
@@ -232,6 +298,11 @@ export function registerDashboardHistoryRoutes(app: Express): void {
   // Previsao de faturamento por cliente da carteira (periodicidade + dia da semana).
   app.get("/api/dashboard2/forecast", async (req, res) => {
     try { const scopeName = await scopeSellerName(req); const r = await computeForecast(scopeName || undefined); res.json(r); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
+
+  app.get("/api/dashboard2/termometro", async (req, res) => {
+    try { const scopeName = await scopeSellerName(req); const r = await computeDailyThermometer(scopeName || undefined); res.json(r); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
