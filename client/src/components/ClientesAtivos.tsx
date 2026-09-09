@@ -152,11 +152,11 @@ export default function ClientesAtivos() {
                       </td>
                       <td className="px-2 py-1 text-right text-indigo-800 font-medium whitespace-nowrap">{brl(total)}</td>
                     </tr>
-                    {open && sortRows(g.rows).map((r: Row) => <Rowline key={r.id} r={r} indent />)}
+                    {open && sortRows(g.rows, (row, key) => (row as any)[key]).map((r: Row) => <Rowline key={r.id} r={r} indent />)}
                   </Fragment>
                 );
               })}
-              {sortRows(grouped.avulsos).map((r: Row) => <Rowline key={r.id} r={r} />)}
+              {sortRows(grouped.avulsos, (row, key) => (row as any)[key]).map((r: Row) => <Rowline key={r.id} r={r} />)}
             </tbody>
           </table>
         </div>
