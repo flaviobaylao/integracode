@@ -60,6 +60,7 @@ import { authenticateUser, requireRole, gone } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
+import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerFabricaRoutes } from './fabrica-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
@@ -2908,6 +2909,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // AVCB, contrato social, certificado... com instancia, vigencia, status e
   // arquivo anexado — 05/set/2026. Rotas /api/industria/documentos*.
   try { registerCompanyDocumentsRoutes(app); } catch (e) { console.error('[docs-empresa]', e); }
+
+  // Check-list da industria (modelos + execucoes com foto, responsavel e
+  // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
+  // Rotas /api/industria/checklists*, /checklist-execucoes*, /funcionarios*.
+  try { registerChecklistIndustriaRoutes(app); } catch (e) { console.error('[checklist-ind]', e); }
   // Checklist de producao + manutencao de maquinas (Flavio 05/set) — mesmo guard /api/industria
   try { registerFabricaRoutes(app); } catch (e) { console.error('[fabrica]', e); }
 
