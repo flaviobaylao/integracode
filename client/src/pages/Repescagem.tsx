@@ -165,7 +165,7 @@ export default function Repescagem() {
   const reassign = useMutation({
     mutationFn: async ({ assignmentId, toUserId }: { assignmentId: string; toUserId: string }) =>
       apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/reassign`, { toUserId }),
-    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Atendente alterado', description: 'A linha foi travada para não sofrer redistribuição no dia.' }); },
+    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Atendente alterado', description: 'Atendente atualizado (sem trava).' }); },
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao reatribuir', variant: 'destructive' }),
   });
 
@@ -173,7 +173,7 @@ export default function Repescagem() {
   const assign = useMutation({
     mutationFn: async ({ customerId, toUserId, lastRedDate }: { customerId: string; toUserId: string; lastRedDate: string }) =>
       apiRequest('POST', '/api/repescagem/assign', { customerId, toUserId, lastRedDate }),
-    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Cliente atribuído', description: 'A linha foi travada para não sofrer redistribuição no dia.' }); },
+    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Cliente atribuído', description: 'Atendente atribuído (sem trava).' }); },
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao atribuir', variant: 'destructive' }),
   });
 
