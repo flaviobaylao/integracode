@@ -375,47 +375,48 @@ if (process.env.NODE_ENV === 'production' || process.env.REPL_DEPLOYMENT) {
   console.log('⚠️ [SCHEDULER] Liberacao automatica de bloqueados DESATIVADA (ambiente de desenvolvimento)');
 }
 
-// 🎯 Distribuicao da REPESCAGEM: todos os dias as 22:00 (BRT), programando a ROTA DO DIA SEGUINTE.
-// 1) gera as rotas de AMANHA p/ os vendedores ativos com coordenadas; 2) roda a distribuicao da
-//    repescagem p/ amanha sobre essas rotas (perimetro 2km, teto 3/vendedor, PROPRIO vendedor
-//    primeiro; o restante vai ao telemarketing habilitado). Idempotente por dia (force refaz o nao-atendido).
-cron.schedule('0 22 * * *', async () => {
-  console.log('🎯 [REPESCAGEM-22H] Iniciando distribuicao da repescagem para o dia seguinte...');
+// 🎯 Distribuicao da REPESCAGEM: todos os dias as 00:10 (BRT), programando a ROTA DO DIA (HOJE).
+// Roda logo APOS a meia-noite para capturar o DIA ANTERIOR INTEIRO: clientes cuja visita/dia de
+// rota do dia anterior nao foi atendida (sem check-in e sem pedido) caem em repescagem hoje. Assim
+// os nao atendidos de ontem entram sem depender de alguem abrir a tela.
+// 1) gera as rotas de HOJE p/ os vendedores ativos com coordenadas; 2) roda a distribuicao da
+//    repescagem p/ HOJE (Carlos/Radilton->Leticia, Jhonatan/Cleber->Robson, Gilmar 50/50
+//    Leticia/Robson, todos tambem no proprio dono). Idempotente por dia (force refaz o nao-atendido,
+//    preservando as linhas travadas manualmente do dia).
+cron.schedule('10 0 * * *', async () => {
+  console.log('🎯 [REPESCAGEM-00H] Iniciando distribuicao da repescagem para HOJE (captura o dia anterior)...');
   try {
     const { users } = await import('../shared/schema');
     const { eq } = await import('drizzle-orm');
     const { runRepescagemDrawForDate, notifyRepescagemWhatsApp } = await import('./repescagem-routes');
     const { generateDailyRoute } = await import('./routeOptimizationService');
 
-    // amanha (BRT)
-    // Amanha no Brasil, como DATA DE CALENDARIO. Antes saia de nowBrazil() + toISOString(),
-    // que so acertava por causa do deslocamento de -3h. Ver shared/tempo.ts.
-    const amanha = dataCalendario(hojeBR());
-    amanha.setUTCDate(amanha.getUTCDate() + 1);
-    const amanhaStr = amanha.toISOString().split('T')[0];
+    // hoje (BRT), como DATA DE CALENDARIO. Roda 00:10, entao hojeBR() ja e o novo dia.
+    const hoje = dataCalendario(hojeBR());
+    const hojeStr = hoje.toISOString().split('T')[0];
 
-    // 1) Gerar as rotas de AMANHA (programa a "rota do dia seguinte").
+    // 1) Gerar as rotas de HOJE (programa a "rota do dia").
     const vendedores = await db.select().from(users).where(eq(users.role, 'vendedor'));
     let rotasGeradas = 0, rotasPuladas = 0, rotasErro = 0;
     for (const v of vendedores) {
       try {
         if (!v.homeLatitude || !v.homeLongitude) { rotasPuladas++; continue; }
-        const existe = await storage.getDailyRouteBySellerAndDate(v.id, amanha);
+        const existe = await storage.getDailyRouteBySellerAndDate(v.id, hoje);
         if (existe) { rotasPuladas++; continue; }
-        await generateDailyRoute(storage, v.id, amanha);
+        await generateDailyRoute(storage, v.id, hoje);
         rotasGeradas++;
-      } catch (e: any) { rotasErro++; console.error(`[REPESCAGEM-22H] rota amanha ${v.firstName || v.id}:`, e?.message); }
+      } catch (e: any) { rotasErro++; console.error(`[REPESCAGEM-00H] rota hoje ${v.firstName || v.id}:`, e?.message); }
     }
-    console.log(`🗺️ [REPESCAGEM-22H] Rotas de amanha (${amanhaStr}): ${rotasGeradas} geradas, ${rotasPuladas} puladas, ${rotasErro} erros`);
+    console.log(`🗺️ [REPESCAGEM-00H] Rotas de hoje (${hojeStr}): ${rotasGeradas} geradas, ${rotasPuladas} puladas, ${rotasErro} erros`);
 
-    // 2) Rodar a distribuicao/sorteio da repescagem p/ AMANHA sobre as rotas geradas.
-    const r = await runRepescagemDrawForDate(amanhaStr, { force: true });
-    console.log(`🎯 [REPESCAGEM-22H] Distribuicao ${amanhaStr}: externos=${r?.allocatedExternal} telemarketing=${r?.allocatedTelemarketing} (cand=${r?.candidates}, semCoord=${r?.withoutCoords})`);
+    // 2) Rodar a distribuicao/sorteio da repescagem p/ HOJE sobre as rotas geradas.
+    const r = await runRepescagemDrawForDate(hojeStr, { force: true });
+    console.log(`🎯 [REPESCAGEM-00H] Distribuicao ${hojeStr}: externos=${r?.allocatedExternal} telemarketing=${r?.allocatedTelemarketing} (cand=${r?.candidates}, semCoord=${r?.withoutCoords})`);
     // Fase 2: notifica os vendedores externos por WhatsApp (DESLIGADO por padrao ate flag 'repescagem_whatsapp_enabled'='true').
     const wa = await notifyRepescagemWhatsApp();
-    console.log(`📲 [REPESCAGEM-22H] WhatsApp vendedores externos: ${wa?.enabled ? 'ENVIADO' : 'dry-run'} (${wa?.vendors} vendedor(es)).`);
+    console.log(`📲 [REPESCAGEM-00H] WhatsApp vendedores externos: ${wa?.enabled ? 'ENVIADO' : 'dry-run'} (${wa?.vendors} vendedor(es)).`);
   } catch (e: any) {
-    console.error('❌ [REPESCAGEM-22H] falha:', e?.message || e);
+    console.error('❌ [REPESCAGEM-00H] falha:', e?.message || e);
   }
 }, { timezone: 'America/Sao_Paulo' });
 
