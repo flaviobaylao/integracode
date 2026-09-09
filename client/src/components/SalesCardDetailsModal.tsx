@@ -237,6 +237,8 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
   });
 
   const handleSendToOmie = () => {
+    // 09/set/2026: sem esta guarda, um 2º clique durante o envio criava pedido duplicado no funil.
+    if (sendToOmieMutation.isPending) return;
     if (!card?.saleValue || parseFloat(card.saleValue) === 0) {
       toast({
         title: "Aviso",
