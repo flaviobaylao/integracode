@@ -6,9 +6,10 @@
 import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MultiSelect } from "@/lib/tableTools";
 
 type Row = { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number; clientes?: { nome: string; potencial: number; comprou: boolean; hoje: number; ultValor: number; ultData: string }[] };
-type Resp = { asOf: string; weekday: number; sellers: Row[] };
+type Resp = { asOf: string; weekday: number; periodicidades?: string[]; sellers: Row[] };
 
 const DOWLBL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
@@ -113,8 +114,11 @@ function buildText(rows: Row[], weekdayLabel: string, dateLbl: string): string {
 }
 
 export default function Termometro() {
-  const { data, isLoading } = useQuery<Resp>({ queryKey: ["/api/dashboard2/termometro"] });
+  const [fPer, setFPer] = useState<string[]>([]);
+  const qs = fPer.length ? "?per=" + encodeURIComponent(fPer.join(",")) : "";
+  const { data, isLoading } = useQuery<Resp>({ queryKey: ["/api/dashboard2/termometro" + qs] });
   const rows: Row[] = (data && data.sellers) || [];
+  const pers: string[] = (data && data.periodicidades) || [];
   const asOf = (data && data.asOf) || "";
   const wd = data && typeof data.weekday === "number" ? data.weekday : new Date().getDay();
   const weekdayLabel = DOWLBL[wd] || "";
@@ -156,6 +160,11 @@ export default function Termometro() {
           <div className="text-xs text-gray-500 mt-1">
             Realizado de hoje x potencial médio dos clientes da carteira com rota/compra em {weekdayLabel.toLowerCase()} ({dateLbl}).
           </div>
+          {pers.length > 0 && (
+            <div className="mt-3">
+              <MultiSelect label="Periodicidade" options={pers} selected={fPer} onChange={setFPer} />
+            </div>
+          )}
         </div>
         <button
           onClick={share}
