@@ -894,6 +894,42 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  // Reverter cancelamento de uma NF de compra: devolve a nota ao estágio
+  // compatível com os dados que ela já possui (linked > classified > imported > detected).
+  app.patch("/api/purchases/:id/uncancel", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    try {
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "NF não encontrada" });
+      if (invoice.status !== "cancelled") {
+        return res.status(400).json({ error: "Só é possível reverter NFs canceladas" });
+      }
+
+      const hasItems = Array.isArray(invoice.items) && (invoice.items as any[]).length > 0;
+      const targetStatus = invoice.payableId
+        ? "linked"
+        : (invoice.chartAccountId || invoice.classifiedAt)
+          ? "classified"
+          : (invoice.importedAt || invoice.xmlContent || hasItems)
+            ? "imported"
+            : "detected";
+
+      const carimbo = `[${agora().toLocaleString("pt-BR")}] Cancelamento revertido para "${targetStatus}" por ${req.user?.email || req.user?.id || "usuário"}`;
+
+      const [updated] = await db.update(purchaseInvoices)
+        .set({
+          status: targetStatus,
+          notes: invoice.notes ? `${invoice.notes}\n${carimbo}` : carimbo,
+          updatedAt: agora(),
+        })
+        .where(eq(purchaseInvoices.id, req.params.id))
+        .returning();
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.delete("/api/purchases/:id", authenticateUser, requireRole(["admin"]), async (req: any, res) => {
     try {
       await db.delete(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
