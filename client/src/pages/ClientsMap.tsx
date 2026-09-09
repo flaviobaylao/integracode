@@ -357,10 +357,25 @@ export default function ClientsMap() {
     }
   };
   // Junta as situações selecionadas num conjunto só de pontos.
-  const customers: Customer[] = useMemo(() => SITUACAO_OPTIONS.flatMap((l) =>
-    situacaoOn(l) && Array.isArray(queryPorSituacao[l].data) ? (queryPorSituacao[l].data as Customer[]) : []
+  // ⚠️ UM CADASTRO PODE VIR EM DUAS SITUAÇÕES: "perdido" é um cliente ATIVO em churn, então os
+  // 128 perdidos são os MESMOS ids que estão em ativos. Sem deduplicar, marcar Ativos+Perdidos
+  // punha o mesmo cliente duas vezes na lista (key repetida no React) e o Leaflet deixava
+  // marcadores ÓRFÃOS no mapa — pin colorido continuando na tela com outro filtro marcado.
+  // Regra: a situação MAIS ESPECÍFICA ganha (lead > perdido > inativado > ativo).
+  const customers: Customer[] = useMemo(() => {
+    const PRIORIDADE: Record<string, number> = { lead: 4, perdido: 3, inativado: 2, ativo: 1 };
+    const porId = new Map<string, any>();
+    for (const l of SITUACAO_OPTIONS) {
+      if (!situacaoOn(l) || !Array.isArray(queryPorSituacao[l].data)) continue;
+      for (const c of queryPorSituacao[l].data as any[]) {
+        const chave = String(c.id);
+        const atual = porId.get(chave);
+        if (!atual || (PRIORIDADE[c.situacao] || 0) > (PRIORIDADE[atual.situacao] || 0)) porId.set(chave, c);
+      }
+    }
+    return Array.from(porId.values()) as Customer[];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [qAtivos.data, qInativados.data, qPerdidos.data, qLeads.data, situacoes]);
+  }, [qAtivos.data, qInativados.data, qPerdidos.data, qLeads.data, situacoes]);
 
   const { data: usersForType } = useQuery<any[]>({
     queryKey: ['/api/users'],
@@ -501,7 +516,7 @@ export default function ClientsMap() {
   // ⚡ Os marcadores só são reconstruídos quando o conjunto de pontos (ou a permissão/cópia) muda.
   const marcadores = useMemo(() => activeCustomersWithCoords.map((customer) => (
     <PontoDoMapa
-      key={customer.id}
+      key={`${(customer as any).situacao || 'ativo'}-${customer.id}`}
       customer={customer}
       podeEditar={!!canEditCustomer}
       copiado={copiadoId === String(customer.id)}
