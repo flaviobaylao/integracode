@@ -179,9 +179,9 @@ export default function Termometro() {
                 <div className="text-lg font-bold" style={{ color: colorFor(r.pct) }}>{r.pct == null ? "-" : r.pct + "%"}</div>
                 <div className="text-[11px] font-medium mb-1" style={{ color: colorFor(r.pct) }}>{statusFor(r.pct)}</div>
                 <div className="text-[11px] text-gray-600 text-center leading-tight">
-                  {brl(r.realizado)}<span className="text-gray-400"> / {brl(r.potencial)}</span>
+                  {brl(r.realizado)}<span className="text-gray-600"> / {brl(r.potencial)}</span>
                 </div>
-                <div className="text-[10px] text-gray-400 mt-0.5">{r.bought}/{r.expected} clientes</div>
+                <div className="text-[10px] text-gray-700 mt-0.5">{r.bought}/{r.expected} clientes</div>
                 {r.clientes && r.clientes.length > 0 && (
                   <button type="button" onClick={() => setOpen((o) => ({ ...o, [r.seller]: !o[r.seller] }))} className="mt-2 text-[11px] text-indigo-600 hover:underline">
                     {openMap[r.seller] ? "Ocultar clientes" : "Ver clientes (" + r.clientes.length + ")"}
@@ -191,10 +191,10 @@ export default function Termometro() {
                   <div className="mt-2 w-full border-t border-gray-100 pt-2 space-y-1 text-left">
                     {r.clientes.map((cl, ci) => (
                       <div key={ci} className="flex items-start justify-between gap-1 text-[10px]">
-                        <span className={cl.comprou ? "truncate text-gray-800 flex-1" : "truncate text-gray-400 flex-1"} title={cl.nome}>{cl.nome}</span>
+                        <span className={cl.comprou ? "truncate text-gray-900 flex-1" : "truncate text-gray-900 flex-1"} title={cl.nome}>{cl.nome}</span>
                         <span className="text-right whitespace-nowrap">
-                          <span className={cl.comprou ? "text-emerald-600 font-medium" : "text-gray-400"}>{cl.comprou ? brl(cl.hoje) : "não comprou"}</span>
-                          <span className="block text-gray-400">ref {brl(cl.potencial)}</span>
+                          <span className={cl.comprou ? "text-emerald-600 font-medium" : "text-gray-900"}>{cl.comprou ? brl(cl.hoje) : "não comprou"}</span>
+                          <span className="block text-gray-700">ref {brl(cl.potencial)}</span>
                         </span>
                       </div>
                     ))}
