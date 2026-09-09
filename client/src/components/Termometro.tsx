@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type Row = { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number };
+type Row = { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number; clientes?: { nome: string; potencial: number; comprou: boolean; hoje: number }[] };
 type Resp = { asOf: string; weekday: number; sellers: Row[] };
 
 const DOWLBL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -120,6 +120,7 @@ export default function Termometro() {
   const weekdayLabel = DOWLBL[wd] || "";
   const dateLbl = fmtDate(asOf);
   const [sharing, setSharing] = useState(false);
+  const [openMap, setOpen] = useState<Record<string, boolean>>({});
 
   async function share() {
     if (!rows.length) return;
@@ -170,7 +171,7 @@ export default function Termometro() {
           <div className="text-sm text-gray-500 py-8 text-center">Nenhum cliente previsto para hoje.</div>
         )}
         {!isLoading && rows.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 items-start">
             {rows.map((r) => (
               <div key={r.seller} className="flex flex-col items-center rounded-xl border border-gray-200 bg-white p-3">
                 <div className="text-sm font-semibold text-gray-800 text-center truncate w-full" title={r.seller}>{r.seller}</div>
@@ -181,6 +182,24 @@ export default function Termometro() {
                   {brl(r.realizado)}<span className="text-gray-400"> / {brl(r.potencial)}</span>
                 </div>
                 <div className="text-[10px] text-gray-400 mt-0.5">{r.bought}/{r.expected} clientes</div>
+                {r.clientes && r.clientes.length > 0 && (
+                  <button type="button" onClick={() => setOpen((o) => ({ ...o, [r.seller]: !o[r.seller] }))} className="mt-2 text-[11px] text-indigo-600 hover:underline">
+                    {openMap[r.seller] ? "Ocultar clientes" : "Ver clientes (" + r.clientes.length + ")"}
+                  </button>
+                )}
+                {openMap[r.seller] && r.clientes && (
+                  <div className="mt-2 w-full border-t border-gray-100 pt-2 space-y-1 text-left">
+                    {r.clientes.map((cl, ci) => (
+                      <div key={ci} className="flex items-start justify-between gap-1 text-[10px]">
+                        <span className={cl.comprou ? "truncate text-gray-800 flex-1" : "truncate text-gray-400 flex-1"} title={cl.nome}>{cl.nome}</span>
+                        <span className="text-right whitespace-nowrap">
+                          <span className={cl.comprou ? "text-emerald-600 font-medium" : "text-gray-400"}>{cl.comprou ? brl(cl.hoje) : "não comprou"}</span>
+                          <span className="block text-gray-400">ref {brl(cl.potencial)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
