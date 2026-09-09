@@ -392,6 +392,27 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
     if (!ev.falls || !ev.lastRedAnchor) continue;
 
+    // REFINO (proxima data de visita): para QUINZENAL e MENSAL, se ainda ha uma visita agendada
+    // NESTA semana (de hoje ate domingo) o cliente esta na SEMANA DA PROXIMA VISITA -> NAO cai em
+    // repescagem ainda (aguarda a visita para vender). So cai 1 dia DEPOIS da data prevista, se a
+    // bolinha continuar vermelha (a partir dai o ciclo ancora nessa visita e a regra base assume).
+    // SEMANAL nao tem essa carencia: cai 1 dia apos o dia de rota se a ultima bolinha estiver vermelha.
+    {
+      const isSemanal = String(c.periodicity || 'semanal').toLowerCase().indexOf('seman') >= 0;
+      if (!isSemanal) {
+        const mkU = (s: string) => new Date(s + 'T12:00:00Z');
+        const isoU = (dt: Date) => dt.toISOString().slice(0, 10);
+        const td = mkU(todayStr);
+        const toSun = (7 - td.getUTCDay()) % 7; // dias ate o domingo desta semana
+        const eow = new Date(td); eow.setUTCDate(td.getUTCDate() + toSun);
+        let upcomingThisWeek = false;
+        for (let d = new Date(td); d <= eow; d.setUTCDate(d.getUTCDate() + 1)) {
+          if (isPlannedCycle(isoU(d), dows, c.periodicity || 'semanal')) { upcomingThisWeek = true; break; }
+        }
+        if (upcomingThisWeek) continue; // dentro da semana da proxima visita -> nao cai ainda
+      }
+    }
+
     const lastRedDate = ev.lastRedAnchor;
     const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
     candidates.push({
