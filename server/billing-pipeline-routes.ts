@@ -616,25 +616,38 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
 // pedido. A trava suave (cliente+valor+produtos, 15 dias) continua no handler.
 // Idempotência: após enviar, o card permanente fica sem venda (saleValue null),
 // então um reenvio acidental é barrado pela checagem "sem venda registrada".
-// Cards NÃO permanentes seguem o fluxo antigo (enviam a si mesmos).
+// Cards NÃO permanentes e SEM item no funil seguem o fluxo antigo (enviam a si mesmos).
+// REAPROVEITAMENTO (11/set/2026): se o card — permanente OU não — JÁ possui um item vivo
+// (não-lixeira) de um pedido anterior, um novo pedido finalizado nele NÃO pode reenviar o mesmo
+// salesCardId — a trava de duplicidade descartava o 2º pedido e o finalize sobrescrevia o card,
+// fazendo os pedidos se "fundirem" (ex.: venda R$197,80 + troca R$98 no mesmo card do NSA: a
+// troca sumia do funil e reescrevia a venda). Nesse caso também geramos um CARD-FILHO por pedido
+// (item/NF próprios) e zeramos o card de origem, liberando-o para o próximo pedido.
 export async function finalizarPedidoParaPipeline(
   card: any,
   createdByEmail: string,
   opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null; skipHistoryGuard?: boolean },
 ): Promise<{ item: any; alvo: any }> {
-  if (!card?.isPermanent) {
-    // Fluxo antigo: o próprio card entra no pipeline.
+  // O card já carrega um pedido vivo no funil? (lixeira não conta). Se sim, é reaproveitamento.
+  let jaTemItemVivo = false;
+  try {
+    const _existing = await storage.getBillingPipelineItems();
+    jaTemItemVivo = !!_existing.find((i: any) => i.salesCardId === card?.id && String(i.stage) !== 'lixeira');
+  } catch (e: any) { console.warn('[FINALIZAR-PEDIDO] falha ao checar item existente (segue):', e?.message); }
+
+  if (!card?.isPermanent && !jaTemItemVivo) {
+    // Fluxo antigo: card não-permanente e sem pedido no funil → o próprio card entra no pipeline.
     const item = await autoSendToBillingPipeline(card, createdByEmail, opts);
     return { item, alvo: card };
   }
-  // Card permanente → cria o card-filho do pedido (id próprio) e envia o FILHO.
+  // Card permanente OU card reutilizado (já tem item vivo) → cria o card-filho do pedido e envia o FILHO.
   const filho = await storage.createSalesCard({
     customerId: card.customerId,
     sellerId: card.sellerId,
     status: 'completed',
     isPermanent: false,
     isRecurring: false,
-    parentCardId: card.id,
+    parentCardId: card.parentCardId || card.id,
     routeDay: card.routeDay || 'Seg',
     recurrenceType: card.recurrenceType || 'semanal',
     scheduledDate: card.scheduledDate || agora(),
@@ -656,14 +669,16 @@ export async function finalizarPedidoParaPipeline(
     source: card.source ?? 'integra',
   } as any);
   const item = await autoSendToBillingPipeline(filho, createdByEmail, opts);
-  // ZERA o card permanente para permitir um novo pedido — SOMENTE se o pedido entrou
-  // (item criado). Se foi bloqueado/duplicado, mantém o card como está.
+  // ZERA o card de origem (permanente ou reutilizado) para liberar um novo pedido — SOMENTE se o
+  // pedido entrou (item criado). Se foi bloqueado/duplicado, mantém o card como está.
+  // Obs.: o item do pedido ANTERIOR permanece intacto — ele guarda o próprio snapshot de
+  // produtos/valor, então zerar o card não afeta a NF do pedido que já estava no funil.
   if (item) {
     try {
       await storage.updateSalesCard(card.id, {
         products: [], saleValue: null, completedDate: null, deliveryPointId: null, status: 'pending',
       } as any);
-    } catch (e: any) { console.warn('[FINALIZAR-PEDIDO] falha ao zerar card permanente (segue):', e?.message); }
+    } catch (e: any) { console.warn('[FINALIZAR-PEDIDO] falha ao zerar card de origem (segue):', e?.message); }
   }
   return { item, alvo: filho };
 }
