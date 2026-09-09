@@ -29,7 +29,7 @@ import {
 type Linha = {
   vendedorId: string; vendedor: string; papel: string | null; ativo: boolean;
   visitas: number; atendimentos: number; pedidos: number; valorPedidos: number;
-  repescagem: number; faturado: number; notas: number;
+  repescagem: number; repescagemAlocados: number; faturado: number; notas: number;
   km: number | null; kmFonte: 'rota' | 'checkpoints' | null;
   primeiroCheckIn: string | null; ultimoCheckIn: string | null;
 };
@@ -37,7 +37,7 @@ type Resposta = {
   dia: string; hoje: string; ehHoje: boolean; geradoEm: string;
   totais: {
     vendedores: number; emCampo: number; visitas: number; atendimentos: number; pedidos: number;
-    valorPedidos: number; repescagem: number; faturado: number; notas: number; km: number;
+    valorPedidos: number; repescagem: number; repescagemAlocados: number; faturado: number; notas: number; km: number;
   };
   vendedores: Linha[];
   evolutivoRepescagem: { de: string; ate: string; dias: { dia: string; sorteados: number; atendidos: number }[] };
@@ -151,6 +151,7 @@ export default function PainelAtendimento() {
         Pedidos: l.pedidos,
         'Valor pedidos': l.valorPedidos,
         'Repescagem atendida': l.repescagem,
+        'Repescagem alocada': l.repescagemAlocados,
         'Notas emitidas': l.notas,
         Faturado: l.faturado,
         'Km rodado': l.km ?? '',
@@ -229,7 +230,7 @@ export default function PainelAtendimento() {
           <Kpi icone={<MapPin className="h-4 w-4" />} rotulo="Visitas" valor={fmtInt(t.visitas)} sub="check-ins (clientes)" testid="kpi-visitas" />
           <Kpi icone={<Headset className="h-4 w-4" />} rotulo="Atendimentos" valor={fmtInt(t.atendimentos)} sub="visita, virtual ou pedido" testid="kpi-atendimentos" />
           <Kpi icone={<ShoppingCart className="h-4 w-4" />} rotulo="Pedidos" valor={fmtInt(t.pedidos)} sub={fmtBRL(t.valorPedidos)} testid="kpi-pedidos" />
-          <Kpi icone={<Redo2 className="h-4 w-4" />} rotulo="Repescagem" valor={fmtInt(t.repescagem)} sub="atendidas" testid="kpi-repescagem" />
+          <Kpi icone={<Redo2 className="h-4 w-4" />} rotulo="Repescagem" valor={fmtInt(t.repescagem)} sub={`atendidos de ${fmtInt(t.repescagemAlocados)} alocados`} testid="kpi-repescagem" />
           <Kpi icone={<FileCheck2 className="h-4 w-4" />} rotulo="Faturado" valor={fmtBRL(t.faturado)} sub={`${fmtInt(t.notas)} NF-e`} testid="kpi-faturado" />
           <Kpi icone={<Route className="h-4 w-4" />} rotulo="Km rodado" valor={fmtKm(t.km)} sub="todas as rotas" testid="kpi-km" />
           <Kpi icone={<Users className="h-4 w-4" />} rotulo="Em atividade" valor={`${fmtInt(t.emCampo)} / ${fmtInt(t.vendedores)}`} sub="vendedores" testid="kpi-vendedores" />
@@ -250,7 +251,7 @@ export default function PainelAtendimento() {
                 <SortableTh colKey="atendimentos" label="Atendimentos" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortableTh colKey="pedidos" label="Pedidos" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortableTh colKey="valorPedidos" label="R$ Pedidos" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
-                <SortableTh colKey="repescagem" label="Repescagem" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+                <SortableTh colKey="repescagem" label="Repescagem (atend. / aloc.)" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortableTh colKey="faturado" label="Faturado" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortableTh colKey="km" label="Km rodado" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortableTh colKey="primeiroCheckIn" label="1º check-in" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
@@ -278,7 +279,12 @@ export default function PainelAtendimento() {
                     <td className="px-2 py-1 text-right"><Barra valor={l.atendimentos} max={max.atendimentos}>{fmtInt(l.atendimentos)}</Barra></td>
                     <td className="px-2 py-1 text-right"><Barra valor={l.pedidos} max={max.pedidos}>{fmtInt(l.pedidos)}</Barra></td>
                     <td className="px-2 py-1 text-right"><Barra valor={l.valorPedidos} max={max.valorPedidos}>{fmtBRL(l.valorPedidos)}</Barra></td>
-                    <td className="px-2 py-1 text-right"><Barra valor={l.repescagem} max={max.repescagem}>{fmtInt(l.repescagem)}</Barra></td>
+                    <td className="px-2 py-1 text-right" title="Clientes em repescagem atendidos hoje por este vendedor / clientes de repescagem alocados a ele hoje">
+                      <Barra valor={l.repescagem} max={max.repescagem}>
+                        {fmtInt(l.repescagem)}
+                        <span className="ml-1 text-xs text-gray-500">/ {fmtInt(l.repescagemAlocados)}</span>
+                      </Barra>
+                    </td>
                     <td className="px-2 py-1 text-right">
                       <Barra valor={l.faturado} max={max.faturado}>
                         <span className="font-medium">{fmtBRL(l.faturado)}</span>
@@ -304,7 +310,7 @@ export default function PainelAtendimento() {
                   <td className="px-3 py-2 text-right tabular-nums">{fmtInt(t.atendimentos)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtInt(t.pedidos)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtBRL(t.valorPedidos)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmtInt(t.repescagem)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmtInt(t.repescagem)} <span className="text-xs font-normal text-gray-500">/ {fmtInt(t.repescagemAlocados)}</span></td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtBRL(t.faturado)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtKm(t.km)}</td>
                   <td colSpan={2} />
@@ -375,6 +381,7 @@ export default function PainelAtendimento() {
 
       <p className="text-xs text-gray-500 dark:text-gray-400">
         Visita = check-in presencial (clientes distintos). Atendimento = cliente atendido por visita, atendimento virtual ou pedido.
+        Repescagem = clientes em repescagem no dia atendidos pelo vendedor / clientes de repescagem alocados a ele no dia.
         Pedidos = implantados no pipeline no dia. Faturado = NF-e de venda autorizada no dia (mesma régua do Faturamento).
         Km = total da rota do dia; <span className="text-amber-600">*</span> = rota ainda aberta (soma parcial entre check-ins).
       </p>
