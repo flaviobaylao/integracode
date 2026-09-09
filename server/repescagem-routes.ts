@@ -997,6 +997,11 @@ const REPESCAGEM_PERIMETER_KM = 2;
 const EXTERNAL_MAX_PER_SELLER = Number.POSITIVE_INFINITY;
 let __drawRunning = false;
 let __lastDrawCheckMs = 0;
+// Reconcile em SEGUNDO PLANO (throttled) — a tela de Repescagem/Rota nao espera o recalculo
+// de 400+ candidatos a cada carregamento; retorna o estado atual do banco e o reconcile roda
+// em background (o proximo load ja reflete). Mantem a tela rapida.
+let __reconcileRunning = false;
+let __lastReconcileMs = 0;
 
 function repHaversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371;
@@ -1312,6 +1317,17 @@ async function maybeAutoDraw(): Promise<void> {
   } finally { __drawRunning = false; }
 }
 
+// Reconcile throttled + fire-and-forget: usado nos GETs (lista/rota) para nao bloquear a tela.
+async function maybeReconcile(actorUserId?: string): Promise<void> {
+  const nowMs = Date.now();
+  if (__reconcileRunning || (nowMs - __lastReconcileMs) < 60000) return;
+  __lastReconcileMs = nowMs;
+  __reconcileRunning = true;
+  try { await reconcileAssignments(actorUserId); }
+  catch (e: any) { console.warn('[REPESCAGEM2-RECONCILE] falha:', e?.message); }
+  finally { __reconcileRunning = false; }
+}
+
 // ============================================================================
 // Repescagem2 — Fase 4: fechamento e devolução
 // "Atendido = tem registro de atendimento OU pedido no dia" → conclui a
@@ -1559,19 +1575,20 @@ export function registerRepescagemRoutes(app: Express, opts: {
         return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
       }
       const phase = role === 'vendedor' ? 'external' : 'telemarketing';
-      // Atualiza a linha (pending) escolhida + TRAVA no dia (dono = quem trocou).
+      // Atualiza a linha (pending) escolhida — SEM travar (a pedido: sem trava automatica).
+      // Se quiser fixar para nao sofrer reconciliacao, use o cadeado manual.
       await db.update(repescagemAssignments).set({
-        assignedUserId: toUserId, phase, locked: true, lockedDate: today, lockedBy: actor?.id || null, assignedAt: new Date(), updatedAt: new Date(),
+        assignedUserId: toUserId, phase, locked: false, lockedDate: null, lockedBy: null, assignedAt: new Date(), updatedAt: new Date(),
       }).where(eq(repescagemAssignments.id, id));
       // Propaga p/ a rota do dia (in_route do MESMO cliente hoje), mantendo consistência.
       await db.execute(sql`UPDATE repescagem_assignments
-        SET assigned_user_id = ${toUserId}, phase = ${phase}, locked = true, locked_date = ${today}, locked_by = ${actor?.id || null}, updated_at = now()
+        SET assigned_user_id = ${toUserId}, phase = ${phase}, locked = false, locked_date = null, locked_by = null, updated_at = now()
         WHERE customer_id = ${a.customerId} AND status = 'in_route' AND draw_date = ${today}`);
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId: id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId,
-        action: 'reassigned', reason: 'Troca manual (linha travada no dia)',
+        action: 'reassigned', reason: 'Troca manual de atendente',
       });
-      res.json({ ok: true, assignmentId: id, assignedUserId: toUserId, phase, locked: true });
+      res.json({ ok: true, assignmentId: id, assignedUserId: toUserId, phase, locked: false });
     } catch (e: any) {
       console.error('POST /api/repescagem/assignments/:id/reassign', e);
       res.status(500).json({ message: e?.message || 'erro' });
@@ -1606,20 +1623,20 @@ export function registerRepescagemRoutes(app: Express, opts: {
       if (existing.length > 0) {
         assignmentId = existing[0].id;
         await db.update(repescagemAssignments).set({
-          assignedUserId: toUserId, phase, locked: true, lockedDate: today, lockedBy: actor?.id || null, assignedAt: new Date(), updatedAt: new Date(),
+          assignedUserId: toUserId, phase, locked: false, lockedDate: null, lockedBy: null, assignedAt: new Date(), updatedAt: new Date(),
         }).where(eq(repescagemAssignments.id, assignmentId));
       } else {
         const ins = await db.insert(repescagemAssignments).values({
           customerId, lastRedDate, assignedUserId: toUserId, status: 'pending', phase,
-          carteiraSellerId, locked: true, lockedDate: today, lockedBy: actor?.id || null,
+          carteiraSellerId, locked: false, lockedDate: null, lockedBy: null,
         }).returning();
         assignmentId = ins[0].id;
       }
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId, customerId, fromUserId: null, toUserId,
-        action: 'assigned', reason: 'Atribuição manual (linha travada no dia)',
+        action: 'assigned', reason: 'Atribuição manual de atendente',
       });
-      res.json({ ok: true, assignmentId, assignedUserId: toUserId, phase, locked: true });
+      res.json({ ok: true, assignmentId, assignedUserId: toUserId, phase, locked: false });
     } catch (e: any) {
       console.error('POST /api/repescagem/assign', e);
       res.status(500).json({ message: e?.message || 'erro' });
@@ -2083,8 +2100,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // e fecha/expira as alocações (atendidos → concluídos; antigos → bolo).
       maybeAutoDraw();
       maybeAutoCloseRepescagem();
-      // Reconciliar primeiro
-      await reconcileAssignments((req as any).currentUser?.id);
+      // Reconciliar em SEGUNDO PLANO (throttled) — nao bloqueia o carregamento da tela.
+      // A lista abaixo reflete o estado atual do banco; o proximo load ja traz o reconcile.
+      maybeReconcile((req as any).currentUser?.id);
 
       const pending = await db.select().from(repescagemAssignments)
         .where(eq(repescagemAssignments.status, 'pending'));
