@@ -2012,7 +2012,7 @@ export default function RotaDoDia() {
                       {repIsExpanded && (<>
                       <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
                         <MapPin className="h-3 w-3" />
-                        {r.address || 'Endereço não informado'}
+                        {[r.address, (r as any).neighborhood, [r.city, r.uf].filter(Boolean).join('/')].filter(Boolean).join(' - ') || 'Endereço não informado'}
                       </p>
                       {(customerInfo?.phones?.[r.customerId] || (r as any).phone) && (
                         <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 mb-1">
@@ -2037,9 +2037,6 @@ export default function RotaDoDia() {
                           {formatPeriodicity(r.visitPeriodicity)}
                         </p>
                       )}
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {[r.city, r.uf].filter(Boolean).join(' / ') || '—'}
-                      </p>
                       </>)}
                     </div>
                     <div className="flex items-center gap-1 flex-wrap justify-end flex-shrink-0">
