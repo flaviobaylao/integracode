@@ -42,6 +42,79 @@ export async function calculateActualRouteDistance(
     throw new Error('Rota não encontrada');
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // ROTA DE PROSPECÇÃO (route_mode='prospeccao'): a km conta o PERCURSO COMPLETO
+  // do vendedor — casa → 1º lead registrado → … → último → casa (INCLUI a ida
+  // casa→1º ponto, diferente da regra normal do dia). Os "check-ins" aqui são os
+  // LEADS REGISTRADOS em nome do vendedor na data da prospecção (cada registro =
+  // passagem no ponto), em ordem cronológica de criação. (set/2026)
+  // ───────────────────────────────────────────────────────────────────────────
+  if ((route as any).routeMode === 'prospeccao') {
+    const { db } = await import('./db');
+    const { sql } = await import('drizzle-orm');
+    // Casa do vendedor (fallback p/ cadastro users.home_*, igual à regra normal).
+    let pHomeLat = parseFloat(route.startLatitude);
+    let pHomeLon = parseFloat(route.startLongitude);
+    const _sid = String((route as any).sellerId || '');
+    if (!coordOk(pHomeLat, pHomeLon) && _sid) {
+      try {
+        const rr: any = await db.execute(sql`SELECT home_latitude AS lat, home_longitude AS lon FROM users WHERE id = ${_sid} OR omie_vendor_code = ${_sid} OR omie_vendor_code = replace(${_sid}, 'omie-vendor-', '') LIMIT 1`);
+        const hr = (rr && (rr.rows || rr))[0];
+        if (hr) { const hl = parseFloat(hr.lat), ho = parseFloat(hr.lon); if (coordOk(hl, ho)) { pHomeLat = hl; pHomeLon = ho; } }
+      } catch (e) { /* mantem o start da rota */ }
+    }
+    // Data da rota (YYYY-MM-DD) — rota gravada em UTC meia-noite.
+    const _dateStr = new Date((route as any).routeDate).toISOString().slice(0, 10);
+    // Leads registrados em nome do vendedor na data (check-ins da prospecção),
+    // em ordem cronológica. Coordenadas são obrigatórias no cadastro de lead.
+    let leadRows: any[] = [];
+    try {
+      const lr: any = await db.execute(sql`
+        SELECT latitude AS lat, longitude AS lon, fantasy_name AS name, created_at
+        FROM leads
+        WHERE (assigned_to = ${_sid} OR created_by = ${_sid})
+          AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${_dateStr}::date
+        ORDER BY created_at ASC
+      `);
+      leadRows = (lr && (lr.rows || lr)) || [];
+    } catch (e) { leadRows = []; }
+
+    const pSegments: Array<{ from: string; to: string; distance: number; isOffRoute: boolean; validationStatus: string }> = [];
+    let pTotal = 0;
+    let pPrevLat = pHomeLat, pPrevLon = pHomeLon;
+    let pHaveOrigin = coordOk(pHomeLat, pHomeLon); // origem = CASA (a ida casa→1º ponto conta)
+    let pPrevName = 'Casa do Vendedor';
+    let pCount = 0;
+    for (const r of leadRows) {
+      const la = parseFloat((r as any).lat), lo = parseFloat((r as any).lon);
+      if (!coordOk(la, lo)) continue;
+      pCount++;
+      if (pHaveOrigin) {
+        try {
+          const d = (await calculateRealDistance(pPrevLat as number, pPrevLon as number, la, lo)) / 1000;
+          pTotal += d;
+          pSegments.push({ from: pPrevName, to: (r as any).name || 'Lead', distance: Math.round(d * 100) / 100, isOffRoute: false, validationStatus: 'validated' });
+        } catch (e) { /* ignora trecho com erro */ }
+      }
+      pPrevLat = la; pPrevLon = lo; pPrevName = (r as any).name || 'Lead'; pHaveOrigin = true;
+    }
+    // Volta pra casa (último lead → casa), fechando o percurso completo.
+    if (pCount > 0 && coordOk(pHomeLat, pHomeLon)) {
+      try {
+        const d = (await calculateRealDistance(pPrevLat as number, pPrevLon as number, pHomeLat, pHomeLon)) / 1000;
+        pTotal += d;
+        pSegments.push({ from: pPrevName, to: 'Casa do Vendedor (Retorno)', distance: Math.round(d * 100) / 100, isOffRoute: false, validationStatus: 'validated' });
+      } catch (e) { /* ignora retorno */ }
+    }
+    return {
+      totalDistance: Math.round(pTotal * 100) / 100,
+      validatedVisits: pCount,
+      offRouteVisits: 0,
+      cancelledVisits: 0,
+      segments: pSegments
+    };
+  }
+
   // Buscar checkpoints em ordem cronológica (apenas check-ins)
   const allCheckpoints = await storage.getRouteCheckpoints(dailyRouteId);
   const checkIns = allCheckpoints
