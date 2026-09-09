@@ -121,8 +121,8 @@ export default function ResumoVisitas() {
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [tipoMulti, setTipoMulti] = useState<string[]>([]);
-  const [freq, setFreq] = useState("");
-  const [segmento, setSegmento] = useState("");
+  const [freqMulti, setFreqMulti] = useState<string[]>([]);
+  const [segmentoMulti, setSegmentoMulti] = useState<string[]>([]);
   const [situacaoMulti, setSituacaoMulti] = useState<string[]>(SITUACAO_PADRAO);
   const [cardFiltro, setCardFiltro] = useState<StatusKey | null>(null);
   const [infoSituacao, setInfoSituacao] = useState(false);
@@ -198,13 +198,13 @@ export default function ResumoVisitas() {
       if (!multiMatch(sellerMulti, r.sellerName || "")) return false;
       if (!multiMatch(cityMulti, cidadeCanonica(r.city))) return false;
       if (!multiMatch(tipoMulti, r.tipoPessoa || "Não identificado")) return false;
-      if (freq && r.periodicity !== freq) return false;
-      if (segmento && ((r.segmento || "").trim() || SEM_SEGMENTO) !== segmento) return false;
+      if (!multiMatch(freqMulti, r.periodicity || "")) return false;
+      if (!multiMatch(segmentoMulti, (r.segmento || "").trim() || SEM_SEGMENTO)) return false;
       if (!multiMatch(situacaoMulti, situacaoDe(r))) return false;
       if (q && !(norm(r.customerName).includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
       return true;
     });
-  }, [rows, search, sellerMulti, cityMulti, tipoMulti, freq, segmento, situacaoMulti, situacaoDe]);
+  }, [rows, search, sellerMulti, cityMulti, tipoMulti, freqMulti, segmentoMulti, situacaoMulti, situacaoDe]);
 
   // Clique num card = manter só os clientes que têm PELO MENOS UM dia naquela condição,
   // dentro do período e dos demais filtros. Clicar de novo no mesmo card limpa.
@@ -357,8 +357,8 @@ export default function ResumoVisitas() {
         <MultiSelect label="Vendedor" options={sellers} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-resumo-visitas" />
         <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={setCityMulti} testId="filter-city-resumo-visitas" />
         <MultiSelect label="Tipo" options={tipos} selected={tipoMulti} onChange={setTipoMulti} testId="filter-tipo-resumo-visitas" />
-        <select className="border rounded px-2 py-1 text-sm" value={freq} onChange={(e) => setFreq(e.target.value)}><option value="">Todas as freq.</option>{freqs.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-        <select className="border rounded px-2 py-1 text-sm" value={segmento} onChange={(e) => setSegmento(e.target.value)} style={{ maxWidth: 260 }} title="Segmento de negócio do cliente (derivado do CNAE)"><option value="">Todos os segmentos</option>{segmentos.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+        <MultiSelect label="Freq." options={freqs} selected={freqMulti} onChange={setFreqMulti} testId="filter-freq-resumo-visitas" />
+        <MultiSelect label="Segmento" options={segmentos} selected={segmentoMulti} onChange={setSegmentoMulti} testId="filter-segmento-resumo-visitas" />
         <div className="relative inline-block" data-testid="filter-situacao-wrap">
           <MultiSelect label="Situação" options={SITUACOES} selected={situacaoMulti} onChange={setSituacaoMulti} testId="filter-situacao-resumo-visitas" />
           <button
