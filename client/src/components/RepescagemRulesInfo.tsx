@@ -35,7 +35,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-green-500 shrink-0" /><span><b>Verde</b> — houve <b>pedido</b> na janela do ciclo.</span></li>
                 <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-yellow-400 shrink-0" /><span><b>Amarelo</b> — houve <b>atendimento</b> (check-in ou virtual), mas <b>sem pedido</b>.</span></li>
                 <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-red-500 shrink-0" /><span><b>Vermelho</b> — passou o dia da visita <b>sem atendimento e sem pedido</b>.</span></li>
-                <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full border border-gray-400 bg-transparent shrink-0" /><span><b>Sem cor</b> — o dia da visita do <b>ciclo atual ainda não chegou</b>.</span></li>
+                <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full border border-gray-400 bg-transparent shrink-0" /><span><b>Sem cor</b> — <b>atendimento do ciclo ainda não realizado</b>.</span></li>
               </ul>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">A repescagem olha a <b>última bolinha</b>: se ela não estiver verde (vermelha ou amarela), o cliente entra na repescagem conforme as regras abaixo.</p>
             </div>
@@ -55,7 +55,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha não estiver verde.</li>
                 <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar sem verde.</li>
                 <li><b>Permanece</b> enquanto a última bolinha não estiver verde. <b>Assim que houver pedido/venda</b> (na data da visita ou depois, inclusive fim de semana), o cliente <b>sai da lista e entra em um novo ciclo</b> — só volta se a próxima visita ficar sem pedido.</li>
-                <li>A bolinha <b>sem cor</b> é o ciclo atual, cujo dia de visita ainda não chegou — cliente nenhum cai por causa dela.</li>
+                <li>A bolinha <b>sem cor</b> é o ciclo atual, com o atendimento ainda não realizado — cliente nenhum cai por causa dela.</li>
               </ul>
             </div>
             <div>
