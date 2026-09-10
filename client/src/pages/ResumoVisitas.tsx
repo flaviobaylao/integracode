@@ -45,6 +45,7 @@ type Row = {
   periodicity: string;
   weekdays: string;
   segmento?: string;
+  razaoSocial?: string;
   documento?: string;
   cadastroAtivo?: boolean;
   tipoPessoa?: string;
@@ -217,7 +218,9 @@ export default function ResumoVisitas() {
       if (!multiMatch(freqMulti, r.periodicity || "")) return false;
       if (!multiMatch(segmentoMulti, (r.segmento || "").trim() || SEM_SEGMENTO)) return false;
       if (!multiMatch(situacaoMulti, situacaoDe(r))) return false;
-      if (q && !(norm(r.customerName).includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
+      // A busca também acha pela razão social — a coluna mostra o nome fantasia, mas quem
+      // digita o nome do CNPJ (ou o antigo, de antes da fantasia ser preenchida) continua achando.
+      if (q && !(norm(r.customerName).includes(q) || norm(r.razaoSocial || "").includes(q) || norm(r.city).includes(q) || norm(r.neighborhood).includes(q))) return false;
       return true;
     });
   }, [rows, search, sellerMulti, cityMulti, tipoMulti, freqMulti, segmentoMulti, situacaoMulti, situacaoDe]);
@@ -436,7 +439,7 @@ export default function ResumoVisitas() {
                 const cm = cellMapFor(r);
                 return (
                   <tr key={`${r.customerId}-${r.sellerName}-${i}`} className="border-t hover:bg-muted/20">
-                    <td style={{ ...stickyL(0), padding: "4px 8px", fontWeight: 500, whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={r.customerName}>{r.customerName}</td>
+                    <td style={{ ...stickyL(0), padding: "4px 8px", fontWeight: 500, whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={r.razaoSocial && r.razaoSocial !== r.customerName ? `${r.customerName} — razão social: ${r.razaoSocial}` : r.customerName}>{r.customerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.sellerName}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.city}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap", textAlign: "center" }}>
