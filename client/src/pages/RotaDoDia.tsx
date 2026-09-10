@@ -94,7 +94,7 @@ function formatPeriodicity(periodicity: string | null | undefined): string {
 // 🟢🟡🔴 Bolinhas de "Efetividade em vendas" (mesma régua do Resumo de Visitas):
 // um ponto por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1). Verde = houve pedido;
 // amarelo = houve atendimento sem pedido; vermelho = passou o dia da visita sem nada;
-// SEM COR = o dia da visita do ciclo atual ainda não chegou. Fica na MESMA linha do nome.
+// SEM COR = atendimento do ciclo ainda não realizado. Fica na MESMA linha do nome.
 type SalesCycle = { anchor?: string; start?: string; end?: string; green: boolean; isPast?: boolean; attended?: boolean; pending?: boolean };
 function corCicloRota(cy: SalesCycle) {
   if (cy.pending) return 'transparent';
@@ -103,7 +103,7 @@ function corCicloRota(cy: SalesCycle) {
   return '#ef4444';
 }
 function textoCicloRota(cy: SalesCycle) {
-  if (cy.pending) return 'visita ainda não chegou';
+  if (cy.pending) return 'Atendimento do ciclo ainda não realizado';
   if (cy.green) return 'houve pedido';
   if (cy.attended) return 'atendido, sem pedido';
   return 'sem atendimento e sem pedido';
@@ -111,7 +111,7 @@ function textoCicloRota(cy: SalesCycle) {
 function SalesCycleDots({ cycles }: { cycles?: SalesCycle[] | null }) {
   if (!cycles || cycles.length === 0) return null;
   return (
-    <span className="inline-flex items-center gap-[3px] align-middle" title="Efetividade em vendas por ciclo: verde = houve pedido; amarelo = atendido sem pedido; vermelho = sem atendimento e sem pedido; sem cor = o dia da visita ainda não chegou">
+    <span className="inline-flex items-center gap-[3px] align-middle" title="Efetividade em vendas por ciclo: verde = houve pedido; amarelo = atendido sem pedido; vermelho = sem atendimento e sem pedido; sem cor = atendimento do ciclo ainda não realizado">
       {cycles.map((cy, ci) => (
         <span
           key={ci}
@@ -1471,7 +1471,7 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#22c55e' }}></span>Pedido no ciclo (efetividade em vendas)</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#eab308' }}></span>Atendido no ciclo, mas sem pedido</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#ef4444' }}></span>Passou o dia da visita sem atendimento e sem pedido</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'transparent', border: '1px dashed #9ca3af', boxSizing: 'border-box' }}></span>Ciclo atual — o dia da visita ainda não chegou</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'transparent', border: '1px dashed #9ca3af', boxSizing: 'border-box' }}></span>Ciclo atual — atendimento do ciclo ainda não realizado</span>
         </div>
       </details>
 
