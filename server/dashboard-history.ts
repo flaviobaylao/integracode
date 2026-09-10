@@ -188,7 +188,7 @@ export async function computeForecast(only?: string): Promise<{ asOf: string; mo
 // periodicidade, geram um "potencial" (ticket medio ponderado por recencia).
 // Compara com o realizado de hoje (NF-e de venda) da carteira. 1 registro por vendedor.
 // ============================================================================
-export async function computeDailyThermometer(only?: string): Promise<{ asOf: string; weekday: number; sellers: { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number }[] }> {
+export async function computeDailyThermometer(only?: string, perFilter?: string[]): Promise<{ asOf: string; weekday: number; periodicidades: string[]; sellers: { seller: string; potencial: number; realizado: number; pct: number | null; expected: number; bought: number }[] }> {
   const today = todayBrt();
   const todayW = weekdayOf(today);
   const dow0 = todayW === 0 ? 7 : todayW;
@@ -210,6 +210,12 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
   const docNames = await rawq("SELECT regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') AS doc, name FROM customers WHERE regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') <> ''");
   const docName: Record<string, string> = {};
   for (const r of docNames) { const d = String(r.doc); if (d && !(d in docName)) docName[d] = String(r.name || ''); }
+  const perRows = await rawq("SELECT regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') AS doc, COALESCE(visit_periodicity::text,'') AS per FROM customers WHERE regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g') <> ''");
+  const docPer: Record<string, string> = {};
+  const perSet = new Set<string>();
+  for (const r of perRows) { const d = String(r.doc); const p = String(r.per || ''); if (d) { if (!(d in docPer)) docPer[d] = p; if (p) perSet.add(p); } }
+  const periodicidades = [...perSet].sort();
+  const perF = (perFilter || []).filter(Boolean);
   const agg: Record<string, { potencial: number; realizado: number; expected: number; bought: number; clientes: { nome: string; potencial: number; comprou: boolean; hoje: number; ultValor: number; ultData: string }[] }> = {};
   const ensure = (s: string) => (agg[s] = agg[s] || { potencial: 0, realizado: 0, expected: 0, bought: 0, clientes: [] });
   for (const doc of Object.keys(byDoc)) {
@@ -224,6 +230,7 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
     if (T <= 0) continue;
     const seller = docSeller[doc] || "Sem vendedor";
     if (only && seller !== only) continue;
+    if (perF.length && !perF.includes(docPer[doc] || "")) continue;
     if (W !== todayW) continue;
     const L = rows[rows.length - 1].d;
     const daysSince = diffDays(L, today);
@@ -248,13 +255,14 @@ export async function computeDailyThermometer(only?: string): Promise<{ asOf: st
   }
   for (const doc of Object.keys(byDoc)) {
     const seller = docSeller[doc]; if (!seller) continue; if (only && seller !== only) continue;
+    if (perF.length && !perF.includes(docPer[doc] || "")) continue;
     const tv = byDoc[doc].filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
     if (tv > 0) { ensure(seller).realizado += tv; }
   }
   const adminRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role = 'admin'");
   const adminSet = new Set(adminRows.map((r: any) => String(r.nome || '')));
   const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : null; return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought, clientes: (a.clientes || []).slice().sort((x, y) => y.potencial - x.potencial) }; }).filter((x) => (x.potencial > 0 || x.realizado > 0) && !adminSet.has(x.seller)).sort((a, b) => b.potencial - a.potencial);
-  return { asOf: today, weekday: todayW, sellers };
+  return { asOf: today, weekday: todayW, periodicidades, sellers };
 }
 
 // ============================================================================
@@ -281,7 +289,9 @@ export async function computeClientesAtivos(de?: string, para?: string, only?: s
     " LEFT JOIN cliente_rede_membros m ON m.customer_id = c.id" +
     " LEFT JOIN cliente_redes rd ON rd.id = m.rede_id" +
     " WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)" +
-    " AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)"
+    " AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = c.id AND ac.is_active IS TRUE)" +
+    " AND NOT (UPPER(COALESCE(c.name,'')||' '||COALESCE(c.fantasy_name,'')) LIKE '%PURO%' AND UPPER(COALESCE(c.name,'')||' '||COALESCE(c.fantasy_name,'')) LIKE '%PRODUTOS NATURAIS%')" +
+    " AND NOT (UPPER(COALESCE(c.name,'')||' '||COALESCE(c.fantasy_name,'')) LIKE '%PURO%' AND UPPER(COALESCE(c.name,'')||' '||COALESCE(c.fantasy_name,'')) LIKE '%CONSULTORIA EMPRESARIAL%')"
   );
   const dcol = nfData("fi");
   const nfe = await rawq(
@@ -373,7 +383,13 @@ export function registerDashboardHistoryRoutes(app: Express): void {
   });
 
   app.get("/api/dashboard2/termometro", async (req, res) => {
-    try { const scopeName = await scopeSellerName(req); const r = await computeDailyThermometer(scopeName || undefined); res.json(r); }
+    try {
+      const scopeName = await scopeSellerName(req);
+      const perRaw = String((req.query as any).per || "");
+      const perFilter = perRaw ? perRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      const r = await computeDailyThermometer(scopeName || undefined, perFilter);
+      res.json(r);
+    }
     catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
