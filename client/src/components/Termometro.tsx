@@ -125,6 +125,7 @@ export default function Termometro() {
   const dateLbl = fmtDate(asOf);
   const [sharing, setSharing] = useState(false);
   const [openMap, setOpen] = useState<Record<string, boolean>>({});
+  const [showInfo, setShowInfo] = useState(false);
 
   async function share() {
     if (!rows.length) return;
@@ -156,10 +157,22 @@ export default function Termometro() {
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4">
         <div>
-          <CardTitle className="text-base font-semibold">Termômetro de Alcance — {weekdayLabel}</CardTitle>
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <span>Termômetro de Alcance — {weekdayLabel}</span>
+            <button type="button" onClick={() => setShowInfo((v) => !v)} className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-400 text-gray-500 text-[10px] font-bold leading-none hover:bg-gray-100" title="Como ler o termômetro" aria-label="Como ler o termômetro">i</button>
+          </CardTitle>
           <div className="text-xs text-gray-500 mt-1">
             Realizado de hoje x potencial médio dos clientes da carteira com rota/compra em {weekdayLabel.toLowerCase()} ({dateLbl}).
           </div>
+          {showInfo && (
+            <div className="mt-2 text-[11px] text-gray-700 bg-blue-50 border border-blue-100 rounded-md p-2 leading-snug max-w-xl">
+              <b>Como ler:</b> cada card é um vendedor. O termômetro mostra <b>quanto do potencial de hoje já foi realizado</b>.<br />
+              • <b>Potencial</b> = soma do ticket médio dos clientes da carteira que costumam comprar <b>neste dia da semana</b>, dentro da periodicidade de cada um.<br />
+              • <b>Realizado</b> = quanto esses mesmos clientes previstos já compraram hoje.<br />
+              • <b>%</b> = realizado ÷ potencial. 🟢 ≥90% no alvo · 🟡 60–89% chegando · 🔴 abaixo de 60% · cinza = sem clientes previstos hoje.<br />
+              • <b>x/y clientes</b> = quantos dos previstos para hoje já compraram.
+            </div>
+          )}
           {pers.length > 0 && (
             <div className="mt-3">
               <MultiSelect label="Periodicidade" options={pers} selected={fPer} onChange={setFPer} />
