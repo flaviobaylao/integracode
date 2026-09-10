@@ -23,13 +23,17 @@ import { queryClient, apiRequest } from '@/lib/queryClient';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 
+type CarteiraCoverage = { sellerId: string; sellerName: string; total: number; assigned: number; pct: number };
 type Attendant = {
   userId: string;
   name: string;
   role: string;
   isEnabled: boolean;
   enabledAt: string | null;
+  carteiras?: string[];
+  coverage?: CarteiraCoverage[];
 };
+type Carteira = { sellerId: string; name: string; role: string };
 
 type Assignment = {
   assignmentId: string;
@@ -148,6 +152,32 @@ export default function Repescagem() {
       toast({ title: 'Erro', description: e?.message || 'Falha ao atualizar', variant: 'destructive' });
     },
   });
+
+  // Carteiras (fontes) selecionáveis = vendedores/telemarketing ativos.
+  const { data: carteiras = [] } = useQuery<Carteira[]>({
+    queryKey: ['/api/repescagem/carteiras'],
+  });
+
+  // Salvar as carteiras de repescagem de um atendente (admin).
+  const saveCarteiras = useMutation({
+    mutationFn: async ({ userId, carteiras }: { userId: string; carteiras: string[] }) =>
+      apiRequest('POST', `/api/repescagem/attendants/${userId}/carteiras`, { carteiras }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/attendants'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      toast({ title: 'Carteiras atualizadas', description: 'Roteamento da repescagem recalculado.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao salvar carteiras', variant: 'destructive' }),
+  });
+
+  // Adiciona/remove uma carteira do atendente (envia a lista inteira atualizada).
+  const carteiraNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of carteiras) m.set(c.sellerId, c.name);
+    return m;
+  }, [carteiras]);
 
   // Invalida tudo que depende da distribuição (lista + rota do dia + rotas).
   const invalidateDistribution = () => {
@@ -370,7 +400,7 @@ export default function Repescagem() {
           >
             <CardTitle className="text-base flex items-center gap-2">
               <UserCheck className="h-4 w-4" />
-              Atendentes habilitados ({enabledAttendants.length})
+              Atendentes e carteiras de repescagem ({enabledAttendants.length})
             </CardTitle>
             {attendantsCollapsed
               ? <ChevronDown className="h-4 w-4 text-gray-500 shrink-0" />
@@ -384,29 +414,78 @@ export default function Repescagem() {
           ) : isAdmin ? (
             <>
               <p className="text-xs text-gray-500">
-                Somente administradores habilitam atendentes. Elegíveis: vendedores externos e telemarketing.
+                Para cada vendedor ativo, marque as <b>carteiras de repescagem</b> que ele recebe na rota do dia.
+                A carteira própria vem marcada (pode remover). A mesma carteira em 2+ atendentes é dividida igualmente.
+                O <b>%</b> em cada carteira mostra quanto dela, em repescagem hoje, está sob este atendente.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {attendants.map(a => (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                {attendants.map(a => {
+                  const sel = a.carteiras || [];
+                  const covById = new Map((a.coverage || []).map(c => [c.sellerId, c]));
+                  const available = carteiras.filter(c => !sel.includes(c.sellerId));
+                  return (
                   <div
                     key={a.userId}
-                    className={`flex items-center justify-between rounded-md border p-2 ${a.isEnabled ? 'bg-green-50 border-green-300 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-800'}`}
+                    className={`rounded-md border p-2 ${sel.length > 0 ? 'bg-green-50 border-green-300 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-800'}`}
                     data-testid={`attendant-row-${a.userId}`}
                   >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{a.name}</p>
-                      <p className="text-[11px] text-gray-500">
-                        {a.role === 'vendedor' ? 'Externo' : a.role === 'telemarketing' ? 'Telemarketing' : a.role}
-                      </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{a.name}</p>
+                        <p className="text-[11px] text-gray-500">
+                          {a.role === 'vendedor' ? 'Externo' : a.role === 'telemarketing' ? 'Telemarketing' : a.role}
+                          {sel.length > 0 ? ` · ${sel.length} carteira(s)` : ' · sem carteiras'}
+                        </p>
+                      </div>
                     </div>
-                    <Switch
-                      checked={a.isEnabled}
-                      onCheckedChange={(v) => toggleAttendant.mutate({ userId: a.userId, isEnabled: v })}
-                      disabled={toggleAttendant.isPending}
-                      data-testid={`switch-attendant-${a.userId}`}
-                    />
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {sel.map(sid => {
+                        const cov = covById.get(sid);
+                        const nm = cov?.sellerName || carteiraNameById.get(sid) || sid;
+                        const isOwn = sid === a.userId;
+                        return (
+                          <span
+                            key={sid}
+                            className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 dark:bg-blue-950/40 pl-2 pr-1 py-0.5 text-[11px]"
+                            data-testid={`carteira-chip-${a.userId}-${sid}`}
+                            title={isOwn ? 'Carteira própria' : 'Carteira recebida'}
+                          >
+                            <span className="font-medium">{nm}{isOwn ? ' (própria)' : ''}</span>
+                            <span className="text-blue-700 dark:text-blue-300 font-semibold">{cov ? `${cov.pct}%` : '0%'}</span>
+                            <button
+                              type="button"
+                              onClick={() => saveCarteiras.mutate({ userId: a.userId, carteiras: sel.filter(x => x !== sid) })}
+                              disabled={saveCarteiras.isPending}
+                              className="ml-0.5 h-4 w-4 inline-flex items-center justify-center rounded-full text-gray-500 hover:bg-red-100 hover:text-red-600"
+                              title="Remover carteira"
+                              data-testid={`carteira-remove-${a.userId}-${sid}`}
+                            >×</button>
+                          </span>
+                        );
+                      })}
+                      {sel.length === 0 && <span className="text-[11px] text-gray-400">Nenhuma carteira — não recebe repescagem.</span>}
+                    </div>
+                    <div className="mt-2">
+                      <Select
+                        value=""
+                        onValueChange={(v) => { if (v) saveCarteiras.mutate({ userId: a.userId, carteiras: Array.from(new Set([...sel, v])) }); }}
+                        disabled={saveCarteiras.isPending || available.length === 0}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs" data-testid={`carteira-add-${a.userId}`}>
+                          <SelectValue placeholder={available.length === 0 ? 'Todas as carteiras adicionadas' : '+ adicionar carteira…'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {available.map(c => (
+                            <SelectItem key={c.sellerId} value={c.sellerId}>
+                              {c.name}{c.sellerId === a.userId ? ' (própria)' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
                 {attendants.length === 0 && (
                   <span className="text-xs text-gray-500">Nenhum atendente elegível.</span>
                 )}
