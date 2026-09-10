@@ -91,12 +91,12 @@ export default function ClientesAtivos() {
   function toggleOne(id: string) { setSel((s) => ({ ...s, [id]: !s[id] })); }
 
   function expandAll() {
-    const n: Record<string, boolean> = {};
+    const n: Record<string, boolean> = { __sem_rede__: true };
     for (const rk of Object.keys(grouped.redes)) n[rk] = true;
     setOpenRedes(n);
   }
   function collapseAll() {
-    const n: Record<string, boolean> = {};
+    const n: Record<string, boolean> = { __sem_rede__: false };
     for (const rk of Object.keys(grouped.redes)) n[rk] = false;
     setOpenRedes(n);
   }
@@ -135,8 +135,14 @@ export default function ClientesAtivos() {
           <MultiSelect label="Vendedor" options={optVend} selected={fVend} onChange={setFVend} />
           <MultiSelect label="Periodicidade" options={optPer} selected={fPer} onChange={setFPer} />
           <MultiSelect label="Município" options={optMun} selected={fMun} onChange={setFMun} />
-          <input type="text" value={qCli} onChange={(e) => setQCli(e.target.value)} placeholder="Buscar cliente..." className="text-sm border border-gray-300 rounded-md px-2 py-1.5 w-40" />
-          <input type="text" value={qRede} onChange={(e) => setQRede(e.target.value)} placeholder="Buscar rede..." className="text-sm border border-gray-300 rounded-md px-2 py-1.5 w-36" />
+          <span className="relative inline-flex items-center">
+            <input type="text" value={qCli} onChange={(e) => setQCli(e.target.value)} placeholder="Buscar cliente..." className="text-sm border border-gray-300 rounded-md px-2 py-1.5 w-40 pr-6" />
+            {qCli && <button type="button" onClick={() => setQCli("")} className="absolute right-1 text-gray-400 hover:text-red-500 text-base leading-none" title="Limpar" aria-label="Limpar busca de cliente">×</button>}
+          </span>
+          <span className="relative inline-flex items-center">
+            <input type="text" value={qRede} onChange={(e) => setQRede(e.target.value)} placeholder="Buscar rede..." className="text-sm border border-gray-300 rounded-md px-2 py-1.5 w-36 pr-6" />
+            {qRede && <button type="button" onClick={() => setQRede("")} className="absolute right-1 text-gray-400 hover:text-red-500 text-base leading-none" title="Limpar" aria-label="Limpar busca de rede">×</button>}
+          </span>
           <DateRangeFilter start={de} end={para} onChange={(s, e) => { setDe(s); setPara(e); }} label="Pedidos entre" />
           <span className="text-xs text-gray-500">{filtered.length} clientes{selCount > 0 ? " - " + selCount + " selecionados" : ""}</span>
           <div className="ml-auto flex items-center gap-2">
@@ -180,7 +186,22 @@ export default function ClientesAtivos() {
                   </Fragment>
                 );
               })}
-              {sortRows(grouped.avulsos, (row, key) => (row as any)[key]).map((r: Row) => <Rowline key={r.id} r={r} />)}
+              {grouped.avulsos.length > 0 && (() => {
+                const openAv = openRedes["__sem_rede__"] !== false;
+                const totalAv = grouped.avulsos.reduce((a, x) => a + (x.ultimo || 0), 0);
+                return (
+                  <Fragment key="rede-__sem_rede__">
+                    <tr className="bg-gray-100 border-b border-gray-200 cursor-pointer" onClick={() => setOpenRedes((o) => ({ ...o, __sem_rede__: !openAv }))}>
+                      <td className="px-2 py-1"></td>
+                      <td className="px-2 py-1 font-semibold text-gray-700" colSpan={colCount - 2}>
+                        {openAv ? "▾" : "▸"} Sem rede ({grouped.avulsos.length})
+                      </td>
+                      <td className="px-2 py-1 text-right text-gray-700 font-medium whitespace-nowrap">{brl(totalAv)}</td>
+                    </tr>
+                    {openAv && sortRows(grouped.avulsos, (row, key) => (row as any)[key]).map((r: Row) => <Rowline key={r.id} r={r} indent />)}
+                  </Fragment>
+                );
+              })()}
             </tbody>
           </table>
         </div>
