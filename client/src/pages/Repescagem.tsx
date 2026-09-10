@@ -113,6 +113,9 @@ export default function Repescagem() {
   const [statsEnd, setStatsEnd] = useState(hojeBR());
   // Recolher/expandir a seção de Atendentes habilitados (a lista é grande).
   const [attendantsCollapsed, setAttendantsCollapsed] = useState(false);
+  // Selecao multipla (por customerId) + alteracao em massa de atendente.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAttendant, setBulkAttendant] = useState<string>('');
 
   const { data: attendants = [], isLoading: loadingAttendants } = useQuery<Attendant[]>({
     queryKey: ['/api/repescagem/attendants'],
@@ -168,6 +171,18 @@ export default function Repescagem() {
       apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/reassign`, { toUserId }),
     onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Atendente alterado', description: 'Atendente atualizado (sem trava).' }); },
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao reatribuir', variant: 'destructive' }),
+  });
+
+  // Alteração EM MASSA de atendente para os clientes selecionados.
+  const bulkAssign = useMutation({
+    mutationFn: async ({ toUserId, customerIds }: { toUserId: string; customerIds: string[] }) =>
+      apiRequest('POST', '/api/repescagem/assignments/bulk-assign', { toUserId, customerIds }),
+    onSuccess: (r: any) => {
+      invalidateDistribution(); refetch();
+      setSelectedIds(new Set()); setBulkAttendant('');
+      toast({ title: 'Atendente alterado em massa', description: `${r?.total ?? 0} cliente(s) atualizado(s).` });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha na alteração em massa', variant: 'destructive' }),
   });
 
   // Atribuir um cliente SEM atendente (admin) — cria a alocação e trava no dia.
@@ -284,6 +299,22 @@ export default function Repescagem() {
     });
     return arr;
   }, [filteredAssignments, sortKey, sortDir]);
+
+  // ----- Seleção múltipla (por customerId, sobre a lista filtrada/ordenada) -----
+  const selectableIds = useMemo(() => sortedAssignments.map(a => a.customerId).filter(Boolean) as string[], [sortedAssignments]);
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      if (selectableIds.every(id => prev.has(id)) && selectableIds.length > 0) {
+        const n = new Set(prev); selectableIds.forEach(id => n.delete(id)); return n;
+      }
+      const n = new Set(prev); selectableIds.forEach(id => n.add(id)); return n;
+    });
+  };
+  const toggleSelectOne = (customerId: string) => {
+    setSelectedIds(prev => { const n = new Set(prev); n.has(customerId) ? n.delete(customerId) : n.add(customerId); return n; });
+  };
 
   // Distribuição visual por atendente para a lista filtrada
   const distribution = useMemo(() => {
@@ -594,13 +625,61 @@ export default function Repescagem() {
       ) : (
         <Card>
           <CardHeader className="py-3">
-            <CardTitle className="text-base">{filteredAssignments.length} cliente(s) em repescagem</CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">{filteredAssignments.length} cliente(s) em repescagem</CardTitle>
+              {isAdmin && selectedIds.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-orange-200 bg-orange-50 dark:bg-orange-950/30 px-2 py-1.5" data-testid="bulk-action-bar">
+                  <span className="text-sm font-medium text-orange-700 dark:text-orange-300">{selectedIds.size} selecionado(s)</span>
+                  <Select value={bulkAttendant} onValueChange={setBulkAttendant}>
+                    <SelectTrigger className="h-8 w-[200px]" data-testid="select-bulk-attendant">
+                      <SelectValue placeholder="Escolher atendente…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {enabledAttendants.map(e => (
+                        <SelectItem key={e.userId} value={e.userId}>{e.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    className="h-8"
+                    disabled={!bulkAttendant || bulkAssign.isPending}
+                    onClick={() => bulkAssign.mutate({ toUserId: bulkAttendant, customerIds: Array.from(selectedIds) })}
+                    data-testid="button-bulk-apply"
+                  >
+                    {bulkAssign.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Aplicar'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8"
+                    onClick={() => { setSelectedIds(new Set()); setBulkAttendant(''); }}
+                    data-testid="button-bulk-clear"
+                  >
+                    Limpar
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-auto max-h-[calc(100vh-360px)]">
               <table className="min-w-full text-sm">
                 <thead className="sticky top-0 z-20">
                   <tr className="bg-gray-50 dark:bg-gray-800 border-b shadow-sm">
+                    {isAdmin && (
+                      <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800 w-8">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer accent-orange-600"
+                          checked={allSelected}
+                          ref={el => { if (el) el.indeterminate = someSelected; }}
+                          onChange={toggleSelectAll}
+                          title="Selecionar todos"
+                          data-testid="checkbox-select-all"
+                        />
+                      </th>
+                    )}
                     <th onClick={() => toggleSort('cliente')} title="Ordenar A-Z" className="px-3 py-2 text-left font-semibold bg-gray-50 dark:bg-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700">
                       <span className="inline-flex items-center gap-1">Cliente <span className={`text-[10px] leading-none ${sortKey === 'cliente' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('cliente')}</span></span>
                     </th>
@@ -657,6 +736,18 @@ export default function Repescagem() {
                       className="border-t hover:bg-orange-50/30"
                       data-testid={`row-repescagem-${a.customerId}`}
                     >
+                      {isAdmin && (
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 cursor-pointer accent-orange-600"
+                            checked={!!a.customerId && selectedIds.has(a.customerId)}
+                            disabled={!a.customerId}
+                            onChange={() => a.customerId && toggleSelectOne(a.customerId)}
+                            data-testid={`checkbox-row-${a.customerId}`}
+                          />
+                        </td>
+                      )}
                       <td className="px-3 py-2 font-medium">
                         <div className="flex items-center gap-1.5">
                           <span>{a.customerName}</span>
