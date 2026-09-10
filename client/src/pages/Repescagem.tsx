@@ -821,7 +821,7 @@ export default function Repescagem() {
                 <li>Cai <b>se e somente se a última bolinha estiver vermelha</b> — a visita agendada mais recente sem venda na janela do ciclo.</li>
                 <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha estiver vermelha.</li>
                 <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar vermelha.</li>
-                <li><b>Permanece</b> enquanto a última bolinha estiver vermelha e <b>sai quando houver venda</b> (bolinha verde) na janela do ciclo.</li>
+                <li><b>Permanece</b> enquanto a última bolinha estiver vermelha. <b>Assim que houver pedido/venda</b> (na data da visita ou depois, inclusive fim de semana), o cliente <b>sai da lista e entra em um novo ciclo</b> — só volta se a próxima visita ficar vermelha.</li>
               </ul>
             </div>
             <div>
