@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { computeCycles, cyclesToShow } from "./repescagem-cycles";
+import { computeCyclesDisplay, cyclesToShow } from "./repescagem-cycles";
 
 /** PJ/PF pelo documento; cai no customer_type quando o documento nao ajuda.
  *  MESMA regra do classificaTipo de server/carteira-routes.ts — as duas telas
@@ -70,6 +70,18 @@ export function registerVisitSummary(app: Express) {
         const salesF = await q(`SELECT bp.customer_id AS customer_id, LEFT(elem->>'changedAt', 10) AS d FROM billing_pipeline bp CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(bp.stage_history)='array' THEN bp.stage_history ELSE '[]'::jsonb END) AS elem WHERE bp.customer_id IS NOT NULL AND LOWER(COALESCE(NULLIF(bp.operation_type::text,''),'venda'))='venda' AND elem->>'stage'='faturado' AND elem->>'changedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND LEFT(elem->>'changedAt', 10) BETWEEN '${saleStart}' AND '${todayStr}'`);
         for (const r of salesF) addSale(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
+      // ATENDIMENTOS (check-in presencial + atendimento virtual) na MESMA janela de ~130 dias
+      // dos faturamentos. Alimenta a bolinha AMARELA da efetividade: atendido, porem sem pedido.
+      const attDatesByCustomer = new Map<string, Set<string>>();
+      const addAtt = (cid: any, d: any) => { if (!cid || !d) return; let s = attDatesByCustomer.get(cid); if (!s) { s = new Set(); attDatesByCustomer.set(cid, s); } s.add(d); };
+      try {
+        const ciF = await q(`SELECT customer_id, (scheduled_date)::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND (scheduled_date)::date BETWEEN '${saleStart}' AND '${todayStr}' AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+        for (const r of ciF) addAtt(r.customer_id, r.d);
+      } catch (e) { /* ignora */ }
+      try {
+        const vsF = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+        for (const r of vsF) addAtt(r.customer_id, r.d);
+      } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
       try { virt = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { virt = []; }
@@ -107,7 +119,9 @@ export function registerVisitSummary(app: Express) {
         if (vm) for (const d of vm) ensure(d).hasVirtualAttendance = true;
         const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
-        const cycles = computeCycles(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
+        // Verde = pedido; amarelo = atendido sem pedido; vermelho = nada; sem cor = a visita
+        // do ciclo corrente ainda nao chegou. O gatilho da repescagem continua no computeCycles.
+        const cycles = computeCyclesDisplay(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), attDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
         return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, tipoPessoa: classificaTipoPessoa(cl.documento, cl.customer_type), cycles, visits };
       });
 
