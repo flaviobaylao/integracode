@@ -31,6 +31,7 @@ type Attendant = {
   isEnabled: boolean;
   enabledAt: string | null;
   carteiras?: string[];
+  carteiraPcts?: Record<string, number>;
   coverage?: CarteiraCoverage[];
 };
 type Carteira = { sellerId: string; name: string; role: string };
@@ -136,7 +137,10 @@ export default function Repescagem() {
     enabled: !!historyCustomer?.id,
   });
 
-  const enabledAttendants = attendants.filter(a => a.isEnabled);
+  // Atendentes de repescagem = SOMENTE telemarketing. Os vendedores externos já recebem os
+  // próprios clientes na rota do dia (perímetro), então não entram no painel nem nos seletores.
+  const panelAttendants = attendants.filter(a => a.role === 'telemarketing');
+  const enabledAttendants = panelAttendants.filter(a => a.isEnabled);
   const isAdmin = user?.role === 'admin';
 
   // Repescagem2: somente administradores habilitam/desabilitam atendentes.
@@ -170,6 +174,20 @@ export default function Repescagem() {
       toast({ title: 'Carteiras atualizadas', description: 'Roteamento da repescagem recalculado.' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao salvar carteiras', variant: 'destructive' }),
+  });
+
+  // Define o % (10..100) de uma carteira para um atendente (rateio quando 2+ recebem a carteira).
+  const setCarteiraPct = useMutation({
+    mutationFn: async ({ userId, sellerId, pct }: { userId: string; sellerId: string; pct: number }) =>
+      apiRequest('POST', `/api/repescagem/attendants/${userId}/carteira-pct`, { sellerId, pct }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/attendants'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      toast({ title: '% atualizado', description: 'Rateio da carteira recalculado.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao definir %', variant: 'destructive' }),
   });
 
   // Adiciona/remove uma carteira do atendente (envia a lista inteira atualizada).
@@ -418,19 +436,17 @@ export default function Repescagem() {
           ) : isAdmin ? (
             <>
               <p className="text-xs text-gray-500">
-                Para cada vendedor ativo, marque as <b>carteiras de repescagem</b> que ele recebe na rota do dia.
-                A carteira própria vem marcada (pode remover). A mesma carteira em 2+ atendentes é dividida igualmente.
-                O <b>%</b> em cada carteira mostra quanto dela, em repescagem hoje, está sob este atendente.
+                Atendentes de repescagem são o <b>telemarketing</b>. Marque as <b>carteiras</b> que cada um recebe e escolha o
+                <b> %</b> daquela carteira que ele atende (10 a 100). Quando 2+ atendentes recebem a mesma carteira, os clientes
+                são rateados conforme os <b>%</b> escolhidos. O <b>atual %</b> em cinza mostra a cobertura real de hoje (resultado do rateio).
               </p>
-              <p className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md px-2 py-1.5">
-                <b>Por que a carteira própria de um vendedor externo aparece com 0%?</b> Porque os clientes dela em repescagem
-                são atendidos pelo <b>telemarketing</b> (ex.: Carlos, Radilton → Letícia; Jhonatan, Cleber → Robson; Gilmar → 50/50).
-                O vendedor continua vendo esses clientes na rota do dia (<b>card duplo</b>), mas quem faz a repescagem é o
-                telemarketing — por isso 0% fica sob o próprio vendedor. Se ninguém do telemarketing receber a carteira, o %
-                volta a subir para o próprio vendedor.
+              <p className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md px-2 py-1.5">
+                Os <b>vendedores externos</b> não aparecem aqui: eles já recebem os próprios clientes em repescagem na
+                <b> rota do dia</b> (perímetro). O telemarketing atende as carteiras marcadas abaixo (o dono também vê o
+                cliente na rota pelo <b>card duplo</b>).
               </p>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                {attendants.map(a => {
+                {panelAttendants.map(a => {
                   const sel = a.carteiras || [];
                   const covById = new Map((a.coverage || []).map(c => [c.sellerId, c]));
                   const available = carteiras.filter(c => !sel.includes(c.sellerId));
@@ -454,19 +470,34 @@ export default function Repescagem() {
                         const cov = covById.get(sid);
                         const nm = cov?.sellerName || carteiraNameById.get(sid) || sid;
                         const isOwn = sid === a.userId;
+                        const chosenPct = (a.carteiraPcts && a.carteiraPcts[sid] != null)
+                          ? a.carteiraPcts[sid]
+                          : (cov && cov.total > 0 ? Math.max(10, Math.min(100, Math.round(cov.pct / 10) * 10)) : 100);
                         return (
                           <span
                             key={sid}
                             className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 dark:bg-blue-950/40 pl-2 pr-1 py-0.5 text-[11px]"
                             data-testid={`carteira-chip-${a.userId}-${sid}`}
-                            title={
-                              isOwn && (cov?.pct ?? 0) === 0
-                                ? 'Carteira própria — 0% porque estes clientes são atendidos pelo telemarketing (card duplo mantém o vendedor vendo a rota).'
-                                : isOwn ? 'Carteira própria' : 'Carteira recebida de outro vendedor'
-                            }
+                            title={isOwn ? 'Carteira própria (fica com o próprio atendente)' : 'Carteira recebida — escolha o % que este atendente atende (o rateio segue os %)'}
                           >
                             <span className="font-medium">{nm}{isOwn ? ' (própria)' : ''}</span>
-                            <span className="text-blue-700 dark:text-blue-300 font-semibold">{cov ? `${cov.pct}%` : '0%'}</span>
+                            {isOwn ? (
+                              <span className="text-blue-700 dark:text-blue-300 font-semibold">{cov ? `${cov.pct}%` : '100%'}</span>
+                            ) : (
+                              <>
+                                <select
+                                  value={String(chosenPct)}
+                                  onChange={(e) => setCarteiraPct.mutate({ userId: a.userId, sellerId: sid, pct: Number(e.target.value) })}
+                                  disabled={setCarteiraPct.isPending || saveCarteiras.isPending}
+                                  className="ml-0.5 rounded border border-blue-300 bg-white dark:bg-gray-900 text-blue-700 dark:text-blue-300 font-semibold text-[11px] px-0.5 py-0 cursor-pointer"
+                                  title="% desta carteira que este atendente atende (10 a 100)"
+                                  data-testid={`carteira-pct-${a.userId}-${sid}`}
+                                >
+                                  {[10,20,30,40,50,60,70,80,90,100].map(p => <option key={p} value={p}>{p}%</option>)}
+                                </select>
+                                {cov && cov.total > 0 && <span className="text-gray-400" title="cobertura atual (resultado do rateio)">atual {cov.pct}%</span>}
+                              </>
+                            )}
                             <button
                               type="button"
                               onClick={() => saveCarteiras.mutate({ userId: a.userId, carteiras: sel.filter(x => x !== sid) })}
@@ -501,14 +532,14 @@ export default function Repescagem() {
                   </div>
                   );
                 })}
-                {attendants.length === 0 && (
+                {panelAttendants.length === 0 && (
                   <span className="text-xs text-gray-500">Nenhum atendente elegível.</span>
                 )}
               </div>
             </>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {attendants.filter(a => a.isEnabled).map(a => (
+              {enabledAttendants.map(a => (
                 <Badge
                   key={a.userId}
                   variant="outline"
@@ -586,7 +617,7 @@ export default function Repescagem() {
                 <SelectTrigger data-testid="select-attendant"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos atendentes</SelectItem>
-                  {attendants.filter(a => a.isEnabled).map(a => (
+                  {enabledAttendants.map(a => (
                     <SelectItem key={a.userId} value={a.userId}>{a.name}</SelectItem>
                   ))}
                 </SelectContent>
