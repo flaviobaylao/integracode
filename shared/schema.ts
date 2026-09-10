@@ -2591,6 +2591,11 @@ export const repescagemAttendants = pgTable("repescagem_attendants", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().unique("repescagem_attendants_user_id_key"),
   isEnabled: boolean("is_enabled").notNull().default(false),
+  // Repescagem2 (carteiras): lista de sellerIds (carteiras de origem) cujos clientes em
+  // repescagem este atendente recebe na rota do dia. A carteira propria do atendente vem
+  // pre-marcada por padrao (editavel). Um atendente esta "habilitado" quando tem >= 1 carteira.
+  // Carteira presente em 2+ atendentes = rateio igualitario (split deterministico por cliente).
+  carteiras: jsonb("carteiras").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   enabledAt: timestamp("enabled_at"),
   disabledAt: timestamp("disabled_at"),
   updatedAt: timestamp("updated_at").defaultNow(),
