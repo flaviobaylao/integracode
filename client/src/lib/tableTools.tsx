@@ -121,6 +121,17 @@ export function MultiSelect(props: {
       >
         {label}: {all ? "Todos" : selected.length === 1 ? selected[0] : `${selected.length} selecionados`}
       </button>
+      {selected.length > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onChange([]); }}
+          className="ml-1 text-gray-400 hover:text-red-500 align-middle text-base leading-none"
+          title="Limpar filtro"
+          aria-label="Limpar filtro"
+        >
+          ×
+        </button>
+      )}
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
