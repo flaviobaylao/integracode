@@ -2254,12 +2254,24 @@ export default function RotaDoDia() {
             <CardContent>
               <div className="space-y-2">
                 {visiblePresentialVisits.map((visit: any, index: number) => {
-                  const checkInCheckpoint = route.checkpoints?.find(
-                    cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_in'
-                  );
-                  const checkOutCheckpoint = route.checkpoints?.find(
-                    cp => cp.customerId === visit.customerId && cp.checkpointType === 'check_out'
-                  );
+                  // Correspondência do checkpoint com a visita. Clientes casam por customerId.
+                  // LEADS não têm customerId no card (usam entityId/leadId e id "lead:{id}"),
+                  // enquanto o checkpoint do lead é gravado com customerId = leadId e
+                  // visitId = "lead:{id}". Sem casar por essas chaves, o check-in do lead
+                  // nunca aparecia no card (hora + coordenadas ficavam "—").
+                  const _isLeadVisit = (visit as any).visitType === 'lead';
+                  const _leadKey = String((visit as any).entityId || (visit as any).leadId || '');
+                  const _stopId = String((visit as any).id || '');
+                  const _matchCp = (cp: any, type: string) => {
+                    if (cp.checkpointType !== type) return false;
+                    if (_isLeadVisit) {
+                      return (!!_leadKey && String(cp.customerId) === _leadKey)
+                        || (!!_stopId && String(cp.visitId) === _stopId);
+                    }
+                    return String(cp.customerId) === String(visit.customerId);
+                  };
+                  const checkInCheckpoint = route.checkpoints?.find(cp => _matchCp(cp, 'check_in'));
+                  const checkOutCheckpoint = route.checkpoints?.find(cp => _matchCp(cp, 'check_out'));
 
                   const customerLat = parseFloat(String(visit.customerLatitude || 0));
                   const customerLng = parseFloat(String(visit.customerLongitude || 0));
@@ -3242,7 +3254,7 @@ export default function RotaDoDia() {
               {/* Localização */}
               <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium">📍 Localização</label>
+                  <label className="text-sm font-medium">📍 Localização (obrigatória)</label>
                   <Button
                     size="sm"
                     variant="outline"
@@ -3353,6 +3365,14 @@ export default function RotaDoDia() {
                 />
               </div>
 
+              {/* Localização e foto são AMBAS obrigatórias — enquanto faltar alguma, o
+                  botão fica bloqueado (cinza) e mostramos exatamente o que falta capturar. */}
+              {(!checkInCoords || !leadCheckInPhoto) && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Para liberar o check-in, é obrigatório: {!checkInCoords ? 'capturar a localização' : ''}{(!checkInCoords && !leadCheckInPhoto) ? ' e ' : ''}{!leadCheckInPhoto ? 'anexar a foto do local' : ''}.
+                </p>
+              )}
+
               {/* Botão Submit */}
               <Button
                 onClick={() => {
@@ -3380,7 +3400,7 @@ export default function RotaDoDia() {
                   });
                 }}
                 disabled={leadCheckInMutation.isPending || !checkInCoords || !leadCheckInPhoto}
-                className="w-full"
+                className={`w-full ${(!checkInCoords || !leadCheckInPhoto) ? 'bg-gray-300 text-gray-600 hover:bg-gray-300 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400' : ''}`}
                 data-testid="button-lead-checkin-submit"
               >
                 {leadCheckInMutation.isPending ? 'Realizando check-in...' : '✓ Fazer Check-in'}
