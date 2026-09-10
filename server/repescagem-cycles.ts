@@ -85,7 +85,9 @@ function saleInWindow(saleDates: Set<string>, start: string, end: string): boole
   return false;
 }
 
-export type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean };
+// attended = houve check-in/atendimento virtual na janela, mas NAO houve pedido (bolinha amarela).
+// pending  = o dia da visita ainda nao passou e nada aconteceu ainda -> bolinha SEM COR.
+export type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean; attended?: boolean; pending?: boolean };
 
 // Retorna os ultimos N ciclos (mais antigo -> mais recente) do cliente ate hoje.
 // saleDates = Set de datas 'YYYY-MM-DD' de VENDAS reais do cliente.
@@ -102,6 +104,48 @@ export function computeCycles(dows: number[], periodicity: string, saleDates: Se
   return lastN.map(anchor => {
     const { start, end } = cycleWindow(anchor, periodicity);
     return { anchor, start, end, green: saleInWindow(saleDates, start, end), isPast: anchor < todayStr };
+  });
+}
+
+// ============================================================================
+// Ciclos para EXIBICAO (as bolinhas de "Efetividade em vendas").
+//
+// Diferente do computeCycles acima (que so olha ancoras passadas e alimenta o
+// GATILHO da repescagem — nao mexer), aqui a ultima bolinha e a do ciclo
+// CORRENTE: aquele cuja janela ja comecou, mesmo que o dia da visita ainda nao
+// tenha chegado. Cores:
+//   verde    = houve PEDIDO na janela do ciclo;
+//   amarelo  = houve ATENDIMENTO (check-in ou virtual) e nenhum pedido;
+//   vermelho = passou o dia da visita e nao houve nem atendimento nem pedido;
+//   sem cor  = o dia da visita ainda nao passou e nada aconteceu (pending).
+// O proprio dia da visita ainda conta como "em andamento" — so vira vermelho no
+// dia seguinte, a mesma tolerancia que a repescagem ja usa.
+// ============================================================================
+export function computeCyclesDisplay(
+  dows: number[],
+  periodicity: string,
+  saleDates: Set<string>,
+  attendanceDates: Set<string>,
+  todayStr: string,
+  n: number,
+): Cycle[] {
+  if (dows.length === 0) return [];
+  const periodDays = CYCLE_PERIODICITY_DAYS[String(periodicity || 'semanal').toLowerCase()] || 7;
+  const lookbackDays = n * periodDays + 21; // folga
+  const startScan = iso(new Date(mkUTC(todayStr).getTime() - lookbackDays * 864e5));
+  const endScan = iso(new Date(mkUTC(todayStr).getTime() + 21 * 864e5)); // alcanca a ancora do ciclo corrente
+  const anchors: string[] = [];
+  { const d = mkUTC(startScan); const end = mkUTC(endScan);
+    while (d <= end) { const ds = iso(d); if (isPlanned(ds, dows, periodicity)) anchors.push(ds); d.setUTCDate(d.getUTCDate() + 1); } }
+  // So ciclos cuja JANELA ja comecou (start <= hoje). Isso inclui o ciclo corrente mesmo
+  // quando o dia da visita e mais adiante na semana/mes, e exclui os ciclos seguintes.
+  const emCurso = anchors.filter((a) => cycleWindow(a, periodicity).start <= todayStr);
+  return emCurso.slice(-n).map((anchor) => {
+    const { start, end } = cycleWindow(anchor, periodicity);
+    const green = saleInWindow(saleDates, start, end);
+    const attended = !green && saleInWindow(attendanceDates, start, end);
+    const pending = !green && !attended && anchor >= todayStr;
+    return { anchor, start, end, green, attended, pending, isPast: anchor < todayStr };
   });
 }
 
