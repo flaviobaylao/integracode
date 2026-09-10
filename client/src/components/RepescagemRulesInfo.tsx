@@ -29,6 +29,17 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
           </DialogHeader>
           <div className="text-sm text-gray-700 dark:text-gray-200 space-y-4">
             <div>
+              <p className="font-semibold mb-1">Como ler as bolinhas (Efetividade em vendas)</p>
+              <p className="mb-1">Uma bolinha por <b>ciclo</b> (semana, quinzena ou mês, conforme a periodicidade do cliente), da mais antiga (esquerda) para a mais recente (direita):</p>
+              <ul className="list-none pl-1 space-y-1">
+                <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-green-500 shrink-0" /><span><b>Verde</b> — houve <b>pedido</b> na janela do ciclo.</span></li>
+                <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-yellow-400 shrink-0" /><span><b>Amarelo</b> — houve <b>atendimento</b> (check-in ou virtual), mas <b>sem pedido</b>.</span></li>
+                <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-red-500 shrink-0" /><span><b>Vermelho</b> — passou o dia da visita <b>sem atendimento e sem pedido</b>.</span></li>
+                <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full border border-gray-400 bg-transparent shrink-0" /><span><b>Sem cor</b> — o dia da visita do <b>ciclo atual ainda não chegou</b>.</span></li>
+              </ul>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">A repescagem olha a <b>última bolinha</b>: se ela não estiver verde (vermelha ou amarela), o cliente entra na repescagem conforme as regras abaixo.</p>
+            </div>
+            <div>
               <p className="font-semibold mb-1">Quem é elegível</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Clientes <b>ativos</b> (inativos não entram).</li>
