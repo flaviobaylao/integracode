@@ -2596,6 +2596,10 @@ export const repescagemAttendants = pgTable("repescagem_attendants", {
   // pre-marcada por padrao (editavel). Um atendente esta "habilitado" quando tem >= 1 carteira.
   // Carteira presente em 2+ atendentes = rateio igualitario (split deterministico por cliente).
   carteiras: jsonb("carteiras").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  // % escolhido (10..100) por carteira de origem: quanto daquela carteira este atendente atende.
+  // Quando 2+ atendentes recebem a mesma carteira, o rateio segue estes pesos (normalizados).
+  // Ausente => rateio igualitario (comportamento antigo). Mapa { [sellerId]: pct }.
+  carteiraPcts: jsonb("carteira_pcts").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
   enabledAt: timestamp("enabled_at"),
   disabledAt: timestamp("disabled_at"),
   updatedAt: timestamp("updated_at").defaultNow(),
