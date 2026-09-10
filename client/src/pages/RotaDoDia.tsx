@@ -91,20 +91,33 @@ function formatPeriodicity(periodicity: string | null | undefined): string {
   return periodicityMap[periodicity] || periodicity;
 }
 
-// 🟢🔴 Bolinhas de "Efetividade em vendas" (mesma régua do Resumo de Visitas):
-// um ponto por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1). Verde = houve faturamento
-// no ciclo; vermelho = sem faturamento. Fica na MESMA linha do nome do cliente.
-type SalesCycle = { anchor?: string; start?: string; end?: string; green: boolean; isPast?: boolean };
+// 🟢🟡🔴 Bolinhas de "Efetividade em vendas" (mesma régua do Resumo de Visitas):
+// um ponto por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1). Verde = houve pedido;
+// amarelo = houve atendimento sem pedido; vermelho = passou o dia da visita sem nada;
+// SEM COR = o dia da visita do ciclo atual ainda não chegou. Fica na MESMA linha do nome.
+type SalesCycle = { anchor?: string; start?: string; end?: string; green: boolean; isPast?: boolean; attended?: boolean; pending?: boolean };
+function corCicloRota(cy: SalesCycle) {
+  if (cy.pending) return 'transparent';
+  if (cy.green) return '#22c55e';
+  if (cy.attended) return '#eab308';
+  return '#ef4444';
+}
+function textoCicloRota(cy: SalesCycle) {
+  if (cy.pending) return 'visita ainda não chegou';
+  if (cy.green) return 'houve pedido';
+  if (cy.attended) return 'atendido, sem pedido';
+  return 'sem atendimento e sem pedido';
+}
 function SalesCycleDots({ cycles }: { cycles?: SalesCycle[] | null }) {
   if (!cycles || cycles.length === 0) return null;
   return (
-    <span className="inline-flex items-center gap-[3px] align-middle" title="Efetividade em vendas por ciclo: verde = houve venda; vermelho = sem venda">
+    <span className="inline-flex items-center gap-[3px] align-middle" title="Efetividade em vendas por ciclo: verde = houve pedido; amarelo = atendido sem pedido; vermelho = sem atendimento e sem pedido; sem cor = o dia da visita ainda não chegou">
       {cycles.map((cy, ci) => (
         <span
           key={ci}
-          title={`${cy.start || ''}${cy.start && cy.end ? ' a ' : ''}${cy.end || ''}: ${cy.green ? 'houve venda' : 'sem venda'}`}
+          title={`${cy.start || ''}${cy.start && cy.end ? ' a ' : ''}${cy.end || ''}: ${textoCicloRota(cy)}`}
           className="inline-block rounded-full"
-          style={{ width: 10, height: 10, background: cy.green ? '#22c55e' : '#ef4444' }}
+          style={{ width: 10, height: 10, boxSizing: 'border-box', background: corCicloRota(cy), border: cy.pending ? '1px dashed #9ca3af' : 'none' }}
         />
       ))}
     </span>
@@ -1455,8 +1468,10 @@ export default function RotaDoDia() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900"></span>Lead</span>
           <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-sm border border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e]"></span>Repescagem</span>
           <span className="flex items-center gap-1.5"><span className="text-[10px] font-semibold text-amber-700 border border-amber-300 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded-full whitespace-nowrap">sob delegação</span>Cliente em delegação temporária de carteira (volta ao titular quando a delegação encerra)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#22c55e' }}></span>Venda no ciclo (efetividade em vendas)</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#ef4444' }}></span>Sem venda no ciclo</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#22c55e' }}></span>Pedido no ciclo (efetividade em vendas)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#eab308' }}></span>Atendido no ciclo, mas sem pedido</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#ef4444' }}></span>Passou o dia da visita sem atendimento e sem pedido</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'transparent', border: '1px dashed #9ca3af', boxSizing: 'border-box' }}></span>Ciclo atual — o dia da visita ainda não chegou</span>
         </div>
       </details>
 
