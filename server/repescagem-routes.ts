@@ -1600,6 +1600,63 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
+  // Alteração EM MASSA de atendente: atribui vários clientes selecionados a um atendente.
+  // Reaproveita o pending existente de cada cliente (ou cria) e propaga para a rota do dia.
+  // SEM trava (mesma regra do reassign/assign individuais).
+  app.post('/api/repescagem/assignments/bulk-assign', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+    try {
+      const toUserId = String(req.body?.toUserId || '').trim();
+      const customerIds: string[] = Array.isArray(req.body?.customerIds)
+        ? Array.from(new Set(req.body.customerIds.map((x: any) => String(x || '').trim()).filter(Boolean)))
+        : [];
+      if (!toUserId || customerIds.length === 0) return res.status(400).json({ message: 'toUserId e customerIds obrigatórios' });
+      const today = brTodayStr();
+      await ensureRepescagemLockCol();
+      // Valida o atendente-alvo: habilitado, elegível (vendedor/telemarketing) e não excluído.
+      const enabled = await db.select().from(repescagemAttendants)
+        .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
+      const urows = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, toUserId));
+      const role = urows[0]?.role;
+      if (enabled.length === 0 || REPESCAGEM_EXCLUDED_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
+        return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
+      }
+      const phase = role === 'vendedor' ? 'external' : 'telemarketing';
+      let updated = 0, created = 0;
+      for (const customerId of customerIds) {
+        try {
+          const existing = await db.select().from(repescagemAssignments)
+            .where(and(eq(repescagemAssignments.customerId, customerId), eq(repescagemAssignments.status, 'pending')));
+          let assignmentId: string; let fromUserId: string | null = null;
+          if (existing.length > 0) {
+            assignmentId = existing[0].id; fromUserId = existing[0].assignedUserId;
+            await db.update(repescagemAssignments).set({
+              assignedUserId: toUserId, phase, locked: false, lockedDate: null, lockedBy: null, assignedAt: new Date(), updatedAt: new Date(),
+            }).where(eq(repescagemAssignments.id, assignmentId));
+            updated++;
+          } else {
+            const carteira = await db.select({ sellerId: customers.sellerId }).from(customers).where(eq(customers.id, customerId));
+            const ins = await db.insert(repescagemAssignments).values({
+              customerId, lastRedDate: today, assignedUserId: toUserId, status: 'pending', phase,
+              carteiraSellerId: carteira[0]?.sellerId || null, locked: false, lockedDate: null, lockedBy: null,
+            }).returning();
+            assignmentId = ins[0].id; created++;
+          }
+          // Propaga p/ a rota do dia (in_route do MESMO cliente hoje).
+          await db.execute(sql`UPDATE repescagem_assignments
+            SET assigned_user_id = ${toUserId}, phase = ${phase}, locked = false, locked_date = null, locked_by = null, updated_at = now()
+            WHERE customer_id = ${customerId} AND status = 'in_route' AND draw_date = ${today}`);
+          await db.insert(repescagemAssignmentHistory).values({
+            assignmentId, customerId, fromUserId, toUserId, action: 'reassigned', reason: 'Alteração em massa de atendente',
+          });
+        } catch (e) { console.error('[bulk-assign] cliente', customerId, (e as any)?.message); }
+      }
+      res.json({ ok: true, updated, created, total: updated + created });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/assignments/bulk-assign', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
   // Travar / destravar UMA linha (qualquer usuário). A trava vale só para o dia vigente.
   // Quem trava vira "dono" da trava; só ele ou um admin conseguem destravar.
   app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
