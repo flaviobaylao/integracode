@@ -33,7 +33,11 @@ export function registerVisitSummary(app: Express) {
       // classifica cada linha em ativo/inativo/perdido e o filtro de Situacao ja abre
       // marcado em Ativo+Perdido, entao o universo padrao continua o mesmo de antes.
       const clients = await q(`
-        SELECT c.id AS customer_id, c.name AS customer_name, c.city, c.neighborhood,
+        SELECT c.id AS customer_id,
+               -- A tela mostra o NOME FANTASIA; cai na razao social so quando nao ha fantasia.
+               COALESCE(NULLIF(TRIM(c.fantasy_name), ''), c.name) AS customer_name,
+               c.name AS razao_social,
+               c.city, c.neighborhood,
                c.visit_periodicity AS periodicity, c.weekdays, c.segmento_principal AS segmento,
                COALESCE(c.is_active, false) AS cad_ativo,
                NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS documento,
@@ -122,7 +126,7 @@ export function registerVisitSummary(app: Express) {
         // Verde = pedido; amarelo = atendido sem pedido; vermelho = nada; sem cor = a visita
         // do ciclo corrente ainda nao chegou. O gatilho da repescagem continua no computeCycles.
         const cycles = computeCyclesDisplay(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), attDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
-        return { customerId: cid, customerName: cl.customer_name || '-', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, tipoPessoa: classificaTipoPessoa(cl.documento, cl.customer_type), cycles, visits };
+        return { customerId: cid, customerName: cl.customer_name || '-', razaoSocial: cl.razao_social || '', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, tipoPessoa: classificaTipoPessoa(cl.documento, cl.customer_type), cycles, visits };
       });
 
       res.json({ start: startDate, end: endDate, today: todayStr, rows });
