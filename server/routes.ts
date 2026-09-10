@@ -18599,7 +18599,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const monthTotals: Record<string, number> = {};
       for (const s of sellersMap.values()) for (const mo of Object.keys(s.byMonth)) monthTotals[mo] = (monthTotals[mo] || 0) + (s.byMonth[mo] || 0);
       const months = Array.from(monthsSet).filter((m) => (monthTotals[m] || 0) > 0).sort();
-      const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0).sort((a, b) => b.total - a.total);
+      // Oculta "vendedores fantasma": seller_id que NAO corresponde a um usuario do Integra
+      // (ex.: codigo de vendedor vindo do Omie que ganhou rota mas nunca virou conta). Nesses
+      // casos o nome cai no proprio seller_id (COALESCE) e o role fica nulo — nao devem aparecer
+      // no Km dos Vendedores. Reversivel: basta vincular o codigo a um usuario. (set/2026)
+      const _isGhostSeller = (s: any) => !s.role && String(s.sellerName) === String(s.sellerId);
+      const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0 && !_isGhostSeller(s)).sort((a, b) => b.total - a.total);
       // Tarifas R$/km por regiao (GO e DF) em config_global + status do mes atual:
       // FECHADO no ultimo dia do mes apos as 20h (SP). ratePerKm legado = fallback.
       let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0, ratePerKmPSN = 0;
