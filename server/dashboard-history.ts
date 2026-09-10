@@ -249,16 +249,13 @@ export async function computeDailyThermometer(only?: string, perFilter?: string[
       const hojeV = rows.filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
       const comprou = hojeV > 0;
       if (comprou) a.bought += 1;
+      a.realizado += hojeV;
       const _prev = rows.filter((x) => x.d < today); const _ult = _prev.length ? _prev[_prev.length - 1] : null;
       a.clientes.push({ nome: docName[doc] || doc, potencial: Math.round(T * 100) / 100, comprou, hoje: Math.round(hojeV * 100) / 100, ultValor: _ult ? Math.round(_ult.v * 100) / 100 : 0, ultData: _ult ? _ult.d : "" });
     }
   }
-  for (const doc of Object.keys(byDoc)) {
-    const seller = docSeller[doc]; if (!seller) continue; if (only && seller !== only) continue;
-    if (perF.length && !perF.includes(docPer[doc] || "")) continue;
-    const tv = byDoc[doc].filter((x) => x.d === today).reduce((s, x) => s + (Number(x.v) || 0), 0);
-    if (tv > 0) { ensure(seller).realizado += tv; }
-  }
+  // Realizado = soma do que os clientes previstos para hoje ja compraram (acumulado
+  // no laco acima), para manter coerencia com o potencial e com "x/y clientes".
   const adminRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role = 'admin'");
   const adminSet = new Set(adminRows.map((r: any) => String(r.nome || '')));
   const sellers = Object.keys(agg).map((s) => { const a = agg[s]; const pct = a.potencial > 0 ? Math.round((a.realizado / a.potencial) * 1000) / 10 : null; return { seller: s, potencial: Math.round(a.potencial * 100) / 100, realizado: Math.round(a.realizado * 100) / 100, pct, expected: a.expected, bought: a.bought, clientes: (a.clientes || []).slice().sort((x, y) => y.potencial - x.potencial) }; }).filter((x) => (x.potencial > 0 || x.realizado > 0) && !adminSet.has(x.seller)).sort((a, b) => b.potencial - a.potencial);
