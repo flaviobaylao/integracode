@@ -62,40 +62,94 @@ const REP_ROUTE = {
   LETICIA: '9faf8fa3-698d-4f90-9607-3f1ff7787a2b',
   ROBSON: 'omie-vendor-4077616122',
 };
-// Roteamento especial por carteira (dono). SEM janela de dias: todo cliente destas
-// carteiras que cair em repescagem vai para o atendente-alvo (e também para o próprio
-// dono — "card duplo" na rota do dia, tratado na camada de rota).
-//  - Carlos, Radilton -> Letícia
-//  - Jhonatan, Cleber -> Robson
-//  - Gilmar           -> 50/50 entre Letícia e Robson (split determinístico por cliente)
-const REP_TO_LETICIA = new Set<string>([REP_ROUTE.CARLOS, REP_ROUTE.RADILTON]);
-const REP_TO_ROBSON = new Set<string>([REP_ROUTE.JHONATAN, REP_ROUTE.CLEBER]);
-// Carteiras cujo destino é dividido 50/50 entre Letícia e Robson (além do próprio dono).
-const REP_SPLIT_LR = new Set<string>([REP_ROUTE.GILMAR]);
-// Retorna o atendente-alvo (telemarketing) do roteamento especial, ou null.
-// splitTarget = alvo pré-calculado do split 50/50 (usado só para as carteiras de REP_SPLIT_LR).
-function repescagemSpecialTarget(ownerId: string | null, _daysSince?: number, _customerId?: string, splitTarget?: string): string | null {
-  if (!ownerId) return null;
-  if (REP_TO_LETICIA.has(ownerId)) return REP_ROUTE.LETICIA;
-  if (REP_TO_ROBSON.has(ownerId)) return REP_ROUTE.ROBSON;
-  if (REP_SPLIT_LR.has(ownerId)) return splitTarget || REP_ROUTE.LETICIA;
-  // Carteiras de TELEMARKETING: os proprios clientes da Leticia/Robson em repescagem ficam
-  // com eles mesmos (nao sao redistribuidos para o outro).
-  if (ownerId === REP_ROUTE.LETICIA) return REP_ROUTE.LETICIA;
-  if (ownerId === REP_ROUTE.ROBSON) return REP_ROUTE.ROBSON;
-  return null;
+// Repescagem2 (carteiras configuraveis): o roteamento ESPECIAL (carteira -> atendente) agora
+// vem da CONFIG do painel (repescagem_attendants.carteiras), nao mais de constantes fixas.
+// Regra: uma carteira que aparece no campo de um atendente que NAO e o proprio dono dela =
+// roteamento especial para esse atendente (e "card duplo" na rota do dono). Se a mesma carteira
+// estiver em 2+ atendentes (fora o dono), os clientes sao divididos IGUALMENTE entre eles
+// (split deterministico por customerId). A carteira PROPRIA (sellerId == userId do atendente)
+// NAO e especial: cai na distribuicao normal por perimetro (comportamento inalterado).
+// Os defaults semeados espelham o de hoje: Carlos+Radilton->Leticia, Jhonatan+Cleber->Robson,
+// Gilmar->Leticia+Robson (50/50).
+
+// Carrega o mapa carteira(sellerId de origem) -> [userIds dos atendentes que a recebem, exceto o
+// proprio dono], considerando apenas atendentes habilitados (com >= 1 carteira). Ordem estavel.
+async function loadSpecialCrossReceivers(): Promise<Map<string, string[]>> {
+  const rows = await db.select().from(repescagemAttendants);
+  const map = new Map<string, string[]>();
+  for (const r of rows) {
+    const cart = Array.isArray((r as any).carteiras) ? ((r as any).carteiras as string[]) : [];
+    if (cart.length === 0) continue; // sem carteira = desabilitado
+    for (const src of cart) {
+      if (!src || src === r.userId) continue; // carteira propria nao e roteamento especial
+      if (!map.has(src)) map.set(src, []);
+      const arr = map.get(src)!;
+      if (!arr.includes(r.userId)) arr.push(r.userId);
+    }
+  }
+  for (const [, arr] of map) arr.sort();
+  return map;
 }
-// Split 50/50 determinístico dos clientes das carteiras de REP_SPLIT_LR (hoje: Gilmar)
-// entre Letícia e Robson. Ordena por customerId e alterna (índice par -> Letícia, ímpar -> Robson),
-// garantindo divisão estável e ~metade para cada, independente da ordem de entrada.
-function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: string) => string | null): Map<string, string> {
+
+// Alvo do roteamento especial da carteira `ownerId`, ou null (sem especial -> distribuicao normal).
+// splitTarget = alvo pre-calculado quando a carteira tem 2+ receptores (rateio).
+function repescagemSpecialTarget(ownerId: string | null, crossReceivers: Map<string, string[]>, splitTarget?: string): string | null {
+  if (!ownerId) return null;
+  const recs = crossReceivers.get(ownerId);
+  if (!recs || recs.length === 0) return null;
+  if (recs.length === 1) return recs[0];
+  return splitTarget || recs[0];
+}
+
+// Split deterministico dos clientes de carteiras com 2+ receptores, dividido igualmente entre
+// eles. Agrupa por carteira, ordena por customerId e distribui round-robin (estavel, ~igual).
+function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: string) => string | null, crossReceivers: Map<string, string[]>): Map<string, string> {
   const out = new Map<string, string>();
-  const ids = cands
-    .map(c => c.customerId)
-    .filter(id => { const o = ownerOf(id); return !!o && REP_SPLIT_LR.has(o); })
-    .sort();
-  ids.forEach((id, i) => out.set(id, i % 2 === 0 ? REP_ROUTE.LETICIA : REP_ROUTE.ROBSON));
+  const byCarteira = new Map<string, string[]>();
+  for (const c of cands) {
+    const o = ownerOf(c.customerId);
+    if (!o) continue;
+    const recs = crossReceivers.get(o);
+    if (!recs || recs.length < 2) continue;
+    if (!byCarteira.has(o)) byCarteira.set(o, []);
+    byCarteira.get(o)!.push(c.customerId);
+  }
+  for (const [carteira, ids] of byCarteira) {
+    const recs = crossReceivers.get(carteira)!;
+    ids.sort();
+    ids.forEach((id, i) => out.set(id, recs[i % recs.length]));
+  }
   return out;
+}
+
+// Defaults de carteiras que ESPELHAM o roteamento de hoje. Semeados uma unica vez por atendente
+// (apenas quando o campo ainda esta vazio). A carteira propria e adicionada para todo atendente
+// habilitado; Leticia/Robson recebem tambem as carteiras cruzadas de hoje.
+function defaultCarteirasFor(userId: string, wasEnabled: boolean): string[] {
+  const set = new Set<string>();
+  if (wasEnabled) set.add(userId); // carteira propria (pre-marcada, editavel)
+  if (userId === REP_ROUTE.LETICIA) { set.add(REP_ROUTE.LETICIA); set.add(REP_ROUTE.CARLOS); set.add(REP_ROUTE.RADILTON); set.add(REP_ROUTE.GILMAR); }
+  if (userId === REP_ROUTE.ROBSON) { set.add(REP_ROUTE.ROBSON); set.add(REP_ROUTE.JHONATAN); set.add(REP_ROUTE.CLEBER); set.add(REP_ROUTE.GILMAR); }
+  return Array.from(set);
+}
+
+// Semeia as carteiras UMA UNICA VEZ (quando nenhum atendente tem carteira configurada ainda),
+// espelhando exatamente o roteamento de hoje. Depois disso, o painel e a fonte da verdade.
+async function seedRepescagemCarteirasIfEmpty(): Promise<void> {
+  const rows = await db.select().from(repescagemAttendants);
+  if (rows.length === 0) return;
+  const anyConfigured = rows.some(r => Array.isArray((r as any).carteiras) && ((r as any).carteiras as string[]).length > 0);
+  if (anyConfigured) return; // ja configurado — nao mexe
+  let n = 0;
+  for (const r of rows) {
+    const def = defaultCarteirasFor(r.userId, !!r.isEnabled);
+    if (def.length === 0) continue; // desabilitado sem papel especial — fica sem carteira
+    await db.update(repescagemAttendants)
+      .set({ carteiras: def as any, isEnabled: true, updatedAt: new Date() })
+      .where(eq(repescagemAttendants.userId, r.userId));
+    n++;
+  }
+  if (n > 0) console.log(`[REPESCAGEM2] carteiras semeadas para ${n} atendente(s) (espelho do roteamento atual).`);
 }
 
 function brTodayStr(): string {
@@ -424,6 +478,22 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       if (pedidoNoCicloAtual) continue;
     }
 
+    // ATENDIMENTO FEITO -> SAI + NOVO CICLO: alem do pedido, QUALQUER registro de atendimento
+    // (check-in na rota, atendimento virtual/resgate ou visita concluida) na data do ultimo
+    // vermelho OU depois tambem resolve o cliente -> sai da repescagem. So retorna se a PROXIMA
+    // visita ficar vermelha (novo ciclo). Isso alinha o gatilho a "ultima bolinha vermelha": a
+    // bolinha amarela (atendido, sem pedido) deixa de manter o cliente na lista.
+    {
+      let atendidoNoCicloAtual = false;
+      for (const map of [checkpointDatesByCustomer, virtualLogDatesByCustomer, completedVisitDatesByCustomer]) {
+        const set = map.get(c.id);
+        if (!set) continue;
+        for (const d of set) { if (d >= ev.lastRedAnchor) { atendidoNoCicloAtual = true; break; } }
+        if (atendidoNoCicloAtual) break;
+      }
+      if (atendidoNoCicloAtual) continue;
+    }
+
     const lastRedDate = ev.lastRedAnchor;
     const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
     candidates.push({
@@ -514,12 +584,12 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     lng: c.lng != null ? Number(c.lng) : null,
     sellerId: (c.sellerId as string | null) || null,
   }]));
-  // Split 50/50 (Letícia/Robson) dos clientes das carteiras de REP_SPLIT_LR (Gilmar) e helper de alvo.
-  const splitLR = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null);
+  // Roteamento especial por carteira (config do painel). Split igualitario para carteiras com 2+ receptores.
+  const crossReceivers = await loadSpecialCrossReceivers();
+  const splitLR = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null, crossReceivers);
   const specialTargetFor = (customerId: string) => repescagemSpecialTarget(
     coordById.get(customerId)?.sellerId || null,
-    (candidateByCustomerId.get(customerId) as any)?.daysSince ?? 999,
-    customerId, splitLR.get(customerId));
+    crossReceivers, splitLR.get(customerId));
   const ownerSellerIds = Array.from(new Set(custInfo.map(c => c.sellerId).filter(Boolean) as string[]));
   const ownerRoleRows = ownerSellerIds.length > 0
     ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, ownerSellerIds))
@@ -1157,11 +1227,12 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   // ROTEAMENTO ESPECIAL (rota do dia): carteiras Gilmar/Jhonatan/Carlos dentro de 3 dias vão
   // para Letícia/Robson (telemarketing) e travadas — não entram na alocação por perímetro.
   const teleSet = new Set(telemarketers);
-  const splitLRDraw = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null);
+  const crossReceiversDraw = await loadSpecialCrossReceivers();
+  const splitLRDraw = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null, crossReceiversDraw);
   for (const cand of candidates) {
     if (allocated.has(cand.customerId)) continue; // já preservado (travado) ou alocado
     const owner = coordById.get(cand.customerId)?.sellerId || null;
-    const target = repescagemSpecialTarget(owner, (cand as any).daysSince ?? 999, cand.customerId, splitLRDraw.get(cand.customerId));
+    const target = repescagemSpecialTarget(owner, crossReceiversDraw, splitLRDraw.get(cand.customerId));
     if (!target || !teleSet.has(target)) continue;
     allocated.add(cand.customerId);
     preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
@@ -1471,6 +1542,12 @@ export function registerRepescagemRoutes(app: Express, opts: {
       await db.execute(sql.raw("ALTER TABLE repescagem_assignments ALTER COLUMN id SET DEFAULT gen_random_uuid()"));
       await db.execute(sql.raw("ALTER TABLE repescagem_assignment_history ALTER COLUMN id SET DEFAULT gen_random_uuid()"));
     } catch (e: any) { console.warn('[REPESCAGEM2] ALTER id default:', e?.message); }
+    // Garante a coluna carteiras (idempotente, evita corrida com o boot do index.ts) e semeia os
+    // defaults que espelham o roteamento de hoje — apenas na primeira vez (nenhuma carteira config.).
+    try {
+      await db.execute(sql.raw("ALTER TABLE repescagem_attendants ADD COLUMN IF NOT EXISTS carteiras jsonb NOT NULL DEFAULT '[]'::jsonb"));
+      await seedRepescagemCarteirasIfEmpty();
+    } catch (e: any) { console.warn('[REPESCAGEM2] carteiras boot:', e?.message); }
   })();
 
   // Repescagem2: sorteio diário — disparo manual (admin) e inspeção.
@@ -2024,9 +2101,15 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
-  // Listar atendentes (habilitados + perfil disponíveis para se habilitarem)
+  // Listar atendentes com suas CARTEIRAS de repescagem e a % de cobertura por carteira.
+  // Cada item: { userId, name, role, isEnabled (= tem >= 1 carteira), carteiras: [sellerId...],
+  //   coverage: [{ sellerId, sellerName, total, assigned, pct }] } — pct = clientes daquela
+  //   carteira em repescagem hoje que estao sob este atendente.
   app.get('/api/repescagem/attendants', authenticateUser, requireRole(ALLOWED_ROLES), async (_req, res) => {
     try {
+      // Semeia os defaults (espelho de hoje) se ainda nao houver nenhuma carteira configurada.
+      try { await seedRepescagemCarteirasIfEmpty(); } catch {}
+
       const eligible = await db.select({
         id: users.id,
         firstName: users.firstName,
@@ -2040,21 +2123,126 @@ export function registerRepescagemRoutes(app: Express, opts: {
       );
       const attendants = await db.select().from(repescagemAttendants);
       const map = new Map(attendants.map(a => [a.userId, a]));
+
+      // ── Cobertura % por carteira, a partir das alocacoes pendentes de hoje ──
+      const pending = await db.select({
+        customerId: repescagemAssignments.customerId,
+        assignedUserId: repescagemAssignments.assignedUserId,
+      }).from(repescagemAssignments).where(eq(repescagemAssignments.status, 'pending'));
+      const custIds = Array.from(new Set(pending.map(p => p.customerId).filter(Boolean) as string[]));
+      const custRows = custIds.length === 0 ? [] : await db.select({
+        id: customers.id, sellerId: customers.sellerId,
+      }).from(customers).where(inArray(customers.id, custIds));
+      const carteiraByCustomer = new Map(custRows.map(c => [c.id, c.sellerId || '']));
+      const totalByCarteira = new Map<string, number>();          // total de clientes em repescagem por carteira
+      const assignedByUserCarteira = new Map<string, number>();   // `${userId}|${carteira}` -> qtd sob o atendente
+      for (const p of pending) {
+        const cart = carteiraByCustomer.get(p.customerId) || '';
+        if (!cart) continue;
+        totalByCarteira.set(cart, (totalByCarteira.get(cart) || 0) + 1);
+        const k = `${p.assignedUserId}|${cart}`;
+        assignedByUserCarteira.set(k, (assignedByUserCarteira.get(k) || 0) + 1);
+      }
+
+      // Nomes das carteiras (sellerIds referenciados nas configs) via tabela users.
+      const referenced = new Set<string>();
+      for (const a of attendants) for (const s of (Array.isArray((a as any).carteiras) ? (a as any).carteiras as string[] : [])) referenced.add(s);
+      const nameRows = referenced.size === 0 ? [] : await db.select({
+        id: users.id, firstName: users.firstName, lastName: users.lastName,
+      }).from(users).where(inArray(users.id, Array.from(referenced)));
+      const nameById = new Map(nameRows.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
+
       const out = eligible
         .filter(u => !REPESCAGEM_EXCLUDED_USER_IDS.has(u.id))
         .map(u => {
           const a = map.get(u.id);
+          const carteiras = Array.isArray((a as any)?.carteiras) ? ((a as any).carteiras as string[]) : [];
+          const coverage = carteiras.map(sellerId => {
+            const total = totalByCarteira.get(sellerId) || 0;
+            const assigned = assignedByUserCarteira.get(`${u.id}|${sellerId}`) || 0;
+            return {
+              sellerId,
+              sellerName: nameById.get(sellerId) || sellerId,
+              total,
+              assigned,
+              pct: total > 0 ? Math.round((assigned / total) * 100) : 0,
+            };
+          });
           return {
             userId: u.id,
             name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id,
             role: u.role, // 'vendedor' (externo) | 'telemarketing' (interno)
-            isEnabled: a?.isEnabled || false,
+            isEnabled: carteiras.length > 0,
             enabledAt: a?.enabledAt || null,
+            carteiras,
+            coverage,
           };
         }).sort((a, b) => a.name.localeCompare(b.name));
       res.json(out);
     } catch (e: any) {
       console.error('GET /api/repescagem/attendants', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Carteiras selecionaveis (fontes) = vendedores/telemarketing ATIVOS (donos de clientes).
+  app.get('/api/repescagem/carteiras', authenticateUser, requireRole(ALLOWED_ROLES), async (_req, res) => {
+    try {
+      const sellers = await db.select({
+        id: users.id, firstName: users.firstName, lastName: users.lastName, role: users.role,
+      }).from(users).where(
+        and(eq(users.isActive, true), inArray(users.role, REPESCAGEM_ELIGIBLE_ROLES as any))
+      );
+      const out = sellers
+        .filter(u => !REPESCAGEM_EXCLUDED_USER_IDS.has(u.id))
+        .map(u => ({ sellerId: u.id, name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id, role: u.role }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      res.json(out);
+    } catch (e: any) {
+      console.error('GET /api/repescagem/carteiras', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Salvar as CARTEIRAS de repescagem de um atendente (admin). Substitui a lista inteira.
+  // isEnabled passa a ser derivado: atendente com >= 1 carteira fica habilitado.
+  app.post('/api/repescagem/attendants/:userId/carteiras', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { userId } = req.params;
+      const body = req.body || {};
+      const carteiras: string[] = Array.isArray(body.carteiras) ? Array.from(new Set(body.carteiras.filter((x: any) => typeof x === 'string' && x))) : [];
+      if (!userId) return res.status(400).json({ message: 'userId obrigatório' });
+      // Valida o atendente: elegivel (vendedor/telemarketing), ativo e nao excluido.
+      const target = await db.select({ id: users.id, role: users.role, isActive: users.isActive }).from(users).where(eq(users.id, userId));
+      if (target.length === 0) return res.status(404).json({ message: 'Usuário não encontrado' });
+      const t = target[0];
+      if (REPESCAGEM_EXCLUDED_USER_IDS.has(userId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(t.role as any) || !t.isActive) {
+        return res.status(400).json({ message: 'Usuário não elegível para a repescagem' });
+      }
+      const isEnabled = carteiras.length > 0;
+      const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
+      if (existing.length === 0) {
+        await db.insert(repescagemAttendants).values({
+          id: sql`gen_random_uuid()`,
+          userId,
+          isEnabled,
+          carteiras: carteiras as any,
+          enabledAt: isEnabled ? new Date() : null,
+          disabledAt: isEnabled ? null : new Date(),
+        });
+      } else {
+        await db.update(repescagemAttendants).set({
+          isEnabled,
+          carteiras: carteiras as any,
+          enabledAt: isEnabled ? (existing[0].enabledAt || new Date()) : existing[0].enabledAt,
+          disabledAt: isEnabled ? null : new Date(),
+          updatedAt: new Date(),
+        }).where(eq(repescagemAttendants.userId, userId));
+      }
+      await reconcileAssignments((req as any).currentUser?.id);
+      res.json({ ok: true, carteiras, isEnabled });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/attendants/:userId/carteiras', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
@@ -2080,6 +2268,11 @@ export function registerRepescagemRoutes(app: Express, opts: {
         return res.status(400).json({ message: 'Usuário não elegível para a repescagem' });
       }
       const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
+      // Repescagem2 (carteiras): a habilitacao agora e derivada das carteiras. Habilitar sem carteiras
+      // seria "ligado mas sem receber ninguem", entao ao HABILITAR semeamos ao menos a carteira propria
+      // (se ainda vazio); ao DESABILITAR limpamos as carteiras.
+      const curCart = existing.length > 0 && Array.isArray((existing[0] as any).carteiras) ? ((existing[0] as any).carteiras as string[]) : [];
+      const nextCart = isEnabled ? (curCart.length > 0 ? curCart : defaultCarteirasFor(userId, true)) : [];
       if (existing.length === 0) {
         // id explícito: a coluna no banco pode não ter DEFAULT gen_random_uuid(),
         // então geramos o UUID no próprio INSERT para não violar o NOT NULL.
@@ -2087,12 +2280,14 @@ export function registerRepescagemRoutes(app: Express, opts: {
           id: sql`gen_random_uuid()`,
           userId,
           isEnabled: !!isEnabled,
+          carteiras: nextCart as any,
           enabledAt: isEnabled ? new Date() : null,
           disabledAt: !isEnabled ? new Date() : null,
         });
       } else {
         await db.update(repescagemAttendants).set({
           isEnabled: !!isEnabled,
+          carteiras: nextCart as any,
           enabledAt: isEnabled ? new Date() : existing[0].enabledAt,
           disabledAt: !isEnabled ? new Date() : existing[0].disabledAt,
           updatedAt: new Date(),
