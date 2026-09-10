@@ -26,7 +26,7 @@ import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic } from "lucide-react
 import { useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
 
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
-type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number };
+type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number; atendido?: boolean };
 
 const MOTIVOS: [string, string][] = [
   ["sem_tempo", "Não deu tempo / rota grande"],
@@ -84,7 +84,7 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     const debito = (!exigirDebito || suspDebito.has(customerId)) ? 0 : debtOf(v?.customerId);
     const visitOk = done || suspVisita.has(customerId);
     if (visitOk && !debito) continue;
-    out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined });
+    out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined, atendido: visitOk });
   }
   // Repescagem: cada cliente da repescagem NÃO atendido precisa de justificativa — mas SOMENTE
   // do VENDEDOR DE CADASTRO (dono da carteira). O atendente habilitado que recebeu o cliente
@@ -103,7 +103,7 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       const debito = (!exigirDebito || suspDebito.has(cid)) ? 0 : debtOf(cid);
       const visitOk = done || suspVisita.has(cid);
       if (visitOk && !debito) continue;
-      out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem", debito: debito || undefined });
+      out.push({ id: "rep-" + String(r?.assignmentId || cid), customerId: cid, nome: r?.customerName || "(sem nome)", tipo: "repescagem", debito: debito || undefined, atendido: visitOk });
     }
   }
   // Rede de segurança: garante 1 card por cliente. A rota pode trazer o mesmo
@@ -116,6 +116,8 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (!ex) { dedup.set(o.customerId, o); continue; }
     // Mantém o débito (maior) caso uma das paradas tenha trazido o valor.
     if (o.debito && (!ex.debito || o.debito > ex.debito)) ex.debito = o.debito;
+    // Se qualquer parada foi atendida, o cliente conta como atendido (débito ainda a prestar contas).
+    if (o.atendido) ex.atendido = true;
   }
   return Array.from(dedup.values());
 }
@@ -310,50 +312,71 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
         <>
           <div className="grid grid-cols-4 gap-2 mt-5">
             <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold">{totalStops}</div><div className="text-[11px] text-muted-foreground">na rota</div></div>
-            <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold text-green-600">{Math.max(0, totalStops - naoVisitados.length)}</div><div className="text-[11px] text-muted-foreground">atendidos</div></div>
+            <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold text-green-600">{Math.max(0, totalStops - naoVisitados.filter((c) => !c.atendido).length)}</div><div className="text-[11px] text-muted-foreground">atendidos</div></div>
             <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold text-green-700">{Object.keys(justified).length}</div><div className="text-[11px] text-muted-foreground">justificados</div></div>
             <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold text-red-600">{pendentes.length}</div><div className="text-[11px] text-muted-foreground">pendentes</div></div>
           </div>
 
-          {naoVisitados.length === 0 ? (
-            <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl p-3 mt-4">Tudo atendido! Nenhum cliente ficou sem visita. Pode fechar a rota.</div>
-          ) : (
-            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3 mt-4 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><span>Estes clientes ficaram <b>sem atendimento</b> hoje. Escolha um motivo para cada um.</span></div>
-          )}
+          {(() => {
+            const soDebito = naoVisitados.filter((c) => c.atendido && !!c.debito).length;
+            const semAtend = naoVisitados.length - soDebito;
+            if (naoVisitados.length === 0) {
+              return <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl p-3 mt-4">Tudo atendido! Nenhum cliente ficou sem visita. Pode fechar a rota.</div>;
+            }
+            if (soDebito > 0 && semAtend === 0) {
+              return <div className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-xl p-3 mt-4 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><span>{soDebito === 1 ? "Este cliente foi atendido" : "Estes clientes foram atendidos"}, mas {soDebito === 1 ? "tem" : "têm"} <b>débito pendente</b>. Você está prestando contas do débito — não do atendimento. Informe a situação de cada um para fechar a rota.</span></div>;
+            }
+            if (soDebito > 0) {
+              return <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3 mt-4 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><span>Alguns clientes ficaram <b>sem atendimento</b> e outros foram <b>atendidos, mas têm débito pendente</b> para prestar contas. Cada card indica sobre o que você está justificando.</span></div>;
+            }
+            return <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3 mt-4 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><span>Estes clientes ficaram <b>sem atendimento</b> hoje. Escolha um motivo para cada um.</span></div>;
+          })()}
 
           <div className="mt-3 space-y-2">
             {naoVisitados.map((c) => {
+              // "Débito a prestar contas": cliente ATENDIDO que entrou na lista só por ter débito
+              // vencido em aberto. Aqui a prestação de contas é sobre o DÉBITO, não sobre a visita.
+              const debtMode = !!(c.debito && c.atendido);
               const j = justified[c.customerId];
               if (j) {
+                const jDebt = debtMode || j.reason === "debito";
                 return (
                   <Card key={c.id} className="border-l-4 border-l-green-500"><CardContent className="py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
-                      <span className="text-[11px] font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full">✓ Justificado</span>
+                      <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{debtMode ? <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 font-bold">Atendido</span> : null}{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
+                      <span className="text-[11px] font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full">{jDebt ? "✓ Débito informado" : "✓ Justificado"}</span>
                     </div>
-                    <div className="mt-2 text-xs bg-green-50 border border-green-100 rounded-lg px-3 py-2">📝 {MOTIVO_LABEL[j.reason] || j.reason}{j.note ? <span className="text-muted-foreground"> — "{j.note}"</span> : null}</div>
+                    <div className="mt-2 text-xs bg-green-50 border border-green-100 rounded-lg px-3 py-2">{jDebt ? "💰 Prestação de contas do débito" : `📝 ${MOTIVO_LABEL[j.reason] || j.reason}`}{j.note ? <span className="text-muted-foreground"> — "{j.note}"</span> : null}</div>
                   </CardContent></Card>
                 );
               }
               const open = openId === c.id;
               return (
-                <Card key={c.id} className="border-l-4 border-l-red-500"><CardContent className="py-3">
+                <Card key={c.id} className={`border-l-4 ${debtMode ? "border-l-amber-500" : "border-l-red-500"}`}><CardContent className="py-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
-                    <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full">● Não visitado</span>
+                    <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{debtMode ? <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 font-bold">Atendido</span> : null}{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
+                    {debtMode
+                      ? <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-full">💰 Débito a prestar contas</span>
+                      : <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full">● Não visitado</span>}
                   </div>
                   {!open ? (
-                    <button className="mt-2 w-full bg-gray-900 text-white rounded-lg py-2 text-sm font-semibold" onClick={() => { setOpenId(c.id); setDraftReason(""); setDraftNote(""); }}>＋ Justificar não atendimento</button>
+                    <button className={`mt-2 w-full rounded-lg py-2 text-sm font-semibold ${debtMode ? "bg-amber-600 text-white" : "bg-gray-900 text-white"}`} onClick={() => { setOpenId(c.id); setDraftReason(debtMode ? "debito" : ""); setDraftNote(""); }}>{debtMode ? "＋ Prestar contas do débito pendente" : "＋ Justificar não atendimento"}</button>
                   ) : (
                     <div className="mt-3 border-t border-dashed pt-3">
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-2">Motivo</div>
-                      <div className="flex flex-wrap gap-2">
-                        {motivosDisponiveis.map(([id, label]) => (
-                          <button key={id} onClick={() => setDraftReason(id)} className={`px-3 py-2 rounded-full text-xs font-semibold border ${draftReason === id ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-200 text-gray-600"}`}>{label}</button>
-                        ))}
-                      </div>
-                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Observação {(draftReason === "outro" || draftReason === "debito" || draftReason === "remarcou") ? "(obrigatória)" : "(opcional)"}</div><button type="button" onClick={toggleGravacao} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
-                      <textarea className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Ex.: passei 17h e estava fechado" value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
+                      {debtMode ? (
+                        <div className="text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-3 py-2 mb-3 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><span>Este cliente <b>foi atendido</b>. Você está prestando contas sobre o <b>débito pendente de R$ {Number(c.debito).toFixed(2)}</b>, não sobre a visita. Descreva a situação do débito (negociação, prazo, promessa de pagamento…).</span></div>
+                      ) : (
+                        <>
+                          <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-2">Motivo</div>
+                          <div className="flex flex-wrap gap-2">
+                            {motivosDisponiveis.map(([id, label]) => (
+                              <button key={id} onClick={() => setDraftReason(id)} className={`px-3 py-2 rounded-full text-xs font-semibold border ${draftReason === id ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-200 text-gray-600"}`}>{label}</button>
+                            ))}
+                        </div>
+                        </>
+                      )}
+                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{debtMode ? "Situação do débito (obrigatória)" : `Observação ${(draftReason === "outro" || draftReason === "debito" || draftReason === "remarcou") ? "(obrigatória)" : "(opcional)"}`}</div><button type="button" onClick={toggleGravacao} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
+                      <textarea className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder={debtMode ? "Ex.: cliente vai quitar até sexta / negociado em 2x" : "Ex.: passei 17h e estava fechado"} value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
                       <div className="flex gap-2 mt-2">
                         <button className="flex-1 bg-gray-100 text-gray-600 rounded-lg py-2 text-sm font-semibold" onClick={() => setOpenId(null)}>Cancelar</button>
                         <button className="flex-1 bg-green-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-50" disabled={!canSave || salvarJust.isPending} onClick={() => salvarJust.mutate(c)}>Salvar</button>
