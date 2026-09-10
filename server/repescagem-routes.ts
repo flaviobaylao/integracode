@@ -413,6 +413,17 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       }
     }
 
+    // PEDIDO FEITO -> SAI + NOVO CICLO: se houve VENDA (pedido) na data da visita que gerou o
+    // vermelho OU depois, o cliente ja foi resolvido -> sai da repescagem e so retorna se a PROXIMA
+    // visita ficar vermelha (novo ciclo). Complementa a "bolinha verde" cobrindo brechas da janela
+    // do ciclo (ex.: venda em fim de semana ou apos o fim da janela).
+    {
+      const sset = saleDatesByCustomer.get(c.id);
+      let pedidoNoCicloAtual = false;
+      if (sset) { for (const d of sset) { if (d >= ev.lastRedAnchor) { pedidoNoCicloAtual = true; break; } } }
+      if (pedidoNoCicloAtual) continue;
+    }
+
     const lastRedDate = ev.lastRedAnchor;
     const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
     candidates.push({
