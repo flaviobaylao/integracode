@@ -37,7 +37,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full bg-red-500 shrink-0" /><span><b>Vermelho</b> — passou o dia da visita <b>sem atendimento e sem pedido</b>.</span></li>
                 <li className="flex items-start gap-2"><span className="mt-1 inline-block h-3 w-3 rounded-full border border-gray-400 bg-transparent shrink-0" /><span><b>Sem cor</b> — <b>atendimento do ciclo ainda não realizado</b>.</span></li>
               </ul>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">A repescagem olha a <b>última bolinha</b>: se ela não estiver verde (vermelha ou amarela), o cliente entra na repescagem conforme as regras abaixo.</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">A repescagem olha a <b>última bolinha</b>: só entra quem está <b>vermelho</b> (sem atendimento e sem pedido). <b>Amarelo</b> (atendido, sem pedido) e <b>verde</b> (com pedido) não entram — e quem já estava na lista, sai.</p>
             </div>
             <div>
               <p className="font-semibold mb-1">Quem é elegível</p>
@@ -51,21 +51,22 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Quando o cliente cai em repescagem</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Segue <b>periodicidade e dia de rota</b>, o mesmo raciocínio do Resumo de Visitas (ciclos/bolinhas).</li>
-                <li>Cai <b>se e somente se a última bolinha não estiver verde</b> — a visita agendada mais recente sem <b>pedido</b> na janela do ciclo. Vale tanto para a bolinha <b>vermelha</b> (não foi atendido) quanto para a <b>amarela</b> (foi atendido, mas não comprou).</li>
-                <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha não estiver verde.</li>
-                <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar sem verde.</li>
-                <li><b>Permanece</b> enquanto a última bolinha não estiver verde. <b>Assim que houver pedido/venda</b> (na data da visita ou depois, inclusive fim de semana), o cliente <b>sai da lista e entra em um novo ciclo</b> — só volta se a próxima visita ficar sem pedido.</li>
+                <li>Cai <b>se e somente se a última bolinha estiver vermelha</b> — a visita agendada mais recente <b>sem atendimento e sem pedido</b> na janela do ciclo. Se houve <b>atendimento</b> (amarela) ou <b>pedido</b> (verde), não cai.</li>
+                <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha estiver vermelha.</li>
+                <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar vermelha.</li>
+                <li><b>Permanece</b> enquanto a última bolinha estiver vermelha. <b>Assim que houver pedido (venda) OU qualquer registro de atendimento</b> — check-in na rota, atendimento virtual/resgate ou visita concluída, na data da visita ou depois (inclusive fim de semana) — o cliente <b>sai da lista e entra em um novo ciclo</b>; só volta se a próxima visita ficar vermelha.</li>
                 <li>A bolinha <b>sem cor</b> é o ciclo atual, com o atendimento ainda não realizado — cliente nenhum cai por causa dela.</li>
               </ul>
             </div>
             <div>
               <p className="font-semibold mb-1">Para quem vai (roteamento) — cada cliente também aparece na rota do próprio dono (card duplo)</p>
+              <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">O roteamento especial (carteira → atendente) é <b>configurável no painel “Atendentes e carteiras de repescagem”</b>: cada vendedor recebe as carteiras marcadas no seu campo. A mesma carteira marcada em 2+ atendentes é <b>dividida igualmente</b> entre eles. A carteira própria vem marcada por padrão (editável). Os padrões espelham o de hoje:</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Carlos T. e Radilton → <b>Letícia</b></li>
                 <li>Jhonatan e Cleber → <b>Robson</b></li>
                 <li>Gilmar → <b>50/50 Letícia/Robson</b></li>
                 <li>Letícia e Robson → seus próprios clientes ficam <b>com eles mesmos</b></li>
-                <li>Demais vendedores externos → clientes dentro do perímetro de 2 km da rota do dia (próprio vendedor primeiro), <b>sem teto por vendedor</b>; o excedente vai para telemarketing.</li>
+                <li>Demais vendedores externos → carteira própria; na rota, clientes dentro do perímetro de 2 km da rota do dia (próprio vendedor primeiro), <b>sem teto por vendedor</b>; o excedente vai para telemarketing.</li>
               </ul>
             </div>
             <div>
