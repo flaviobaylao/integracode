@@ -401,6 +401,10 @@ export default function Repescagem() {
             <CardTitle className="text-base flex items-center gap-2">
               <UserCheck className="h-4 w-4" />
               Atendentes e carteiras de repescagem ({enabledAttendants.length})
+              <span className="inline-flex items-center justify-center h-6 w-6 rounded-md border border-gray-300 bg-white dark:bg-gray-900 text-gray-600 shrink-0">
+                {attendantsCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              </span>
+              <span className="text-[11px] font-normal text-gray-400">{attendantsCollapsed ? 'expandir' : 'recolher'}</span>
             </CardTitle>
             {attendantsCollapsed
               ? <ChevronDown className="h-4 w-4 text-gray-500 shrink-0" />
@@ -417,6 +421,13 @@ export default function Repescagem() {
                 Para cada vendedor ativo, marque as <b>carteiras de repescagem</b> que ele recebe na rota do dia.
                 A carteira própria vem marcada (pode remover). A mesma carteira em 2+ atendentes é dividida igualmente.
                 O <b>%</b> em cada carteira mostra quanto dela, em repescagem hoje, está sob este atendente.
+              </p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md px-2 py-1.5">
+                <b>Por que a carteira própria de um vendedor externo aparece com 0%?</b> Porque os clientes dela em repescagem
+                são atendidos pelo <b>telemarketing</b> (ex.: Carlos, Radilton → Letícia; Jhonatan, Cleber → Robson; Gilmar → 50/50).
+                O vendedor continua vendo esses clientes na rota do dia (<b>card duplo</b>), mas quem faz a repescagem é o
+                telemarketing — por isso 0% fica sob o próprio vendedor. Se ninguém do telemarketing receber a carteira, o %
+                volta a subir para o próprio vendedor.
               </p>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {attendants.map(a => {
@@ -448,7 +459,11 @@ export default function Repescagem() {
                             key={sid}
                             className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 dark:bg-blue-950/40 pl-2 pr-1 py-0.5 text-[11px]"
                             data-testid={`carteira-chip-${a.userId}-${sid}`}
-                            title={isOwn ? 'Carteira própria' : 'Carteira recebida'}
+                            title={
+                              isOwn && (cov?.pct ?? 0) === 0
+                                ? 'Carteira própria — 0% porque estes clientes são atendidos pelo telemarketing (card duplo mantém o vendedor vendo a rota).'
+                                : isOwn ? 'Carteira própria' : 'Carteira recebida de outro vendedor'
+                            }
                           >
                             <span className="font-medium">{nm}{isOwn ? ' (própria)' : ''}</span>
                             <span className="text-blue-700 dark:text-blue-300 font-semibold">{cov ? `${cov.pct}%` : '0%'}</span>
