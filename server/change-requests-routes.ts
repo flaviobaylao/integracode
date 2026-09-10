@@ -391,9 +391,11 @@ export function registerChangeRequestsRoutes(app: Express) {
     const src = String((req.body || {}).audio || "");
     if (!src.startsWith("data:")) return res.status(400).json({ error: "áudio inválido" });
     if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: "Transcrição indisponível (OPENAI_API_KEY não configurada)." });
-    const m = src.match(/^data:([^;]+);base64,(.*)$/);
+    const m = src.match(/^data:([^,]*?);base64,(.*)$/);
     if (!m) return res.status(400).json({ error: "formato de áudio inválido" });
     const mt = m[1];
+    // (set/2026) MediaRecorder do Chrome grava "audio/webm;codecs=opus": usa o mime BASE p/ o File.
+    const baseMt = (mt.split(";")[0] || "audio/webm").trim();
     const buffer = Buffer.from(m[2], "base64");
     if (!buffer.length) return res.status(400).json({ error: "áudio vazio" });
     const ext = /webm/.test(mt) ? "webm" : /ogg|opus/.test(mt) ? "ogg" : /mpeg|mp3/.test(mt) ? "mp3" : /wav/.test(mt) ? "wav" : /m4a|mp4|aac/.test(mt) ? "m4a" : "webm";
@@ -401,8 +403,8 @@ export function registerChangeRequestsRoutes(app: Express) {
     const OpenAI = mod.default || mod.OpenAI || mod;
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const fileArg = typeof mod.toFile === "function"
-      ? await mod.toFile(buffer, `audio.${ext}`, { type: mt })
-      : new File([buffer], `audio.${ext}`, { type: mt });
+      ? await mod.toFile(buffer, `audio.${ext}`, { type: baseMt })
+      : new File([buffer], `audio.${ext}`, { type: baseMt });
     const resp = await client.audio.transcriptions.create({ file: fileArg, model: "whisper-1", language: "pt" });
     res.json({ text: resp && resp.text ? String(resp.text).trim() : "" });
   }));
