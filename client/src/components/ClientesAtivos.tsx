@@ -33,7 +33,7 @@ function Spark({ serie }: { serie: number[] }) {
   const last = serie[n - 1], prev = serie[n - 2] || 0;
   const col = last >= prev ? "#16a34a" : "#dc2626";
   return (
-    <svg width={w} height={h} className="block">
+    <svg width={w} height={h} className="mx-auto block">
       <polyline points={pts} fill="none" stroke={col} strokeWidth="1.5" strokeLinejoin="round" />
     </svg>
   );
@@ -49,6 +49,8 @@ export default function ClientesAtivos() {
   const [fVend, setFVend] = useState<string[]>([]);
   const [fPer, setFPer] = useState<string[]>([]);
   const [fMun, setFMun] = useState<string[]>([]);
+  const [qCli, setQCli] = useState("");
+  const [qRede, setQRede] = useState("");
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openRedes, setOpenRedes] = useState<Record<string, boolean>>({});
 
@@ -57,8 +59,12 @@ export default function ClientesAtivos() {
   const optMun = useMemo(() => [...new Set(rows.map((r) => r.municipio).filter(Boolean))].sort(), [rows]);
 
   const filtered = useMemo(
-    () => rows.filter((r) => multiMatch(fVend, r.vendedor) && multiMatch(fPer, r.periodicidade) && multiMatch(fMun, r.municipio)),
-    [rows, fVend, fPer, fMun]
+    () => rows.filter((r) =>
+      multiMatch(fVend, r.vendedor) && multiMatch(fPer, r.periodicidade) && multiMatch(fMun, r.municipio)
+      && (!qCli.trim() || (r.nome || "").toLowerCase().includes(qCli.trim().toLowerCase()))
+      && (!qRede.trim() || (r.redeNome || "").toLowerCase().includes(qRede.trim().toLowerCase()))
+    ),
+    [rows, fVend, fPer, fMun, qCli, qRede]
   );
 
   const { sortKey, sortDir, toggleSort, sortRows } = useTableSort("nome", "asc");
@@ -84,6 +90,17 @@ export default function ClientesAtivos() {
   }
   function toggleOne(id: string) { setSel((s) => ({ ...s, [id]: !s[id] })); }
 
+  function expandAll() {
+    const n: Record<string, boolean> = {};
+    for (const rk of Object.keys(grouped.redes)) n[rk] = true;
+    setOpenRedes(n);
+  }
+  function collapseAll() {
+    const n: Record<string, boolean> = {};
+    for (const rk of Object.keys(grouped.redes)) n[rk] = false;
+    setOpenRedes(n);
+  }
+
   const colCount = 7;
 
   function Rowline({ r, indent }: { r: Row; indent?: boolean }) {
@@ -94,13 +111,13 @@ export default function ClientesAtivos() {
           {r.nome}
           <div className="text-[10px] text-gray-500">{r.municipio}{r.vendedor ? " - " + r.vendedor : ""}</div>
         </td>
-        <td className="px-2 py-1 text-right whitespace-nowrap">{r.penultimo > 0 ? brl(r.penultimo) : "-"}</td>
-        <td className="px-2 py-1 text-right whitespace-nowrap">{r.ultimo > 0 ? brl(r.ultimo) : "-"}</td>
-        <td className="px-2 py-1 whitespace-nowrap">{r.periodicidade || "-"}</td>
-        <td className={"px-2 py-1 text-right whitespace-nowrap " + (r.variacao == null ? "text-gray-400" : r.variacao >= 0 ? "text-emerald-600" : "text-red-600")}>
+        <td className="px-2 py-1 text-center whitespace-nowrap">{r.penultimo > 0 ? brl(r.penultimo) : "-"}</td>
+        <td className="px-2 py-1 text-center whitespace-nowrap">{r.ultimo > 0 ? brl(r.ultimo) : "-"}</td>
+        <td className="px-2 py-1 text-center whitespace-nowrap">{r.periodicidade || "-"}</td>
+        <td className={"px-2 py-1 text-center whitespace-nowrap " + (r.variacao == null ? "text-gray-400" : r.variacao >= 0 ? "text-emerald-600" : "text-red-600")}>
           {r.variacao == null ? "-" : (r.variacao > 0 ? "+" : "") + r.variacao + "%"}
         </td>
-        <td className="px-2 py-1"><Spark serie={r.serie} /></td>
+        <td className="px-2 py-1 text-center"><Spark serie={r.serie} /></td>
       </tr>
     );
   }
@@ -110,7 +127,7 @@ export default function ClientesAtivos() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-semibold">Clientes Ativos</CardTitle>
+        <CardTitle className="text-base font-semibold">Variação de Vendas</CardTitle>
         <div className="text-xs text-gray-500 mt-1">
           Penúltimo x último pedido (NF-e de venda), periodicidade, variação e minigráfico Jan/26 → hoje.
         </div>
@@ -118,8 +135,15 @@ export default function ClientesAtivos() {
           <MultiSelect label="Vendedor" options={optVend} selected={fVend} onChange={setFVend} />
           <MultiSelect label="Periodicidade" options={optPer} selected={fPer} onChange={setFPer} />
           <MultiSelect label="Município" options={optMun} selected={fMun} onChange={setFMun} />
+          <input type="text" value={qCli} onChange={(e) => setQCli(e.target.value)} placeholder="Buscar cliente..." className="text-sm border border-gray-300 rounded-md px-2 py-1.5 w-40" />
+          <input type="text" value={qRede} onChange={(e) => setQRede(e.target.value)} placeholder="Buscar rede..." className="text-sm border border-gray-300 rounded-md px-2 py-1.5 w-36" />
           <DateRangeFilter start={de} end={para} onChange={(s, e) => { setDe(s); setPara(e); }} label="Pedidos entre" />
           <span className="text-xs text-gray-500">{filtered.length} clientes{selCount > 0 ? " - " + selCount + " selecionados" : ""}</span>
+          <div className="ml-auto flex items-center gap-2">
+            <button type="button" onClick={expandAll} className="text-xs text-gray-500 hover:text-indigo-600">Expandir tudo</button>
+            <span className="text-gray-300">·</span>
+            <button type="button" onClick={collapseAll} className="text-xs text-gray-500 hover:text-indigo-600">Recolher tudo</button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -128,12 +152,12 @@ export default function ClientesAtivos() {
             <thead className="sticky top-0 bg-gray-50 z-10">
               <tr className="border-b border-gray-200 text-left">
                 <th className="px-2 py-2"><input type="checkbox" checked={allSel} onChange={toggleAll} /></th>
-                <SortableTh label="Nome Fantasia" colKey="nome" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                <SortableTh label="Penúltimo R$" colKey="penultimo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
-                <SortableTh label="Último R$" colKey="ultimo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
-                <SortableTh label="Periodicidade" colKey="periodicidade" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                <SortableTh label="Variação %" colKey="variacao" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
-                <th className="px-2 py-2 text-gray-500 font-medium whitespace-nowrap">Jan/26 → hoje</th>
+                <SortableTh label="Nome Fantasia" colKey="nome" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-2 py-2" />
+                <SortableTh label="Penúltimo R$" colKey="penultimo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" className="px-2 py-2 text-center" />
+                <SortableTh label="Último R$" colKey="ultimo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" className="px-2 py-2 text-center" />
+                <SortableTh label="Periodicidade" colKey="periodicidade" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" className="px-2 py-2 text-center" />
+                <SortableTh label="Variação %" colKey="variacao" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" className="px-2 py-2 text-center" />
+                <th className="px-2 py-2 text-center text-gray-500 font-medium whitespace-nowrap">Jan/26 → hoje</th>
               </tr>
             </thead>
             <tbody>
