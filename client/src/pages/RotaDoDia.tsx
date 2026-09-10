@@ -1941,29 +1941,24 @@ export default function RotaDoDia() {
                 {filteredRepescagem.map((r: any) => {
                   const repKey = String(r.assignmentId);
                   const repIsExpanded = repExpanded.has(repKey);
-                  // Cor: MESMAS regras do card de vendas normal (offsite=vermelho, check-in/pedido=verde, ajuste admin=roxo,
-                  // alteracao efetuada=cinza), com o BEGE como estado neutro da repescagem. (set/2026)
-                  const _rCin = route?.checkpoints?.find((cp) => cp && cp.checkpointType === "check_in" && String(cp.customerId) === String(r.customerId));
-                  const _rCout = route?.checkpoints?.find((cp) => cp && cp.checkpointType === "check_out" && String(cp.customerId) === String(r.customerId));
-                  const _rcLat = parseFloat(String(r.latitude || 0)), _rcLon = parseFloat(String(r.longitude || 0));
-                  let _rOff = false;
-                  if (_rCin && _rCin.latitude && _rCin.longitude && _rcLat && _rcLon) { if (calculateDistance(_rcLat, _rcLon, parseFloat(_rCin.latitude), parseFloat(_rCin.longitude)) > 100) _rOff = true; }
-                  if (_rCout && _rCout.latitude && _rCout.longitude && _rcLat && _rcLon) { if (calculateDistance(_rcLat, _rcLon, parseFloat(_rCout.latitude), parseFloat(_rCout.longitude)) > 100) _rOff = true; }
-                  const _rCompleted = !!_rCin;
-                  const _rHasOrder = !!(customerInfo?.orders?.[r.customerId]?.length);
-                  const _rAttended = attendedCustomerIds.has(r.customerId);
-                  const _rAdminMark = adminAdjustments(r.customerId);
-                  const _rHasAdminChange = !!(_rAdminMark && Array.isArray(_rAdminMark.changes) && _rAdminMark.changes.length > 0);
-                  const _rCref = crEfetuadaByKey(crKey("repescagem", String(r.assignmentId)));
-                  let _rBorder = "border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]";
-                  if (_rOff) _rBorder = "border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950";
-                  else if (_rCompleted || _rHasOrder || _rAttended) _rBorder = "border-green-500 dark:border-green-700 bg-green-50 dark:bg-green-950";
-                  if (_rHasAdminChange) _rBorder = "border-2 border-purple-800 dark:border-purple-400 bg-purple-200 dark:bg-purple-900 ring-1 ring-purple-800 dark:ring-purple-500";
-                  if (_rCref) _rBorder = "opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700";
                   return (
                   <div
                     key={r.assignmentId}
-                    className={` flex items-start justify-between p-2 rounded-lg border ${_rBorder}`}
+                    className={`flex items-start justify-between p-2 rounded-lg border ${
+                      crEfetuadaByKey(crKey('repescagem', String(r.assignmentId)))
+                        ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
+                        : r.inactive
+                          // 🚫 FASE 4: o pedido do cliente foi colocado por OUTRA pessoa (o dono ou o
+                          // habilitado). Este card "perdeu" a repescagem → totalmente inativo/desabilitado
+                          // (cinza, sem ações) e isento de justificativa no fechamento de rota.
+                          ? 'opacity-50 grayscale bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700'
+                          : (attendedCustomerIds.has(r.customerId) || !!(customerInfo?.orders?.[r.customerId]?.length))
+                            // ✅ Repescagem ATENDIDA (atendimento registrado OU pedido no dia) → card VERDE,
+                            // como presencial/virtual. Antes só tinha cinza (Efetuada) e o bege padrão, então
+                            // o card nunca ficava verde mesmo após o registro de atendimento. (30/jul/2026)
+                            ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950'
+                            : 'border-[#cbb98a] bg-[#f3ecda] dark:bg-[#2e2a1e] dark:border-[#5c5230]'
+                    }`}
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
                     <div className="min-w-0">
@@ -2074,7 +2069,7 @@ export default function RotaDoDia() {
                       </Button>
                       {/* FASE 4: card inativo (pedido feito por outra pessoa) não tem ações operacionais. */}
                       {/* Botões só para repescagem que caiu no telemarketing */}
-                      {r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
+                      {!r.inactive && r.phase === 'telemarketing' && (isAdmin || (isTelemarketing && user?.isActive !== false)) && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
@@ -2085,7 +2080,7 @@ export default function RotaDoDia() {
                           <MessageCircle className="h-4 w-4" />
                         </Button>
                       )}
-                      {r.customerId && (
+                      {!r.inactive && r.customerId && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
@@ -2096,7 +2091,7 @@ export default function RotaDoDia() {
                           <FileText className="h-4 w-4" />
                         </Button>
                       )}
-                      {r.latitude && r.longitude && (
+                      {!r.inactive && r.latitude && r.longitude && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
@@ -2124,18 +2119,7 @@ export default function RotaDoDia() {
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       )}
-                      {/* Solicitar Alteracao — igual ao card de vendas normal (somado as acoes da repescagem). (set/2026) */}
-                      <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0" onClick={(e) => e.stopPropagation()}>
-                        <ChangeRequestControl
-                          disabled={hasCheckinOrSale(r.customerId)}
-                          entityType="customer"
-                          entityId={String(r.customerId)}
-                          customerId={r.customerId}
-                          entityName={r.customerName}
-                          sellerId={selectedSellerId}
-                          state={changeRequestStates[crKey("customer", String(r.customerId))]}
-                        />
-                      </div>
+                      {/* Solicitar Alteração REMOVIDO para Repescagem — somente clientes ativos têm o botão. */}
                     </div>
                   </div>
                   );
