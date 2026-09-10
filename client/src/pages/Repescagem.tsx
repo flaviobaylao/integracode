@@ -388,7 +388,7 @@ export default function Repescagem() {
       </div>
 
       {/* Painel de habilitação + atendentes */}
-      <Card>
+      <Card className="border-indigo-300 bg-indigo-50/70 dark:bg-indigo-950/30 dark:border-indigo-900 border-l-4 border-l-indigo-500">
         <CardHeader className="pb-2">
           <button
             type="button"
