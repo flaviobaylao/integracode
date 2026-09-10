@@ -23,7 +23,7 @@ type Visit = {
 type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean; attended?: boolean; pending?: boolean };
 
 // Bolinha de efetividade: verde = pedido; amarelo = atendido sem pedido; vermelho = nem
-// atendimento nem pedido; SEM COR = o dia da visita do ciclo corrente ainda não chegou.
+// atendimento nem pedido; SEM COR = atendimento do ciclo ainda não realizado.
 function corCiclo(cy: Cycle) {
   if (cy.pending) return "transparent";
   if (cy.green) return "#22c55e";
@@ -31,7 +31,7 @@ function corCiclo(cy: Cycle) {
   return "#ef4444";
 }
 function textoCiclo(cy: Cycle) {
-  if (cy.pending) return "visita ainda não chegou";
+  if (cy.pending) return "Atendimento do ciclo ainda não realizado";
   if (cy.green) return "houve pedido";
   if (cy.attended) return "atendido, sem pedido";
   return "sem atendimento e sem pedido";
@@ -427,7 +427,7 @@ export default function ResumoVisitas() {
                 <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente <span style={{ fontWeight: 400, color: "#6b7280" }} title="Quantidade de clientes no filtro atual">({clientesCount})</span>{sortArrow("cliente")}</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
                 <th className={th} onClick={() => toggleSort("cidade")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cidade{sortArrow("cidade")}</th>
-                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Uma bolinha por ciclo (semana/quinzena/mês), na periodicidade do cliente. Verde = houve pedido. Amarelo = houve atendimento, mas sem pedido. Vermelho = passou o dia da visita sem atendimento e sem pedido. Sem cor = o dia da visita do ciclo atual ainda não chegou.">Efetividade em vendas{sortArrow("efet")} <RepescagemRulesInfo className="align-middle ml-1" /></th>
+                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Uma bolinha por ciclo (semana/quinzena/mês), na periodicidade do cliente. Verde = houve pedido. Amarelo = houve atendimento, mas sem pedido. Vermelho = passou o dia da visita sem atendimento e sem pedido. Sem cor = atendimento do ciclo ainda não realizado.">Efetividade em vendas{sortArrow("efet")} <RepescagemRulesInfo className="align-middle ml-1" /></th>
                 <th className={th} onClick={() => toggleSort("freq")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Freq.{sortArrow("freq")}</th>
                 {days.map((d) => (
                   <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 46, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
