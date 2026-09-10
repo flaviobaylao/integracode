@@ -72,38 +72,47 @@ const REP_ROUTE = {
 // Os defaults semeados espelham o de hoje: Carlos+Radilton->Leticia, Jhonatan+Cleber->Robson,
 // Gilmar->Leticia+Robson (50/50).
 
-// Carrega o mapa carteira(sellerId de origem) -> [userIds dos atendentes que a recebem, exceto o
-// proprio dono], considerando apenas atendentes habilitados (com >= 1 carteira). Ordem estavel.
-async function loadSpecialCrossReceivers(): Promise<Map<string, string[]>> {
+// Receptor de uma carteira: atendente + peso (% escolhido no painel, 10..100). pct=null => sem
+// escolha explicita (usa rateio igualitario como fallback, comportamento antigo).
+type Receiver = { userId: string; pct: number | null };
+
+// Carrega o mapa carteira(sellerId de origem) -> [receptores {userId, pct}, exceto o proprio dono],
+// considerando apenas atendentes habilitados (com >= 1 carteira). Ordem estavel por userId.
+async function loadSpecialCrossReceivers(): Promise<Map<string, Receiver[]>> {
   const rows = await db.select().from(repescagemAttendants);
-  const map = new Map<string, string[]>();
+  const map = new Map<string, Receiver[]>();
   for (const r of rows) {
     const cart = Array.isArray((r as any).carteiras) ? ((r as any).carteiras as string[]) : [];
     if (cart.length === 0) continue; // sem carteira = desabilitado
+    const pcts = ((r as any).carteiraPcts && typeof (r as any).carteiraPcts === 'object') ? (r as any).carteiraPcts as Record<string, number> : {};
     for (const src of cart) {
       if (!src || src === r.userId) continue; // carteira propria nao e roteamento especial
       if (!map.has(src)) map.set(src, []);
       const arr = map.get(src)!;
-      if (!arr.includes(r.userId)) arr.push(r.userId);
+      if (!arr.some(x => x.userId === r.userId)) {
+        const raw = Number(pcts[src]);
+        arr.push({ userId: r.userId, pct: Number.isFinite(raw) && raw > 0 ? raw : null });
+      }
     }
   }
-  for (const [, arr] of map) arr.sort();
+  for (const [, arr] of map) arr.sort((a, b) => a.userId.localeCompare(b.userId));
   return map;
 }
 
 // Alvo do roteamento especial da carteira `ownerId`, ou null (sem especial -> distribuicao normal).
-// splitTarget = alvo pre-calculado quando a carteira tem 2+ receptores (rateio).
-function repescagemSpecialTarget(ownerId: string | null, crossReceivers: Map<string, string[]>, splitTarget?: string): string | null {
+// splitTarget = alvo pre-calculado (por peso) quando a carteira tem 2+ receptores.
+function repescagemSpecialTarget(ownerId: string | null, crossReceivers: Map<string, Receiver[]>, splitTarget?: string): string | null {
   if (!ownerId) return null;
   const recs = crossReceivers.get(ownerId);
   if (!recs || recs.length === 0) return null;
-  if (recs.length === 1) return recs[0];
-  return splitTarget || recs[0];
+  if (recs.length === 1) return recs[0].userId;
+  return splitTarget || recs[0].userId;
 }
 
-// Split deterministico dos clientes de carteiras com 2+ receptores, dividido igualmente entre
-// eles. Agrupa por carteira, ordena por customerId e distribui round-robin (estavel, ~igual).
-function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: string) => string | null, crossReceivers: Map<string, string[]>): Map<string, string> {
+// Split deterministico dos clientes de carteiras com 2+ receptores, POR PESO (% escolhido). Se
+// nenhum receptor da carteira tem % explicito, cai no rateio IGUALITARIO (comportamento antigo).
+// Usa maior-resto para contagens exatas e blocos contiguos por customerId ordenado (estavel).
+function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: string) => string | null, crossReceivers: Map<string, Receiver[]>): Map<string, string> {
   const out = new Map<string, string>();
   const byCarteira = new Map<string, string[]>();
   for (const c of cands) {
@@ -114,10 +123,27 @@ function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: s
     if (!byCarteira.has(o)) byCarteira.set(o, []);
     byCarteira.get(o)!.push(c.customerId);
   }
-  for (const [carteira, ids] of byCarteira) {
+  for (const [carteira, idsRaw] of byCarteira) {
     const recs = crossReceivers.get(carteira)!;
-    ids.sort();
-    ids.forEach((id, i) => out.set(id, recs[i % recs.length]));
+    const ids = idsRaw.slice().sort();
+    // pesos: usa % escolhido; se ninguem tem %, todos = 1 (igualitario)
+    const anyPct = recs.some(r => r.pct != null && r.pct > 0);
+    const weights = recs.map(r => (anyPct ? (r.pct != null && r.pct > 0 ? r.pct : 0) : 1));
+    const totalW = weights.reduce((a, b) => a + b, 0) || recs.length;
+    const n = ids.length;
+    // contagem alvo por receptor (maior-resto)
+    const exact = weights.map(w => (n * w) / totalW);
+    const counts = exact.map(x => Math.floor(x));
+    let rem = n - counts.reduce((a, b) => a + b, 0);
+    const order = exact
+      .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+      .sort((a, b) => b.frac - a.frac || a.i - b.i);
+    for (let k = 0; k < order.length && rem > 0; k++) { counts[order[k].i]++; rem--; }
+    // atribui blocos contiguos na ordem dos receptores
+    let pos = 0;
+    for (let i = 0; i < recs.length; i++) {
+      for (let j = 0; j < counts[i] && pos < n; j++, pos++) out.set(ids[pos], recs[i].userId);
+    }
   }
   return out;
 }
@@ -1546,6 +1572,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
     // defaults que espelham o roteamento de hoje — apenas na primeira vez (nenhuma carteira config.).
     try {
       await db.execute(sql.raw("ALTER TABLE repescagem_attendants ADD COLUMN IF NOT EXISTS carteiras jsonb NOT NULL DEFAULT '[]'::jsonb"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_attendants ADD COLUMN IF NOT EXISTS carteira_pcts jsonb NOT NULL DEFAULT '{}'::jsonb"));
       await seedRepescagemCarteirasIfEmpty();
     } catch (e: any) { console.warn('[REPESCAGEM2] carteiras boot:', e?.message); }
   })();
@@ -2157,6 +2184,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .map(u => {
           const a = map.get(u.id);
           const carteiras = Array.isArray((a as any)?.carteiras) ? ((a as any).carteiras as string[]) : [];
+          const carteiraPcts = ((a as any)?.carteiraPcts && typeof (a as any).carteiraPcts === 'object') ? (a as any).carteiraPcts as Record<string, number> : {};
           const coverage = carteiras.map(sellerId => {
             const total = totalByCarteira.get(sellerId) || 0;
             const assigned = assignedByUserCarteira.get(`${u.id}|${sellerId}`) || 0;
@@ -2175,6 +2203,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
             isEnabled: carteiras.length > 0,
             enabledAt: a?.enabledAt || null,
             carteiras,
+            carteiraPcts,
             coverage,
           };
         }).sort((a, b) => a.name.localeCompare(b.name));
@@ -2221,12 +2250,18 @@ export function registerRepescagemRoutes(app: Express, opts: {
       }
       const isEnabled = carteiras.length > 0;
       const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
+      // Mantem os % apenas das carteiras que continuam na lista (poda os removidos).
+      const prevPcts = existing.length > 0 && (existing[0] as any).carteiraPcts && typeof (existing[0] as any).carteiraPcts === 'object'
+        ? (existing[0] as any).carteiraPcts as Record<string, number> : {};
+      const carteiraPcts: Record<string, number> = {};
+      for (const c of carteiras) { if (Number.isFinite(Number(prevPcts[c]))) carteiraPcts[c] = Number(prevPcts[c]); }
       if (existing.length === 0) {
         await db.insert(repescagemAttendants).values({
           id: sql`gen_random_uuid()`,
           userId,
           isEnabled,
           carteiras: carteiras as any,
+          carteiraPcts: carteiraPcts as any,
           enabledAt: isEnabled ? new Date() : null,
           disabledAt: isEnabled ? null : new Date(),
         });
@@ -2234,6 +2269,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         await db.update(repescagemAttendants).set({
           isEnabled,
           carteiras: carteiras as any,
+          carteiraPcts: carteiraPcts as any,
           enabledAt: isEnabled ? (existing[0].enabledAt || new Date()) : existing[0].enabledAt,
           disabledAt: isEnabled ? null : new Date(),
           updatedAt: new Date(),
@@ -2243,6 +2279,32 @@ export function registerRepescagemRoutes(app: Express, opts: {
       res.json({ ok: true, carteiras, isEnabled });
     } catch (e: any) {
       console.error('POST /api/repescagem/attendants/:userId/carteiras', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Definir o % (10..100) de uma carteira para um atendente — controla o rateio quando 2+
+  // atendentes recebem a mesma carteira. Salva em carteira_pcts e reconcilia.
+  app.post('/api/repescagem/attendants/:userId/carteira-pct', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { userId } = req.params;
+      const { sellerId } = req.body || {};
+      let pct = Number(req.body?.pct);
+      if (!userId || !sellerId) return res.status(400).json({ message: 'userId e sellerId obrigatórios' });
+      if (!Number.isFinite(pct)) return res.status(400).json({ message: 'pct inválido' });
+      pct = Math.round(pct / 10) * 10;          // passo de 10
+      pct = Math.max(10, Math.min(100, pct));   // faixa 10..100
+      const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
+      if (existing.length === 0) return res.status(404).json({ message: 'Atendente sem carteiras' });
+      const carteiras = Array.isArray((existing[0] as any).carteiras) ? ((existing[0] as any).carteiras as string[]) : [];
+      if (!carteiras.includes(sellerId)) return res.status(400).json({ message: 'Carteira não pertence a este atendente' });
+      const pcts = ((existing[0] as any).carteiraPcts && typeof (existing[0] as any).carteiraPcts === 'object') ? { ...(existing[0] as any).carteiraPcts } : {};
+      pcts[sellerId] = pct;
+      await db.update(repescagemAttendants).set({ carteiraPcts: pcts as any, updatedAt: new Date() }).where(eq(repescagemAttendants.userId, userId));
+      await reconcileAssignments((req as any).currentUser?.id);
+      res.json({ ok: true, sellerId, pct });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/attendants/:userId/carteira-pct', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });

@@ -408,6 +408,7 @@ run();
       await db.execute(sql.raw("CREATE INDEX IF NOT EXISTS idx_repescagem_assign_draw ON repescagem_assignments(draw_date)"));
       // Repescagem2 (carteiras): mapa carteira->atendente configuravel no painel (roteamento especial).
       await db.execute(sql.raw("ALTER TABLE repescagem_attendants ADD COLUMN IF NOT EXISTS carteiras jsonb NOT NULL DEFAULT '[]'::jsonb"));
+      await db.execute(sql.raw("ALTER TABLE repescagem_attendants ADD COLUMN IF NOT EXISTS carteira_pcts jsonb NOT NULL DEFAULT '{}'::jsonb"));
       await db.execute(sql.raw("ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS check_in_notes text"));
 
       // ── LOCAL DE ENTREGA na NF-e (rede de clientes) ────────────────────────
