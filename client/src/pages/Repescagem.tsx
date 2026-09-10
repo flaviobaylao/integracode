@@ -818,10 +818,11 @@ export default function Repescagem() {
               <p className="font-semibold mb-1">Quando o cliente cai em repescagem</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Segue <b>periodicidade e dia de rota</b>, o mesmo raciocínio do Resumo de Visitas (ciclos/bolinhas).</li>
-                <li>Cai <b>se e somente se a última bolinha estiver vermelha</b> — a visita agendada mais recente sem venda na janela do ciclo.</li>
-                <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha estiver vermelha.</li>
-                <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar vermelha.</li>
-                <li><b>Permanece</b> enquanto a última bolinha estiver vermelha. <b>Assim que houver pedido/venda</b> (na data da visita ou depois, inclusive fim de semana), o cliente <b>sai da lista e entra em um novo ciclo</b> — só volta se a próxima visita ficar vermelha.</li>
+                <li>Cai <b>se e somente se a última bolinha não estiver verde</b> — a visita agendada mais recente sem <b>pedido</b> na janela do ciclo. Vale tanto para a bolinha <b>vermelha</b> (não foi atendido) quanto para a <b>amarela</b> (foi atendido, mas não comprou).</li>
+                <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha não estiver verde.</li>
+                <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar sem verde.</li>
+                <li><b>Permanece</b> enquanto a última bolinha não estiver verde. <b>Assim que houver pedido/venda</b> (na data da visita ou depois, inclusive fim de semana), o cliente <b>sai da lista e entra em um novo ciclo</b> — só volta se a próxima visita ficar sem pedido.</li>
+                <li>A bolinha <b>sem cor</b> é o ciclo atual, cujo dia de visita ainda não chegou — cliente nenhum cai por causa dela.</li>
               </ul>
             </div>
             <div>
