@@ -10183,7 +10183,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ message: 'Lista de IDs de pedidos e obrigatoria' });
       }
-      const { autoSendToBillingPipeline } = await import('./billing-pipeline-routes.js');
+      // Liberação usa finalizarPedidoParaPipeline (card-filho por pedido): se o card do pedido
+      // bloqueado JÁ tem um item vivo no funil (ex.: uma venda), a troca/amostra liberada vira um
+      // CARD-FILHO com item/NF próprios em vez de colidir e sumir na trava de duplicidade. Assim os
+      // pedidos ficam SEMPRE separados e visíveis (arrasto de Bloqueados → Pedido não funde mais).
+      const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
       let released = 0; const errors: string[] = [];
       for (const orderId of orderIds) {
         let order: any = null; let salesCard: any = null;
@@ -10211,10 +10215,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             paymentMethod: (salesCard as any).paymentMethod || (order as any).paymentMethod || null,
           };
           let pipelineItem: any = null;
-          try { pipelineItem = await autoSendToBillingPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true }); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
-          // Idempotencia: se ja existe item no funil para este card, conta como "entrou".
+          try { pipelineItem = (await finalizarPedidoParaPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true })).item; } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
+          // Idempotencia: so conta como "entrou" se ja existe item DESTE pedido no funil — mesmo card
+          // + mesma operacao + mesmo valor. Um item de OUTRA operacao (ex.: uma venda) no mesmo card
+          // NAO significa que a troca/amostra liberada entrou: isso mascarava a colisao e a troca sumia.
           if (!pipelineItem) {
-            try { const existing = await storage.getBillingPipelineItems(); if (existing.find((i: any) => i.salesCardId === order.salesCardId)) pipelineItem = { existing: true }; } catch {}
+            try {
+              const existing = await storage.getBillingPipelineItems();
+              const _op = String((cardForPipeline as any).operationType || '');
+              const _val = parseFloat(String((cardForPipeline as any).saleValue || '0')) || 0;
+              if (existing.find((i: any) => i.salesCardId === order.salesCardId
+                    && String(i.stage) !== 'lixeira'
+                    && String((i as any).operationType || '') === _op
+                    && (parseFloat(String((i as any).saleValue || '0')) || 0) === _val)) pipelineItem = { existing: true };
+            } catch {}
           }
           // SO marca liberado se o pedido REALMENTE entrou no funil. Se nao entrou, mantem em
           // Bloqueados e reporta — o pedido NUNCA some silenciosamente.
