@@ -19,7 +19,22 @@ type Visit = {
   metaValue?: number;
   nextSaleValue?: number;
 };
-type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean };
+type Cycle = { anchor: string; start: string; end: string; green: boolean; isPast: boolean; attended?: boolean; pending?: boolean };
+
+// Bolinha de efetividade: verde = pedido; amarelo = atendido sem pedido; vermelho = nem
+// atendimento nem pedido; SEM COR = o dia da visita do ciclo corrente ainda não chegou.
+function corCiclo(cy: Cycle) {
+  if (cy.pending) return "transparent";
+  if (cy.green) return "#22c55e";
+  if (cy.attended) return "#eab308";
+  return "#ef4444";
+}
+function textoCiclo(cy: Cycle) {
+  if (cy.pending) return "visita ainda não chegou";
+  if (cy.green) return "houve pedido";
+  if (cy.attended) return "atendido, sem pedido";
+  return "sem atendimento e sem pedido";
+}
 type Row = {
   customerId: string;
   customerName: string;
@@ -218,7 +233,9 @@ export default function ResumoVisitas() {
 
   // Efetividade: nota p/ ordenar (verde=2, amarelo=1, vermelho=0), normalizada 0..1.
   const efetScore = (r: Row) => {
-    const cy = r.cycles || [];
+    // Ciclos ainda sem cor (visita não chegou) não entram na nota — senão o cliente
+    // seria punido por um ciclo que ainda nem começou a ser cobrado.
+    const cy = (r.cycles || []).filter((c) => !c.pending);
     if (cy.length === 0) return -1;
     let s = 0;
     for (const c of cy) { s += c.green ? 1 : 0; }
@@ -406,7 +423,7 @@ export default function ResumoVisitas() {
                 <th className={th} onClick={() => toggleSort("cliente")} style={{ ...stickyL(0), minWidth: 200, textAlign: "left", padding: "6px 8px", cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cliente <span style={{ fontWeight: 400, color: "#6b7280" }} title="Quantidade de clientes no filtro atual">({clientesCount})</span>{sortArrow("cliente")}</th>
                 <th className={th} style={{ padding: "6px 8px", textAlign: "left", minWidth: 110 }}>Vendedor</th>
                 <th className={th} onClick={() => toggleSort("cidade")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 100, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Cidade{sortArrow("cidade")}</th>
-                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Verde = houve venda no ciclo (semana/quinzena/mês). Vermelho = sem venda.">Efetividade em vendas{sortArrow("efet")}</th>
+                <th className={th} onClick={() => toggleSort("efet")} style={{ padding: "6px 8px", textAlign: "center", minWidth: 120, cursor: "pointer", userSelect: "none" }} title="Ordenar por efetividade. Uma bolinha por ciclo (semana/quinzena/mês), na periodicidade do cliente. Verde = houve pedido. Amarelo = houve atendimento, mas sem pedido. Vermelho = passou o dia da visita sem atendimento e sem pedido. Sem cor = o dia da visita do ciclo atual ainda não chegou.">Efetividade em vendas{sortArrow("efet")}</th>
                 <th className={th} onClick={() => toggleSort("freq")} style={{ padding: "6px 8px", textAlign: "left", minWidth: 80, cursor: "pointer", userSelect: "none" }} title="Ordenar A-Z">Freq.{sortArrow("freq")}</th>
                 {days.map((d) => (
                   <th key={d} className={th} style={{ padding: "4px 3px", textAlign: "center", minWidth: 46, color: isWeekend(d) ? "#9ca3af" : undefined, whiteSpace: "nowrap", fontWeight: 500 }}>{ddmm(d)}</th>
@@ -423,7 +440,7 @@ export default function ResumoVisitas() {
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.city}</td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap", textAlign: "center" }}>
                       {(r.cycles && r.cycles.length > 0) ? r.cycles.map((cy, ci) => (
-                        <span key={ci} title={`${cy.start} a ${cy.end}: ${cy.green ? "houve venda" : "sem venda"}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: cy.green ? "#22c55e" : "#ef4444", marginRight: 3, verticalAlign: "middle" }} />
+                        <span key={ci} title={`${cy.start} a ${cy.end}: ${textoCiclo(cy)}`} style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: corCiclo(cy), border: cy.pending ? "1px dashed #9ca3af" : "none", boxSizing: "border-box", marginRight: 3, verticalAlign: "middle" }} />
                       )) : <span style={{ color: "#9ca3af" }}>—</span>}
                     </td>
                     <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>{r.periodicity}</td>
