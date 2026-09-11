@@ -22,9 +22,12 @@ import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon,
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
   presencial_virtual: "Presencial/Virtual",
-  inicio_atendimento: "Início de atendimento", inativar: "Inativar", outro: "Outro",
+  inicio_atendimento: "Início de atendimento", inativar: "Inativar",
+  dia_sobrecarregado: "Dia sobrecarregado", outro: "Outro",
 };
-const ENTITY_LABEL: Record<string, string> = { customer: "Cliente", lead: "Lead", repescagem: "Repescagem" };
+const ENTITY_LABEL: Record<string, string> = {
+  customer: "Cliente", lead: "Lead", repescagem: "Repescagem", agenda_dia: "Agenda da carteira",
+};
 const RESULT_META: Record<string, { label: string; cls: string }> = {
   efetuadas: { label: "Efetuadas", cls: "bg-green-100 text-green-800 border-green-300" },
   parcial: { label: "Parcial", cls: "bg-amber-100 text-amber-800 border-amber-300" },

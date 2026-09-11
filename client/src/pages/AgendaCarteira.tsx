@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Download, Search, ArrowUp, ArrowDown, ChevronsUpDown, Info, CalendarDays } from "lucide-react";
+import { Download, Search, ArrowUp, ArrowDown, ChevronsUpDown, Info, CalendarDays, Users } from "lucide-react";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
 type Item = {
@@ -41,6 +41,8 @@ type Item = {
   datas: string[];
 };
 type Semana = { i: number; off: number; ini: string; fim: string; rotulo: string; atual: boolean; passada: boolean };
+type LimiteCanais = { presencial: number; virtual: number };
+type Limites = LimiteCanais & { porVendedor: Record<string, LimiteCanais> };
 
 const DIAS = [
   { n: 1, curto: "2ª", longo: "Segunda", cod: "Seg" },
@@ -110,6 +112,9 @@ export default function AgendaCarteira() {
   const [ordCol, setOrdCol] = useState("nome");
   const [ordDir, setOrdDir] = useState<"asc" | "desc">("asc");
   const [editando, setEditando] = useState<string>("");
+  // Rascunho do teto de clientes por dia enquanto o popover esta aberto.
+  const [rascunhoTeto, setRascunhoTeto] = useState<null | { presencial: string; virtual: string; vendedorId: string; vPresencial: string; vVirtual: string }>(null);
+  const [salvandoTeto, setSalvandoTeto] = useState(false);
   // O quadro abre com 8 semanas de passado a esquerda; sem isso o usuario cai
   // olhando junho. Rolamos ate a semana vigente assim que ela existe no DOM.
   const rolagem = useRef<HTMLDivElement | null>(null);
@@ -131,6 +136,8 @@ export default function AgendaCarteira() {
   const semanaAtual = semanas.find((s) => s.atual);
   const escopoRestrito = data?.escopo?.restrito === true;
   const podeEditarVisita = data?.podeEditarVisita === true;
+  const limites: Limites = data?.limites || { presencial: 0, virtual: 0, porVendedor: {} };
+  const podeEditarLimites = data?.podeEditarLimites === true;
 
   // Opções do filtro de vendedor: quem realmente tem alguém na janela.
   const opcoesVend = useMemo(() => {
@@ -162,21 +169,98 @@ export default function AgendaCarteira() {
   const baldeDe = (i: Item) => (i.tipo === "lead" ? "leads" : i.canal);
 
   // Tabela dinâmica: contagem de atendimentos por semana × dia × balde.
+  // Guarda TAMBÉM a contagem por vendedor dentro de cada célula: o teto é de
+  // cada vendedor, então sem o filtro de vendedor o total da célula não diz
+  // nada — quem estoura é uma pessoa, não a soma de todas.
   const pivo = useMemo(() => {
     const m = new Map<string, number>();
+    const porVend = new Map<string, Map<string, number>>();
     for (const it of base) {
+      const balde = baldeDe(it);
       for (const dt of it.datas) {
         const s = semanaDaData(dt);
         const d = diaDaData(dt);
         if (!s || !d) continue;
-        const k = `${s}|${d}|${baldeDe(it)}`;
+        const k = `${s}|${d}|${balde}`;
         m.set(k, (m.get(k) || 0) + 1);
+        if (balde !== "leads" && it.sellerId) {
+          let dentro = porVend.get(k);
+          if (!dentro) { dentro = new Map(); porVend.set(k, dentro); }
+          dentro.set(it.sellerId, (dentro.get(it.sellerId) || 0) + 1);
+        }
       }
     }
-    return m;
+    return { total: m, porVend };
   }, [base, semanaDaData]);
-  const conta = (s: number, d: number, c: string) => pivo.get(`${s}|${d}|${c}`) || 0;
+  const conta = (s: number, d: number, c: string) => pivo.total.get(`${s}|${d}|${c}`) || 0;
+
+  const nomeDoVendedor = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const i of todos) if (i.sellerId) m.set(i.sellerId, i.vendedor);
+    return m;
+  }, [todos]);
+
+  /** Teto daquele vendedor no canal: a exceção dele, senão o padrão. 0 = sem teto. */
+  const tetoDe = (sellerId: string, canal: "presencial" | "virtual") => {
+    const ex = limites.porVendedor?.[sellerId];
+    return Number(ex?.[canal] || 0) || Number(limites[canal] || 0);
+  };
+
+  /**
+   * Célula acima do teto: quem estourou e quanto. Leads ficam de fora (decisão
+   * do Flavio) e o passado também — dia cheio que já passou não tem conserto.
+   */
+  const estouro = (s: number, d: number, c: string): { vendedor: string; n: number; teto: number }[] => {
+    if (c === "leads") return [];
+    const semana = semanas.find((x) => x.i === s);
+    if (!semana || semana.passada) return [];
+    const dentro = pivo.porVend.get(`${s}|${d}|${c}`);
+    if (!dentro) return [];
+    const fora: { vendedor: string; n: number; teto: number }[] = [];
+    dentro.forEach((n, sellerId) => {
+      const teto = tetoDe(sellerId, c as "presencial" | "virtual");
+      if (teto && n > teto) fora.push({ vendedor: nomeDoVendedor.get(sellerId) || "Sem vendedor", n, teto });
+    });
+    return fora.sort((a, b) => b.n - a.n);
+  };
+
   const totalSemana = (s: number, c: string) => DIAS.reduce((t, x) => t + conta(s, x.n, c), 0);
+
+  // Exceção de teto só faz sentido com UM vendedor escolhido no filtro — é
+  // dele que o número passa a ser.
+  const vendedorUnicoId = useMemo(() => {
+    if (vendedores.length !== 1) return "";
+    const achado = todos.find((i) => i.vendedor === vendedores[0] && i.sellerId);
+    return achado?.sellerId || "";
+  }, [vendedores, todos]);
+
+  async function salvarTeto() {
+    if (!rascunhoTeto) return;
+    setSalvandoTeto(true);
+    try {
+      const num = (v: string) => Math.max(0, Math.floor(Number(v) || 0));
+      const porVendedor: Record<string, LimiteCanais> = { ...(limites.porVendedor || {}) };
+      if (rascunhoTeto.vendedorId) {
+        const p = num(rascunhoTeto.vPresencial);
+        const v = num(rascunhoTeto.vVirtual);
+        if (p || v) porVendedor[rascunhoTeto.vendedorId] = { presencial: p, virtual: v };
+        else delete porVendedor[rascunhoTeto.vendedorId];
+      }
+      const r = await fetch("/api/carteira/agenda/limites", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ presencial: num(rascunhoTeto.presencial), virtual: num(rascunhoTeto.virtual), porVendedor }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Falha ao salvar o teto.");
+      setRascunhoTeto(null);
+      await qc.invalidateQueries({ queryKey: ["/api/carteira/agenda"] });
+    } catch (e: any) {
+      alert(e?.message || "Falha ao salvar o teto.");
+    } finally {
+      setSalvandoTeto(false);
+    }
+  }
 
   // Grafia canônica de cada cidade: entre as variações do cadastro, ganha a que
   // tem mais acento (é a que carrega mais informação) e ela vai para Title Case.
@@ -335,7 +419,104 @@ export default function AgendaCarteira() {
               <MultiSelect label="Vendedor" options={opcoesVend} selected={vendedores} onChange={setVendedores} testId="select-vendedor-agenda" />
             )}
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-end gap-2">
+            <Popover
+              onOpenChange={(aberto) => {
+                if (!aberto) return setRascunhoTeto(null);
+                const id = vendedorUnicoId;
+                const ex = id ? limites.porVendedor?.[id] : undefined;
+                setRascunhoTeto({
+                  presencial: String(limites.presencial || ""),
+                  virtual: String(limites.virtual || ""),
+                  vendedorId: id,
+                  vPresencial: String(ex?.presencial || ""),
+                  vVirtual: String(ex?.virtual || ""),
+                });
+              }}
+            >
+              <PopoverTrigger asChild>
+                <Button variant="outline" data-testid="button-teto-dia">
+                  <Users className="h-4 w-4 mr-2" />
+                  Teto por dia
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {limites.presencial || limites.virtual
+                      ? `${limites.presencial || "—"} pres. / ${limites.virtual || "—"} virt.`
+                      : "não definido"}
+                  </span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-[22rem] text-sm space-y-3">
+                <div>
+                  <p className="font-semibold">Máximo de clientes por dia</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Vale por vendedor, não pela soma de todos. A célula fica amarela quando alguém passa do
+                    teto, e o admin recebe um aviso na Inbox. Leads não entram na conta. Em branco ou 0 = sem teto.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium">Presenciais</span>
+                    <Input
+                      type="number" min={0} inputMode="numeric"
+                      data-testid="input-teto-presencial"
+                      disabled={!podeEditarLimites}
+                      value={rascunhoTeto?.presencial ?? ""}
+                      onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, presencial: e.target.value } : r))}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium">Virtuais</span>
+                    <Input
+                      type="number" min={0} inputMode="numeric"
+                      data-testid="input-teto-virtual"
+                      disabled={!podeEditarLimites}
+                      value={rascunhoTeto?.virtual ?? ""}
+                      onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, virtual: e.target.value } : r))}
+                    />
+                  </label>
+                </div>
+
+                {rascunhoTeto?.vendedorId ? (
+                  <div className="border-t pt-3 space-y-2">
+                    <p className="text-xs font-medium">
+                      Exceção para {nomeDoVendedor.get(rascunhoTeto.vendedorId) || "este vendedor"}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Input
+                        type="number" min={0} placeholder="usa o padrão" inputMode="numeric"
+                        data-testid="input-teto-vend-presencial"
+                        disabled={!podeEditarLimites}
+                        value={rascunhoTeto.vPresencial}
+                        onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, vPresencial: e.target.value } : r))}
+                      />
+                      <Input
+                        type="number" min={0} placeholder="usa o padrão" inputMode="numeric"
+                        data-testid="input-teto-vend-virtual"
+                        disabled={!podeEditarLimites}
+                        value={rascunhoTeto.vVirtual}
+                        onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, vVirtual: e.target.value } : r))}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground border-t pt-3">
+                    Para dar um teto diferente a um vendedor, escolha só ele no filtro Vendedor e abra isto de novo.
+                  </p>
+                )}
+
+                {podeEditarLimites ? (
+                  <Button
+                    className="w-full" size="sm" disabled={salvandoTeto}
+                    data-testid="button-salvar-teto"
+                    onClick={salvarTeto}
+                  >
+                    {salvandoTeto ? "Salvando…" : "Salvar"}
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Só admin ou coordenador pode alterar.</p>
+                )}
+              </PopoverContent>
+            </Popover>
             <Button variant="outline" onClick={exportar} data-testid="button-export-agenda">
               <Download className="h-4 w-4 mr-2" />Exportar Excel
             </Button>
@@ -391,6 +572,14 @@ export default function AgendaCarteira() {
                       quanto da rota da semana é lead. Cliente marcado como atendimento virtual no cadastro conta em
                       VIRTUAL; o resto, em PRESENCIAL.
                     </p>
+                    <p>
+                      <b className="text-amber-700">Célula amarela</b> = algum vendedor passou do <b>teto de clientes
+                      por dia</b> naquele dia. O teto é por vendedor (botão “Teto por dia”), então sem o filtro de
+                      vendedor o número da célula é a soma de todos, mas o amarelo continua apontando a pessoa —
+                      passe o mouse para ver quem e quanto. Leads não entram na conta e semanas passadas não ficam
+                      amarelas. Cada célula amarela abre um aviso na Inbox do admin, e ele some sozinho quando o dia
+                      volta a caber.
+                    </p>
                     <p className="text-muted-foreground text-xs">
                       Quem atende em mais de um dia da semana aparece em todos eles na semana visitada. O número conta
                       atendimentos, não clientes distintos.
@@ -445,17 +634,28 @@ export default function AgendaCarteira() {
                           BALDES.map((canal) => {
                             const v = conta(s.i, dia.n, canal);
                             const ativa = celula && celula.s === s.i && celula.d === dia.n && celula.c === canal;
+                            // AMARELO = algum vendedor passou do teto dele nesse
+                            // dia. O aviso correspondente vai para a Inbox.
+                            const acima = estouro(s.i, dia.n, canal);
+                            const aviso = acima.length
+                              ? `Acima do teto — ${acima.map((x) => `${x.vendedor}: ${x.n} de ${x.teto}`).join(" · ")}`
+                              : "";
                             return (
                               <td
                                 key={`${s.i}-${canal}`}
-                                className={`px-2 py-2 text-center ${canal === "presencial" ? "border-l" : ""} ${s.atual ? "bg-blue-50/60" : ""}`}
+                                data-sobrecarga={acima.length ? "1" : undefined}
+                                className={`px-2 py-2 text-center ${canal === "presencial" ? "border-l" : ""} ${
+                                  acima.length
+                                    ? "bg-amber-200/70 dark:bg-amber-500/25"
+                                    : s.atual ? "bg-blue-50/60" : ""
+                                }`}
                               >
                                 <button
                                   type="button"
                                   data-testid={`celula-${s.i}-${dia.n}-${canal}`}
                                   onClick={() => setCelula(ativa ? null : { s: s.i, d: dia.n, c: canal })}
                                   disabled={v === 0}
-                                  title={s.passada ? "Semana passada — agenda real" : "Projeção do cadastro"}
+                                  title={aviso || (s.passada ? "Semana passada — agenda real" : "Projeção do cadastro")}
                                   className={`min-w-[2.25rem] px-2 py-0.5 rounded transition ${
                                     v === 0
                                       ? "text-muted-foreground/40 cursor-default"
