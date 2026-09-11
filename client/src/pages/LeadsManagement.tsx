@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { sortSellersByType } from "@/lib/sellerOrder";
-import { useTableSort, SortableTh } from "@/lib/tableTools";
+import { useTableSort, SortableTh, exportToExcel as exportPadraoExcel } from "@/lib/tableTools";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,6 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { CIDADES_GO_DF } from "@/lib/cidadesGoDf";
-import * as XLSX from "xlsx";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -591,15 +590,7 @@ export default function LeadsManagement() {
       "Próximo Contato": lead.nextContactDate ? formatInTimeZone(new Date(String(lead.nextContactDate)), "America/Sao_Paulo", "dd/MM/yyyy", { locale: ptBR }) : "",
       "Criado em": lead.createdAt ? formatInTimeZone(new Date(String(lead.createdAt)), "America/Sao_Paulo", "dd/MM/yyyy HH:mm", { locale: ptBR }) : "",
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Leads");
-    ws["!cols"] = [
-      { wch: 30 }, { wch: 25 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
-      { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 20 }, { wch: 20 },
-      { wch: 16 }, { wch: 18 },
-    ];
-    XLSX.writeFile(wb, `leads_${hojeBR()}.xlsx`);
+    exportPadraoExcel(data, `leads_${hojeBR()}`, { aba: "Leads" });
     toast({ title: "Exportação concluída", description: `${data.length} leads exportados com sucesso.` });
   };
 

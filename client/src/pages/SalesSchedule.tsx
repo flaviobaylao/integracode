@@ -35,7 +35,7 @@ import {
   Pencil,
   UserX
 } from "lucide-react";
-import * as XLSX from 'xlsx';
+import { exportToExcel as exportPadraoExcel } from '@/lib/tableTools';
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { apiRequest } from "@/lib/queryClient";
@@ -424,30 +424,12 @@ export default function SalesSchedule() {
         'Atendimento': card.customer.virtualService ? 'Virtual' : 'Presencial'
       }));
 
-      // Criar workbook e worksheet
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Agenda de Vendas');
-
-      // Ajustar largura das colunas
-      const maxWidth = 50;
-      const colWidths = Object.keys(exportData[0] || {}).map(key => ({
-        wch: Math.min(
-          Math.max(
-            key.length,
-            ...exportData.map(row => String(row[key as keyof typeof row] || '').length)
-          ),
-          maxWidth
-        )
-      }));
-      ws['!cols'] = colWidths;
-
       // Gerar nome do arquivo
       const dayLabel = DAYS_OF_WEEK.find(d => d.value === selectedDay)?.label || 'Todos';
       const fileName = `agenda_vendas_${dayLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${getBrazilDateISO()}.xlsx`;
 
-      // Fazer download
-      XLSX.writeFile(wb, fileName);
+      // Padrao unico de planilha do INTEGRA.
+      exportPadraoExcel(exportData, fileName, { aba: 'Agenda de Vendas' });
 
       toast({
         title: "Exportação concluída!",

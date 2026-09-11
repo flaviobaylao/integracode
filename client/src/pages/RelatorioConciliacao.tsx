@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { hojeBR, inicioDoMes, diaMaisBR } from '@shared/tempo';
-import * as XLSX from "xlsx";
+import { exportToExcel, exportSheetsToExcel } from "@/lib/tableTools";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 // ---------------------------------------------------------------------------
@@ -103,13 +103,8 @@ function BotaoExport({ onClick, label }: { onClick: () => void; label: string })
 }
 
 // baixa uma aba de dados como .xlsx
-const baixarXlsx = (linhas: any[], aba: string, nome: string) => {
-  try {
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhas.length ? linhas : [{ Aviso: "sem dados no período" }]), aba.slice(0, 31));
-    XLSX.writeFile(wb, /\.xlsx$/i.test(nome) ? nome : nome + ".xlsx");
-  } catch (e) { console.error(e); alert("Falha ao exportar para Excel."); }
-};
+const baixarXlsx = (linhas: any[], aba: string, nome: string) =>
+  exportToExcel(linhas.length ? linhas : [{ Aviso: "sem dados no período" }], nome, { aba });
 // baixa uma aba de dados como .csv (; + BOM, abre no Excel pt-BR)
 const baixarCsv = (linhas: any[], nome: string) => {
   if (!linhas.length) { alert("Sem dados para exportar."); return; }
@@ -337,20 +332,22 @@ export default function RelatorioConciliacao(props: {
   const exportarTudo = () => {
     if (!dados) return;
     try {
-      const wb = XLSX.utils.book_new();
-      const add = (nome: string, linhas: any[]) =>
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhas.length ? linhas : [{ Aviso: "sem dados" }]), nome);
-      add("Resumo", linhasResumo());
-      add("Conferência", linhasConferencia());
-      add("Movimentações", linhasMovimentacoes());
-      add("Recebidos", linhasTitulos(recebidos, "Cliente"));
-      add("Pagos", linhasTitulos(pagos, "Fornecedor"));
-      add("Recebidos automáticos", linhasAutomaticos());
-      add("Cobrança x extrato", linhasCobranca());
-      add("Pendentes", linhasPendentes());
-      add("Categorias", linhasCategorias());
-      add("Histórico mensal", linhasMensal());
-      XLSX.writeFile(wb, `Conciliacao_${String(dados?.conta?.nome || "conta").replace(/[^\w]+/g, "_")}_${sufixo}.xlsx`);
+      const aba = (nome: string, linhas: any[]) => ({ nome, linhas: linhas.length ? linhas : [{ Aviso: "sem dados" }] });
+      exportSheetsToExcel(
+        [
+          aba("Resumo", linhasResumo()),
+          aba("Conferência", linhasConferencia()),
+          aba("Movimentações", linhasMovimentacoes()),
+          aba("Recebidos", linhasTitulos(recebidos, "Cliente")),
+          aba("Pagos", linhasTitulos(pagos, "Fornecedor")),
+          aba("Recebidos automáticos", linhasAutomaticos()),
+          aba("Cobrança x extrato", linhasCobranca()),
+          aba("Pendentes", linhasPendentes()),
+          aba("Categorias", linhasCategorias()),
+          aba("Histórico mensal", linhasMensal()),
+        ],
+        `Conciliacao_${String(dados?.conta?.nome || "conta").replace(/[^\w]+/g, "_")}_${sufixo}.xlsx`,
+      );
     } catch (e) { console.error(e); alert("Falha ao exportar para Excel."); }
   };
 

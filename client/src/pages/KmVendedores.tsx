@@ -21,7 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Route as RouteIcon, Search, DollarSign, Download, Info } from "lucide-react";
-import * as XLSXStyle from "xlsx-js-style";
+import { exportToExcel } from "@/lib/tableTools";
 
 type Region = "GO" | "DF" | "PSN";
 type SellerRow = {
@@ -156,9 +156,9 @@ export default function KmVendedores() {
   const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateOf(r);
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
-  // Exporta TODAS as colunas para .xlsx FORMATADO: cabecalho em negrito, faixas
-  // alternadas, km com separador de milhar, coluna Ref (GO/DF/PSN), R$/km e R$ a
-  // pagar em moeda (traco para zero) e linha de Total.
+  // Exporta TODAS as colunas para .xlsx no padrao unico do INTEGRA
+  // (lib/excelExport): km com separador de milhar, coluna Ref (GO/DF/PSN),
+  // R$/km e R$ a pagar em moeda contabil, e linha de Total em negrito.
   function exportarExcel() {
     const meses = months;
     const headers = ["Vendedor", "Funcao", ...meses.map(fmtMes), "Ref", "R$/km", `R$ a pagar (${fmtMes(mesPagto)})`];
@@ -171,44 +171,15 @@ export default function KmVendedores() {
       Number(valorSeller(r).toFixed(2)),
     ]);
     const totalRow: any[] = ["Total", "", ...meses.map(() => null), "", null, Number(totalPagar.toFixed(2))];
-    const aoa: any[][] = [headers, ...dataRows, totalRow];
-    const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
-    const nCols = headers.length;
-    const lastRow = aoa.length - 1;
-    const KM_FMT = "#,##0";
-    const BRL_FMT = '_-"R$" * #,##0.00_-;-"R$" * #,##0.00_-;_-"R$" * "-"??_-;_-@_-';
-    const firstMonthCol = 2;
-    const lastMonthCol = nCols - 4; // ultima coluna de mes
-    const refCol = nCols - 3;       // coluna Ref (GO/DF/PSN)
-    const rateCol = nCols - 2;      // coluna R$/km
-    const payCol = nCols - 1;       // coluna R$ a pagar
-    const thin = { style: "thin", color: { rgb: "D0D5DD" } };
-    const borderAll: any = { top: thin, bottom: thin, left: thin, right: thin };
-    for (let R = 0; R <= lastRow; R++) {
-      const isHeader = R === 0;
-      const isTotal = R === lastRow;
-      const band = !isHeader && !isTotal && R % 2 === 1;
-      for (let C = 0; C < nCols; C++) {
-        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
-        const cell: any = ws[addr] || (ws[addr] = { t: "s", v: "" });
-        const s: any = { border: borderAll, alignment: { vertical: "center", horizontal: C <= 1 ? "left" : C === refCol ? "center" : "right" } };
-        if (isHeader) {
-          s.font = { bold: true, color: { rgb: "1F2937" } };
-          s.fill = { fgColor: { rgb: "E9EDF5" } };
-          s.alignment.horizontal = C <= 1 ? "left" : "center";
-        } else {
-          if (C >= firstMonthCol && C <= lastMonthCol) { cell.z = KM_FMT; s.numFmt = KM_FMT; }
-          if (C === rateCol || C === payCol) { cell.z = BRL_FMT; s.numFmt = BRL_FMT; }
-          if (isTotal) { s.font = { bold: true }; s.fill = { fgColor: { rgb: "D9D9D9" } }; }
-          else if (band) { s.fill = { fgColor: { rgb: "F3F5F9" } }; }
-        }
-        cell.s = s;
-      }
-    }
-    ws["!cols"] = [{ wch: 18 }, { wch: 13 }, ...meses.map(() => ({ wch: 10 })), { wch: 6 }, { wch: 11 }, { wch: 20 }];
-    const wb = XLSXStyle.utils.book_new();
-    XLSXStyle.utils.book_append_sheet(wb, ws, "Km Vendedores");
-    XLSXStyle.writeFile(wb, `km-vendedores-${mesPagto || "geral"}.xlsx`);
+    // Padrao unico de planilha do INTEGRA: cabecalho congelado/negrito, larguras
+    // ajustadas, R$ contabil, sem faixas nem bordas (fica a grade do Excel).
+    const linhas = [...dataRows, totalRow].map((linha) =>
+      Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
+    );
+    exportToExcel(linhas, `km-vendedores-${mesPagto || "geral"}`, {
+      aba: "Km Vendedores",
+      negritoUltimaLinha: true,
+    });
   }
 
   return (
