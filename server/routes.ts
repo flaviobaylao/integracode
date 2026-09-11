@@ -66,6 +66,7 @@ import { nanoid } from "nanoid";
 import { db } from "./db";
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import { planilhaPadrao, enviarPlanilha } from './excel-export';
 import bcrypt from 'bcrypt';
 import path from 'path';
 import fs from 'fs';
@@ -9998,46 +9999,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Atualizado Em': b.updatedAt ? new Date(b.updatedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : ''
       }));
       
-      // Criar workbook e worksheet
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(excelData);
-      
-      // Ajustar largura das colunas
-      const colWidths = [
-        { wch: 15 }, // Número Pedido
-        { wch: 20 }, // ID Pedido Omie
-        { wch: 15 }, // Número NF
-        { wch: 20 }, // ID NF Omie
-        { wch: 35 }, // Cliente
-        { wch: 20 }, // CPF/CNPJ
-        { wch: 20 }, // Código Cliente Omie
-        { wch: 10 }, // CFOP
-        { wch: 15 }, // Data Pedido
-        { wch: 15 }, // Data Faturamento
-        { wch: 15 }, // Data Vencimento
-        { wch: 15 }, // Valor Total
-        { wch: 20 }, // Forma Pagamento
-        { wch: 25 }, // Vendedor
-        { wch: 15 }, // ID Vendedor
-        { wch: 20 }, // Tipo Faturamento
-        { wch: 15 }, // Status NF
-        { wch: 20 }, // Etapa
-        { wch: 50 }, // Produtos
-        { wch: 20 }, // Criado Em
-        { wch: 20 }  // Atualizado Em
-      ];
-      ws['!cols'] = colWidths;
-      
-      XLSX.utils.book_append_sheet(wb, ws, 'Dados Omie');
-      
-      // Gerar buffer do Excel
-      const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-      
-      // Enviar arquivo
+      // Padrao unico de planilha do INTEGRA (shared/excel-padrao): cabecalho em
+      // negrito e congelado, larguras ajustadas, R$ contabil, CPF/CNPJ e numeros
+      // de pedido/NF como texto (sem perder zero a esquerda).
       const timestamp = getBrazilDateString();
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename=dados-omie-${timestamp}.xlsx`);
-      res.send(excelBuffer);
+      enviarPlanilha(
+        res,
+        planilhaPadrao(excelData, { aba: 'Dados Omie' }),
+        `dados-omie-${timestamp}.xlsx`,
+      );
       
     } catch (error) {
       console.error('Erro ao exportar dados do Omie:', error);
@@ -23635,15 +23605,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         { 'CPF/CNPJ': '000.000.000-00', 'Nome Fantasia': 'Cliente Exemplo' }
       ];
       
-      const worksheet = XLSX.utils.json_to_sheet(templateData);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes Ativos');
-      
-      const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-      
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=template_clientes_ativos.xlsx');
-      res.send(buffer);
+      enviarPlanilha(
+        res,
+        planilhaPadrao(templateData, { aba: 'Clientes Ativos' }),
+        'template_clientes_ativos.xlsx',
+      );
     } catch (error) {
       console.error('Erro ao gerar template:', error);
       res.status(500).json({ message: 'Erro ao gerar template' });

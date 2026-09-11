@@ -5,6 +5,7 @@ import { registerEnvioTexto, enviarTexto } from './envio-texto';
 import { registerRetomada } from './retomada';
 import { registerPromessaPagamento } from './promessa-pagamento';
 import { authenticateUser, requireRole } from "./authMiddleware";
+import { planilhaPadrao, enviarPlanilha } from "./excel-export";
 import { storage } from "./storage";
 import { db } from "./db";
 import { sql, and, eq, inArray, isNull, desc } from "drizzle-orm";
@@ -2835,25 +2836,17 @@ export function registerChatRoutes(app: Express): void {
   // Download sample spreadsheet template
   app.get("/api/chat/bulk-message/template", authenticateUser, async (req, res) => {
     try {
-      const XLSX = await import("xlsx");
-      
-      // Create sample workbook
+      // Modelo no padrao unico de planilha do INTEGRA (shared/excel-padrao).
       const sampleData = [
-        ["Nome", "Telefone"],
-        ["João Silva", "62999991111"],
-        ["Maria Santos", "62999992222"],
-        ["Pedro Oliveira", "(62) 99999-3333"]
+        { Nome: "João Silva", Telefone: "62999991111" },
+        { Nome: "Maria Santos", Telefone: "62999992222" },
+        { Nome: "Pedro Oliveira", Telefone: "(62) 99999-3333" },
       ];
-      
-      const worksheet = XLSX.utils.aoa_to_sheet(sampleData);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Contatos");
-      
-      const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
-      
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", "attachment; filename=modelo_disparo_whatsapp.xlsx");
-      res.send(buffer);
+      enviarPlanilha(
+        res,
+        planilhaPadrao(sampleData, { aba: "Contatos" }),
+        "modelo_disparo_whatsapp.xlsx",
+      );
     } catch (error: any) {
       console.error("[BULK] Template error:", error);
       res.status(500).json({ error: "Erro ao gerar modelo" });
