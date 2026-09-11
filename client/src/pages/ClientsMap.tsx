@@ -134,6 +134,20 @@ function proximaDataDoDia(diaLabel: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Formata "2026-09-14 12:00:00" (ou ISO) como 14/09/2026, sem depender de fuso.
+function dataBR(v: any): string {
+  const t = String(v || '').trim();
+  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+
+// ℹ️ O que essa data faz no sistema (o "i" ao lado do rótulo mostra este texto).
+const AJUDA_DATA_LEAD =
+  'Esta data funciona como a DATA DE INÍCIO DE FORNECIMENTO do lead: é nela, e só nela, que o ' +
+  'lead entra na Rota do Dia do vendedor — não aparece antes nem depois (lead atrasado sai da rota). ' +
+  'Para entrar, o lead precisa ter coordenada, estar com status agendado e estar alocado em "Rota do dia": ' +
+  'lead em "Prospecção" só aparece na rota de prospecção.';
+
 // ⚡ Um divIcon POR COR, criado uma vez e reaproveitado. Antes cada render criava 1000+ ícones
 // novos e o Leaflet trocava o DOM de todos os pins — era o que travava a tela ao digitar na busca.
 const ICONES_POR_COR = new Map<string, any>();
@@ -183,11 +197,14 @@ type PropsPonto = {
   podeEditar: boolean;
   copiado: boolean;
   salvandoDia: boolean;
+  salvandoVendedor: boolean;
+  vendedores: { id: string; nome: string }[];
   aoCopiar: (id: string, nome: string) => void;
   aoEditar: (c: any) => void;
   aoMudarDia: (leadId: string, diaLabel: string) => void;
+  aoMudarVendedor: (c: any, vendedorId: string) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, aoCopiar, aoEditar, aoMudarDia }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarVendedor }: PropsPonto) {
   const lat = Number(customer.latitude);
   const lng = Number(customer.longitude);
   const color = pinColorFor(customer);
@@ -225,26 +242,58 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
               {customer.address}
             </p>
             {ehLead && podeEditar ? (
-              <p className="font-medium flex items-center gap-2">
-                📅 Dia de rota:
-                <select
-                  value={DIAS_OPTIONS.includes(dayName) ? dayName : ''}
-                  disabled={salvandoDia}
-                  onChange={(e) => e.target.value && aoMudarDia(String(customer.id), e.target.value)}
-                  className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
-                  data-testid={`select-lead-day-${customer.id}`}
-                >
-                  <option value="">{salvandoDia ? 'salvando...' : 'Sem dia'}</option>
-                  {DIAS_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </p>
+              <>
+                <p className="font-medium flex items-center gap-2 flex-wrap">
+                  📅 Dia de rota:
+                  <select
+                    value={DIAS_OPTIONS.includes(dayName) ? dayName : ''}
+                    disabled={salvandoDia}
+                    onChange={(e) => e.target.value && aoMudarDia(String(customer.id), e.target.value)}
+                    className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                    data-testid={`select-lead-day-${customer.id}`}
+                  >
+                    <option value="">{salvandoDia ? 'salvando...' : 'Sem dia'}</option>
+                    {DIAS_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  {!!customer.nextContactDate && (
+                    <span data-testid={`text-lead-date-${customer.id}`}>{dataBR(customer.nextContactDate)}</span>
+                  )}
+                  <span
+                    title={AJUDA_DATA_LEAD}
+                    aria-label={AJUDA_DATA_LEAD}
+                    className="inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] leading-none cursor-help text-gray-600 dark:text-gray-300"
+                    data-testid={`help-lead-date-${customer.id}`}
+                  >i</span>
+                </p>
+                {String(customer.routeType || 'dia') === 'prospeccao' && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    ⚠️ Lead alocado em <strong>Prospecção</strong>: não entra na Rota do Dia nesta data.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="font-medium">
                 📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
               </p>
             )}
             {!!customer.phone && <p>📞 {customer.phone}</p>}
-            <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
+            {podeEditar && vendedores.length > 0 ? (
+              <p className="font-medium flex items-center gap-2">
+                👤 Vendedor:
+                <select
+                  value={String(customer.sellerId || '')}
+                  disabled={salvandoVendedor}
+                  onChange={(e) => aoMudarVendedor(customer, e.target.value)}
+                  className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800 max-w-[150px]"
+                  data-testid={`select-seller-${customer.id}`}
+                >
+                  <option value="">{salvandoVendedor ? 'salvando...' : 'Sem vendedor'}</option>
+                  {vendedores.map((v) => <option key={v.id} value={v.id}>{v.nome}</option>)}
+                </select>
+              </p>
+            ) : (
+              <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
+            )}
             {customer.visitPeriodicity && (
               <p className="font-medium">
                 🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}
@@ -508,6 +557,37 @@ export default function ClientsMap() {
     }
   }, [queryClient]);
 
+  // 👤 Lista de vendedores para o pick-list do card (usuários ativos com papel de vendedor).
+  const vendedoresParaEscolha = useMemo(() => {
+    const arr = (Array.isArray(usersForType) ? usersForType : [])
+      .filter((u: any) => u?.isActive !== false && (u?.role === 'vendedor' || u?.role === 'telemarketing'))
+      .map((u: any) => ({ id: String(u.id), nome: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || 'Sem nome' }));
+    const vistos = new Set<string>();
+    return arr.filter((v) => (vistos.has(v.id) ? false : (vistos.add(v.id), true)))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [usersForType]);
+
+  // 👤 Trocar o vendedor pelo card: lead grava em assigned_to, cliente em seller_id.
+  const [salvandoVendedorId, setSalvandoVendedorId] = useState<string | null>(null);
+  const mudarVendedor = useCallback(async (ponto: any, vendedorId: string) => {
+    const id = String(ponto.id);
+    const ehLead = ponto.situacao === 'lead';
+    setSalvandoVendedorId(id);
+    try {
+      if (ehLead) {
+        await apiRequest('PATCH', `/api/leads/${id}`, { assignedTo: vendedorId || null });
+      } else {
+        await apiRequest('PATCH', `/api/customers/${id}`, { sellerId: vendedorId || null });
+      }
+      await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
+    } catch (e: any) {
+      console.error('[MAPA] falha ao mudar o vendedor:', e);
+      alert('Não foi possível alterar o vendedor: ' + (e?.message || e));
+    } finally {
+      setSalvandoVendedorId(null);
+    }
+  }, [queryClient]);
+
   const handleEditCustomer = useCallback((customer: Customer) => {
     setSelectedCustomer(customer);
     setIsEditModalOpen(true);
@@ -521,11 +601,14 @@ export default function ClientsMap() {
       podeEditar={!!canEditCustomer}
       copiado={copiadoId === String(customer.id)}
       salvandoDia={salvandoDiaId === String(customer.id)}
+      salvandoVendedor={salvandoVendedorId === String(customer.id)}
+      vendedores={vendedoresParaEscolha}
       aoCopiar={copiarNome}
       aoEditar={handleEditCustomer}
       aoMudarDia={mudarDiaDoLead}
+      aoMudarVendedor={mudarVendedor}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, copiarNome, handleEditCustomer, mudarDiaDoLead]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarVendedor]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
