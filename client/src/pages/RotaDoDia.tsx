@@ -220,6 +220,17 @@ export default function RotaDoDia() {
     return next;
   });
 
+  // Ocultar/mostrar as marcações de REPESCAGEM no Mapa da Rota (preferência por navegador).
+  // No mobile os pinos de repescagem se acumulam e poluem o mapa; este toggle limpa a visão.
+  const [showRepMarkers, setShowRepMarkers] = useState<boolean>(() => {
+    try { return localStorage.getItem('honest_rota_show_rep_markers') !== '0'; } catch { return true; }
+  });
+  const toggleRepMarkers = () => setShowRepMarkers(prev => {
+    const next = !prev;
+    try { localStorage.setItem('honest_rota_show_rep_markers', next ? '1' : '0'); } catch {}
+    return next;
+  });
+
   const { data: sellers } = useQuery<any[]>({
     queryKey: ['/api/users'],
     enabled: isAdmin && !!user,
@@ -1808,17 +1819,32 @@ export default function RotaDoDia() {
               <CardHeader>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <CardTitle>Mapa da Rota</CardTitle>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleMap}
-                    className="text-muted-foreground"
-                    data-testid="button-toggle-map"
-                    title={showMap ? 'Ocultar mapa' : 'Mostrar mapa'}
-                  >
-                    {showMap ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-                    {showMap ? 'Ocultar' : 'Mostrar'}
-                  </Button>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {showMap && Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleRepMarkers}
+                        className={showRepMarkers ? "text-amber-700 dark:text-amber-500" : "text-muted-foreground"}
+                        data-testid="button-toggle-rep-markers"
+                        title={showRepMarkers ? 'Ocultar marcações de repescagem no mapa' : 'Mostrar marcações de repescagem no mapa'}
+                      >
+                        {showRepMarkers ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                        Repescagem
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={toggleMap}
+                      className="text-muted-foreground"
+                      data-testid="button-toggle-map"
+                      title={showMap ? 'Ocultar mapa' : 'Mostrar mapa'}
+                    >
+                      {showMap ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                      {showMap ? 'Ocultar' : 'Mostrar'}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               {showMap && (
@@ -1831,12 +1857,12 @@ export default function RotaDoDia() {
                     customerLongitude: visit.customerLongitude != null ? String(visit.customerLongitude) : null,
                   }))}
                   virtualVisits={[]}
-                  repescagemPoints={(Array.isArray(repescagemOverlay) ? repescagemOverlay : []).map((r: any) => ({
+                  repescagemPoints={showRepMarkers ? (Array.isArray(repescagemOverlay) ? repescagemOverlay : []).map((r: any) => ({
                     id: r.assignmentId,
                     customerName: r.customerName,
                     latitude: r.latitude != null ? String(r.latitude) : null,
                     longitude: r.longitude != null ? String(r.longitude) : null,
-                  }))}
+                  })) : []}
                   optimizedOrder={route.optimizedOrder || []}
                   checkpoints={route.checkpoints || []}
                 />
