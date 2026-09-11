@@ -103,6 +103,54 @@ export default function ClientesAtivos() {
 
   const colCount = 7;
 
+  // Somatorio do grupo (rede ou "sem rede"). Penultimo/Ultimo/Jan->hoje sao somas
+  // simples; a Variacao % NAO se soma -- e recalculada a partir dos dois totais,
+  // e fica "-" quando a base (penultimo) e zero.
+  function totaisDoGrupo(lista: Row[]) {
+    let penultimo = 0, ultimo = 0, periodo = 0;
+    for (const r of lista) {
+      penultimo += Number(r.penultimo) || 0;
+      ultimo += Number(r.ultimo) || 0;
+      for (const v of r.serie || []) periodo += Number(v) || 0;
+    }
+    penultimo = Math.round(penultimo * 100) / 100;
+    ultimo = Math.round(ultimo * 100) / 100;
+    periodo = Math.round(periodo * 100) / 100;
+    const variacao = penultimo > 0 ? Math.round(((ultimo - penultimo) / penultimo) * 1000) / 10 : null;
+    return { penultimo, ultimo, periodo, variacao };
+  }
+
+  function GroupRow({ chave, titulo, lista, tom }: { chave: string; titulo: string; lista: Row[]; tom: "rede" | "avulso" }) {
+    const open = openRedes[chave] !== false;
+    const t = totaisDoGrupo(lista);
+    const fundo = tom === "rede" ? "bg-indigo-50 border-b border-indigo-100" : "bg-gray-100 border-b border-gray-200";
+    const texto = tom === "rede" ? "text-indigo-800" : "text-gray-700";
+    return (
+      <tr className={fundo + " cursor-pointer"} onClick={() => setOpenRedes((o) => ({ ...o, [chave]: !open }))} data-testid={"grupo-" + chave}>
+        <td className="px-2 py-1"></td>
+        <td className={"px-2 py-1 font-semibold " + texto}>
+          {open ? "▾" : "▸"} {titulo} ({lista.length})
+        </td>
+        <td className={"px-2 py-1 text-center font-medium whitespace-nowrap " + texto} data-testid={"grupo-penultimo-" + chave}>
+          {t.penultimo > 0 ? brl(t.penultimo) : "-"}
+        </td>
+        <td className={"px-2 py-1 text-center font-medium whitespace-nowrap " + texto} data-testid={"grupo-ultimo-" + chave}>
+          {t.ultimo > 0 ? brl(t.ultimo) : "-"}
+        </td>
+        <td className="px-2 py-1 text-center text-gray-400">-</td>
+        <td
+          className={"px-2 py-1 text-center font-medium whitespace-nowrap " + (t.variacao == null ? "text-gray-400" : t.variacao >= 0 ? "text-emerald-600" : "text-red-600")}
+          data-testid={"grupo-variacao-" + chave}
+        >
+          {t.variacao == null ? "-" : (t.variacao > 0 ? "+" : "") + t.variacao + "%"}
+        </td>
+        <td className={"px-2 py-1 text-right font-medium whitespace-nowrap " + texto} data-testid={"grupo-periodo-" + chave}>
+          {brl(t.periodo)}
+        </td>
+      </tr>
+    );
+  }
+
   function Rowline({ r, indent }: { r: Row; indent?: boolean }) {
     return (
       <tr className="border-b border-gray-100 hover:bg-gray-50">
@@ -172,32 +220,18 @@ export default function ClientesAtivos() {
               {redeKeys.map((rk) => {
                 const g = grouped.redes[rk];
                 const open = openRedes[rk] !== false;
-                const total = g.rows.reduce((a, x) => a + (x.ultimo || 0), 0);
                 return (
                   <Fragment key={"rede-" + rk}>
-                    <tr className="bg-indigo-50 border-b border-indigo-100 cursor-pointer" onClick={() => setOpenRedes((o) => ({ ...o, [rk]: !open }))}>
-                      <td className="px-2 py-1"></td>
-                      <td className="px-2 py-1 font-semibold text-indigo-800" colSpan={colCount - 2}>
-                        {open ? "▾" : "▸"} Rede: {g.nome} ({g.rows.length})
-                      </td>
-                      <td className="px-2 py-1 text-right text-indigo-800 font-medium whitespace-nowrap">{brl(total)}</td>
-                    </tr>
+                    <GroupRow chave={rk} titulo={"Rede: " + g.nome} lista={g.rows} tom="rede" />
                     {open && sortRows(g.rows, (row, key) => (row as any)[key]).map((r: Row) => <Rowline key={r.id} r={r} indent />)}
                   </Fragment>
                 );
               })}
               {grouped.avulsos.length > 0 && (() => {
                 const openAv = openRedes["__sem_rede__"] !== false;
-                const totalAv = grouped.avulsos.reduce((a, x) => a + (x.ultimo || 0), 0);
                 return (
                   <Fragment key="rede-__sem_rede__">
-                    <tr className="bg-gray-100 border-b border-gray-200 cursor-pointer" onClick={() => setOpenRedes((o) => ({ ...o, __sem_rede__: !openAv }))}>
-                      <td className="px-2 py-1"></td>
-                      <td className="px-2 py-1 font-semibold text-gray-700" colSpan={colCount - 2}>
-                        {openAv ? "▾" : "▸"} Sem rede ({grouped.avulsos.length})
-                      </td>
-                      <td className="px-2 py-1 text-right text-gray-700 font-medium whitespace-nowrap">{brl(totalAv)}</td>
-                    </tr>
+                    <GroupRow chave="__sem_rede__" titulo="Sem rede" lista={grouped.avulsos} tom="avulso" />
                     {openAv && sortRows(grouped.avulsos, (row, key) => (row as any)[key]).map((r: Row) => <Rowline key={r.id} r={r} indent />)}
                   </Fragment>
                 );
