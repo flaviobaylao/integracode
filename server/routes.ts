@@ -18569,12 +18569,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SUM(COALESCE(dr.total_actual_distance::numeric, 0)) AS km,
           COUNT(*) FILTER (WHERE COALESCE(dr.total_actual_distance::numeric, 0) > 0) AS dias,
           COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email, dr.seller_id) AS seller_name,
-          u.role AS role
+          u.role AS role,
+          u.is_active AS is_active
         FROM daily_routes dr
         LEFT JOIN users u ON u.id = dr.seller_id
         WHERE dr.seller_id IS NOT NULL AND dr.seller_id <> ''
           AND dr.route_date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
-        GROUP BY dr.seller_id, date_trunc('month', dr.route_date), u.first_name, u.last_name, u.email, u.role
+        GROUP BY dr.seller_id, date_trunc('month', dr.route_date), u.first_name, u.last_name, u.email, u.role, u.is_active
       `);
       const rows = (r?.rows || []) as any[];
       const monthsSet = new Set<string>();
@@ -18585,7 +18586,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sid = String(row.seller_id);
         let s = sellersMap.get(sid);
         if (!s) {
-          s = { sellerId: sid, sellerName: row.seller_name || sid, role: row.role || null, byMonth: {}, diasByMonth: {}, total: 0, totalDias: 0 };
+          s = { sellerId: sid, sellerName: row.seller_name || sid, role: row.role || null, active: (row.is_active === true || row.is_active === 't'), byMonth: {}, diasByMonth: {}, total: 0, totalDias: 0 };
           sellersMap.set(sid, s);
         }
         const km = Math.round(Number(row.km || 0) * 10) / 10;
@@ -18599,12 +18600,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const monthTotals: Record<string, number> = {};
       for (const s of sellersMap.values()) for (const mo of Object.keys(s.byMonth)) monthTotals[mo] = (monthTotals[mo] || 0) + (s.byMonth[mo] || 0);
       const months = Array.from(monthsSet).filter((m) => (monthTotals[m] || 0) > 0).sort();
-      // Oculta "vendedores fantasma": seller_id que NAO corresponde a um usuario do Integra
-      // (ex.: codigo de vendedor vindo do Omie que ganhou rota mas nunca virou conta). Nesses
-      // casos o nome cai no proprio seller_id (COALESCE) e o role fica nulo — nao devem aparecer
-      // no Km dos Vendedores. Reversivel: basta vincular o codigo a um usuario. (set/2026)
-      const _isGhostSeller = (s: any) => !s.role && String(s.sellerName) === String(s.sellerId);
-      const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0 && !_isGhostSeller(s)).sort((a, b) => b.total - a.total);
+      // Historico mensal: SOMENTE vendedores EXTERNOS ATIVOS — role='vendedor' e is_active=true.
+      // Isso ja exclui: telemarketing (interno), cargos administrativos, inativos e os "vendedores
+      // fantasma" (seller_id sem usuario, ex.: codigo do Omie — role null). Reversivel: reativar o
+      // usuario / vincular o codigo a uma conta 'vendedor' ativa o traz de volta. (set/2026)
+      const _isExternoAtivo = (s: any) => s.role === 'vendedor' && s.active === true;
+      const sellers = Array.from(sellersMap.values()).filter((s) => (s.total || 0) > 0 && _isExternoAtivo(s)).sort((a, b) => b.total - a.total);
       // Tarifas R$/km por regiao (GO e DF) em config_global + status do mes atual:
       // FECHADO no ultimo dia do mes apos as 20h (SP). ratePerKm legado = fallback.
       let ratePerKm = 0, ratePerKmGO = 0, ratePerKmDF = 0, ratePerKmPSN = 0;
