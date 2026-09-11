@@ -2661,6 +2661,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Validar com o schema
           const validatedLead = insertLeadSchema.parse(leadData);
           const lead = await storage.createLead(validatedLead);
+      // 🛰️ PROSPECÇÃO: se a rota do dia do vendedor está em modo 'prospeccao', cada lead
+      // registrado é a "passagem" no ponto (não há check-in). Recalcula a km do percurso
+      // na hora — senão a "Km hoje" fica 0 o dia todo até um recálculo manual do admin.
+      // Best-effort e fora do caminho da resposta (não atrasa o cadastro). (set/2026)
+      (async () => {
+        try {
+          const _sid = String((lead as any).assignedTo || user.id);
+          const rr: any = await db.execute(sql`SELECT id, route_mode FROM daily_routes WHERE seller_id = ${_sid} AND DATE(route_date) = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
+          const _route = (rr && (rr.rows || rr))[0];
+          if (_route && String(_route.route_mode) === 'prospeccao') {
+            const { recalculateRouteDistance } = await import('./actualRouteService');
+            await recalculateRouteDistance(String(_route.id), storage);
+            console.log(`🛰️ [PROSPECÇÃO] Km recalculada após novo lead (rota ${_route.id}, vendedor ${_sid}).`);
+          }
+        } catch (_e: any) { console.warn('[PROSPECÇÃO] recalc pós-lead:', _e?.message); }
+      })();
+
           leadMessage = ` ✅ Lead criado (ID: ${lead.id})`;
           console.log(`✅ [CREATE CUSTOMER] Lead criado com sucesso: ${lead.id}`);
           
