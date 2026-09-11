@@ -347,6 +347,7 @@ export default function RotaDoDia() {
     periodicity?: Record<string, string>;
     lastOrders?: Record<string, { date: string; value: number }>;
     phones?: Record<string, string>;
+    cities?: Record<string, string>;
     trocasBloqueadas?: Record<string, boolean>;
   }
   
@@ -2537,7 +2538,7 @@ export default function RotaDoDia() {
                             {isExpanded && (<>
                             <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
                               <MapPin className="h-3 w-3" />
-                              {visit.customerAddress || 'Endereço não informado'}
+                              {[visit.customerAddress, customerInfo?.cities?.[visit.customerId || (visit as any).entityId || (visit as any).leadId]].filter(Boolean).join(' - ') || 'Endereço não informado'}
                             </p>
 
                             {visit.customerId && (
@@ -2944,7 +2945,7 @@ export default function RotaDoDia() {
                                   {vExpanded && (<>
                                   {visit.customerAddress && (
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                      📍 {visit.customerAddress}
+                                      📍 {[visit.customerAddress, customerInfo?.cities?.[visit.customerId || (visit as any).entityId || (visit as any).leadId]].filter(Boolean).join(' - ')}
                                     </p>
                                   )}
                                   {(customerInfo?.phones?.[visit.customerId] || (visit as any).phone || (visit as any).customerPhone) && (
