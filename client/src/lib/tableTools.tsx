@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { diaBR } from '@shared/tempo';
-import * as XLSX from "xlsx";
 import { ArrowUp, ArrowDown, ChevronsUpDown } from "lucide-react";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
 
@@ -290,17 +289,10 @@ export function SortableTh(props: {
   );
 }
 
-export function exportToExcel(rows: Record<string, any>[], filename: string) {
-  try {
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Dados");
-    XLSX.writeFile(wb, /\.xlsx$/i.test(filename) ? filename : filename + ".xlsx");
-  } catch (e) {
-    console.error("exportToExcel:", e);
-    alert("Falha ao exportar para Excel.");
-  }
-}
+// O padrao visual de TODA exportacao .xlsx do INTEGRA mora em lib/excelExport.
+// Aqui fica so o reexport, para nao mexer nas ~30 telas que ja importam daqui.
+export { exportToExcel, exportSheetsToExcel, montarPlanilha, bytesDoWorkbook } from "@/lib/excelExport";
+export type { OpcoesExcel, FormatoColuna, AbaExcel } from "@/lib/excelExport";
 
 export function ExportExcelButton(props: { onClick: () => void; testId?: string }) {
   return (
