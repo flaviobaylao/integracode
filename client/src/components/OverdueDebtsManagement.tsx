@@ -1,4 +1,4 @@
-import { useActiveSellers, MultiSelect, DateRangeFilter, dateInRange } from "@/lib/tableTools";
+import { useActiveSellers, MultiSelect, DateRangeFilter, dateInRange, exportSheetsToExcel } from "@/lib/tableTools";
 import { hojeBR } from '@shared/tempo';
 import { useState } from "react";
 import * as React from "react";
@@ -14,7 +14,6 @@ import { AlertTriangle, RefreshCw, Search, Eye, Download, MessageCircle, ArrowUp
 import WhatsAppButton from "@/components/WhatsAppButton";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import * as XLSX from 'xlsx';
 import type { User } from "@shared/schema";
 import { generateMultiCobrancaPdf, type CobrancaData } from "@/lib/cobranca-generator";
 
@@ -267,17 +266,6 @@ export default function OverdueDebtsManagement() {
         });
       });
 
-      // Criar workbook
-      const workbook = XLSX.utils.book_new();
-
-      // Aba 1: Resumo por cliente
-      const resumoSheet = XLSX.utils.json_to_sheet(resumoData);
-      XLSX.utils.book_append_sheet(workbook, resumoSheet, 'Resumo por Cliente');
-
-      // Aba 2: Detalhes dos documentos
-      const detalhesSheet = XLSX.utils.json_to_sheet(detalhesData);
-      XLSX.utils.book_append_sheet(workbook, detalhesSheet, 'Detalhes dos Documentos');
-
       // Aba 3: Estatísticas gerais
       const estatisticasData = [
         { 'Métrica': 'Total de Clientes com Débitos', 'Valor': overdueDebts.totalClients },
@@ -286,15 +274,19 @@ export default function OverdueDebtsManagement() {
         { 'Métrica': 'Total de Documentos Vencidos', 'Valor': detalhesData.length },
         { 'Métrica': 'Data da Exportação', 'Valor': new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) },
       ];
-      const estatisticasSheet = XLSX.utils.json_to_sheet(estatisticasData);
-      XLSX.utils.book_append_sheet(workbook, estatisticasSheet, 'Estatísticas');
-
       // Gerar nome do arquivo
       const dataAtual = hojeBR();
       const nomeArquivo = `debitos-vencidos-${dataAtual}.xlsx`;
 
-      // Fazer download
-      XLSX.writeFile(workbook, nomeArquivo);
+      // Padrao unico de planilha do INTEGRA (cabecalho congelado, R$ contabil...).
+      exportSheetsToExcel(
+        [
+          { nome: 'Resumo por Cliente', linhas: resumoData },
+          { nome: 'Detalhes dos Documentos', linhas: detalhesData },
+          { nome: 'Estatísticas', linhas: estatisticasData, opcoes: { formatos: { Valor: 'geral' } } },
+        ],
+        nomeArquivo,
+      );
 
       toast({
         title: "Exportação concluída",
