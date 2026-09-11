@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
+import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -164,7 +165,10 @@ function PendingCard({ r }: { r: any }) {
         </div>
       )}
 
-      <Textarea placeholder="Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+      <div className="space-y-1">
+        <Textarea placeholder="Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+        <VoiceDictateButton onText={(t) => setNote((p) => (p ? p.trim() + " " : "") + t)} testId="cr-admin-obs-audio" />
+      </div>
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => resolveMut.mutate("efetuadas")}>

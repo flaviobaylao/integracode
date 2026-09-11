@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -1768,19 +1769,7 @@ export default function LeadsManagement() {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <Label htmlFor="atend-texto">Descrição do atendimento</Label>
-                {atendSpeechSupported ? (
-                  atendGravando ? (
-                    <Button type="button" size="sm" variant="destructive" onClick={atendStopRec} data-testid="button-atend-stop">
-                      <XCircle className="h-4 w-4 mr-1" /> Parar
-                    </Button>
-                  ) : (
-                    <Button type="button" size="sm" variant="outline" className="border-blue-400 text-blue-700" onClick={atendStartRec} data-testid="button-atend-record">
-                      <Phone className="h-4 w-4 mr-1" /> Gravar áudio
-                    </Button>
-                  )
-                ) : (
-                  <span className="text-[11px] text-muted-foreground">Ditado indisponível neste navegador</span>
-                )}
+                <VoiceDictateButton onText={(t) => setAtendTexto((prev) => (prev ? prev.trim() + ' ' : '') + t)} testId="button-atend-record" />
               </div>
               <Textarea id="atend-texto" rows={6} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder="Digite o registro do atendimento ou use o botão Gravar áudio para ditar..." data-testid="textarea-atend" />
               {atendGravando && <p className="text-[11px] text-red-600 mt-1 animate-pulse">● Gravando… fale e o texto aparece automaticamente.</p>}

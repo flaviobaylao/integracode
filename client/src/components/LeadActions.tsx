@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle, XCircle, Clock, FileText, Phone } from "lucide-react";
 
@@ -373,19 +374,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
             <div>
               <div className="flex items-center justify-between mb-1">
                 <Label htmlFor={`atend-${leadId}`}>Descrição do atendimento</Label>
-                {atendSpeechSupported ? (
-                  atendGravando ? (
-                    <Button type="button" size="sm" variant="destructive" onClick={atendStop} data-testid={`button-lead-atend-stop-${leadId}`}>
-                      <XCircle className="w-4 h-4 mr-1" /> Parar
-                    </Button>
-                  ) : (
-                    <Button type="button" size="sm" variant="outline" className="border-blue-400 text-blue-700 dark:text-blue-400" onClick={atendStart} data-testid={`button-lead-atend-record-${leadId}`}>
-                      <Phone className="w-4 h-4 mr-1" /> Gravar áudio
-                    </Button>
-                  )
-                ) : (
-                  <span className="text-[11px] text-muted-foreground">Ditado indisponível neste navegador</span>
-                )}
+                <VoiceDictateButton onText={(t) => setAtendTexto((prev) => (prev ? prev.trim() + ' ' : '') + t)} testId={`button-lead-atend-record-${leadId}`} />
               </div>
               <Textarea id={`atend-${leadId}`} rows={6} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder="Digite o registro do atendimento ou use o botão Gravar áudio para ditar..." data-testid={`textarea-lead-atend-${leadId}`} />
               {atendGravando && <p className="text-[11px] text-red-600 mt-1 animate-pulse">● Gravando… fale e o texto aparece automaticamente.</p>}

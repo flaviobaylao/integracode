@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, MapPin, Loader2, Mic } from "lucide-react";
+import { useVoiceToText } from "@/components/VoiceDictateButton";
 import { useAuth } from "@/hooks/useAuth";
 import { getBrazilDateISO } from "@/lib/brazilTimezone";
 
@@ -54,23 +55,14 @@ export default function CheckInModal({
   // Explicação do débito (quando o cliente tem débito em aberto). Transcrição por voz (pt-BR).
   const hasDebt = Number(debt) > 0;
   const [debtNote, setDebtNote] = useState('');
-  const [gravando, setGravando] = useState(false);
-  const recRef = useRef<any>(null);
-  const debtBaseRef = useRef<string>('');
-  const toggleGravacao = () => {
-    const SR = (typeof window !== 'undefined') ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
-    if (!SR) { toast({ title: 'Gravação de áudio não suportada neste navegador', description: 'Abra pelo Chrome do celular para usar a transcrição.', variant: 'destructive' }); return; }
-    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} return; }
-    try {
-      const r = new SR();
-      r.lang = 'pt-BR'; r.interimResults = true; r.continuous = true;
-      debtBaseRef.current = debtNote ? debtNote.trim() + ' ' : '';
-      r.onresult = (e: any) => { let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setDebtNote(debtBaseRef.current + t); };
-      r.onerror = () => { setGravando(false); recRef.current = null; };
-      r.onend = () => { setGravando(false); recRef.current = null; };
-      recRef.current = r; r.start(); setGravando(true);
-    } catch { setGravando(false); recRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
-  };
+  // Transcrição por voz confiável (MediaRecorder + Whisper no servidor): funciona em
+  // qualquer navegador com microfone, inclusive iPhone. (set/2026)
+  const voz = useVoiceToText({
+    onError: (m) => toast({ title: 'Falha na transcrição', description: m, variant: 'destructive' }),
+    onEmpty: () => toast({ title: 'Nada transcrito', description: 'Não consegui entender o áudio. Tente de novo.' }),
+  });
+  const gravando = voz.recording;
+  const toggleGravacao = () => voz.toggle((t) => setDebtNote((p) => (p ? p.trim() + ' ' : '') + t));
 
   // Calcular distância usando Haversine
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -333,7 +325,7 @@ export default function CheckInModal({
     setPhotoData(null);
     setNotes('');
     setDebtNote('');
-    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} }
+    if (voz.recording) { voz.stop(); }
     setCameraError(false);
     onClose();
   };
@@ -500,14 +492,16 @@ export default function CheckInModal({
                     <button
                       type="button"
                       onClick={toggleGravacao}
-                      className={`absolute right-2 top-2 rounded-full p-1.5 ${gravando ? 'bg-red-600 text-white animate-pulse' : 'bg-white text-red-600 border border-red-300'}`}
+                      disabled={voz.transcribing}
+                      className={`absolute right-2 top-2 rounded-full p-1.5 disabled:opacity-60 ${gravando ? 'bg-red-600 text-white animate-pulse' : 'bg-white text-red-600 border border-red-300'}`}
                       aria-label={gravando ? 'Parar gravação' : 'Ditar explicação'}
                       data-testid="button-mic-debito"
                     >
                       <Mic className="h-4 w-4" />
                     </button>
                   </div>
-                  {gravando && <div className="text-[11px] text-red-600 dark:text-red-300 mt-1">Gravando… fale a explicação do débito.</div>}
+                  {gravando && <div className="text-[11px] text-red-600 dark:text-red-300 mt-1">Gravando… fale a explicação do débito e toque no microfone para parar.</div>}
+                  {voz.transcribing && <div className="text-[11px] text-muted-foreground mt-1">Transcrevendo o áudio…</div>}
                 </div>
               )}
 
