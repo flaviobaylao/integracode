@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1682,17 +1683,12 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                       <span className="text-red-600"> * (obrigatório — detalhe o motivo)</span>
                     )}
                   </Label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={gravandoObs ? 'destructive' : 'outline'}
-                    onClick={toggleGravacaoObs}
+                  <VoiceDictateButton
+                    onText={(t) => setNotes((p) => (p ? p.trim() + ' ' : '') + t)}
+                    label="Ditar por voz"
                     className="h-8 shrink-0"
-                    data-testid="button-mic-notes"
-                  >
-                    <Mic className="h-4 w-4 mr-1" />
-                    {gravandoObs ? 'Gravando… toque p/ parar' : 'Ditar por voz'}
-                  </Button>
+                    testId="button-mic-notes"
+                  />
                 </div>
                 <Textarea
                   value={notes}
