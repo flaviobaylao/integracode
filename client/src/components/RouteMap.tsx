@@ -40,6 +40,11 @@ interface RouteMapProps {
 export default function RouteMap({ homeLocation, visits, virtualVisits = [], repescagemPoints = [], optimizedOrder, checkpoints = [], onPhotoClick }: RouteMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  // Guarda a "identidade" da rota já enquadrada. O fitBounds só roda quando a rota
+  // MUDA de fato (outro vendedor/dia = outra casa/visitas), NÃO a cada refetch de
+  // dados. Sem isto, no mobile o mapa voltava sempre ao zoom geral e o usuário não
+  // conseguia ampliar/fixar uma região. (set/2026)
+  const didFitRef = useRef<string>('');
 
   // Validar coordenadas antes de renderizar
   const hasValidCoordinates =
@@ -241,9 +246,17 @@ export default function RouteMap({ homeLocation, visits, virtualVisits = [], rep
       }).addTo(map);
     }
 
-    // Ajustar zoom para mostrar TODOS os pontos (presenciais, leads e repescagem)
+    // Ajustar zoom para mostrar TODOS os pontos (presenciais, leads e repescagem) —
+    // SOMENTE quando a rota muda de verdade (casa + IDs das visitas + nº de check-ins).
+    // A cada refetch de dados esses valores são iguais, então o mapa NÃO reenquadra e
+    // o zoom/posição que o usuário escolheu é preservado (essencial no mobile). Ligar/
+    // desligar as marcações de repescagem também não reenquadra (fora da chave).
     if (allPoints.length > 1) {
-      map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+      const fitKey = `${homeLocation.latitude},${homeLocation.longitude}|${(visits || []).map((v) => v.id).join(',')}|${(checkpoints || []).length}`;
+      if (didFitRef.current !== fitKey) {
+        map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+        didFitRef.current = fitKey;
+      }
     }
 
     // Adicionar marcadores de checkpoints reais (se houver)
