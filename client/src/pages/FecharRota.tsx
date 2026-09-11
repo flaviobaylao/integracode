@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic } from "lucide-react";
 import { useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
+import { useVoiceToText } from "@/components/VoiceDictateButton";
 
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
 type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number; atendido?: boolean };
@@ -236,24 +237,15 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const [draftReason, setDraftReason] = useState<string>("");
   const [draftNote, setDraftNote] = useState<string>("");
 
-  // Gravação de áudio -> transcrição na caixa de texto (Web Speech API do navegador, pt-BR).
-  const [gravando, setGravando] = useState<boolean>(false);
-  const recRef = useRef<any>(null);
-  const noteBaseRef = useRef<string>("");
-  function toggleGravacao() {
-    const SR = (typeof window !== "undefined") ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
-    if (!SR) { toast({ title: "Gravação de áudio não suportada neste navegador", description: "Abra pelo Chrome do celular para usar a transcrição.", variant: "destructive" }); return; }
-    if (gravando && recRef.current) { try { recRef.current.stop(); } catch {} return; }
-    try {
-      const r = new SR();
-      r.lang = "pt-BR"; r.interimResults = true; r.continuous = true;
-      noteBaseRef.current = draftNote ? draftNote.trim() + " " : "";
-      r.onresult = (e: any) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setDraftNote(noteBaseRef.current + t); };
-      r.onerror = () => { setGravando(false); recRef.current = null; };
-      r.onend = () => { setGravando(false); recRef.current = null; };
-      recRef.current = r; r.start(); setGravando(true);
-    } catch { setGravando(false); recRef.current = null; toast({ title: "Não foi possível iniciar a gravação", variant: "destructive" }); }
-  }
+  // Gravação de áudio -> transcrição na caixa de texto. Usa MediaRecorder + Whisper
+  // (servidor), que funciona em QUALQUER navegador com microfone — inclusive iPhone,
+  // onde a Web Speech API não existe e o "Gravar áudio" não gerava texto. (set/2026)
+  const voz = useVoiceToText({
+    onError: (m) => toast({ title: "Falha na transcrição", description: m, variant: "destructive" }),
+    onEmpty: () => toast({ title: "Nada transcrito", description: "Não consegui entender o áudio. Tente de novo." }),
+  });
+  const gravando = voz.recording;
+  const toggleGravacao = () => voz.toggle((t) => setDraftNote((p) => (p ? p.trim() + " " : "") + t));
 
   const pendentes = naoVisitados.filter((c) => !justified[c.customerId]);
   const closed = !!statusData?.closed;
@@ -375,7 +367,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                         </div>
                         </>
                       )}
-                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{debtMode ? "Situação do débito (obrigatória)" : `Observação ${(draftReason === "outro" || draftReason === "debito" || draftReason === "remarcou") ? "(obrigatória)" : "(opcional)"}`}</div><button type="button" onClick={toggleGravacao} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
+                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{debtMode ? "Situação do débito (obrigatória)" : `Observação ${(draftReason === "outro" || draftReason === "debito" || draftReason === "remarcou") ? "(obrigatória)" : "(opcional)"}`}</div><button type="button" onClick={toggleGravacao} disabled={voz.transcribing} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border disabled:opacity-60 ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {voz.transcribing ? "Transcrevendo…" : gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
                       <textarea className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder={debtMode ? "Ex.: cliente vai quitar até sexta / negociado em 2x" : "Ex.: passei 17h e estava fechado"} value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
                       <div className="flex gap-2 mt-2">
                         <button className="flex-1 bg-gray-100 text-gray-600 rounded-lg py-2 text-sm font-semibold" onClick={() => setOpenId(null)}>Cancelar</button>
