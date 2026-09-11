@@ -19204,12 +19204,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('[CUSTOMER-INFO] falha ao buscar trocas bloqueadas:', e?.message);
       }
 
+      // Município (cidade/UF) por cliente — para exibir no endereço do card (repescagem, vendas, leads).
+      const citiesMap: Record<string, string> = {};
+      try {
+        const cityRes = await db.execute(sql`
+          SELECT id, COALESCE(city, '') AS city, COALESCE(state, '') AS uf
+          FROM customers
+          WHERE id = ANY(string_to_array(${customerIds.join(',')}, ','))
+        `);
+        for (const row of (cityRes.rows as any[])) {
+          if (!row.id) continue;
+          const city = String(row.city || '').trim();
+          const uf = String(row.uf || '').trim();
+          const label = city ? (uf ? `${city}/${uf}` : city) : '';
+          if (label) citiesMap[String(row.id)] = label;
+        }
+      } catch (e: any) {
+        console.warn('[CUSTOMER-INFO] falha ao buscar cidade:', e?.message);
+      }
+      // LEADS: ids que não são de clientes vêm da tabela leads (cidade do reverse geocode).
+      try {
+        const missing = customerIds.filter(id => !citiesMap[id]);
+        if (missing.length > 0) {
+          const leadRes = await db.execute(sql`
+            SELECT id, COALESCE(city, '') AS city
+            FROM leads
+            WHERE id = ANY(string_to_array(${missing.join(',')}, ','))
+          `);
+          for (const row of (leadRes.rows as any[])) {
+            if (!row.id) continue;
+            const city = String(row.city || '').trim();
+            if (city) citiesMap[String(row.id)] = city;
+          }
+        }
+      } catch (e: any) {
+        console.warn('[CUSTOMER-INFO] falha ao buscar cidade de lead:', e?.message);
+      }
+
       res.json({
         orders: ordersMap,
         debts: debtsMap,
         periodicity: periodicityMap,
         lastOrders: lastOrdersMap,
         phones: phonesMap,
+        cities: citiesMap,
         trocasBloqueadas
       });
     } catch (error: any) {
