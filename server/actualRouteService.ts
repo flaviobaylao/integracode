@@ -14,6 +14,58 @@ function coordOk(lat: number, lon: number): boolean {
   return true;
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// ROTA INTERMUNICIPAL (set/2026): "portoes" (bordas de saida da cidade). Quando um
+// check-in/lead do dia cai ALEM de um portao (mais longe da casa do que o portao
+// naquela direcao — ou seja, o vendedor passou pelo portao pra chegar la), o dia
+// conta km INTERMUNICIPAL separada: do PORTAO mais proximo do 1o ponto fora →
+// pontos fora (em ordem) → Casa. O restante (trecho urbano) fica na km "normal".
+// A km total paga NAO muda: intermunicipal_distance e um recorte informativo do
+// total (normal = total − intermunicipal). Coordenadas configuraveis aqui.
+// ───────────────────────────────────────────────────────────────────────────
+const INTERMUNICIPAL_GATES: Array<[number, number]> = [
+  [-16.60089833515983, -49.19913860560444],
+  [-16.742269673615645, -49.13975559798092],
+  [-16.789277887310842, -49.23811755907917],
+];
+function haversineKm(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const R = 6371, toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat), dLon = toRad(bLon - aLon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+function nearestGate(lat: number, lon: number): [number, number] {
+  let best = INTERMUNICIPAL_GATES[0], bestD = Infinity;
+  for (const g of INTERMUNICIPAL_GATES) { const d = haversineKm(lat, lon, g[0], g[1]); if (d < bestD) { bestD = d; best = g; } }
+  return best;
+}
+// Ponto "fora do perimetro": mais longe da casa do que o portao mais proximo dele
+// (o vendedor passou por aquele portao pra chegar ate o ponto). Classificacao por
+// linha reta (barata); a distancia intermunicipal em si usa rota real (OSRM).
+function isForaPerimetro(lat: number, lon: number, homeLat: number, homeLon: number): boolean {
+  if (!coordOk(lat, lon) || !coordOk(homeLat, homeLon)) return false;
+  const g = nearestGate(lat, lon);
+  return haversineKm(homeLat, homeLon, lat, lon) > haversineKm(homeLat, homeLon, g[0], g[1]);
+}
+// Km intermunicipal a partir de uma lista ordenada de pontos {lat,lon}: portao mais
+// proximo do 1o ponto fora → pontos fora (em ordem) → Casa. 0 se nenhum ponto fora.
+async function computeIntermunicipalKm(
+  pts: Array<{ lat: number; lon: number }>,
+  homeLat: number, homeLon: number
+): Promise<number> {
+  if (!coordOk(homeLat, homeLon)) return 0;
+  const fora = pts.filter((p) => isForaPerimetro(p.lat, p.lon, homeLat, homeLon));
+  if (fora.length === 0) return 0;
+  const gate = nearestGate(fora[0].lat, fora[0].lon);
+  let km = 0, prevLat = gate[0], prevLon = gate[1];
+  for (const p of fora) {
+    try { km += (await calculateRealDistance(prevLat, prevLon, p.lat, p.lon)) / 1000; } catch { /* trecho com erro = 0 */ }
+    prevLat = p.lat; prevLon = p.lon;
+  }
+  try { km += (await calculateRealDistance(prevLat, prevLon, homeLat, homeLon)) / 1000; } catch { /* retorno com erro = 0 */ }
+  return Math.round(km * 100) / 100;
+}
+
 /**
  * Calcula a distância REAL percorrida baseada nos checkpoints (check-ins) realizados
  * Considera apenas visitas validadas (status !== 'cancelled')
@@ -25,6 +77,7 @@ export async function calculateActualRouteDistance(
   dailyRouteId: string
 ): Promise<{
   totalDistance: number;
+  intermunicipalDistance: number;
   validatedVisits: number;
   offRouteVisits: number;
   cancelledVisits: number;
@@ -106,8 +159,15 @@ export async function calculateActualRouteDistance(
         pSegments.push({ from: pPrevName, to: 'Casa do Vendedor (Retorno)', distance: Math.round(d * 100) / 100, isOffRoute: false, validationStatus: 'validated' });
       } catch (e) { /* ignora retorno */ }
     }
+    // Intermunicipal na prospecção: leads registrados fora do perímetro contam como
+    // trecho intermunicipal (portão → leads fora → casa), mesmo recorte do modo 'dia'.
+    const pInterPts = leadRows
+      .map((r: any) => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon) }))
+      .filter((p: any) => coordOk(p.lat, p.lon));
+    const pInter = await computeIntermunicipalKm(pInterPts, pHomeLat, pHomeLon);
     return {
       totalDistance: Math.round(pTotal * 100) / 100,
+      intermunicipalDistance: pInter,
       validatedVisits: pCount,
       offRouteVisits: 0,
       cancelledVisits: 0,
@@ -152,6 +212,8 @@ export async function calculateActualRouteDistance(
   let previousLon: number | null = null;
   let previousName = 'Casa do Vendedor';
   let haveOrigin = false;
+  // Pontos validados (em ordem cronológica) p/ o recorte intermunicipal.
+  const validPts: Array<{ lat: number; lon: number }> = [];
 
   for (const checkpoint of checkIns) {
     const currentLat = parseFloat(checkpoint.checkpointLatitude as any);
@@ -213,6 +275,7 @@ export async function calculateActualRouteDistance(
       previousLon = currentLon;
       previousName = customerName;
       haveOrigin = true;
+      validPts.push({ lat: currentLat, lon: currentLon });
     }
   }
 
@@ -241,8 +304,13 @@ export async function calculateActualRouteDistance(
     }
   }
 
+  // Recorte INTERMUNICIPAL do dia (portão → pontos fora → casa). É 0 quando o
+  // vendedor não passou por nenhum portão. Informativo: não altera o total pago.
+  const intermunicipalDistance = await computeIntermunicipalKm(validPts, homeLat, homeLon);
+
   return {
     totalDistance: Math.round(totalDistance * 100) / 100,
+    intermunicipalDistance,
     validatedVisits,
     offRouteVisits,
     cancelledVisits,
@@ -309,14 +377,36 @@ export async function cancelOffRouteVisit(
 /**
  * Recalcula a distância total da rota baseado nos checkpoints validados
  */
+// Garante a coluna intermunicipal_distance (padrão do projeto: ALTER IF NOT EXISTS
+// em runtime, sem migração manual). Roda 1x por processo.
+let __intermColReady = false;
+async function ensureIntermunicipalColumn(): Promise<void> {
+  if (__intermColReady) return;
+  try {
+    const { db } = await import('./db');
+    const { sql } = await import('drizzle-orm');
+    await db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS intermunicipal_distance numeric`);
+    __intermColReady = true;
+  } catch (e: any) { console.warn('[KM] ensure intermunicipal_distance:', e?.message); }
+}
+
 export async function recalculateRouteDistance(
   dailyRouteId: string,
   storage: DatabaseStorage
 ): Promise<void> {
   const result = await calculateActualRouteDistance(storage, dailyRouteId);
-  
+
   await storage.updateDailyRoute(dailyRouteId, {
     totalActualDistance: result.totalDistance.toString(),
     completedVisits: result.validatedVisits
   });
+
+  // Persiste o recorte intermunicipal (coluna própria, via SQL cru p/ não depender
+  // do mapeamento do storage). Não afeta a km total paga.
+  try {
+    await ensureIntermunicipalColumn();
+    const { db } = await import('./db');
+    const { sql } = await import('drizzle-orm');
+    await db.execute(sql`UPDATE daily_routes SET intermunicipal_distance = ${Number(result.intermunicipalDistance || 0)} WHERE id = ${dailyRouteId}`);
+  } catch (e: any) { console.warn('[KM] persist intermunicipal_distance:', e?.message); }
 }
