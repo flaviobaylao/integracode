@@ -36,9 +36,14 @@ type SellerRow = {
   region?: Region;
 };
 type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; ratePerKmGO?: number; ratePerKmDF?: number; ratePerKmPSN?: number; mesAtual?: string; mesFechado?: boolean };
+// Histórico DIÁRIO: por vendedor, cada dia com a km separada (Normal / Intermunicipal / Prospecção).
+type DiaRow = { dia: string; total: number; intermunicipal: number; normal: number; prospeccao: number; mode: string };
+type DiarioSeller = { sellerId: string; sellerName: string; dias: DiaRow[]; total: number; totalInter: number; totalNormal: number; totalProsp: number };
+type DiarioResp = { sellers: DiarioSeller[]; geradoEm?: string };
 
 const MES_LABEL: Record<string, string> = { "01": "jan", "02": "fev", "03": "mar", "04": "abr", "05": "mai", "06": "jun", "07": "jul", "08": "ago", "09": "set", "10": "out", "11": "nov", "12": "dez" };
 function fmtMes(iso: string): string { const [y, m] = iso.split("-"); return `${MES_LABEL[m] || m}/${(y || "").slice(2)}`; }
+function fmtDia(iso: string): string { const [y, m, d] = (iso || "").split("-"); return d ? `${d}/${m}/${(y || "").slice(2)}` : iso; }
 function fmtKm(n: number): string { return (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function fmtBRL(n: number): string { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 function ultimoDiaDoMes(iso: string): number { if (!iso) return 0; const [y, m] = iso.split("-").map(Number); return new Date(y, m, 0).getDate(); }
@@ -69,6 +74,19 @@ export default function KmVendedores() {
     staleTime: 60_000,
     refetchOnMount: "always",
   });
+
+  // Abas: "mensal" (padrão) e "diario" (histórico por dia com sub-abas por vendedor).
+  const [aba, setAba] = useState<"mensal" | "diario">("mensal");
+  const [diarioSeller, setDiarioSeller] = useState<string>("");
+  const { data: diario, isLoading: diarioLoading } = useQuery<DiarioResp>({
+    queryKey: ["/api/admin/km-vendedores/diario"],
+    queryFn: () => apiRequest("GET", "/api/admin/km-vendedores/diario"),
+    enabled: aba === "diario",
+    staleTime: 60_000,
+  });
+  const diarioSellers = diario?.sellers || [];
+  const selDiario = diarioSellers.find((s) => s.sellerId === diarioSeller) || diarioSellers[0];
+
   const months = (data?.months || []).filter((m) => m >= "2026-01");
   const sellers = data?.sellers || [];
   const mesAtualCol = months.length ? months[months.length - 1] : "";
@@ -207,6 +225,21 @@ export default function KmVendedores() {
         </div>
       </div>
 
+      {/* Abas: Histórico mensal | Histórico por dia */}
+      <div className="flex items-center gap-1 mb-3 border-b">
+        {([["mensal", "Histórico mensal"], ["diario", "Histórico por dia"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setAba(id)}
+            className={`px-4 py-2 text-sm font-semibold -mb-px border-b-2 ${aba === id ? "border-indigo-600 text-indigo-700" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {aba === "mensal" && (
       <Card className="relative">
         <button type="button" onClick={() => setShowInfo((v) => !v)} title="Como a km e calculada" aria-label="Como a km e calculada" className="absolute top-3 right-3 z-20 w-7 h-7 rounded-full border bg-background text-indigo-600 hover:bg-indigo-50 flex items-center justify-center">
           <Info className="w-4 h-4" />
@@ -346,6 +379,76 @@ export default function KmVendedores() {
           <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). "R$ a pagar" = km do mes de {fmtMes(mesPagto)} x a tarifa da referencia escolhida do vendedor (GO, DF ou PSN). O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
         </CardContent>
       </Card>
+      )}
+
+      {aba === "diario" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Histórico por dia</CardTitle>
+            <div className="text-xs text-muted-foreground mt-1">A km de cada dia separada em <b>Normal · dia</b>, <b>Intermunicipal · dia</b> e <b>Prospecção</b> (a soma dos três = total do dia). Só vendedores externos ativos. Escolha o vendedor nas abas abaixo.</div>
+          </CardHeader>
+          <CardContent>
+            {diarioLoading ? (
+              <div className="text-sm text-muted-foreground py-6">Carregando...</div>
+            ) : diarioSellers.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6">Nenhuma rota com quilometragem registrada ainda.</div>
+            ) : (
+              <>
+                <div className="flex gap-1 overflow-x-auto pb-2 mb-3 border-b">
+                  {diarioSellers.map((s) => (
+                    <button
+                      key={s.sellerId}
+                      type="button"
+                      onClick={() => setDiarioSeller(s.sellerId)}
+                      className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold border ${selDiario?.sellerId === s.sellerId ? "bg-indigo-600 border-indigo-600 text-white" : "bg-background border-gray-200 text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {s.sellerName}
+                    </button>
+                  ))}
+                </div>
+                {selDiario && (
+                  <div className="overflow-auto max-h-[65vh] rounded-lg border">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <th className="text-left font-bold py-2 px-3 bg-background border-b">Dia</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Normal · dia</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-amber-700">Intermunicipal · dia</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-violet-700">Prospecção</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selDiario.dias.length === 0 ? (
+                          <tr><td colSpan={5} className="text-center text-muted-foreground py-6 px-3">Sem dias com km.</td></tr>
+                        ) : selDiario.dias.map((d) => (
+                          <tr key={d.dia} className="border-t hover:bg-muted/40">
+                            <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDia(d.dia)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums">{d.normal ? fmtKm(d.normal) : <span className="text-gray-300">-</span>}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-amber-700">{d.intermunicipal ? fmtKm(d.intermunicipal) : <span className="text-gray-300">-</span>}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-violet-700">{d.prospeccao ? fmtKm(d.prospeccao) : <span className="text-gray-300">-</span>}</td>
+                            <td className="py-2 px-3 text-right tabular-nums font-bold">{fmtKm(d.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 bg-muted/30 font-bold">
+                          <td className="py-2 px-3 whitespace-nowrap">Total ({selDiario.dias.length} dia(s))</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{fmtKm(selDiario.totalNormal)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-amber-700">{fmtKm(selDiario.totalInter)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-violet-700">{fmtKm(selDiario.totalProsp)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{fmtKm(selDiario.total)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+                <div className="text-[11px] text-muted-foreground mt-2">"Intermunicipal · dia" conta do portão de saída da cidade → pontos fora → casa. "Normal · dia" é o restante (trecho urbano). A soma dos três = km total do dia. Os valores de Intermunicipal aparecem conforme as rotas são recalculadas.</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
