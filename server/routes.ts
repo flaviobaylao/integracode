@@ -18672,6 +18672,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Historico DIARIO por vendedor: por dia, a km separada em Normal / Intermunicipal /
+  // Prospeccao (a soma dos tres = total do dia). SOMENTE vendedores externos ativos
+  // (role='vendedor' + is_active). Base da aba "Diario" em Kilometragem Vendedores.
+  app.get('/api/admin/km-vendedores/diario', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      // Garante a coluna (padrao do projeto: ALTER IF NOT EXISTS em runtime).
+      try { await db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS intermunicipal_distance numeric`); } catch {}
+      const r: any = await db.execute(sql`
+        SELECT
+          dr.seller_id AS seller_id,
+          to_char(dr.route_date, 'YYYY-MM-DD') AS dia,
+          COALESCE(dr.total_actual_distance::numeric, 0) AS total,
+          COALESCE(dr.intermunicipal_distance::numeric, 0) AS interm,
+          dr.route_mode AS mode,
+          COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email, dr.seller_id) AS seller_name
+        FROM daily_routes dr
+        JOIN users u ON u.id = dr.seller_id
+        WHERE u.role = 'vendedor' AND u.is_active = true
+          AND COALESCE(dr.total_actual_distance::numeric, 0) > 0
+          AND dr.route_date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        ORDER BY dr.seller_id, dr.route_date DESC
+      `);
+      const rows = (r?.rows || []) as any[];
+      const byId = new Map<string, any>();
+      for (const row of rows) {
+        const sid = String(row.seller_id);
+        let s = byId.get(sid);
+        if (!s) { s = { sellerId: sid, sellerName: row.seller_name || sid, dias: [], total: 0, totalInter: 0, totalNormal: 0, totalProsp: 0 }; byId.set(sid, s); }
+        const total = Math.round(Number(row.total || 0) * 10) / 10;
+        const inter = Math.round(Number(row.interm || 0) * 10) / 10;
+        const isProsp = String(row.mode) === 'prospeccao';
+        const resto = Math.max(0, Math.round((total - inter) * 10) / 10); // trecho fora do intermunicipal
+        const normal = isProsp ? 0 : resto;
+        const prosp = isProsp ? resto : 0;
+        s.dias.push({ dia: String(row.dia), total, intermunicipal: inter, normal, prospeccao: prosp, mode: String(row.mode || 'dia') });
+        s.total = Math.round((s.total + total) * 10) / 10;
+        s.totalInter = Math.round((s.totalInter + inter) * 10) / 10;
+        s.totalNormal = Math.round((s.totalNormal + normal) * 10) / 10;
+        s.totalProsp = Math.round((s.totalProsp + prosp) * 10) / 10;
+      }
+      const sellers = Array.from(byId.values()).sort((a, b) => b.total - a.total);
+      res.json({ sellers, geradoEm: getBrazilDateString() });
+    } catch (error: any) {
+      console.error('Erro no historico diario de km:', error);
+      res.status(500).json({ message: 'Erro no historico diario de km', error: error?.message });
+    }
+  });
+
   // Salva as tarifas R$/km por regiao (GO e DF) pagas ao vendedor. Admin apenas.
   // Persistido em config_global. Aceita ratePerKmGO/ratePerKmDF; ratePerKm legado
   // continua aceito como fallback para as duas regioes.
