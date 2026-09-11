@@ -307,6 +307,25 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     checkpointSet.add(`${c.customerId}_${ds}`);
   }
 
+  // 3.1) Check-in do CARD de venda (sales_cards.check_in_time) — MESMA fonte de "visita efetuada"
+  // usada no Resumo de Visitas (bolinha amarela = visitado sem pedido). Sem isto, um cliente
+  // visitado que aparece AMARELO no Resumo ainda cairia em repescagem. A data da visita = a
+  // scheduled_date do card. Consolidado no mesmo conjunto de checkpoints ("visita feita").
+  try {
+    const scc = (await db.execute(sql`
+      SELECT customer_id AS cid, (scheduled_date)::date::text AS d
+      FROM sales_cards
+      WHERE scheduled_date IS NOT NULL
+        AND (scheduled_date)::date >= ${startDate} AND (scheduled_date)::date <= ${endDate}
+        AND check_in_time IS NOT NULL AND customer_id IS NOT NULL
+      GROUP BY customer_id, d
+    `)).rows as any[];
+    for (const r of scc) {
+      if (!r.cid || !r.d) continue;
+      checkpointSet.add(`${r.cid}_${r.d}`);
+    }
+  } catch (e) { console.warn('[computeRedCandidates] sales_cards check-in:', (e as any)?.message); }
+
   // 3.5) Atendimentos virtuais (registrados em resgate) contam como visita
   const vlogs = await db.select({
     customerId: virtualServiceLogs.customerId,
