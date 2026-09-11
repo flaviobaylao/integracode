@@ -30,10 +30,20 @@ export default function Cupons() {
   const [saving, setSaving] = useState(false);
 
   const brl = (v: any) => "R$ " + (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // A vigencia volta da API como timestamp NAIVE ja em UTC ("2026-10-01 02:59:59", sem Z).
+  // Sem o Z o navegador lia como horario local: o fim da vigencia (23:59:59 de 30/09 em
+  // Brasilia) aparecia como 01/10 na tabela e, ao abrir Editar, o campo vinha com o dia
+  // seguinte — salvar de novo esticava o cupom em um dia. Marca como UTC antes de comparar
+  // ou formatar.
+  const comoUTC = (ts: any) => {
+    const s = String(ts ?? "").trim();
+    const naive = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !/([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+    return naive ? s.replace(" ", "T") + "Z" : ts;
+  };
   const dayBRT = (ts: any) => {
     if (!ts) return "";
     try {
-      return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ts));
+      return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(comoUTC(ts)));
     } catch { return ""; }
   };
   const dayBR = (ts: any) => { const d = dayBRT(ts); return d ? d.split("-").reverse().join("/") : "—"; };
@@ -110,8 +120,8 @@ export default function Cupons() {
     if (c.enabled_2_0 !== true) return { txt: "Não habilitado", cls: "bg-gray-100 text-gray-600" };
     if (c.is_active === false) return { txt: "Inativo", cls: "bg-gray-100 text-gray-600" };
     const now = Date.now();
-    if (c.valid_from && new Date(c.valid_from).getTime() > now) return { txt: "Agendado", cls: "bg-blue-100 text-blue-700" };
-    if (c.valid_until && new Date(c.valid_until).getTime() < now) return { txt: "Expirado", cls: "bg-amber-100 text-amber-700" };
+    if (c.valid_from && new Date(comoUTC(c.valid_from)).getTime() > now) return { txt: "Agendado", cls: "bg-blue-100 text-blue-700" };
+    if (c.valid_until && new Date(comoUTC(c.valid_until)).getTime() < now) return { txt: "Expirado", cls: "bg-amber-100 text-amber-700" };
     if (c.max_uses != null && Number(c.used_count) >= Number(c.max_uses)) return { txt: "Esgotado", cls: "bg-amber-100 text-amber-700" };
     return { txt: "Válido", cls: "bg-green-100 text-green-700" };
   };
@@ -122,7 +132,7 @@ export default function Cupons() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold">Cupons de Desconto</h1>
-          <p className="text-sm text-gray-500">O desconto é aplicado pelo servidor no fechamento do pedido do vendedor (o hotsite ainda não usa cupom). Um desconto por pedido — o cupom promocional tem prioridade sobre o programa de indicação.</p>
+          <p className="text-sm text-gray-500">O desconto é aplicado pelo servidor: no fechamento do pedido do vendedor e também nos pedidos do hotsite, onde o cliente digita o código no checkout. Um desconto por pedido — o cupom promocional tem prioridade sobre o programa de indicação.</p>
         </div>
         <button onClick={novo} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white" data-testid="button-novo-cupom">+ Novo cupom</button>
       </div>
