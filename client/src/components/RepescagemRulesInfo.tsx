@@ -51,7 +51,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Quando o cliente cai em repescagem</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Segue <b>periodicidade e dia de rota</b>, o mesmo raciocínio do Resumo de Visitas (ciclos/bolinhas).</li>
-                <li>Cai <b>se e somente se a última bolinha estiver vermelha</b> — a visita agendada mais recente <b>sem atendimento e sem pedido</b> na janela do ciclo. Se houve <b>atendimento</b> (amarela) ou <b>pedido</b> (verde), não cai.</li>
+                <li>Cai <b>somente quando a última visita agendada NÃO foi feita</b> (bolinha vermelha — sem check-in, sem atendimento virtual e sem pedido). <b>Se a visita foi feita — com ou sem pedido</b> (bolinha amarela ou verde) — o cliente <b>não cai</b>. A visita conta como feita pelo check-in do card (mesma fonte do Resumo de Visitas), check-in na rota, atendimento virtual ou pedido.</li>
                 <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha estiver vermelha.</li>
                 <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar vermelha.</li>
                 <li><b>Permanece</b> enquanto a última bolinha estiver vermelha. <b>Assim que houver pedido (venda) OU qualquer registro de atendimento</b> — check-in na rota, atendimento virtual/resgate ou visita concluída, na data da visita ou depois (inclusive fim de semana) — o cliente <b>sai da lista e entra em um novo ciclo</b>; só volta se a próxima visita ficar vermelha.</li>
