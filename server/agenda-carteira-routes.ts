@@ -88,6 +88,202 @@ export function semanasDaJanela(ref: string): SemanaJanela[] {
   return out;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TETO DE CLIENTES POR DIA  (pedido do Flavio, 11/set/2026)
+//
+// Cada celula do quadro (semana x dia x canal) tem um teto. Quando um VENDEDOR
+// passa do teto dele naquele dia, a celula fica amarela na tela e abre-se um
+// aviso na Inbox para o admin olhar.
+//
+// ESCOPO (decidido com o Flavio): um teto PADRAO para todos, com EXCECAO por
+// vendedor. LEADS FICAM DE FORA da conta — o teto vale para clientes
+// presenciais e para clientes virtuais, separadamente.
+//
+// Teto 0 (ou ausente) = SEM teto: nada fica amarelo e nada vai para a Inbox.
+// Enquanto ninguem configurar, o comportamento da tela e' exatamente o de hoje.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const CHAVE_LIMITES = "agenda.limites_dia";
+export type LimiteCanais = { presencial: number; virtual: number };
+export type LimitesAgenda = LimiteCanais & { porVendedor: Record<string, LimiteCanais> };
+
+const LIMITES_VAZIOS: LimitesAgenda = { presencial: 0, virtual: 0, porVendedor: {} };
+
+/** Numero >= 0 e inteiro; qualquer lixo vira 0 (= sem teto). */
+const nLimite = (v: any) => {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+function normalizarLimites(bruto: any): LimitesAgenda {
+  const o = bruto && typeof bruto === "object" ? bruto : {};
+  const porVendedor: Record<string, LimiteCanais> = {};
+  const mapa = o.porVendedor && typeof o.porVendedor === "object" ? o.porVendedor : {};
+  for (const [id, v] of Object.entries(mapa as Record<string, any>)) {
+    const chave = String(id || "").trim();
+    if (!chave) continue;
+    const presencial = nLimite((v as any)?.presencial);
+    const virtual = nLimite((v as any)?.virtual);
+    // Excecao que nao excetua nada nao precisa ficar guardada.
+    if (presencial || virtual) porVendedor[chave] = { presencial, virtual };
+  }
+  return { presencial: nLimite(o.presencial), virtual: nLimite(o.virtual), porVendedor };
+}
+
+async function lerLimites(): Promise<LimitesAgenda> {
+  try {
+    const r = (await db.execute(sql`SELECT value FROM system_settings WHERE key = ${CHAVE_LIMITES} LIMIT 1`)).rows as any[];
+    if (!r.length) return { ...LIMITES_VAZIOS, porVendedor: {} };
+    return normalizarLimites(JSON.parse(String(r[0].value || "{}")));
+  } catch (e: any) {
+    console.warn("[carteira-agenda] limites:", e?.message);
+    return { ...LIMITES_VAZIOS, porVendedor: {} };
+  }
+}
+
+async function gravarLimites(l: LimitesAgenda, quem: string): Promise<void> {
+  const valor = JSON.stringify(l);
+  await db.execute(sql`
+    INSERT INTO system_settings (key, value, description, updated_by, updated_at)
+    VALUES (${CHAVE_LIMITES}, ${valor}, 'Teto de clientes por dia na Agenda da Carteira', ${quem}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`);
+}
+
+/** Teto do vendedor naquele canal: a excecao dele, senao o padrao. 0 = sem teto. */
+export function limiteDoVendedor(l: LimitesAgenda, sellerId: string, canal: "presencial" | "virtual"): number {
+  const excecao = l.porVendedor?.[String(sellerId || "")];
+  const proprio = excecao ? nLimite((excecao as any)[canal]) : 0;
+  return proprio || nLimite((l as any)[canal]);
+}
+
+/**
+ * Celulas acima do teto, a partir de HOJE. O passado nao entra: dia cheio que
+ * ja passou nao tem o que corrigir, so faria barulho.
+ *
+ * Agrupa por VENDEDOR + CANAL + DIA DA SEMANA, e nao por data: a sobrecarga e'
+ * estrutural ("a terca do Carlos esta cheia"), e um aviso por data encheria a
+ * Inbox com dezenas de linhas dizendo a mesma coisa.
+ */
+export type Sobrecarga = {
+  sellerId: string; vendedor: string; canal: "presencial" | "virtual"; dia: string;
+  limite: number; pico: number; datas: string[];
+};
+
+export function acharSobrecargas(itens: any[], hoje: string, limites: LimitesAgenda): Sobrecarga[] {
+  // vendedor|canal|data -> nº de clientes
+  const porDia = new Map<string, number>();
+  const nomes = new Map<string, string>();
+  for (const it of itens) {
+    if (it?.tipo === "lead") continue;                 // leads ficam de fora
+    const canal = it?.canal === "virtual" ? "virtual" : "presencial";
+    const sellerId = String(it?.sellerId || "");
+    if (!sellerId) continue;                           // sem vendedor nao ha quem cobrar
+    nomes.set(sellerId, String(it?.vendedor || "Sem vendedor"));
+    for (const d of (it?.datas || [])) {
+      if (String(d) < hoje) continue;
+      const k = `${sellerId}|${canal}|${d}`;
+      porDia.set(k, (porDia.get(k) || 0) + 1);
+    }
+  }
+
+  // vendedor|canal|diaDaSemana -> dias que estouraram
+  const grupos = new Map<string, Sobrecarga>();
+  for (const [k, n] of Array.from(porDia.entries())) {
+    const [sellerId, canal, data] = k.split("|");
+    const limite = limiteDoVendedor(limites, sellerId, canal as any);
+    if (!limite || n <= limite) continue;
+    const dia = NUM_DIA[dataLocal(data).getDay()];
+    const gk = `${sellerId}|${canal}|${dia}`;
+    const atual = grupos.get(gk);
+    if (atual) {
+      atual.pico = Math.max(atual.pico, n);
+      atual.datas.push(data);
+    } else {
+      grupos.set(gk, {
+        sellerId, vendedor: nomes.get(sellerId) || "Sem vendedor",
+        canal: canal as any, dia, limite, pico: n, datas: [data],
+      });
+    }
+  }
+  for (const g of Array.from(grupos.values())) g.datas.sort();
+  return Array.from(grupos.values());
+}
+
+const DIA_LONGO: Record<string, string> = {
+  Seg: "Segunda-feira", Ter: "Terça-feira", Qua: "Quarta-feira", Qui: "Quinta-feira", Sex: "Sexta-feira",
+};
+const ddmmDe = (d: string) => { const [a, m, x] = String(d).split("-"); return `${x}/${m}`; };
+
+export function textoSobrecarga(s: Sobrecarga): string {
+  const quando = s.datas.length === 1
+    ? `em ${ddmmDe(s.datas[0])}`
+    : `em ${s.datas.length} semanas (${s.datas.slice(0, 6).map(ddmmDe).join(", ")}${s.datas.length > 6 ? "…" : ""})`;
+  return `${DIA_LONGO[s.dia] || s.dia} ${s.canal} acima do teto na carteira de ${s.vendedor}: `
+    + `teto de ${s.limite} cliente${s.limite === 1 ? "" : "s"} por dia, chega a ${s.pico} ${quando}. `
+    + `Vale remanejar dia de atendimento ou periodicidade de parte desses clientes.`;
+}
+
+/**
+ * Abre (e fecha) os avisos da Inbox. Roda solto, depois da resposta — a tela
+ * nunca espera por isto e nunca quebra por causa disto.
+ *
+ * Um pendente por vendedor+canal+dia: quem deduplica e' o indice ux_cr_pending
+ * (entity_type, entity_id) WHERE status='pending' da propria change_requests.
+ * Quando a sobrecarga some, o pendente correspondente e' CANCELADO — senao a
+ * Inbox acumularia aviso de problema que ja foi resolvido.
+ */
+async function sincronizarAvisos(sobrecargas: Sobrecarga[], vendedoresAvaliados: string[]): Promise<void> {
+  if (!vendedoresAvaliados.length) return;
+  const chaveDe = (s: Sobrecarga) => `${s.sellerId}|${s.canal}|${s.dia}`;
+  const ativas = new Map(sobrecargas.map((s) => [chaveDe(s), s]));
+
+  // IN com bind por item, e nao `= ANY(${array})`: o bind de array falha neste
+  // setup (ver server/index.ts:2516, onde derrubou o "limpar" em massa).
+  const listaVend = sql.join(vendedoresAvaliados.map((v) => sql`${v}`), sql`, `);
+  const pendentes = (await db.execute(sql`
+    SELECT id, entity_id FROM change_requests
+    WHERE entity_type = 'agenda_dia' AND status = 'pending'
+      AND split_part(entity_id, '|', 1) IN (${listaVend})`)).rows as any[];
+  const jaAbertas = new Set(pendentes.map((p: any) => String(p.entity_id)));
+
+  // Fecha o que voltou ao normal.
+  const resolvidas = pendentes.filter((p: any) => !ativas.has(String(p.entity_id))).map((p: any) => String(p.id));
+  if (resolvidas.length) {
+    await db.execute(sql`
+      UPDATE change_requests
+      SET status = 'cancelled', resolved_at = NOW(), resolved_by_name = 'Sistema (automático)',
+          resolution_note = 'Dia voltou a caber no teto.'
+      WHERE id IN (${sql.join(resolvidas.map((id: string) => sql`${id}`), sql`, `)})`);
+  }
+
+  // Abre o que estourou e ainda nao tem aviso.
+  for (const s of Array.from(ativas.values())) {
+    const chave = chaveDe(s);
+    if (jaAbertas.has(chave)) continue;
+    const nota = textoSobrecarga(s);
+    const msg = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      role: "admin", by: null, byName: "Sistema (automático)", kind: "system",
+      text: nota, at: new Date().toISOString(),
+    };
+    try {
+      await db.execute(sql`
+        INSERT INTO change_requests
+          (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+           types, details, status, requested_by, requested_by_name, messages)
+        VALUES
+          ('agenda_dia', ${chave}, NULL, ${`${s.vendedor} — ${DIA_LONGO[s.dia] || s.dia} ${s.canal}`},
+           ${s.sellerId}, ${s.vendedor},
+           ${JSON.stringify(["dia_sobrecarregado"])}::jsonb,
+           ${JSON.stringify({ outro: nota, sobrecarga: s })}::jsonb, 'pending',
+           NULL, 'Sistema', ${JSON.stringify([msg])}::jsonb)`);
+    } catch (e: any) {
+      // Corrida com outra aba abrindo o mesmo aviso: o indice unico resolve.
+      if (!String(e?.message || "").includes("ux_cr_pending")) throw e;
+    }
+  }
+}
+
 /** Escopo: vendedor e telemarketing so enxergam a carteira deles. */
 function escopo(req: any) {
   const usuario: any = req?.currentUser || req?.user || null;
@@ -113,6 +309,9 @@ function escopo(req: any) {
 /** Só estes admins podem ALTERAR dia/periodicidade já preenchidos — mesma
  *  trava do PATCH /api/customers/:id (guardVisitFieldsAlteration). */
 const ADMINS_VISITA = ["cinthiamarque90@gmail.com", "flavio@bebahonest.com.br", "flaviobaylao@gmail.com"];
+
+/** Quem pode mudar o teto de clientes por dia. Os demais so enxergam o numero. */
+const PAPEIS_LIMITE = ["admin", "coordinator"];
 
 const DIA_NUM: Record<string, number> = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6 };
 const NUM_DIA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
@@ -393,13 +592,65 @@ export function registerAgendaCarteira(app: Express) {
         console.warn("[carteira-agenda] leads:", e?.message);
       }
 
+      // TETO DO DIA: a tela pinta de amarelo quem estourou, e a Inbox recebe o
+      // aviso. A verificacao roda SOLTA, depois da resposta — a tela nunca
+      // espera por ela e nunca quebra por causa dela.
+      const limites = await lerLimites();
       res.json({
         hoje, semanas, itens,
         escopo: { restrito: esc.restrito, papel: esc.papel, vendedor: esc.nome },
         podeEditarVisita: ADMINS_VISITA.includes(esc.email),
+        limites,
+        podeEditarLimites: PAPEIS_LIMITE.includes(esc.papel),
       });
+
+      void (async () => {
+        try {
+          const sobre = acharSobrecargas(itens, hoje, limites);
+          const avaliados = Array.from(new Set(itens.map((i) => String(i.sellerId || "")).filter(Boolean)));
+          await sincronizarAvisos(sobre, avaliados);
+        } catch (e: any) {
+          console.warn("[carteira-agenda] avisos de sobrecarga:", e?.message);
+        }
+      })();
     } catch (e: any) {
       console.error("[carteira-agenda GET]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // GET/PUT /api/carteira/agenda/limites
+  // Teto de clientes por dia: um padrao para todos e excecao por vendedor.
+  // Guardado em system_settings (chave/valor) — nao precisa de migracao.
+  // ---------------------------------------------------------------------------
+  app.get("/api/carteira/agenda/limites", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const esc = escopo(req);
+      res.json({ ...(await lerLimites()), podeEditar: PAPEIS_LIMITE.includes(esc.papel) });
+    } catch (e: any) {
+      console.error("[carteira-agenda limites GET]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  app.put("/api/carteira/agenda/limites", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const esc = escopo(req);
+      if (!PAPEIS_LIMITE.includes(esc.papel)) {
+        return res.status(403).json({ ok: false, error: "Só admin ou coordenador pode mudar o teto do dia." });
+      }
+      const atual = await lerLimites();
+      const b: any = req.body || {};
+      const novo = normalizarLimites({
+        presencial: b.presencial ?? atual.presencial,
+        virtual: b.virtual ?? atual.virtual,
+        porVendedor: b.porVendedor ?? atual.porVendedor,
+      });
+      await gravarLimites(novo, String(esc.usuario?.id || esc.email || "sistema"));
+      res.json({ ok: true, ...novo, podeEditar: true });
+    } catch (e: any) {
+      console.error("[carteira-agenda limites PUT]", e);
       res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

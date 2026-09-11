@@ -31,8 +31,10 @@ const safe = (fn: (req: Request, res: Response) => Promise<any>) =>
   };
 
 // Tipos válidos de alteração e status.
-const VALID_TYPES = new Set(["periodicidade", "dia_rota", "area_vendas", "inicio_atendimento", "inativar", "outro"]);
-const VALID_ENTITY = new Set(["customer", "lead", "repescagem"]);
+const VALID_TYPES = new Set(["periodicidade", "dia_rota", "area_vendas", "inicio_atendimento", "inativar", "dia_sobrecarregado", "outro"]);
+// 'agenda_dia' nao e' um cadastro: e' uma CELULA do quadro da Agenda da Carteira
+// (vendedor|canal|dia da semana) que passou do teto de clientes por dia.
+const VALID_ENTITY = new Set(["customer", "lead", "repescagem", "agenda_dia"]);
 const VALID_RESOLUTION = new Set(["efetuadas", "parcial", "rejeitadas"]);
 
 const DDL: string[] = [
@@ -89,7 +91,8 @@ const userName = (u: any): string => {
 const TYPE_LABEL_SRV: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
   presencial_virtual: "Presencial/Virtual",
-  inicio_atendimento: "Início de atendimento", inativar: "Inativar", outro: "Outro",
+  inicio_atendimento: "Início de atendimento", inativar: "Inativar",
+  dia_sobrecarregado: "Dia sobrecarregado", outro: "Outro",
 };
 const RESOLUTION_LABEL: Record<string, string> = {
   efetuadas: "Alterações efetuadas", parcial: "Alterações efetuadas parcialmente", rejeitadas: "Alterações rejeitadas",
@@ -103,6 +106,7 @@ function summarizeRequest(types: string[], details: any): string {
     else if (t === "area_vendas" && d.areaVendas) parts.push(`Área de vendas → ${d.areaVendas}`);
     else if (t === "presencial_virtual" && d.modalidade) parts.push(`Modalidade → ${d.modalidade === "virtual" ? "Virtual" : "Presencial"}`);
     else if (t === "inicio_atendimento" && d.inicioAtendimento) parts.push(`Início de atendimento → ${d.inicioAtendimento}`);
+    else if (t === "dia_sobrecarregado" && d.outro) parts.push(String(d.outro));
     else if (t === "outro" && d.outro) parts.push(`Outro: ${d.outro}`);
     else parts.push(TYPE_LABEL_SRV[t] || t);
   }
