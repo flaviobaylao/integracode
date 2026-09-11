@@ -1787,6 +1787,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             leadStatus: l.status ?? null,
             leadTemperature: l.temperature ?? null,
             nextContactDate: l.next_contact_date ?? null,
+            // Alocacao do lead: 'prospeccao' NAO entra na Rota do Dia (so na rota de prospeccao).
+            // O card do mapa avisa quando for o caso, senao a data parece nao surtir efeito.
+            routeType: l.route_type ?? 'dia',
             contact: l.contact ?? null,
           };
         });
