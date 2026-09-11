@@ -134,11 +134,10 @@ function proximaDataDoDia(diaLabel: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// Formata "2026-09-14 12:00:00" (ou ISO) como 14/09/2026, sem depender de fuso.
-function dataBR(v: any): string {
-  const t = String(v || '').trim();
-  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+// "2026-09-14 12:00:00" -> "2026-09-14" (o <input type="date"> exige esse formato).
+function dataISO(v: any): string {
+  const m = String(v || '').trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
 }
 
 // ℹ️ O que essa data faz no sistema (o "i" ao lado do rótulo mostra este texto).
@@ -202,9 +201,10 @@ type PropsPonto = {
   aoCopiar: (id: string, nome: string) => void;
   aoEditar: (c: any) => void;
   aoMudarDia: (leadId: string, diaLabel: string) => void;
+  aoMudarData: (leadId: string, dataISO: string) => void;
   aoMudarVendedor: (c: any, vendedorId: string) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarVendedor }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor }: PropsPonto) {
   const lat = Number(customer.latitude);
   const lng = Number(customer.longitude);
   const color = pinColorFor(customer);
@@ -255,9 +255,15 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                     <option value="">{salvandoDia ? 'salvando...' : 'Sem dia'}</option>
                     {DIAS_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
-                  {!!customer.nextContactDate && (
-                    <span data-testid={`text-lead-date-${customer.id}`}>{dataBR(customer.nextContactDate)}</span>
-                  )}
+                  {/* A data é editável direto: o seletor de dia é só o atalho para a próxima ocorrência. */}
+                  <input
+                    type="date"
+                    value={dataISO(customer.nextContactDate)}
+                    disabled={salvandoDia}
+                    onChange={(e) => e.target.value && aoMudarData(String(customer.id), e.target.value)}
+                    className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                    data-testid={`input-lead-date-${customer.id}`}
+                  />
                   <span
                     title={AJUDA_DATA_LEAD}
                     aria-label={AJUDA_DATA_LEAD}
@@ -588,6 +594,20 @@ export default function ClientsMap() {
     }
   }, [queryClient]);
 
+  // 📅 Data exata do lead (o seletor de dia é atalho; aqui dá para escolher qualquer data).
+  const mudarDataDoLead = useCallback(async (leadId: string, iso: string) => {
+    setSalvandoDiaId(leadId);
+    try {
+      await apiRequest('PATCH', `/api/leads/${leadId}`, { nextContactDate: iso });
+      await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data', 'leads'] });
+    } catch (e: any) {
+      console.error('[MAPA] falha ao mudar a data do lead:', e);
+      alert('Não foi possível alterar a data do lead: ' + (e?.message || e));
+    } finally {
+      setSalvandoDiaId(null);
+    }
+  }, [queryClient]);
+
   const handleEditCustomer = useCallback((customer: Customer) => {
     setSelectedCustomer(customer);
     setIsEditModalOpen(true);
@@ -606,9 +626,10 @@ export default function ClientsMap() {
       aoCopiar={copiarNome}
       aoEditar={handleEditCustomer}
       aoMudarDia={mudarDiaDoLead}
+      aoMudarData={mudarDataDoLead}
       aoMudarVendedor={mudarVendedor}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarVendedor]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
