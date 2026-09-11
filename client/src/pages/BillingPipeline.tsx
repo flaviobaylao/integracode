@@ -63,7 +63,8 @@ interface BillingPipelineItem {
   operationType: string | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
   notes: string | null;
-  trocaPhotoUrl?: string | null; // foto dos produtos anexada na troca (armazenada no servidor)
+  trocaPhotoUrl?: string | null; // 1ª foto da troca (compatibilidade)
+  trocaPhotoUrls?: string[];     // todas as fotos dos produtos anexadas na troca (até 3)
   omieInstanceId: string | null;
   omieInstanceName: string | null;
   scheduledBillingDate: string | null;
@@ -766,6 +767,7 @@ export default function BillingPipeline() {
           // o motivo automático do bloqueio segue logo abaixo, quando houver.
           notes: ([b.sellerNotes, b.blockDetails].filter((x: any) => x && String(x).trim()).join('\n\n')) || b.blockReason || null,
           trocaPhotoUrl: b.trocaPhotoUrl ?? null,
+          trocaPhotoUrls: Array.isArray(b.trocaPhotoUrls) ? b.trocaPhotoUrls : (b.trocaPhotoUrl ? [b.trocaPhotoUrl] : []),
           omieInstanceId: null,
           omieInstanceName: null,
           stageHistory: [],
@@ -1853,18 +1855,31 @@ export default function BillingPipeline() {
                 </div>
               )}
 
-              {detailItem.trocaPhotoUrl && (
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Foto da troca</label>
-                  <a href={detailItem.trocaPhotoUrl} target="_blank" rel="noopener noreferrer">
-                    <img
-                      src={detailItem.trocaPhotoUrl}
-                      alt="Foto dos produtos da troca"
-                      className="w-full max-h-72 object-contain rounded-lg border bg-white cursor-zoom-in"
-                    />
-                  </a>
-                </div>
-              )}
+              {(() => {
+                const fotos = (detailItem.trocaPhotoUrls && detailItem.trocaPhotoUrls.length > 0)
+                  ? detailItem.trocaPhotoUrls
+                  : (detailItem.trocaPhotoUrl ? [detailItem.trocaPhotoUrl] : []);
+                if (fotos.length === 0) return null;
+                return (
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">
+                      {fotos.length === 1 ? 'Foto da troca' : `Fotos da troca (${fotos.length})`}
+                    </label>
+                    <div className={fotos.length === 1 ? '' : 'grid grid-cols-3 gap-2'}>
+                      {fotos.map((url, i) => (
+                        <a key={i} href={url} target="_blank" rel="noopener noreferrer" title="Abrir em tamanho real">
+                          <img
+                            src={url}
+                            alt={`Foto ${i + 1} dos produtos da troca`}
+                            className={`w-full rounded-lg border bg-white cursor-zoom-in ${fotos.length === 1 ? 'max-h-72 object-contain' : 'h-28 object-cover'}`}
+                            data-testid={`img-pipeline-troca-photo-${i}`}
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem.stage)) && Array.isArray(cardNotes) && cardNotes.length > 0 && (
                 <div>
