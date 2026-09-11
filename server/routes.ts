@@ -10119,7 +10119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const scIds = Array.from(new Set(blockedOrdersData.map((o: any) => o.salesCardId).filter(Boolean)));
       const srcById = new Map<string, string>();
       const notesById = new Map<string, string>(); // observação escrita pelo vendedor na implantação
-      const trocaPhotoById = new Map<string, string>(); // URL da foto anexada na troca (order_pipeline_audit)
+      const trocaPhotosById = new Map<string, string[]>(); // URLs das fotos anexadas na troca (order_pipeline_audit)
       const paidSet = new Set<string>();
       if (scIds.length) {
         try {
@@ -10146,11 +10146,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const lp: any = await db.execute(sql`SELECT DISTINCT sales_card_id FROM lio_pedidos WHERE liquidado = true AND sales_card_id IN (${idList})`);
           for (const x of (lp.rows || lp) as any[]) if (x.sales_card_id) paidSet.add(String(x.sales_card_id));
         } catch {}
-        // Foto dos produtos anexada na troca (registrada em order_pipeline_audit com outcome='troca_photo').
-        // Pega a mais recente por card para exibir no card bloqueado.
+        // Fotos dos produtos anexadas na troca (uma linha por foto em order_pipeline_audit,
+        // outcome='troca_photo'). O vendedor pode mandar ate 3 — traz TODAS, da mais antiga
+        // para a mais nova, que e a ordem em que ele anexou.
         try {
-          const tp: any = await db.execute(sql`SELECT DISTINCT ON (sales_card_id) sales_card_id, error AS url FROM order_pipeline_audit WHERE outcome = 'troca_photo' AND sales_card_id IN (${idList}) ORDER BY sales_card_id, created_at DESC`);
-          for (const x of (tp.rows || tp) as any[]) if (x.url) trocaPhotoById.set(String(x.sales_card_id), String(x.url));
+          const tp: any = await db.execute(sql`SELECT sales_card_id, error AS url FROM order_pipeline_audit WHERE outcome = 'troca_photo' AND sales_card_id IN (${idList}) ORDER BY sales_card_id, created_at ASC`);
+          for (const x of (tp.rows || tp) as any[]) {
+            if (!x.url) continue;
+            const k = String(x.sales_card_id);
+            const lista = trocaPhotosById.get(k) || [];
+            if (!lista.includes(String(x.url))) lista.push(String(x.url));
+            trocaPhotosById.set(k, lista);
+          }
         } catch {}
       }
 
@@ -10166,7 +10173,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Observação que o vendedor escreveu na implantação (troca/amostra exigem justificativa).
             // O card bloqueado deve mostrá-la, e não apenas o motivo automático do bloqueio.
             sellerNotes: notesById.get(String(order.salesCardId)) || null,
-            trocaPhotoUrl: trocaPhotoById.get(String(order.salesCardId)) || null,
+            // `trocaPhotoUrl` fica por compatibilidade (primeira foto); a lista completa vai em `trocaPhotoUrls`.
+            trocaPhotoUrl: (trocaPhotosById.get(String(order.salesCardId)) || [])[0] || null,
+            trocaPhotoUrls: trocaPhotosById.get(String(order.salesCardId)) || [],
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
