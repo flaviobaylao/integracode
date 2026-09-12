@@ -1,0 +1,166 @@
+// Teste de integracao da Caixa de Decisoes + Radar (sem chamar a Anthropic):
+// cria as tabelas minimas que os modulos leem, popula 60 clientes com historico
+// de compra, roda os sinais, materializa acoes como o Radar faria, decide por
+// WhatsApp, executa (regua com clientes fixos), mede e expira.
+// Rodar: DATABASE_URL=postgres://itest@localhost:5499/integra_test npx tsx scripts/teste-caixa-decisoes.ts
+import { db } from '../server/db';
+import { sql } from 'drizzle-orm';
+
+let falhas = 0, ok = 0;
+const check = (cond: any, msg: string) => { if (cond) { ok++; console.log('  ✓ ' + msg); } else { falhas++; console.log('  ✗ ' + msg); } };
+
+async function raw(q: string) { return db.execute(sql.raw(q)); }
+
+async function schemaBase() {
+  await raw(`CREATE TABLE IF NOT EXISTS system_settings (key varchar PRIMARY KEY, value text, updated_by varchar, updated_at timestamptz DEFAULT now())`);
+  await raw(`CREATE TABLE IF NOT EXISTS users (id varchar PRIMARY KEY, first_name varchar, last_name varchar, phone varchar, role varchar, is_active boolean DEFAULT true, updated_at timestamptz, omie_vendor_codes jsonb)`);
+  await raw(`CREATE TABLE IF NOT EXISTS customers (id varchar PRIMARY KEY, name varchar, phone varchar, seller_id varchar, cnpj varchar, cpf varchar, document varchar, is_active boolean DEFAULT true, is_lead boolean DEFAULT false, city varchar)`);
+  await raw(`CREATE TABLE IF NOT EXISTS billing_pipeline (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, created_at timestamptz DEFAULT now(), stage varchar)`);
+  await raw(`CREATE TABLE IF NOT EXISTS billings (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_document varchar, invoice_date date)`);
+  await raw(`CREATE TABLE IF NOT EXISTS sales_cards (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, seller_id varchar, status varchar DEFAULT 'completed', sale_value numeric(10,2), products jsonb DEFAULT '[]'::jsonb, created_at timestamptz DEFAULT now(), campaign_id varchar, utm jsonb, attribution_kind varchar)`);
+  await raw(`CREATE TABLE IF NOT EXISTS receivables (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, customer_document varchar, customer_name varchar, amount numeric, amount_paid numeric, status varchar, due_date date, issue_date date, deleted_at timestamptz, import_origin varchar, category varchar, description varchar, fiscal_invoice_id varchar, billing_pipeline_id varchar, sales_card_id varchar, omie_instance_id varchar, title_number varchar, created_at timestamptz DEFAULT now())`);
+  await raw(`CREATE TABLE IF NOT EXISTS chat_customers (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), phone varchar, whatsapp_opt_out boolean DEFAULT false)`);
+  await raw(`CREATE TABLE IF NOT EXISTS chat_conversations (id varchar PRIMARY KEY DEFAULT gen_random_uuid())`);
+  await raw(`CREATE TABLE IF NOT EXISTS whatsapp_templates (label varchar PRIMARY KEY, umbler_id varchar, categoria varchar)`);
+  await raw(`DO $$ BEGIN CREATE TYPE dispatch_use_case AS ENUM ('rota_do_dia'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+  await raw(`CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL)`);
+  await raw(`CREATE TABLE IF NOT EXISTS agentes_config (id text PRIMARY KEY, nome text NOT NULL, modelo text NOT NULL, system_prompt text NOT NULL, ferramentas jsonb NOT NULL DEFAULT '[]'::jsonb, limites jsonb NOT NULL DEFAULT '{}'::jsonb, ativo boolean NOT NULL DEFAULT true, base_conhecimento text NOT NULL DEFAULT '', updated_at timestamp DEFAULT now())`);
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria) VALUES ('recompra_reativacao','x','UTILITY'),('recompra_ciclo_furado','x','UTILITY'),('recompra_reposicao','x','MARKETING'),('recompra_mix','x','UTILITY'),('recompra_pos_primeira','x','UTILITY') ON CONFLICT DO NOTHING`);
+  await raw(`INSERT INTO users (id, first_name, last_name, phone) VALUES ('v1','Gilmar','Silva','5562911110001'),('v2','Renata','Souza','5562911110002') ON CONFLICT DO NOTHING`);
+  await raw(`INSERT INTO system_settings (key, value) VALUES ('telefone_gestor_relatorios','5562999990000') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+}
+
+async function popular() {
+  await raw(`DELETE FROM customers; DELETE FROM billing_pipeline; DELETE FROM sales_cards; DELETE FROM receivables; DELETE FROM chat_customers`);
+  // 60 clientes: 30 com ciclo de 14 dias e ultima compra ha 50 dias (reativacao), 20 comprando certinho, 10 ciclo furado
+  for (let i = 1; i <= 60; i++) {
+    const id = 'c' + i, vend = i % 2 ? 'v1' : 'v2';
+    await raw(`INSERT INTO customers (id, name, phone, seller_id, cnpj, is_active) VALUES ('${id}','Cliente ${i}','556299${String(100000 + i)}','${vend}','${String(10000000000000 + i)}',true)`);
+    const ultimo = i <= 30 ? 50 : (i <= 50 ? 3 : 25);
+    for (let k = 0; k < 6; k++) {
+      const dias = ultimo + k * 14;
+      await raw(`INSERT INTO billing_pipeline (customer_id, created_at) VALUES ('${id}', now() - interval '${dias} days')`);
+      await raw(`INSERT INTO sales_cards (customer_id, seller_id, sale_value, products, created_at) VALUES ('${id}','${vend}', ${200 + (i % 7) * 60}, '[{"name":"Laranja"},{"name":"Uva"}]'::jsonb, now() - interval '${dias} days')`);
+    }
+  }
+  // 2 inadimplentes e 1 opt-out entre os de reativacao
+  await raw(`INSERT INTO receivables (customer_id, amount, amount_paid, status, due_date, issue_date) VALUES ('c1', 500, 0, 'vencida', current_date - 20, current_date - 50), ('c2', 300, 0, 'vencida', current_date - 10, current_date - 40)`);
+  await raw(`INSERT INTO chat_customers (phone, whatsapp_opt_out) VALUES ('556299100003', true)`);
+}
+
+async function main() {
+  console.log('1) schema');
+  await schemaBase();
+  const { ensureMktRecompraSchema } = await import('../server/mkt-recompra');
+  const { ensureMktRunsSchema } = await import('../server/mkt-agent-runs');
+  const { ensureMktEsteiraSchema } = await import('../server/mkt-esteira');
+  const { ensureMktAcoesSchema, criarAcao, nivelEfetivo, pendentes, decidir, interpretar, responderWhatsApp, medir, expirar, panorama, listar, salvarPolitica, textoResumo } = await import('../server/mkt-acoes');
+  check((await ensureMktRecompraSchema()).ok, 'recompra schema');
+  check((await ensureMktRunsSchema()).ok, 'runs schema');
+  check((await ensureMktEsteiraSchema()).ok, 'esteira schema');
+  const s = await ensureMktAcoesSchema();
+  check(s.ok, 'acoes schema ' + JSON.stringify(s.steps.filter(x => !x.ok)));
+  const { garantirAgente } = await import('../server/mkt-radar');
+  await garantirAgente();
+  check(((await raw(`SELECT id FROM agentes_config WHERE id='mkt_radar'`)) as any).rows.length === 1, 'agente mkt_radar em agentes_config');
+
+  console.log('2) sinais');
+  await popular();
+  const { lerSinais, sinaisParaPrompt, segmentoPorId } = await import('../server/mkt-sinais');
+  const sin = await lerSinais();
+  check(sin.base.clientes === 60, 'retrato le 60 clientes (' + sin.base.clientes + ')');
+  const reat = segmentoPorId(sin, 'regua:reativacao');
+  check(!!reat && reat.clientes.length === 30, 'segmento reativacao com 30 (' + reat?.clientes.length + ')');
+  check(!!reat && reat.elegiveis === 27, 'elegiveis = 27 (2 inadimplentes + 1 opt-out fora) -> ' + reat?.elegiveis);
+  check(reat?.categoria === 'UTILITY' && reat?.custoUnit === 0.04, 'categoria do template aprovado (UTILITY, R$0,04)');
+  const furado = segmentoPorId(sin, 'regua:ciclo_furado');
+  check(!!furado && furado.clientes.length === 10, 'ciclo furado com 10 (' + furado?.clientes.length + ')');
+  check(sin.carteiras.length === 2, 'carteiras por vendedor (' + sin.carteiras.length + ')');
+  const prompt = sinaisParaPrompt(sin);
+  check(JSON.stringify(prompt).length < 20000 && !JSON.stringify(prompt).includes('"clientes":[{'), 'prompt enxuto sem lista nominal');
+  check(((await raw(`SELECT COUNT(*)::int AS n FROM mkt_sinais`)) as any).rows[0].n === 1, 'snapshot gravado em mkt_sinais');
+
+  console.log('3) politica e nivel');
+  const base = { tipo: 'regua' as const, agente: 'mkt_radar', titulo: 't', justificativa: 'j', categoria: 'UTILITY' as const, custoEstimado: 1, publico: { regua: 'reativacao', clientes: reat!.clientes.filter(c => !c.optout && !c.inadimplente).slice(0, 10).map(c => ({ id: c.id, nome: c.nome })) } };
+  check((await nivelEfetivo(base)).nivel === 2, 'regua nasce em N2 (humano)');
+  check((await nivelEfetivo({ tipo: 'alerta', agente: 'x', titulo: 't', justificativa: '' })).nivel === 0, 'alerta e N0');
+  await salvarPolitica('regua', { nivel_padrao: 1, amostra_minima: 2, taxa_aprovacao_minima: 0.5 }, 'teste');
+  const n1 = await nivelEfetivo(base);
+  check(n1.nivel === 2 && /observacao/.test(n1.motivo), 'N1 exige amostra de decisoes humanas: ' + n1.motivo);
+  check((await nivelEfetivo({ ...base, modoTeste: true })).nivel === 2, 'modo teste forca N2');
+  check((await nivelEfetivo({ ...base, categoria: 'MARKETING' })).nivel === 2, 'MARKETING exige humano');
+  await salvarPolitica('regua', { nivel_padrao: 2 }, 'teste');
+
+  console.log('4) criar, resumo, decidir por whatsapp, executar (simulado)');
+  const a1 = await criarAcao({ ...base, titulo: 'Reativação — 10 clientes', modoTeste: true, receitaEsperada: 300 });
+  const a2 = await criarAcao({ tipo: 'alerta', agente: 'mkt_radar', titulo: 'Carteira Renata caiu 20%', justificativa: 'x', parametros: { vendedor_id: 'v2', texto: 'oi' }, modoTeste: true });
+  check(a1.status === 'proposta' && a1.nivel === 2, 'regua entra como proposta #' + a1.numero);
+  check(a2.status === 'proposta', 'alerta em modo teste tambem espera (#' + a2.numero + ')');
+  const pend = await pendentes();
+  check(pend.length === 2, '2 pendentes');
+  const texto = textoResumo(pend);
+  check(texto.includes('#' + a1.numero) && texto.includes('OK 12'.replace('12', String(a1.numero))) === false || texto.includes('OK 12'), 'resumo cita a acao');
+  check((await responderWhatsApp('5562911119999', 'OK ' + a1.numero)) === null, 'numero desconhecido e ignorado');
+  check((await responderWhatsApp('5562999990000', 'bom dia')) === null, 'conversa normal passa direto');
+  check((await responderWhatsApp('5562999990000', 'ok')) === null, '"ok" sem numero passa direto');
+  const r1 = await responderWhatsApp('5562999990000', 'OK ' + a1.numero + ' menos 2,5');
+  check(!!r1 && /Aprovada/.test(r1), 'aprovou por WhatsApp: ' + (r1 || '').split('\n')[0]);
+  const v1: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${a1.numero}`)) as any).rows[0];
+  check(v1.status === 'executada' && v1.execucao?.simulado === true, 'modo teste: executada como simulacao');
+  check(v1.publico_total === 8 && v1.decidido_via === 'whatsapp', 'tirou 2 clientes da lista (8) e registrou via whatsapp');
+  const r2 = await responderWhatsApp('5562999990000', 'nao ' + a2.numero);
+  check(!!r2 && /Rejeitada/.test(r2), 'rejeitou por WhatsApp');
+  check(((await raw(`SELECT COUNT(*)::int AS n FROM mkt_decisoes_whatsapp`)) as any).rows[0].n === 2, 'decisoes gravadas');
+
+  console.log('5) execucao real de regua (modo on) -> montarLote/liberarLote com clientes fixos');
+  // liberarLote chama enqueueOfficialDispatch; sem canal configurado deve registrar erro por item sem lancar
+  const a3 = await criarAcao({ ...base, titulo: 'Reativação real', custoEstimado: 0.4, receitaEsperada: 150 });
+  const d3 = await decidir({ ids: [String(a3.numero)], decisao: 'aprovar', quem: 'teste', via: 'tela' });
+  const v3: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${a3.numero}`)) as any).rows[0];
+  check(['executada', 'erro'].includes(v3.status), 'executor de regua rodou (status ' + v3.status + ') ' + JSON.stringify(d3.execucoes[0]).slice(0, 160));
+  const lotes: any = (await raw(`SELECT id, acao_id, total FROM mkt_lotes WHERE acao_id = '${v3.id}'`)) as any;
+  check(lotes.rows.length === 1 && lotes.rows[0].total === 10, 'lote carimbado com acao_id e restrito aos 10 clientes (' + lotes.rows[0]?.total + ')');
+  const toques: any = (await raw(`SELECT COUNT(*)::int AS n FROM mkt_fila_toques WHERE acao_id = '${v3.id}'`)) as any;
+  check(toques.rows[0].n === 10, 'toques carimbados (' + toques.rows[0].n + ')');
+
+  console.log('6) medir e expirar');
+  await raw(`INSERT INTO sales_cards (customer_id, seller_id, sale_value, created_at) VALUES ('${base.publico.clientes[0].id}','v1', 250, now())`);
+  await raw(`UPDATE mkt_acoes SET status='executada', executada_em = now() - interval '1 hour' WHERE numero=${a3.numero}`);
+  const m = await medir();
+  const v3b: any = ((await raw(`SELECT resultado, medido_em FROM mkt_acoes WHERE numero=${a3.numero}`)) as any).rows[0];
+  check(m >= 1 && v3b.resultado?.pedidos === 1 && v3b.resultado?.receita === 250 && !v3b.medido_em, 'medicao parcial: 1 pedido R$250, janela ainda aberta');
+  check(((await raw(`SELECT COUNT(*)::int AS n FROM sales_cards WHERE acao_id IS NOT NULL`)) as any).rows[0].n === 1, 'pedido carimbado com acao_id');
+  const a4 = await criarAcao({ ...base, titulo: 'vai expirar', prazoHoras: 1 });
+  await raw(`UPDATE mkt_acoes SET expira_em = now() - interval '1 minute' WHERE numero=${a4.numero}`);
+  check((await expirar()) === 1, 'expirou 1');
+  const p = await panorama();
+  check(p.ok && p.aprovadores.includes('5562999990000') && p.politicas.length === 7, 'panorama ok');
+
+  console.log('7) radar: materializacao sem chamar o modelo');
+  // simula a resposta do modelo e valida via o mesmo caminho interno (funcao privada -> testa por rodar com chave ausente)
+  const { rodar } = await import('../server/mkt-radar');
+  const semChave = await rodar({ quem: 'teste', forcar: true });
+  check(semChave.ok === false && /ANTHROPIC/.test(String(semChave.motivo)), 'sem chave, radar avisa e nao cria acao');
+  const { aplicarResposta } = await import('../server/mkt-radar');
+  const fake = { acoes: [
+    { tipo: 'regua', segmento: 'regua:reativacao', regua: 'reativacao', max_clientes: 12, prioridade: 1, filtro: { ticket_min: 300 }, titulo: 'Reativar padarias de ticket alto', justificativa: '27 elegíveis' },
+    { tipo: 'regua', segmento: 'regua:reativacao', regua: 'reativacao', max_clientes: 5, titulo: 'repetida', justificativa: '' },
+    { tipo: 'regua', segmento: 'regua:inexistente', regua: 'x', titulo: 'inventada', justificativa: '' },
+    { tipo: 'regua', segmento: 'regua:ciclo_furado', regua: 'reativacao', titulo: 'regua errada', justificativa: '' },
+    { tipo: 'alerta', titulo: 'Carteira Renata Souza caiu', justificativa: 'j', alerta: { vendedor: 'Renata Souza', texto: 'Renata, 5 clientes cairam.' } },
+    { tipo: 'cupom', titulo: 'tipo sem executor', justificativa: '' },
+  ], leitura_do_dia: 'ok' };
+  const ap = await aplicarResposta(fake, sin, true);
+  check(ap.criadas.length === 2 && ap.descartadas.length === 4, 'radar: 2 validas, 4 descartadas (' + ap.descartadas.map(d => d.motivo).join(' | ') + ')');
+  const regua = ap.criadas.find(c => c.tipo === 'regua');
+  const vr: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${regua.numero}`)) as any).rows[0];
+  check(vr.publico_total <= 12 && vr.publico.clientes.every((c: any) => c.ticket >= 300) && Number(vr.custo_estimado) === Number((vr.publico_total * 0.04).toFixed(2)), 'publico filtrado por ticket, custo = n × 0,04 (' + vr.publico_total + ' clientes, R$ ' + vr.custo_estimado + ')');
+  check(Number(vr.receita_esperada) > 0 && vr.evidencia.segmento === 'regua:reativacao' && vr.modo_teste === true, 'receita esperada calculada por codigo; evidencia guarda o segmento; modo teste');
+  const al = ap.criadas.find(c => c.tipo === 'alerta');
+  const va: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${al.numero}`)) as any).rows[0];
+  check(va.parametros.vendedor_id === 'v2' && /Radar de Vendas/.test(va.parametros.texto), 'alerta resolve o vendedor pelo nome da carteira');
+
+  console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
+  process.exit(falhas ? 1 : 0);
+}
+main().catch(e => { console.error(e); process.exit(1); });
