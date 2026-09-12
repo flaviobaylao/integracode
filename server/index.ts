@@ -4305,6 +4305,39 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ── SPRINT 3: otimizador / aprendizados, analista semanal, hashes no servidor ──
+  app.get("/api/mkt/aprendizados", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { listar } = await import('./mkt-otimizador'); res.json({ aprendizados: await listar() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/aprendizados", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { registrarHumano, listar } = await import('./mkt-otimizador');
+      const t = String(req.body?.enunciado || '').trim(); if (!t) return res.status(400).json({ error: 'enunciado obrigatorio' });
+      await registrarHumano(t, String(req.user?.username || 'admin')); res.json({ ok: true, aprendizados: await listar() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.delete("/api/mkt/aprendizados/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { desativar } = await import('./mkt-otimizador'); await desativar(String(req.params.id)); res.json({ ok: true }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/otimizador/rodar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { rodar } = await import('./mkt-otimizador'); res.json(await rodar({ quem: String(req.user?.username || 'admin') })); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/analista/semanal", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { relatorioSemanal } = await import('./mkt-analista'); res.json(await relatorioSemanal()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/analista/numeros", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { numerosDoDia, numerosDaSemana } = await import('./mkt-analista'); res.json({ dia: await numerosDoDia(), semana: await numerosDaSemana() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/assets/hashes/servidor", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { calcularHashesPendentes } = await import('./mkt-semelhanca'); res.json(await calcularHashesPendentes(Number(req.body?.limite) || 60)); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ── RADAR DE VENDAS (agente mkt_radar) ──
   app.get("/api/mkt/radar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { panorama } = await import('./mkt-radar'); res.json(await panorama()); }

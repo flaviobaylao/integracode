@@ -214,7 +214,69 @@ export default function CaixaDecisoes() {
 
       <Radar politicas={d.politicas || []} aoMudar={recarregar} />
       <AgentesConteudo />
+      <Aprendizados aoMudar={recarregar} />
     </>
+  );
+}
+
+function Aprendizados({ aoMudar }: { aoMudar: () => void }) {
+  const { toast } = useToast();
+  const [novo, setNovo] = useState("");
+  const [rodando, setRodando] = useState(false);
+  const q = useQuery<any>({ queryKey: ["/api/mkt/aprendizados"], queryFn: () => apiGet("/api/mkt/aprendizados") });
+  const lista: any[] = q.data?.aprendizados || [];
+  async function rodar() {
+    setRodando(true);
+    try { const r = await apiPost("/api/mkt/otimizador/rodar", {}); toast({ title: r.ok ? (r.gravados?.length || 0) + " aprendizado(s)" : "Não rodou", description: r.ok ? (r.resumo || "") : (r.motivo || ""), variant: r.ok ? undefined : "destructive" }); q.refetch(); aoMudar(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setRodando(false);
+  }
+  async function salvar() {
+    if (!novo.trim()) return;
+    try { await apiPost("/api/mkt/aprendizados", { enunciado: novo }); setNovo(""); q.refetch(); toast({ title: "Aprendizado salvo — entra no prompt do Radar e do conteúdo" }); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  async function apagar(id: string) {
+    try { await fetch("/api/mkt/aprendizados/" + id, { method: "DELETE", credentials: "include" }); q.refetch(); } catch {}
+  }
+  async function semanal() {
+    try { const r = await apiPost("/api/mkt/analista/semanal", {}); toast({ title: "Relatório semanal enviado", description: r.enviados.map((e: any) => (e.success ? "ok" : e.error)).join(", ") }); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  const COR: Record<string, string> = { alta: "#16a34a", media: "#d97706", baixa: "#9ca3af" };
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+          <i className="fas fa-brain text-muted-foreground" /> Aprendizados
+          <span className="ml-auto flex gap-1 flex-wrap">
+            <Button size="sm" variant="outline" onClick={semanal}>Relatório semanal agora</Button>
+            <Button size="sm" disabled={rodando} onClick={rodar}>{rodando ? "Analisando…" : "Rodar otimizador"}</Button>
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">Toda segunda 06:00 o otimizador cruza o que a Central fez com o que rendeu (14 dias) e grava aprendizados com amostra e confiança; eles entram no prompt do Radar e do agente de conteúdo. Às 07:15 de segunda chega o relatório dos 12 números. Você também pode escrever os seus.</p>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="flex gap-2">
+          <Input className="h-10 flex-1" placeholder="ex.: nunca propor promoção para padaria antes das 10h" value={novo} onChange={e => setNovo(e.target.value)} />
+          <Button className="h-10" variant="outline" onClick={salvar}>Salvar</Button>
+        </div>
+        {!lista.length && <p className="text-xs text-muted-foreground">Nenhum aprendizado ainda. O otimizador precisa de ações executadas com resultado medido.</p>}
+        <ul className="space-y-2">
+          {lista.filter((l: any) => l.ativo).map((l: any) => (
+            <li key={l.id} className="border rounded p-2 flex gap-2 items-start">
+              <span className="text-[11px] font-mono mt-0.5" style={{ color: COR[l.confianca] || "#9ca3af" }}>{l.confianca}</span>
+              <div className="flex-1 min-w-0">
+                <div>{l.enunciado}</div>
+                {l.acao_sugerida && <div className="text-xs text-muted-foreground">→ {l.acao_sugerida}</div>}
+                <div className="text-[11px] text-muted-foreground">{l.origem}{l.amostra ? " · amostra " + l.amostra : ""} · {new Date(l.criado_em).toLocaleDateString("pt-BR")}</div>
+              </div>
+              <button className="text-xs underline" onClick={() => apagar(l.id)}>desativar</button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 

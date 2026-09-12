@@ -945,6 +945,24 @@ cron.schedule('5 9 * * *', async () => {
   } catch (e: any) { console.error('[MKT-ENTREGA] cron falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
+// Segunda 06:00 — otimizador: o que a Central fez x o que rendeu -> mkt_learnings
+cron.schedule('0 6 * * 1', async () => {
+  try { const { rodar } = await import('./mkt-otimizador'); const r = await rodar({ quem: 'cron' }); console.log('[MKT-OTIMIZADOR] ' + (r.ok ? (r.gravados?.length || 0) + ' aprendizado(s)' : r.motivo)); }
+  catch (e: any) { console.error('[MKT-OTIMIZADOR] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// Segunda 07:15 — os 12 numeros da semana no WhatsApp do aprovador
+cron.schedule('15 7 * * 1', async () => {
+  try { const { relatorioSemanal } = await import('./mkt-analista'); const r = await relatorioSemanal(); console.log('[MKT-ANALISTA] semanal: ' + r.enviados.filter((e: any) => e.success).length + '/' + r.enviados.length); }
+  catch (e: any) { console.error('[MKT-ANALISTA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// 03:50 — dHash (sharp) dos criativos sem hash + familias
+cron.schedule('50 3 * * *', async () => {
+  try { const { calcularHashesPendentes } = await import('./mkt-semelhanca'); const r = await calcularHashesPendentes(60); if (r.feitos || r.erros) console.log('[MKT-SEMELHANCA] ' + r.feitos + ' hash(es), ' + r.erros + ' erro(s)'); }
+  catch (e: any) { console.error('[MKT-SEMELHANCA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
 // 03:40 — visao tagueia criativos que ainda nao passaram por ela (lote pequeno)
 cron.schedule('40 3 * * *', async () => {
   try {

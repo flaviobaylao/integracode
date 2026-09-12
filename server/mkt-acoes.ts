@@ -504,7 +504,9 @@ export async function enviarResumo(opts: { avisos?: string[] } = {}): Promise<{ 
     const ag: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM mkt_pieces WHERE estado = 'agendado' AND agendado_para < now()`);
     if (Number(ag.rows?.[0]?.n)) avisos.push(ag.rows[0].n + ' peça(s) agendada(s) passaram da hora e não foram publicadas');
   } catch {}
-  const texto = textoResumo(pend, { autoHoje: autoHoje.rows || [], medidas: medidas.rows || [], avisos });
+  let leitura = '';
+  try { const { leituraDoDia } = await import('./mkt-analista'); leitura = await leituraDoDia(); } catch {}
+  const texto = (leitura ? leitura + '\n' : '') + textoResumo(pend, { autoHoje: autoHoje.rows || [], medidas: medidas.rows || [], avisos });
   const { enviarInterno } = await import('./envio-texto');
   const enviados: any[] = [];
   for (const tel of await aprovadores()) enviados.push({ para: tel, ...(await enviarInterno(tel, texto)) });

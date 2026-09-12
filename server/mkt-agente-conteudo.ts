@@ -415,10 +415,16 @@ async function escrever(sistema: string, pedido: string, gatilho = 'cron'): Prom
     // sem tools) e entrou no caminho unico dos agentes de marketing: prompt e
     // teto em agentes_config, custo em mkt_agent_runs, preco so via tool.
     const { chamarAgente, TOOL_CONSULTAR_PRODUTO } = await import('./mkt-llm');
+    // SPRINT 3: os aprendizados ativos do otimizador/gestor entram no prompt.
+    let aprend = '';
+    try {
+      const l: any = await db.execute(sql`SELECT enunciado, acao_sugerida FROM mkt_learnings WHERE ativo = true AND (evidencia->>'tema' LIKE 'gancho:%' OR evidencia->>'tema' IN ('geral','humano')) ORDER BY criado_em DESC LIMIT 8`);
+      if (l.rows?.length) aprend = '\n\n# APRENDIZADOS (o que ja funcionou ou nao — respeite)\n' + l.rows.map((x: any) => '- ' + x.enunciado + (x.acao_sugerida ? ' → ' + x.acao_sugerida : '')).join('\n');
+    } catch {}
     const r = await chamarAgente({
       agente: AGENTE, nome: 'Agente de Conteudo', modeloPadrao: 'claude-sonnet-4-6', tetoPadrao: 2,
       promptPadrao: 'Voce e o redator da Honest Sucos Naturais. Escreve pecas curtas, honestas e especificas, sempre dentro do cartao de marca e dos fatos recebidos.',
-      systemExtra: sistema, user: pedido, tools: [TOOL_CONSULTAR_PRODUTO], maxTokens: 1500, temperature: 0.7, gatilho,
+      systemExtra: sistema + aprend, user: pedido, tools: [TOOL_CONSULTAR_PRODUTO], maxTokens: 1500, temperature: 0.7, gatilho,
     });
     if (!r.ok || !r.json) { if (!r.ok) console.error('[MKT-CONTEUDO]', r.erro); return null; }
     const j = r.json;

@@ -211,6 +211,48 @@ async function main() {
   const ma: any = await marcaAtiva();
   check(g1.criou && g1.versao === 2 && !g2.criou && /Bela Vista/.test(JSON.stringify(ma)) && !/fresco em Goi/.test(JSON.stringify(ma)), 'cartao de marca v2 corrige a geografia uma unica vez');
 
+  console.log('9) sprint 3: sugestao do ultimo pedido, contexto do atendente, analista, otimizador, dHash');
+  await raw(`CREATE TABLE IF NOT EXISTS visit_agenda (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, scheduled_date date, visit_status varchar)`);
+  await raw(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS fantasy_name varchar`);
+  await raw(`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS operation_type varchar, ADD COLUMN IF NOT EXISTS completed_date timestamptz, ADD COLUMN IF NOT EXISTS updated_at timestamptz`);
+  const { ultimosPedidos } = await import('../server/mkt-recompra');
+  const up = await ultimosPedidos(['c5', 'c6']);
+  check(up.size === 2 && /2x Laranja, 2x Uva|Laranja/.test(up.get('c5') || '') === false ? /Laranja/.test(up.get('c5') || '') : true, 'ultimo pedido em uma linha: ' + up.get('c5'));
+  const tq: any = (await raw(`SELECT COUNT(*)::int AS n, MIN(sugestao) AS ex FROM mkt_fila_toques WHERE sugestao IS NOT NULL`)) as any;
+  check(Number(tq.rows[0]?.n) >= 10, 'sugestao do ultimo pedido gravada nos toques do lote (' + tq.rows[0]?.n + ', ex.: ' + tq.rows[0]?.ex + ')');
+  await raw(`UPDATE mkt_fila_toques SET status = 'enfileirado', liberado_em = now(), sugestao = '28/08: 6x Laranja 300ml' WHERE cliente_id = 'c1' OR cliente_id = (SELECT cliente_id FROM mkt_fila_toques LIMIT 1)`);
+  const alvo: any = (await raw(`SELECT cliente_id FROM mkt_fila_toques WHERE status = 'enfileirado' AND sugestao IS NOT NULL LIMIT 1`)) as any;
+  const { contextoDoCliente } = await import('../server/contexto-cliente');
+  const ctx = await contextoDoCliente(String(alvo.rows[0].cliente_id));
+  check(/CONTATO ATIVO RECENTE/.test(ctx) && /6x Laranja 300ml/.test(ctx), 'atendente recebe o contato ativo e a sugestao no contexto');
+  const { numerosDoDia, numerosDaSemana, textoSemanal, leituraDoDia } = await import('../server/mkt-analista');
+  const nd = await numerosDoDia();
+  check(nd.ativos === 60 && nd.vendas7d >= 0 && typeof nd.custoIaMes === 'number', 'numeros do dia (ativos ' + nd.ativos + ', vendas7d ' + nd.vendas7d + ')');
+  const ns = await numerosDaSemana();
+  const ts = textoSemanal(ns);
+  check(/12\. ROI/.test(ts) && /1\. Vendas 7d/.test(ts), 'relatorio semanal com os 12 numeros');
+  const ld = await leituraDoDia();
+  check(/Leitura do dia/.test(ld) && /Positiva/.test(ld), 'leitura do dia cai nos numeros quando nao ha modelo');
+  const { rodar: rodarOtim, listar: listarAprend, registrarHumano } = await import('../server/mkt-otimizador');
+  const ro = await rodarOtim({ quem: 'teste' });
+  check(ro.ok === false && /ANTHROPIC/.test(String(ro.motivo)), 'otimizador sem chave avisa e nao grava');
+  await registrarHumano('nunca propor promoção antes das 10h', 'teste');
+  const la = await listarAprend();
+  check(la.length === 1 && la[0].origem === 'humano:teste', 'aprendizado humano gravado');
+  const sin3 = await lerSinais();
+  check(sin3.aprendizados.includes('nunca propor promoção antes das 10h'), 'aprendizado entra nos sinais do Radar');
+  const { dHashDeBuffer, hashNoServidor, distancia } = await import('../server/mkt-semelhanca');
+  const mod: any = await import('sharp'); const sharp = mod.default || mod;
+  const img1 = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 200, g: 50, b: 50 } } }).composite([{ input: await sharp({ create: { width: 30, height: 64, channels: 3, background: { r: 20, g: 20, b: 20 } } }).png().toBuffer(), left: 0, top: 0 }]).jpeg().toBuffer();
+  const img2 = await sharp(img1).resize(48, 48).jpeg({ quality: 60 }).toBuffer();
+  const img3 = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 200, g: 50, b: 50 } } }).composite([{ input: await sharp({ create: { width: 64, height: 30, channels: 3, background: { r: 20, g: 20, b: 20 } } }).png().toBuffer(), left: 0, top: 0 }]).jpeg().toBuffer();
+  const h1 = await dHashDeBuffer(img1), h2 = await dHashDeBuffer(img2), h3 = await dHashDeBuffer(img3);
+  check(!!h1 && h1.length === 16 && !!h2 && distancia(h1, h2!) <= 10 && distancia(h1, h3!) > 10, 'dHash: recorte/recompressao = mesma familia (' + distancia(h1!, h2!) + ' bits), cena diferente nao (' + distancia(h1!, h3!) + ' bits)');
+  const asset2 = await cadastrarAsset({ url: 'data:image/jpeg;base64,' + img1.toString('base64'), tipo: 'foto', origem: 'foto_real', titulo: 'foto jpeg', tags: { gancho: ['sabor'], publico: ['b2c'] }, direitosOk: true } as any);
+  await new Promise(r => setTimeout(r, 800));
+  const hs: any = (await raw(`SELECT phash FROM mkt_assets WHERE id = ${asset2.id}`)) as any;
+  check(hs.rows[0]?.phash === h1, 'cadastro grava o dHash sozinho (' + hs.rows[0]?.phash + ')');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }
