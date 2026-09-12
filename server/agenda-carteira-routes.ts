@@ -32,7 +32,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
-import { calculateNextVisitDate } from "@shared/visitSchedule";
+import { calculateNextVisitDate, datasPelaRegra, normalizarSemana } from "@shared/visitSchedule";
 import { normalizeWeekdayInput } from "@shared/schema";
 import { calculateDeliveryDaysFromMultipleRoutes } from "@shared/deliveryDaysCalculator";
 
@@ -439,6 +439,7 @@ export function projetarDatas(params: {
   inicioFornecimento: string | null;
   ini: string;
   fim: string;
+  semana?: string | null;
 }): string[] {
   const { dias, periodicidade, ancora, inicioFornecimento, ini, fim } = params;
   const alvos = dias.map((d) => DIA_NUM[d]).filter((n) => n !== undefined && n >= 1 && n <= 5);
@@ -447,6 +448,18 @@ export function projetarDatas(params: {
   const dIni = dataLocal(ini);
   const dFim = dataLocal(fim);
   const inicio = inicioFornecimento ? dataLocal(inicioFornecimento) : undefined;
+
+  // SEMANA DE ATENDIMENTO: quando o cliente tem semana fixa ("ultima terca"),
+  // a data sai do CALENDARIO, nao de encadeamento a partir da ultima visita.
+  // E' deterministico de proposito: visita atrasada nao empurra o ciclo todo,
+  // e o cliente sabe a data olhando o mes.
+  const semana = normalizarSemana(params.semana);
+  if (semana !== "toda") {
+    return datasPelaRegra(dIni, dFim, alvos, semana)
+      .filter((d) => !inicio || d >= inicio)
+      .map(iso);
+  }
+
   const per = (["semanal", "quinzenal", "mensal"] as const).includes(periodicidade as any)
     ? (periodicidade as any)
     : "semanal";
@@ -531,6 +544,7 @@ export async function montarJanela(
     SELECT c.id, c.name, c.fantasy_name, c.city, c.weekdays, c.visit_periodicity::text AS periodicidade,
            COALESCE(c.virtual_service,false) AS virtual, COALESCE(c.is_lead,false) AS is_lead,
            c.is_active, c.seller_id, c.service_start_date::date::text AS inicio_fornecimento,
+               COALESCE(c.semana_atendimento,'toda') AS semana_atendimento,
            COALESCE(vend.nome,'Sem vendedor') AS vendedor,
            vend.uid AS vendedor_uid, vend.papel AS vendedor_papel, vend.tipo AS vendedor_tipo,
            va.ultima::text AS ultima_visita
@@ -611,6 +625,7 @@ export async function montarJanela(
       periodicidade: String(r.periodicidade || "semanal"),
       ancora: r.ultima_visita || null,
       inicioFornecimento: r.inicio_fornecimento || null,
+      semana: r.semana_atendimento || "toda",
       ini: amanha, fim,
     });
     const anteriores = (passadoPorCliente.get(String(r.id)) || []).filter((d) => {
@@ -634,6 +649,7 @@ export async function montarJanela(
       // Lead e' SEMPRE presencial, mesmo que o cadastro esteja marcado virtual.
       canal: r.is_lead ? "presencial" : (r.virtual ? "virtual" : "presencial"),
       periodicidade: String(r.periodicidade || "semanal"),
+      semana: normalizarSemana(r.semana_atendimento),
       dias,
       ultimaVisita: r.ultima_visita || null,
       pedidoUltimaVisita: pedidoPorCliente.get(String(r.id))?.valor ?? 0,
@@ -701,7 +717,25 @@ export async function varreduraSobrecargaDiaria(): Promise<{ sobrecargas: number
 }
 
 
+/**
+ * A coluna semana_atendimento e' criada aqui porque o build de producao NAO
+ * roda `db:push` — mesmo motivo do ensureTables() de change-requests-routes.
+ * Default 'toda' = comportamento de antes para todo mundo que ja existe.
+ */
+let colunaPronta: Promise<void> | null = null;
+function garantirColunaSemana(): Promise<void> {
+  if (!colunaPronta) {
+    colunaPronta = db
+      .execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS semana_atendimento varchar NOT NULL DEFAULT 'toda'`)
+      .then(() => { console.log("[carteira-agenda] coluna semana_atendimento pronta"); })
+      .catch((e: any) => { console.error("[carteira-agenda] semana_atendimento:", e?.message); colunaPronta = null; });
+  }
+  return colunaPronta as Promise<void>;
+}
+
 export function registerAgendaCarteira(app: Express) {
+  void garantirColunaSemana();
+
   // ---------------------------------------------------------------------------
   // GET /api/carteira/agenda   (janela deslizante: 8 semanas atras -> 8 a frente)
   //
@@ -829,6 +863,7 @@ export function registerAgendaCarteira(app: Express) {
 
       const atualRows = (await db.execute(sql`
         SELECT id, name, seller_id, city, weekdays, visit_periodicity::text AS periodicidade,
+               COALESCE(semana_atendimento,'toda') AS semana_atendimento,
                COALESCE(virtual_service,false) AS virtual, latitude, longitude, address
         FROM customers WHERE id = ${id} LIMIT 1`)).rows as any[];
       if (!atualRows.length) return res.status(404).json({ ok: false, error: "Cliente não encontrado." });
@@ -867,9 +902,22 @@ export function registerAgendaCarteira(app: Express) {
         } else novaPer = p;
       }
 
+      // --- semana de atendimento ----------------------------------------------
+      // Mesma trava de dia/periodicidade: mexer na semana de quem ja tem uma
+      // definida e' do Admin. Ir de 'toda' para uma semana fixa qualquer um faz.
+      let novaSemana: string | null = null;
+      if (b.semana !== undefined) {
+        const nova = normalizarSemana(b.semana);
+        const semAtual = normalizarSemana(atual.semana_atendimento);
+        if (nova === semAtual) novaSemana = null;
+        else if (semAtual !== "toda" && !podeAlterar) {
+          return res.status(403).json({ ok: false, error: "Alterar a semana de atendimento de quem já tem uma definida é restrito ao Admin." });
+        } else novaSemana = nova;
+      }
+
       const novaCidade = b.cidade === undefined ? null : String(b.cidade || "").slice(0, 120);
 
-      if (novosDias === null && novaPer === null && novaCidade === null) {
+      if (novosDias === null && novaPer === null && novaCidade === null && novaSemana === null) {
         return res.json({ ok: true, semMudanca: true });
       }
 
@@ -883,6 +931,7 @@ export function registerAgendaCarteira(app: Express) {
         } catch { /* dias de entrega sao sinalizacao; nao travam a edicao */ }
       }
       if (novaPer) sets.push(sql`visit_periodicity = ${novaPer}::visit_periodicity`);
+      if (novaSemana !== null) sets.push(sql`semana_atendimento = ${novaSemana}`);
       if (novaCidade !== null) sets.push(sql`city = ${novaCidade || null}`);
       sets.push(sql`updated_at = now()`);
       await db.execute(sql`UPDATE customers SET ${sql.join(sets, sql`, `)} WHERE id = ${id}`);
@@ -893,6 +942,7 @@ export function registerAgendaCarteira(app: Express) {
         const mudou: any = {};
         if (novosDias) mudou.weekdays = JSON.stringify(novosDias);
         if (novaPer) mudou.visitPeriodicity = novaPer;
+        if (novaSemana !== null) mudou.semanaAtendimento = novaSemana;
         if (novaCidade !== null) mudou.city = novaCidade || null;
         await logCustomerChanges({
           customerId: id,
@@ -905,9 +955,12 @@ export function registerAgendaCarteira(app: Express) {
 
       // --- reescreve a agenda pendente (e' dai que sai a Rota do Dia) ----------
       let regravadas = 0;
-      if (novosDias || novaPer) {
+      if (novosDias || novaPer || novaSemana !== null) {
         try {
-          regravadas = await reprogramarAgenda(id, novosDias || diasAtuais, novaPer || perAtual || "semanal");
+          regravadas = await reprogramarAgenda(
+            id, novosDias || diasAtuais, novaPer || perAtual || "semanal",
+            novaSemana !== null ? novaSemana : atual.semana_atendimento,
+          );
         } catch (e: any) { console.warn("[carteira-agenda] agenda:", e?.message); }
         // Alinha os sales cards futuros com o novo cadastro (mesma rotina do PATCH de cliente).
         try {
@@ -929,11 +982,12 @@ export function registerAgendaCarteira(app: Express) {
  * cadencia, ancorando na ultima visita CONCLUIDA — igual ao que a Rota do Dia
  * espera encontrar. Visita ja concluida nunca e' tocada.
  */
-async function reprogramarAgenda(customerId: string, dias: string[], periodicidade: string): Promise<number> {
+async function reprogramarAgenda(customerId: string, dias: string[], periodicidade: string, semanaRegra?: string | null): Promise<number> {
   const rows = (await db.execute(sql`
     SELECT c.id, c.name, c.seller_id, c.latitude, c.longitude, c.address,
            COALESCE(c.virtual_service,false) AS virtual,
            c.service_start_date::date::text AS inicio,
+           COALESCE(c.semana_atendimento,'toda') AS semana_atendimento,
            (SELECT MAX(COALESCE(v.actual_check_in, v.scheduled_date))::date
               FROM visit_agenda v WHERE v.customer_id = c.id AND v.visit_status = 'completed') AS ultima
     FROM customers c WHERE c.id = ${customerId} LIMIT 1`)).rows as any[];
@@ -946,6 +1000,20 @@ async function reprogramarAgenda(customerId: string, dias: string[], periodicida
   const hoje = dataLocal(hojeStr);
   const ultima = c.ultima ? dataLocal(String(c.ultima).slice(0, 10)) : undefined;
   const inicio = c.inicio ? dataLocal(String(c.inicio).slice(0, 10)) : undefined;
+
+  // SEMANA FIXA: a agenda real sai do calendario, igual ao quadro. Sem isto a
+  // Rota do Dia e a Agenda da Carteira mostrariam datas diferentes.
+  const semana = normalizarSemana(semanaRegra ?? c.semana_atendimento);
+  if (semana !== "toda") {
+    const fim = new Date(hoje);
+    fim.setMonth(fim.getMonth() + 5); // 5 meses cobrem 4 visitas ate no mensal
+    const alvos = dias.map((d) => DIA_NUM[d]).filter((n) => n !== undefined && n >= 1 && n <= 5);
+    const daRegra = datasPelaRegra(hoje, fim, alvos, semana)
+      .filter((d) => !inicio || d >= inicio)
+      .slice(0, 4)
+      .map((d) => { const x = new Date(d); x.setHours(8, 0, 0, 0); return x; });
+    return gravarAgenda(customerId, c, per, daRegra, hojeStr);
+  }
 
   const datas: Date[] = [];
   let cursor = ultima;
@@ -961,6 +1029,11 @@ async function reprogramarAgenda(customerId: string, dias: string[], periodicida
     cursor = d;
     if (d >= hoje) datas.push(d);
   }
+  return gravarAgenda(customerId, c, per, datas, hojeStr);
+}
+
+/** Apaga as pendentes futuras e regrava as datas passadas. */
+async function gravarAgenda(customerId: string, c: any, per: string, datas: Date[], hojeStr: string): Promise<number> {
   if (!datas.length) return 0;
 
   await db.execute(sql`
