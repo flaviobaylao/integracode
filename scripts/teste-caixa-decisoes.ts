@@ -22,6 +22,8 @@ async function schemaBase() {
   await raw(`CREATE TABLE IF NOT EXISTS chat_customers (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), phone varchar, whatsapp_opt_out boolean DEFAULT false)`);
   await raw(`CREATE TABLE IF NOT EXISTS chat_conversations (id varchar PRIMARY KEY DEFAULT gen_random_uuid())`);
   await raw(`CREATE TABLE IF NOT EXISTS whatsapp_templates (label varchar PRIMARY KEY, umbler_id varchar, categoria varchar)`);
+  await raw(`CREATE TABLE IF NOT EXISTS products (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), name varchar, price numeric, retail_price numeric, resale_goiania_price numeric, stock int, available_for_sale boolean DEFAULT true, is_active boolean DEFAULT true)`);
+  await raw(`INSERT INTO products (name, price, retail_price, resale_goiania_price, stock) VALUES ('Suco de Laranja 300ml', 8, 8, 5.5, 100) ON CONFLICT DO NOTHING`);
   await raw(`DO $$ BEGIN CREATE TYPE dispatch_use_case AS ENUM ('rota_do_dia'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
   await raw(`CREATE TABLE IF NOT EXISTS config_global (chave text PRIMARY KEY, valor text NOT NULL)`);
   await raw(`CREATE TABLE IF NOT EXISTS agentes_config (id text PRIMARY KEY, nome text NOT NULL, modelo text NOT NULL, system_prompt text NOT NULL, ferramentas jsonb NOT NULL DEFAULT '[]'::jsonb, limites jsonb NOT NULL DEFAULT '{}'::jsonb, ativo boolean NOT NULL DEFAULT true, base_conhecimento text NOT NULL DEFAULT '', updated_at timestamp DEFAULT now())`);
@@ -159,6 +161,55 @@ async function main() {
   const al = ap.criadas.find(c => c.tipo === 'alerta');
   const va: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${al.numero}`)) as any).rows[0];
   check(va.parametros.vendedor_id === 'v2' && /Radar de Vendas/.test(va.parametros.texto), 'alerta resolve o vendedor pelo nome da carteira');
+
+  console.log('8) sprint 2: link por peca, revisor, entrega, POSTEI, pauta do radar');
+  const { linkDaPeca } = await import('../server/mkt-agente-conteudo');
+  const lk = await linkDaPeca('instagram', 'margem', 'b2b');
+  check(!!lk && /^IG\d{4}$/.test(lk.codigo) && /^ig-\d{8}-margem-/.test(lk.slug), 'campanha do mes + link por peca: ' + lk?.codigo + ' /r/' + lk?.slug);
+  const lk2 = await linkDaPeca('instagram', 'sabor', 'b2c');
+  check(!!lk2 && lk2.campanhaId === lk!.campanhaId && lk2.slug !== lk!.slug, 'segunda peca reaproveita a campanha e ganha slug proprio');
+  const { TOOL_CONSULTAR_PRODUTO } = await import('../server/mkt-llm');
+  const tp = await TOOL_CONSULTAR_PRODUTO.run({ termo: 'laranja' });
+  check(/varejo R\$ 8,00/.test(tp) && /revenda R\$ 5,50/.test(tp), 'tool consultar_produto le o cadastro: ' + tp);
+  const { criarPeca, enviarParaRevisao, verPeca } = await import('../server/mkt-esteira');
+  const pc = await criarPeca({ canal: 'instagram', gancho: 'margem', titulo: '[b2b] teste', copy: 'Suco natural para a sua padaria vender mais. Fale com a gente: https://loja.bebahonest.com.br/r/' + lk!.slug, campanhaId: lk!.campanhaId, ctaTipo: 'link', ctaSlug: lk!.slug, origem: 'agente', agente: 'mkt_conteudo' });
+  check(pc.ok && !!pc.id, 'peca criada com campanha');
+  const rv = await enviarParaRevisao(pc.id!, 'teste');
+  check(rv.ok && rv.estado === 'aguardando_aprovacao', 'revisao: regex passou, revisor IA sem chave nao bloqueia (' + rv.estado + ')');
+  const pv: any = await verPeca(pc.id!);
+  check(Number(pv.numero) > 0 && Array.isArray(pv.variacoes), 'peca tem numero curto (#' + pv.numero + ') e variacoes');
+  const { textoDaPeca, responderPostei, entregarAprovadas, urlFoto, fotoConfere, assinarFoto } = await import('../server/mkt-entrega');
+  await raw(`UPDATE mkt_pieces SET estado = 'aprovado' WHERE id = '${pc.id}'`);
+  const tx = textoDaPeca({ ...pv, estado: 'aprovado' });
+  check(tx.includes('POSTEI ' + pv.numero) && tx.includes(pv.copy), 'texto de entrega traz numero e copy');
+  check(fotoConfere(7, assinarFoto(7)) && !fotoConfere(7, assinarFoto(8)) && /\/mkt\/foto\/7\?k=/.test(urlFoto(7)), 'foto assinada por id');
+  const en = await entregarAprovadas();
+  check(en.entregues + en.falhas === 1, 'entrega tentou 1 peca (sem canal: ' + en.falhas + ' falha)');
+  check((await responderPostei('5562911119999', 'POSTEI ' + pv.numero)) === null, 'POSTEI de numero desconhecido e ignorado');
+  const rp = await responderPostei('5562999990000', 'postei ' + pv.numero + ' https://www.instagram.com/p/abc123/');
+  const pv2: any = await verPeca(pc.id!);
+  check(!!rp && /publicada/.test(rp) && pv2.estado === 'publicado' && pv2.permalink === 'https://www.instagram.com/p/abc123/', 'POSTEI marca publicada com permalink');
+  // pauta do radar: precisa de foto elegivel
+  const { cadastrarAsset } = await import('../server/mkt-assets');
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const asset = await cadastrarAsset({ url: png, tipo: 'foto', origem: 'foto_real', titulo: 'prateleira padaria', tags: { gancho: ['margem'], publico: ['b2b'], cenario: ['prateleira'] }, direitosOk: true } as any);
+  check(asset.ok && !!asset.id, 'criativo cadastrado #' + asset.id);
+  const sin2 = await lerSinais();
+  check(sin2.conteudo.ganchosComFoto.some(g => g.gancho === 'margem' && g.publico === 'b2b'), 'sinal de conteudo enxerga gancho com foto');
+  const ap2 = await aplicarResposta({ acoes: [
+    { tipo: 'peca', titulo: 'Carrossel de margem para padarias', justificativa: 'gancho com foto e cota livre', peca: { gancho: 'margem', publico: 'b2b' } },
+    { tipo: 'peca', titulo: 'sem foto', justificativa: '', peca: { gancho: 'giro', publico: 'b2c' } },
+  ] }, sin2, false);
+  check(ap2.criadas.length === 1 && ap2.descartadas.length === 1 && ap2.criadas[0].nivel === 0, 'pauta valida vira acao N0; pauta sem foto e descartada');
+  const { processarAutomaticas } = await import('../server/mkt-acoes');
+  await processarAutomaticas();
+  const vp: any = ((await raw(`SELECT status, execucao FROM mkt_acoes WHERE numero=${ap2.criadas[0].numero}`)) as any).rows[0];
+  check(vp.status === 'erro' && /modelo|chave|ANTHROPIC/i.test(String(vp.execucao?.erro || '')), 'executor de pauta chamou o agente de conteudo (sem chave -> erro registrado: ' + String(vp.execucao?.erro || '').slice(0, 60) + ')');
+
+  const { corrigirGeografiaV2, marcaAtiva } = await import('../server/mkt-marca');
+  const g1 = await corrigirGeografiaV2(); const g2 = await corrigirGeografiaV2();
+  const ma: any = await marcaAtiva();
+  check(g1.criou && g1.versao === 2 && !g2.criou && /Bela Vista/.test(JSON.stringify(ma)) && !/fresco em Goi/.test(JSON.stringify(ma)), 'cartao de marca v2 corrige a geografia uma unica vez');
 
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);

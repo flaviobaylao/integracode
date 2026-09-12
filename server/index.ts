@@ -4273,6 +4273,38 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ── SPRINT 2: entrega no WhatsApp, visao de criativos ──
+  try { const { registerMktEntrega } = await import('./mkt-entrega'); registerMktEntrega(app); } catch (e: any) { console.warn('[MKT-ENTREGA] rota:', e?.message); }
+  app.post("/api/mkt/entrega/enviar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { entregarAprovadas } = await import('./mkt-entrega'); res.json(await entregarAprovadas({ forcar: !!req.body?.forcar })); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/assets/:id/visao", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { classificarAsset } = await import('./mkt-visao'); res.json(await classificarAsset(Number(req.params.id))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/visao/lote", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { classificarPendentes } = await import('./mkt-visao'); res.json(await classificarPendentes(Number(req.body?.limite) || 20)); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Modos dos agentes auxiliares (revisor / visao): off|on
+  app.post("/api/mkt/agentes-aux/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const ag = String(req.body?.agente || ''); const m = String(req.body?.modo || '');
+      if (!['mkt_revisor', 'mkt_visao'].includes(ag) || !['off', 'on'].includes(m)) return res.status(400).json({ error: 'agente/modo invalido' });
+      const k = ag === 'mkt_revisor' ? 'mkt_revisor_modo' : 'mkt_visao_modo';
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${k}, ${m}, ${'mkt'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/agentes-aux", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const rv = await import('./mkt-revisor'); const vi = await import('./mkt-visao');
+      const pend: any = await db.execute(sql.raw("SELECT COUNT(*)::int AS n FROM mkt_assets WHERE visao_em IS NULL AND COALESCE(ativo,true) = true"));
+      res.json({ revisor: await rv.modo(), visao: await vi.modo(), criativosSemVisao: Number(pend.rows?.[0]?.n || 0) });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ── RADAR DE VENDAS (agente mkt_radar) ──
   app.get("/api/mkt/radar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { panorama } = await import('./mkt-radar'); res.json(await panorama()); }

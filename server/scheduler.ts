@@ -936,6 +936,24 @@ cron.schedule('30 7 * * *', async () => {
   } catch (e: any) { console.error('[MKT-ACOES] resumo falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
+// 09:05 — peca aprovada chega pronta no WhatsApp (legenda + foto assinada + numero)
+cron.schedule('5 9 * * *', async () => {
+  try {
+    const { entregarAprovadas } = await import('./mkt-entrega');
+    const r = await entregarAprovadas();
+    if (r.entregues || r.falhas) console.log('[MKT-ENTREGA] ' + r.entregues + ' entregue(s), ' + r.falhas + ' falha(s)');
+  } catch (e: any) { console.error('[MKT-ENTREGA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// 03:40 — visao tagueia criativos que ainda nao passaram por ela (lote pequeno)
+cron.schedule('40 3 * * *', async () => {
+  try {
+    const { classificarPendentes } = await import('./mkt-visao');
+    const r = await classificarPendentes(20);
+    if (r.feitos || r.erros) console.log('[MKT-VISAO] ' + r.feitos + ' classificado(s), ' + r.erros + ' erro(s)');
+  } catch (e: any) { console.error('[MKT-VISAO] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
 cron.schedule('30 2 * * *', async () => {
   try {
     const { medir, expirar } = await import('./mkt-acoes');

@@ -345,7 +345,8 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
       // e NAO chama o agente de atendimento. Qualquer outro texto segue o fluxo normal.
       try {
         const { responderWhatsApp } = await import('./mkt-acoes');
-        const resposta = await responderWhatsApp(normalizedPhone, finalContent);
+        const { responderPostei } = await import('./mkt-entrega');
+        const resposta = (await responderPostei(normalizedPhone, finalContent)) || (await responderWhatsApp(normalizedPhone, finalContent));
         if (resposta) {
           await replyVia(normalizedPhone, resposta);
           console.log(`✅ [MKT-ACOES] decisao por WhatsApp de ${normalizedPhone}: ${finalContent.slice(0, 40)}`);

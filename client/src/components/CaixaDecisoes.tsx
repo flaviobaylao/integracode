@@ -213,7 +213,89 @@ export default function CaixaDecisoes() {
       </Card>
 
       <Radar politicas={d.politicas || []} aoMudar={recarregar} />
+      <AgentesConteudo />
     </>
+  );
+}
+
+function AgentesConteudo() {
+  const { toast } = useToast();
+  const [rodando, setRodando] = useState(false);
+  const c = useQuery<any>({ queryKey: ["/api/mkt/conteudo"], queryFn: () => apiGet("/api/mkt/conteudo") });
+  const aux = useQuery<any>({ queryKey: ["/api/mkt/agentes-aux"], queryFn: () => apiGet("/api/mkt/agentes-aux") });
+  const d = c.data || {};
+  const a = aux.data || {};
+  async function modo(m: string) {
+    try { await apiPost("/api/mkt/conteudo/modo", { modo: m }); toast({ title: "Agente de conteúdo em " + m }); c.refetch(); }
+    catch (e: any) { toast({ title: "Não deu", description: e.message, variant: "destructive" }); }
+  }
+  async function rodar() {
+    setRodando(true);
+    try {
+      const r = await apiPost("/api/mkt/conteudo/rodar", { forcar: true });
+      toast({ title: r.ok ? (r.criou ? "Peça criada e enviada ao revisor" : "Rodou em modo teste") : "Não produziu", description: r.ok ? (r.titulo || "") + (r.motivo ? " — " + r.motivo : "") : (r.motivo || ""), variant: r.ok ? undefined : "destructive" });
+      c.refetch();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setRodando(false);
+  }
+  async function auxModo(agente: string, m: string) {
+    try { await apiPost("/api/mkt/agentes-aux/modo", { agente, modo: m }); aux.refetch(); } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  async function visaoLote() {
+    try { const r = await apiPost("/api/mkt/visao/lote", { limite: 20 }); toast({ title: r.feitos + " criativo(s) classificado(s)", description: r.erros ? r.erros + " erro(s)" : "" }); aux.refetch(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  async function entregar() {
+    try { const r = await apiPost("/api/mkt/entrega/enviar", {}); toast({ title: r.entregues + " peça(s) enviada(s) ao WhatsApp", description: r.semAprovador ? "Nenhum aprovador cadastrado" : (r.falhas ? r.falhas + " falha(s)" : "") }); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  const portoes: any[] = d.portoes || d.prontidao?.portoes || [];
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+          <i className="fas fa-pen-nib text-muted-foreground" /> Agente de conteúdo
+          <Badge variant="outline">{d.modo || "…"}</Badge>
+          {d.temChaveIA === false && <Badge variant="destructive">sem ANTHROPIC_API_KEY</Badge>}
+          <span className="ml-auto flex gap-1 flex-wrap">
+            <Button size="sm" variant={d.modo === "off" ? "default" : "outline"} onClick={() => modo("off")}>Desligar</Button>
+            <Button size="sm" variant={d.modo === "test" ? "default" : "outline"} onClick={() => modo("test")}>Modo teste</Button>
+            <Button size="sm" variant={d.modo === "on" ? "default" : "outline"} onClick={() => modo("on")}>Ligar</Button>
+            <Button size="sm" disabled={rodando || d.modo === "off"} onClick={rodar}>{rodando ? "Escrevendo…" : "Escrever uma peça agora"}</Button>
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Escreve às 07:10 até a cota da semana ({d.saldo ? d.saldo.feitas + "/" + d.saldo.cota : "…"}), com foto do acervo, campanha do mês e link próprio por peça; preço só via consulta ao cadastro. Cada peça passa pelo revisor (regras + IA) e para na fila de aprovação. Aprovada, chega pronta no seu WhatsApp às 09:05 — responda <code>POSTEI 31 &lt;link&gt;</code>.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {portoes.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {portoes.map((p: any) => (
+              <div key={p.id} className="border rounded p-2 text-xs">
+                <div className="flex items-center gap-1"><span style={{ color: p.ok ? "#16a34a" : "#dc2626" }}>{p.ok ? "●" : "●"}</span><b>{p.id}</b></div>
+                <div className="text-muted-foreground">{p.detalhe}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2 items-center border-t pt-3">
+          <span className="text-xs text-muted-foreground">Revisor de IA (fato, claim, foto, tom — depois das regras):</span>
+          <Button size="sm" variant={a.revisor === "on" ? "default" : "outline"} onClick={() => auxModo("mkt_revisor", "on")}>ligado</Button>
+          <Button size="sm" variant={a.revisor === "off" ? "default" : "outline"} onClick={() => auxModo("mkt_revisor", "off")}>desligado</Button>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-muted-foreground">Visão de criativos (tagueia gancho/cenário/público ao subir a foto; {num(a.criativosSemVisao)} ainda sem passar):</span>
+          <Button size="sm" variant={a.visao === "on" ? "default" : "outline"} onClick={() => auxModo("mkt_visao", "on")}>ligada</Button>
+          <Button size="sm" variant={a.visao === "off" ? "default" : "outline"} onClick={() => auxModo("mkt_visao", "off")}>desligada</Button>
+          <Button size="sm" variant="outline" disabled={a.visao !== "on" || !a.criativosSemVisao} onClick={visaoLote}>Classificar 20 agora</Button>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-muted-foreground">Peças aprovadas ainda não postadas:</span>
+          <Button size="sm" variant="outline" onClick={entregar}>Mandar prontas no WhatsApp agora</Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
