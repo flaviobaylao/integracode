@@ -485,6 +485,27 @@ run();
     }
   })();
 
+  // ── CENTRAL DE MARKETING — CAIXA DE DECISÕES + RADAR DE VENDAS ──
+  // mkt_acoes / mkt_politicas / mkt_sinais / mkt_decisoes_whatsapp / mkt_learnings
+  // + coluna acao_id em sales_cards, mkt_fila_toques, mkt_lotes, mkt_pieces,
+  // chat_conversations + provedor em mkt_agent_runs. Idempotente; nao bloqueia o boot.
+  // O Radar NASCE EM TEST (propoe, nao executa) — system_settings mkt_radar_modo.
+  (async () => {
+    try {
+      const { ensureMktAcoesSchema } = await import('./mkt-acoes');
+      const r = await ensureMktAcoesSchema();
+      if (!r.ok) console.warn('[MKT-ACOES-MIGRATION] passos com falha:', r.steps.filter((s: any) => !s.ok));
+      else console.log('[MKT-ACOES-MIGRATION] ok');
+      const { garantirAgente } = await import('./mkt-radar');
+      await garantirAgente();
+      // Cartão de marca v2: corrige a geografia (fábrica em Bela Vista de Goiás)
+      const { corrigirGeografiaV2 } = await import('./mkt-marca');
+      await corrigirGeografiaV2();
+    } catch (e: any) {
+      console.warn('[MKT-ACOES-MIGRATION] falha (ignorada):', e?.message);
+    }
+  })();
+
   // ── CENTRAL DE MARKETING — buraco 3: CTWA + Conversions API ──
   // Colunas de origem em chat_conversations + fila mkt_capi_eventos.
   // NASCE DESLIGADO: sem META_PIXEL_ID/META_CAPI_TOKEN e com mkt_capi_mode='off',
@@ -4182,6 +4203,94 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json({ precosModelo: await g('mkt_precos_modelo', ''), usdBrl: await g('mkt_usd_brl', '5.40') });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  // ── CAIXA DE DECISÕES (mkt_acoes) ──
+  app.post("/api/mkt/acoes/setup", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { ensureMktAcoesSchema } = await import('./mkt-acoes'); res.json(await ensureMktAcoesSchema()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/acoes", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { panorama, listar } = await import('./mkt-acoes');
+      if (req.query.status) return res.json({ acoes: await listar({ status: String(req.query.status), limite: Number(req.query.limite) || 50 }) });
+      res.json(await panorama());
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/acoes/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { ver } = await import('./mkt-acoes'); const a = await ver(String(req.params.id)); if (!a) return res.status(404).json({ error: 'nao encontrada' }); res.json(a); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Decisão em lote: { ids: [...], decisao: 'aprovar'|'rejeitar', comentario?, excluirClientes?: ['3','7'] }
+  app.post("/api/mkt/acoes/decidir", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { decidir } = await import('./mkt-acoes');
+      const b = req.body || {};
+      const ids: string[] = Array.isArray(b.ids) ? b.ids.map(String) : (b.id ? [String(b.id)] : []);
+      if (!ids.length) return res.status(400).json({ error: 'ids obrigatorio' });
+      const decisao = b.decisao === 'rejeitar' ? 'rejeitar' : 'aprovar';
+      const quem = String(req.user?.username || req.user?.email || req.user?.id || 'admin');
+      res.json(await decidir({ ids, decisao, quem, via: 'tela', comentario: b.comentario || null, excluirClientes: Array.isArray(b.excluirClientes) ? b.excluirClientes.map(String) : [] }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Criar ação à mão (o humano também pode propor — entra pela mesma esteira)
+  app.post("/api/mkt/acoes", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { criarAcao } = await import('./mkt-acoes');
+      const b = req.body || {};
+      if (!b.tipo || !b.titulo) return res.status(400).json({ error: 'tipo e titulo obrigatorios' });
+      res.json(await criarAcao({ ...b, agente: 'humano:' + String(req.user?.username || req.user?.id || 'admin') }));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/acoes/:id/executar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { executar } = await import('./mkt-acoes'); res.json(await executar(String(req.params.id))); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/acoes/resumo/enviar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { enviarResumo } = await import('./mkt-acoes'); res.json(await enviarResumo()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/acoes/medir", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { medir, expirar } = await import('./mkt-acoes'); res.json({ medidas: await medir(), expiradas: await expirar() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/politicas", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { politicas, aprovadores } = await import('./mkt-acoes'); res.json({ politicas: await politicas(), aprovadores: await aprovadores() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/politicas/:tipo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const { salvarPolitica, politicas } = await import('./mkt-acoes');
+      await salvarPolitica(String(req.params.tipo), req.body || {}, String(req.user?.username || req.user?.id || 'admin'));
+      res.json({ ok: true, politicas: await politicas() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  // Aprovadores por WhatsApp (além de telefone_gestor_relatorios): "5562...,5561..."
+  app.post("/api/mkt/aprovadores", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const lista = String(req.body?.telefones || '').split(/[,;\s]+/).map((t: string) => t.replace(/\D/g, '')).filter((t: string) => t.length >= 10).join(',');
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('mkt_aprovadores', ${lista}, ${'mkt-acoes'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      const { aprovadores } = await import('./mkt-acoes');
+      res.json({ ok: true, aprovadores: await aprovadores() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // ── RADAR DE VENDAS (agente mkt_radar) ──
+  app.get("/api/mkt/radar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panorama } = await import('./mkt-radar'); res.json(await panorama()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/radar/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { definirModo, modo } = await import('./mkt-radar'); await definirModo(String(req.body?.modo || ''), String(req.user?.username || 'admin')); res.json({ ok: true, modo: await modo() }); }
+    catch (e: any) { res.status(400).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/radar/rodar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { rodar } = await import('./mkt-radar'); res.json(await rodar({ quem: String(req.user?.username || 'admin'), forcar: !!req.body?.forcar })); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.get("/api/mkt/radar/sinais", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { lerSinais, sinaisParaPrompt } = await import('./mkt-sinais'); res.json(sinaisParaPrompt(await lerSinais())); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   app.post("/api/mkt/precos", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try {
       const b = req.body || {};
