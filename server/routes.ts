@@ -1701,11 +1701,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           weekdays: pw.join(', '), isActive: sit === 'ativo', visitDay: pw.length ? pw[0] : 'Seg',
           customerId: c.id, sellerId: sid, sellerName: sid ? (sellerMap.get(String(sid)) || null) : null, situacao: sit,
           visitPeriodicity: c.visit_periodicity ?? null, bairroPadrao: normBairro(c.neighborhood),
+          // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
+          virtualService: c.virtual_service === true,
         };
       };
       if (situacao === 'inativados') {
         const sellerMap = await buildSellerMap();
-        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, visit_periodicity, seller_id FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
+        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
@@ -1729,7 +1731,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             WHERE doc IS NOT NULL AND length(doc) >= 11
             GROUP BY doc
           )
-          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id
+          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id, c.virtual_service
           FROM customers c
           JOIN buys b ON b.doc = NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'')
           WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
@@ -1877,7 +1879,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sellerId: c.sellerId || null,
             sellerName: c.sellerId ? sellerMap.get(c.sellerId) : null,
             situacao: 'ativo',
-            visitPeriodicity: c.visitPeriodicity ?? null
+            visitPeriodicity: c.visitPeriodicity ?? null,
+            // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
+            virtualService: c.virtualService === true
           };
         });
       
