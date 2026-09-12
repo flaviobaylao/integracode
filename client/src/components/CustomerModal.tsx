@@ -168,6 +168,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       sellerId: '',
       weekdays: '[]',
       visitPeriodicity: 'semanal',
+      semanaAtendimento: 'toda',
       icmsCsosn: '102',
       omieInstanceId: '',
       isSupplier: false,
@@ -225,6 +226,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         sellerId: customer.sellerId || '',
         weekdays: weekdaysJson,
         visitPeriodicity: (customer as any).visitPeriodicity || 'semanal',
+        semanaAtendimento: (customer as any).semanaAtendimento || 'toda',
         icmsCsosn: (customer as any).icmsCsosn || '102',
         omieInstanceId: (customer as any).omieInstanceId || '',
         isSupplier: (customer as any).isSupplier || false,
@@ -266,6 +268,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         sellerId: '',
         weekdays: '[]',
         visitPeriodicity: 'semanal',
+      semanaAtendimento: 'toda',
       icmsCsosn: '102',
       omieInstanceId: '',
       isSupplier: false,
@@ -1301,6 +1304,47 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                           {canManagePeriodicity
                             ? "Defina com que frequência o cliente deve ser visitado"
                             : "Já definido. Apenas Cinthia e Flávio podem alterar a periodicidade."}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* 📅 SEMANA DO MÊS: segundo eixo da rota, junto com o dia da semana. */}
+                <div className="mt-4">
+                  <FormField
+                    control={form.control}
+                    name="semanaAtendimento"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center space-x-1">
+                          <Clock className="h-4 w-4" />
+                          <span>Semana do mês</span>
+                        </FormLabel>
+                        <Select
+                          value={field.value || 'toda'}
+                          onValueChange={field.onChange}
+                          disabled={!canManagePeriodicity && !!field.value && field.value !== 'toda'}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-semana-atendimento">
+                              <SelectValue placeholder="Selecione a semana" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="toda">Toda semana</SelectItem>
+                            <SelectItem value="impar">1ª e 3ª do mês</SelectItem>
+                            <SelectItem value="par">2ª e 4ª do mês</SelectItem>
+                            <SelectItem value="1">1ª do mês</SelectItem>
+                            <SelectItem value="2">2ª do mês</SelectItem>
+                            <SelectItem value="3">3ª do mês</SelectItem>
+                            <SelectItem value="ultima">Última do mês</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription className="text-xs">
+                          Em qual semana do mês este cliente é atendido, dentro do dia escolhido acima. A semana é
+                          contada pela segunda-feira. “Toda semana” mantém o comportamento de sempre.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

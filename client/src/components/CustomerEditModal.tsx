@@ -115,6 +115,8 @@ export default function CustomerEditModal({
     sellerId: "",
     weekdays: [] as string[],
     visitPeriodicity: "semanal" as "semanal" | "quinzenal" | "mensal" | "bimestral",
+    // Em QUAL semana do mês o cliente é atendido. 'toda' = comportamento antigo.
+    semanaAtendimento: "toda" as "toda" | "impar" | "par" | "1" | "2" | "3" | "ultima",
     exclusiveVehicle: false,
     vehicleTypes: [] as string[],
     receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
@@ -432,6 +434,7 @@ export default function CustomerEditModal({
         sellerId: customer.sellerId || "",
         weekdays: parsedWeekdays,
         visitPeriodicity: customer.visitPeriodicity || "semanal",
+        semanaAtendimento: ((customer as any)?.semanaAtendimento || "toda") as any,
         exclusiveVehicle: customer.exclusiveVehicle || false,
         vehicleTypes: Array.isArray(customer.vehicleTypes) ? customer.vehicleTypes : [],
         receivingWeekdays: Array.isArray((customer as any).receivingWeekdays) ? (customer as any).receivingWeekdays : [],
@@ -841,6 +844,36 @@ export default function CustomerEditModal({
                 <SelectItem value="bimestral">Bimestral</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Semana de Atendimento */}
+          <div>
+            <Label htmlFor="semanaAtendimento">Semana do mês</Label>
+            {!canManagePeriodicity && formData.semanaAtendimento !== "toda" && (
+              <p className="text-xs text-muted-foreground mb-2">Já definida. Apenas Cinthia e Flávio podem alterar a semana.</p>
+            )}
+            <Select
+              value={formData.semanaAtendimento}
+              onValueChange={(v) => setFormData((prev) => ({ ...prev, semanaAtendimento: v as any }))}
+              disabled={!canManagePeriodicity && formData.semanaAtendimento !== "toda"}
+            >
+              <SelectTrigger data-testid="select-semana-atendimento">
+                <SelectValue placeholder="Selecione a semana" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="toda">Toda semana</SelectItem>
+                <SelectItem value="impar">1ª e 3ª do mês</SelectItem>
+                <SelectItem value="par">2ª e 4ª do mês</SelectItem>
+                <SelectItem value="1">1ª do mês</SelectItem>
+                <SelectItem value="2">2ª do mês</SelectItem>
+                <SelectItem value="3">3ª do mês</SelectItem>
+                <SelectItem value="ultima">Última do mês</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Em qual semana do mês este cliente é atendido, dentro do dia escolhido acima. A semana é contada pela
+              segunda-feira. “Toda semana” mantém o comportamento de sempre.
+            </p>
           </div>
 
           {/* Data de Início do Fornecimento */}
