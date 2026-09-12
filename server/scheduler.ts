@@ -14,10 +14,25 @@ import { runDebitosVencidosAlertaCron } from './debitos-vencidos-alert';
 import { runRotaNaoVisitadosCron } from './rota-nao-visitados-alert';
 import { sweepOpenBoletos } from './bb-boleto-service';
 import { runGarantirCobranca } from './charge-guarantee-routes';
+import { varreduraSobrecargaDiaria } from './agenda-carteira-routes';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
 console.log('Inicializando agendador de tarefas...');
+
+// ── AGENDA DA CARTEIRA: varredura de dia sobrecarregado, 07h ────────────────
+// A tabela da tela e' recalculada a cada abertura, entao ela ja nasce atual.
+// O que PRECISA de horario marcado e' o aviso: sem isto, so' nasce aviso para
+// quem alguem abriu, e a carteira que ninguem olha nunca aparece na Inbox.
+cron.schedule('0 7 * * *', async () => {
+  console.log('📅 [SCHEDULER] Varredura de dias sobrecarregados (07:00)...');
+  try {
+    const r = await varreduraSobrecargaDiaria();
+    console.log(`✅ [SCHEDULER] Sobrecarga: ${r.sobrecargas} célula(s) acima do teto em ${r.vendedores} carteira(s).`);
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Varredura de sobrecarga falhou:', error?.message);
+  }
+}, { timezone: 'America/Sao_Paulo' });
 
 // Gerar relatórios de IA na inicialização (async, não bloqueia)
 (async () => {

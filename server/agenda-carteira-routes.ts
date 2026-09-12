@@ -501,6 +501,206 @@ export function projetarDatas(params: {
   return Array.from(achadas).sort();
 }
 
+/**
+ * Monta a JANELA da agenda (semanas + itens) para um escopo de carteira.
+ * Extraido do GET para poder rodar tambem na varredura diaria das 07h — antes
+ * disso, aviso de dia sobrecarregado so' nascia se alguem abrisse a tela, e
+ * vendedor que ninguem olha nunca gerava aviso nenhum.
+ */
+export async function montarJanela(
+  esc: { restrito: boolean; ids: string[] },
+  hoje: string,
+): Promise<{ semanas: SemanaJanela[]; itens: any[] }> {
+  const semanas = semanasDaJanela(hoje);
+  const ini = semanas[0].ini;
+  const fim = semanas[semanas.length - 1].fim;
+  // 1º dia projetado: o quadro so' projeta o que ainda nao aconteceu.
+  const amanha = (() => { const d = dataLocal(hoje); d.setDate(d.getDate() + 1); return iso(d); })();
+
+  const filtroCarteira = esc.restrito
+    ? ` AND c.seller_id IN (${esc.ids.map((i) => `'${i}'`).join(",")})`
+    : "";
+  const filtroLead = esc.restrito
+    ? ` AND (l.assigned_to IN (${esc.ids.map((i) => `'${i}'`).join(",")}))`
+    : "";
+
+  // Clientes do cadastro + a ultima visita CONCLUIDA de cada um. Entra quem
+  // esta ativo hoje E TAMBEM quem foi inativado mas teve visita na janela —
+  // senao o passado do quadro ficaria menor do que realmente foi.
+  const clientes = (await db.execute(sql.raw(`
+    SELECT c.id, c.name, c.fantasy_name, c.city, c.weekdays, c.visit_periodicity::text AS periodicidade,
+           COALESCE(c.virtual_service,false) AS virtual, COALESCE(c.is_lead,false) AS is_lead,
+           c.is_active, c.seller_id, c.service_start_date::date::text AS inicio_fornecimento,
+           COALESCE(vend.nome,'Sem vendedor') AS vendedor,
+           vend.uid AS vendedor_uid, vend.papel AS vendedor_papel, vend.tipo AS vendedor_tipo,
+           va.ultima::text AS ultima_visita
+    FROM customers c
+    LEFT JOIN LATERAL (
+      SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome,
+             u.id AS uid, u.role::text AS papel, u.seller_type AS tipo
+      FROM users u
+      WHERE c.seller_id IS NOT NULL AND c.seller_id <> '' AND (
+            u.id = c.seller_id
+         OR u.omie_vendor_code = c.seller_id
+         OR u.omie_vendor_code = REPLACE(c.seller_id,'omie-vendor-','')
+      )
+      LIMIT 1
+    ) vend ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT MAX(COALESCE(v.actual_check_in, v.scheduled_date))::date AS ultima
+      FROM visit_agenda v
+      WHERE v.customer_id = c.id AND v.visit_status = 'completed'
+    ) va ON TRUE
+    WHERE COALESCE(c.is_supplier,false) = false
+      AND (
+        c.is_active = true
+        OR EXISTS (SELECT 1 FROM visit_agenda vj
+                    WHERE vj.customer_id = c.id
+                      AND vj.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date)
+      )
+      ${filtroCarteira}
+    LIMIT 20000`))).rows as any[];
+
+  // O que REALMENTE esteve na agenda ate hoje, dentro da janela.
+  const passadoPorCliente = new Map<string, string[]>();
+  try {
+    const passado = (await db.execute(sql.raw(`
+      SELECT v.customer_id, v.scheduled_date::date::text AS d
+      FROM visit_agenda v
+      WHERE v.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date
+      LIMIT 400000`))).rows as any[];
+    for (const p of passado) {
+      const k = String(p.customer_id || "");
+      if (!k || !p.d) continue;
+      const l = passadoPorCliente.get(k);
+      if (l) { if (!l.includes(p.d)) l.push(p.d); } else passadoPorCliente.set(k, [p.d]);
+    }
+  } catch (e: any) { console.warn("[carteira-agenda] passado:", e?.message); }
+
+  // PEDIDO NA ULTIMA VISITA. O fechamento de um card grava sempre uma linha
+  // em order_history — com venda (status 'completed') ou sem venda. Entao a
+  // linha MAIS RECENTE de cada cliente e' o registro da ultima visita, e o
+  // valor dela responde "teve pedido?". Sem venda vira 0.
+  // Uma varredura so' (DISTINCT ON), nao um lateral por cliente.
+  const pedidoPorCliente = new Map<string, { valor: number; data: string | null }>();
+  try {
+    const pedidos = (await db.execute(sql.raw(`
+      SELECT DISTINCT ON (sc.customer_id)
+             sc.customer_id,
+             oh.order_date::date::text AS d,
+             CASE WHEN oh.status = 'completed'
+                  THEN COALESCE(NULLIF(oh.total_value::text,'')::numeric, 0)
+                  ELSE 0 END::float AS valor
+      FROM order_history oh
+      JOIN sales_cards sc ON sc.id = oh.sales_card_id
+      WHERE oh.order_date >= (now() - interval '18 months')
+      ORDER BY sc.customer_id, oh.order_date DESC
+      LIMIT 100000`))).rows as any[];
+    for (const p of pedidos) {
+      const k = String(p.customer_id || "");
+      if (k) pedidoPorCliente.set(k, { valor: Number(p.valor || 0), data: p.d || null });
+    }
+  } catch (e: any) { console.warn("[carteira-agenda] pedidos:", e?.message); }
+
+  const itens: any[] = [];
+  for (const r of clientes) {
+    const dias = diasDoCadastro(r.weekdays);
+    // Futuro: projetado do cadastro. Passado: o que esteve marcado de fato.
+    const futuro = projetarDatas({
+      dias,
+      periodicidade: String(r.periodicidade || "semanal"),
+      ancora: r.ultima_visita || null,
+      inicioFornecimento: r.inicio_fornecimento || null,
+      ini: amanha, fim,
+    });
+    const anteriores = (passadoPorCliente.get(String(r.id)) || []).filter((d) => {
+      const w = dataLocal(d).getDay();
+      return w >= 1 && w <= 5;
+    });
+    const datas = Array.from(new Set([...anteriores, ...futuro])).sort();
+    if (!datas.length) continue;
+    itens.push({
+      id: String(r.id),
+      tipo: r.is_lead ? "lead" : "cliente",
+      nome: String(r.fantasy_name || r.name || "").trim() || "(sem nome)",
+      cidade: r.city || "",
+      vendedor: String(r.vendedor || "Sem vendedor"),
+      sellerId: String(r.seller_id || ""),
+      // Mesma regra de server/lead-capture.ts:51 — role OU seller_type.
+      papel: (String(r.vendedor_papel || "") === "telemarketing"
+           || String(r.vendedor_tipo || "") === "telemarketing") ? "telemarketing" : "vendedor",
+      usuarioId: String(r.vendedor_uid || ""),
+      ativo: r.is_active !== false,
+      // Lead e' SEMPRE presencial, mesmo que o cadastro esteja marcado virtual.
+      canal: r.is_lead ? "presencial" : (r.virtual ? "virtual" : "presencial"),
+      periodicidade: String(r.periodicidade || "semanal"),
+      dias,
+      ultimaVisita: r.ultima_visita || null,
+      pedidoUltimaVisita: pedidoPorCliente.get(String(r.id))?.valor ?? 0,
+      dataUltimoPedido: pedidoPorCliente.get(String(r.id))?.data ?? null,
+      datas,
+    });
+  }
+
+  // LEADS (tabela propria): entram pela data de proximo contato e sao
+  // SEMPRE presenciais. Nao tem periodicidade — e' um retorno agendado.
+  try {
+    const leads = (await db.execute(sql.raw(`
+      SELECT l.id, l.fantasy_name, l.city, l.assigned_to, l.next_contact_date::date::text AS retorno,
+             COALESCE(vend.nome,'Sem vendedor') AS vendedor
+      FROM leads l
+      LEFT JOIN LATERAL (
+        SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome
+        FROM users u WHERE l.assigned_to IS NOT NULL AND u.id = l.assigned_to LIMIT 1
+      ) vend ON TRUE
+      WHERE COALESCE(l.status::text,'pending') NOT IN ('converted','discarded','descartado','convertido')
+        AND l.next_contact_date::date BETWEEN '${ini}' AND '${fim}'
+        ${filtroLead}
+      LIMIT 5000`))).rows as any[];
+    for (const l of leads) {
+      const d = l.retorno ? dataLocal(l.retorno) : null;
+      if (!d || d.getDay() === 0 || d.getDay() === 6) continue;
+      itens.push({
+        id: String(l.id),
+        tipo: "lead",
+        nome: String(l.fantasy_name || "").trim() || "(lead sem nome)",
+        cidade: l.city || "",
+        vendedor: String(l.vendedor || "Sem vendedor"),
+        sellerId: String(l.assigned_to || ""),
+        ativo: true,
+        canal: "presencial",
+        periodicidade: "retorno",
+        dias: [NUM_DIA[d.getDay()]],
+        ultimaVisita: null,
+        // Lead nao tem card de venda fechado — nao ha pedido anterior.
+        pedidoUltimaVisita: 0,
+        dataUltimoPedido: null,
+        datas: [l.retorno],
+      });
+    }
+  } catch (e: any) {
+    console.warn("[carteira-agenda] leads:", e?.message);
+  }
+
+  return { semanas, itens };
+}
+
+/**
+ * VARREDURA DIARIA (07h, ver server/scheduler.ts): recalcula a janela inteira,
+ * sem escopo de carteira, e sincroniza os avisos de dia sobrecarregado na Inbox
+ * — abre os que estouraram e cancela os que voltaram a caber.
+ */
+export async function varreduraSobrecargaDiaria(): Promise<{ sobrecargas: number; vendedores: number }> {
+  const hoje = hojeBrasilia();
+  const { itens } = await montarJanela({ restrito: false, ids: [] }, hoje);
+  const limites = await lerLimites();
+  const sobrecargas = acharSobrecargas(itens, hoje, limites);
+  const avaliados = Array.from(new Set(itens.map((i: any) => String(i.sellerId || "")).filter(Boolean)));
+  await sincronizarAvisos(sobrecargas, avaliados);
+  return { sobrecargas: sobrecargas.length, vendedores: avaliados.length };
+}
+
+
 export function registerAgendaCarteira(app: Express) {
   // ---------------------------------------------------------------------------
   // GET /api/carteira/agenda   (janela deslizante: 8 semanas atras -> 8 a frente)
@@ -518,177 +718,7 @@ export function registerAgendaCarteira(app: Express) {
     try {
       const esc = escopo(req);
       const hoje = String(req.query.ref || "").match(/^\d{4}-\d{2}-\d{2}$/) ? String(req.query.ref) : hojeBrasilia();
-      const semanas = semanasDaJanela(hoje);
-      const ini = semanas[0].ini;
-      const fim = semanas[semanas.length - 1].fim;
-      // 1º dia projetado: o quadro so' projeta o que ainda nao aconteceu.
-      const amanha = (() => { const d = dataLocal(hoje); d.setDate(d.getDate() + 1); return iso(d); })();
-
-      const filtroCarteira = esc.restrito
-        ? ` AND c.seller_id IN (${esc.ids.map((i) => `'${i}'`).join(",")})`
-        : "";
-      const filtroLead = esc.restrito
-        ? ` AND (l.assigned_to IN (${esc.ids.map((i) => `'${i}'`).join(",")}))`
-        : "";
-
-      // Clientes do cadastro + a ultima visita CONCLUIDA de cada um. Entra quem
-      // esta ativo hoje E TAMBEM quem foi inativado mas teve visita na janela —
-      // senao o passado do quadro ficaria menor do que realmente foi.
-      const clientes = (await db.execute(sql.raw(`
-        SELECT c.id, c.name, c.fantasy_name, c.city, c.weekdays, c.visit_periodicity::text AS periodicidade,
-               COALESCE(c.virtual_service,false) AS virtual, COALESCE(c.is_lead,false) AS is_lead,
-               c.is_active, c.seller_id, c.service_start_date::date::text AS inicio_fornecimento,
-               COALESCE(vend.nome,'Sem vendedor') AS vendedor,
-               vend.uid AS vendedor_uid, vend.papel AS vendedor_papel, vend.tipo AS vendedor_tipo,
-               va.ultima::text AS ultima_visita
-        FROM customers c
-        LEFT JOIN LATERAL (
-          SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome,
-                 u.id AS uid, u.role::text AS papel, u.seller_type AS tipo
-          FROM users u
-          WHERE c.seller_id IS NOT NULL AND c.seller_id <> '' AND (
-                u.id = c.seller_id
-             OR u.omie_vendor_code = c.seller_id
-             OR u.omie_vendor_code = REPLACE(c.seller_id,'omie-vendor-','')
-          )
-          LIMIT 1
-        ) vend ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT MAX(COALESCE(v.actual_check_in, v.scheduled_date))::date AS ultima
-          FROM visit_agenda v
-          WHERE v.customer_id = c.id AND v.visit_status = 'completed'
-        ) va ON TRUE
-        WHERE COALESCE(c.is_supplier,false) = false
-          AND (
-            c.is_active = true
-            OR EXISTS (SELECT 1 FROM visit_agenda vj
-                        WHERE vj.customer_id = c.id
-                          AND vj.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date)
-          )
-          ${filtroCarteira}
-        LIMIT 20000`))).rows as any[];
-
-      // O que REALMENTE esteve na agenda ate hoje, dentro da janela.
-      const passadoPorCliente = new Map<string, string[]>();
-      try {
-        const passado = (await db.execute(sql.raw(`
-          SELECT v.customer_id, v.scheduled_date::date::text AS d
-          FROM visit_agenda v
-          WHERE v.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date
-          LIMIT 400000`))).rows as any[];
-        for (const p of passado) {
-          const k = String(p.customer_id || "");
-          if (!k || !p.d) continue;
-          const l = passadoPorCliente.get(k);
-          if (l) { if (!l.includes(p.d)) l.push(p.d); } else passadoPorCliente.set(k, [p.d]);
-        }
-      } catch (e: any) { console.warn("[carteira-agenda] passado:", e?.message); }
-
-      // PEDIDO NA ULTIMA VISITA. O fechamento de um card grava sempre uma linha
-      // em order_history — com venda (status 'completed') ou sem venda. Entao a
-      // linha MAIS RECENTE de cada cliente e' o registro da ultima visita, e o
-      // valor dela responde "teve pedido?". Sem venda vira 0.
-      // Uma varredura so' (DISTINCT ON), nao um lateral por cliente.
-      const pedidoPorCliente = new Map<string, { valor: number; data: string | null }>();
-      try {
-        const pedidos = (await db.execute(sql.raw(`
-          SELECT DISTINCT ON (sc.customer_id)
-                 sc.customer_id,
-                 oh.order_date::date::text AS d,
-                 CASE WHEN oh.status = 'completed'
-                      THEN COALESCE(NULLIF(oh.total_value::text,'')::numeric, 0)
-                      ELSE 0 END::float AS valor
-          FROM order_history oh
-          JOIN sales_cards sc ON sc.id = oh.sales_card_id
-          WHERE oh.order_date >= (now() - interval '18 months')
-          ORDER BY sc.customer_id, oh.order_date DESC
-          LIMIT 100000`))).rows as any[];
-        for (const p of pedidos) {
-          const k = String(p.customer_id || "");
-          if (k) pedidoPorCliente.set(k, { valor: Number(p.valor || 0), data: p.d || null });
-        }
-      } catch (e: any) { console.warn("[carteira-agenda] pedidos:", e?.message); }
-
-      const itens: any[] = [];
-      for (const r of clientes) {
-        const dias = diasDoCadastro(r.weekdays);
-        // Futuro: projetado do cadastro. Passado: o que esteve marcado de fato.
-        const futuro = projetarDatas({
-          dias,
-          periodicidade: String(r.periodicidade || "semanal"),
-          ancora: r.ultima_visita || null,
-          inicioFornecimento: r.inicio_fornecimento || null,
-          ini: amanha, fim,
-        });
-        const anteriores = (passadoPorCliente.get(String(r.id)) || []).filter((d) => {
-          const w = dataLocal(d).getDay();
-          return w >= 1 && w <= 5;
-        });
-        const datas = Array.from(new Set([...anteriores, ...futuro])).sort();
-        if (!datas.length) continue;
-        itens.push({
-          id: String(r.id),
-          tipo: r.is_lead ? "lead" : "cliente",
-          nome: String(r.fantasy_name || r.name || "").trim() || "(sem nome)",
-          cidade: r.city || "",
-          vendedor: String(r.vendedor || "Sem vendedor"),
-          sellerId: String(r.seller_id || ""),
-          // Mesma regra de server/lead-capture.ts:51 — role OU seller_type.
-          papel: (String(r.vendedor_papel || "") === "telemarketing"
-               || String(r.vendedor_tipo || "") === "telemarketing") ? "telemarketing" : "vendedor",
-          usuarioId: String(r.vendedor_uid || ""),
-          ativo: r.is_active !== false,
-          // Lead e' SEMPRE presencial, mesmo que o cadastro esteja marcado virtual.
-          canal: r.is_lead ? "presencial" : (r.virtual ? "virtual" : "presencial"),
-          periodicidade: String(r.periodicidade || "semanal"),
-          dias,
-          ultimaVisita: r.ultima_visita || null,
-          pedidoUltimaVisita: pedidoPorCliente.get(String(r.id))?.valor ?? 0,
-          dataUltimoPedido: pedidoPorCliente.get(String(r.id))?.data ?? null,
-          datas,
-        });
-      }
-
-      // LEADS (tabela propria): entram pela data de proximo contato e sao
-      // SEMPRE presenciais. Nao tem periodicidade — e' um retorno agendado.
-      try {
-        const leads = (await db.execute(sql.raw(`
-          SELECT l.id, l.fantasy_name, l.city, l.assigned_to, l.next_contact_date::date::text AS retorno,
-                 COALESCE(vend.nome,'Sem vendedor') AS vendedor
-          FROM leads l
-          LEFT JOIN LATERAL (
-            SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome
-            FROM users u WHERE l.assigned_to IS NOT NULL AND u.id = l.assigned_to LIMIT 1
-          ) vend ON TRUE
-          WHERE COALESCE(l.status::text,'pending') NOT IN ('converted','discarded','descartado','convertido')
-            AND l.next_contact_date::date BETWEEN '${ini}' AND '${fim}'
-            ${filtroLead}
-          LIMIT 5000`))).rows as any[];
-        for (const l of leads) {
-          const d = l.retorno ? dataLocal(l.retorno) : null;
-          if (!d || d.getDay() === 0 || d.getDay() === 6) continue;
-          itens.push({
-            id: String(l.id),
-            tipo: "lead",
-            nome: String(l.fantasy_name || "").trim() || "(lead sem nome)",
-            cidade: l.city || "",
-            vendedor: String(l.vendedor || "Sem vendedor"),
-            sellerId: String(l.assigned_to || ""),
-            ativo: true,
-            canal: "presencial",
-            periodicidade: "retorno",
-            dias: [NUM_DIA[d.getDay()]],
-            ultimaVisita: null,
-            // Lead nao tem card de venda fechado — nao ha pedido anterior.
-            pedidoUltimaVisita: 0,
-            dataUltimoPedido: null,
-            datas: [l.retorno],
-          });
-        }
-      } catch (e: any) {
-        console.warn("[carteira-agenda] leads:", e?.message);
-      }
-
+      const { semanas, itens } = await montarJanela(esc, hoje);
       // TETO DO DIA: a tela pinta de amarelo quem estourou, e a Inbox recebe o
       // aviso. A verificacao roda SOLTA, depois da resposta — a tela nunca
       // espera por ela e nunca quebra por causa dela.
