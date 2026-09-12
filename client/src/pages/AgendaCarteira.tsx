@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Download, Search, ArrowUp, ArrowDown, ChevronsUpDown, Info, CalendarDays, Users } from "lucide-react";
+import { Download, Search, ArrowUp, ArrowDown, ChevronsUpDown, Info, CalendarDays, Users, RefreshCw } from "lucide-react";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
 type Item = {
@@ -126,7 +126,7 @@ export default function AgendaCarteira() {
   const jaRolou = useRef(false);
 
   const qc = useQueryClient();
-  const { data, isLoading, error } = useQuery<any>({
+  const { data, isLoading, error, isFetching, refetch, dataUpdatedAt } = useQuery<any>({
     queryKey: ["/api/carteira/agenda"],
     queryFn: async () => {
       const r = await fetch("/api/carteira/agenda", { credentials: "include" });
@@ -462,6 +462,21 @@ export default function AgendaCarteira() {
             )}
           </div>
           <div className="ml-auto flex items-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              data-testid="button-atualizar-agenda"
+              title="Reler os dados e recalcular os números do quadro"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
+              {isFetching ? "Atualizando…" : "Atualizar"}
+              {dataUpdatedAt && !isFetching && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {new Date(dataUpdatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </Button>
             <Popover
               onOpenChange={(aberto) => {
                 if (!aberto) return setRascunhoTeto(null);
@@ -671,6 +686,12 @@ export default function AgendaCarteira() {
                       fornecedores e leads. Não existe campo de cidade no cadastro de usuário — os clientes é que servem
                       de mapa. <b>Quem não tem coordenada de casa não recebe destaque nenhum</b>: sem origem não há com
                       o que comparar, e marcar tudo seria pior do que não marcar nada.
+                    </p>
+                    <p>
+                      <b>Atualização.</b> O quadro é recalculado do cadastro a cada vez que a tela abre — ele já
+                      nasce atual. O botão <b>Atualizar</b> força uma releitura agora, e o horário ao lado dele diz de
+                      quando são os números na tela. Os avisos de dia sobrecarregado também passam por uma varredura
+                      automática <b>todo dia às 7h</b>, que cobre todas as carteiras, inclusive as que ninguém abriu.
                     </p>
                     <p className="text-muted-foreground text-xs">
                       Quem atende em mais de um dia da semana aparece em todos eles na semana visitada. O número conta
