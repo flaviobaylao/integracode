@@ -1306,6 +1306,9 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   cnpj: z.string().nullable().optional(),
   // Data de início do fornecimento como opcional (aceita string ISO ou Date)
   serviceStartDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
+  // Semana de atendimento: o CustomerModal valida por este schema, entao um
+  // valor livre passaria direto para o banco sem este enum.
+  semanaAtendimento: z.enum(["toda", "impar", "par", "1", "2", "3", "ultima"]).optional().default("toda"),
   // Validação de weekdays: deve ser JSON array com 0-2 dias (opcional)
   weekdays: z.string().optional().default('[]').refine(
     (val) => {
