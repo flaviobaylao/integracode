@@ -187,7 +187,7 @@ export default function AgendaCarteira() {
     const foraDaOrigem = new Map<string, Map<string, number>>();
     for (const it of base) {
       const balde = baldeDe(it);
-      const origem = chaveCidade(cidadeOrigem[it.sellerId] || "");
+      const origem = chaveCidade(cidadeCanonica(cidadeOrigem[it.sellerId] || ""));
       const cidade = cidadeCanonica(it.cidade) || "";
       for (const dt of it.datas) {
         const s = semanaDaData(dt);
@@ -219,9 +219,12 @@ export default function AgendaCarteira() {
     return m;
   }, [todos]);
 
+  // Item de LEAD nao carrega papel: se ele entrasse aqui, sobrescreveria o papel
+  // de um telemarketing que tambem tem leads e ele passaria a ser cobrado pelo
+  // teto de vendedor. So' itens que declaram o papel contam.
   const papelDoVendedor = useMemo(() => {
     const m = new Map<string, Papel>();
-    for (const i of todos) if (i.sellerId) m.set(i.sellerId, i.papel === "telemarketing" ? "telemarketing" : "vendedor");
+    for (const i of todos) if (i.sellerId && i.papel) m.set(i.sellerId, i.papel === "telemarketing" ? "telemarketing" : "vendedor");
     return m;
   }, [todos]);
 
