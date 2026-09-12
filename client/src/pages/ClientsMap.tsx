@@ -210,8 +210,13 @@ type PropsPonto = {
   aoMudarDia: (leadId: string, diaLabel: string) => void;
   aoMudarData: (leadId: string, dataISO: string) => void;
   aoMudarVendedor: (c: any, vendedorId: string) => void;
+  /** Salva um patch no cadastro do CLIENTE (dia de rota, telefone, periodicidade, tipo). */
+  aoSalvarCliente: (c: any, patch: Record<string, any>) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente }: PropsPonto) {
+  // Telefone é campo de texto: só grava ao sair do campo (ou Enter), não a cada tecla.
+  const [tel, setTel] = useState<string>(customer.phone || '');
+  useEffect(() => { setTel(customer.phone || ''); }, [customer.phone]);
   const lat = Number(customer.latitude);
   const lng = Number(customer.longitude);
   const color = pinColorFor(customer);
@@ -284,15 +289,43 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                   </p>
                 )}
               </>
+            ) : !ehLead && podeEditar ? (
+              <p className="font-medium flex items-center gap-2">
+                📅 Dia de rota:
+                <select
+                  value={DIAS_OPTIONS.includes(dayName) ? dayName : ''}
+                  disabled={salvandoVendedor}
+                  onChange={(e) => e.target.value && aoSalvarCliente(customer, { weekdays: e.target.value })}
+                  className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                  data-testid={`select-customer-day-${customer.id}`}
+                >
+                  <option value="">Sem dia</option>
+                  {DIAS_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </p>
             ) : (
               <p className="font-medium">
                 📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
               </p>
             )}
-            {customer.virtualService === true && (
-              <p className="font-medium text-red-600 dark:text-red-400">🖥️ Atendimento virtual</p>
+            {!ehLead && podeEditar ? (
+              <p className="flex items-center gap-2">
+                📞
+                <input
+                  type="text"
+                  value={tel}
+                  disabled={salvandoVendedor}
+                  onChange={(e) => setTel(e.target.value)}
+                  onBlur={() => { if (tel.trim() !== String(customer.phone || '').trim()) aoSalvarCliente(customer, { phone: tel.trim() }); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  placeholder="Telefone"
+                  className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800 w-[140px]"
+                  data-testid={`input-customer-phone-${customer.id}`}
+                />
+              </p>
+            ) : (
+              !!customer.phone && <p>📞 {customer.phone}</p>
             )}
-            {!!customer.phone && <p>📞 {customer.phone}</p>}
             {podeEditar && vendedores.length > 0 ? (
               <p className="font-medium flex items-center gap-2">
                 👤 Vendedor:
@@ -310,10 +343,40 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
             ) : (
               <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
             )}
-            {customer.visitPeriodicity && (
-              <p className="font-medium">
-                🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}
-              </p>
+            {!ehLead && podeEditar ? (
+              <>
+                <p className="font-medium flex items-center gap-2">
+                  🔁 Periodicidade:
+                  <select
+                    value={String(customer.visitPeriodicity || '').toLowerCase()}
+                    disabled={salvandoVendedor}
+                    onChange={(e) => e.target.value && aoSalvarCliente(customer, { visitPeriodicity: e.target.value })}
+                    className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                    data-testid={`select-customer-periodicity-${customer.id}`}
+                  >
+                    <option value="">Sem periodicidade</option>
+                    {PERIODICIDADE_OPTIONS.map((pp) => <option key={pp} value={pp.toLowerCase()}>{pp}</option>)}
+                  </select>
+                </p>
+                <p className="font-medium flex items-center gap-2">
+                  🖥️ Tipo:
+                  <select
+                    value={customer.virtualService === true ? 'Virtual' : 'Presencial'}
+                    disabled={salvandoVendedor}
+                    onChange={(e) => aoSalvarCliente(customer, { virtualService: e.target.value === 'Virtual' })}
+                    className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                    data-testid={`select-customer-type-${customer.id}`}
+                  >
+                    {ATENDIMENTO_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </p>
+              </>
+            ) : (
+              customer.visitPeriodicity && (
+                <p className="font-medium">
+                  🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}
+                </p>
+              )
             )}
           </div>
           {/* Lead nao e cliente: o modal de edicao de cliente nao serve para ele. */}
@@ -357,7 +420,10 @@ export default function ClientsMap() {
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
   const canAccess = user && ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'].includes(user.role);
-  const canEditCustomer = user && ['admin', 'coordinator', 'administrative'].includes(user.role);
+  // 🔒 ALTERAR pelo mapa é só do ADMIN (12/set/2026, decisão do Flavio): coordenação,
+  // administrativo, vendedor e telemarketing apenas VISUALIZAM. Vale para tudo no card:
+  // editar cliente, dia de rota, data do lead, telefone, vendedor, periodicidade e tipo.
+  const canEditCustomer = user?.role === 'admin';
 
   // Uma consulta por situação: só busca a situação marcada (vazio = todas).
   const situacaoOn = (label: string) => situacoes.length === 0 || situacoes.includes(label);
@@ -626,6 +692,23 @@ export default function ClientsMap() {
     }
   }, [queryClient]);
 
+  // ✏️ Edição rápida do CADASTRO do cliente pelo card (dia de rota, telefone, periodicidade, tipo).
+  // Usa o mesmo PATCH /api/customers/:id da tela de cadastro — inclusive os efeitos dele
+  // (⚠️ trocar o TELEFONE dispara a confirmação de telefone por WhatsApp, como no cadastro).
+  const salvarCliente = useCallback(async (ponto: any, patch: Record<string, any>) => {
+    const id = String(ponto.id);
+    setSalvandoVendedorId(id);
+    try {
+      await apiRequest('PATCH', `/api/customers/${id}`, patch);
+      await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
+    } catch (e: any) {
+      console.error('[MAPA] falha ao salvar o cadastro do cliente:', e);
+      alert('Não foi possível salvar: ' + (e?.message || e));
+    } finally {
+      setSalvandoVendedorId(null);
+    }
+  }, [queryClient]);
+
   const handleEditCustomer = useCallback((customer: Customer) => {
     setSelectedCustomer(customer);
     setIsEditModalOpen(true);
@@ -646,8 +729,9 @@ export default function ClientsMap() {
       aoMudarDia={mudarDiaDoLead}
       aoMudarData={mudarDataDoLead}
       aoMudarVendedor={mudarVendedor}
+      aoSalvarCliente={salvarCliente}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
