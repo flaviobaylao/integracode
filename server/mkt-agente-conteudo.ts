@@ -377,6 +377,12 @@ async function escrever(sistema: string, pedido: string): Promise<{ titulo: stri
       messages: [{ role: 'system', content: sistema }, { role: 'user', content: pedido }],
     });
     const bruto = r?.choices?.[0]?.message?.content || '';
+    // Caixa de Decisoes (set/2026): este era o unico LLM fora da conta de custo.
+    try {
+      const { registrarRun } = await import('./mkt-agent-runs');
+      await registrarRun({ agente: AGENTE, gatilho: 'cron', canal: 'interno', modelo: 'gpt-4o-mini', provedor: 'openai',
+        tokensIn: Number(r?.usage?.prompt_tokens || 0), tokensOut: Number(r?.usage?.completion_tokens || 0), rodadas: 1, sucesso: !!bruto });
+    } catch {}
     const j = JSON.parse(bruto);
     const copy = String(j.copy || '').trim();
     if (!copy) return null;

@@ -27,6 +27,8 @@ const PRECO_PADRAO: Record<string, { in: number; out: number }> = {
   'claude-haiku-4-5': { in: 1, out: 5 },
   'claude-sonnet-4-6': { in: 3, out: 15 },
   'claude-opus-4-8': { in: 15, out: 75 },
+  // Caixa de Decisoes (set/2026): o agente de conteudo roda em OpenAI e ficava fora da conta.
+  'gpt-4o-mini': { in: 0.15, out: 0.6 },
 };
 
 // Familia do modelo: 'claude-haiku-4-5-20251001' -> 'claude-haiku-4-5'
@@ -35,6 +37,7 @@ export function familiaModelo(m?: string): string {
   if (x.startsWith('claude-haiku-4-5')) return 'claude-haiku-4-5';
   if (x.startsWith('claude-opus-4-8')) return 'claude-opus-4-8';
   if (x.startsWith('claude-sonnet-4-6')) return 'claude-sonnet-4-6';
+  if (x.startsWith('gpt-4o-mini')) return 'gpt-4o-mini';
   return 'claude-sonnet-4-6';
 }
 
@@ -134,6 +137,7 @@ export type AgentRun = {
   duracaoMs?: number;
   sucesso?: boolean;
   erro?: string | null;
+  provedor?: 'anthropic' | 'openai';
 };
 
 export async function registrarRun(r: AgentRun): Promise<void> {
@@ -145,17 +149,18 @@ export async function registrarRun(r: AgentRun): Promise<void> {
     const tin = Math.max(0, Number(r.tokensIn || 0));
     const tout = Math.max(0, Number(r.tokensOut || 0));
     const { usd, brl } = await calcularCusto(r.modelo || '', tin, tout);
+    try { await db.execute(sql.raw("ALTER TABLE mkt_agent_runs ADD COLUMN IF NOT EXISTS provedor varchar NOT NULL DEFAULT 'anthropic'")); } catch {}
     await db.execute(sql`
       INSERT INTO mkt_agent_runs
         (agente, gatilho, canal, entrada_ref, modelo, tokens_in, tokens_out,
-         custo_usd, custo_brl, rodadas, ferramentas, duracao_ms, sucesso, erro)
+         custo_usd, custo_brl, rodadas, ferramentas, duracao_ms, sucesso, erro, provedor)
       VALUES
         (${r.agente}, ${r.gatilho || 'chat'}, ${r.canal || null}, ${r.entradaRef || null},
          ${r.modelo || null}, ${tin}, ${tout}, ${usd.toFixed(6)}, ${brl.toFixed(4)},
          ${Math.max(1, Number(r.rodadas || 1))},
          ${JSON.stringify(r.ferramentas || [])}::jsonb,
          ${r.duracaoMs == null ? null : Math.round(r.duracaoMs)},
-         ${r.sucesso !== false}, ${r.erro || null})`);
+         ${r.sucesso !== false}, ${r.erro || null}, ${r.provedor || 'anthropic'})`);
   } catch (e: any) {
     console.error('[MKT-RUNS] falha ao registrar execucao:', e?.message || e);
   }
