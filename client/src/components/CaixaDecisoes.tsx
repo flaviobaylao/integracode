@@ -33,7 +33,7 @@ async function apiPost(url: string, body: any) {
 const brl = (v: any) => "R$ " + Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const num = (v: any) => Number(v || 0).toLocaleString("pt-BR");
 
-const TIPO_LABEL: Record<string, string> = { regua: "Régua WhatsApp", alerta: "Alerta ao vendedor", peca: "Peça de conteúdo", campanha: "Campanha + link", cupom: "Cupom", visita: "Visita", anuncio: "Anúncio" };
+const TIPO_LABEL: Record<string, string> = { regua: "Régua WhatsApp", alerta: "Alerta ao vendedor", peca: "Peça de conteúdo", campanha: "Campanha + link", cupom: "Cupom", visita: "Visita", anuncio: "Anúncio", sistema: "Ajuste do sistema" };
 const NIVEL: Record<number, { t: string; cor: string }> = {
   0: { t: "N0 · executa e informa", cor: "#16a34a" },
   1: { t: "N1 · executa no teto", cor: "#0891b2" },
@@ -177,6 +177,7 @@ export default function CaixaDecisoes() {
                             </div>
                           )}
                           {a.parametros?.texto && <pre className="text-xs whitespace-pre-wrap bg-muted p-2 rounded">{a.parametros.texto}</pre>}
+                          {a.tipo === "sistema" && <pre className="text-xs whitespace-pre-wrap bg-muted p-2 rounded">{a.parametros?.tipo === "prompt" ? "Novo prompt de " + a.parametros.agente + ":\n\n" + a.parametros.system_prompt : JSON.stringify(a.parametros, null, 1)}</pre>}
                           <pre className="text-[11px] whitespace-pre-wrap bg-muted p-2 rounded text-muted-foreground">{JSON.stringify(a.evidencia || {}, null, 1)}</pre>
                           <div className="text-xs text-muted-foreground">expira {a.expira_em ? new Date(a.expira_em).toLocaleString("pt-BR") : "—"}</div>
                         </div>
@@ -215,7 +216,75 @@ export default function CaixaDecisoes() {
       <Radar politicas={d.politicas || []} aoMudar={recarregar} />
       <AgentesConteudo />
       <Aprendizados aoMudar={recarregar} />
+      <Auditor aoMudar={recarregar} />
     </>
+  );
+}
+
+function Auditor({ aoMudar }: { aoMudar: () => void }) {
+  const { toast } = useToast();
+  const [rodando, setRodando] = useState(false);
+  const [verTudo, setVerTudo] = useState(false);
+  const q = useQuery<any>({ queryKey: ["/api/mkt/auditor"], queryFn: () => apiGet("/api/mkt/auditor") });
+  const d = q.data || {};
+  const u = d.ultimo || null;
+  const checagens: any[] = u?.checagens || [];
+  const ruins = checagens.filter((c: any) => c.gravidade !== "ok");
+  const serie: any[] = d.serie || [];
+  async function rodar() {
+    setRodando(true);
+    try { const r = await apiPost("/api/mkt/auditor/rodar", {}); toast({ title: "Auditor: nota " + r.nota + "/100", description: (r.resumo || "") + (r.melhorias?.length ? " · " + r.melhorias.length + " melhoria(s) na Caixa" : "") }); q.refetch(); aoMudar(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setRodando(false);
+  }
+  async function autoajuste(ligado: boolean) {
+    try { await apiPost("/api/mkt/auditor/autoajuste", { ligado }); q.refetch(); toast({ title: ligado ? "Autoajuste ligado: parâmetros dentro dos limites mudam sozinhos (e avisam)" : "Autoajuste desligado: tudo passa por você" }); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  const COR: Record<string, string> = { ok: "#16a34a", atencao: "#d97706", alerta: "#dc2626" };
+  const notaCor = u ? (u.nota >= 80 ? "#16a34a" : u.nota >= 60 ? "#d97706" : "#dc2626") : "#9ca3af";
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+          <i className="fas fa-stethoscope text-muted-foreground" /> Auditor da Central
+          {u && <Badge variant="outline" style={{ borderColor: notaCor, color: notaCor }}>nota {u.nota}/100</Badge>}
+          <span className="ml-auto flex gap-1 flex-wrap">
+            <Button size="sm" variant={d.autoajuste ? "default" : "outline"} onClick={() => autoajuste(!d.autoajuste)}>{d.autoajuste ? "Autoajuste: ligado" : "Autoajuste: desligado"}</Button>
+            <Button size="sm" disabled={rodando} onClick={rodar}>{rodando ? "Auditando…" : "Auditar agora"}</Button>
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Todo dia 05:45 o auditor verifica o próprio sistema (crons, erros, aprovações, templates, criativos, custo, conversão medida × esperada), corrige sozinho o que é seguro (expirar, descartar lote parado, hash, visão) e propõe melhorias como ações do tipo <b>sistema</b> na Caixa: parâmetro dentro de limites, política de autonomia ou prompt de agente (versão anterior guardada). Com autoajuste ligado, só os parâmetros mudam sozinhos; política e prompt sempre passam por você.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {!u && <p className="text-xs text-muted-foreground">Ainda não rodou. Clique em Auditar agora.</p>}
+        {u && (
+          <>
+            {serie.length > 1 && (
+              <div className="flex items-end gap-1 h-10">
+                {serie.map((p: any, i: number) => <div key={i} title={p.data + ": " + p.nota} className="flex-1 rounded-t" style={{ height: Math.max(4, Number(p.nota) * 0.4) + "px", background: Number(p.nota) >= 80 ? "#16a34a" : Number(p.nota) >= 60 ? "#d97706" : "#dc2626", opacity: 0.8 }} />)}
+              </div>
+            )}
+            {u.texto && <div className="border-l-4 pl-3 text-muted-foreground whitespace-pre-wrap" style={{ borderColor: ROXO }}>{String(u.texto).split("\n").slice(0, 3).join("\n")}</div>}
+            <div className="text-xs text-muted-foreground">{new Date(u.criado_em).toLocaleString("pt-BR")} · {checagens.length} checagens · {ruins.length} ponto(s) de atenção · {(u.autofix || []).length} autocorreção(ões)</div>
+            <ul className="space-y-1">
+              {(verTudo ? checagens : ruins).map((c: any) => (
+                <li key={c.id} className="flex gap-2 items-start text-xs">
+                  <span style={{ color: COR[c.gravidade] }}>●</span>
+                  <span><b>{c.titulo}</b> <span className="text-muted-foreground">— {c.detalhe}</span></span>
+                </li>
+              ))}
+            </ul>
+            <button className="text-xs underline" onClick={() => setVerTudo(!verTudo)}>{verTudo ? "só o que precisa de atenção" : "ver todas as " + checagens.length + " checagens"}</button>
+            {u.melhorias?.criadas?.length > 0 && (
+              <div className="text-xs"><b>Melhorias propostas:</b> {u.melhorias.criadas.filter((m: any) => m.numero).map((m: any) => "#" + m.numero + " " + m.titulo + (m.auto ? " (aplicada)" : "")).join(" · ")}</div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

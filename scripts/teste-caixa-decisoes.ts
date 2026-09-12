@@ -136,7 +136,7 @@ async function main() {
   await raw(`UPDATE mkt_acoes SET expira_em = now() - interval '1 minute' WHERE numero=${a4.numero}`);
   check((await expirar()) === 1, 'expirou 1');
   const p = await panorama();
-  check(p.ok && p.aprovadores.includes('5562999990000') && p.politicas.length === 7, 'panorama ok');
+  check(p.ok && p.aprovadores.includes('5562999990000') && p.politicas.length === 8, 'panorama ok');
 
   console.log('7) radar: materializacao sem chamar o modelo');
   // simula a resposta do modelo e valida via o mesmo caminho interno (funcao privada -> testa por rodar com chave ausente)
@@ -252,6 +252,57 @@ async function main() {
   await new Promise(r => setTimeout(r, 800));
   const hs: any = (await raw(`SELECT phash FROM mkt_assets WHERE id = ${asset2.id}`)) as any;
   check(hs.rows[0]?.phash === h1, 'cadastro grava o dHash sozinho (' + hs.rows[0]?.phash + ')');
+
+  console.log('10) sprint 4a: executores visita/cupom/sistema, auditor');
+  await raw(`ALTER TABLE visit_agenda ADD COLUMN IF NOT EXISTS seller_id varchar, ADD COLUMN IF NOT EXISTS route_day varchar, ADD COLUMN IF NOT EXISTS recurrence_type varchar, ADD COLUMN IF NOT EXISTS is_virtual boolean DEFAULT false, ADD COLUMN IF NOT EXISTS customer_name varchar, ADD COLUMN IF NOT EXISTS customer_latitude numeric, ADD COLUMN IF NOT EXISTS customer_longitude numeric, ADD COLUMN IF NOT EXISTS customer_address text`);
+  await raw(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS latitude numeric, ADD COLUMN IF NOT EXISTS longitude numeric, ADD COLUMN IF NOT EXISTS address text`);
+  await raw(`CREATE TABLE IF NOT EXISTS coupons (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), code varchar NOT NULL, description text, discount_type varchar NOT NULL DEFAULT 'percent', discount_value numeric(10,2) NOT NULL DEFAULT 0, valid_from timestamp, valid_until timestamp, is_active boolean NOT NULL DEFAULT true, max_uses int, used_count int NOT NULL DEFAULT 0, min_order_value numeric(10,2), created_by_user_id varchar, once_per_customer boolean DEFAULT true, channels varchar DEFAULT 'todos', enabled_2_0 boolean DEFAULT false, created_at timestamp DEFAULT now())`);
+  await salvarPolitica('visita', { nivel_padrao: 0 }, 'teste'); await salvarPolitica('cupom', { nivel_padrao: 0 }, 'teste'); await salvarPolitica('sistema', { nivel_padrao: 0 }, 'teste');
+  const av = await criarAcao({ tipo: 'visita', agente: 'mkt_radar', titulo: 'Visitar 3 padarias que pararam', justificativa: 'ticket alto', publico: { clientes: [{ id: 'c7', nome: 'Cliente 7' }, { id: 'c9', nome: 'Cliente 9' }, { id: 'c11', nome: 'Cliente 11' }] }, parametros: { dias: 1, motivo: 'pararam de comprar' } });
+  const { processarAutomaticas: pa2 } = await import('../server/mkt-acoes');
+  await pa2();
+  const vv: any = ((await raw(`SELECT status, execucao FROM mkt_acoes WHERE numero=${av.numero}`)) as any).rows[0];
+  const nv: any = ((await raw(`SELECT COUNT(*)::int AS n FROM visit_agenda WHERE visit_status = 'pending' AND recurrence_type = 'avulsa'`)) as any).rows[0];
+  check(vv.status === 'executada' && vv.execucao.agendadas === 3 && nv.n === 3, 'visita: 3 agendadas na visit_agenda (' + vv.execucao.data + ')');
+  await pa2();
+  const av2 = await criarAcao({ tipo: 'visita', agente: 'mkt_radar', titulo: 'repete', justificativa: '', publico: { clientes: [{ id: 'c7', nome: 'Cliente 7' }] }, parametros: { dias: 1 } });
+  await pa2();
+  const vv2: any = ((await raw(`SELECT execucao FROM mkt_acoes WHERE numero=${av2.numero}`)) as any).rows[0];
+  check(vv2.execucao.jaTinha === 1 && vv2.execucao.agendadas === 0, 'visita: nao duplica no mesmo dia');
+  const ac = await criarAcao({ tipo: 'cupom', agente: 'mkt_radar', titulo: 'Cupom 10% reativacao', justificativa: '', publico: { regua: 'reativacao', clientes: [{ id: 'c13', nome: 'Cliente 13' }, { id: 'c15', nome: 'Cliente 15' }] }, parametros: { percentual: 25, validade_dias: 14, regua: 'reativacao' } });
+  await pa2();
+  const vc: any = ((await raw(`SELECT status, execucao FROM mkt_acoes WHERE numero=${ac.numero}`)) as any).rows[0];
+  const cp: any = ((await raw(`SELECT code, discount_value, enabled_2_0, max_uses FROM coupons ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
+  check(vc.status === 'executada' && Number(cp.discount_value) === 15 && cp.enabled_2_0 === true && cp.max_uses === 2, 'cupom: criado com teto de 15% (pediu 25) e max_uses = publico (' + cp.code + ')');
+  const tq2: any = ((await raw(`SELECT sugestao FROM mkt_fila_toques WHERE acao_id = '${vc ? (await raw(`SELECT id FROM mkt_acoes WHERE numero=${ac.numero}`) as any).rows[0].id : ''}' LIMIT 1`)) as any).rows[0];
+  check(!!tq2 && /oferecer cupom/.test(tq2.sugestao), 'cupom: lembrete da regua leva o cupom na sugestao (' + (tq2?.sugestao || '').slice(0, 60) + ')');
+  const as1 = await criarAcao({ tipo: 'sistema', agente: 'mkt_auditor', titulo: 'Aumentar lote', justificativa: '', parametros: { tipo: 'setting', chave: 'mkt_recompra_lote_max', valor: 120 } });
+  const as2 = await criarAcao({ tipo: 'sistema', agente: 'mkt_auditor', titulo: 'Fora do limite', justificativa: '', parametros: { tipo: 'setting', chave: 'mkt_recompra_lote_max', valor: 9999 } });
+  const as3 = await criarAcao({ tipo: 'sistema', agente: 'mkt_auditor', titulo: 'Chave proibida', justificativa: '', parametros: { tipo: 'setting', chave: 'oficial_dispatch_mode', valor: 1 } });
+  const as4 = await criarAcao({ tipo: 'sistema', agente: 'mkt_auditor', titulo: 'Prompt do radar', justificativa: '', parametros: { tipo: 'prompt', agente: 'mkt_radar', system_prompt: 'Você é o Radar de Vendas. '.repeat(10), motivo: 'teste' } });
+  await pa2();
+  const st: any = ((await raw(`SELECT numero, status, execucao FROM mkt_acoes WHERE numero IN (${as1.numero},${as2.numero},${as3.numero},${as4.numero}) ORDER BY numero`)) as any).rows;
+  const lote: any = ((await raw(`SELECT value FROM system_settings WHERE key = 'mkt_recompra_lote_max'`)) as any).rows[0];
+  check(st[0].status === 'executada' && lote.value === '120', 'sistema: parametro dentro do limite aplicado (lote_max=120)');
+  check(st[1].status === 'erro' && /limites/.test(st[1].execucao.erro), 'sistema: valor fora do limite recusado');
+  check(st[2].status === 'erro' && /permitidos/.test(st[2].execucao.erro), 'sistema: chave fora da lista recusada');
+  const pv3: any = ((await raw(`SELECT COUNT(*)::int AS n FROM mkt_prompt_versoes WHERE agente = 'mkt_radar'`)) as any).rows[0];
+  const ag3: any = ((await raw(`SELECT system_prompt FROM agentes_config WHERE id = 'mkt_radar'`)) as any).rows[0];
+  check(st[3].status === 'executada' && pv3.n === 1 && /Radar de Vendas\. Você/.test(ag3.system_prompt), 'sistema: prompt trocado com versao anterior guardada');
+  const { checar, autocorrigir, rodar: rodarAud, textoDiagnostico } = await import('../server/mkt-auditor');
+  const ch = await checar();
+  const ids = ch.map(c => c.id);
+  check(ch.length >= 15 && ids.includes('chave_anthropic') && ids.includes('aprovadores') && ids.includes('templates') && ids.includes('caixa_erros'), 'auditor: ' + ch.length + ' checagens (' + ch.filter(c => c.gravidade === 'alerta').length + ' alertas, ' + ch.filter(c => c.gravidade === 'atencao').length + ' atencoes)');
+  check(ch.find(c => c.id === 'chave_anthropic')?.gravidade === 'alerta' && ch.find(c => c.id === 'aprovadores')?.gravidade === 'ok', 'auditor: sem chave = alerta; aprovador cadastrado = ok');
+  await raw(`INSERT INTO mkt_lotes (regua, status, criado_em) VALUES ('todas', 'previsto', now() - interval '3 days')`);
+  const ch2 = await checar();
+  check(ch2.some(c => c.id === 'lotes_orfaos' && c.autofix === 'descartar_lotes'), 'auditor: detecta lote orfao com autofix');
+  const fx = await autocorrigir(ch2);
+  const lo: any = ((await raw(`SELECT COUNT(*)::int AS n FROM mkt_lotes WHERE status = 'previsto' AND criado_em < now() - interval '2 days'`)) as any).rows[0];
+  check(fx.some(f => f.fix === 'descartar_lotes') && lo.n === 0, 'auditor: autocorrecao descartou o lote orfao');
+  const ra = await rodarAud({ quem: 'teste' });
+  const dg: any = ((await raw(`SELECT nota, checagens FROM mkt_diagnosticos ORDER BY criado_em DESC LIMIT 1`)) as any).rows[0];
+  check(ra.ok && typeof ra.nota === 'number' && dg && Array.isArray(dg.checagens) && /Auditor da Central/.test(ra.texto), 'auditor: rodada grava diagnostico (nota ' + ra.nota + ') mesmo sem modelo');
 
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
