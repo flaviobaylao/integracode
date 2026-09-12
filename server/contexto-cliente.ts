@@ -104,6 +104,23 @@ export async function contextoDoCliente(customerId?: string | null): Promise<str
       ? `Proxima visita do vendedor: ${visita}. Se o cliente perguntar quando passam la, e essa data.`
       : 'Sem visita agendada no sistema. Se perguntarem quando o vendedor passa, diga que vai confirmar — nao chute data.');
 
+    // SPRINT 3 (Caixa de Decisoes): se a Central mandou um lembrete de recompra nos
+    // ultimos 14 dias, o atendente precisa saber — e saber o que sugerir. Sem isso a
+    // IA respondia "em que posso ajudar?" a quem acabou de receber "quer repor?".
+    try {
+      const t: any = await db.execute(sql`
+        SELECT regua, sugestao, liberado_em FROM mkt_fila_toques
+         WHERE cliente_id = ${customerId} AND status = 'enfileirado' AND liberado_em >= now() - interval '14 days'
+         ORDER BY liberado_em DESC LIMIT 1`);
+      const toque = t.rows?.[0];
+      if (toque) {
+        const nomes: Record<string, string> = { reposicao: 'lembrete de reposicao', ciclo_furado: 'lembrete de que passou do dia de repor', reativacao: 'convite para voltar a comprar', mix: 'sugestao de ampliar o mix de sabores', pos_primeira: 'acompanhamento pos-primeira compra' };
+        linhas.push('# CONTATO ATIVO RECENTE (a Central de Marketing falou com este cliente)');
+        linhas.push(`Em ${ddmm(toque.liberado_em)} ele recebeu um ${nomes[String(toque.regua)] || 'lembrete'} pelo WhatsApp oficial. Se ele responder "quero", "pode mandar", "igual ao ultimo" ou algo assim, e resposta a ESSE contato: monte o pedido, nao pergunte "em que posso ajudar".`);
+        if (toque.sugestao) linhas.push(`Ultimo pedido dele (sugira repetir, ajustando se ele quiser): ${toque.sugestao}.`);
+      }
+    } catch { /* tabela pode nao existir ainda */ }
+
     return linhas.join('\n');
   } catch (e: any) {
     console.error('[CTX-CLIENTE]', e?.message || e);
