@@ -234,6 +234,11 @@ export const customers = pgTable("customers", {
   sellerId: varchar("seller_id").notNull(),
   weekdays: varchar("weekdays").notNull(), // JSON array with 1-2 weekdays: ["segunda"] or ["segunda","quarta"]
   visitPeriodicity: visitPeriodicityEnum("visit_periodicity").notNull().default('semanal'),
+  // SEMANA DE ATENDIMENTO (segundo eixo da rota): 'toda' | 'impar' | 'par' |
+  // '1' | '2' | '3' | 'ultima'. Sem isto o dia da semana repete o cliente em
+  // todas as semanas e nao da para dizer "Caldas Novas na ultima terca".
+  // varchar (nao enum) de proposito: o build de producao nao roda db:push.
+  semanaAtendimento: varchar("semana_atendimento").notNull().default('toda'),
   isActive: boolean("is_active").notNull().default(true),
   inactivatedAt: timestamp("inactivated_at"),
   lastSaleDate: timestamp("last_sale_date"),

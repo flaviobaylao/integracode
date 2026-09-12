@@ -319,3 +319,141 @@ export function getNextVisitWithOverride(
   const result = calculateNextVisitDate(input);
   return result.nextDate;
 }
+
+// ============================================================================
+// SEMANA DE ATENDIMENTO  (Grade de Roteiro — 12/set/2026)
+//
+// O dia da semana sozinho nao consegue dizer "Caldas Novas na ULTIMA terca do
+// mes": ele repete o cliente em todas as semanas. A semana de atendimento e' o
+// segundo eixo da rota — dia da semana X semana do mes.
+//
+// REGRA DO QUINZENAL (decidida com o Flavio): 1ª e 3ª ocorrencia, ou 2ª e 4ª.
+// Vence a previsibilidade ("sempre a 1ª e a 3ª terca") sobre o intervalo exato:
+// na virada de um mes com 5 tercas o intervalo vira 21 dias, 4 vezes por ano.
+//
+// 'toda' e' o padrao e reproduz exatamente o comportamento anterior.
+// NAO existe o valor '4': em 8 dos 12 meses de 2026 a 4ª ocorrencia E' a ultima,
+// e dois clientes configurados diferente cairiam no mesmo dia sem ninguem
+// entender por que. Para a quarta semana existe um valor so: 'ultima'.
+// ============================================================================
+
+export type SemanaAtendimento = "toda" | "1" | "2" | "3" | "ultima" | "impar" | "par";
+
+export const SEMANAS_ATENDIMENTO: SemanaAtendimento[] = ["toda", "impar", "par", "1", "2", "3", "ultima"];
+
+export const ROTULO_SEMANA: Record<SemanaAtendimento, string> = {
+  toda: "Toda semana",
+  impar: "1ª e 3ª do mês",
+  par: "2ª e 4ª do mês",
+  "1": "1ª do mês",
+  "2": "2ª do mês",
+  "3": "3ª do mês",
+  ultima: "Última do mês",
+};
+
+/** Normaliza o que veio do banco. Qualquer coisa fora da lista vira 'toda'. */
+export function normalizarSemana(v: any): SemanaAtendimento {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "4") return "ultima";           // '4' sempre foi a ultima, na pratica
+  return (SEMANAS_ATENDIMENTO as string[]).includes(s) ? (s as SemanaAtendimento) : "toda";
+}
+
+/** Quais semanas do mes a regra seleciona. [] = todas. */
+export function ocorrenciasDaSemana(semana: SemanaAtendimento): (number | "ultima")[] {
+  switch (semana) {
+    case "impar": return [1, 3];
+    case "par": return [2, 4];
+    case "1": return [1];
+    case "2": return [2];
+    case "3": return [3];
+    case "ultima": return ["ultima"];
+    default: return [];
+  }
+}
+
+/**
+ * As SEGUNDAS-FEIRAS de um mes, em ordem. Cada segunda abre uma semana, e a
+ * semana pertence ao mes da segunda dela — definicao dada pelo Flavio em
+ * ago/2026 e ja usada pelo quadro da Agenda da Carteira. Por isso a semana e'
+ * contada pela segunda, e nao pela enesima ocorrencia do dia de rota: assim a
+ * coluna do quadro e a regra do cliente falam da mesma semana.
+ */
+export function segundasDoMes(ano: number, mes: number): Date[] {
+  const fora: Date[] = [];
+  const ultimoDia = new Date(ano, mes + 1, 0).getDate();
+  for (let d = 1; d <= ultimoDia; d++) {
+    const data = new Date(ano, mes, d);
+    if (data.getDay() === 1) fora.push(data);
+  }
+  return fora;
+}
+
+/** A segunda-feira que abre a enesima semana do mes ('ultima' = a ultima). */
+export function segundaDaSemana(ano: number, mes: number, n: number | "ultima"): Date | null {
+  const segundas = segundasDoMes(ano, mes);
+  if (!segundas.length) return null;
+  return n === "ultima" ? segundas[segundas.length - 1] : segundas[n - 1] || null;
+}
+
+/**
+ * Datas das semanas de um MES que casam com (dias da semana X semana).
+ * Atencao: a semana pode atravessar a virada — se a ultima segunda de novembro
+ * e' dia 30, a terca dessa semana e' 1º de dezembro, e ela ainda e' a ultima
+ * semana de NOVEMBRO. E' a regra que o Flavio definiu para o quadro.
+ */
+export function datasDoMesPelaRegra(
+  ano: number, mes: number, alvos: number[], semana: SemanaAtendimento,
+): Date[] {
+  const uteis = alvos.filter((n) => n >= 1 && n <= 5);
+  if (!uteis.length) return [];
+  const quais = ocorrenciasDaSemana(semana);
+  const segundas = quais.length
+    ? quais.map((n) => segundaDaSemana(ano, mes, n)).filter((d): d is Date => !!d)
+    : segundasDoMes(ano, mes);
+  const fora: Date[] = [];
+  for (const segunda of segundas) {
+    for (const dow of uteis) {
+      const d = new Date(segunda);
+      d.setDate(d.getDate() + (dow - 1));
+      fora.push(d);
+    }
+  }
+  return fora.sort((a, b) => a.getTime() - b.getTime());
+}
+
+/**
+ * Datas da regra dentro de uma janela [ini, fim] (ambas inclusivas).
+ * Determinista: nao depende de ancora nem de encadeamento, entao visita
+ * atrasada nao empurra o ciclo inteiro para a frente.
+ */
+export function datasPelaRegra(
+  ini: Date, fim: Date, alvos: number[], semana: SemanaAtendimento,
+): Date[] {
+  const fora: Date[] = [];
+  // Comeca um mes antes: a ultima semana do mes anterior pode cair dentro da
+  // janela (segunda dia 30, terca dia 1º do mes seguinte).
+  const cursor = new Date(ini.getFullYear(), ini.getMonth() - 1, 1);
+  const limite = new Date(fim.getFullYear(), fim.getMonth(), 1);
+  while (cursor <= limite) {
+    for (const d of datasDoMesPelaRegra(cursor.getFullYear(), cursor.getMonth(), alvos, semana)) {
+      if (d >= ini && d <= fim) fora.push(d);
+    }
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return Array.from(new Set(fora.map((d) => d.getTime()))).sort((a, b) => a - b).map((t) => new Date(t));
+}
+
+/**
+ * Que semana do mes esta data ocupa, contada pela SEGUNDA-FEIRA da semana dela
+ * (e por isso o mes pode ser o anterior, na virada). Devolve tambem se e' a
+ * ultima semana daquele mes.
+ */
+export function semanaDoMesDaData(d: Date): { mes: number; ano: number; n: number; ultima: boolean } {
+  const segunda = new Date(d);
+  segunda.setDate(segunda.getDate() - ((segunda.getDay() + 6) % 7));
+  const ano = segunda.getFullYear();
+  const mes = segunda.getMonth();
+  const segundas = segundasDoMes(ano, mes);
+  const n = segundas.findIndex((x) => x.getDate() === segunda.getDate()) + 1;
+  return { mes, ano, n: n || 1, ultima: n === segundas.length };
+}
