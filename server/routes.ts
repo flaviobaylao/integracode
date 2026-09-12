@@ -16981,11 +16981,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn(`⚠️ Erro ao buscar clientes virtuais:`, virtualError);
       }
 
+      // 🔀 ORDEM MANUAL (arrastar-e-soltar): se o vendedor definiu a ordem no card, NÃO
+      // reposicionamos os leads — respeitamos exatamente o optimizedOrder salvo. (set/2026)
+      let __manualOrder = false;
+      try {
+        const __moRow: any = await db.execute(sql`SELECT manual_order FROM daily_routes WHERE id = ${route.id} LIMIT 1`);
+        __manualOrder = !!((__moRow?.rows || __moRow || [])[0]?.manual_order);
+      } catch { /* coluna pode nao existir ainda: trata como ordem automatica */ }
+
       // Posiciona os RETORNOS DE LEAD dentro da sequencia da rota pela COORDENADA
       // (cheapest insertion), em vez de deixa-los no fim. Mantem a ordem dos clientes e
       // insere cada lead no ponto que menos aumenta a distancia da rota. Vale por rota do
       // dia (cada data tem sua sequencia). Paradas sem coordenada (ex.: virtuais) ficam no fim.
-      try {
+      // Quando a rota esta em ORDEM MANUAL, este reposicionamento e PULADO.
+      if (!__manualOrder) try {
         const { calculateDistance: _cd } = await import('./routeOptimizationService');
         const hasCoords = (v: any) => v && v.customerLatitude != null && v.customerLongitude != null
           && !isNaN(parseFloat(v.customerLatitude)) && !isNaN(parseFloat(v.customerLongitude));
@@ -17707,6 +17716,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Aplicar otimização à rota (salvar no banco)
+  // 🔀 REORDENAR MANUALMENTE as visitas (arrastar-e-soltar no card da Rota do Dia).
+  // Recebe { order: string[] } — a nova ordem COMPLETA dos stopIds (mesma base do optimizedOrder).
+  // Valida que é uma permutação das paradas atuais, persiste e marca manual_order = true (para o
+  // GET parar de reposicionar os leads por proximidade). "Otimizar Rota" volta manual_order a false.
+  app.post('/api/daily-routes/:routeId/reorder', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser;
+      const { routeId } = req.params;
+      const incoming = Array.isArray(req.body?.order) ? req.body.order.map((s: any) => String(s)) : null;
+      if (!incoming || incoming.length === 0) {
+        return res.status(400).json({ message: 'Ordem inválida.' });
+      }
+      const route = await storage.getDailyRoute(routeId);
+      if (!route) return res.status(404).json({ message: 'Rota não encontrada.' });
+      // Permissão: admin/coordenação/administrativo OU o próprio vendedor dono da rota.
+      const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user?.role);
+      if (!isAdmin && String(route.sellerId) !== String(user?.id)) {
+        return res.status(403).json({ message: 'Sem permissão para reordenar esta rota.' });
+      }
+      // A ordem recebida precisa ser uma PERMUTAÇÃO das paradas atuais (mesmo conjunto de stopIds).
+      const current = Array.from(new Set((route.optimizedOrder || []).map((s: any) => String(s))));
+      const incomingUniq = Array.from(new Set(incoming));
+      const sameSet = incomingUniq.length === current.length && current.every((id) => incomingUniq.includes(id));
+      if (!sameSet) {
+        return res.status(409).json({ message: 'A ordem enviada não corresponde às paradas atuais. Recarregue a rota e tente novamente.' });
+      }
+      await storage.updateDailyRoute(routeId, { optimizedOrder: incomingUniq } as any);
+      // manual_order não está no schema Drizzle (coluna aditiva): grava via SQL cru. Idempotente.
+      try { await db.execute(sql`UPDATE daily_routes SET manual_order = true WHERE id = ${routeId}`); } catch (e: any) { console.warn('[REORDER] set manual_order:', e?.message); }
+      console.log(`🔀 Rota ${routeId} reordenada manualmente por ${user?.email || user?.id} (${incomingUniq.length} paradas).`);
+      return res.json({ success: true, optimizedOrder: incomingUniq });
+    } catch (e: any) {
+      console.error('[REORDER] Erro ao reordenar rota:', e?.message);
+      return res.status(500).json({ message: 'Erro ao salvar a nova ordem das visitas.' });
+    }
+  });
+
   app.post('/api/daily-routes/:routeId/optimize', authenticateUser, async (req: any, res) => {
     try {
       const user = req.currentUser;
@@ -17776,6 +17822,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalEstimatedDistance: optP.totalDistance.toString(),
           totalVisits: pOrder.length
         } as any);
+        // Reotimizou: sai do modo de ORDEM MANUAL (volta a posicionar leads por proximidade).
+        try { await db.execute(sql`UPDATE daily_routes SET manual_order = false WHERE id = ${routeId}`); } catch {}
         console.log(`✅ Rota de PROSPECÇÃO ${routeId} otimizada: ${pOrder.length} leads, ${optP.totalDistance}km`);
         return res.json({
           success: true,
@@ -17859,6 +17907,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalEstimatedDistance: optimizedResult.totalDistance.toString(),
         totalVisits: newOptimizedOrder.length
       });
+      // Reotimizou: sai do modo de ORDEM MANUAL (volta a posicionar leads por proximidade).
+      try { await db.execute(sql`UPDATE daily_routes SET manual_order = false WHERE id = ${routeId}`); } catch {}
       
       console.log(`✅ Rota ${routeId} otimizada e salva: ${resolvedStops.length} visitas (${resolvedStops.filter(s => s.entityType === 'customer').length} clientes + ${resolvedStops.filter(s => s.entityType === 'lead').length} leads), distância: ${optimizedResult.totalDistance}km`);
 

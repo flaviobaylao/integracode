@@ -3041,6 +3041,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
   // Ajuste admin de check-in/out na Rota do Dia (marca card roxo + tag "Adm - email"). Mapa por customerId.
   db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS admin_adjustments jsonb DEFAULT '{}'::jsonb`).catch(() => {});
+  // 🔀 Ordem manual da Rota do Dia (arrastar-e-soltar): quando true, o GET NÃO reposiciona os
+  // leads por proximidade — respeita a ordem que o vendedor definiu no card. "Otimizar Rota" volta a false.
+  db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS manual_order boolean NOT NULL DEFAULT false`).catch(() => {});
   // Agendamento de pedidos: data para a qual o pedido foi agendado (etapa 'agendado' do pipeline) + valor de enum. Idempotente.
   db.execute(sql`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS scheduled_billing_date timestamp`).catch(() => {});
 

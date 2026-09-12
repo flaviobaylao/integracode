@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2, GripVertical } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -1223,6 +1223,51 @@ export default function RotaDoDia() {
     let n = 0;
     return visibleVirtualVisits.map((v: any) => (crEfetuadaByKey(crKey('customer', String((v as any).customerId))) ? null : ++n));
   })();
+  // 🔀 Arrastar-e-soltar (mouse) para reordenar as visitas presenciais no card da Rota do Dia.
+  // Só habilitado quando NÃO há busca/filtro ativo (a lista visível = a rota inteira). Persiste no
+  // servidor e marca a rota como "ordem manual" (o backend para de reposicionar leads). (set/2026)
+  const reorderEnabled = !rotaFilterAtivo;
+  const [localOrder, setLocalOrder] = useState<any[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const _visIds = visiblePresentialVisits.map((v: any) => String(v.id));
+  const _visSet = new Set(_visIds);
+  const _loValid = localOrder.length === visiblePresentialVisits.length && localOrder.every((v: any) => _visSet.has(String(v.id)));
+  // Ordem exibida: usa a arrastada quando é permutação válida do conjunto visível; senão, a do servidor.
+  const displayStops: any[] = _loValid ? localOrder : visiblePresentialVisits;
+  const _visSig = _visIds.join('|');
+  useEffect(() => { setLocalOrder(visiblePresentialVisits); /* ressincroniza com o servidor */ }, [_visSig]);
+  const displayCardNumbers: (number | null)[] = (() => { let n = 0; return displayStops.map((v: any) => (isVisitEfetuada(v) ? null : ++n)); })();
+  const reorderMutation = useMutation({
+    mutationFn: async (order: string[]) => apiRequest('POST', `/api/daily-routes/${route?.id}/reorder`, { order }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] }); },
+    onError: (e: any) => {
+      toast({ variant: 'destructive', title: 'Não foi possível salvar a ordem', description: e?.message || 'Tente novamente.' });
+      setLocalOrder(visiblePresentialVisits); // desfaz visualmente
+    },
+  });
+  const persistReorderWith = (arr: any[]) => {
+    if (!reorderEnabled || !route?.id || !Array.isArray(route.optimizedOrder)) return;
+    const presIds = new Set((presentialVisits || []).map((v: any) => String(v.id)));
+    const newPres = arr.map((v: any) => String(v.id)).filter((id: string) => presIds.has(id));
+    const currentPres = (route.optimizedOrder || []).map(String).filter((id: string) => presIds.has(id));
+    if (newPres.length !== currentPres.length) return;
+    if (!newPres.some((id: string, i: number) => id !== currentPres[i])) return; // nada mudou
+    let k = 0;
+    const newOrder = (route.optimizedOrder || []).map((id: any) => presIds.has(String(id)) ? newPres[k++] : id);
+    reorderMutation.mutate(newOrder);
+  };
+  const handleStopDrop = (dropIndex: number) => {
+    const from = dragIndex;
+    setDragIndex(null); setOverIndex(null);
+    if (from == null || from === dropIndex) return;
+    const arr = displayStops.slice();
+    const [moved] = arr.splice(from, 1);
+    arr.splice(dropIndex, 0, moved);
+    setLocalOrder(arr);
+    persistReorderWith(arr);
+  };
+
   // Chave estavel de cada card (para o mapa de expandido/recolhido).
   const presCardKey = (v: any) => String(v?.id || v?.customerId || v?.entityId || '');
   const virtCardKey = (v: any) => String(v?.id || v?.customerId || '');
@@ -2295,8 +2340,13 @@ export default function RotaDoDia() {
               </div>
             </CardHeader>
             <CardContent>
+              {reorderEnabled && displayStops.length >= 2 && (
+                <p className="text-[11px] text-muted-foreground mb-2 flex items-center gap-1" data-testid="reorder-hint">
+                  <GripVertical className="h-3 w-3" /> Arraste um card para mudar a ordem das visitas.
+                </p>
+              )}
               <div className="space-y-2">
-                {visiblePresentialVisits.map((visit: any, index: number) => {
+                {displayStops.map((visit: any, index: number) => {
                   // Correspondência do checkpoint com a visita. Clientes casam por customerId.
                   // LEADS não têm customerId no card (usam entityId/leadId e id "lead:{id}"),
                   // enquanto o checkpoint do lead é gravado com customerId = leadId e
@@ -2408,7 +2458,12 @@ export default function RotaDoDia() {
                   return (
                     <div
                       key={visit.id || visit.customerId || index}
-                      className={`p-3 border rounded-lg transition-all ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : `hover:shadow-md ${borderColor}`}`}
+                      draggable={reorderEnabled}
+                      onDragStart={reorderEnabled ? (e) => { setDragIndex(index); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); } catch {} } : undefined}
+                      onDragOver={reorderEnabled ? (e) => { e.preventDefault(); if (overIndex !== index) setOverIndex(index); } : undefined}
+                      onDrop={reorderEnabled ? (e) => { e.preventDefault(); handleStopDrop(index); } : undefined}
+                      onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
+                      className={`p-3 border rounded-lg transition-all ${reorderEnabled ? 'cursor-grab active:cursor-grabbing' : ''} ${dragIndex === index ? 'opacity-40' : ''} ${overIndex === index && dragIndex !== null && dragIndex !== index ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${crEfetuada ? 'opacity-60 bg-gray-100 dark:bg-gray-900/40 border-gray-300 dark:border-gray-700' : `hover:shadow-md ${borderColor}`}`}
                       data-testid={`visit-${visit.customerId || visit.id}`}
                     >
                       {crEfetuada ? (
@@ -2442,7 +2497,7 @@ export default function RotaDoDia() {
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
                             crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
-                            {crEfetuada ? '' : (cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : presCardNumbers[index])}
+                            {crEfetuada ? '' : (cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : displayCardNumbers[index])}
                           </div>
 
                           <div className="flex-1 min-w-0">
