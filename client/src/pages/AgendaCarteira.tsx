@@ -676,8 +676,9 @@ export default function AgendaCarteira() {
                     </p>
                     <p>
                       <b className="text-blue-600">Cidade em azul</b> embaixo do número = naquele dia há atendimento{" "}
-                      <b>fora da cidade de origem</b> de quem atende. Aparecem as duas cidades com mais atendimentos e
-                      um “+N” para o resto; a lista completa, com as quantidades, sai passando o mouse. Vale também
+                      <b>fora da cidade de origem</b> de quem atende. Ao lado de cada cidade vai <b>quantos</b> atendimentos
+                      daquele dia são dela — o resto do número é da cidade de origem. Aparecem as duas cidades com
+                      mais atendimentos e um “+N” para as demais; a lista completa sai passando o mouse. Vale também
                       para a coluna de leads.
                     </p>
                     <p>
@@ -795,7 +796,11 @@ export default function AgendaCarteira() {
                                       data-testid={`cidades-fora-${s.i}-${dia.n}-${canal}`}
                                     >
                                       {outras.slice(0, 2).map((x) => (
-                                        <div key={x.cidade} className="truncate max-w-[7rem] mx-auto">{x.cidade}</div>
+                                        // A QUANTIDADE vem junto: sem ela a cidade embaixo de um "26"
+                                        // parece dizer que os 26 sao naquela cidade, quando pode ser 1.
+                                        <div key={x.cidade} className="truncate max-w-[7.5rem] mx-auto">
+                                          {x.cidade} <span className="tabular-nums font-medium">{x.n}</span>
+                                        </div>
                                       ))}
                                       {outras.length > 2 && <div>+{outras.length - 2}</div>}
                                     </div>
