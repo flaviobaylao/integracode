@@ -112,6 +112,9 @@ const SITUACOES: Array<{ label: string; param: string; sit: string; color: strin
 const SITUACAO_OPTIONS = SITUACOES.map((x) => x.label);
 const DIAS_OPTIONS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 const PERIODICIDADE_OPTIONS = ['Semanal', 'Quinzenal', 'Mensal'];
+// Atendimento: vem de customers.virtual_service. LEAD não tem essa marca — conta como Presencial.
+const ATENDIMENTO_OPTIONS = ['Presencial', 'Virtual'];
+const atendimentoDoPonto = (c: any) => (c?.virtualService === true ? 'Virtual' : 'Presencial');
 
 // Cor do pin por situação: inativado = cinza, perdido = cinza escuro, lead = marrom; ativo = cor do dia.
 const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563', lead: '#7b4b2a' };
@@ -342,6 +345,7 @@ export default function ClientsMap() {
   const [situacoes, setSituacoes] = useState<string[]>(["Ativos"]);
   const [periodicidades, setPeriodicidades] = useState<string[]>([]);
   const [bairros, setBairros] = useState<string[]>([]);
+  const [atendimentos, setAtendimentos] = useState<string[]>([]);
   // ⚡ A busca só entra no filtro depois de 300ms parado. Sem isso cada TECLA re-renderizava os
   // 1000+ pins do mapa e a aba congelava por dezenas de segundos.
   const [buscaAplicada, setBuscaAplicada] = useState("");
@@ -448,7 +452,7 @@ export default function ClientsMap() {
   // ⚡ TODO o pipeline de filtro/faceta num useMemo só: sem isso ele rodava (e reconstruía os
   // 1000+ marcadores) a cada mudança de estado da tela — inclusive ao copiar um nome.
   const {
-    activeCustomersWithCoords, opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, customersByDay,
+    activeCustomersWithCoords, opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, opcoesAtendimento, customersByDay,
   } = useMemo(() => {
     // Clientes com coordenadas válidas (o backend já devolve o conjunto certo por situação).
     let baseDoMapa = customers.filter(
@@ -481,18 +485,20 @@ export default function ClientsMap() {
     const alvoPeriodicidade = periodicidades.map((x) => x.toLowerCase());
     const passaPeriodicidade = (c: any) =>
       periodicidades.length === 0 || alvoPeriodicidade.includes(String(c?.visitPeriodicity || '').toLowerCase());
+    const passaAtendimento = (c: any) => atendimentos.length === 0 || atendimentos.includes(atendimentoDoPonto(c));
 
     // 🔎 FILTROS DINÂMICOS (facetados): as opções de cada filtro saem dos pontos que estão NA TELA,
     // já com os OUTROS filtros aplicados — nunca de uma lista fixa de cadastro. Assim vendedor que
     // não tem nenhum cliente na situação marcada simplesmente não aparece na lista.
     // O próprio filtro fica de fora do seu cálculo, senão marcar um valor apagaria os demais.
-    const paraOpcoes = (exceto: 'vendedor' | 'bairro' | 'dia' | 'periodicidade') =>
+    const paraOpcoes = (exceto: 'vendedor' | 'bairro' | 'dia' | 'periodicidade' | 'atendimento') =>
       baseDoMapa.filter(
         (c) =>
           (exceto === 'vendedor' || passaVendedor(c)) &&
           (exceto === 'bairro' || passaBairro(c)) &&
           (exceto === 'dia' || passaDia(c)) &&
-          (exceto === 'periodicidade' || passaPeriodicidade(c))
+          (exceto === 'periodicidade' || passaPeriodicidade(c)) &&
+          (exceto === 'atendimento' || passaAtendimento(c))
       );
 
     // Tipo do vendedor (CLT, PJ, Telemarketing, Canal) só para ORDENAR a lista.
@@ -526,8 +532,13 @@ export default function ClientsMap() {
       pontosParaPeriodicidade.some((c) => String((c as any).visitPeriodicity || '').toLowerCase() === pp.toLowerCase())
     );
 
+    const pontosParaAtendimento = paraOpcoes('atendimento');
+    const opcoesAtendimento = ATENDIMENTO_OPTIONS.filter((a) =>
+      pontosParaAtendimento.some((c) => atendimentoDoPonto(c) === a)
+    );
+
     // Legenda: distribuição por dia dos ATIVOS que sobraram dos OUTROS filtros (antes do filtro de dia).
-    const semFiltroDeDia = baseDoMapa.filter((c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c));
+    const semFiltroDeDia = baseDoMapa.filter((c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c) && passaAtendimento(c));
     const ativosParaLegenda = semFiltroDeDia.filter((c) => ((c as any).situacao || 'ativo') === 'ativo');
     const customersByDay = {
       Segunda: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
@@ -539,9 +550,9 @@ export default function ClientsMap() {
 
     return {
       activeCustomersWithCoords: semFiltroDeDia.filter(passaDia),
-      opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, customersByDay,
+      opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, opcoesAtendimento, customersByDay,
     };
-  }, [customers, isVendedor, user, buscaAplicada, sellers, bairros, dias, periodicidades, usersForType]);
+  }, [customers, isVendedor, user, buscaAplicada, sellers, bairros, dias, periodicidades, atendimentos, usersForType]);
 
   // Centro do mapa (São Paulo como padrão, ou centro dos clientes)
   const defaultCenter: [number, number] = [-23.55052, -46.633308];
@@ -757,6 +768,15 @@ export default function ClientsMap() {
             </div>
             <div className="pt-[21px]">
               <MultiSelect
+                label="Atendimento"
+                options={opcoesAtendimento}
+                selected={atendimentos}
+                onChange={setAtendimentos}
+                testId="select-atendimento-map"
+              />
+            </div>
+            <div className="pt-[21px]">
+              <MultiSelect
                 label="Periodicidade"
                 options={opcoesPeriodicidade}
                 selected={periodicidades}
@@ -764,7 +784,7 @@ export default function ClientsMap() {
                 testId="select-periodicity-map"
               />
             </div>
-            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 || bairros.length > 0 ||
+            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 || bairros.length > 0 || atendimentos.length > 0 ||
               situacoes.length !== 1 || situacoes[0] !== "Ativos") && (
               <Button
                 variant="outline"
@@ -775,6 +795,7 @@ export default function ClientsMap() {
                   setSellers([]);
                   setPeriodicidades([]);
                   setBairros([]);
+                  setAtendimentos([]);
                   setSituacoes(["Ativos"]);
                 }}
                 data-testid="button-clear-filters"
