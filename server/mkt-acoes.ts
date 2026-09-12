@@ -20,7 +20,7 @@
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
-export type TipoAcao = 'regua' | 'alerta' | 'peca' | 'campanha' | 'cupom' | 'visita' | 'anuncio';
+export type TipoAcao = 'regua' | 'alerta' | 'peca' | 'campanha' | 'cupom' | 'visita' | 'anuncio' | 'sistema';
 
 export type NovaAcao = {
   tipo: TipoAcao;
@@ -79,7 +79,7 @@ export async function ensureMktAcoesSchema(): Promise<{ ok: boolean; steps: any[
   // Politicas de partida — tudo que fala com cliente comeca em N2 (humano).
   await run('seed_politicas',
     "INSERT INTO mkt_politicas (tipo, nivel_padrao) VALUES " +
-    "('regua', 2), ('alerta', 0), ('peca', 0), ('campanha', 0), ('cupom', 2), ('visita', 2), ('anuncio', 2) " +
+    "('regua', 2), ('alerta', 0), ('peca', 0), ('campanha', 0), ('cupom', 2), ('visita', 2), ('anuncio', 2), ('sistema', 2) " +
     "ON CONFLICT (tipo) DO NOTHING");
 
   await run('create_sinais',
@@ -300,6 +300,9 @@ export async function executar(id: string): Promise<{ id: string; ok: boolean; d
       case 'alerta': detalhe = await executarAlerta(a); break;
       case 'campanha': detalhe = await executarCampanha(a); break;
       case 'peca': detalhe = await executarPeca(a); break;
+      case 'visita': detalhe = await executarVisita(a); break;
+      case 'cupom': detalhe = await executarCupom(a); break;
+      case 'sistema': detalhe = await executarSistema(a); break;
       default: throw new Error('executor para tipo ' + a.tipo + ' ainda nao existe');
     }
     await db.execute(sql`UPDATE mkt_acoes SET status='executada', executada_em=now(), execucao=${JSON.stringify(detalhe || {})}::jsonb WHERE id=${a.id}`);
@@ -379,6 +382,140 @@ async function executarPeca(a: any): Promise<any> {
   await db.execute(sql`UPDATE mkt_pieces SET acao_id = ${a.id} WHERE id = ${r.id}`);
   const rev = await enviarParaRevisao(r.id, 'acao:' + a.numero);
   return { pecaId: r.id, revisao: rev };
+}
+
+// ---------------------------------------------------------------------------
+// VISITA: entra na agenda do vendedor (visit_agenda, 'pending', avulsa) para o
+// proximo dia util (ou parametros.dias a frente) e avisa o vendedor por WhatsApp.
+// Idempotente: nao duplica visita pendente do mesmo cliente no mesmo dia.
+// ---------------------------------------------------------------------------
+const NUM_DIA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+function proximoDiaUtil(diasAFrente = 1): Date {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  d.setHours(8, 0, 0, 0);
+  let n = Math.max(1, diasAFrente);
+  while (n > 0) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0) n--; }
+  return d;
+}
+async function executarVisita(a: any): Promise<any> {
+  const p = a.parametros || {};
+  const clientes: any[] = a.publico?.clientes || [];
+  if (!clientes.length) throw new Error('acao de visita sem clientes');
+  const data = proximoDiaUtil(Number(p.dias) || 1);
+  const dataStr = data.toISOString().slice(0, 10);
+  const porVendedor = new Map<string, string[]>();
+  let agendadas = 0, jaTinha = 0, semVendedor = 0;
+  for (const c of clientes.slice(0, 40)) {
+    const row: any = (await db.execute(sql`SELECT id, name, seller_id, latitude, longitude, address FROM customers WHERE id = ${String(c.id)} LIMIT 1`) as any).rows?.[0];
+    if (!row) continue;
+    const seller = row.seller_id || c.vendedor || null;
+    if (!seller) { semVendedor++; continue; }
+    const ex: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${row.id} AND visit_status = 'pending' AND scheduled_date::date = ${dataStr}::date LIMIT 1`);
+    if (ex.rows?.length) { jaTinha++; continue; }
+    await db.execute(sql`
+      INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
+      VALUES (${row.id}, ${seller}, ${data}, ${NUM_DIA[data.getDay()]}, ${'avulsa'}, ${!!p.virtual}, 'pending', ${row.name || c.nome || ''}, ${row.latitude || null}, ${row.longitude || null}, ${row.address || ''})
+      ON CONFLICT DO NOTHING`);
+    agendadas++;
+    if (!porVendedor.has(seller)) porVendedor.set(seller, []);
+    porVendedor.get(seller)!.push(String(row.name || c.nome || row.id));
+  }
+  // Aviso ao vendedor
+  const avisos: any[] = [];
+  try {
+    const { enviarInterno } = await import('./envio-texto');
+    for (const [sellerId, nomes] of Array.from(porVendedor.entries())) {
+      const u: any = (await db.execute(sql`SELECT phone, first_name FROM users WHERE id = ${sellerId} LIMIT 1`) as any).rows?.[0];
+      if (!u?.phone) continue;
+      const texto = '📍 *Visita(s) extra(s) na sua agenda de ' + data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + '*\n'
+        + (p.motivo ? p.motivo + '\n' : '') + nomes.map((n: string) => '• ' + n).join('\n') + '\n\n' + (a.justificativa ? String(a.justificativa).slice(0, 300) : '');
+      avisos.push({ vendedor: sellerId, ...(await enviarInterno(String(u.phone), texto)) });
+    }
+  } catch {}
+  return { data: dataStr, agendadas, jaTinha, semVendedor, avisos };
+}
+
+// ---------------------------------------------------------------------------
+// CUPOM: cria um cupom da loja (tabela coupons, enabled_2_0) para o publico da
+// acao e, se houver regua, dispara o lembrete com o cupom na SUGESTAO — o
+// atendente oferece o codigo quando o cliente responde (template UTILITY nao
+// leva texto livre). Percentual limitado por codigo (teto 15%).
+// ---------------------------------------------------------------------------
+async function executarCupom(a: any): Promise<any> {
+  const p = a.parametros || {};
+  const pct = Math.min(15, Math.max(3, Number(p.percentual) || 10));
+  const dias = Math.min(30, Math.max(3, Number(p.validade_dias) || 14));
+  const codigo = String(p.codigo || ('VOLTA' + pct + '-' + String(a.numero))).toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  const clientes: any[] = a.publico?.clientes || [];
+  const validoAte = new Date(Date.now() + dias * 86400000);
+  try {
+    await db.execute(sql`
+      INSERT INTO coupons (code, description, discount_type, discount_value, valid_from, valid_until, is_active, max_uses, min_order_value, once_per_customer, channels, enabled_2_0, created_by_user_id)
+      VALUES (${codigo}, ${'Caixa de Decisoes #' + a.numero + ': ' + String(a.titulo).slice(0, 120)}, 'percent', ${pct}, now(), ${validoAte}, true,
+              ${clientes.length || null}, ${p.pedido_minimo != null ? Number(p.pedido_minimo) : null}, true, 'todos', true, ${'acao:' + a.numero})
+      ON CONFLICT DO NOTHING`);
+  } catch (e: any) { throw new Error('cupom: ' + String(e?.message || e).slice(0, 120)); }
+  const cupomTexto = 'cupom ' + codigo + ' (' + pct + '% ate ' + validoAte.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ')';
+  let regua: any = null;
+  if (p.regua && clientes.length) {
+    const { montarLote, liberarLote, descartarLote } = await import('./mkt-recompra');
+    const ids = clientes.map((c: any) => String(c.id));
+    const lote = await montarLote({ regua: String(p.regua), limite: ids.length, criadoPor: 'acao:' + a.numero, clientesIds: ids, acaoId: a.id });
+    if (!lote.total) { await descartarLote(lote.loteId); regua = { enviados: 0 }; }
+    else {
+      await db.execute(sql`UPDATE mkt_fila_toques SET sugestao = COALESCE(sugestao || ' · ', '') || ${'oferecer ' + cupomTexto} WHERE lote_id = ${lote.loteId}`);
+      const lib = await liberarLote(lote.loteId, 'acao:' + a.numero);
+      regua = { loteId: lote.loteId, montados: lote.total, resultado: lib.resultado };
+    }
+  }
+  return { codigo, percentual: pct, validoAte: validoAte.toISOString().slice(0, 10), clientes: clientes.length, regua };
+}
+
+// ---------------------------------------------------------------------------
+// SISTEMA (Auditor da Central): aplica um ajuste no proprio sistema de
+// marketing — parametro em system_settings (com limites), politica de
+// autonomia, ou prompt de agente (versao anterior guardada). Sempre reversivel.
+// ---------------------------------------------------------------------------
+export const AJUSTES_PERMITIDOS: Record<string, { min: number; max: number; passo?: number; desc: string }> = {
+  mkt_conteudo_por_semana: { min: 1, max: 6, desc: 'pecas de conteudo por semana' },
+  mkt_recompra_lote_max: { min: 20, max: 300, desc: 'teto de clientes por lote da regua' },
+  mkt_recompra_frequencia_dias: { min: 7, max: 30, desc: 'dias minimos entre toques no mesmo cliente' },
+  mkt_recompra_reativacao_dias: { min: 30, max: 90, desc: 'dias sem compra para entrar em reativacao' },
+  mkt_recompra_antecedencia_dias: { min: 1, max: 7, desc: 'dias antes do fim do ciclo (reposicao)' },
+  mkt_recompra_folga_dias: { min: 3, max: 21, desc: 'dias apos o ciclo (ciclo furado)' },
+  mkt_recompra_mix_min_skus: { min: 2, max: 5, desc: 'SKUs minimos para nao entrar em mix' },
+  ia_pausa_horas: { min: 4, max: 72, desc: 'horas de pausa da IA apos transferencia' },
+};
+async function executarSistema(a: any): Promise<any> {
+  const p = a.parametros || {};
+  const por = 'acao:' + a.numero;
+  if (p.tipo === 'setting') {
+    const regra = AJUSTES_PERMITIDOS[String(p.chave)];
+    if (!regra) throw new Error('chave fora da lista de ajustes permitidos: ' + p.chave);
+    const v = Number(p.valor);
+    if (!Number.isFinite(v) || v < regra.min || v > regra.max) throw new Error('valor fora dos limites (' + regra.min + '..' + regra.max + ')');
+    const antes = await getSetting(String(p.chave), '');
+    await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${String(p.chave)}, ${String(v)}, ${por}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+    return { chave: p.chave, antes, depois: v };
+  }
+  if (p.tipo === 'politica') {
+    const antes: any = (await db.execute(sql`SELECT * FROM mkt_politicas WHERE tipo = ${String(p.tipo_acao)} LIMIT 1`) as any).rows?.[0] || null;
+    await salvarPolitica(String(p.tipo_acao), p.campos || {}, por);
+    return { politica: p.tipo_acao, antes: antes ? { nivel_padrao: antes.nivel_padrao, teto_custo_dia: antes.teto_custo_dia, max_clientes_dia: antes.max_clientes_dia } : null, depois: p.campos };
+  }
+  if (p.tipo === 'prompt') {
+    const ag = String(p.agente || '');
+    if (!/^mkt_/.test(ag)) throw new Error('so prompts de agentes de marketing (mkt_*) podem ser ajustados por acao');
+    const novo = String(p.system_prompt || '').trim();
+    if (novo.length < 80) throw new Error('prompt curto demais');
+    const atual: any = (await db.execute(sql`SELECT system_prompt FROM agentes_config WHERE id = ${ag} LIMIT 1`) as any).rows?.[0];
+    if (!atual) throw new Error('agente nao encontrado');
+    await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS mkt_prompt_versoes (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), agente varchar NOT NULL, system_prompt text NOT NULL, motivo text, por varchar, criado_em timestamptz NOT NULL DEFAULT now())"));
+    await db.execute(sql`INSERT INTO mkt_prompt_versoes (agente, system_prompt, motivo, por) VALUES (${ag}, ${String(atual.system_prompt || '')}, ${'antes de ' + por + ': ' + String(p.motivo || '').slice(0, 200)}, ${por})`);
+    await db.execute(sql`UPDATE agentes_config SET system_prompt = ${novo}, updated_at = now() WHERE id = ${ag}`);
+    return { agente: ag, versaoAnteriorGuardada: true, tamanhoAntes: String(atual.system_prompt || '').length, tamanhoDepois: novo.length };
+  }
+  throw new Error('ajuste de sistema desconhecido: ' + p.tipo);
 }
 
 /** Executa tudo que a política liberou (N0/N1). Chamado logo após o Radar. */
@@ -506,6 +643,14 @@ export async function enviarResumo(opts: { avisos?: string[] } = {}): Promise<{ 
   } catch {}
   let leitura = '';
   try { const { leituraDoDia } = await import('./mkt-analista'); leitura = await leituraDoDia(); } catch {}
+  try {
+    const { ultimo } = await import('./mkt-auditor');
+    const d = await ultimo();
+    if (d && String(d.data) === new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })) {
+      const ruins = (d.checagens || []).filter((c: any) => c.gravidade === 'alerta');
+      avisos.unshift('Auditor: nota ' + d.nota + '/100' + (ruins.length ? ' · ' + ruins.length + ' alerta(s): ' + ruins.slice(0, 3).map((c: any) => c.titulo).join('; ') : ''));
+    }
+  } catch {}
   const texto = (leitura ? leitura + '\n' : '') + textoResumo(pend, { autoHoje: autoHoje.rows || [], medidas: medidas.rows || [], avisos });
   const { enviarInterno } = await import('./envio-texto');
   const enviados: any[] = [];
@@ -581,6 +726,11 @@ function resumoExecucao(d: any): string {
   if (d.enviados) return 'aviso enviado';
   if (d.campanhaId) return 'campanha ' + d.codigo + (d.link ? ' + link /r/' + d.link : '');
   if (d.pecaId) return 'peça criada e enviada ao revisor' + (d.estado ? ' (' + d.estado + ')' : '');
+  if (d.agendadas != null) return d.agendadas + ' visita(s) agendada(s) para ' + d.data + (d.jaTinha ? ' (' + d.jaTinha + ' já tinham)' : '');
+  if (d.codigo) return 'cupom ' + d.codigo + ' (' + d.percentual + '%)' + (d.regua?.montados ? ' + ' + d.regua.montados + ' lembrete(s)' : '');
+  if (d.chave) return d.chave + ': ' + d.antes + ' → ' + d.depois;
+  if (d.politica) return 'política ' + d.politica + ' ajustada';
+  if (d.agente) return 'prompt de ' + d.agente + ' atualizado (versão anterior guardada)';
   return 'ok';
 }
 

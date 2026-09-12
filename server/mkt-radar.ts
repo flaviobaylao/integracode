@@ -63,12 +63,14 @@ Regras:
 - Prefira UTILITY (R$ 0,04) a MARKETING (R$ 0,34). Nunca proponha promoção a inadimplente.
 - Se um segmento tem clientes de ticket alto (acima de 2× o ticket médio), proponha visita/contato do vendedor em vez de mensagem — como ação do tipo "alerta" para a carteira.
 - Quando uma carteira caiu mais de 15% no mês, proponha um "alerta" ao vendedor com os clientes que mais caíram e um roteiro de abordagem em 2 linhas.
+- VISITA: para clientes de ticket alto que pararam (ou os que mais caíram numa carteira), prefira "visita" (o vendedor vai lá) a mensagem. Use "segmento" ou "filtro.vendedor"; max_clientes ≤ 8.
+- CUPOM: só como 3º toque de reativação (segmento regua:reativacao) ou para carteira em queda forte; percentual 5–15; sempre com "regua" do segmento para o lembrete sair junto. Nunca cupom a inadimplente.
 - CONTEÚDO: se "conteudo.cabe_esta_semana" > 0, "pecas_na_fila_de_aprovacao" + "pecas_aprovadas_nao_postadas" < 3 e existe gancho em "ganchos_com_foto_elegivel", proponha até 2 ações do tipo "peca" (uma pauta cada: gancho + público), preferindo o gancho de melhor "receitaPorUso" confiável e variando o gancho em relação às peças recentes. Peça é rascunho: vai para o revisor e para a fila — não vai ao ar sozinha.
 - Título: até 90 caracteres, direto. Justificativa: 1 a 3 frases, com os números, em português do Brasil, sem jargão.
 - Seja conservador com "max_clientes": lotes pequenos, especialmente enquanto a conversão medida for nula.
 
 Responda SOMENTE com JSON válido no formato:
-{"acoes":[{"tipo":"regua"|"alerta"|"peca","segmento":"regua:reativacao","regua":"reativacao","max_clientes":40,"prioridade":1,"filtro":{"vendedor":null,"ticket_min":null},"titulo":"...","justificativa":"...","alerta":{"vendedor":"nome exato da carteira","texto":"mensagem pronta para o vendedor"},"peca":{"gancho":"margem","publico":"b2b"}}],"leitura_do_dia":"2 frases sobre o estado geral"}`;
+{"acoes":[{"tipo":"regua"|"alerta"|"peca"|"visita"|"cupom","segmento":"regua:reativacao","regua":"reativacao","max_clientes":40,"prioridade":1,"filtro":{"vendedor":null,"ticket_min":null},"titulo":"...","justificativa":"...","alerta":{"vendedor":"nome exato da carteira","texto":"mensagem pronta para o vendedor"},"peca":{"gancho":"margem","publico":"b2b"},"visita":{"dias":1,"motivo":"..."},"cupom":{"percentual":10,"validade_dias":14}}],"leitura_do_dia":"2 frases sobre o estado geral"}`;
 
 export async function garantirAgente(): Promise<void> {
   const { garantirAgenteConfig } = await import('./mkt-llm');
@@ -128,6 +130,36 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
       parametros: { vendedor_id: cart?.vendedorId || null, texto: corpo },
       custoEstimado: 0, receitaEsperada: 0, categoria: null, nivelSugerido: 0, modoTeste,
     } };
+  }
+  if (tipo === 'visita' || tipo === 'cupom') {
+    // Publico: um segmento de regua (com filtro) ou os clientes que mais cairam numa carteira
+    let clientes: any[] = [];
+    const seg = prop.segmento ? segmentoPorId(s, String(prop.segmento)) : null;
+    if (seg) clientes = seg.clientes.filter(c => !c.optout && !c.inadimplente).sort((a, b) => b.ticket - a.ticket);
+    else if (prop.filtro?.vendedor) { const cart = s.carteiras.find(c => c.vendedor === String(prop.filtro.vendedor)); if (cart) clientes = cart.clientesCairam.map(c => ({ id: c.id, nome: c.nome, vendedor: cart.vendedorId, ticket: c.anterior })); }
+    const f = prop.filtro || {};
+    if (f.ticket_min != null && Number(f.ticket_min) > 0) clientes = clientes.filter(c => Number(c.ticket) >= Number(f.ticket_min));
+    clientes = clientes.slice(0, Math.max(1, Math.min(Number(prop.max_clientes) || (tipo === 'visita' ? 8 : 30), tipo === 'visita' ? 20 : 100)));
+    if (!clientes.length) return { descarte: tipo + ' sem publico' };
+    const chave = tipo + ':' + (prop.segmento || prop.filtro?.vendedor || 'x');
+    if (jaHoje.has(chave)) return { descarte: tipo + ' repetido: ' + chave };
+    jaHoje.add(chave);
+    const ticketMedio = clientes.reduce((t, c) => t + Number(c.ticket || 0), 0) / clientes.length;
+    if (tipo === 'visita') {
+      return { acao: { tipo: 'visita', agente: AGENTE, titulo: String(prop.titulo || ('Visita a ' + clientes.length + ' cliente(s)')).slice(0, 200),
+        justificativa: String(prop.justificativa || '').slice(0, 1200), evidencia: { segmento: seg?.id || null, carteira: prop.filtro?.vendedor || null, ticket_medio: Number(ticketMedio.toFixed(2)), prioridade: prop.prioridade ?? null },
+        publico: { segmento: seg?.id, clientes: clientes.map(c => ({ id: c.id, nome: c.nome, vendedor: c.vendedor, ticket: c.ticket })) },
+        parametros: { dias: Number(prop.visita?.dias) || 1, motivo: String(prop.visita?.motivo || prop.titulo || '').slice(0, 200) },
+        custoEstimado: 0, receitaEsperada: Number((ticketMedio * clientes.length * 0.3).toFixed(2)), categoria: null, nivelSugerido: 2, modoTeste } };
+    }
+    const pct = Math.min(15, Math.max(3, Number(prop.cupom?.percentual) || 10));
+    const regua = seg?.regua && reguaPorId(seg.regua) ? seg.regua : null;
+    return { acao: { tipo: 'cupom', agente: AGENTE, titulo: String(prop.titulo || ('Cupom ' + pct + '% para ' + clientes.length + ' cliente(s)')).slice(0, 200),
+      justificativa: String(prop.justificativa || '').slice(0, 1200), evidencia: { segmento: seg?.id || null, ticket_medio: Number(ticketMedio.toFixed(2)), percentual: pct, prioridade: prop.prioridade ?? null },
+      publico: { segmento: seg?.id, regua: regua || undefined, clientes: clientes.map(c => ({ id: c.id, nome: c.nome, vendedor: c.vendedor, ticket: c.ticket })) },
+      parametros: { percentual: pct, validade_dias: Number(prop.cupom?.validade_dias) || 14, regua },
+      custoEstimado: Number(((regua ? clientes.length * (seg?.custoUnit || 0.04) : 0) + ticketMedio * clientes.length * 0.1 * (pct / 100)).toFixed(2)),
+      receitaEsperada: Number((ticketMedio * clientes.length * 0.1).toFixed(2)), categoria: seg?.categoria as any || null, nivelSugerido: 2, modoTeste } };
   }
   if (tipo === 'peca') {
     const pc = prop.peca || {};
