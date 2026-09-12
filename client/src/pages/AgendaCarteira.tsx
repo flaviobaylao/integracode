@@ -647,20 +647,30 @@ export default function AgendaCarteira() {
                       VIRTUAL; o resto, em PRESENCIAL.
                     </p>
                     <p>
-                      <b className="text-amber-700">Célula amarela</b> = algum vendedor passou do <b>teto de clientes
-                      por dia</b> naquele dia. O teto é por vendedor (botão “Teto por dia”), então sem o filtro de
-                      vendedor o número da célula é a soma de todos, mas o amarelo continua apontando a pessoa —
-                      passe o mouse para ver quem e quanto. O teto é separado para <b>vendedores</b> e <b>telemarketing</b>,
-                      porque a carga dos dois não se compara. Leads não entram na conta e semanas passadas não ficam
-                      amarelas. Cada célula amarela abre um aviso na Inbox do admin, e ele some sozinho quando o dia
-                      volta a caber.
+                      <b className="text-amber-700">Célula amarela</b> = alguém passou do <b>teto de clientes por
+                      dia</b>. O teto se define no botão <b>“Teto por dia”</b> e é <b>separado por papel</b> —
+                      vendedores e telemarketing têm cargas que não se comparam — com um número para presencial e
+                      outro para virtual em cada um, mais exceção para quem precisar de um teto próprio.
                     </p>
                     <p>
-                      <b className="text-blue-600">Cidade em azul</b> embaixo do número = naquele dia há atendimento
-                      <b> fora da cidade de origem</b> de quem atende. A origem é deduzida das coordenadas da casa do
-                      vendedor ou do telemarketing: é a cidade que mais aparece entre os clientes mais próximos dela.
-                      Quem não tem coordenada de casa cadastrada não recebe destaque nenhum — sem origem não há com o
-                      que comparar.
+                      A comparação é sempre <b>por pessoa, nunca pela soma</b>. Sem o filtro de vendedor o número da
+                      célula é a soma de todos, mas o amarelo continua apontando quem estourou: passe o mouse para ver
+                      o nome e o quanto. <b>Leads ficam de fora</b> da conta e <b>semanas passadas não ficam
+                      amarelas</b> — dia cheio que já passou não tem conserto. Cada célula amarela abre um aviso na
+                      Inbox do admin, e o aviso <b>some sozinho</b> quando o dia volta a caber.
+                    </p>
+                    <p>
+                      <b className="text-blue-600">Cidade em azul</b> embaixo do número = naquele dia há atendimento{" "}
+                      <b>fora da cidade de origem</b> de quem atende. Aparecem as duas cidades com mais atendimentos e
+                      um “+N” para o resto; a lista completa, com as quantidades, sai passando o mouse. Vale também
+                      para a coluna de leads.
+                    </p>
+                    <p>
+                      A <b>origem</b> vem das <b>coordenadas da casa</b> do vendedor ou do telemarketing: é a cidade que
+                      mais aparece entre os 12 clientes com coordenada mais próximos dela, até 80 km, ignorando
+                      fornecedores e leads. Não existe campo de cidade no cadastro de usuário — os clientes é que servem
+                      de mapa. <b>Quem não tem coordenada de casa não recebe destaque nenhum</b>: sem origem não há com
+                      o que comparar, e marcar tudo seria pior do que não marcar nada.
                     </p>
                     <p className="text-muted-foreground text-xs">
                       Quem atende em mais de um dia da semana aparece em todos eles na semana visitada. O número conta
