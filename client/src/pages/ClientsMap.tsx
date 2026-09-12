@@ -150,14 +150,18 @@ const AJUDA_DATA_LEAD =
 // ⚡ Um divIcon POR COR, criado uma vez e reaproveitado. Antes cada render criava 1000+ ícones
 // novos e o Leaflet trocava o DOM de todos os pins — era o que travava a tela ao digitar na busca.
 const ICONES_POR_COR = new Map<string, any>();
-function iconeDaCor(color: string) {
-  let ic = ICONES_POR_COR.get(color);
-  if (!ic) { ic = createCustomIcon(color); ICONES_POR_COR.set(color, ic); }
+function iconeDaCor(color: string, virtual?: boolean) {
+  const chave = `${color}|${virtual ? 'v' : ''}`;
+  let ic = ICONES_POR_COR.get(chave);
+  if (!ic) { ic = createCustomIcon(color, !!virtual); ICONES_POR_COR.set(chave, ic); }
   return ic;
 }
 
-// Criar ícone customizado do Leaflet
-function createCustomIcon(color: string) {
+// Criar ícone customizado do Leaflet.
+// virtual = ATENDIMENTO VIRTUAL: ganha uma aura vermelha em volta do pin (a cor do pin continua
+// sendo a do dia/situação — a aura é um anel por fora, não substitui nada).
+function createCustomIcon(color: string, virtual = false) {
+  const aura = virtual ? '0 0 0 4px rgba(239,68,68,0.9), 0 0 10px 4px rgba(239,68,68,0.45), ' : '';
   return L.divIcon({
     className: 'custom-marker',
     html: `
@@ -168,7 +172,7 @@ function createCustomIcon(color: string) {
         border-radius: 50% 50% 50% 0;
         transform: rotate(-45deg);
         border: 3px solid white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        box-shadow: ${aura}0 2px 8px rgba(0,0,0,0.3);
       ">
         <div style="
           width: 10px;
@@ -215,7 +219,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
   const nomePonto = customer.fantasyName || customer.name || (ehLead ? 'Lead sem nome' : 'Cliente sem nome');
   const vendedorPonto = customer.sellerName || 'Sem vendedor';
   return (
-    <Marker position={[lat, lng]} icon={iconeDaCor(color)}>
+    <Marker position={[lat, lng]} icon={iconeDaCor(color, customer.virtualService === true)}>
       <Popup>
         <div className="space-y-3 min-w-[220px]">
           <div className="flex items-center gap-2">
@@ -281,6 +285,9 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
               <p className="font-medium">
                 📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
               </p>
+            )}
+            {customer.virtualService === true && (
+              <p className="font-medium text-red-600 dark:text-red-400">🖥️ Atendimento virtual</p>
             )}
             {!!customer.phone && <p>📞 {customer.phone}</p>}
             {podeEditar && vendedores.length > 0 ? (
@@ -840,6 +847,9 @@ export default function ClientsMap() {
               </div>
             </div>
           )}
+          <p className="text-xs text-muted-foreground">
+            Pin com <span className="text-red-600 dark:text-red-400 font-medium">aura vermelha</span> = cliente de atendimento virtual.
+          </p>
           {situacaoOn('Leads') && (
             <p className="text-xs text-muted-foreground">
               Em Leads, o dia é o do próximo contato programado.
