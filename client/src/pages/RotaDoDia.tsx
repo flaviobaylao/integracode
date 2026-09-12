@@ -1864,7 +1864,7 @@ export default function RotaDoDia() {
                     latitude: r.latitude != null ? String(r.latitude) : null,
                     longitude: r.longitude != null ? String(r.longitude) : null,
                   })) : []}
-                  optimizedOrder={route.optimizedOrder || []}
+                  optimizedOrder={((route.visits || []).filter((v) => !v.isVirtual && v.visitType !== 'virtual')).map((v) => v.id)}
                   checkpoints={route.checkpoints || []}
                 />
               </CardContent>
