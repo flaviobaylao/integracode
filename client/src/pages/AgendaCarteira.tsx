@@ -35,6 +35,7 @@ type Item = {
   canal: "presencial" | "virtual";
   papel?: Papel;
   periodicidade: string;
+  semana?: string;
   dias: string[];
   ultimaVisita: string | null;
   pedidoUltimaVisita?: number;
@@ -55,6 +56,30 @@ const DIAS = [
 ];
 const COD_LONGO: Record<string, string> = { Seg: "Segunda", Ter: "Terça", Qua: "Quarta", Qui: "Quinta", Sex: "Sexta", Sab: "Sábado", Dom: "Domingo" };
 const PERIODICIDADES = ["semanal", "quinzenal", "mensal"];
+// Segundo eixo da rota: em QUAL semana do mês o cliente é atendido.
+const SEMANAS = ["toda", "impar", "par", "1", "2", "3", "ultima"] as const;
+const ROTULO_SEMANA: Record<string, string> = {
+  toda: "Toda semana", impar: "1ª e 3ª do mês", par: "2ª e 4ª do mês",
+  "1": "1ª do mês", "2": "2ª do mês", "3": "3ª do mês", ultima: "Última do mês",
+};
+const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+/**
+ * Que semana do mês uma semana é, contada pela SEGUNDA-FEIRA dela — a mesma
+ * definição do quadro ("a semana pertence ao mês da segunda dela") e a mesma
+ * que o servidor usa na regra de semana de atendimento. Sem isto, "+4 sem."
+ * seria lido como "4ª semana do mês", que é outra coisa.
+ */
+const semanaDoMes = (isoSegunda: string) => {
+  const [a, m, d] = String(isoSegunda).split("-").map(Number);
+  const segunda = new Date(a, m - 1, d);
+  const ano = segunda.getFullYear();
+  const mes = segunda.getMonth();
+  const segundas: number[] = [];
+  const ultimoDia = new Date(ano, mes + 1, 0).getDate();
+  for (let x = 1; x <= ultimoDia; x++) if (new Date(ano, mes, x).getDay() === 1) segundas.push(x);
+  const n = segundas.indexOf(segunda.getDate()) + 1;
+  return { mes, n: n || 1, ultima: n === segundas.length, rotulo: `${n || 1}ª de ${MES_CURTO[mes]}` };
+};
 const NUM = (v: any) => Number(v || 0).toLocaleString("pt-BR");
 const BRL = (v: any) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 /** 'YYYY-MM-DD' -> dia da semana 1..5 (0 = fim de semana / invalido). */
@@ -313,6 +338,7 @@ export default function AgendaCarteira() {
   const rotuloTipo = (i: Item) => (i.tipo === "lead" ? "Lead" : "Cliente");
   const rotuloCanal = (i: Item) => (i.canal === "virtual" ? "Virtual" : "Presencial");
   const rotuloPeriodo = (i: Item) => i.periodicidade || "—";
+  const rotuloSemanaCliente = (i: Item) => ROTULO_SEMANA[i.semana || "toda"] || "Toda semana";
   const rotulosDia = (i: Item) => (i.dias.length ? i.dias.map((d) => COD_LONGO[d] || d) : ["—"]);
   const rotuloCidade = (i: Item) => cidadePadrao(i.cidade) || "(sem cidade)";
 
@@ -418,6 +444,7 @@ export default function AgendaCarteira() {
       Tipo: i.tipo === "lead" ? "Lead" : "Cliente",
       Atendimento: i.canal === "virtual" ? "Virtual" : "Presencial",
       Periodicidade: i.periodicidade,
+      "Semana do mês": rotuloSemanaCliente(i),
       "Dia(s) de atendimento": i.dias.map((d) => COD_LONGO[d] || d).join(", "),
       Cidade: cidadePadrao(i.cidade),
       Vendedor: i.vendedor,
@@ -689,6 +716,15 @@ export default function AgendaCarteira() {
                       o que comparar, e marcar tudo seria pior do que não marcar nada.
                     </p>
                     <p>
+                      <b>Semana de atendimento.</b> Cada cliente pode ter uma semana fixa no mês — “última do mês”,
+                      “1ª e 3ª”, e assim por diante — além do dia da semana. Quando tem, a data sai do <b>calendário</b>,
+                      não do encadeamento a partir da última visita: o cliente sabe a data olhando o mês e uma visita
+                      atrasada não empurra o ciclo inteiro. O padrão é <b>toda semana</b>, que é o comportamento
+                      antigo. A semana é contada pela <b>segunda-feira</b> — a mesma definição do quadro, então a
+                      semana que abre numa segunda dia 30 ainda é a última daquele mês, mesmo que a terça caia no dia 1º
+                      do mês seguinte. O rótulo embaixo de cada coluna diz de que semana do mês ela se trata.
+                    </p>
+                    <p>
                       <b>Atualização.</b> O quadro é recalculado do cadastro a cada vez que a tela abre — ele já
                       nasce atual. O botão <b>Atualizar</b> força uma releitura agora, e o horário ao lado dele diz de
                       quando são os números na tela. Os avisos de dia sobrecarregado também passam por uma varredura
@@ -719,6 +755,14 @@ export default function AgendaCarteira() {
                         >
                           {rotuloSemana(s)}
                           <span className={`block text-[11px] font-normal ${s.atual ? "text-blue-800" : "text-muted-foreground"}`}>{s.rotulo}</span>
+                          <span
+                            className={`block text-[11px] font-medium ${
+                              semanaDoMes(s.ini).ultima ? "text-emerald-700" : s.atual ? "text-blue-800" : "text-muted-foreground"
+                            }`}
+                            title="Semana do mês, contada pela segunda-feira — é o que a regra de semana de atendimento usa"
+                          >
+                            {semanaDoMes(s.ini).ultima ? `última de ${MES_CURTO[semanaDoMes(s.ini).mes]}` : semanaDoMes(s.ini).rotulo}
+                          </span>
                         </th>
                       ))}
                     </tr>
@@ -968,12 +1012,13 @@ function EditorCliente(props: {
   const [per, setPer] = useState(item.periodicidade);
   const [dias, setDias] = useState<string[]>(item.dias);
   const [cidade, setCidade] = useState(item.cidade || "");
+  const [semana, setSemana] = useState(item.semana || "toda");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
 
   // Reabrir num cliente diferente sempre parte do valor atual dele.
   useEffect(() => {
-    if (aberto) { setPer(item.periodicidade); setDias(item.dias); setCidade(item.cidade || ""); setErro(""); }
+    if (aberto) { setPer(item.periodicidade); setDias(item.dias); setCidade(item.cidade || ""); setSemana(item.semana || "toda"); setErro(""); }
   }, [aberto, item.id]);
 
   const travado = !podeEditarVisita && (item.dias.length > 0 || !!item.periodicidade);
@@ -992,7 +1037,7 @@ function EditorCliente(props: {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(
-          ehLead ? { tipo: "lead", dias, cidade } : { tipo: "cliente", periodicidade: per, dias, cidade },
+          ehLead ? { tipo: "lead", dias, cidade } : { tipo: "cliente", periodicidade: per, dias, cidade, semana },
         ),
       });
       const j = await r.json().catch(() => ({}));
@@ -1021,14 +1066,25 @@ function EditorCliente(props: {
         </div>
 
         {!ehLead ? (
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Periodicidade</label>
-            <Select value={per} onValueChange={setPer} disabled={travado}>
-              <SelectTrigger className="h-8 text-sm" data-testid={`sel-per-${item.id}`}><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {PERIODICIDADES.map((p) => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Periodicidade</label>
+              <Select value={per} onValueChange={setPer} disabled={travado}>
+                <SelectTrigger className="h-8 text-sm" data-testid={`sel-per-${item.id}`}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PERIODICIDADES.map((p) => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Semana do mês</label>
+              <Select value={semana} onValueChange={setSemana} disabled={travado}>
+                <SelectTrigger className="h-8 text-sm" data-testid={`sel-semana-${item.id}`}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SEMANAS.map((x) => <SelectItem key={x} value={x}>{ROTULO_SEMANA[x]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         ) : null}
 
