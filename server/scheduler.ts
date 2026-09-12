@@ -920,6 +920,13 @@ cron.schedule('40 6 * * *', async () => {
 //         feito sozinho, resultados fechados e pendencias dos outros modulos (lote
 //         a mao, peca na fila, agendada vencida) — que antes so iam para o console.
 // 02:30 — Medicao (14 dias) e expiracao (48h sem decisao).
+// 05:45 — Auditor da Central: checagens do proprio sistema, autocorrecoes seguras e
+//         melhorias propostas (acoes 'sistema' na Caixa). Antes do Radar de proposito.
+cron.schedule('45 5 * * *', async () => {
+  try { const { rodar } = await import('./mkt-auditor'); const r = await rodar({ quem: 'cron' }); console.log('[MKT-AUDITOR] nota ' + r.nota + ' · ' + r.checagens.filter((c: any) => c.gravidade !== 'ok').length + ' ponto(s) · ' + r.autofix.length + ' autocorrecao(oes) · ' + r.melhorias.length + ' melhoria(s)'); }
+  catch (e: any) { console.error('[MKT-AUDITOR] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
 cron.schedule('30 6 * * *', async () => {
   try {
     const { rodar } = await import('./mkt-radar');

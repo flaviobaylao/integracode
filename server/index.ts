@@ -4338,6 +4338,30 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ── AUDITOR DA CENTRAL (agente mkt_auditor): o sistema olhando para si mesmo ──
+  app.get("/api/mkt/auditor", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const { ultimo, serie, autoajuste } = await import('./mkt-auditor');
+      const { AJUSTES_PERMITIDOS } = await import('./mkt-acoes');
+      res.json({ ultimo: await ultimo(), serie: await serie(30), autoajuste: await autoajuste(), ajustesPermitidos: AJUSTES_PERMITIDOS, temChave: !!process.env.ANTHROPIC_API_KEY });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/auditor/rodar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { rodar } = await import('./mkt-auditor'); res.json(await rodar({ quem: String(req.user?.username || 'admin') })); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/auditor/checar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { checar } = await import('./mkt-auditor'); res.json({ checagens: await checar() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/auditor/autoajuste", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const m = req.body?.ligado ? 'on' : 'off';
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('mkt_auditor_autoajuste', ${m}, ${'mkt-auditor'}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+      res.json({ ok: true, autoajuste: m === 'on' });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ── RADAR DE VENDAS (agente mkt_radar) ──
   app.get("/api/mkt/radar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { panorama } = await import('./mkt-radar'); res.json(await panorama()); }
