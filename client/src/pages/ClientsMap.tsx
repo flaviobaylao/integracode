@@ -720,12 +720,27 @@ export default function ClientsMap() {
           <div className="flex gap-4 flex-wrap items-end">
             <div className="flex-1 min-w-[200px]">
               <label className="text-sm font-medium mb-2 block">Buscar Cliente</label>
-              <Input
-                placeholder="Nome ou telefone..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                data-testid="input-search-customers"
-              />
+              <div className="relative">
+                <Input
+                  placeholder="Nome ou telefone..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  data-testid="input-search-customers"
+                  className={searchTerm ? 'pr-8' : undefined}
+                />
+                {!!searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm("")}
+                    title="Limpar busca"
+                    aria-label="Limpar busca"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-base leading-none"
+                    data-testid="input-search-customers-clear"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             </div>
             <div className="pt-[21px]">
               <MultiSelect
