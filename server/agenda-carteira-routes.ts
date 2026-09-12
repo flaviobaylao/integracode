@@ -105,15 +105,23 @@ export function semanasDaJanela(ref: string): SemanaJanela[] {
 
 const CHAVE_LIMITES = "agenda.limites_dia";
 export type LimiteCanais = { presencial: number; virtual: number };
-export type LimitesAgenda = LimiteCanais & { porVendedor: Record<string, LimiteCanais> };
+export type PapelCarteira = "vendedor" | "telemarketing";
+/** Teto por PAPEL — vendedor externo e telemarketing tem cargas bem diferentes. */
+export type LimitesAgenda = {
+  vendedor: LimiteCanais;
+  telemarketing: LimiteCanais;
+  porVendedor: Record<string, LimiteCanais>;
+};
 
-const LIMITES_VAZIOS: LimitesAgenda = { presencial: 0, virtual: 0, porVendedor: {} };
+const SEM_TETO: LimiteCanais = { presencial: 0, virtual: 0 };
 
 /** Numero >= 0 e inteiro; qualquer lixo vira 0 (= sem teto). */
 const nLimite = (v: any) => {
   const n = Math.floor(Number(v));
   return Number.isFinite(n) && n > 0 ? n : 0;
 };
+
+const canais = (v: any): LimiteCanais => ({ presencial: nLimite(v?.presencial), virtual: nLimite(v?.virtual) });
 
 function normalizarLimites(bruto: any): LimitesAgenda {
   const o = bruto && typeof bruto === "object" ? bruto : {};
@@ -122,22 +130,29 @@ function normalizarLimites(bruto: any): LimitesAgenda {
   for (const [id, v] of Object.entries(mapa as Record<string, any>)) {
     const chave = String(id || "").trim();
     if (!chave) continue;
-    const presencial = nLimite((v as any)?.presencial);
-    const virtual = nLimite((v as any)?.virtual);
+    const c = canais(v);
     // Excecao que nao excetua nada nao precisa ficar guardada.
-    if (presencial || virtual) porVendedor[chave] = { presencial, virtual };
+    if (c.presencial || c.virtual) porVendedor[chave] = c;
   }
-  return { presencial: nLimite(o.presencial), virtual: nLimite(o.virtual), porVendedor };
+  // FORMATO ANTIGO (um teto so, sem papel): vira o teto dos VENDEDORES e o
+  // telemarketing comeca sem teto, para o numero do vendedor nao ser aplicado
+  // a quem tem uma carga completamente diferente.
+  const antigo = o.vendedor === undefined && o.telemarketing === undefined && (o.presencial !== undefined || o.virtual !== undefined);
+  return {
+    vendedor: antigo ? canais(o) : canais(o.vendedor),
+    telemarketing: antigo ? { ...SEM_TETO } : canais(o.telemarketing),
+    porVendedor,
+  };
 }
 
 async function lerLimites(): Promise<LimitesAgenda> {
   try {
     const r = (await db.execute(sql`SELECT value FROM system_settings WHERE key = ${CHAVE_LIMITES} LIMIT 1`)).rows as any[];
-    if (!r.length) return { ...LIMITES_VAZIOS, porVendedor: {} };
+    if (!r.length) return normalizarLimites(null);
     return normalizarLimites(JSON.parse(String(r[0].value || "{}")));
   } catch (e: any) {
     console.warn("[carteira-agenda] limites:", e?.message);
-    return { ...LIMITES_VAZIOS, porVendedor: {} };
+    return normalizarLimites(null);
   }
 }
 
@@ -149,11 +164,14 @@ async function gravarLimites(l: LimitesAgenda, quem: string): Promise<void> {
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`);
 }
 
-/** Teto do vendedor naquele canal: a excecao dele, senao o padrao. 0 = sem teto. */
-export function limiteDoVendedor(l: LimitesAgenda, sellerId: string, canal: "presencial" | "virtual"): number {
+/** Teto daquela pessoa no canal: a excecao dela, senao o teto do PAPEL. 0 = sem teto. */
+export function limiteDoVendedor(
+  l: LimitesAgenda, sellerId: string, canal: "presencial" | "virtual", papel: PapelCarteira,
+): number {
   const excecao = l.porVendedor?.[String(sellerId || "")];
   const proprio = excecao ? nLimite((excecao as any)[canal]) : 0;
-  return proprio || nLimite((l as any)[canal]);
+  const doPapel = papel === "telemarketing" ? l.telemarketing : l.vendedor;
+  return proprio || nLimite((doPapel as any)?.[canal]);
 }
 
 /**
@@ -165,7 +183,8 @@ export function limiteDoVendedor(l: LimitesAgenda, sellerId: string, canal: "pre
  * Inbox com dezenas de linhas dizendo a mesma coisa.
  */
 export type Sobrecarga = {
-  sellerId: string; vendedor: string; canal: "presencial" | "virtual"; dia: string;
+  sellerId: string; vendedor: string; papel: PapelCarteira;
+  canal: "presencial" | "virtual"; dia: string;
   limite: number; pico: number; datas: string[];
 };
 
@@ -173,12 +192,14 @@ export function acharSobrecargas(itens: any[], hoje: string, limites: LimitesAge
   // vendedor|canal|data -> nº de clientes
   const porDia = new Map<string, number>();
   const nomes = new Map<string, string>();
+  const papeis = new Map<string, PapelCarteira>();
   for (const it of itens) {
     if (it?.tipo === "lead") continue;                 // leads ficam de fora
     const canal = it?.canal === "virtual" ? "virtual" : "presencial";
     const sellerId = String(it?.sellerId || "");
     if (!sellerId) continue;                           // sem vendedor nao ha quem cobrar
     nomes.set(sellerId, String(it?.vendedor || "Sem vendedor"));
+    papeis.set(sellerId, it?.papel === "telemarketing" ? "telemarketing" : "vendedor");
     for (const d of (it?.datas || [])) {
       if (String(d) < hoje) continue;
       const k = `${sellerId}|${canal}|${d}`;
@@ -190,7 +211,8 @@ export function acharSobrecargas(itens: any[], hoje: string, limites: LimitesAge
   const grupos = new Map<string, Sobrecarga>();
   for (const [k, n] of Array.from(porDia.entries())) {
     const [sellerId, canal, data] = k.split("|");
-    const limite = limiteDoVendedor(limites, sellerId, canal as any);
+    const papel = papeis.get(sellerId) || "vendedor";
+    const limite = limiteDoVendedor(limites, sellerId, canal as any, papel);
     if (!limite || n <= limite) continue;
     const dia = NUM_DIA[dataLocal(data).getDay()];
     const gk = `${sellerId}|${canal}|${dia}`;
@@ -200,7 +222,7 @@ export function acharSobrecargas(itens: any[], hoje: string, limites: LimitesAge
       atual.datas.push(data);
     } else {
       grupos.set(gk, {
-        sellerId, vendedor: nomes.get(sellerId) || "Sem vendedor",
+        sellerId, vendedor: nomes.get(sellerId) || "Sem vendedor", papel,
         canal: canal as any, dia, limite, pico: n, datas: [data],
       });
     }
@@ -218,7 +240,8 @@ export function textoSobrecarga(s: Sobrecarga): string {
   const quando = s.datas.length === 1
     ? `em ${ddmmDe(s.datas[0])}`
     : `em ${s.datas.length} semanas (${s.datas.slice(0, 6).map(ddmmDe).join(", ")}${s.datas.length > 6 ? "…" : ""})`;
-  return `${DIA_LONGO[s.dia] || s.dia} ${s.canal} acima do teto na carteira de ${s.vendedor}: `
+  const quem = s.papel === "telemarketing" ? "telemarketing" : "vendedor";
+  return `${DIA_LONGO[s.dia] || s.dia} ${s.canal} acima do teto na carteira de ${s.vendedor} (${quem}): `
     + `teto de ${s.limite} cliente${s.limite === 1 ? "" : "s"} por dia, chega a ${s.pico} ${quando}. `
     + `Vale remanejar dia de atendimento ou periodicidade de parte desses clientes.`;
 }
@@ -282,6 +305,74 @@ async function sincronizarAvisos(sobrecargas: Sobrecarga[], vendedoresAvaliados:
       if (!String(e?.message || "").includes("ux_cr_pending")) throw e;
     }
   }
+}
+
+/**
+ * CIDADE DE ORIGEM de cada vendedor/telemarketing, deduzida das COORDENADAS DA
+ * CASA (users.home_latitude/longitude): e' a cidade que mais aparece entre os
+ * 12 clientes com coordenada mais proximos da casa dele.
+ *
+ * Nao existe campo de cidade no cadastro de usuario, e nao ha geocodificador
+ * aqui — mas os clientes tem coordenada E cidade, entao eles servem de mapa.
+ * E' o mesmo raciocinio do fallback "regra dos leads" em visitScheduleService
+ * (__agendaRegionWeekday, voto ponderado dos vizinhos mais proximos).
+ *
+ * Quem nao tem coordenada de casa fica SEM cidade de origem — e nesse caso
+ * nenhuma cidade e' destacada para ele, em vez de destacar todas por engano.
+ */
+const RAIO_ORIGEM_KM = 80;
+const VIZINHOS_ORIGEM = 12;
+
+async function cidadesDeOrigem(uids: string[]): Promise<Map<string, string>> {
+  const fora = new Map<string, string>();
+  const ids = Array.from(new Set(uids.filter(Boolean)));
+  if (!ids.length) return fora;
+  try {
+    const lista = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+    // Distancia em graus corrigida pela latitude — suficiente para ordenar
+    // vizinhos; converto so' o corte de raio para km.
+    const linhas = (await db.execute(sql`
+      WITH casa AS (
+        SELECT id, home_latitude::float8 AS lat, home_longitude::float8 AS lng
+        FROM users
+        WHERE id IN (${lista})
+          AND home_latitude IS NOT NULL AND home_longitude IS NOT NULL
+      )
+      SELECT k.id AS uid, n.city, n.d2
+      FROM casa k
+      CROSS JOIN LATERAL (
+        SELECT NULLIF(TRIM(c.city),'') AS city,
+               POWER(c.latitude::float8 - k.lat, 2)
+             + POWER((c.longitude::float8 - k.lng) * COS(RADIANS(k.lat)), 2) AS d2
+        FROM customers c
+        WHERE c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+          AND NULLIF(TRIM(COALESCE(c.city,'')),'') IS NOT NULL
+          AND COALESCE(c.is_supplier,false) = false
+          AND COALESCE(c.is_lead,false) = false
+        ORDER BY 2
+        LIMIT ${VIZINHOS_ORIGEM}
+      ) n`)).rows as any[];
+
+    // 1 grau ~ 111 km; d2 esta em graus ao quadrado.
+    const corte = Math.pow(RAIO_ORIGEM_KM / 111, 2);
+    const votos = new Map<string, Map<string, number>>();
+    for (const l of linhas) {
+      if (Number(l.d2) > corte) continue;
+      const uid = String(l.uid);
+      let m = votos.get(uid);
+      if (!m) { m = new Map(); votos.set(uid, m); }
+      const cidade = String(l.city || "").trim();
+      if (cidade) m.set(cidade, (m.get(cidade) || 0) + 1);
+    }
+    votos.forEach((m, uid) => {
+      let melhor = "", n = 0;
+      m.forEach((qtd, cidade) => { if (qtd > n) { n = qtd; melhor = cidade; } });
+      if (melhor) fora.set(uid, melhor);
+    });
+  } catch (e: any) {
+    console.warn("[carteira-agenda] cidade de origem:", e?.message);
+  }
+  return fora;
 }
 
 /** Escopo: vendedor e telemarketing so enxergam a carteira deles. */
@@ -448,10 +539,12 @@ export function registerAgendaCarteira(app: Express) {
                COALESCE(c.virtual_service,false) AS virtual, COALESCE(c.is_lead,false) AS is_lead,
                c.is_active, c.seller_id, c.service_start_date::date::text AS inicio_fornecimento,
                COALESCE(vend.nome,'Sem vendedor') AS vendedor,
+               vend.uid AS vendedor_uid, vend.papel AS vendedor_papel, vend.tipo AS vendedor_tipo,
                va.ultima::text AS ultima_visita
         FROM customers c
         LEFT JOIN LATERAL (
-          SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome
+          SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome,
+                 u.id AS uid, u.role::text AS papel, u.seller_type AS tipo
           FROM users u
           WHERE c.seller_id IS NOT NULL AND c.seller_id <> '' AND (
                 u.id = c.seller_id
@@ -540,6 +633,10 @@ export function registerAgendaCarteira(app: Express) {
           cidade: r.city || "",
           vendedor: String(r.vendedor || "Sem vendedor"),
           sellerId: String(r.seller_id || ""),
+          // Mesma regra de server/lead-capture.ts:51 — role OU seller_type.
+          papel: (String(r.vendedor_papel || "") === "telemarketing"
+               || String(r.vendedor_tipo || "") === "telemarketing") ? "telemarketing" : "vendedor",
+          usuarioId: String(r.vendedor_uid || ""),
           ativo: r.is_active !== false,
           // Lead e' SEMPRE presencial, mesmo que o cadastro esteja marcado virtual.
           canal: r.is_lead ? "presencial" : (r.virtual ? "virtual" : "presencial"),
@@ -596,8 +693,15 @@ export function registerAgendaCarteira(app: Express) {
       // aviso. A verificacao roda SOLTA, depois da resposta — a tela nunca
       // espera por ela e nunca quebra por causa dela.
       const limites = await lerLimites();
+      // Cidade de origem de cada vendedor/telemarketing que aparece na janela.
+      const origens = await cidadesDeOrigem(itens.map((i) => String(i.usuarioId || "")));
+      const cidadeOrigem: Record<string, string> = {};
+      for (const i of itens) {
+        const c = origens.get(String(i.usuarioId || ""));
+        if (c && i.sellerId) cidadeOrigem[i.sellerId] = c;
+      }
       res.json({
-        hoje, semanas, itens,
+        hoje, semanas, itens, cidadeOrigem,
         escopo: { restrito: esc.restrito, papel: esc.papel, vendedor: esc.nome },
         podeEditarVisita: ADMINS_VISITA.includes(esc.email),
         limites,
@@ -643,8 +747,8 @@ export function registerAgendaCarteira(app: Express) {
       const atual = await lerLimites();
       const b: any = req.body || {};
       const novo = normalizarLimites({
-        presencial: b.presencial ?? atual.presencial,
-        virtual: b.virtual ?? atual.virtual,
+        vendedor: b.vendedor ?? atual.vendedor,
+        telemarketing: b.telemarketing ?? atual.telemarketing,
         porVendedor: b.porVendedor ?? atual.porVendedor,
       });
       await gravarLimites(novo, String(esc.usuario?.id || esc.email || "sistema"));
