@@ -281,7 +281,7 @@ async function __flagCadastroIncompletoInbox(c: any, faltando: string[]): Promis
 // SEM dia de rota → alocação pela "regra dos leads" (coordenada + semanal) + flag Inbox.
 // Retorna a quantidade de visitas criadas (0 = nada gerado).
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
-  const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+  const { calculateNextVisitDate, datasPelaRegra, normalizarSemana } = await import('../shared/visitSchedule');
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
   if (!rows.length) return 0;
   const c: any = rows[0];
@@ -329,6 +329,27 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     periodicity = 'semanal'; // regra dos leads
   }
 
+  // 📅 SEMANA DE ATENDIMENTO: cliente com semana fixa ("última terça") tem as
+  // datas vindas do CALENDÁRIO, não do encadeamento por intervalo —
+  // calculateNextVisitDate não tem como respeitar "qual semana do mês".
+  // Mesma regra de reprogramarAgenda (agenda-carteira-routes), senão a Rota do
+  // Dia e a Agenda da Carteira mostrariam datas diferentes para o mesmo cliente.
+  const semanaRegra = normalizarSemana(c.semanaAtendimento);
+  if (semanaRegra !== 'toda') {
+    const DIA_NUM_REGRA: Record<string, number> = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6 };
+    const alvos = (targetWeekdays as any[])
+      .map((d) => DIA_NUM_REGRA[String(d)])
+      .filter((n) => n !== undefined && n >= 1 && n <= 5);
+    if (alvos.length) {
+      const fimJanela = new Date(today);
+      fimJanela.setMonth(fimJanela.getMonth() + 5); // 5 meses cobrem 4 visitas até no mensal
+      const daRegra = datasPelaRegra(today, fimJanela, alvos, semanaRegra)
+        .filter((d) => !serviceStart || d >= serviceStart)
+        .slice(0, 4);
+      if (daRegra.length) return await __gravarAgendaDatas(c, periodicity, daRegra);
+    }
+  }
+
   // Calcula 4 próximas datas ancoradas no início do fornecimento
   let dates: Date[] = [];
   try {
@@ -341,10 +362,15 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     }
   } catch { return 0; }
 
+  return await __gravarAgendaDatas(c, periodicity, dates);
+}
+
+/** Grava as datas na visit_agenda. Meio-dia UTC para nao virar o dia no fuso BRT. */
+async function __gravarAgendaDatas(c: any, periodicity: string, dates: Date[]): Promise<number> {
   const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
   let created = 0;
   for (const dt of dates) {
-    const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0); // meio-dia UTC evita virar o dia no fuso BRT
+    const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
     await db.insert(visitAgenda).values({
       customerId: c.id,
       sellerId: c.sellerId,

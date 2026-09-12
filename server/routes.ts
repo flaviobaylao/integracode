@@ -1994,6 +1994,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         delete req.body.visitPeriodicity;
       }
     }
+    // 📅 semana de atendimento: 'toda' (ou vazio) conta como NÃO preenchido —
+    // qualquer um pode definir a primeira vez; trocar uma semana já definida é
+    // do Admin, igual a dia e periodicidade.
+    if (req.body.semanaAtendimento !== undefined) {
+      const existingS = String((existingCustomer as any)?.semanaAtendimento || 'toda');
+      const enviada = String(req.body.semanaAtendimento || 'toda');
+      if (existingS !== 'toda' && existingS !== enviada) {
+        console.warn(`🔒 [VISIT-GUARD] ${email || 'usuário'} tentou ALTERAR a semana de atendimento (${existingS} → ${enviada}); bloqueado.`);
+        delete req.body.semanaAtendimento;
+      }
+    }
   }
 
   // FIX 08/set/2026 — CADASTRO APAGADO EM BRANCO.
@@ -2329,6 +2340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           _wd(_b.weekdays) !== _wd(_a.weekdays) ||
           String(_b.visitPeriodicity || '') !== String(_a.visitPeriodicity || '') ||
           String(_b.sellerId || '') !== String(_a.sellerId || '') ||
+          String((_b as any).semanaAtendimento || 'toda') !== String((_a as any).semanaAtendimento || 'toda') ||
           _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
         const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
         if (_mudou && _elegivel) {
@@ -3051,6 +3063,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           _wd(_b.weekdays) !== _wd(_a.weekdays) ||
           String(_b.visitPeriodicity || '') !== String(_a.visitPeriodicity || '') ||
           String(_b.sellerId || '') !== String(_a.sellerId || '') ||
+          String((_b as any).semanaAtendimento || 'toda') !== String((_a as any).semanaAtendimento || 'toda') ||
           _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
         const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
         if (_mudou && _elegivel) {
@@ -3744,6 +3757,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patch: any = {};
       if (fields?.sellerId) patch.sellerId = String(fields.sellerId);
       if (fields?.visitPeriodicity && ['semanal', 'quinzenal', 'mensal'].includes(String(fields.visitPeriodicity))) patch.visitPeriodicity = String(fields.visitPeriodicity);
+      if (fields?.semanaAtendimento && ['toda', 'impar', 'par', '1', '2', '3', 'ultima'].includes(String(fields.semanaAtendimento))) patch.semanaAtendimento = String(fields.semanaAtendimento);
       if (Array.isArray(fields?.weekdays) && fields.weekdays.length > 0) patch.weekdays = JSON.stringify(fields.weekdays);
       if (fields?.serviceStartDate) { const d = new Date(fields.serviceStartDate); if (!isNaN(d.getTime())) patch.serviceStartDate = d; }
       if (typeof fields?.virtualService === 'boolean') patch.virtualService = fields.virtualService;
