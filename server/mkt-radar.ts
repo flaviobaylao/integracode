@@ -24,8 +24,8 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { lerSinais, sinaisParaPrompt, segmentoPorId, reguaPorId, type Sinais } from './mkt-sinais';
 import { criarAcao, processarAutomaticas, type NovaAcao } from './mkt-acoes';
+import { chamarAgente } from './mkt-llm';
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 export const AGENTE = 'mkt_radar';
 
 async function getSetting(key: string, def: string): Promise<string> {
@@ -63,80 +63,16 @@ Regras:
 - Prefira UTILITY (R$ 0,04) a MARKETING (R$ 0,34). Nunca proponha promoção a inadimplente.
 - Se um segmento tem clientes de ticket alto (acima de 2× o ticket médio), proponha visita/contato do vendedor em vez de mensagem — como ação do tipo "alerta" para a carteira.
 - Quando uma carteira caiu mais de 15% no mês, proponha um "alerta" ao vendedor com os clientes que mais caíram e um roteiro de abordagem em 2 linhas.
+- CONTEÚDO: se "conteudo.cabe_esta_semana" > 0, "pecas_na_fila_de_aprovacao" + "pecas_aprovadas_nao_postadas" < 3 e existe gancho em "ganchos_com_foto_elegivel", proponha até 2 ações do tipo "peca" (uma pauta cada: gancho + público), preferindo o gancho de melhor "receitaPorUso" confiável e variando o gancho em relação às peças recentes. Peça é rascunho: vai para o revisor e para a fila — não vai ao ar sozinha.
 - Título: até 90 caracteres, direto. Justificativa: 1 a 3 frases, com os números, em português do Brasil, sem jargão.
 - Seja conservador com "max_clientes": lotes pequenos, especialmente enquanto a conversão medida for nula.
 
 Responda SOMENTE com JSON válido no formato:
-{"acoes":[{"tipo":"regua"|"alerta","segmento":"regua:reativacao","regua":"reativacao","max_clientes":40,"prioridade":1,"filtro":{"vendedor":null,"ticket_min":null},"titulo":"...","justificativa":"...","alerta":{"vendedor":"nome exato da carteira","texto":"mensagem pronta para o vendedor"}}],"leitura_do_dia":"2 frases sobre o estado geral"}`;
+{"acoes":[{"tipo":"regua"|"alerta"|"peca","segmento":"regua:reativacao","regua":"reativacao","max_clientes":40,"prioridade":1,"filtro":{"vendedor":null,"ticket_min":null},"titulo":"...","justificativa":"...","alerta":{"vendedor":"nome exato da carteira","texto":"mensagem pronta para o vendedor"},"peca":{"gancho":"margem","publico":"b2b"}}],"leitura_do_dia":"2 frases sobre o estado geral"}`;
 
 export async function garantirAgente(): Promise<void> {
-  try {
-    try { await db.execute(sql.raw("ALTER TABLE agentes_config ADD COLUMN IF NOT EXISTS teto_custo_dia numeric(10,2)")); } catch {}
-    await db.execute(sql`
-      INSERT INTO agentes_config (id, nome, modelo, system_prompt, ferramentas, limites, ativo, base_conhecimento, teto_custo_dia)
-      VALUES (${AGENTE}, ${'Radar de Vendas'}, ${'claude-sonnet-4-6'}, ${PROMPT_PADRAO}, ${'[]'}::jsonb, ${'{}'}::jsonb, true, ${''}, ${3})
-      ON CONFLICT (id) DO NOTHING`);
-  } catch (e: any) { console.error('[MKT-RADAR] agentes_config:', e?.message || e); }
-}
-
-async function configDoAgente(): Promise<{ modelo: string; prompt: string; base: string }> {
-  try {
-    const r: any = await db.execute(sql`SELECT modelo, system_prompt, base_conhecimento FROM agentes_config WHERE id = ${AGENTE} LIMIT 1`);
-    const a = r.rows?.[0];
-    if (a) return { modelo: normModel(a.modelo), prompt: String(a.system_prompt || PROMPT_PADRAO), base: String(a.base_conhecimento || '') };
-  } catch {}
-  return { modelo: 'claude-sonnet-4-6', prompt: PROMPT_PADRAO, base: '' };
-}
-function normModel(m?: string): string {
-  const x = (m || '').trim();
-  if (x.startsWith('claude-haiku-4-5')) return 'claude-haiku-4-5-20251001';
-  if (x.startsWith('claude-opus-4-8')) return 'claude-opus-4-8';
-  return 'claude-sonnet-4-6';
-}
-
-// ---------------------------------------------------------------------------
-// A chamada ao modelo — com custo registrado e teto respeitado
-// ---------------------------------------------------------------------------
-async function chamarModelo(system: string, user: string, gatilho: string): Promise<{ ok: boolean; texto?: string; erro?: string; modelo: string }> {
-  const cfg = await configDoAgente();
-  const t0 = Date.now();
-  let mkt: any = null;
-  try { mkt = await import('./mkt-agent-runs'); } catch {}
-  if (mkt) {
-    const t = await mkt.tetoEstourado(AGENTE).catch(() => ({ estourou: false }));
-    if (t.estourou) return { ok: false, erro: 'teto diario de custo do Radar estourado (R$ ' + Number(t.gasto).toFixed(2) + ' de R$ ' + Number(t.teto).toFixed(2) + ')', modelo: cfg.modelo };
-  }
-  const registrar = async (tin: number, tout: number, ok: boolean, erro?: string) => {
-    if (!mkt) return;
-    try { await mkt.registrarRun({ agente: AGENTE, gatilho, canal: 'interno', modelo: cfg.modelo, tokensIn: tin, tokensOut: tout, rodadas: 1, ferramentas: [], duracaoMs: Date.now() - t0, sucesso: ok, erro: erro || null }); } catch {}
-  };
-  try {
-    const body = { model: cfg.modelo, max_tokens: 4000, temperature: 0.3, system, messages: [{ role: 'user', content: user }] };
-    const resp = await fetch(ANTHROPIC_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY as string, 'anthropic-version': '2023-06-01' }, body: JSON.stringify(body) });
-    const j: any = await resp.json().catch(() => ({}));
-    const u = j?.usage || {};
-    const tin = Number(u.input_tokens || 0) + Number(u.cache_creation_input_tokens || 0) + Number(u.cache_read_input_tokens || 0);
-    const tout = Number(u.output_tokens || 0);
-    if (!resp.ok) { const erro = 'anthropic ' + resp.status + ': ' + JSON.stringify(j).slice(0, 200); await registrar(tin, tout, false, erro); return { ok: false, erro, modelo: cfg.modelo }; }
-    const texto = (j.content || []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
-    await registrar(tin, tout, true);
-    return { ok: true, texto, modelo: cfg.modelo };
-  } catch (e: any) {
-    const erro = String(e?.message || e).slice(0, 200);
-    await registrar(0, 0, false, erro);
-    return { ok: false, erro, modelo: cfg.modelo };
-  }
-}
-
-function extrairJson(texto: string): any | null {
-  const t = String(texto || '').trim();
-  const semCerca = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  for (const cand of [semCerca, t]) {
-    try { return JSON.parse(cand); } catch {}
-    const i = cand.indexOf('{'), f = cand.lastIndexOf('}');
-    if (i >= 0 && f > i) { try { return JSON.parse(cand.slice(i, f + 1)); } catch {} }
-  }
-  return null;
+  const { garantirAgenteConfig } = await import('./mkt-llm');
+  await garantirAgenteConfig({ agente: AGENTE, nome: 'Radar de Vendas', promptPadrao: PROMPT_PADRAO, modeloPadrao: 'claude-sonnet-4-6', tetoPadrao: 3 });
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +129,24 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
       custoEstimado: 0, receitaEsperada: 0, categoria: null, nivelSugerido: 0, modoTeste,
     } };
   }
+  if (tipo === 'peca') {
+    const pc = prop.peca || {};
+    const gancho = String(pc.gancho || '').trim(); const publico = pc.publico === 'b2c' ? 'b2c' : 'b2b';
+    const temFoto = s.conteudo.ganchosComFoto.find(g => g.gancho === gancho && g.publico === publico);
+    if (!temFoto) return { descarte: 'pauta sem foto elegivel: ' + gancho + '/' + publico };
+    if (s.conteudo.cabe <= 0) return { descarte: 'cota de conteudo da semana cumprida' };
+    const chave = 'peca:' + gancho + ':' + publico;
+    if (jaHoje.has(chave)) return { descarte: 'pauta repetida: ' + chave };
+    jaHoje.add(chave);
+    return { acao: {
+      tipo: 'peca', agente: AGENTE,
+      titulo: String(prop.titulo || ('Peça ' + publico + ' · gancho ' + gancho)).slice(0, 200),
+      justificativa: String(prop.justificativa || '').slice(0, 1200),
+      evidencia: { gancho, publico, fotos_elegiveis: temFoto.fotos, cabe_semana: s.conteudo.cabe, desempenho: s.conteudo.desempenhoGancho.find(d => d.gancho === gancho) || null, prioridade: prop.prioridade ?? null },
+      parametros: { gerar: true, gancho, publico },
+      custoEstimado: 0.1, receitaEsperada: 0, categoria: null, nivelSugerido: 0, modoTeste,
+    } };
+  }
   return { descarte: 'tipo desconhecido: ' + tipo };
 }
 
@@ -213,12 +167,11 @@ export async function rodar(opts: { quem?: string; forcar?: boolean } = {}): Pro
   const t0 = Date.now();
 
   const sinais = await lerSinais();
-  const cfg = await configDoAgente();
-  const system = cfg.prompt + (cfg.base ? '\n\nFatos da empresa:\n' + cfg.base : '');
   const user = 'Retrato de hoje (' + sinais.data + '):\n' + JSON.stringify(sinaisParaPrompt(sinais), null, 0);
-  const r = await chamarModelo(system, user, opts.quem === 'cron' ? 'cron' : 'api');
+  const r = await chamarAgente({ agente: AGENTE, nome: 'Radar de Vendas', promptPadrao: PROMPT_PADRAO, modeloPadrao: 'claude-sonnet-4-6', tetoPadrao: 3,
+    user, maxTokens: 4000, temperature: 0.3, gatilho: opts.quem === 'cron' ? 'cron' : 'api' });
   if (!r.ok) { console.error('[MKT-RADAR]', r.erro); return { ok: false, motivo: r.erro, sinais: sinaisParaPrompt(sinais) }; }
-  const j = extrairJson(r.texto || '');
+  const j = r.json;
   if (!j || !Array.isArray(j.acoes)) return { ok: false, motivo: 'resposta do modelo sem JSON valido', bruto: String(r.texto || '').slice(0, 500) };
 
   const { criadas, descartadas } = await aplicarResposta(j, sinais, modoTeste);
@@ -241,6 +194,9 @@ export async function aplicarResposta(j: any, sinais: Sinais, modoTeste: boolean
       WHERE agente = ${AGENTE} AND status IN ('proposta','aprovada','auto','executando','executada')
         AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
     for (const row of (q.rows || [])) { if (row.s) jaHoje.add(String(row.s)); if (row.p && String(row.p).startsWith('carteira:')) jaHoje.add('alerta:' + String(row.p).slice(9)); }
+    const qp: any = await db.execute(sql`SELECT parametros->>'gancho' AS g, parametros->>'publico' AS p FROM mkt_acoes WHERE agente = ${AGENTE} AND tipo = 'peca'
+      AND status NOT IN ('rejeitada','expirada') AND criado_em >= now() - interval '3 days'`);
+    for (const row of (qp.rows || [])) if (row.g) jaHoje.add('peca:' + row.g + ':' + (row.p || 'b2b'));
   } catch {}
 
   const criadas: any[] = [], descartadas: any[] = [];

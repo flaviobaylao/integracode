@@ -57,8 +57,8 @@ export async function definirModo(novo: string, quem?: string): Promise<{ ok: bo
   if (!(MODOS as readonly string[]).includes(novo)) return { ok: false, erro: 'modo invalido' };
   // Ligar em `on` sem chave de IA produziria peca vazia todo dia. Melhor recusar
   // agora, com o motivo, do que sujar a fila de aprovacao amanha.
-  if (novo === 'on' && !process.env.OPENAI_API_KEY) {
-    return { ok: false, erro: 'OPENAI_API_KEY ausente: o agente escreveria peca vazia' };
+  if (novo === 'on' && !process.env.ANTHROPIC_API_KEY) {
+    return { ok: false, erro: 'ANTHROPIC_API_KEY ausente: o agente escreveria peca vazia' };
   }
   try {
     await db.execute(sql`
@@ -233,6 +233,44 @@ export async function escolherCriativo(publico: string, gancho: string, formato?
 // existe para fechar. Prefere link do canal; se nao houver, qualquer link ativo;
 // se nao houver nenhum, RECUSA em vez de produzir peca cega.
 
+/**
+ * SPRINT 2 (set/2026): link POR PECA, nao o link mais clicado do canal.
+ *
+ * Com um so link para todas as pecas, a atribuicao por peca era impossivel e
+ * `desempenhoPorTag` nunca ficava "confiavel" (exige campanha exclusiva). Agora
+ * cada peca nasce com campanha do mes (IG0926) + link proprio
+ * (/r/ig-20260912-margem-x1) com utm_content = gancho. Peca com campanha_id
+ * tambem liga o `exigirCodigo` do revisor.
+ */
+export async function linkDaPeca(canal: string, gancho: string, publico: string): Promise<{ slug: string; destino: string; campanhaId: string; codigo: string } | null> {
+  try {
+    const { ensureMktAtribuicaoSchema, normalizarSlug } = await import('./mkt-atribuicao');
+    await ensureMktAtribuicaoSchema();
+    const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const mm = String(agora.getMonth() + 1).padStart(2, '0'), yy = String(agora.getFullYear()).slice(2);
+    const prefixo = canal === 'instagram' ? 'IG' : canal === 'facebook' ? 'FB' : canal === 'whatsapp' ? 'WA' : 'MK';
+    const codigo = prefixo + mm + yy;
+    const c: any = await db.execute(sql`
+      INSERT INTO mkt_campanhas (codigo, nome, objetivo, canal, publico, ativo)
+      VALUES (${codigo}, ${'Conteudo ' + canal + ' ' + mm + '/' + yy}, ${publico === 'b2b' ? 'aquisicao_b2b' : 'b2c'}, ${canal}, ${publico === 'b2b' ? 'b2b_revenda' : 'b2c_consumidor'}, true)
+      ON CONFLICT (codigo) DO UPDATE SET ativo = true RETURNING id`);
+    const campanhaId = String(c.rows?.[0]?.id || '');
+    if (!campanhaId) return null;
+    const dia = agora.toISOString().slice(0, 10).replace(/-/g, '');
+    const sufixo = Math.random().toString(36).slice(2, 5);
+    const slug = normalizarSlug(prefixo.toLowerCase() + '-' + dia + '-' + gancho + '-' + sufixo);
+    const destino = '/shop';
+    await db.execute(sql`
+      INSERT INTO mkt_links (slug, destino, campanha_id, utm_source, utm_medium, utm_campaign, utm_content, ativo, criado_por)
+      VALUES (${slug}, ${destino}, ${campanhaId}, ${canal}, ${'organico'}, ${codigo.toLowerCase()}, ${gancho}, true, ${AGENTE})
+      ON CONFLICT (slug) DO NOTHING`);
+    return { slug, destino, campanhaId, codigo };
+  } catch (e: any) {
+    console.error('[MKT-CONTEUDO] linkDaPeca:', e?.message || e);
+    return null;
+  }
+}
+
 export async function escolherLink(canal: string): Promise<{ slug: string; destino: string } | null> {
   try {
     const r: any = await db.execute(sql`
@@ -349,7 +387,13 @@ export function montarPrompt(o: {
     '- Termine com uma chamada para o link, escrito exatamente como recebido.',
     '  O endereco fecha a peca SOZINHO: nada de ponto, virgula ou parentese',
     '  colado nele. O Instagram engole o sinal para dentro do link e ele morre.',
-    '- Devolva SO um JSON: {"titulo": "...", "copy": "..."}. Nada fora do JSON.',
+    '- Preco, sabor disponivel e estoque: SO via a ferramenta consultar_produto.',
+    '  Se nao consultar, nao cite. Nunca de memoria.',
+    '- Alem da copy, escreva 3 VARIACOES da primeira linha (o gancho dos 3',
+    '  primeiros segundos), genuinamente diferentes entre si — e o que alimenta',
+    '  o teste de criativo. Cada uma com ate 90 caracteres.',
+    '- Devolva SO um JSON: {"titulo": "...", "copy": "...", "variacoes": ["...", "...", "..."]}.',
+    '  Nada fora do JSON.',
     '- O titulo e interno, para a fila de aprovacao: curto e descritivo.',
   ].join('\n');
 
@@ -364,29 +408,24 @@ export function montarPrompt(o: {
   return { sistema, pedido };
 }
 
-async function escrever(sistema: string, pedido: string): Promise<{ titulo: string; copy: string } | null> {
-  if (!process.env.OPENAI_API_KEY) return null;
+async function escrever(sistema: string, pedido: string, gatilho = 'cron'): Promise<{ titulo: string; copy: string; variacoes: string[] } | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
   try {
-    const mod: any = await import('openai');
-    const OpenAI = mod.default || mod.OpenAI || mod;
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const r = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: sistema }, { role: 'user', content: pedido }],
+    // SPRINT 2 (set/2026): saiu do gpt-4o-mini (fora do runtime, fora do custo,
+    // sem tools) e entrou no caminho unico dos agentes de marketing: prompt e
+    // teto em agentes_config, custo em mkt_agent_runs, preco so via tool.
+    const { chamarAgente, TOOL_CONSULTAR_PRODUTO } = await import('./mkt-llm');
+    const r = await chamarAgente({
+      agente: AGENTE, nome: 'Agente de Conteudo', modeloPadrao: 'claude-sonnet-4-6', tetoPadrao: 2,
+      promptPadrao: 'Voce e o redator da Honest Sucos Naturais. Escreve pecas curtas, honestas e especificas, sempre dentro do cartao de marca e dos fatos recebidos.',
+      systemExtra: sistema, user: pedido, tools: [TOOL_CONSULTAR_PRODUTO], maxTokens: 1500, temperature: 0.7, gatilho,
     });
-    const bruto = r?.choices?.[0]?.message?.content || '';
-    // Caixa de Decisoes (set/2026): este era o unico LLM fora da conta de custo.
-    try {
-      const { registrarRun } = await import('./mkt-agent-runs');
-      await registrarRun({ agente: AGENTE, gatilho: 'cron', canal: 'interno', modelo: 'gpt-4o-mini', provedor: 'openai',
-        tokensIn: Number(r?.usage?.prompt_tokens || 0), tokensOut: Number(r?.usage?.completion_tokens || 0), rodadas: 1, sucesso: !!bruto });
-    } catch {}
-    const j = JSON.parse(bruto);
+    if (!r.ok || !r.json) { if (!r.ok) console.error('[MKT-CONTEUDO]', r.erro); return null; }
+    const j = r.json;
     const copy = String(j.copy || '').trim();
     if (!copy) return null;
-    return { titulo: String(j.titulo || '').trim().slice(0, 120), copy };
+    const variacoes = Array.isArray(j.variacoes) ? j.variacoes.map((v: any) => String(v || '').trim()).filter(Boolean).slice(0, 3) : [];
+    return { titulo: String(j.titulo || '').trim().slice(0, 120), copy, variacoes };
   } catch {
     return null;
   }
@@ -433,12 +472,13 @@ export type Rodada = {
   link?: string;
   titulo?: string;
   copy?: string;
+  variacoes?: string[];
   saldo?: { cota: number; feitas: number; cabe: number };
   motivo?: string;
 };
 
-export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): Promise<Rodada> {
-  const m = await modo();
+export async function rodar(opts?: { forcar?: boolean; quem?: string | null; gancho?: string | null; publico?: 'b2b' | 'b2c' | null; acaoId?: string | null; modoForcado?: string | null }): Promise<Rodada> {
+  const m = opts?.modoForcado || await modo();
   if (m === 'off') return { ok: false, modo: m, motivo: 'agente de conteudo desligado' };
 
   const saldo = await saldoDaSemana();
@@ -448,17 +488,29 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
 
   const canal = await cfg('mkt_conteudo_canal');
 
-  const a = await escolherAssunto();
+  // Pauta vinda de fora (Radar/acao aprovada): gancho e publico ja decididos.
+  let a: any;
+  if (opts?.gancho) {
+    const { GANCHOS } = await import('./mkt-assets');
+    if (!(GANCHOS as readonly string[]).includes(String(opts.gancho))) return { ok: false, modo: m, saldo, motivo: 'gancho desconhecido: ' + opts.gancho };
+    a = { ok: true, assunto: { publico: opts.publico || 'b2b', gancho: String(opts.gancho), cenas: 0, motivo: 'pauta do Radar' } };
+  } else {
+    a = await escolherAssunto();
+    if (a.ok && a.assunto && opts?.publico) a.assunto.publico = opts.publico;
+  }
   if (!a.ok || !a.assunto) return { ok: false, modo: m, saldo, motivo: a.erro || 'sem assunto possivel' };
 
   const criativo = await escolherCriativo(a.assunto.publico, a.assunto.gancho);
   if (!criativo) return { ok: false, modo: m, saldo, assunto: a.assunto, motivo: 'sem criativo elegivel para ' + a.assunto.publico + ' x ' + a.assunto.gancho };
 
-  const link = await escolherLink(canal);
+  // Link proprio da peca (campanha do mes + slug com gancho). Em test nao cria nada.
+  const link = m === 'test'
+    ? await escolherLink(canal).then(l => l ? { ...l, campanhaId: null as string | null, codigo: '' } : null)
+    : await linkDaPeca(canal, a.assunto.gancho, a.assunto.publico);
   if (!link) {
     return {
       ok: false, modo: m, saldo, assunto: a.assunto, criativoId: criativo.id,
-      motivo: 'nenhum link rastreavel cadastrado: a peca sairia sem origem, e e isso que a Central existe para evitar',
+      motivo: m === 'test' ? 'nenhum link rastreavel cadastrado (em modo on o agente cria um por peca)' : 'nao consegui criar campanha/link para a peca',
     };
   }
 
@@ -484,8 +536,8 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
     fatos,
   });
 
-  const texto = await escrever(sistema, pedido);
-  if (!texto) return { ok: false, modo: m, saldo, assunto: a.assunto, criativoId: criativo.id, motivo: 'o modelo nao devolveu texto utilizavel' };
+  const texto = await escrever(sistema, pedido, opts?.quem === 'cron' ? 'cron' : 'api');
+  if (!texto) return { ok: false, modo: m, saldo, assunto: a.assunto, criativoId: criativo.id, motivo: 'o modelo nao devolveu texto utilizavel (chave, teto ou JSON invalido — veja mkt_agent_runs)' };
 
   // O prompt pede para nao colar pontuacao no endereco. Isso e pedido; a
   // garantia e esta linha.
@@ -499,24 +551,29 @@ export async function rodar(opts?: { forcar?: boolean; quem?: string | null }): 
   if (m === 'test') {
     return {
       ok: true, modo: m, criou: false, saldo, assunto: a.assunto, criativoId: criativo.id,
-      link: enderecoNaCopy, titulo, copy: texto.copy, motivo: 'modo test: nada foi gravado',
+      link: enderecoNaCopy, titulo, copy: texto.copy, variacoes: texto.variacoes, motivo: 'modo test: nada foi gravado',
     };
   }
 
   const { criarPeca, enviarParaRevisao } = await import('./mkt-esteira');
   const c = await criarPeca({
     canal, gancho: a.assunto.gancho, titulo, copy: texto.copy,
-    assetIds: [criativo.id], ctaTipo: 'link', ctaSlug: link.slug,
+    assetIds: [criativo.id], ctaTipo: 'link', ctaSlug: link.slug, campanhaId: link.campanhaId || null,
     origem: 'agente', agente: AGENTE, criadoPor: opts?.quem || AGENTE,
   });
   if (!c.ok || !c.id) return { ok: false, modo: m, saldo, assunto: a.assunto, motivo: c.erro || 'falha ao criar a peca' };
+  // Variacoes de gancho, acao de origem e post_ref do link — colunas aditivas.
+  try {
+    await db.execute(sql`UPDATE mkt_pieces SET variacoes = ${JSON.stringify(texto.variacoes || [])}::jsonb, acao_id = ${opts?.acaoId || null} WHERE id = ${c.id}`);
+    await db.execute(sql`UPDATE mkt_links SET post_ref = ${c.id} WHERE slug = ${link.slug}`);
+  } catch {}
 
   const rev = await enviarParaRevisao(c.id, AGENTE);
 
   return {
     ok: true, modo: m, criou: true, pieceId: c.id, estado: rev.estado, veredito: rev.veredito,
     saldo, assunto: a.assunto, criativoId: criativo.id, link: enderecoNaCopy,
-    titulo, copy: texto.copy,
+    titulo, copy: texto.copy, variacoes: texto.variacoes,
   };
 }
 
@@ -559,8 +616,7 @@ export async function prontidao(): Promise<{
     add('criativo', false, 'depende do assunto');
   }
 
-  const l = await escolherLink(canal).catch(() => null);
-  add('link', !!l, l ? (await linkPublico(l.slug)) : 'nenhum link rastreavel cadastrado: a peca sairia sem origem');
+  add('link', true, 'o agente cria campanha do mes + link proprio por peca (/r/' + (canal === 'instagram' ? 'ig' : 'mk') + '-<data>-<gancho>)');
 
   let cartao = '';
   try { const { blocoDePrompt } = await import('./mkt-marca'); cartao = String((await blocoDePrompt()) || '').trim(); } catch { cartao = ''; }
@@ -571,8 +627,8 @@ export async function prontidao(): Promise<{
   add('base_de_conhecimento', !!fatos,
     fatos ? (fatos.length + ' caracteres') : 'base de conhecimento vazia: sem fato o modelo inventa, e ja inventou');
 
-  add('chave_de_ia', !!process.env.OPENAI_API_KEY,
-    process.env.OPENAI_API_KEY ? 'presente' : 'OPENAI_API_KEY ausente: o agente escreveria peca vazia');
+  add('chave_de_ia', !!process.env.ANTHROPIC_API_KEY,
+    process.env.ANTHROPIC_API_KEY ? 'presente (Anthropic, custo em mkt_agent_runs)' : 'ANTHROPIC_API_KEY ausente: o agente escreveria peca vazia');
 
   const primeiro = portoes.find(p => !p.ok);
   return { pronto: !primeiro, portoes, impedimento: primeiro ? primeiro.detalhe : null, assunto, disponiveis };
@@ -598,7 +654,7 @@ export async function panorama(): Promise<any> {
   } catch { /* tabela ainda nao existe */ }
   return {
     ok: true, modo: m, parametros: p, saldo, pecasDoAgente: noAr,
-    temChaveIA: !!process.env.OPENAI_API_KEY,
+    temChaveIA: !!process.env.ANTHROPIC_API_KEY,
     proximoAssunto: pr.assunto,
     ganchosComFoto: pr.disponiveis || [],
     pronto: pr.pronto,
