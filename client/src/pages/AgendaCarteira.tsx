@@ -33,6 +33,7 @@ type Item = {
   vendedor: string;
   sellerId: string;
   canal: "presencial" | "virtual";
+  papel?: Papel;
   periodicidade: string;
   dias: string[];
   ultimaVisita: string | null;
@@ -42,7 +43,8 @@ type Item = {
 };
 type Semana = { i: number; off: number; ini: string; fim: string; rotulo: string; atual: boolean; passada: boolean };
 type LimiteCanais = { presencial: number; virtual: number };
-type Limites = LimiteCanais & { porVendedor: Record<string, LimiteCanais> };
+type Papel = "vendedor" | "telemarketing";
+type Limites = { vendedor: LimiteCanais; telemarketing: LimiteCanais; porVendedor: Record<string, LimiteCanais> };
 
 const DIAS = [
   { n: 1, curto: "2ª", longo: "Segunda", cod: "Seg" },
@@ -113,7 +115,10 @@ export default function AgendaCarteira() {
   const [ordDir, setOrdDir] = useState<"asc" | "desc">("asc");
   const [editando, setEditando] = useState<string>("");
   // Rascunho do teto de clientes por dia enquanto o popover esta aberto.
-  const [rascunhoTeto, setRascunhoTeto] = useState<null | { presencial: string; virtual: string; vendedorId: string; vPresencial: string; vVirtual: string }>(null);
+  const [rascunhoTeto, setRascunhoTeto] = useState<null | {
+    presencial: string; virtual: string; tmPresencial: string; tmVirtual: string;
+    vendedorId: string; vPresencial: string; vVirtual: string;
+  }>(null);
   const [salvandoTeto, setSalvandoTeto] = useState(false);
   // O quadro abre com 8 semanas de passado a esquerda; sem isso o usuario cai
   // olhando junho. Rolamos ate a semana vigente assim que ela existe no DOM.
@@ -136,8 +141,11 @@ export default function AgendaCarteira() {
   const semanaAtual = semanas.find((s) => s.atual);
   const escopoRestrito = data?.escopo?.restrito === true;
   const podeEditarVisita = data?.podeEditarVisita === true;
-  const limites: Limites = data?.limites || { presencial: 0, virtual: 0, porVendedor: {} };
+  const SEM_TETO = { presencial: 0, virtual: 0 };
+  const limites: Limites = data?.limites || { vendedor: SEM_TETO, telemarketing: SEM_TETO, porVendedor: {} };
   const podeEditarLimites = data?.podeEditarLimites === true;
+  // sellerId -> cidade de origem (deduzida das coordenadas da casa, no servidor).
+  const cidadeOrigem: Record<string, string> = data?.cidadeOrigem || {};
 
   // Opções do filtro de vendedor: quem realmente tem alguém na janela.
   const opcoesVend = useMemo(() => {
@@ -175,8 +183,12 @@ export default function AgendaCarteira() {
   const pivo = useMemo(() => {
     const m = new Map<string, number>();
     const porVend = new Map<string, Map<string, number>>();
+    // Cidades FORA da cidade de origem de quem atende — é o que sai em azul.
+    const foraDaOrigem = new Map<string, Map<string, number>>();
     for (const it of base) {
       const balde = baldeDe(it);
+      const origem = chaveCidade(cidadeOrigem[it.sellerId] || "");
+      const cidade = cidadeCanonica(it.cidade) || "";
       for (const dt of it.datas) {
         const s = semanaDaData(dt);
         const d = diaDaData(dt);
@@ -188,10 +200,17 @@ export default function AgendaCarteira() {
           if (!dentro) { dentro = new Map(); porVend.set(k, dentro); }
           dentro.set(it.sellerId, (dentro.get(it.sellerId) || 0) + 1);
         }
+        // Só destaca quando SABEMOS a origem: sem coordenada da casa não há
+        // com o que comparar, e marcar tudo seria pior do que não marcar nada.
+        if (origem && cidade && chaveCidade(cidade) !== origem) {
+          let fora = foraDaOrigem.get(k);
+          if (!fora) { fora = new Map(); foraDaOrigem.set(k, fora); }
+          fora.set(cidade, (fora.get(cidade) || 0) + 1);
+        }
       }
     }
-    return { total: m, porVend };
-  }, [base, semanaDaData]);
+    return { total: m, porVend, foraDaOrigem };
+  }, [base, semanaDaData, cidadeOrigem]);
   const conta = (s: number, d: number, c: string) => pivo.total.get(`${s}|${d}|${c}`) || 0;
 
   const nomeDoVendedor = useMemo(() => {
@@ -200,10 +219,17 @@ export default function AgendaCarteira() {
     return m;
   }, [todos]);
 
-  /** Teto daquele vendedor no canal: a exceção dele, senão o padrão. 0 = sem teto. */
+  const papelDoVendedor = useMemo(() => {
+    const m = new Map<string, Papel>();
+    for (const i of todos) if (i.sellerId) m.set(i.sellerId, i.papel === "telemarketing" ? "telemarketing" : "vendedor");
+    return m;
+  }, [todos]);
+
+  /** Teto daquela pessoa no canal: a exceção dela, senão o teto do PAPEL. 0 = sem teto. */
   const tetoDe = (sellerId: string, canal: "presencial" | "virtual") => {
     const ex = limites.porVendedor?.[sellerId];
-    return Number(ex?.[canal] || 0) || Number(limites[canal] || 0);
+    const doPapel = papelDoVendedor.get(sellerId) === "telemarketing" ? limites.telemarketing : limites.vendedor;
+    return Number(ex?.[canal] || 0) || Number(doPapel?.[canal] || 0);
   };
 
   /**
@@ -222,6 +248,15 @@ export default function AgendaCarteira() {
       if (teto && n > teto) fora.push({ vendedor: nomeDoVendedor.get(sellerId) || "Sem vendedor", n, teto });
     });
     return fora.sort((a, b) => b.n - a.n);
+  };
+
+  /** Cidades daquela célula que não são a cidade de origem de quem atende. */
+  const cidadesForaDaOrigem = (s: number, d: number, c: string): { cidade: string; n: number }[] => {
+    const m = pivo.foraDaOrigem.get(`${s}|${d}|${c}`);
+    if (!m) return [];
+    const fora: { cidade: string; n: number }[] = [];
+    m.forEach((n, cidade) => fora.push({ cidade, n }));
+    return fora.sort((a, b) => b.n - a.n || a.cidade.localeCompare(b.cidade, "pt-BR"));
   };
 
   const totalSemana = (s: number, c: string) => DIAS.reduce((t, x) => t + conta(s, x.n, c), 0);
@@ -250,7 +285,11 @@ export default function AgendaCarteira() {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ presencial: num(rascunhoTeto.presencial), virtual: num(rascunhoTeto.virtual), porVendedor }),
+        body: JSON.stringify({
+          vendedor: { presencial: num(rascunhoTeto.presencial), virtual: num(rascunhoTeto.virtual) },
+          telemarketing: { presencial: num(rascunhoTeto.tmPresencial), virtual: num(rascunhoTeto.tmVirtual) },
+          porVendedor,
+        }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Falha ao salvar o teto.");
       setRascunhoTeto(null);
@@ -426,8 +465,10 @@ export default function AgendaCarteira() {
                 const id = vendedorUnicoId;
                 const ex = id ? limites.porVendedor?.[id] : undefined;
                 setRascunhoTeto({
-                  presencial: String(limites.presencial || ""),
-                  virtual: String(limites.virtual || ""),
+                  presencial: String(limites.vendedor?.presencial || ""),
+                  virtual: String(limites.vendedor?.virtual || ""),
+                  tmPresencial: String(limites.telemarketing?.presencial || ""),
+                  tmVirtual: String(limites.telemarketing?.virtual || ""),
                   vendedorId: id,
                   vPresencial: String(ex?.presencial || ""),
                   vVirtual: String(ex?.virtual || ""),
@@ -439,8 +480,8 @@ export default function AgendaCarteira() {
                   <Users className="h-4 w-4 mr-2" />
                   Teto por dia
                   <span className="ml-2 text-xs text-muted-foreground">
-                    {limites.presencial || limites.virtual
-                      ? `${limites.presencial || "—"} pres. / ${limites.virtual || "—"} virt.`
+                    {limites.vendedor?.presencial || limites.vendedor?.virtual || limites.telemarketing?.presencial || limites.telemarketing?.virtual
+                      ? `vend. ${limites.vendedor?.presencial || "—"}/${limites.vendedor?.virtual || "—"} · tele ${limites.telemarketing?.presencial || "—"}/${limites.telemarketing?.virtual || "—"}`
                       : "não definido"}
                   </span>
                 </Button>
@@ -449,31 +490,61 @@ export default function AgendaCarteira() {
                 <div>
                   <p className="font-semibold">Máximo de clientes por dia</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Vale por vendedor, não pela soma de todos. A célula fica amarela quando alguém passa do
+                    Vale por pessoa, não pela soma de todas. A célula fica amarela quando alguém passa do
                     teto, e o admin recebe um aviso na Inbox. Leads não entram na conta. Em branco ou 0 = sem teto.
                   </p>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium">Presenciais</span>
-                    <Input
-                      type="number" min={0} inputMode="numeric"
-                      data-testid="input-teto-presencial"
-                      disabled={!podeEditarLimites}
-                      value={rascunhoTeto?.presencial ?? ""}
-                      onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, presencial: e.target.value } : r))}
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium">Virtuais</span>
-                    <Input
-                      type="number" min={0} inputMode="numeric"
-                      data-testid="input-teto-virtual"
-                      disabled={!podeEditarLimites}
-                      value={rascunhoTeto?.virtual ?? ""}
-                      onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, virtual: e.target.value } : r))}
-                    />
-                  </label>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vendedores</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-xs font-medium">Presenciais</span>
+                      <Input
+                        type="number" min={0} inputMode="numeric"
+                        data-testid="input-teto-presencial"
+                        disabled={!podeEditarLimites}
+                        value={rascunhoTeto?.presencial ?? ""}
+                        onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, presencial: e.target.value } : r))}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs font-medium">Virtuais</span>
+                      <Input
+                        type="number" min={0} inputMode="numeric"
+                        data-testid="input-teto-virtual"
+                        disabled={!podeEditarLimites}
+                        value={rascunhoTeto?.virtual ?? ""}
+                        onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, virtual: e.target.value } : r))}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Telemarketing</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-xs font-medium">Presenciais</span>
+                      <Input
+                        type="number" min={0} inputMode="numeric"
+                        data-testid="input-teto-tm-presencial"
+                        disabled={!podeEditarLimites}
+                        value={rascunhoTeto?.tmPresencial ?? ""}
+                        onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, tmPresencial: e.target.value } : r))}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs font-medium">Virtuais</span>
+                      <Input
+                        type="number" min={0} inputMode="numeric"
+                        data-testid="input-teto-tm-virtual"
+                        disabled={!podeEditarLimites}
+                        value={rascunhoTeto?.tmVirtual ?? ""}
+                        onChange={(e) => setRascunhoTeto((r) => (r ? { ...r, tmVirtual: e.target.value } : r))}
+                      />
+                    </label>
+                  </div>
                 </div>
 
                 {rascunhoTeto?.vendedorId ? (
@@ -576,9 +647,17 @@ export default function AgendaCarteira() {
                       <b className="text-amber-700">Célula amarela</b> = algum vendedor passou do <b>teto de clientes
                       por dia</b> naquele dia. O teto é por vendedor (botão “Teto por dia”), então sem o filtro de
                       vendedor o número da célula é a soma de todos, mas o amarelo continua apontando a pessoa —
-                      passe o mouse para ver quem e quanto. Leads não entram na conta e semanas passadas não ficam
+                      passe o mouse para ver quem e quanto. O teto é separado para <b>vendedores</b> e <b>telemarketing</b>,
+                      porque a carga dos dois não se compara. Leads não entram na conta e semanas passadas não ficam
                       amarelas. Cada célula amarela abre um aviso na Inbox do admin, e ele some sozinho quando o dia
                       volta a caber.
+                    </p>
+                    <p>
+                      <b className="text-blue-600">Cidade em azul</b> embaixo do número = naquele dia há atendimento
+                      <b> fora da cidade de origem</b> de quem atende. A origem é deduzida das coordenadas da casa do
+                      vendedor ou do telemarketing: é a cidade que mais aparece entre os clientes mais próximos dela.
+                      Quem não tem coordenada de casa cadastrada não recebe destaque nenhum — sem origem não há com o
+                      que comparar.
                     </p>
                     <p className="text-muted-foreground text-xs">
                       Quem atende em mais de um dia da semana aparece em todos eles na semana visitada. O número conta
@@ -668,6 +747,26 @@ export default function AgendaCarteira() {
                                 >
                                   {v || "—"}
                                 </button>
+                                {(() => {
+                                  // AZUL = atendimento em cidade que não é a de
+                                  // origem de quem atende (deduzida da coordenada
+                                  // da casa). Mostra as 2 maiores e resume o resto.
+                                  const outras = cidadesForaDaOrigem(s.i, dia.n, canal);
+                                  if (!outras.length) return null;
+                                  const todasAsCidades = outras.map((x) => `${x.cidade} (${x.n})`).join(" · ");
+                                  return (
+                                    <div
+                                      className="mt-0.5 text-[10px] leading-tight text-blue-600 dark:text-blue-400"
+                                      title={`Fora da cidade de origem: ${todasAsCidades}`}
+                                      data-testid={`cidades-fora-${s.i}-${dia.n}-${canal}`}
+                                    >
+                                      {outras.slice(0, 2).map((x) => (
+                                        <div key={x.cidade} className="truncate max-w-[7rem] mx-auto">{x.cidade}</div>
+                                      ))}
+                                      {outras.length > 2 && <div>+{outras.length - 2}</div>}
+                                    </div>
+                                  );
+                                })()}
                               </td>
                             );
                           }),
