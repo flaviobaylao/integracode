@@ -9,11 +9,10 @@
 // A regra que passa a valer: o descanso e da FAMILIA, nao da peca. Usou uma,
 // a familia inteira descansa.
 //
-// Como o hash e calculado: o projeto nao tem sharp/jimp e o Railway nao tem
-// volume — decodificar JPEG no servidor sairia caro em dependencia e em risco
-// de build (mesmo motivo de lerDimensao ler so o cabecalho). Quem decodifica a
-// imagem e o navegador, no painel, via canvas; o servidor recebe o hash pronto
-// e faz a parte que importa: agrupar e impedir a repeticao.
+// Como o hash e calculado (set/2026, Sprint 3): o projeto passou a ter `sharp`
+// (autorizado para o Railway). O servidor decodifica a imagem no cadastro e em
+// lote (hashNoServidor / calcularHashesPendentes) — o caminho pelo navegador
+// (gravarHashes) continua valendo, mas nunca chegou a ser ligado na tela.
 //
 // dHash 9x8: reduz para 9x8 tons de cinza e compara cada pixel com o vizinho da
 // direita -> 64 bits, 16 caracteres hex. Robusto a recorte leve, escala e
@@ -281,4 +280,50 @@ export async function panoramaFamilias(): Promise<any> {
   } catch (e: any) {
     return { ok: false, erro: String(e?.message || e) };
   }
+}
+
+// ---------------------------------------------------------------------------
+// dHash no servidor (sharp): 9x8 cinza, bit = pixel < vizinho da direita,
+// linha a linha, 64 bits -> 16 hex. Nunca lanca: sem sharp ou imagem ruim,
+// devolve null e o criativo fica sem familia (como antes).
+// ---------------------------------------------------------------------------
+export async function dHashDeBuffer(buf: Buffer): Promise<string | null> {
+  try {
+    const mod: any = await import('sharp');
+    const sharp = mod.default || mod;
+    const raw: Buffer = await sharp(buf).rotate().grayscale().resize(9, 8, { fit: 'fill' }).raw().toBuffer();
+    if (raw.length < 72) return null;
+    let bits = '';
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) bits += raw[y * 9 + x] < raw[y * 9 + x + 1] ? '1' : '0';
+    let hex = '';
+    for (let i = 0; i < 64; i += 4) hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+    return hex;
+  } catch (e: any) {
+    console.error('[MKT-SEMELHANCA] dHash:', e?.message || e);
+    return null;
+  }
+}
+
+export async function hashNoServidor(id: number, buf?: Buffer | null): Promise<{ ok: boolean; phash?: string; erro?: string }> {
+  try {
+    let b = buf || null;
+    if (!b) { const { arquivoDoAsset } = await import('./mkt-assets'); const a = await arquivoDoAsset(id); b = a?.buf || null; }
+    if (!b) return { ok: false, erro: 'sem arquivo' };
+    const h = await dHashDeBuffer(b);
+    if (!h) return { ok: false, erro: 'nao decodificou' };
+    await db.execute(sql`UPDATE mkt_assets SET phash = ${h} WHERE id = ${id}`);
+    return { ok: true, phash: h };
+  } catch (e: any) { return { ok: false, erro: String(e?.message || e) }; }
+}
+
+/** Criativos sem hash: calcula em lote e recalcula as familias no fim. */
+export async function calcularHashesPendentes(limite = 60): Promise<{ feitos: number; erros: number; familias?: any }> {
+  let feitos = 0, erros = 0;
+  try {
+    const r: any = await db.execute(sql`SELECT id FROM mkt_assets WHERE phash IS NULL AND COALESCE(ativo, true) = true ORDER BY id DESC LIMIT ${Math.min(300, limite)}`);
+    for (const row of (r.rows || [])) { const x = await hashNoServidor(Number(row.id)); if (x.ok) feitos++; else erros++; }
+  } catch (e: any) { console.error('[MKT-SEMELHANCA] lote:', e?.message || e); }
+  let familias: any = null;
+  if (feitos) { try { familias = await recalcularFamilias(); } catch {} }
+  return { feitos, erros, familias };
 }
