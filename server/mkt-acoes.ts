@@ -79,7 +79,7 @@ export async function ensureMktAcoesSchema(): Promise<{ ok: boolean; steps: any[
   // Politicas de partida — tudo que fala com cliente comeca em N2 (humano).
   await run('seed_politicas',
     "INSERT INTO mkt_politicas (tipo, nivel_padrao) VALUES " +
-    "('regua', 2), ('alerta', 0), ('peca', 2), ('campanha', 0), ('cupom', 2), ('visita', 2), ('anuncio', 2) " +
+    "('regua', 2), ('alerta', 0), ('peca', 0), ('campanha', 0), ('cupom', 2), ('visita', 2), ('anuncio', 2) " +
     "ON CONFLICT (tipo) DO NOTHING");
 
   await run('create_sinais',
@@ -95,11 +95,24 @@ export async function ensureMktAcoesSchema(): Promise<{ ok: boolean; steps: any[
     "confianca varchar NOT NULL DEFAULT 'media', acao_sugerida text, ativo boolean NOT NULL DEFAULT true, " +
     "criado_em timestamptz NOT NULL DEFAULT now())");
 
+  // As tabelas dos outros modulos sao preguicosas (nascem no 1o uso). Garante-as
+  // antes dos ALTERs abaixo, senao as colunas novas so existiriam no 2o boot.
+  try { const { ensureMktEsteiraSchema } = await import('./mkt-esteira'); await ensureMktEsteiraSchema(); } catch {}
+  try { const { ensureMktAssetsSchema } = await import('./mkt-assets'); await ensureMktAssetsSchema(); } catch {}
+  try { const { ensureMktRecompraSchema } = await import('./mkt-recompra'); await ensureMktRecompraSchema(); } catch {}
+
   // Rastro da acao ate a venda
   await run('col_sales_acao', "ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS acao_id varchar");
   await run('col_fila_acao', "ALTER TABLE mkt_fila_toques ADD COLUMN IF NOT EXISTS acao_id varchar");
   await run('col_lotes_acao', "ALTER TABLE mkt_lotes ADD COLUMN IF NOT EXISTS acao_id varchar");
   await run('col_pieces_acao', "ALTER TABLE mkt_pieces ADD COLUMN IF NOT EXISTS acao_id varchar");
+  // Sprint 2: numero curto (o '31' de 'POSTEI 31'), variacoes de gancho, entrega no WhatsApp
+  await run('col_pieces_numero', "ALTER TABLE mkt_pieces ADD COLUMN IF NOT EXISTS numero serial");
+  await run('col_pieces_variacoes', "ALTER TABLE mkt_pieces ADD COLUMN IF NOT EXISTS variacoes jsonb NOT NULL DEFAULT '[]'::jsonb");
+  await run('col_pieces_entregue', "ALTER TABLE mkt_pieces ADD COLUMN IF NOT EXISTS entregue_em timestamptz");
+  await run('col_assets_visao', "ALTER TABLE mkt_assets ADD COLUMN IF NOT EXISTS tags_ia jsonb");
+  await run('col_assets_descricao', "ALTER TABLE mkt_assets ADD COLUMN IF NOT EXISTS descricao_ia text");
+  await run('col_assets_visao_em', "ALTER TABLE mkt_assets ADD COLUMN IF NOT EXISTS visao_em timestamptz");
   await run('col_conv_acao', "ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS acao_id varchar");
   await run('col_runs_provedor', "ALTER TABLE mkt_agent_runs ADD COLUMN IF NOT EXISTS provedor varchar NOT NULL DEFAULT 'anthropic'");
 
@@ -353,6 +366,14 @@ async function executarCampanha(a: any): Promise<any> {
 async function executarPeca(a: any): Promise<any> {
   const { criarPeca, enviarParaRevisao } = await import('./mkt-esteira');
   const p = a.parametros || {};
+  // Pauta (Radar): o agente de conteudo escreve a peca com o gancho/publico pedidos.
+  // A peca continua passando por revisor + fila de aprovacao — a acao so gera o rascunho.
+  if (p.gerar) {
+    const { rodar } = await import('./mkt-agente-conteudo');
+    const r = await rodar({ forcar: true, quem: 'acao:' + a.numero, gancho: p.gancho || null, publico: p.publico || null, acaoId: a.id, modoForcado: 'on' });
+    if (!r.ok || !r.criou) throw new Error(r.motivo || 'agente de conteudo nao produziu');
+    return { pecaId: r.pieceId, estado: r.estado, veredito: r.veredito, titulo: r.titulo };
+  }
   const r = await criarPeca({ ...(p.peca || {}), criadoPor: 'acao:' + a.numero } as any);
   if (!r.ok || !r.id) throw new Error(r.erro || 'nao criou peca');
   await db.execute(sql`UPDATE mkt_pieces SET acao_id = ${a.id} WHERE id = ${r.id}`);
@@ -557,7 +578,7 @@ function resumoExecucao(d: any): string {
   if (d.loteId) return (d.montados ?? 0) + ' mensagem(ns) na fila do 1841' + (d.bloqueados ? ', ' + d.bloqueados + ' bloqueada(s)' : '');
   if (d.enviados) return 'aviso enviado';
   if (d.campanhaId) return 'campanha ' + d.codigo + (d.link ? ' + link /r/' + d.link : '');
-  if (d.pecaId) return 'peça criada e enviada ao revisor';
+  if (d.pecaId) return 'peça criada e enviada ao revisor' + (d.estado ? ' (' + d.estado + ')' : '');
   return 'ok';
 }
 

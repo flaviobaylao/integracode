@@ -40,6 +40,7 @@ export type Sinais = {
   custoIaMes: number;
   aprendizados: string[];
   avisos: string[];
+  conteudo: { modo: string; cotaSemana: number; feitasSemana: number; cabe: number; naFila: number; aprovadasNaoPostadas: number; ganchosComFoto: Array<{ gancho: string; publico: string; fotos: number }>; desempenhoGancho: Array<{ gancho: string; usos: number; receitaPorUso: number; confiavel: boolean }> };
 };
 
 const hojeBR = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })).toISOString().slice(0, 10);
@@ -175,6 +176,25 @@ async function custoIaMes(): Promise<number> {
   } catch { return 0; }
 }
 
+async function conteudo(): Promise<Sinais['conteudo']> {
+  const out: Sinais['conteudo'] = { modo: 'off', cotaSemana: 0, feitasSemana: 0, cabe: 0, naFila: 0, aprovadasNaoPostadas: 0, ganchosComFoto: [], desempenhoGancho: [] };
+  try {
+    const c = await import('./mkt-agente-conteudo');
+    out.modo = await c.modo();
+    const s = await c.saldoDaSemana(); out.cotaSemana = s.cota; out.feitasSemana = s.feitas; out.cabe = s.cabe;
+    const f: any = await db.execute(sql`SELECT COUNT(*) FILTER (WHERE estado = 'aguardando_aprovacao')::int AS fila, COUNT(*) FILTER (WHERE estado IN ('aprovado','agendado'))::int AS aprov FROM mkt_pieces`);
+    out.naFila = Number(f.rows?.[0]?.fila || 0); out.aprovadasNaoPostadas = Number(f.rows?.[0]?.aprov || 0);
+    const { buscar, GANCHOS, desempenhoPorTag } = await import('./mkt-assets');
+    for (const pub of ['b2b', 'b2c']) for (const g of GANCHOS as readonly string[]) {
+      const lista = await buscar({ soElegiveis: true, publico: pub, gancho: g, limite: 50 } as any).catch(() => []);
+      if (lista.length) out.ganchosComFoto.push({ gancho: g, publico: pub, fotos: lista.length });
+    }
+    const d = await desempenhoPorTag('gancho', 90).catch(() => ({ linhas: [] }));
+    out.desempenhoGancho = (d.linhas || []).map((l: any) => ({ gancho: String(l.valor), usos: Number(l.usos || 0), receitaPorUso: Number(l.receitaPorUso || 0), confiavel: !!l.confiavel }));
+  } catch (e: any) { console.error('[MKT-SINAIS] conteudo:', e?.message || e); }
+  return out;
+}
+
 async function aprendizados(): Promise<string[]> {
   try {
     const r: any = await db.execute(sql.raw(`SELECT enunciado FROM mkt_learnings WHERE ativo = true ORDER BY criado_em DESC LIMIT 12`));
@@ -189,8 +209,8 @@ export async function lerSinais(): Promise<Sinais> {
   const avisos: string[] = [];
   const retrato = await retratoDaBase().catch((e: any) => { avisos.push('retrato da base falhou: ' + (e?.message || e)); return [] as Retrato[]; });
   const r14 = await reguas14d();
-  const [segmentos, cart, pos, acoes, custo, aprend] = await Promise.all([
-    segmentosPorRegua(retrato, r14), carteiras(), positivacao(), historicoAcoes(), custoIaMes(), aprendizados(),
+  const [segmentos, cart, pos, acoes, custo, aprend, cont] = await Promise.all([
+    segmentosPorRegua(retrato, r14), carteiras(), positivacao(), historicoAcoes(), custoIaMes(), aprendizados(), conteudo(),
   ]);
   const cats = await categoriasAprovadas();
   if (cats.faltando.length) avisos.push('templates sem cadastro em whatsapp_templates: ' + cats.faltando.join(', ') + ' (custo e palpite; liberacao falharia)');
@@ -203,7 +223,7 @@ export async function lerSinais(): Promise<Sinais> {
       inadimplentes: retrato.filter(r => r.inadimplente).length,
       optout: retrato.filter(r => r.optout).length,
     },
-    segmentos, carteiras: cart, positivacao: pos, reguas14d: r14, acoes, custoIaMes: custo, aprendizados: aprend, avisos,
+    segmentos, carteiras: cart, positivacao: pos, reguas14d: r14, acoes, custoIaMes: custo, aprendizados: aprend, avisos, conteudo: cont,
   };
 
   // Snapshot (sem a lista nominal — só os números; a lista vive na ação)
@@ -239,6 +259,9 @@ export function sinaisParaPrompt(s: Sinais): any {
     resultado_reguas_14d: s.reguas14d,
     historico_acoes_30d: s.acoes,
     custo_ia_mes_brl: s.custoIaMes,
+    conteudo: { agente_modo: s.conteudo.modo, cota_semana: s.conteudo.cotaSemana, feitas_semana: s.conteudo.feitasSemana, cabe_esta_semana: s.conteudo.cabe,
+      pecas_na_fila_de_aprovacao: s.conteudo.naFila, pecas_aprovadas_nao_postadas: s.conteudo.aprovadasNaoPostadas,
+      ganchos_com_foto_elegivel: s.conteudo.ganchosComFoto, desempenho_por_gancho_90d: s.conteudo.desempenhoGancho },
     aprendizados: s.aprendizados,
     avisos: s.avisos,
   };
