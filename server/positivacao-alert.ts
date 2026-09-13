@@ -12,12 +12,30 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
   const digits = (v: any) => String(v || '').replace(/[^0-9]/g, '');
   const unesc = (v: any) => String(v || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#0?34;/g, '"').replace(/&apos;/g, "'");
 
-  // 1) Universo: clientes na lista de Ativos (resolvidos no cadastro)
+  // Normaliza nome p/ comparação (sem acento, minúsculo, espaços colapsados)
+  const normName = (v: any) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+  // 0) Nomes de COLABORADORES e FORNECEDORES (por flag) — nome, nome fantasia e razão social.
+  //    Usado p/ excluir da lista também os cadastros duplicados que não têm a flag marcada
+  //    mas batem no nome fantasia OU razão social de um colaborador/fornecedor conhecido.
+  const flags = rowsOf(await db.execute(sql`
+    SELECT name, fantasy_name, company_name FROM customers
+    WHERE is_supplier IS TRUE OR is_colaborador IS TRUE`));
+  const nomesExcluir = new Set<string>();
+  for (const f of flags) { for (const v of [f.name, f.fantasy_name, f.company_name]) { const n = normName(v); if (n) nomesExcluir.add(n); } }
+
+  // 1) Universo: clientes na lista de Ativos (resolvidos no cadastro).
+  //    Exclui: vínculo inativo, cadastro inativo/excluído em Gestão (c.is_active=false),
+  //    fornecedores e colaboradores (por flag).
   const au = rowsOf(await db.execute(sql`
-    SELECT c.id AS rid, c.name AS nome, c.city AS cidade, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid, c.weekdays AS weekdays
+    SELECT c.id AS rid, c.name AS nome, c.city AS cidade, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid, c.weekdays AS weekdays,
+           c.fantasy_name AS fantasia, c.company_name AS razao
     FROM active_customers ac
     LEFT JOIN customers c ON c.id = ac.customer_id
-    WHERE ac.is_active IS NOT FALSE AND c.id IS NOT NULL`));
+    WHERE ac.is_active IS NOT FALSE AND c.id IS NOT NULL
+      AND c.is_active IS NOT FALSE
+      AND c.is_supplier IS NOT TRUE
+      AND c.is_colaborador IS NOT TRUE`));
 
   // 2) Positivação do mês (billing_pipeline OU receivable)
   const bp = rowsOf(await db.execute(sql`
@@ -59,6 +77,8 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
   const seenC = new Set<string>();
   for (const r of au) {
     const rid = String(r.rid); if (seenC.has(rid)) continue; seenC.add(rid);
+    // Exclui cadastros (sem a flag) cujo nome, nome fantasia OU razão social batem com um colaborador/fornecedor conhecido
+    if ([r.nome, r.fantasia, r.razao].some((v: any) => { const n = normName(v); return n && nomesExcluir.has(n); })) continue;
     const doc = digits(r.cnpj) || digits(r.cpf);
     const pos = posById.has(rid) || (doc.length >= 11 && posByDoc.has(doc));
     const u = resolveUser(r.sid ? String(r.sid) : null);
