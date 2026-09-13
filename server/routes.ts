@@ -1717,12 +1717,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const buildProximaVisita = async (): Promise<Map<string, string>> => {
         const m = new Map<string, string>();
         try {
+          // ⚡ DISTINCT ON + janela de 90 dias: usa o indice (customer_id, scheduled_date) e nao
+          // varre a agenda inteira. Com MIN()+GROUP BY sem janela o map-data foi de 0,4s para 14s.
           const r: any = await db.execute(sql`
-            SELECT customer_id, MIN(scheduled_date) AS proxima
+            SELECT DISTINCT ON (customer_id) customer_id, scheduled_date AS proxima
             FROM visit_agenda
             WHERE scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+              AND scheduled_date < ((now() AT TIME ZONE 'America/Sao_Paulo')::date + interval '90 days')
               AND COALESCE(visit_status, 'pending') = 'pending'
-            GROUP BY customer_id`);
+            ORDER BY customer_id, scheduled_date`);
           for (const x of ((r.rows || r) as any[])) {
             if (x.customer_id && x.proxima) m.set(String(x.customer_id), String(x.proxima));
           }
