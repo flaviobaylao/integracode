@@ -314,6 +314,11 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
               </p>
             )}
+            {!ehLead && (
+              <p className="font-medium">
+                📆 Próxima visita: {dataBR(customer.nextVisitDate) || 'sem visita agendada'}
+              </p>
+            )}
             {!ehLead && podeEditar ? (
               <p className="flex items-center gap-2">
                 📞
