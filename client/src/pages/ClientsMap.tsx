@@ -137,6 +137,12 @@ function proximaDataDoDia(diaLabel: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// "2026-09-14 12:00:00" (ou ISO) -> "14/09/2026", sem depender de fuso.
+function dataBR(v: any): string {
+  const m = String(v || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+
 // "2026-09-14 12:00:00" -> "2026-09-14" (o <input type="date"> exige esse formato).
 function dataISO(v: any): string {
   const m = String(v || '').trim().match(/^(\d{4}-\d{2}-\d{2})/);
@@ -358,6 +364,9 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                     {PERIODICIDADE_OPTIONS.map((pp) => <option key={pp} value={pp.toLowerCase()}>{pp}</option>)}
                   </select>
                 </p>
+                <p className="font-medium">
+                  🧾 Último faturamento: {dataBR(customer.lastInvoiceDate) || 'sem faturamento'}
+                </p>
                 <p className="font-medium flex items-center gap-2">
                   🖥️ Tipo:
                   <select
@@ -372,11 +381,18 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 </p>
               </>
             ) : (
-              customer.visitPeriodicity && (
-                <p className="font-medium">
-                  🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}
-                </p>
-              )
+              <>
+                {customer.visitPeriodicity && (
+                  <p className="font-medium">
+                    🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}
+                  </p>
+                )}
+                {!ehLead && (
+                  <p className="font-medium">
+                    🧾 Último faturamento: {dataBR(customer.lastInvoiceDate) || 'sem faturamento'}
+                  </p>
+                )}
+              </>
             )}
           </div>
           {/* Lead nao e cliente: o modal de edicao de cliente nao serve para ele. */}
