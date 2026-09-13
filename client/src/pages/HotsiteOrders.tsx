@@ -89,6 +89,12 @@ export default function HotsiteOrders() {
     return map;
   }, {} as Record<string, Customer>) || {};
 
+  // 🎟️ Cupom usado em cada pedido. O resgate da loja e gravado por order_ref (o WEB-...
+  // que vive no notes do card); o do vendedor, por sales_card_id. Consulta as duas chaves.
+  const { data: cuponsPorPedido } = useQuery<{ porRef: Record<string, { code: string; discount: number }>; porCard: Record<string, { code: string; discount: number }> }>({
+    queryKey: ['/api/coupons/por-pedido'],
+  });
+
   // Mutation para excluir pedido
   const deleteMutation = useMutation({
     mutationFn: async (orderId: string) => {
@@ -264,6 +270,13 @@ export default function HotsiteOrders() {
     return match ? match[0] : '-';
   };
 
+  const getCupom = (order: HotsiteOrder): { code: string; discount: number } | null => {
+    const ref = extractOrderNumber(order.notes);
+    return (ref && ref !== '-' && cuponsPorPedido?.porRef?.[ref])
+      || cuponsPorPedido?.porCard?.[order.id]
+      || null;
+  };
+
   const getDeliveryAddress = (order: HotsiteOrder, customer?: Customer): string | null => {
     if (order.customerAddress) return order.customerAddress;
     if (customer?.address) return customer.address;
@@ -279,6 +292,7 @@ export default function HotsiteOrders() {
       case 'address': return getDeliveryAddress(order, cust) || '';
       case 'products': return order.products ? order.products.length : 0;
       case 'value': return Number(order.saleValue || 0);
+      case 'cupom': return getCupom(order)?.code || '';
       case 'payment': return getPaymentMethodLabel(order.paymentMethod) || '';
       case 'status': return order.status || '';
       default: return '';
@@ -457,6 +471,7 @@ export default function HotsiteOrders() {
                       <SortableTh label="Endereço de Entrega" colKey="address" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Produtos" colKey="products" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Valor" colKey="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Cupom" colKey="cupom" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Pagamento" colKey="payment" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <TableHead className="text-center">Ações</TableHead>
@@ -532,6 +547,20 @@ export default function HotsiteOrders() {
                             <div className="font-semibold text-green-700">
                               R$ {parseFloat(order.saleValue || '0').toFixed(2)}
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              const cupom = getCupom(order);
+                              if (!cupom) return <span className="text-gray-400">—</span>;
+                              return (
+                                <div className="whitespace-nowrap">
+                                  <span className="inline-block font-mono text-xs font-semibold px-2 py-0.5 rounded bg-green-100 text-green-800">
+                                    {cupom.code}
+                                  </span>
+                                  <div className="text-xs text-gray-500 mt-0.5">− R$ {cupom.discount.toFixed(2)}</div>
+                                </div>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell>{getPaymentMethodLabel(order.paymentMethod)}</TableCell>
                           <TableCell>{getStatusBadge(order.status)}</TableCell>
