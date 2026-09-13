@@ -218,8 +218,10 @@ type PropsPonto = {
   aoMudarVendedor: (c: any, vendedorId: string) => void;
   /** Salva um patch no cadastro do CLIENTE (dia de rota, telefone, periodicidade, tipo). */
   aoSalvarCliente: (c: any, patch: Record<string, any>) => void;
+  /** Remarca a próxima visita do cliente (move na agenda e regenera a Rota do Dia). */
+  aoMudarProximaVisita: (c: any, dataISO: string) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita }: PropsPonto) {
   // Telefone é campo de texto: só grava ao sair do campo (ou Enter), não a cada tecla.
   const [tel, setTel] = useState<string>(customer.phone || '');
   useEffect(() => { setTel(customer.phone || ''); }, [customer.phone]);
@@ -314,11 +316,27 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
               </p>
             )}
-            {!ehLead && (
+            {!ehLead && (podeEditar ? (
+              <p className="font-medium flex items-center gap-2">
+                📆 Próxima visita:
+                <input
+                  type="date"
+                  value={dataISO(customer.nextVisitDate)}
+                  disabled={salvandoVendedor}
+                  onChange={(e) => e.target.value && aoMudarProximaVisita(customer, e.target.value)}
+                  className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
+                  data-testid={`input-next-visit-${customer.id}`}
+                />
+                <span
+                  title="Muda a visita na agenda do vendedor e regenera a Rota do Dia das duas datas (a que perdeu e a que ganhou a visita)."
+                  className="inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] leading-none cursor-help text-gray-600 dark:text-gray-300"
+                >i</span>
+              </p>
+            ) : (
               <p className="font-medium">
                 📆 Próxima visita: {dataBR(customer.nextVisitDate) || 'sem visita agendada'}
               </p>
-            )}
+            ))}
             {!ehLead && podeEditar ? (
               <p className="flex items-center gap-2">
                 📞
@@ -730,6 +748,25 @@ export default function ClientsMap() {
     }
   }, [queryClient]);
 
+  // 📆 Remarcar a próxima visita: endpoint dedicado, que move a visita na agenda E regenera a
+  // Rota do Dia das datas afetadas. Não é um PATCH de cadastro — por isso rota própria.
+  const mudarProximaVisita = useCallback(async (ponto: any, iso: string) => {
+    const id = String(ponto.id);
+    setSalvandoVendedorId(id);
+    try {
+      const r = await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: iso });
+      await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
+      const rotas = (r as any)?.rotas || {};
+      const avisos = Object.values(rotas).filter((x: any) => x && x.erro);
+      if (avisos.length) console.warn('[MAPA] rota do dia:', rotas);
+    } catch (e: any) {
+      console.error('[MAPA] falha ao remarcar a visita:', e);
+      alert('Não foi possível remarcar a visita: ' + (e?.message || e));
+    } finally {
+      setSalvandoVendedorId(null);
+    }
+  }, [queryClient]);
+
   const handleEditCustomer = useCallback((customer: Customer) => {
     setSelectedCustomer(customer);
     setIsEditModalOpen(true);
@@ -751,8 +788,9 @@ export default function ClientsMap() {
       aoMudarData={mudarDataDoLead}
       aoMudarVendedor={mudarVendedor}
       aoSalvarCliente={salvarCliente}
+      aoMudarProximaVisita={mudarProximaVisita}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
