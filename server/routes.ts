@@ -1712,13 +1712,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (e: any) { console.warn('[MAP-DATA] ultimo faturamento:', e?.message); }
         return m;
       };
+      // 📆 PRÓXIMA VISITA por cliente: primeira data PENDENTE de hoje em diante na visit_agenda
+      // (a mesma agenda que alimenta a Rota do Dia). Visita concluída/perdida não conta.
+      const buildProximaVisita = async (): Promise<Map<string, string>> => {
+        const m = new Map<string, string>();
+        try {
+          const r: any = await db.execute(sql`
+            SELECT customer_id, MIN(scheduled_date) AS proxima
+            FROM visit_agenda
+            WHERE scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+              AND COALESCE(visit_status, 'pending') = 'pending'
+            GROUP BY customer_id`);
+          for (const x of ((r.rows || r) as any[])) {
+            if (x.customer_id && x.proxima) m.set(String(x.customer_id), String(x.proxima));
+          }
+        } catch (e: any) { console.warn('[MAP-DATA] proxima visita:', e?.message); }
+        return m;
+      };
       const soDigitos = (v: any) => String(v ?? '').replace(/\D/g, '');
       const ultimoFatDoCliente = (c: any, mapa: Map<string, string>): string | null => {
         const doc = soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document);
         return doc ? (mapa.get(doc) || null) : null;
       };
 
-      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>) => {
+      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>, proxVisita?: Map<string, string>) => {
         const pw = parseWk(c.weekdays);
         const sid = c.seller_id ?? null;
         return {
@@ -1731,19 +1748,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
           virtualService: c.virtual_service === true,
           lastInvoiceDate: ultimoFat ? ultimoFatDoCliente(c, ultimoFat) : null,
+          nextVisitDate: proxVisita ? (proxVisita.get(String(c.id)) || null) : null,
         };
       };
       if (situacao === 'inativados') {
         const sellerMap = await buildSellerMap();
         const ultimoFat = await buildUltimoFaturamento();
+        const proxVisita = await buildProximaVisita();
         const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, cnpj, cpf, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat, proxVisita));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
       }
       if (situacao === 'perdidos') {
         const sellerMap = await buildSellerMap();
         const ultimoFatPerdidos = await buildUltimoFaturamento();
+        const proxVisitaPerdidos = await buildProximaVisita();
         const r: any = await db.execute(sql`
           WITH rec AS (
             SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
@@ -1772,7 +1792,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
                   - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3
             ${andVend('c.seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos, proxVisitaPerdidos));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
       }
@@ -1857,6 +1877,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       
       const ultimoFatAtivos = await buildUltimoFaturamento();
+      const proxVisitaAtivos = await buildProximaVisita();
       // Buscar todos os sellers para mapear nomes
       const allSellers = await db.select().from(users);
       const sellerMap = new Map<string, string>();
@@ -1913,7 +1934,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             visitPeriodicity: c.visitPeriodicity ?? null,
             // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
             virtualService: c.virtualService === true,
-            lastInvoiceDate: ultimoFatAtivos.get(soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document)) || null
+            lastInvoiceDate: ultimoFatAtivos.get(soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document)) || null,
+            nextVisitDate: proxVisitaAtivos.get(String(c.id)) || null
           };
         });
       
