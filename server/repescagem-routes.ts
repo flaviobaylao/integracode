@@ -539,6 +539,27 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       if (atendidoNoCicloAtual) continue;
     }
 
+    // EMENDA (proximidade da proxima visita): o cliente NAO permanece em repescagem coladinho na
+    // proxima visita agendada. Se a PROXIMA visita da rota e HOJE (tem visita na rota do dia) ou
+    // AMANHA (um dia antes), o cliente SAI da lista e aguarda o novo ciclo — se essa visita ficar
+    // sem atendimento/venda, ele volta a cair 1 dia depois (novo ciclo). Vale para todas as
+    // periodicidades. (Ate aqui o cliente ja esta "vermelho": sem pedido e sem atendimento no ciclo.)
+    {
+      const mkU = (s: string) => new Date(s + 'T12:00:00Z');
+      const isoU = (dt: Date) => dt.toISOString().slice(0, 10);
+      let nextPlanned: string | null = null;
+      const d = mkU(todayStr);
+      for (let i = 0; i < 40; i++) {
+        const ds = isoU(d);
+        if (isPlannedCycle(ds, dows, c.periodicity || 'semanal')) { nextPlanned = ds; break; }
+        d.setUTCDate(d.getUTCDate() + 1);
+      }
+      if (nextPlanned) {
+        const diff = Math.floor((mkU(nextPlanned).getTime() - mkU(todayStr).getTime()) / 864e5);
+        if (diff <= 1) continue; // visita hoje ou amanha -> sai da repescagem, aguarda novo ciclo
+      }
+    }
+
     const lastRedDate = ev.lastRedAnchor;
     const days = Math.floor((new Date(todayStr).getTime() - new Date(lastRedDate).getTime()) / 86400000);
     candidates.push({
