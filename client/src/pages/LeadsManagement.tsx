@@ -85,6 +85,7 @@ export default function LeadsManagement() {
   const [filterSellerId, setFilterSellerId] = useState("");
   const [filterCity, setFilterCity] = useState("");
   const [filterPeriodicity, setFilterPeriodicity] = useState("");
+  const [filterNeighborhood, setFilterNeighborhood] = useState("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterNextContactFrom, setFilterNextContactFrom] = useState("");
@@ -154,6 +155,13 @@ export default function LeadsManagement() {
   const filterCities = useMemo(() => {
     const set = new Set<string>();
     (leads || []).forEach((l: any) => { const c = String(l.city || '').trim(); if (c) set.add(c); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [leads]);
+
+  // Bairros do filtro: valores distintos de neighborhood entre os leads, ordenados.
+  const filterNeighborhoods = useMemo(() => {
+    const set = new Set<string>();
+    (leads || []).forEach((l: any) => { const b = String(l.neighborhood || '').trim(); if (b) set.add(b); });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [leads]);
 
@@ -622,6 +630,11 @@ export default function LeadsManagement() {
         return false;
       }
 
+      // Filtro por bairro
+      if (filterNeighborhood && String(lead.neighborhood || '') !== filterNeighborhood) {
+        return false;
+      }
+
       // Filtro por periodicidade
       if (filterPeriodicity && String(lead.periodicity || 'semanal') !== filterPeriodicity) {
         return false;
@@ -659,7 +672,7 @@ export default function LeadsManagement() {
 
       return true;
     });
-  }, [leads, filterName, filterSellerId, filterCity, filterPeriodicity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
+  }, [leads, filterName, filterSellerId, filterCity, filterNeighborhood, filterPeriodicity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
   // Lista da tabela: exclui convertidos (que saem da lista e contam apenas nas caixas)
   const filteredLeads = useMemo(() => {
@@ -862,6 +875,21 @@ export default function LeadsManagement() {
             </div>
 
             <div>
+              <Label htmlFor="filter-neighborhood">Bairro</Label>
+              <Select value={filterNeighborhood || "all"} onValueChange={(val) => setFilterNeighborhood(val === "all" ? "" : val)}>
+                <SelectTrigger data-testid="select-filter-neighborhood">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {filterNeighborhoods.map((b) => (
+                    <SelectItem key={b} value={b}>{b}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
               <Label htmlFor="filter-date-from">Data De</Label>
               <Input
                 id="filter-date-from"
@@ -917,7 +945,7 @@ export default function LeadsManagement() {
               </Select>
             </div>
           </div>
-          {(filterName || filterSellerId || filterCity || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
+          {(filterName || filterSellerId || filterCity || filterNeighborhood || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -926,6 +954,7 @@ export default function LeadsManagement() {
                 setFilterName("");
                 setFilterSellerId("");
                 setFilterCity("");
+                setFilterNeighborhood("");
                 setFilterPeriodicity("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
@@ -981,11 +1010,11 @@ export default function LeadsManagement() {
                   <SortableTh label="Telefone" colKey="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <th className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950">Vendedor</th>
                   <th className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950">Município</th>
+                  <SortableTh label="Bairro" colKey="neighborhood" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
-                  <SortableTh label="Bairro" colKey="neighborhood" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   {canAct && <th className="text-right py-3 px-4 font-semibold sticky top-0 right-0 z-20 bg-white dark:bg-gray-950">Ações</th>}
                 </tr>
               </thead>
@@ -1048,6 +1077,11 @@ export default function LeadsManagement() {
                       <td className="py-3 px-4">{lead.phone ? <a href={`tel:${lead.phone}`} className={descartado ? 'text-gray-400' : 'text-blue-600 hover:underline'} onClick={(e) => e.stopPropagation()}>{lead.phone}</a> : '—'}</td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap">{sellerNameById(lead.assignedTo)}</td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap">{(lead as any).city || '—'}</td>
+                      <td className="py-3 px-4 text-xs whitespace-nowrap">
+                        {(lead as any).neighborhood ? (
+                          <span className="font-medium" title="Bairro (reverse geocode das coordenadas)">{(lead as any).neighborhood}</span>
+                        ) : '—'}
+                      </td>
                       <td className="py-3 px-4 text-xs text-gray-500 dark:text-gray-400">
                         <div className="flex flex-col gap-1">
                           <div>Lat: {parseFloat(lead.latitude.toString()).toFixed(6)}</div>
@@ -1104,11 +1138,6 @@ export default function LeadsManagement() {
                               {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
                             </span>
                           </div>
-                        ) : '—'}
-                      </td>
-                      <td className="py-3 px-4 text-xs whitespace-nowrap">
-                        {(lead as any).neighborhood ? (
-                          <span className="font-medium" title="Bairro (reverse geocode das coordenadas)">{(lead as any).neighborhood}</span>
                         ) : '—'}
                       </td>
                       {canAct && (
