@@ -976,6 +976,65 @@ export function registerAgendaCarteira(app: Express) {
       res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // LOTE — reclassificacao de periodicidade + 1a visita fixada (fire-and-forget).
+  // Body: { items: [{ id, periodicidade, primeiraData }], dryRun? }
+  // Idempotente: pula quem ja esta na periodicidade alvo. Grava progresso em
+  // system_settings 'reclassif_lote_last' (lido pelo endpoint de status).
+  // ---------------------------------------------------------------------------
+  app.post("/api/admin/carteira/reclassificar-lote", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const esc = escopo(req);
+      if (!ADMINS_VISITA.includes(esc.email)) return res.status(403).json({ ok: false, error: "Restrito ao Admin." });
+      const items = Array.isArray((req.body || {}).items) ? (req.body as any).items : [];
+      const dry = (req.body || {}).dryRun === true;
+      if (!items.length) return res.status(400).json({ ok: false, error: "items vazio." });
+      res.json({ ok: true, started: true, total: items.length, dryRun: dry });
+      (async () => {
+        const prog: any = { at: new Date().toISOString(), total: items.length, ok: 0, skip: 0, erros: [], finished: false, dryRun: dry };
+        const salvar = async () => {
+          try {
+            const payload = JSON.stringify(prog).slice(0, 100000);
+            const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key='reclassif_lote_last'"));
+            if (((ex.rows || ex) as any[]).length > 0) await db.execute(sql`UPDATE system_settings SET value=${payload}, updated_at=now() WHERE key='reclassif_lote_last'`);
+            else await db.execute(sql`INSERT INTO system_settings (key, value, description, updated_by) VALUES ('reclassif_lote_last', ${payload}, 'ultima reclassificacao em lote', 'reclassif-lote')`);
+          } catch (e) { /* ignora */ }
+        };
+        for (const it of items) {
+          const id = String((it && it.id) || "");
+          const per = String((it && it.periodicidade) || "");
+          const pd = String((it && it.primeiraData) || "");
+          if (!id || !["semanal", "quinzenal", "mensal"].includes(per) || !/^\d{4}-\d{2}-\d{2}$/.test(pd)) { prog.skip++; if (prog.erros.length < 50) prog.erros.push({ id, err: "payload" }); continue; }
+          try {
+            const rows = (await db.execute(sql`SELECT visit_periodicity::text AS per, weekdays FROM customers WHERE id = ${id} LIMIT 1`)).rows as any[];
+            if (!rows.length) { prog.skip++; if (prog.erros.length < 50) prog.erros.push({ id, err: "nao encontrado" }); continue; }
+            const atualPer = String(rows[0].per || "");
+            const dias = diasDoCadastro(rows[0].weekdays);
+            if (atualPer === per) { prog.skip++; continue; } // idempotente
+            if (!dias.length) { prog.skip++; if (prog.erros.length < 50) prog.erros.push({ id, err: "sem dia de rota" }); continue; }
+            if (!dry) {
+              await db.execute(sql`UPDATE customers SET visit_periodicity = ${per}::visit_periodicity, updated_at = now() WHERE id = ${id}`);
+              await reprogramarAgenda(id, dias, per, null, pd);
+              try { const { updateExistingSalesCardsFromCustomer } = await import("./visitScheduleService"); await updateExistingSalesCardsFromCustomer(id); } catch (e) { /* ignora */ }
+            }
+            prog.ok++;
+          } catch (e: any) { if (prog.erros.length < 50) prog.erros.push({ id, err: String(e?.message || e).slice(0, 100) }); }
+          if ((prog.ok + prog.skip) % 20 === 0) await salvar();
+        }
+        prog.finished = true; prog.at = new Date().toISOString();
+        await salvar();
+      })().catch((e) => console.error("[reclassif-lote] erro geral", e));
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  app.get("/api/admin/carteira/reclassificar-lote/status", authenticateUser, async (_req: Request, res: Response) => {
+    try {
+      const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key='reclassif_lote_last'"));
+      const rows = (r.rows || r) as any[];
+      res.json(rows[0] ? JSON.parse(rows[0].value) : { finished: true, total: 0, ok: 0, skip: 0, erros: [] });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
 }
 
 /**
