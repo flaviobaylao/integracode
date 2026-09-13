@@ -1665,6 +1665,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
   let _mapaVisitaCache: { t: number; m: Map<string, string> } | null = null;
   const _MAPA_CACHE_MS = 120000;
 
+  // 📆 REMARCAR a PRÓXIMA VISITA do cliente pelo card do mapa (somente ADMIN).
+  // Move a visita PENDENTE mais próxima na visit_agenda e REGENERA a Rota do Dia das duas datas
+  // afetadas (a que perdeu e a que ganhou a visita) — só quando já existe rota naquele dia.
+  const regenerarRotaSeExistir = async (sellerId: string, quando: Date) => {
+    try {
+      const rota = await storage.getDailyRouteBySellerAndDate(sellerId, quando);
+      if (!rota) return { regenerada: false, motivo: 'sem rota nessa data' };
+      // Mesma regra do POST /api/daily-routes/generate: o plano novo SUBSTITUI a rota, preservando
+      // apenas quem já tem checkpoint (trabalho de campo iniciado) e saiu do plano.
+      const cps = await storage.getRouteCheckpoints(rota.id);
+      const comCheckpoint = new Set((cps || []).filter((c: any) => c.customerId).map((c: any) => c.customerId));
+      const { planDailyRoute } = await import('./routeOptimizationService');
+      const plan = await planDailyRoute(storage, sellerId, quando);
+      const novos: string[] = plan.optimizedOrder || [];
+      const setNovos = new Set(novos);
+      const preservados = ((rota.optimizedOrder as string[]) || []).filter((cid) => comCheckpoint.has(cid) && !setNovos.has(cid));
+      const ordem = [...preservados, ...novos];
+      await storage.updateDailyRoute(rota.id, {
+        optimizedOrder: ordem,
+        totalEstimatedDistance: plan.totalDistance.toString(),
+        totalVisits: ordem.length,
+        totalActualDistance: rota.totalActualDistance || '0',
+        completedVisits: rota.completedVisits || 0,
+        routeStatus: rota.routeStatus || 'pending',
+      } as any);
+      return { regenerada: true, total: ordem.length };
+    } catch (e: any) {
+      console.error('[PROX-VISITA] falha ao regenerar rota:', e?.message || e);
+      return { regenerada: false, erro: String(e?.message || e) };
+    }
+  };
+
+  app.patch('/api/customers/:id/proxima-visita', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const data = String(req.body?.data || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+        return res.status(400).json({ message: 'Data inválida (use AAAA-MM-DD).' });
+      }
+      const nova = new Date(`${data}T00:00:00.000Z`);
+      const cliente: any = await storage.getCustomer(id);
+      if (!cliente) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+      const atualQ: any = await db.execute(sql`
+        SELECT id, seller_id, scheduled_date FROM visit_agenda
+        WHERE customer_id = ${id}
+          AND COALESCE(visit_status, 'pending') = 'pending'
+          AND scheduled_date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        ORDER BY scheduled_date
+        LIMIT 1`);
+      const atual: any = ((atualQ.rows || atualQ) as any[])[0] || null;
+      const sellerId = String(atual?.seller_id || cliente.sellerId || '');
+      if (!sellerId) return res.status(400).json({ message: 'Cliente sem vendedor: não dá para agendar a visita.' });
+
+      const DIAS_ROTA = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+      const routeDay = DIAS_ROTA[nova.getUTCDay()];
+      const dataAntiga: Date | null = atual?.scheduled_date ? new Date(atual.scheduled_date) : null;
+
+      if (atual) {
+        try {
+          await db.execute(sql`UPDATE visit_agenda SET scheduled_date = ${nova}, route_day = ${routeDay}, updated_at = now() WHERE id = ${atual.id}`);
+        } catch (e: any) {
+          // unique (customer_id, scheduled_date): já existe visita do cliente nessa data -> some com a antiga.
+          console.warn('[PROX-VISITA] conflito ao mover, removendo a antiga:', e?.message);
+          await db.execute(sql`DELETE FROM visit_agenda WHERE id = ${atual.id}`);
+        }
+      } else {
+        await db.execute(sql`
+          INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
+          VALUES (${id}, ${sellerId}, ${nova}, ${routeDay}, ${String(cliente.visitPeriodicity || 'semanal')}, ${cliente.virtualService === true}, 'pending',
+                  ${String(cliente.fantasyName || cliente.name || 'Cliente')}, ${cliente.latitude ?? null}, ${cliente.longitude ?? null}, ${cliente.address ?? null})
+          ON CONFLICT (customer_id, scheduled_date) DO NOTHING`);
+      }
+
+      // O card do mapa lê de um cache de 2 min — sem isso a data velha ficaria na tela.
+      _mapaVisitaCache = null;
+
+      const rotas: any = {};
+      if (dataAntiga && dataAntiga.toISOString().slice(0, 10) !== data) {
+        rotas.antiga = { data: dataAntiga.toISOString().slice(0, 10), ...(await regenerarRotaSeExistir(sellerId, dataAntiga)) };
+      }
+      rotas.nova = { data, ...(await regenerarRotaSeExistir(sellerId, nova)) };
+
+      console.log(`📆 [PROX-VISITA] cliente ${id}: ${dataAntiga ? dataAntiga.toISOString().slice(0,10) : '(sem agenda)'} -> ${data}`);
+      res.json({ ok: true, de: dataAntiga ? dataAntiga.toISOString().slice(0, 10) : null, para: data, rotas });
+    } catch (error: any) {
+      console.error('Erro ao remarcar próxima visita:', error);
+      res.status(500).json({ message: 'Erro ao remarcar a próxima visita', error: String(error?.message || error) });
+    }
+  });
+
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
     try {
