@@ -137,6 +137,23 @@ function proximaDataDoDia(diaLabel: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// 🔌 "Failed to fetch" = a requisição não chegou ao servidor (queda de rede ou o app reiniciando
+// depois de um deploy). Nesses casos NADA foi gravado, então repetir uma vez é seguro — e resolve
+// o susto de ver um erro no card por causa de um restart de 20 segundos.
+function ehQuedaDeRede(e: any): boolean {
+  return /failed to fetch|networkerror|load failed/i.test(String(e?.message || e || ''));
+}
+async function comRetryDeRede<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e: any) {
+    if (!ehQuedaDeRede(e)) throw e;
+    await new Promise((r) => setTimeout(r, 2000));
+    return await fn();
+  }
+}
+const AVISO_QUEDA = 'A conexão com o servidor caiu no meio da alteração (o app pode estar reiniciando). Nada foi alterado — tente de novo em alguns segundos.';
+
 // 🔁 DIA DE ROTA ⇄ DATA DA PRÓXIMA VISITA andam juntos: o rótulo do card ('Quinta') e o
 // código gravado no cadastro ('Qui'), e o caminho inverso — de uma data para o dia dela.
 const CODIGO_DO_DIA: Record<string, string> = { Domingo: 'Dom', Segunda: 'Seg', 'Terça': 'Ter', Quarta: 'Qua', Quinta: 'Qui', Sexta: 'Sex', 'Sábado': 'Sab' };
@@ -772,15 +789,15 @@ export default function ClientsMap() {
       // partir de dia + periodicidade). Por isso o dia vai PRIMEIRO e a data depois — invertido,
       // a data escolhida era sobrescrita pela que a regeneração calculava.
       const codigo = CODIGO_DO_DIA[diaDaDataISO(iso)];
-      if (codigo) await apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] });
-      const r = await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: iso });
+      if (codigo) await comRetryDeRede(() => apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] }));
+      const r = await comRetryDeRede(() => apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: iso }));
       await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
       const rotas = (r as any)?.rotas || {};
       const avisos = Object.values(rotas).filter((x: any) => x && x.erro);
       if (avisos.length) console.warn('[MAPA] rota do dia:', rotas);
     } catch (e: any) {
       console.error('[MAPA] falha ao remarcar a visita:', e);
-      alert('Não foi possível remarcar a visita: ' + (e?.message || e));
+      alert(ehQuedaDeRede(e) ? AVISO_QUEDA : 'Não foi possível remarcar a visita: ' + (e?.message || e));
     } finally {
       setSalvandoVendedorId(null);
     }
@@ -795,11 +812,11 @@ export default function ClientsMap() {
     setSalvandoVendedorId(id);
     try {
       // O dia vai primeiro (isso regenera a agenda) e só então a visita é puxada para a data certa.
-      await apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] });
+      await comRetryDeRede(() => apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] }));
       // A visita só é remarcada se o cliente já tiver vendedor — sem vendedor não há agenda.
       if (ponto.sellerId) {
         try {
-          await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: proximaDataDoDia(diaLabel) });
+          await comRetryDeRede(() => apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: proximaDataDoDia(diaLabel) }));
         } catch (e: any) {
           console.warn('[MAPA] dia gravado, mas a visita não foi remarcada:', e?.message || e);
         }
@@ -807,7 +824,7 @@ export default function ClientsMap() {
       await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
     } catch (e: any) {
       console.error('[MAPA] falha ao mudar o dia de rota:', e);
-      alert('Não foi possível alterar o dia de rota: ' + (e?.message || e));
+      alert(ehQuedaDeRede(e) ? AVISO_QUEDA : 'Não foi possível alterar o dia de rota: ' + (e?.message || e));
     } finally {
       setSalvandoVendedorId(null);
     }
