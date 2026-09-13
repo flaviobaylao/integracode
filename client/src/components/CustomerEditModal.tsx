@@ -124,6 +124,7 @@ export default function CustomerEditModal({
     deliverySaturdayTimeSlots: [] as string[],
     isConsumerClient: false, // Cliente Consumidor - destaque verde
     virtualService: false, // Cliente Virtual (atendimento remoto) - so admins
+    isSupplier: false, // FORNECEDOR: cadastro que nao e cliente - sai do mapa, das rotas e da agenda
     omieInstanceId: "",
     paymentMethod: "", // Condicao de pagamento do cliente (sobrepoe forma+prazo da venda)
     boletoDays: "" as any,
@@ -442,6 +443,7 @@ export default function CustomerEditModal({
         deliverySaturdayTimeSlots: Array.isArray(customer.deliverySaturdayTimeSlots) ? customer.deliverySaturdayTimeSlots : [],
         isConsumerClient: (customer as any).isConsumerClient || false,
         virtualService: (customer as any).virtualService || false,
+        isSupplier: (customer as any).isSupplier || false,
         omieInstanceId: (customer as any).omieInstanceId || "",
         paymentMethod: (customer as any).paymentMethod || "",
         boletoDays: (customer as any).boletoDays ?? "",
@@ -933,6 +935,32 @@ export default function CustomerEditModal({
                   Cliente Virtual
                 </label>
                 <p className="text-xs text-blue-700">Cliente atendido de forma virtual (remota). Nao entra nas rotas de visita presencial.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Fornecedor (somente administradores) */}
+          {((user as any)?.role === 'admin') && (
+            <div className="flex items-center space-x-3 p-4 border border-amber-200 bg-amber-50 rounded-lg">
+              <Checkbox
+                id="is-supplier"
+                checked={(formData as any).isSupplier}
+                onCheckedChange={(checked) => {
+                  setFormData(prev => ({
+                    ...prev,
+                    isSupplier: checked as boolean
+                  }));
+                }}
+                data-testid="checkbox-supplier"
+              />
+              <div>
+                <label htmlFor="is-supplier" className="text-sm font-medium cursor-pointer text-amber-900">
+                  Fornecedor
+                </label>
+                <p className="text-xs text-amber-700">
+                  Cadastro de FORNECEDOR, não de cliente. Ao marcar, ele sai do Mapa de Clientes,
+                  das rotas e da agenda de visitas.
+                </p>
               </div>
             </div>
           )}
