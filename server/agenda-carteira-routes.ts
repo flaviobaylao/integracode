@@ -960,6 +960,7 @@ export function registerAgendaCarteira(app: Express) {
           regravadas = await reprogramarAgenda(
             id, novosDias || diasAtuais, novaPer || perAtual || "semanal",
             novaSemana !== null ? novaSemana : atual.semana_atendimento,
+            (b && typeof b.primeiraData === "string") ? b.primeiraData : null,
           );
         } catch (e: any) { console.warn("[carteira-agenda] agenda:", e?.message); }
         // Alinha os sales cards futuros com o novo cadastro (mesma rotina do PATCH de cliente).
@@ -982,7 +983,7 @@ export function registerAgendaCarteira(app: Express) {
  * cadencia, ancorando na ultima visita CONCLUIDA — igual ao que a Rota do Dia
  * espera encontrar. Visita ja concluida nunca e' tocada.
  */
-async function reprogramarAgenda(customerId: string, dias: string[], periodicidade: string, semanaRegra?: string | null): Promise<number> {
+async function reprogramarAgenda(customerId: string, dias: string[], periodicidade: string, semanaRegra?: string | null, primeiraData?: string | null): Promise<number> {
   const rows = (await db.execute(sql`
     SELECT c.id, c.name, c.seller_id, c.latitude, c.longitude, c.address,
            COALESCE(c.virtual_service,false) AS virtual,
@@ -1000,6 +1001,25 @@ async function reprogramarAgenda(customerId: string, dias: string[], periodicida
   const hoje = dataLocal(hojeStr);
   const ultima = c.ultima ? dataLocal(String(c.ultima).slice(0, 10)) : undefined;
   const inicio = c.inicio ? dataLocal(String(c.inicio).slice(0, 10)) : undefined;
+
+  // 1a VISITA FIXADA (reclassificacao de periodicidade): a proxima visita e' a
+  // data pedida (dia de rota dentro da semana-alvo) e as demais encadeiam a
+  // cadencia a partir dela. Tem prioridade sobre a regra de semana do cadastro.
+  if (primeiraData && /^\d{4}-\d{2}-\d{2}$/.test(String(primeiraData))) {
+    const first = dataLocal(String(primeiraData)); first.setHours(8, 0, 0, 0);
+    if (first >= hoje) {
+      const datasF: Date[] = [first];
+      let cur = first;
+      for (let volta = 0; volta < 200 && datasF.length < 4; volta++) {
+        const r = calculateNextVisitDate({ weekdays: dias, periodicity: per, lastCompletedDate: cur, serviceStartDate: inicio });
+        const d = new Date(r.nextDate); d.setHours(8, 0, 0, 0);
+        if (d <= cur) break; // trava de seguranca: cadeia parada
+        cur = d;
+        datasF.push(d);
+      }
+      return gravarAgenda(customerId, c, per, datasF, hojeStr);
+    }
+  }
 
   // SEMANA FIXA: a agenda real sai do calendario, igual ao quadro. Sem isto a
   // Rota do Dia e a Agenda da Carteira mostrariam datas diferentes.
