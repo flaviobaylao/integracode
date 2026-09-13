@@ -137,6 +137,17 @@ function proximaDataDoDia(diaLabel: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// 🔁 DIA DE ROTA ⇄ DATA DA PRÓXIMA VISITA andam juntos: o rótulo do card ('Quinta') e o
+// código gravado no cadastro ('Qui'), e o caminho inverso — de uma data para o dia dela.
+const CODIGO_DO_DIA: Record<string, string> = { Domingo: 'Dom', Segunda: 'Seg', 'Terça': 'Ter', Quarta: 'Qua', Quinta: 'Qui', Sexta: 'Sex', 'Sábado': 'Sab' };
+const LABEL_POR_INDICE = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+// 'AAAA-MM-DD' -> 'Quinta'. Lido como data de calendário (UTC), sem o fuso do navegador puxar um dia.
+function diaDaDataISO(iso: string): string {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  return LABEL_POR_INDICE[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()] || '';
+}
+
 // "2026-09-14 12:00:00" (ou ISO) -> "14/09/2026", sem depender de fuso.
 function dataBR(v: any): string {
   const m = String(v || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -220,8 +231,10 @@ type PropsPonto = {
   aoSalvarCliente: (c: any, patch: Record<string, any>) => void;
   /** Remarca a próxima visita do cliente (move na agenda e regenera a Rota do Dia). */
   aoMudarProximaVisita: (c: any, dataISO: string) => void;
+  /** Troca o dia de rota do CLIENTE e leva a próxima visita junto. */
+  aoMudarDiaDeRota: (c: any, diaLabel: string) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita, aoMudarDiaDeRota }: PropsPonto) {
   // Telefone é campo de texto: só grava ao sair do campo (ou Enter), não a cada tecla.
   const [tel, setTel] = useState<string>(customer.phone || '');
   useEffect(() => { setTel(customer.phone || ''); }, [customer.phone]);
@@ -303,7 +316,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 <select
                   value={DIAS_OPTIONS.includes(dayName) ? dayName : ''}
                   disabled={salvandoVendedor}
-                  onChange={(e) => e.target.value && aoSalvarCliente(customer, { weekdays: e.target.value })}
+                  onChange={(e) => e.target.value && aoMudarDiaDeRota(customer, e.target.value)}
                   className="border rounded px-1 py-0.5 text-sm bg-white dark:bg-gray-800"
                   data-testid={`select-customer-day-${customer.id}`}
                 >
@@ -328,7 +341,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                   data-testid={`input-next-visit-${customer.id}`}
                 />
                 <span
-                  title="Muda a visita na agenda do vendedor e regenera a Rota do Dia das duas datas (a que perdeu e a que ganhou a visita)."
+                  title="Dia de rota e data da próxima visita andam juntos: mudar a data troca o dia de rota para o dia da semana dela, e mudar o dia joga a visita para a próxima data com aquele dia. Nos dois casos a visita muda de lugar na agenda do vendedor e a Rota do Dia das duas datas (a que perdeu e a que ganhou a visita) é regenerada."
                   className="inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] leading-none cursor-help text-gray-600 dark:text-gray-300"
                 >i</span>
               </p>
@@ -755,6 +768,9 @@ export default function ClientsMap() {
     setSalvandoVendedorId(id);
     try {
       const r = await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: iso });
+      // 🔁 A data manda no dia de rota: o cadastro acompanha o dia da semana da data escolhida.
+      const codigo = CODIGO_DO_DIA[diaDaDataISO(iso)];
+      if (codigo) await apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] });
       await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
       const rotas = (r as any)?.rotas || {};
       const avisos = Object.values(rotas).filter((x: any) => x && x.erro);
@@ -762,6 +778,32 @@ export default function ClientsMap() {
     } catch (e: any) {
       console.error('[MAPA] falha ao remarcar a visita:', e);
       alert('Não foi possível remarcar a visita: ' + (e?.message || e));
+    } finally {
+      setSalvandoVendedorId(null);
+    }
+  }, [queryClient]);
+
+  // 🔁 O caminho inverso: trocar o DIA DE ROTA grava o dia no cadastro E joga a próxima visita
+  // para a próxima data com aquele dia da semana (hoje conta, se hoje já for o dia escolhido).
+  const mudarDiaDeRota = useCallback(async (ponto: any, diaLabel: string) => {
+    const id = String(ponto.id);
+    const codigo = CODIGO_DO_DIA[diaLabel];
+    if (!codigo) return;
+    setSalvandoVendedorId(id);
+    try {
+      await apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] });
+      // A visita só é remarcada se o cliente já tiver vendedor — sem vendedor não há agenda.
+      if (ponto.sellerId) {
+        try {
+          await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: proximaDataDoDia(diaLabel) });
+        } catch (e: any) {
+          console.warn('[MAPA] dia gravado, mas a visita não foi remarcada:', e?.message || e);
+        }
+      }
+      await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
+    } catch (e: any) {
+      console.error('[MAPA] falha ao mudar o dia de rota:', e);
+      alert('Não foi possível alterar o dia de rota: ' + (e?.message || e));
     } finally {
       setSalvandoVendedorId(null);
     }
@@ -789,8 +831,9 @@ export default function ClientsMap() {
       aoMudarVendedor={mudarVendedor}
       aoSalvarCliente={salvarCliente}
       aoMudarProximaVisita={mudarProximaVisita}
+      aoMudarDiaDeRota={mudarDiaDeRota}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita, mudarDiaDeRota]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
