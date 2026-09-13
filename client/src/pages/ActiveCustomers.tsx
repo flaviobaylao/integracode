@@ -628,7 +628,7 @@ export default function ActiveCustomers() {
         'Mês Anterior': prev > 0 ? prev.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Mês Atual': curr > 0 ? curr.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Variação': variacao,
-        'Última Atividade': ac.customer?.lastActivityDate ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR }) : '',
+        'Última Compra': ac.customer?.lastActivityDate ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR }) : '',
         'Último Atend. Virtual': lastLog ? format(new Date(lastLog.date), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '',
         'Atendente Virtual': lastLog?.attendant || '',
         'Próximas Visitas': ac.nextThreeVisits.length > 0 ? ac.nextThreeVisits.sort((a, b) => a.date.localeCompare(b.date)).map(v => { try { const [y, m, d] = v.date.split('-'); return `${d}/${m}`; } catch { return ''; } }).filter(Boolean).join(', ') : '',
@@ -644,7 +644,7 @@ export default function ActiveCustomers() {
       return;
     }
 
-    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Atividade', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
     const csvContent = [
       headers.join(';'),
       ...dataToExport.map(row =>
@@ -1307,7 +1307,7 @@ export default function ActiveCustomers() {
                   <span className="inline-block h-4 w-4 rounded bg-orange-100 border" title="até 30 dias"></span>
                   <span className="inline-block h-4 w-4 rounded bg-red-100 border" title="mais de 30 dias"></span>
                 </span>
-                <span><b className="text-foreground">Última Atividade / Atendimento</b> — recência: até 7d, 15d, 30d, +30d sem comprar</span>
+                <span><b className="text-foreground">Última Compra / Atendimento</b> — recência: até 7d, 15d, 30d, +30d sem comprar</span>
               </div>
             </div>
           </details>
@@ -1422,7 +1422,7 @@ export default function ActiveCustomers() {
                             )}
                           </button>
                         </TableHead>
-                        <TableHead className="min-w-[80px]">Última Atividade</TableHead>
+                        <TableHead className="min-w-[80px]">Última Compra</TableHead>
                         <TableHead className="min-w-[100px]">Último Atend. Virtual</TableHead>
                         <TableHead className="min-w-[140px]">Próximas 3 Visitas</TableHead>
                       </TableRow>
