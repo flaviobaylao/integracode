@@ -1604,6 +1604,29 @@ app.get('/api/coupons/applied', async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
 });
 
+// Mapa de resgates por pedido — alimenta a coluna "Cupom" das listas de Canais (Hotsite e
+// Instagram). Read-only e enxuto: so o codigo e o desconto. Sao DUAS chaves porque o resgate
+// e gravado de jeitos diferentes: pedido da loja entra por order_ref ('WEB-...'/'IG-...') e
+// pedido do vendedor entra por sales_card_id. A lista consulta as duas e usa a que casar.
+app.get('/api/coupons/por-pedido', authenticateUser, async (_req: Request, res: Response) => {
+  try {
+    await _cupSchemaReady();
+    const q: any = await db.execute(sql.raw("SELECT coupon_code, sales_card_id, order_ref, discount_applied, redeemed_at FROM coupon_redemptions WHERE cancelled_at IS NULL ORDER BY redeemed_at DESC LIMIT 5000"));
+    const rows = (q.rows || q) as any[];
+    const porRef: Record<string, any> = {};
+    const porCard: Record<string, any> = {};
+    for (const r of rows) {
+      const item = { code: String(r.coupon_code || ''), discount: Number(r.discount_applied) || 0 };
+      // rows vem do mais recente para o mais antigo: o primeiro de cada chave e o que vale
+      const ref = String(r.order_ref || '');
+      const card = String(r.sales_card_id || '');
+      if (ref && !porRef[ref]) porRef[ref] = item;
+      if (card && !porCard[card]) porCard[card] = item;
+    }
+    res.json({ ok: true, total: rows.length, porRef, porCard });
+  } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
+});
+
 // Reaplicacao ao reeditar um pedido ja fechado: RECALCULA pela regra do cupom sobre o total atual
 // (nao repete o valor antigo) e atualiza o resgate, mantendo o razao fiel ao pedido. Chamada interna.
 app.post('/api/coupons/reapply', async (req: Request, res: Response) => {
