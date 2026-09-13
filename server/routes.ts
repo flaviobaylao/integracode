@@ -1691,7 +1691,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch { /* noop */ }
         return [];
       };
-      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>) => {
+      // 🧾 ÚLTIMO FATURAMENTO por documento. Fonte = receivables (MESMA régua dos "Perdidos":
+      // não cancelada, não excluída, valor > 0). customers.last_sale_date NÃO serve: só é gravado
+      // quando um cartão de venda recorrente é concluído, não no faturamento real.
+      const buildUltimoFaturamento = async (): Promise<Map<string, string>> => {
+        const m = new Map<string, string>();
+        try {
+          const r: any = await db.execute(sql`
+            SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
+                   MAX(issue_date) AS ultima
+            FROM receivables
+            WHERE deleted_at IS NULL
+              AND issue_date >= '2024-01-01'
+              AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+              AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+            GROUP BY 1`);
+          for (const x of ((r.rows || r) as any[])) {
+            if (x.doc && x.ultima) m.set(String(x.doc), String(x.ultima));
+          }
+        } catch (e: any) { console.warn('[MAP-DATA] ultimo faturamento:', e?.message); }
+        return m;
+      };
+      const soDigitos = (v: any) => String(v ?? '').replace(/\D/g, '');
+      const ultimoFatDoCliente = (c: any, mapa: Map<string, string>): string | null => {
+        const doc = soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document);
+        return doc ? (mapa.get(doc) || null) : null;
+      };
+
+      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>) => {
         const pw = parseWk(c.weekdays);
         const sid = c.seller_id ?? null;
         return {
@@ -1703,17 +1730,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visitPeriodicity: c.visit_periodicity ?? null, bairroPadrao: normBairro(c.neighborhood),
           // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
           virtualService: c.virtual_service === true,
+          lastInvoiceDate: ultimoFat ? ultimoFatDoCliente(c, ultimoFat) : null,
         };
       };
       if (situacao === 'inativados') {
         const sellerMap = await buildSellerMap();
-        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap));
+        const ultimoFat = await buildUltimoFaturamento();
+        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, cnpj, cpf, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
       }
       if (situacao === 'perdidos') {
         const sellerMap = await buildSellerMap();
+        const ultimoFatPerdidos = await buildUltimoFaturamento();
         const r: any = await db.execute(sql`
           WITH rec AS (
             SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
@@ -1731,7 +1761,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             WHERE doc IS NOT NULL AND length(doc) >= 11
             GROUP BY doc
           )
-          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id, c.virtual_service
+          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.cnpj, c.cpf, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id, c.virtual_service
           FROM customers c
           JOIN buys b ON b.doc = NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'')
           WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
@@ -1742,7 +1772,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
                   - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3
             ${andVend('c.seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
       }
@@ -1826,6 +1856,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         )
       );
       
+      const ultimoFatAtivos = await buildUltimoFaturamento();
       // Buscar todos os sellers para mapear nomes
       const allSellers = await db.select().from(users);
       const sellerMap = new Map<string, string>();
@@ -1881,7 +1912,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             situacao: 'ativo',
             visitPeriodicity: c.visitPeriodicity ?? null,
             // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
-            virtualService: c.virtualService === true
+            virtualService: c.virtualService === true,
+            lastInvoiceDate: ultimoFatAtivos.get(soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document)) || null
           };
         });
       
