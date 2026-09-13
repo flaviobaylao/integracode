@@ -1658,6 +1658,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ⚡ CACHE de 2 min dos dois agregados do mapa (ultimo faturamento e proxima visita). Eles
+  // mudam pouco e sao os unicos pontos caros do map-data; sem cache, cada situacao aberta na
+  // tela refazia as duas consultas e a PRIMEIRA chamada chegava a 10-25s sob concorrencia.
+  let _mapaFatCache: { t: number; m: Map<string, string> } | null = null;
+  let _mapaVisitaCache: { t: number; m: Map<string, string> } | null = null;
+  const _MAPA_CACHE_MS = 120000;
+
   // Listar clientes do mapa (ANTES de :id para evitar conflito)
   app.get('/api/customers/map-data', authenticateUser, async (req: any, res) => {
     try {
@@ -1695,6 +1702,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // não cancelada, não excluída, valor > 0). customers.last_sale_date NÃO serve: só é gravado
       // quando um cartão de venda recorrente é concluído, não no faturamento real.
       const buildUltimoFaturamento = async (): Promise<Map<string, string>> => {
+        if (_mapaFatCache && (Date.now() - _mapaFatCache.t) < _MAPA_CACHE_MS) return _mapaFatCache.m;
         const m = new Map<string, string>();
         try {
           const r: any = await db.execute(sql`
@@ -1710,11 +1718,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (x.doc && x.ultima) m.set(String(x.doc), String(x.ultima));
           }
         } catch (e: any) { console.warn('[MAP-DATA] ultimo faturamento:', e?.message); }
+        _mapaFatCache = { t: Date.now(), m };
         return m;
       };
       // 📆 PRÓXIMA VISITA por cliente: primeira data PENDENTE de hoje em diante na visit_agenda
       // (a mesma agenda que alimenta a Rota do Dia). Visita concluída/perdida não conta.
       const buildProximaVisita = async (): Promise<Map<string, string>> => {
+        if (_mapaVisitaCache && (Date.now() - _mapaVisitaCache.t) < _MAPA_CACHE_MS) return _mapaVisitaCache.m;
         const m = new Map<string, string>();
         try {
           // ⚡ DISTINCT ON + janela de 90 dias: usa o indice (customer_id, scheduled_date) e nao
@@ -1730,6 +1740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (x.customer_id && x.proxima) m.set(String(x.customer_id), String(x.proxima));
           }
         } catch (e: any) { console.warn('[MAP-DATA] proxima visita:', e?.message); }
+        _mapaVisitaCache = { t: Date.now(), m };
         return m;
       };
       const soDigitos = (v: any) => String(v ?? '').replace(/\D/g, '');
