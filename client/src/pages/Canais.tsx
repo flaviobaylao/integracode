@@ -68,6 +68,15 @@ function PedidosDoCanal({ canal }: { canal: "hotsite" | "instagram" }) {
   const { data, isLoading } = useQuery<any>({ queryKey: [`/api/canais/pedidos?canal=${canal}`] });
   const pedidos: any[] = data?.pedidos || [];
 
+  // 🎟️ Cupom usado em cada pedido. O resgate da loja e gravado por order_ref (WEB-.../IG-...)
+  // e o do vendedor por sales_card_id — por isso as duas chaves.
+  const { data: cupons } = useQuery<any>({ queryKey: ["/api/coupons/por-pedido"] });
+  const cupomDoPedido = (p: any) =>
+    (p.numero && cupons?.porRef?.[p.numero])
+    || (p.pipeline_numero && cupons?.porRef?.[p.pipeline_numero])
+    || cupons?.porCard?.[p.id]
+    || null;
+
   // A lixeira e exclusiva do papel admin (o servidor tambem recusa os demais).
   const { data: usuarioLogado } = useQuery<any>({ queryKey: ["/api/auth/user"] });
   const ehAdmin = String((usuarioLogado as any)?.role || "") === "admin";
@@ -106,6 +115,7 @@ function PedidosDoCanal({ canal }: { canal: "hotsite" | "instagram" }) {
             <th className="text-left py-2 px-3 font-semibold">Data</th>
             <th className="text-left py-2 px-3 font-semibold">Cliente</th>
             <th className="text-left py-2 px-3 font-semibold">Valor</th>
+            <th className="text-left py-2 px-3 font-semibold">Cupom</th>
             <th className="text-left py-2 px-3 font-semibold">Pagamento</th>
             <th className="text-left py-2 px-3 font-semibold">Situação</th>
             {ehAdmin && <th className="text-center py-2 px-3 font-semibold">Ações</th>}
@@ -118,6 +128,18 @@ function PedidosDoCanal({ canal }: { canal: "hotsite" | "instagram" }) {
               <td className="py-2 px-3">{p.created_at ? new Date(p.created_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "—"}</td>
               <td className="py-2 px-3">{p.cliente_fantasia || p.cliente || "—"}</td>
               <td className="py-2 px-3">{p.sale_value ? brl(p.sale_value) : "—"}</td>
+              <td className="py-2 px-3 whitespace-nowrap">
+                {(() => {
+                  const cupom = cupomDoPedido(p);
+                  if (!cupom) return <span className="text-gray-400">—</span>;
+                  return (
+                    <>
+                      <span className="inline-block font-mono text-xs font-semibold px-2 py-0.5 rounded bg-green-100 text-green-800">{cupom.code}</span>
+                      <div className="text-xs text-gray-500 mt-0.5">− {brl(cupom.discount)}</div>
+                    </>
+                  );
+                })()}
+              </td>
               <td className="py-2 px-3">{p.payment_method || "—"}</td>
               <td className="py-2 px-3">
                 {p.bloqueado ? (
