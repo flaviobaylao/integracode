@@ -98,6 +98,29 @@ export async function responderPostei(telefone: string, texto: string): Promise<
   return '✅ Peça #' + numero + ' marcada como publicada' + (permalink ? ' com o link' : ' (sem link — mande "POSTEI ' + numero + ' <link>" para eu guardar o permalink)') + '. ' + (r.usosRegistrados || 0) + ' criativo(s) passam a contar no desempenho.';
 }
 
+/** JPEG sRGB, lado maior ate 1440px, proporcao entre 4:5 (0.8) e 1.91:1 — completa com branco fora da faixa. */
+export async function normalizarParaInstagram(buf: Buffer): Promise<Buffer | null> {
+  try {
+    const sharp = (await import('sharp')).default;
+    // Passo 1: orienta, achata, limita a 1440px. (sharp aplica resize ANTES de extend
+    // seja qual for a ordem das chamadas — por isso a borda entra num segundo passo.)
+    const base = await sharp(buf, { failOn: 'none' }).rotate().flatten({ background: '#ffffff' })
+      .resize({ width: 1440, height: 1440, fit: 'inside', withoutEnlargement: true }).toColourspace('srgb').png().toBuffer();
+    const meta = await sharp(base).metadata();
+    const w = meta.width || 0, h = meta.height || 0;
+    if (!w || !h) return null;
+    let alvoW = w, alvoH = h;
+    const r = w / h;
+    if (r < 0.8) alvoW = Math.ceil(h * 0.8);           // alto demais -> borda lateral
+    else if (r > 1.91) alvoH = Math.ceil(w / 1.91);    // largo demais -> borda em cima/embaixo
+    let pipe = sharp(base);
+    if (alvoW !== w || alvoH !== h) {
+      pipe = pipe.extend({ left: Math.floor((alvoW - w) / 2), right: Math.ceil((alvoW - w) / 2), top: Math.floor((alvoH - h) / 2), bottom: Math.ceil((alvoH - h) / 2), background: '#ffffff' });
+    }
+    return await pipe.jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+  } catch (e: any) { console.warn('[MKT-ENTREGA] normalizar foto:', e?.message || e); return null; }
+}
+
 export function registerMktEntrega(app: any) {
   // Foto assinada: sem login, so com o hash daquele id.
   app.get('/mkt/foto/:id', async (req: any, res: any) => {
@@ -107,6 +130,12 @@ export function registerMktEntrega(app: any) {
       const { arquivoDoAsset } = await import('./mkt-assets');
       const a = await arquivoDoAsset(id);
       if (!a) return res.status(404).end();
+      // ?ig=1: a Meta so aceita JPEG com proporcao entre 4:5 e 1.91:1 e ate 8MB.
+      // Converte com sharp e completa com borda branca quando a foto foge da faixa.
+      if (String(req.query.ig || '') === '1') {
+        const n = await normalizarParaInstagram(a.buf);
+        if (n) { res.setHeader('Content-Type', 'image/jpeg'); res.setHeader('Cache-Control', 'public, max-age=86400'); return res.end(n); }
+      }
       res.setHeader('Content-Type', a.mime || 'image/jpeg');
       res.setHeader('Cache-Control', 'private, max-age=86400');
       res.end(a.buf);

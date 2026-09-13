@@ -4362,6 +4362,25 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ── INSTAGRAM CONECTADO (OAuth "Instagram API com login do Instagram") + PUBLICADOR ──
+  try { const { registerMktIgAuth } = await import('./mkt-ig-auth'); registerMktIgAuth(app, authenticateUser, requireRole); } catch (e: any) { console.warn('[MKT-IG] rotas:', e?.message); }
+  app.get("/api/mkt/publicador", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panorama } = await import('./mkt-publicador'); res.json(await panorama()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/publicador/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { definirModo, modo } = await import('./mkt-publicador'); const r = await definirModo(String(req.body?.modo || ''), String(req.user?.username || 'admin')); if (!r.ok) return res.status(400).json({ error: r.erro }); res.json({ ok: true, modo: await modo() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/publicador/publicar/:id", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { publicarPeca } = await import('./mkt-publicador'); res.json(await publicarPeca(String(req.params.id), { quem: String(req.user?.username || 'admin'), forcarModo: req.body?.modo ? String(req.body.modo) : undefined })); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/publicador/rodar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const { publicarVencidas } = await import('./mkt-publicador'); res.json(await publicarVencidas({ slotDiario: req.body?.slotDiario !== false, quem: String(req.user?.username || 'admin') })); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ── RADAR DE VENDAS (agente mkt_radar) ──
   app.get("/api/mkt/radar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { panorama } = await import('./mkt-radar'); res.json(await panorama()); }

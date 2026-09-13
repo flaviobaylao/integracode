@@ -513,7 +513,8 @@ export async function marcarPublicada(id: string, dados?: { externalMediaId?: st
   let postId: string | null = null;
   try {
     const { registrarDaPeca } = await import('./mkt-posts');
-    const rp = await registrarDaPeca({ ...p, permalink: dados?.permalink || p.permalink }, dados?.permalink, dados?.quem);
+    // external_media_id vem de `dados` (o publicador acabou de receber da Meta); `p` e a foto ANTES do UPDATE.
+    const rp = await registrarDaPeca({ ...p, permalink: dados?.permalink || p.permalink, external_media_id: dados?.externalMediaId || p.external_media_id }, dados?.permalink, dados?.quem);
     if (rp.ok) postId = rp.id || null;
   } catch { /* o registro do post nao pode impedir a peca de ser marcada como publicada */ }
 

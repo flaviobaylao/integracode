@@ -943,13 +943,27 @@ cron.schedule('30 7 * * *', async () => {
   } catch (e: any) { console.error('[MKT-ACOES] resumo falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
-// 09:05 — peca aprovada chega pronta no WhatsApp (legenda + foto assinada + numero)
+// 09:05 — publicador tenta por o post no ar (modo on); o que nao saiu chega pronto no WhatsApp
 cron.schedule('5 9 * * *', async () => {
+  try { const { publicarVencidas } = await import('./mkt-publicador'); await publicarVencidas({ slotDiario: true, quem: 'cron' }); }
+  catch (e: any) { console.error('[MKT-PUBLICADOR] cron falhou:', e?.message || e); }
   try {
     const { entregarAprovadas } = await import('./mkt-entrega');
     const r = await entregarAprovadas();
     if (r.entregues || r.falhas) console.log('[MKT-ENTREGA] ' + r.entregues + ' entregue(s), ' + r.falhas + ' falha(s)');
   } catch (e: any) { console.error('[MKT-ENTREGA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// A cada 30 min (7h-21h) — pecas AGENDADAS saem na hora marcada
+cron.schedule('*/30 7-21 * * *', async () => {
+  try { const { publicarVencidas } = await import('./mkt-publicador'); await publicarVencidas({ slotDiario: false, quem: 'cron' }); }
+  catch (e: any) { console.error('[MKT-PUBLICADOR] cron agendadas falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// Domingo 04:20 — renova o token do Instagram conectado quando faltar < 20 dias
+cron.schedule('20 4 * * 0', async () => {
+  try { const { renovar } = await import('./mkt-ig-auth'); const r = await renovar(); if (r.renovou || !r.ok) console.log('[MKT-IG] renovacao: ' + (r.ok ? 'ok' : r.erro) + ' · ' + r.diasRestantes + ' dia(s)'); }
+  catch (e: any) { console.error('[MKT-IG] renovacao falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
 // Segunda 06:00 — otimizador: o que a Central fez x o que rendeu -> mkt_learnings

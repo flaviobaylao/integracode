@@ -61,6 +61,18 @@ export async function checar(): Promise<Checagem[]> {
   add('radar_modo', 'radar', radarModo === 'on' ? 'ok' : (radarModo === 'test' ? 'atencao' : 'alerta'), 'Modo do Radar', radarModo === 'on' ? 'ligado' : radarModo === 'test' ? 'em teste: propõe, mas nada executa sozinho' : 'desligado', radarModo);
   const contModo = await getSetting('mkt_conteudo_modo', 'off');
   add('conteudo_modo', 'conteudo', contModo === 'on' ? 'ok' : 'atencao', 'Agente de conteúdo', contModo === 'on' ? 'ligado' : 'em ' + contModo + ': nenhuma peça nasce sozinha', contModo);
+  try {
+    const { status: igStatus } = await import('./mkt-ig-auth');
+    const ig = await igStatus();
+    if (ig.conectado) {
+      const d = Number(ig.diasRestantes ?? 99);
+      add('instagram_token', 'conteudo', d <= 5 ? 'alerta' : d <= 20 ? 'atencao' : 'ok', 'Instagram conectado', '@' + ig.username + ' · token vence em ' + d + ' dia(s)' + (ig.podePublicar ? ' · pode publicar' : ' · SEM permissão de publicar (reconectar)'), { username: ig.username, dias: d, perms: ig.permissoes });
+    } else {
+      add('instagram_token', 'conteudo', ig.origem === 'env' ? 'atencao' : 'alerta', 'Instagram conectado', ig.origem === 'env' ? 'usando IG_PAGE_TOKEN do env (sem renovação automática) — conecte pela Central' : (ig.faltaEnv?.length ? 'faltam ' + ig.faltaEnv.join(', ') + ' no Railway' : 'não conectado: clique em Conectar Instagram'), ig.origem);
+    }
+    const pubModo = await getSetting('mkt_publicador_modo', 'test');
+    add('publicador_modo', 'conteudo', pubModo === 'on' ? 'ok' : 'atencao', 'Publicador do Instagram', pubModo === 'on' ? 'ligado: peça aprovada vai ao ar sozinha' : pubModo === 'test' ? 'em teste: a Meta valida a foto, mas quem posta ainda é o humano' : 'desligado', pubModo);
+  } catch {}
   const aprov = await (await import('./mkt-acoes')).aprovadores();
   add('aprovadores', 'caixa', aprov.length ? 'ok' : 'alerta', 'Aprovadores no WhatsApp', aprov.length ? aprov.length + ' número(s)' : 'nenhum: resumo e decisões por WhatsApp não funcionam (telefone_gestor_relatorios / mkt_aprovadores)', aprov.length);
   const disp = await getSetting('oficial_dispatch_mode', 'off'), rec = await getSetting('oficial_recompra', 'off');

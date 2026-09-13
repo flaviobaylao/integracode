@@ -23,6 +23,17 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 
 const GRAPH = () => `${process.env.IG_GRAPH_BASE || "https://graph.facebook.com"}/${process.env.GRAPH_VERSION || "v21.0"}`;
 
+// Token + base: prefere o Instagram conectado pela Central (mkt-ig-auth, graph.instagram.com);
+// sem ele, cai no IG_PAGE_TOKEN do env (graph.facebook.com) como sempre foi.
+async function credIg(): Promise<{ token: string; base: string }> {
+  try {
+    const { credenciais } = await import('./mkt-ig-auth');
+    const c = await credenciais();
+    if (c.ok && c.token) return { token: c.token, base: c.base };
+  } catch {}
+  return { token: String(process.env.IG_PAGE_TOKEN || ''), base: GRAPH() };
+}
+
 // Buffer em memoria dos ultimos webhooks recebidos (diagnostico; sobrevive so ate o restart).
 const recentHooks: any[] = [];
 function recordHook(e: any) { try { recentHooks.unshift(e); if (recentHooks.length > 30) recentHooks.length = 30; } catch {} }
@@ -30,9 +41,9 @@ function recordHook(e: any) { try { recentHooks.unshift(e); if (recentHooks.leng
 // Resolve o @username do IGSID (best-effort; requer permissao). Se falhar, retorna null.
 async function resolveUsername(igsid: string): Promise<string | null> {
   try {
-    const token = process.env.IG_PAGE_TOKEN;
+    const { token, base } = await credIg();
     if (!token) return null;
-    const r = await fetch(`${GRAPH()}/${igsid}?fields=username,name&access_token=${encodeURIComponent(token)}`);
+    const r = await fetch(`${base}/${igsid}?fields=username,name&access_token=${encodeURIComponent(token)}`);
     const j: any = await r.json().catch(() => ({}));
     return j?.username || j?.name || null;
   } catch {
@@ -43,9 +54,9 @@ async function resolveUsername(igsid: string): Promise<string | null> {
 // Envia texto para o usuario do Instagram pela Graph API (Send API).
 async function igSend(igsid: string, text: string): Promise<{ success: boolean; id?: string; error?: string }> {
   try {
-    const token = process.env.IG_PAGE_TOKEN;
-    if (!token) return { success: false, error: "IG_PAGE_TOKEN ausente" };
-    const r = await fetch(`${GRAPH()}/me/messages?access_token=${encodeURIComponent(token)}`, {
+    const { token, base } = await credIg();
+    if (!token) return { success: false, error: "Instagram nao conectado (nem IG_PAGE_TOKEN)" };
+    const r = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(token)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ recipient: { id: igsid }, message: { text: String(text || "").slice(0, 950) } }),
@@ -61,9 +72,9 @@ async function igSend(igsid: string, text: string): Promise<{ success: boolean; 
 // Envia uma IMAGEM (por URL publica) para o usuario do Instagram pela Send API.
 async function igSendImage(igsid: string, url: string): Promise<{ success: boolean; id?: string; error?: string }> {
   try {
-    const token = process.env.IG_PAGE_TOKEN;
-    if (!token) return { success: false, error: "IG_PAGE_TOKEN ausente" };
-    const r = await fetch(`${GRAPH()}/me/messages?access_token=${encodeURIComponent(token)}`, {
+    const { token, base } = await credIg();
+    if (!token) return { success: false, error: "Instagram nao conectado (nem IG_PAGE_TOKEN)" };
+    const r = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(token)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ recipient: { id: igsid }, message: { attachment: { type: "image", payload: { url, is_reusable: true } } } }),

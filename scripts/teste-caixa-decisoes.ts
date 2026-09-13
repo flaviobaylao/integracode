@@ -304,6 +304,94 @@ async function main() {
   const dg: any = ((await raw(`SELECT nota, checagens FROM mkt_diagnosticos ORDER BY criado_em DESC LIMIT 1`)) as any).rows[0];
   check(ra.ok && typeof ra.nota === 'number' && dg && Array.isArray(dg.checagens) && /Auditor da Central/.test(ra.texto), 'auditor: rodada grava diagnostico (nota ' + ra.nota + ') mesmo sem modelo');
 
+  // ── Sprint 5: Instagram conectado (OAuth) + publicador ──
+  const ig = await import('../server/mkt-ig-auth');
+  delete process.env.IG_PAGE_TOKEN; delete process.env.IG_APP_ID; delete process.env.IG_APP_SECRET;
+  await raw(`DELETE FROM system_settings WHERE key LIKE 'ig_%'`);
+  check((await ig.credenciais()).origem === 'nenhuma', 'ig: sem nada = origem nenhuma');
+  process.env.IG_PAGE_TOKEN = 'ENVTOKEN'; process.env.IG_BUSINESS_ID = '1784';
+  const ce = await ig.credenciais();
+  check(ce.origem === 'env' && ce.token === 'ENVTOKEN' && /graph\.facebook\.com/.test(ce.base) && ce.userId === '1784', 'ig: env = IG_PAGE_TOKEN em graph.facebook.com');
+  check(!(await ig.urlConectar()).ok, 'ig: sem IG_APP_ID nao monta a URL');
+  process.env.IG_APP_ID = '1749965846130240'; process.env.IG_APP_SECRET = 'segredo';
+  const uc = await ig.urlConectar();
+  const stSalvo: any = ((await raw(`SELECT value FROM system_settings WHERE key = 'ig_oauth_state'`)) as any).rows[0];
+  check(uc.ok && /instagram\.com\/oauth\/authorize/.test(uc.url!) && /instagram_business_content_publish/.test(uc.url!) && /redirect_uri=https%3A%2F%2Fintegracode-production\.up\.railway\.app%2Fapi%2Fmkt%2Fig%2Fcallback/.test(uc.url!) && stSalvo && uc.url!.includes('state=' + stSalvo.value), 'ig: URL de autorizacao com escopos, redirect e state guardado');
+  check(!(await ig.concluirCallback('code', 'state-errado')).ok, 'ig: callback com state errado e recusado');
+  // fetch falso: troca de code, token longo, /me, e depois a Graph do publicador
+  const chamadas: string[] = [];
+  const fetchReal = globalThis.fetch;
+  (globalThis as any).fetch = async (url: any, init?: any) => {
+    const u = String(url); chamadas.push((init?.method || 'GET') + ' ' + u.split('?')[0]);
+    const json = (o: any, status = 200) => ({ ok: status < 400, status, json: async () => o });
+    if (u.startsWith('https://api.instagram.com/oauth/access_token')) return json({ access_token: 'CURTO', user_id: 17841400000, permissions: ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_insights'] });
+    if (u.startsWith('https://graph.instagram.com/access_token')) return json({ access_token: 'LONGO', token_type: 'bearer', expires_in: 5184000 });
+    if (u.startsWith('https://graph.instagram.com/refresh_access_token')) return json({ access_token: 'LONGO2', expires_in: 5184000 });
+    if (/graph\.instagram\.com\/v[\d.]+\/me\?/.test(u)) return json({ user_id: '17841400000', username: 'bebahonest', account_type: 'BUSINESS', id: '17841400000', media_count: 42 });
+    if (/\/me\/media_publish$/.test(u)) return json({ id: 'MEDIA777' });
+    if (/\/me\/media$/.test(u)) { const b = String(init?.body || ''); return json({ id: /CAROUSEL/.test(b) ? 'CAR9' : 'CONT' + (chamadas.length) }); }
+    if (/\/MEDIA777\?/.test(u)) return json({ permalink: 'https://www.instagram.com/p/ABC123xyz/' });
+    if (/\/(CONT\d+|CAR9)\?/.test(u)) return json({ status_code: 'FINISHED' });
+    return json({ error: { message: 'rota nao simulada: ' + u } }, 400);
+  };
+  const cb = await ig.concluirCallback('codigo123#_', stSalvo.value);
+  const cl = await ig.credenciais();
+  check(cb.ok && cb.username === 'bebahonest' && cl.origem === 'instagram_login' && cl.token === 'LONGO' && cl.diasRestantes! >= 59 && /graph\.instagram\.com/.test(cl.base) && cl.permissoes!.includes('instagram_business_content_publish'), 'ig: callback troca code -> token longo, guarda @, permissoes e vencimento');
+  check(!(await raw(`SELECT 1 FROM system_settings WHERE key = 'ig_oauth_state'`) as any).rows.length, 'ig: state consumido (nao reutilizavel)');
+  const stt = await ig.status();
+  check(stt.conectado && stt.podePublicar && stt.podeInsights && !('token' in stt), 'ig: status para a tela sem expor o token');
+  const rn0 = await ig.renovar();
+  check(rn0.ok && !rn0.renovou, 'ig: com 60 dias nao renova a toa');
+  await raw(`UPDATE system_settings SET value = '${new Date(Date.now() + 10 * 86400000).toISOString()}' WHERE key = 'ig_token_expira'`);
+  const rn1 = await ig.renovar();
+  check(rn1.ok && rn1.renovou && (await ig.credenciais()).token === 'LONGO2' && rn1.diasRestantes! >= 59, 'ig: faltando 10 dias renova e troca o token');
+  const te = await ig.testar();
+  check(te.ok && te.username === 'bebahonest' && te.mediaCount === 42, 'ig: testar chama /me com o token conectado');
+  const { modoColeta } = await import('../server/mkt-posts');
+  check((await modoColeta()).pronto, 'insights: modoColeta pronto com o token conectado (sem IG_BUSINESS_ID)');
+  const chAud = await checar();
+  check(chAud.find(c => c.id === 'instagram_token')?.gravidade === 'ok' && chAud.some(c => c.id === 'publicador_modo'), 'auditor: checa token do Instagram e modo do publicador');
+
+  // publicador
+  const pub = await import('../server/mkt-publicador');
+  check((await pub.modo()) === 'test', 'publicador: nasce em teste');
+  await raw(`DELETE FROM system_settings WHERE key = 'ig_permissoes'`);
+  check(!(await pub.definirModo('on')).ok, 'publicador: nao liga sem a permissao de publicar');
+  await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('ig_permissoes', 'instagram_business_basic,instagram_business_content_publish', 't')`);
+  check((await pub.definirModo('on')).ok && (await pub.modo()) === 'on', 'publicador: liga com token + permissao');
+  await raw(`INSERT INTO mkt_assets (id, sha256, tipo, url, titulo, formato, ativo, direitos_ok) VALUES (901, 'sha901', 'foto', 'data:image/png;base64,iVBORw0KGgo=', 'foto', 'png', true, true) ON CONFLICT DO NOTHING`);
+  const pp: any = ((await raw(`INSERT INTO mkt_pieces (canal, titulo, copy, gancho, estado, asset_ids) VALUES ('instagram', 'Peca IG', 'Legenda de teste #honest', 'sabor', 'aprovado', '[901]'::jsonb) RETURNING id, numero`)) as any).rows[0];
+  const semFoto: any = ((await raw(`INSERT INTO mkt_pieces (canal, titulo, copy, estado, asset_ids) VALUES ('instagram', 'Sem foto', 'x', 'aprovado', '[]'::jsonb) RETURNING id`)) as any).rows[0];
+  check(/sem criativo/.test((await pub.publicarPeca(semFoto.id)).erro || ''), 'publicador: recusa peca sem foto');
+  chamadas.length = 0;
+  const sim = await pub.publicarPeca(pp.id, { forcarModo: 'test' });
+  const estSim: any = ((await raw(`SELECT estado FROM mkt_pieces WHERE id = '${pp.id}'`)) as any).rows[0];
+  check(sim.ok && sim.simulado && sim.containerId && !chamadas.some(c => /media_publish/.test(c)) && estSim.estado === 'aprovado', 'publicador: em teste cria o container e NAO publica');
+  chamadas.length = 0;
+  const real = await pub.publicarPeca(pp.id, { quem: 'teste' });
+  const pRow: any = ((await raw(`SELECT estado, external_media_id, permalink FROM mkt_pieces WHERE id = '${pp.id}'`)) as any).rows[0];
+  const sp: any = ((await raw(`SELECT COUNT(*)::int AS n FROM social_posts WHERE external_media_id = 'MEDIA777'`)) as any).rows[0];
+  check(real.ok && real.mediaId === 'MEDIA777' && /instagram\.com\/p\//.test(real.permalink!) && pRow.estado === 'publicado' && pRow.external_media_id === 'MEDIA777' && sp.n === 1 && chamadas.some(c => /POST .*\/me\/media$/.test(c)) && chamadas.some(c => /media_publish/.test(c)), 'publicador: em on publica, guarda media_id/permalink e registra o post');
+  check(chamadas.some(c => /\/me\/media$/.test(c)) && !chamadas.some(c => /graph\.facebook\.com/.test(c)), 'publicador: usa graph.instagram.com com /me (login do Instagram)');
+  const pc2: any = ((await raw(`INSERT INTO mkt_pieces (canal, titulo, copy, estado, asset_ids) VALUES ('instagram', 'Carrossel', 'Duas fotos', 'aprovado', '[901,901]'::jsonb) RETURNING id, numero`)) as any).rows[0];
+  chamadas.length = 0;
+  const car = await pub.publicarPeca(pc2.id, { forcarModo: 'test' });
+  check(car.ok && car.containerId === 'CAR9' && chamadas.filter(c => /POST .*\/me\/media$/.test(c)).length === 3, 'publicador: 2+ fotos viram carrossel (2 filhos + 1 pai)');
+  const runsPub: any = ((await raw(`SELECT COUNT(*)::int AS n FROM mkt_agent_runs WHERE agente = 'mkt_publicador'`)) as any).rows[0];
+  check(runsPub.n >= 3, 'publicador: cada tentativa vira um run auditavel');
+  const pvz = await pub.publicarVencidas({ slotDiario: true, quem: 'teste' });
+  check(pvz.modo === "on" && pvz.publicadas + pvz.simuladas + pvz.falhas.length >= 1, 'publicador: varredura do cron pega aprovadas no slot diario');
+  (globalThis as any).fetch = fetchReal;
+  const { normalizarParaInstagram } = await import('../server/mkt-entrega');
+  const sharpI = (await import('sharp')).default;
+  const alta = await sharpI({ create: { width: 400, height: 1000, channels: 4, background: '#ff0000' } }).png().toBuffer();
+  const norm = await normalizarParaInstagram(alta);
+  const nm = norm ? await sharpI(norm).metadata() : null;
+  check(!!nm && nm.format === 'jpeg' && Math.abs((nm.width! / nm.height!) - 0.8) < 0.01, 'foto ?ig=1: PNG 2:5 vira JPEG 4:5 com borda branca');
+  const larga = await sharpI({ create: { width: 3000, height: 1000, channels: 3, background: '#00ff00' } }).jpeg().toBuffer();
+  const nl = await sharpI((await normalizarParaInstagram(larga))!).metadata();
+  check(nl.width! <= 1440 && Math.abs((nl.width! / nl.height!) - 1.91) < 0.02, 'foto ?ig=1: 3:1 vira 1.91:1 e cabe em 1440px');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

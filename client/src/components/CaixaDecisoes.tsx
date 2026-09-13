@@ -396,7 +396,7 @@ function AgentesConteudo() {
           </span>
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Escreve às 07:10 até a cota da semana ({d.saldo ? d.saldo.feitas + "/" + d.saldo.cota : "…"}), com foto do acervo, campanha do mês e link próprio por peça; preço só via consulta ao cadastro. Cada peça passa pelo revisor (regras + IA) e para na fila de aprovação. Aprovada, chega pronta no seu WhatsApp às 09:05 — responda <code>POSTEI 31 &lt;link&gt;</code>.
+          Escreve às 07:10 até a cota da semana ({d.saldo ? d.saldo.feitas + "/" + d.saldo.cota : "…"}), com foto do acervo, campanha do mês e link próprio por peça; preço só via consulta ao cadastro. Cada peça passa pelo revisor (regras + IA) e para na fila de aprovação. Aprovada, às 09:05 o publicador põe no ar (se ligado e Instagram conectado) ou ela chega pronta no seu WhatsApp — responda <code>POSTEI 31 &lt;link&gt;</code>.
         </p>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
@@ -425,8 +425,70 @@ function AgentesConteudo() {
           <span className="text-xs text-muted-foreground">Peças aprovadas ainda não postadas:</span>
           <Button size="sm" variant="outline" onClick={entregar}>Mandar prontas no WhatsApp agora</Button>
         </div>
+        <InstagramConectado />
       </CardContent>
     </Card>
+  );
+}
+
+function InstagramConectado() {
+  const { toast } = useToast();
+  const [ocupado, setOcupado] = useState(false);
+  const q = useQuery<any>({ queryKey: ["/api/mkt/publicador"], queryFn: () => apiGet("/api/mkt/publicador") });
+  const p = q.data || {};
+  const ig = p.instagram || {};
+  async function conectar() {
+    setOcupado(true);
+    try { const r = await apiGet("/api/mkt/ig/conectar"); if (r.url) window.location.href = r.url; }
+    catch (e: any) { toast({ title: "Não deu para iniciar", description: e.message, variant: "destructive" }); }
+    setOcupado(false);
+  }
+  async function testar() {
+    try { const r = await apiPost("/api/mkt/ig/testar", {}); toast({ title: r.ok ? "@" + r.username + " responde (" + r.mediaCount + " mídias)" : "Instagram não respondeu", description: r.ok ? "origem: " + r.origem : r.erro, variant: r.ok ? undefined : "destructive" }); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  async function renovar() {
+    try { const r = await apiPost("/api/mkt/ig/renovar", {}); toast({ title: r.ok ? (r.renovou ? "Token renovado" : "Ainda não precisava renovar") : "Não renovou", description: r.erro || (r.diasRestantes != null ? r.diasRestantes + " dia(s) restantes" : ""), variant: r.ok ? undefined : "destructive" }); q.refetch(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  async function modo(m: string) {
+    try { await apiPost("/api/mkt/publicador/modo", { modo: m }); toast({ title: "Publicador em " + m }); q.refetch(); }
+    catch (e: any) { toast({ title: "Não deu", description: e.message, variant: "destructive" }); }
+  }
+  async function publicarAgora() {
+    setOcupado(true);
+    try { const r = await apiPost("/api/mkt/publicador/rodar", { slotDiario: true }); toast({ title: r.publicadas + " publicada(s) · " + r.simuladas + " simulada(s)", description: r.falhas?.length ? r.falhas.map((f: any) => "#" + f.numero + ": " + f.erro).join(" · ") : "", variant: r.falhas?.length ? "destructive" : undefined }); q.refetch(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+    setOcupado(false);
+  }
+  return (
+    <div className="border-t pt-3 space-y-2">
+      <div className="flex flex-wrap gap-2 items-center">
+        <i className="fab fa-instagram text-muted-foreground" />
+        <span className="text-xs">
+          {ig.conectado
+            ? <>Instagram conectado como <b>@{ig.username}</b> · token vence em {ig.diasRestantes} dia(s) · {ig.podePublicar ? "pode publicar" : <span className="text-red-600">sem permissão de publicar — reconecte</span>}</>
+            : ig.origem === "env"
+              ? <>Usando <code>IG_PAGE_TOKEN</code> do Railway (sem renovação automática). Conecte pela Central para a Central renovar sozinha.</>
+              : <>Instagram <b>não conectado</b>.{ig.faltaEnv?.length ? " Faltam " + ig.faltaEnv.join(", ") + " no Railway." : ""}</>}
+        </span>
+        <span className="ml-auto flex gap-1 flex-wrap">
+          <Button size="sm" disabled={ocupado || !!ig.faltaEnv?.length} onClick={conectar}>{ig.conectado ? "Reconectar" : "Conectar Instagram"}</Button>
+          <Button size="sm" variant="outline" onClick={testar}>Testar</Button>
+          {ig.conectado && <Button size="sm" variant="outline" onClick={renovar}>Renovar token</Button>}
+        </span>
+      </div>
+      {ig.ultimoErro && <div className="text-xs text-red-600">Último erro: {ig.ultimoErro}</div>}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-muted-foreground">Publicador (peça aprovada vai ao ar sozinha; em teste a Meta só valida a foto):</span>
+        <Badge variant="outline">{p.modo || "…"}</Badge>
+        <Button size="sm" variant={p.modo === "off" ? "default" : "outline"} onClick={() => modo("off")}>Desligar</Button>
+        <Button size="sm" variant={p.modo === "test" ? "default" : "outline"} onClick={() => modo("test")}>Modo teste</Button>
+        <Button size="sm" variant={p.modo === "on" ? "default" : "outline"} onClick={() => modo("on")}>Ligar</Button>
+        <Button size="sm" variant="outline" disabled={ocupado || p.modo === "off"} onClick={publicarAgora}>Publicar aprovadas agora</Button>
+        {p.fila && <span className="text-[11px] text-muted-foreground">{num(p.fila.aprovadas)} aprovada(s) · {num(p.fila.agendadas)} agendada(s) · {num(p.fila.publicadas30)} publicada(s) em 30d</span>}
+      </div>
+    </div>
   );
 }
 
