@@ -767,10 +767,13 @@ export default function ClientsMap() {
     const id = String(ponto.id);
     setSalvandoVendedorId(id);
     try {
-      const r = await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: iso });
       // 🔁 A data manda no dia de rota: o cadastro acompanha o dia da semana da data escolhida.
+      // ⚠️ ORDEM IMPORTA: gravar weekdays REGENERA a agenda do cliente (cria a próxima visita a
+      // partir de dia + periodicidade). Por isso o dia vai PRIMEIRO e a data depois — invertido,
+      // a data escolhida era sobrescrita pela que a regeneração calculava.
       const codigo = CODIGO_DO_DIA[diaDaDataISO(iso)];
       if (codigo) await apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] });
+      const r = await apiRequest('PATCH', `/api/customers/${id}/proxima-visita`, { data: iso });
       await queryClient.refetchQueries({ queryKey: ['/api/customers/map-data'] });
       const rotas = (r as any)?.rotas || {};
       const avisos = Object.values(rotas).filter((x: any) => x && x.erro);
@@ -791,6 +794,7 @@ export default function ClientsMap() {
     if (!codigo) return;
     setSalvandoVendedorId(id);
     try {
+      // O dia vai primeiro (isso regenera a agenda) e só então a visita é puxada para a data certa.
       await apiRequest('PATCH', `/api/customers/${id}`, { weekdays: [codigo] });
       // A visita só é remarcada se o cliente já tiver vendedor — sem vendedor não há agenda.
       if (ponto.sellerId) {
