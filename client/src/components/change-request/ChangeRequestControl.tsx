@@ -145,6 +145,105 @@ export function useChangeRequestStates(keys: string[], date?: string): Record<st
 export const crKey = (entityType: EntityType, entityId: string) => `${entityType}:${entityId}`;
 
 // ---------------------------------------------------------------------------
+// 💬 RÉPLICA de report (admin → vendedor). Hook + controle no card do atendimento.
+//    O admin responde um report no Inbox; o vendedor vê a resposta aqui na Rota
+//    do Dia (selo "Resposta do admin") e pode responder de volta. Mesma conversa.
+// ---------------------------------------------------------------------------
+export type ReportState = ChangeRequestState & { hasAdminReply?: boolean; lastRole?: string | null };
+
+export function useReportStates(keys: string[]): Record<string, ReportState> {
+  const uniq = useMemo(() => Array.from(new Set(keys.filter(Boolean))).sort(), [keys.join("|")]);
+  const keysParam = uniq.join(",");
+  const { data } = useQuery<Record<string, ReportState>>({
+    queryKey: ["/api/change-requests/report-states", keysParam],
+    queryFn: async () => {
+      if (!keysParam) return {};
+      const r = await fetch(`/api/change-requests/report-states?keys=${encodeURIComponent(keysParam)}`, { credentials: "include" });
+      if (!r.ok) return {};
+      return r.json();
+    },
+    enabled: !!keysParam,
+    staleTime: 30_000,
+  });
+  return data || {};
+}
+
+export function ReportReplyControl({ reportState, className }: { reportState?: ReportState | null; className?: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const replyMut = useMutation({
+    mutationFn: async () => {
+      if (!reportState?.id) throw new Error("Report inválido");
+      return apiRequest("POST", `/api/change-requests/${reportState.id}/reply`, { text: replyText.trim() });
+    },
+    onSuccess: () => {
+      toast({ title: "Resposta enviada", description: "O admin foi notificado no Inbox." });
+      setReplyText(""); setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  if (!reportState || !reportState.hasAdminReply) return null;
+  const stop = (e: any) => e.stopPropagation();
+  const label = (reportState.details && (reportState.details as any).reportLabel) || "Report";
+  return (
+    <>
+      <Badge
+        variant="outline"
+        className={`cursor-pointer bg-indigo-50 text-indigo-700 border-indigo-300 hover:bg-indigo-100 gap-1 text-[10px] sm:text-xs px-1.5 sm:px-2.5 py-0 sm:py-0.5 ${className || ""}`}
+        title="O admin respondeu ao seu report — toque para ver e responder"
+        onClick={(e) => { stop(e); setOpen(true); }}
+        data-testid={`badge-report-reply-${reportState.entityId}`}
+      >
+        <Bell className="h-2.5 w-2.5 sm:h-3 sm:w-3 animate-pulse" /> Resposta do admin
+      </Badge>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md" onClick={stop}>
+          <DialogHeader>
+            <DialogTitle>Resposta do admin</DialogTitle>
+            <DialogDescription>{reportState.entityName || "Registro de atendimento"} · {label}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            {Array.isArray(reportState.messages) && reportState.messages.length > 0 && (
+              <div className="pt-1">
+                <div className="text-[11px] font-semibold text-muted-foreground mb-1">Conversa</div>
+                <MessageThread messages={reportState.messages} />
+              </div>
+            )}
+            <div className="pt-2 mt-1 border-t space-y-2">
+              <div className="text-[11px] font-semibold text-muted-foreground">Responder ao admin</div>
+              <Textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Escreva sua resposta ao admin…"
+                rows={2}
+                data-testid="report-reply-text"
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={replyMut.isPending || !replyText.trim()}
+                onClick={() => replyMut.mutate()}
+                data-testid="report-reply-send"
+              >
+                {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enviar resposta"}
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Fechar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Controle por card
 // ---------------------------------------------------------------------------
 interface ControlProps {
