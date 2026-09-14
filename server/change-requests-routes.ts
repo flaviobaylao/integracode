@@ -362,6 +362,48 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // GET /api/change-requests/report-states?keys=customer:ID,lead:ID
+  //   Mapa { "entityType:entityId": <último report c/ RÉPLICA do admin> } para o
+  //   vendedor ver a resposta do admin no card do atendimento (Rota do Dia) e
+  //   responder de volta. Só retorna reports (kind='report') que já têm ao menos
+  //   uma mensagem do admin — senão não há nada para o vendedor ver.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/report-states", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const raw = String(req.query.keys || "").trim();
+    if (!raw) return res.json({});
+    const wanted = new Set<string>();
+    const ids: string[] = [];
+    for (const p of raw.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 800)) {
+      const idx = p.indexOf(":");
+      if (idx <= 0) continue;
+      const t = p.slice(0, idx);
+      const id = p.slice(idx + 1);
+      if (!VALID_ENTITY.has(t) || !id) continue;
+      wanted.add(t + ":" + id);
+      ids.push(id);
+    }
+    if (ids.length === 0) return res.json({});
+    const uniqIds = Array.from(new Set(ids));
+    const inList = sql.join(uniqIds.map((id) => sql`${id}`), sql`, `);
+    const rows = rowsOf(await db.execute(sql`
+      SELECT * FROM change_requests
+      WHERE entity_id IN (${inList}) AND kind = 'report'
+      ORDER BY created_at DESC`));
+    const out: Record<string, any> = {};
+    for (const r of rows) {
+      const key = r.entity_type + ":" + r.entity_id;
+      if (!wanted.has(key) || out[key]) continue;
+      const msgs = Array.isArray(r.messages) ? r.messages : [];
+      const hasAdminReply = msgs.some((m: any) => m && m.role === "admin");
+      if (!hasAdminReply) continue; // só interessa ao vendedor quando o admin respondeu
+      const last = msgs[msgs.length - 1] || {};
+      out[key] = { ...mapRow(r), hasAdminReply, lastRole: last.role || null };
+    }
+    return res.json(out);
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/resolve — admin fecha a tarefa.
   //   body: { status: 'efetuadas'|'parcial'|'rejeitadas', note?: string }
   // --------------------------------------------------------------------------
