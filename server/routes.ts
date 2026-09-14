@@ -4551,10 +4551,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Product routes
-  app.get('/api/products', authenticateUser, async (req, res) => {
+  // PAPEIS QUE ENXERGAM ITENS DE USO INTERNO (products.internal_only = true).
+  // Sao itens fora do catalogo de vendas (ex.: bombonas plasticas vendidas como
+  // material reciclavel): vendedor, telemarketing, motorista e industria NUNCA os
+  // recebem, para nao entrarem em pedido por engano.
+  const PAPEIS_ITENS_INTERNOS = ['admin', 'coordinator', 'administrative'];
+
+  app.get('/api/products', authenticateUser, async (req: any, res) => {
     try {
       const products = await storage.getProducts();
-      res.json(products);
+      const podeVerInternos = PAPEIS_ITENS_INTERNOS.includes(req.currentUser?.role || '');
+      res.json(podeVerInternos ? products : products.filter((p: any) => p.internalOnly !== true));
     } catch (error) {
       console.error("Error fetching products:", error);
       res.status(500).json({ message: "Failed to fetch products" });
@@ -4563,10 +4570,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/products', authenticateUser, async (req: any, res) => {
     try {
-      // Only admin and coordinators can manage products
+      // Only admin, coordinators and administrative can manage products
       const user = req.currentUser;
       
-      if (!['admin', 'coordinator'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -4587,7 +4594,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const user = req.currentUser;
       
-      if (!['admin', 'coordinator'].includes(user?.role || '')) {
+      if (!['admin', 'coordinator', 'administrative'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -20617,7 +20624,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/public/products', async (req, res) => {
     try {
       const productsData = await storage.getProducts();
-      const activeProducts = productsData.filter(p => p.isActive);
+      // Item de uso interno (bombonas etc.) nunca vai para a loja publica.
+      const activeProducts = productsData.filter(p => p.isActive && (p as any).internalOnly !== true);
       
       // Formatar produtos para o hotsite com todas as tabelas de preço
       const formattedProducts = activeProducts.map(product => ({
