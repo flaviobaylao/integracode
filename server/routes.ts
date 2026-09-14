@@ -369,6 +369,54 @@ async function __sellerCustomers(sellerId: string): Promise<Array<{ latitude: an
   return (r.rows || []) as any[];
 }
 
+// Reprograma leads VENCIDOS (status 'scheduled', proximo contato < hoje, do vendedor, com
+// coordenada, NAO prospeccao) para a PROXIMA data da rota da regiao: o dia de rota dos clientes
+// ativos mais proximos da coordenada do lead (__regionTargetWeekday). Sem regiao resolvivel
+// (sem clientes ativos por perto), cai no proximo dia util. Mantem status 'scheduled'. Idempotente
+// (so mexe em quem esta vencido) e chamado no self-heal da rota do dia. Devolve # reprogramados.
+async function __reprogramarLeadsVencidos(sellerId: string, todayStr: string): Promise<number> {
+  if (!sellerId || !todayStr) return 0;
+  try {
+    const overdue: any = await db.execute(sql`
+      SELECT id, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng
+      FROM leads
+      WHERE status = 'scheduled'
+        AND assigned_to = ${sellerId}
+        AND COALESCE(route_type, 'dia') <> 'prospeccao'
+        AND next_contact_date IS NOT NULL
+        AND (next_contact_date)::date < ${todayStr}::date
+        AND latitude IS NOT NULL AND longitude IS NOT NULL
+    `);
+    const rows = (overdue?.rows || []) as any[];
+    if (!rows.length) return 0;
+    const custs = await __sellerCustomers(sellerId);
+    const base0 = new Date(`${todayStr}T00:00:00Z`); // hoje (BR) como meia-noite UTC
+    let n = 0;
+    for (const r of rows) {
+      const lat = Number((r as any).lat), lng = Number((r as any).lng);
+      const wd = __regionTargetWeekday(custs, lat, lng);
+      let next: Date;
+      if (wd !== null) {
+        // Proxima ocorrencia (>= hoje) do dia de rota da regiao (janela de 7 dias).
+        next = __snapToWeekday(new Date(base0), wd, 6, new Date(base0), null);
+      } else {
+        // Sem clientes ativos na regiao: proximo dia util (evita sabado/domingo).
+        next = new Date(base0);
+        const dow = next.getUTCDay();
+        if (dow === 6) next.setUTCDate(next.getUTCDate() + 2);
+        else if (dow === 0) next.setUTCDate(next.getUTCDate() + 1);
+      }
+      await db.execute(sql`UPDATE leads SET next_contact_date = ${next}, updated_at = NOW() WHERE id = ${(r as any).id}`);
+      n++;
+    }
+    if (n) console.log(`📅 [LEAD-VENCIDO-REPROG] vendedor ${sellerId}: ${n} lead(s) vencido(s) reprogramado(s) p/ o dia de rota da regiao.`);
+    return n;
+  } catch (e: any) {
+    console.warn('⚠️ [LEAD-VENCIDO-REPROG] falha:', e?.message || e);
+    return 0;
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -16589,6 +16637,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const todayBR = getBrazilDateString();
         if (date >= todayBR) {
+          // 🔁 Leads VENCIDOS (nao atendidos) do vendedor sao reprogramados para a PROXIMA data da
+          // rota da regiao (dia de rota dos clientes ativos mais proximos da coordenada do lead),
+          // em vez de sumirem. Idempotente; roda no self-heal da rota do dia/atual.
+          try { await __reprogramarLeadsVencidos(String(sellerId), todayBR); } catch (_rv) { /* nao bloqueia a rota */ }
           const { db: _dbLR } = await import('./db');
           const { customers: _custTbl, leads: _leadsTbl2 } = await import('../shared/schema');
           const { inArray: _inArr } = await import('drizzle-orm');
