@@ -390,6 +390,7 @@ run();
       'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS delivery_point_id varchar',
       'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS is_priority boolean NOT NULL DEFAULT false',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS internal_only boolean NOT NULL DEFAULT false',
     ];
     for (const _stmt of _critCols) {
       try { await db.execute(sql.raw(_stmt)); }
@@ -441,6 +442,9 @@ run();
       // existe segue vendavel. NAO desligamos nenhum produto aqui — quem decide e a
       // tela de Produtos, senao o boot desfaria a escolha do usuario a cada deploy.
       await db.execute(sql.raw("ALTER TABLE products ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true"));
+      // Item de USO INTERNO (fora do catalogo de vendas). Default false: nenhum
+      // produto existente muda. Mesma regra do ALTER acima — coluna no schema drizzle.
+      await db.execute(sql.raw("ALTER TABLE products ADD COLUMN IF NOT EXISTS internal_only boolean NOT NULL DEFAULT false"));
       await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS coordinates_locked boolean NOT NULL DEFAULT false"));
       // Fluxo de retorno de lead (15 dias): colunas de controle (aditivas, idempotentes).
       await db.execute(sql.raw("ALTER TABLE leads ADD COLUMN IF NOT EXISTS original_return_date timestamp"));
