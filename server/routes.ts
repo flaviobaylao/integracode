@@ -9183,6 +9183,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   })();
 
   // ===================================================================================
+  // MIGRAÇÃO ONE-SHOT (guardada), roda no boot, idempotente: RESTAURA a visita VIRTUAL de HOJE
+  // dos clientes SEMANAIS virtuais cujo dia de rota é hoje e que ficaram SEM a linha de hoje
+  // (regressão da regeneração que apagava o dia corrente). Semanal do dia tem que aparecer
+  // sempre nesse dia — recria só quando falta. NÃO toca quinzenal/mensal (alternância legítima).
+  // ===================================================================================
+  (async () => {
+    const MIGR_KEY = 'migr_restore_today_virtual_v1';
+    try {
+      const already: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = ${MIGR_KEY} LIMIT 1`);
+      if ((already?.rows || []).length > 0) return;
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${MIGR_KEY}, 'done', 'system-migration') ON CONFLICT (key) DO UPDATE SET value = 'done', updated_by = 'system-migration', updated_at = now()`);
+      const TZR = 'America/Sao_Paulo';
+      const hojeStr = new Intl.DateTimeFormat('en-CA', { timeZone: TZR, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+      const ABBR = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+      const dow = new Date(hojeStr + 'T12:00:00Z').getUTCDay();
+      const hojeAbbr = ABBR[dow];
+      if (dow === 0 || dow === 6) { console.log('[MIGR restore-today-virtual] fim de semana, nada a fazer'); return; }
+      const noon = hojeStr + ' 12:00:00';
+      const ins: any = await db.execute(sql`
+        INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
+        SELECT c.id, c.seller_id, ${noon}::timestamp, ${hojeAbbr}, 'semanal', true, 'pending', COALESCE(c.fantasy_name, c.name), c.latitude, c.longitude, c.address
+        FROM customers c
+        WHERE c.is_active = true
+          AND COALESCE(c.virtual_service, false) = true
+          AND c.visit_periodicity::text = 'semanal'
+          AND c.seller_id IS NOT NULL
+          AND c.weekdays LIKE '[%]'
+          AND jsonb_exists(c.weekdays::jsonb, ${hojeAbbr})
+          AND (c.service_start_date IS NULL OR c.service_start_date::date <= ${hojeStr}::date)
+          AND NOT EXISTS (SELECT 1 FROM visit_agenda va WHERE va.customer_id = c.id AND va.scheduled_date::date = ${hojeStr}::date)
+        ON CONFLICT DO NOTHING`);
+      console.log(`[MIGR restore-today-virtual] recriadas ${ins?.rowCount ?? 0} visitas virtuais de hoje (${hojeAbbr})`);
+    } catch (e: any) {
+      console.error('[MIGR restore-today-virtual] falha:', e?.message);
+    }
+  })();
+
+  // ===================================================================================
   // MIGRAÇÃO ONE-SHOT (guardada em system_settings), roda no boot em background, idempotente:
   // RE-SYNC das ROTAS PRESENCIAIS conforme os ajustes ATUAIS de dia de rota + periodicidade + data de início.
   //   (1) weekdays: Dom -> Seg (dedupe) nos clientes presenciais (regra: sem visita em domingo);
