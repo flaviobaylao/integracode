@@ -255,55 +255,82 @@ export function textoSobrecarga(s: Sobrecarga): string {
  * Quando a sobrecarga some, o pendente correspondente e' CANCELADO — senao a
  * Inbox acumularia aviso de problema que ja foi resolvido.
  */
-async function sincronizarAvisos(sobrecargas: Sobrecarga[], vendedoresAvaliados: string[]): Promise<void> {
-  if (!vendedoresAvaliados.length) return;
-  const chaveDe = (s: Sobrecarga) => `${s.sellerId}|${s.canal}|${s.dia}`;
-  const ativas = new Map(sobrecargas.map((s) => [chaveDe(s), s]));
+/** Uma linha do resumo, por celula estourada. */
+function linhaSobrecarga(s: Sobrecarga): string {
+  const quem = s.papel === "telemarketing" ? "telemarketing" : "vendedor";
+  const quando = s.datas.length === 1
+    ? ddmmDe(s.datas[0])
+    : `${s.datas.length} semanas (${s.datas.slice(0, 4).map(ddmmDe).join(", ")}${s.datas.length > 4 ? "…" : ""})`;
+  return `• ${s.vendedor} (${quem}) — ${DIA_LONGO[s.dia] || s.dia} ${s.canal}: teto ${s.limite}, `
+    + `chega a ${s.pico} em ${quando}`;
+}
 
-  // IN com bind por item, e nao `= ANY(${array})`: o bind de array falha neste
-  // setup (ver server/index.ts:2516, onde derrubou o "limpar" em massa).
-  const listaVend = sql.join(vendedoresAvaliados.map((v) => sql`${v}`), sql`, `);
-  const pendentes = (await db.execute(sql`
-    SELECT id, entity_id FROM change_requests
-    WHERE entity_type = 'agenda_dia' AND status = 'pending'
-      AND split_part(entity_id, '|', 1) IN (${listaVend})`)).rows as any[];
-  const jaAbertas = new Set(pendentes.map((p: any) => String(p.entity_id)));
+/**
+ * UM aviso por dia, com TODOS os dias sobrecarregados juntos (pedido do Flavio,
+ * 14/set/2026). Antes era um aviso por vendedor+canal+dia e a Inbox enchia com
+ * seis cartoes dizendo variacoes da mesma coisa.
+ *
+ * `entity_id = 'resumo|<data>'` e o indice ux_cr_pending (entity_type,
+ * entity_id) WHERE status='pending' garantem no maximo UM pendente por dia. Ao
+ * publicar o de hoje, qualquer pendente anterior de agenda_dia e' CANCELADO —
+ * inclusive os avisos antigos por celula — porque o de hoje o substitui.
+ *
+ * Quem chama e' so' a varredura das 07h: o GET da tela nao abre mais aviso
+ * nenhum. Se abrisse, o primeiro vendedor a olhar o quadro publicaria o resumo
+ * do dia so' com a carteira DELE, e o dia ficaria travado com um resumo parcial.
+ */
+async function publicarResumoDiario(sobrecargas: Sobrecarga[], hoje: string): Promise<void> {
+  const chaveHoje = `resumo|${hoje}`;
 
-  // Fecha o que voltou ao normal.
-  const resolvidas = pendentes.filter((p: any) => !ativas.has(String(p.entity_id))).map((p: any) => String(p.id));
-  if (resolvidas.length) {
+  // Tudo que estava pendente e nao e' o resumo de hoje sai de cena.
+  const anteriores = (await db.execute(sql`
+    SELECT id FROM change_requests
+    WHERE entity_type = 'agenda_dia' AND status = 'pending' AND entity_id <> ${chaveHoje}`)).rows as any[];
+  if (anteriores.length) {
     await db.execute(sql`
       UPDATE change_requests
       SET status = 'cancelled', resolved_at = NOW(), resolved_by_name = 'Sistema (automático)',
-          resolution_note = 'Dia voltou a caber no teto.'
-      WHERE id IN (${sql.join(resolvidas.map((id: string) => sql`${id}`), sql`, `)})`);
+          resolution_note = ${sobrecargas.length ? "Substituído pelo resumo do dia." : "Os dias voltaram a caber no teto."}
+      WHERE id IN (${sql.join(anteriores.map((a: any) => sql`${String(a.id)}`), sql`, `)})`);
   }
 
-  // Abre o que estourou e ainda nao tem aviso.
-  for (const s of Array.from(ativas.values())) {
-    const chave = chaveDe(s);
-    if (jaAbertas.has(chave)) continue;
-    const nota = textoSobrecarga(s);
-    const msg = {
-      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      role: "admin", by: null, byName: "Sistema (automático)", kind: "system",
-      text: nota, at: new Date().toISOString(),
-    };
-    try {
-      await db.execute(sql`
-        INSERT INTO change_requests
-          (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
-           types, details, status, requested_by, requested_by_name, messages)
-        VALUES
-          ('agenda_dia', ${chave}, NULL, ${`${s.vendedor} — ${DIA_LONGO[s.dia] || s.dia} ${s.canal}`},
-           ${s.sellerId}, ${s.vendedor},
-           ${JSON.stringify(["dia_sobrecarregado"])}::jsonb,
-           ${JSON.stringify({ outro: nota, sobrecarga: s })}::jsonb, 'pending',
-           NULL, 'Sistema', ${JSON.stringify([msg])}::jsonb)`);
-    } catch (e: any) {
-      // Corrida com outra aba abrindo o mesmo aviso: o indice unico resolve.
-      if (!String(e?.message || "").includes("ux_cr_pending")) throw e;
-    }
+  if (!sobrecargas.length) return; // nada acima do teto: nao abre aviso nenhum
+
+  // Ja existe o resumo de hoje? Entao o dia ja foi avisado — uma vez ao dia.
+  const jaTem = (await db.execute(sql`
+    SELECT 1 FROM change_requests
+    WHERE entity_type = 'agenda_dia' AND entity_id = ${chaveHoje} AND status = 'pending' LIMIT 1`)).rows as any[];
+  if (jaTem.length) return;
+
+  // Pior primeiro: o que mais passou do teto abre a lista.
+  const ordenadas = [...sobrecargas].sort(
+    (a, b) => (b.pico - b.limite) - (a.pico - a.limite) || b.pico - a.pico,
+  );
+  const carteiras = new Set(ordenadas.map((s) => s.sellerId)).size;
+  const cabecalho = `${ordenadas.length} dia${ordenadas.length === 1 ? "" : "s"} acima do teto `
+    + `em ${carteiras} carteira${carteiras === 1 ? "" : "s"}.`;
+  const nota = [cabecalho, "", ...ordenadas.map(linhaSobrecarga), "",
+    "Vale remanejar dia de atendimento, semana do mês ou periodicidade de parte desses clientes."].join("\n");
+
+  const msg = {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    role: "admin", by: null, byName: "Sistema (automático)", kind: "system",
+    text: nota, at: new Date().toISOString(),
+  };
+  try {
+    await db.execute(sql`
+      INSERT INTO change_requests
+        (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+         types, details, status, requested_by, requested_by_name, messages)
+      VALUES
+        ('agenda_dia', ${chaveHoje}, NULL, ${`Dias sobrecarregados — ${ddmmDe(hoje)}`},
+         NULL, NULL,
+         ${JSON.stringify(["dia_sobrecarregado"])}::jsonb,
+         ${JSON.stringify({ outro: nota, sobrecargas: ordenadas })}::jsonb, 'pending',
+         NULL, 'Sistema', ${JSON.stringify([msg])}::jsonb)`);
+  } catch (e: any) {
+    // Corrida com a varredura manual: o indice unico resolve.
+    if (!String(e?.message || "").includes("ux_cr_pending")) throw e;
   }
 }
 
@@ -712,7 +739,7 @@ export async function varreduraSobrecargaDiaria(): Promise<{ sobrecargas: number
   const limites = await lerLimites();
   const sobrecargas = acharSobrecargas(itens, hoje, limites);
   const avaliados = Array.from(new Set(itens.map((i: any) => String(i.sellerId || "")).filter(Boolean)));
-  await sincronizarAvisos(sobrecargas, avaliados);
+  await publicarResumoDiario(sobrecargas, hoje);
   return { sobrecargas: sobrecargas.length, vendedores: avaliados.length };
 }
 
@@ -753,9 +780,8 @@ export function registerAgendaCarteira(app: Express) {
       const esc = escopo(req);
       const hoje = String(req.query.ref || "").match(/^\d{4}-\d{2}-\d{2}$/) ? String(req.query.ref) : hojeBrasilia();
       const { semanas, itens } = await montarJanela(esc, hoje);
-      // TETO DO DIA: a tela pinta de amarelo quem estourou, e a Inbox recebe o
-      // aviso. A verificacao roda SOLTA, depois da resposta — a tela nunca
-      // espera por ela e nunca quebra por causa dela.
+      // TETO DO DIA: a tela pinta de amarelo quem estourou. O aviso da Inbox
+      // e' um resumo diario, publicado pela varredura das 07h.
       const limites = await lerLimites();
       // Cidade de origem de cada vendedor/telemarketing que aparece na janela.
       const origens = await cidadesDeOrigem(itens.map((i) => String(i.usuarioId || "")));
@@ -772,17 +798,31 @@ export function registerAgendaCarteira(app: Express) {
         podeEditarLimites: PAPEIS_LIMITE.includes(esc.papel),
       });
 
-      void (async () => {
-        try {
-          const sobre = acharSobrecargas(itens, hoje, limites);
-          const avaliados = Array.from(new Set(itens.map((i) => String(i.sellerId || "")).filter(Boolean)));
-          await sincronizarAvisos(sobre, avaliados);
-        } catch (e: any) {
-          console.warn("[carteira-agenda] avisos de sobrecarga:", e?.message);
-        }
-      })();
+      // O aviso da Inbox NAO sai daqui: e' um resumo unico, publicado uma vez
+      // por dia pela varredura das 07h (publicarResumoDiario). Se o GET
+      // publicasse, o primeiro vendedor a abrir o quadro travaria o dia com um
+      // resumo so' da carteira dele. A tela continua pintando de amarelo.
     } catch (e: any) {
       console.error("[carteira-agenda GET]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/carteira/agenda/varredura
+  // Roda a varredura de dias sobrecarregados AGORA, sem esperar as 07h. Publica
+  // o resumo do dia na Inbox (ou cancela o pendente, se tudo voltou ao teto).
+  // ---------------------------------------------------------------------------
+  app.post("/api/carteira/agenda/varredura", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const esc = escopo(req);
+      if (!PAPEIS_LIMITE.includes(esc.papel)) {
+        return res.status(403).json({ ok: false, error: "Só admin ou coordenador pode rodar a varredura." });
+      }
+      const r = await varreduraSobrecargaDiaria();
+      res.json({ ok: true, ...r });
+    } catch (e: any) {
+      console.error("[carteira-agenda varredura]", e);
       res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
