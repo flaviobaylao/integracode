@@ -1155,13 +1155,19 @@ async function reprogramarAgenda(customerId: string, dias: string[], periodicida
 async function gravarAgenda(customerId: string, c: any, per: string, datas: Date[], hojeStr: string): Promise<number> {
   if (!datas.length) return 0;
 
+  // 🛡️ NUNCA remove a ocorrência de HOJE (nem o passado): limpa só o pendente de AMANHÃ em
+  // diante. A visita de hoje já agendada é preservada — a Rota do Dia não encolhe no meio do dia.
   await db.execute(sql`
     DELETE FROM visit_agenda
-    WHERE customer_id = ${customerId} AND visit_status = 'pending' AND scheduled_date::date >= ${hojeStr}::date`);
+    WHERE customer_id = ${customerId} AND visit_status = 'pending' AND scheduled_date::date > ${hojeStr}::date`);
 
   let n = 0;
   for (const d of datas) {
     const routeDay = NUM_DIA[d.getDay()];
+    // 🛡️ Não duplica um dia que já tem linha (a visita de HOJE preservada no delete acima).
+    const dStr = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    const jaTem: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${customerId} AND scheduled_date::date = ${dStr}::date LIMIT 1`);
+    if ((((jaTem as any).rows || jaTem) as any[]).length > 0) continue;
     await db.execute(sql`
       INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type,
                                 is_virtual, visit_status, customer_name, customer_latitude,
