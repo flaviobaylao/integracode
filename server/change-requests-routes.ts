@@ -35,7 +35,7 @@ const VALID_TYPES = new Set(["periodicidade", "dia_rota", "area_vendas", "inicio
 // 'agenda_dia' nao e' um cadastro: e' uma CELULA do quadro da Agenda da Carteira
 // (vendedor|canal|dia da semana) que passou do teto de clientes por dia.
 const VALID_ENTITY = new Set(["customer", "lead", "repescagem", "agenda_dia"]);
-const VALID_RESOLUTION = new Set(["efetuadas", "parcial", "rejeitadas"]);
+const VALID_RESOLUTION = new Set(["efetuadas", "parcial", "rejeitadas", "lido"]);
 
 const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS change_requests (
@@ -60,8 +60,14 @@ const DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_cr_entity ON change_requests (entity_type, entity_id);`,
   `CREATE INDEX IF NOT EXISTS idx_cr_status ON change_requests (status);`,
   `CREATE INDEX IF NOT EXISTS idx_cr_created ON change_requests (created_at DESC);`,
-  // No máximo UMA solicitação pendente por entidade (bloqueia duplicadas no mesmo card).
-  `CREATE UNIQUE INDEX IF NOT EXISTS ux_cr_pending ON change_requests (entity_type, entity_id) WHERE status = 'pending';`,
+  // 🏷️ kind: 'solicitacao' = pedido do vendedor a resolver; 'report' = registro do vendedor
+  // no card (não-venda, justificativa, atendimento virtual, desfecho de lead) que o admin só lê.
+  `ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS kind varchar NOT NULL DEFAULT 'solicitacao';`,
+  // No máximo UMA solicitação pendente por entidade — mas SÓ para kind='solicitacao'. Reports
+  // podem coexistir (vários por card) e não colidem com uma solicitação real. Substitui o índice
+  // antigo (sem escopo de kind) pelo escopado.
+  `DROP INDEX IF EXISTS ux_cr_pending;`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS ux_cr_pending_sol ON change_requests (entity_type, entity_id) WHERE status = 'pending' AND kind = 'solicitacao';`,
   // 💬 Histórico de conversa (vendedor ⇄ admin) — mensagens da solicitação.
   `ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS messages jsonb NOT NULL DEFAULT '[]'::jsonb;`,
 ];
@@ -96,6 +102,7 @@ const TYPE_LABEL_SRV: Record<string, string> = {
 };
 const RESOLUTION_LABEL: Record<string, string> = {
   efetuadas: "Alterações efetuadas", parcial: "Alterações efetuadas parcialmente", rejeitadas: "Alterações rejeitadas",
+  lido: "Report lido",
 };
 function summarizeRequest(types: string[], details: any): string {
   const d = details || {};
@@ -124,6 +131,7 @@ function mkMsg(role: "seller" | "admin", u: any, text: string, kind: string, ext
 
 const mapRow = (r: any) => ({
   id: r.id,
+  kind: r.kind || "solicitacao",
   entityType: r.entity_type,
   entityId: r.entity_id,
   customerId: r.customer_id,
@@ -142,6 +150,72 @@ const mapRow = (r: any) => ({
   createdAt: r.created_at,
   resolvedAt: r.resolved_at,
 });
+
+// 🗂️ REPORT → INBOX. Registra no Inbox (change_requests, kind='report') um "report" que o
+// vendedor fez no card da Rota do Dia (não-venda, justificativa, atendimento virtual, desfecho
+// de lead). REGRA: só entra no Inbox se o vendedor ESCREVEU algo na caixa de texto (texto não
+// vazio) — motivo/opção sozinho não gera report. Best-effort: nunca deixa a ação principal falhar.
+const REPORT_KIND_LABEL: Record<string, string> = {
+  nao_venda: "Não-venda",
+  justificativa: "Justificativa de não-visita",
+  debito: "Prestação de contas (débito)",
+  atendimento_virtual: "Atendimento virtual",
+  lead_desfecho: "Desfecho de lead",
+};
+export async function registrarReportInbox(p: {
+  entityType: "customer" | "lead";
+  entityId: string;
+  customerId?: string | null;
+  sellerId?: string | null;
+  sellerName?: string | null;
+  reportKind: string;      // 'nao_venda' | 'justificativa' | 'debito' | 'atendimento_virtual' | 'lead_desfecho'
+  motivo?: string | null;  // rótulo do motivo/opção selecionada
+  texto: string;           // observação escrita (obrigatória — só cria se tiver conteúdo)
+}): Promise<void> {
+  try {
+    const texto = String(p?.texto || "").trim();
+    if (!texto) return; // ➜ só vai pro Inbox se o vendedor escreveu algo
+    if (!p?.entityId) return;
+    await ensureTables();
+    // Descobre nomes (cliente/lead e vendedor) quando não vieram prontos.
+    let entityName: string | null = null;
+    try {
+      if (p.entityType === "customer") {
+        const cr = rowsOf(await db.execute(sql`SELECT fantasy_name, name FROM customers WHERE id = ${p.customerId || p.entityId} LIMIT 1`));
+        entityName = cr[0]?.fantasy_name || cr[0]?.name || null;
+      } else {
+        const lr = rowsOf(await db.execute(sql`SELECT fantasy_name FROM leads WHERE id = ${p.entityId} LIMIT 1`));
+        entityName = lr[0]?.fantasy_name || null;
+      }
+    } catch {}
+    let sellerName: string | null = p.sellerName ? String(p.sellerName).slice(0, 200) : null;
+    try {
+      if (!sellerName && p.sellerId) {
+        const ur = rowsOf(await db.execute(sql`SELECT first_name, last_name, email FROM users WHERE id = ${p.sellerId} LIMIT 1`));
+        const u = ur[0];
+        if (u) sellerName = (((u.first_name || "") + " " + (u.last_name || "")).trim() || (u.email ? String(u.email).split("@")[0] : "")) || null;
+      }
+    } catch {}
+    const motivoLabel = p.motivo ? String(p.motivo).slice(0, 200) : "";
+    const catLabel = REPORT_KIND_LABEL[p.reportKind] || "Report";
+    const details = { reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000) };
+    const seedMsg = {
+      id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
+      text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
+      at: new Date().toISOString(), kind: "report",
+    };
+    await db.execute(sql`
+      INSERT INTO change_requests
+        (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+         types, details, status, kind, requested_by, requested_by_name, messages)
+      VALUES
+        (${p.entityType}, ${p.entityId}, ${p.customerId || null}, ${entityName}, ${p.sellerId || null}, ${sellerName},
+         ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', ${p.sellerId || null}, ${sellerName},
+         ${JSON.stringify([seedMsg])}::jsonb)`);
+  } catch (e: any) {
+    console.warn("[REPORT-INBOX] falha ao registrar report:", e?.message);
+  }
+}
 
 export function registerChangeRequestsRoutes(app: Express) {
   void ensureTables();
@@ -275,6 +349,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     const rows = rowsOf(await db.execute(sql`
       SELECT * FROM change_requests
       WHERE entity_id IN (${inList})
+      AND kind = 'solicitacao'
       ${dateOk ? sql`AND to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') = ${dq}` : sql``}
       ORDER BY created_at DESC`));
     const out: Record<string, any> = {};

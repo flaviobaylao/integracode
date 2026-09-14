@@ -2274,6 +2274,21 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const notes = b.notes != null ? String(b.notes).slice(0, 500) : null;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !customerId || !seller || !reason) return res.status(400).json({ error: 'date, customerId, sellerId e reason (motivo valido) obrigatorios' });
       await db.execute(sql`INSERT INTO visit_justifications (visit_date, customer_id, seller_id, reason, notes, created_by) VALUES (${date}, ${customerId}, ${seller}, ${reason}, ${notes}, ${seller}) ON CONFLICT (visit_date, customer_id, seller_id) DO UPDATE SET reason = EXCLUDED.reason, notes = EXCLUDED.notes`);
+      // 🗂️ REPORT → INBOX: justificativa de não-visita / prestação de contas de débito com
+      // observação ESCRITA vira report no Inbox (motivo + texto).
+      try {
+        if (notes && String(notes).trim() && reason !== 'removido') {
+          const JUSTIF_LABEL: Record<string, string> = { fechado: 'Estabelecimento fechado', ausente: 'Cliente ausente', sem_tempo: 'Sem tempo', ja_comprou: 'Já comprou', endereco: 'Endereço/localização', sem_interesse: 'Sem interesse', remarcou: 'Remarcou', rota_inviavel: 'Rota inviável', imprevisto: 'Imprevisto', cancelou: 'Cancelou', debito: 'Débito', outro: 'Outro' };
+          const { registrarReportInbox } = await import('./change-requests-routes');
+          await registrarReportInbox({
+            entityType: 'customer', entityId: customerId, customerId,
+            sellerId: seller,
+            reportKind: reason === 'debito' ? 'debito' : 'justificativa',
+            motivo: JUSTIF_LABEL[reason] || reason,
+            texto: String(notes || ''),
+          });
+        }
+      } catch (_e: any) { console.warn('[REPORT-INBOX] justificativa:', _e?.message); }
       res.json({ ok: true, date, customerId, reason });
     } catch (e: any) {
       res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) });

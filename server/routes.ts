@@ -3578,6 +3578,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // 🗂️ REPORT → INBOX: atendimento virtual com observação ESCRITA vira report no Inbox.
+      try {
+        if (String(notes || '').trim()) {
+          const ST_LABEL: Record<string, string> = { debito_vencido: 'Débito vencido', venda: 'Venda', nao_venda: 'Não-venda', prospecao: 'Prospecção' };
+          const { registrarReportInbox } = await import('./change-requests-routes');
+          await registrarReportInbox({
+            entityType: entityType === 'lead' ? 'lead' : 'customer',
+            entityId: String(entityId),
+            customerId: entityType === 'lead' ? null : String(entityId),
+            sellerId: String(user?.id || ''),
+            sellerName: user?.name || (user?.email ? String(user.email).split('@')[0] : null),
+            reportKind: 'atendimento_virtual',
+            motivo: ST_LABEL[finalServiceType] || finalServiceType,
+            texto: String(notes || ''),
+          });
+        }
+      } catch (_e: any) { console.warn('[REPORT-INBOX] atendimento virtual:', _e?.message); }
+
       res.json(serviceLog);
     } catch (error) {
       console.error("Error creating service log:", error);
@@ -7343,6 +7361,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         salesCard = cardAfter!; // Atualizar salesCard para retornar o valor mais recente
       }
       
+      // 🗂️ REPORT → INBOX: "Venda Não Realizada" com motivo + observação ESCRITA vira report no Inbox.
+      try {
+        if ((data as any).status === 'no_sale' && (data as any).noSaleReason && String((data as any).notes || '').trim()) {
+          const NO_SALE_LABEL: Record<string, string> = { sem_interesse: 'Cliente sem interesse', sem_dinheiro: 'Cliente sem dinheiro', fechado: 'Estabelecimento fechado', outro_fornecedor: 'Já possui fornecedor', produto_inadequado: 'Produto inadequado', preco_alto: 'Preço muito alto', nao_atendeu: 'Cliente não atendeu', reagendado: 'Reagendado para outra data', outro: 'Outro motivo' };
+          const _cid = String(salesCard?.customerId || cardBefore?.customerId || '');
+          const { registrarReportInbox } = await import('./change-requests-routes');
+          await registrarReportInbox({
+            entityType: 'customer', entityId: _cid, customerId: _cid,
+            sellerId: String(salesCard?.sellerId || cardBefore?.sellerId || userId || ''),
+            reportKind: 'nao_venda',
+            motivo: NO_SALE_LABEL[String((data as any).noSaleReason)] || String((data as any).noSaleReason),
+            texto: String((data as any).notes || ''),
+          });
+        }
+      } catch (_e: any) { console.warn('[REPORT-INBOX] no_sale:', _e?.message); }
+
       res.json(salesCard);
     } catch (error) {
       console.error("Error updating sales card:", error);
@@ -23554,6 +23588,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } as any);
         } catch (_e) {}
         console.log(`🚫 [LEAD-DESFECHO] ${lead.fantasyName} finalizado como NÃO CONVERTIDO (${motivo}) por ${user.email}`);
+        // 🗂️ REPORT → INBOX: desfecho de lead (não-conversão) com observação ESCRITA vira report.
+        try {
+          if (String(observacao || '').trim()) {
+            const LEAD_MOTIVO: Record<string, string> = { preco: 'Preço', sem_interesse: 'Sem interesse', ja_tem_fornecedor: 'Já tem fornecedor', fechou: 'Fechou', sem_perfil: 'Sem perfil', sem_contato: 'Sem contato', outro: 'Outro' };
+            const { registrarReportInbox } = await import('./change-requests-routes');
+            await registrarReportInbox({
+              entityType: 'lead', entityId: String(id), customerId: null,
+              sellerId: String(lead.assignedTo || user.id || ''),
+              sellerName: user?.name || (user?.email ? String(user.email).split('@')[0] : null),
+              reportKind: 'lead_desfecho',
+              motivo: 'Não convertido — ' + (LEAD_MOTIVO[String(motivo)] || String(motivo)),
+              texto: String(observacao || ''),
+            });
+          }
+        } catch (_e: any) { console.warn('[REPORT-INBOX] lead desfecho:', _e?.message); }
         return res.json({ message: 'Lead finalizado como não convertido.', status: 'discarded', reason: motivo });
       }
 

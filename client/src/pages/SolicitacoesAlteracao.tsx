@@ -32,6 +32,7 @@ const RESULT_META: Record<string, { label: string; cls: string }> = {
   efetuadas: { label: "Efetuadas", cls: "bg-green-100 text-green-800 border-green-300" },
   parcial: { label: "Parcial", cls: "bg-amber-100 text-amber-800 border-amber-300" },
   rejeitadas: { label: "Rejeitadas", cls: "bg-red-100 text-red-800 border-red-300" },
+  lido: { label: "Lido", cls: "bg-indigo-100 text-indigo-800 border-indigo-300" },
 };
 
 const fmtDate = (s?: string) => {
@@ -137,6 +138,10 @@ function PendingCard({ r }: { r: any }) {
     onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
   const busy = resolveMut.isPending || inativarMut.isPending;
+  // 🗂️ Report do vendedor (não-venda, justificativa, atendimento virtual, desfecho de lead):
+  // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
+  const isReport = r?.kind === "report";
+  const rd = r?.details || {};
 
   return (
     <Card className="p-4 space-y-3">
@@ -146,20 +151,40 @@ function PendingCard({ r }: { r: any }) {
             <span>{r.entityName || r.entityId}</span>
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
-          <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+          <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
-            <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.requestedByName || "—"}</span>
+            {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
+            <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1">
-        {(r.types || []).map((t: string) => (
-          <Badge key={t} variant="secondary" className="text-[11px]">{TYPE_LABEL[t] || t}</Badge>
-        ))}
-      </div>
-      <Detalhes details={r.details} />
+      {isReport ? (
+        <div className="rounded-md bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900 p-2.5 text-sm space-y-1.5">
+          {rd.motivo && (
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Motivo</div>
+              <div>{rd.motivo}</div>
+            </div>
+          )}
+          {rd.texto && (
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Observação do vendedor</div>
+              <div className="whitespace-pre-wrap break-words">{rd.texto}</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1">
+            {(r.types || []).map((t: string) => (
+              <Badge key={t} variant="secondary" className="text-[11px]">{TYPE_LABEL[t] || t}</Badge>
+            ))}
+          </div>
+          <Detalhes details={r.details} />
+        </>
+      )}
 
       {Array.isArray(r.messages) && r.messages.length > 0 && (
         <div className="pt-1 border-t">
@@ -174,6 +199,11 @@ function PendingCard({ r }: { r: any }) {
       </div>
 
       <div className="flex flex-wrap gap-2">
+        {isReport ? (
+          <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={busy} onClick={() => resolveMut.mutate("lido")}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
+          </Button>
+        ) : (<>
         <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => resolveMut.mutate("efetuadas")}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Efetuadas</>}
         </Button>
@@ -196,6 +226,7 @@ function PendingCard({ r }: { r: any }) {
             {inativarMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar cliente</>}
           </Button>
         )}
+        </>)}
       </div>
     </Card>
   );
@@ -203,6 +234,8 @@ function PendingCard({ r }: { r: any }) {
 
 function ResolvedCard({ r }: { r: any }) {
   const m = RESULT_META[r.status];
+  const isReport = r?.kind === "report";
+  const rd = r?.details || {};
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -211,18 +244,26 @@ function ResolvedCard({ r }: { r: any }) {
             <span>{r.entityName || r.entityId}</span>
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
-          <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+          <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
-            <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.requestedByName || "—"}</span>
+            {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
+            <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span>{fmtDate(r.createdAt)}</span>
           </div>
         </div>
         {m && <Badge variant="outline" className={m.cls}>{m.label}</Badge>}
       </div>
+      {isReport ? (
+        <div className="rounded-md bg-muted/50 border p-2.5 text-sm space-y-1">
+          {rd.motivo && <div><span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Motivo: </span>{rd.motivo}</div>}
+          {rd.texto && <div className="whitespace-pre-wrap break-words">{rd.texto}</div>}
+        </div>
+      ) : (<>
       <div className="flex flex-wrap gap-1">
         {(r.types || []).map((t: string) => <Badge key={t} variant="secondary" className="text-[11px]">{TYPE_LABEL[t] || t}</Badge>)}
       </div>
       <Detalhes details={r.details} />
+      </>)}
       {Array.isArray(r.messages) && r.messages.length > 0 && (
         <div className="pt-1 border-t">
           <div className="text-[11px] font-semibold text-muted-foreground mb-1">Conversa</div>
