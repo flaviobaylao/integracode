@@ -15,6 +15,7 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import CaixaDecisoes from "@/components/CaixaDecisoes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,6 +235,9 @@ export default function Marketing() {
           ))}
         </div>
       </div>
+
+      {/* ── Caixa de Decisões + Radar de Vendas — a única decisão do dia vem primeiro ── */}
+      <CaixaDecisoes />
 
       {/* ── Fase 0: os riscos abertos, antes de tudo ── */}
       <Fase0 />

@@ -387,7 +387,12 @@ export async function cadastrarAsset(a: NovoAsset): Promise<ResultadoCadastro> {
       RETURNING id
     `);
     if (r.rows?.length) {
-      return { ok: true, id: Number(r.rows[0].id), duplicado: false, formato, largura: dim?.largura ?? null, altura: dim?.altura ?? null, recusadas };
+      const novoId = Number(r.rows[0].id);
+      // SPRINT 2: a visao sugere as tags que faltam (fire-and-forget; nunca atrasa o upload)
+      import('./mkt-visao').then(({ classificarAsset }) => classificarAsset(novoId)).catch(() => {});
+      // SPRINT 3: dHash no servidor (sharp) -> familia de fotos quase iguais
+      import('./mkt-semelhanca').then(async ({ hashNoServidor, recalcularFamilias }) => { const h = await hashNoServidor(novoId, buf); if (h.ok) await recalcularFamilias(); }).catch(() => {});
+      return { ok: true, id: novoId, duplicado: false, formato, largura: dim?.largura ?? null, altura: dim?.altura ?? null, recusadas };
     }
 
     // Ja existia: em vez de ignorar, SOMA as tags novas no registro que existe.

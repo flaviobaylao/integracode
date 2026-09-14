@@ -305,6 +305,27 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
       status: isFromMe ? conversation.status : 'new'
     });
 
+   // CTWA no WhatsApp (Caixa de Decisoes, set/2026): ate aqui so o webhook do Instagram
+    // lia o `referral` do anuncio. Mensagem vinda de Click-to-WhatsApp chega com
+    // contextInfo.externalAdReply (ctwaClid, sourceId, sourceUrl). Fire-and-forget:
+    // atribuicao nunca atrasa nem derruba o atendimento.
+    if (!isFromMe) {
+      try {
+        const msg: any = data.message || {};
+        const ctxInfo = msg.extendedTextMessage?.contextInfo || msg.imageMessage?.contextInfo || msg.videoMessage?.contextInfo
+          || msg.conversation?.contextInfo || data.contextInfo || null;
+        const ad = ctxInfo?.externalAdReply || data.referral || null;
+        if (ad && (ad.ctwaClid || ad.ctwa_clid || ad.sourceId || ad.source_id)) {
+          const { lerReferral, referralUtil, registrarToqueDeConversa } = await import('./mkt-ctwa');
+          const ref = lerReferral({ ctwa_clid: ad.ctwaClid || ad.ctwa_clid, source_id: ad.sourceId || ad.source_id, source_url: ad.sourceUrl || ad.source_url,
+            source_type: ad.sourceType || ad.source_type || 'ad', headline: ad.title, body: ad.body });
+          if (referralUtil(ref)) {
+            void registrarToqueDeConversa({ conversaId: conversation.id, canal: 'whatsapp', referral: ref!, clienteId: customer.id || null, telefone: normalizedPhone });
+          }
+        }
+      } catch (e: any) { console.error('[WPP-IN] ctwa (segue):', e?.message || e); }
+    }
+
    // Runtime de Agentes de IA — responde pelo 1841 se a janela 24h estiver aberta, senão HONEST2 (2630)
     if (!isFromMe && finalContent && finalContent.trim()) {
       const replyVia = async (toPhone: string, text: string) => {
@@ -319,6 +340,19 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
         } catch {}
         return sendUmblerTalkText(toPhone, text);
       };
+      // CAIXA DE DECISOES: "OK 12" / "NAO 12" / "OK TUDO" vindo de um aprovador cadastrado
+      // (telefone_gestor_relatorios / mkt_aprovadores) e decisao, nao conversa. Responde
+      // e NAO chama o agente de atendimento. Qualquer outro texto segue o fluxo normal.
+      try {
+        const { responderWhatsApp } = await import('./mkt-acoes');
+        const { responderPostei } = await import('./mkt-entrega');
+        const resposta = (await responderPostei(normalizedPhone, finalContent)) || (await responderWhatsApp(normalizedPhone, finalContent));
+        if (resposta) {
+          await replyVia(normalizedPhone, resposta);
+          console.log(`✅ [MKT-ACOES] decisao por WhatsApp de ${normalizedPhone}: ${finalContent.slice(0, 40)}`);
+          return true;
+        }
+      } catch (e: any) { console.error('[MKT-ACOES] decisao por WhatsApp (segue):', e?.message || e); }
       import('./ia-takeover').then(async ({ shouldRespondNow }) => {
         if (!(await shouldRespondNow(conversation.id))) return; // regra de timeout: espera humano; o sweep assume depois
         const { maybeRunAgent } = await import('./agent-runtime');

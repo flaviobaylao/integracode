@@ -389,3 +389,36 @@ export async function blocoDePrompt(): Promise<string> {
     '', '## Assinatura', m.assinatura || 'Honest Sucos',
   ].join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// v2 automática (set/2026): a v1 semeada dizia "produzido fresco em Goiânia" /
+// "Produção diária em Goiânia" — a fábrica é em Bela Vista de Goiás e Goiânia é
+// a filial (mkt-google.ts e mkt-agente-conteudo.ts já sabiam disso). O revisor
+// não pega erro factual, e esse texto entra em todo prompt de conteúdo. Roda no
+// boot, uma vez: só cria a v2 se a versão ativa ainda for a v1 com o erro.
+// ---------------------------------------------------------------------------
+export async function corrigirGeografiaV2(): Promise<{ criou: boolean; versao?: number }> {
+  try {
+    const atual = await marcaAtiva();
+    if (!atual) return { criou: false };
+    const texto = JSON.stringify(atual);
+    if (Number(atual.versao) !== 1 || !/em Goi[aâ]nia/i.test(texto)) return { criou: false };
+    const troca = (v: any): any => {
+      if (typeof v === 'string') return v
+        .replace(/produzido fresco em Goi[aâ]nia/gi, 'produzido fresco em Bela Vista de Goiás e entregue em Goiânia e região')
+        .replace(/Produção diária em Goi[aâ]nia/gi, 'Produção diária na fábrica em Bela Vista de Goiás')
+        .replace(/feito em Goi[aâ]nia/gi, 'feito em Goiás');
+      if (Array.isArray(v)) return v.map(troca);
+      if (v && typeof v === 'object') { const o: any = {}; for (const k of Object.keys(v)) o[k] = troca(v[k]); return o; }
+      return v;
+    };
+    const dados = troca({
+      posicionamento: atual.posicionamento, tom: atual.tom, pilares: atual.pilares, sempre: atual.sempre, nunca: atual.nunca,
+      exemplos_bons: atual.exemplos_bons, exemplos_ruins: atual.exemplos_ruins, termos_bloqueados: atual.termos_bloqueados,
+      termos_atencao: atual.termos_atencao, termos_preferidos: atual.termos_preferidos, assinatura: atual.assinatura,
+    });
+    const r = await novaVersao(dados, 'sistema:geografia-v2');
+    console.log('[MKT-MARCA] cartao de marca v' + r.versao + ' criado (fabrica em Bela Vista de Goias)');
+    return { criou: true, versao: r.versao };
+  } catch (e: any) { console.error('[MKT-MARCA] v2 geografia:', e?.message || e); return { criou: false }; }
+}

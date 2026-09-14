@@ -878,12 +878,23 @@ cron.schedule('40 6 * * *', async () => {
         FROM mkt_lotes WHERE status = 'previsto' ORDER BY criado_em ASC LIMIT 1`);
     const parado = p.rows?.[0];
     if (parado) {
-      if (Number(parado.dias) >= 3) {
-        console.warn('⚠️  [MKT-RECOMPRA] lote ' + parado.id + ' esperando decisao ha '
-          + Math.floor(Number(parado.dias)) + ' dia(s). Enquanto ele nao for liberado ou descartado, nao monto outro.');
+      // CAIXA DE DECISOES (set/2026): lote parado ha 2+ dias EXPIRA sozinho. Antes ele
+      // travava todos os lotes seguintes ate alguem lembrar de abrir a tela — e a regua
+      // parava em silencio. O Radar re-propoe no dia seguinte com o publico atualizado.
+      if (Number(parado.dias) >= 2) {
+        const { descartarLote } = await import('./mkt-recompra');
+        await descartarLote(String(parado.id));
+        console.warn('⚠️  [MKT-RECOMPRA] lote ' + parado.id + ' esperou ' + Math.floor(Number(parado.dias)) + ' dia(s) sem decisao e foi descartado.');
+      } else {
+        return;
       }
-      return;
     }
+    // Com o Radar ligado (test/on), quem monta lote e a acao aprovada — nao este cron.
+    // Evita dois caminhos propondo a mesma regua no mesmo dia.
+    try {
+      const { modo } = await import('./mkt-radar');
+      if ((await modo()) !== 'off') return;
+    } catch {}
 
     const { montarLote, descartarLote } = await import('./mkt-recompra');
     const r = await montarLote({ criadoPor: 'cron' });
@@ -898,6 +909,96 @@ cron.schedule('40 6 * * *', async () => {
   } catch (e: any) {
     console.error('[MKT-RECOMPRA] cron falhou:', e?.message || e);
   }
+}, { timezone: 'America/Sao_Paulo' });
+
+// ---------------------------------------------------------------------------
+// CAIXA DE DECISOES + RADAR DE VENDAS (set/2026)
+// ---------------------------------------------------------------------------
+// 06:30 — Radar le os sinais do ERP e propoe as acoes do dia (N0/N1 executam ja;
+//         N2 esperam o humano). Nasce em modo test.
+// 07:30 — Resumo no WhatsApp do(s) aprovador(es): o que espera decisao, o que foi
+//         feito sozinho, resultados fechados e pendencias dos outros modulos (lote
+//         a mao, peca na fila, agendada vencida) — que antes so iam para o console.
+// 02:30 — Medicao (14 dias) e expiracao (48h sem decisao).
+// 05:45 — Auditor da Central: checagens do proprio sistema, autocorrecoes seguras e
+//         melhorias propostas (acoes 'sistema' na Caixa). Antes do Radar de proposito.
+cron.schedule('45 5 * * *', async () => {
+  try { const { rodar } = await import('./mkt-auditor'); const r = await rodar({ quem: 'cron' }); console.log('[MKT-AUDITOR] nota ' + r.nota + ' · ' + r.checagens.filter((c: any) => c.gravidade !== 'ok').length + ' ponto(s) · ' + r.autofix.length + ' autocorrecao(oes) · ' + r.melhorias.length + ' melhoria(s)'); }
+  catch (e: any) { console.error('[MKT-AUDITOR] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+cron.schedule('30 6 * * *', async () => {
+  try {
+    const { rodar } = await import('./mkt-radar');
+    const r = await rodar({ quem: 'cron' });
+    if (!r.ok) console.warn('[MKT-RADAR] ' + (r.motivo || 'falhou'));
+  } catch (e: any) { console.error('[MKT-RADAR] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+cron.schedule('30 7 * * *', async () => {
+  try {
+    const { enviarResumo } = await import('./mkt-acoes');
+    const r = await enviarResumo();
+    console.log('[MKT-ACOES] resumo: ' + r.pendentes + ' pendente(s), ' + r.enviados.filter((e: any) => e.success).length + '/' + r.enviados.length + ' entregue(s)');
+  } catch (e: any) { console.error('[MKT-ACOES] resumo falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// 09:05 — publicador tenta por o post no ar (modo on); o que nao saiu chega pronto no WhatsApp
+cron.schedule('5 9 * * *', async () => {
+  try { const { publicarVencidas } = await import('./mkt-publicador'); await publicarVencidas({ slotDiario: true, quem: 'cron' }); }
+  catch (e: any) { console.error('[MKT-PUBLICADOR] cron falhou:', e?.message || e); }
+  try {
+    const { entregarAprovadas } = await import('./mkt-entrega');
+    const r = await entregarAprovadas();
+    if (r.entregues || r.falhas) console.log('[MKT-ENTREGA] ' + r.entregues + ' entregue(s), ' + r.falhas + ' falha(s)');
+  } catch (e: any) { console.error('[MKT-ENTREGA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// A cada 30 min (7h-21h) — pecas AGENDADAS saem na hora marcada
+cron.schedule('*/30 7-21 * * *', async () => {
+  try { const { publicarVencidas } = await import('./mkt-publicador'); await publicarVencidas({ slotDiario: false, quem: 'cron' }); }
+  catch (e: any) { console.error('[MKT-PUBLICADOR] cron agendadas falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// Domingo 04:20 — renova o token do Instagram conectado quando faltar < 20 dias
+cron.schedule('20 4 * * 0', async () => {
+  try { const { renovar } = await import('./mkt-ig-auth'); const r = await renovar(); if (r.renovou || !r.ok) console.log('[MKT-IG] renovacao: ' + (r.ok ? 'ok' : r.erro) + ' · ' + r.diasRestantes + ' dia(s)'); }
+  catch (e: any) { console.error('[MKT-IG] renovacao falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// Segunda 06:00 — otimizador: o que a Central fez x o que rendeu -> mkt_learnings
+cron.schedule('0 6 * * 1', async () => {
+  try { const { rodar } = await import('./mkt-otimizador'); const r = await rodar({ quem: 'cron' }); console.log('[MKT-OTIMIZADOR] ' + (r.ok ? (r.gravados?.length || 0) + ' aprendizado(s)' : r.motivo)); }
+  catch (e: any) { console.error('[MKT-OTIMIZADOR] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// Segunda 07:15 — os 12 numeros da semana no WhatsApp do aprovador
+cron.schedule('15 7 * * 1', async () => {
+  try { const { relatorioSemanal } = await import('./mkt-analista'); const r = await relatorioSemanal(); console.log('[MKT-ANALISTA] semanal: ' + r.enviados.filter((e: any) => e.success).length + '/' + r.enviados.length); }
+  catch (e: any) { console.error('[MKT-ANALISTA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// 03:50 — dHash (sharp) dos criativos sem hash + familias
+cron.schedule('50 3 * * *', async () => {
+  try { const { calcularHashesPendentes } = await import('./mkt-semelhanca'); const r = await calcularHashesPendentes(60); if (r.feitos || r.erros) console.log('[MKT-SEMELHANCA] ' + r.feitos + ' hash(es), ' + r.erros + ' erro(s)'); }
+  catch (e: any) { console.error('[MKT-SEMELHANCA] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+// 03:40 — visao tagueia criativos que ainda nao passaram por ela (lote pequeno)
+cron.schedule('40 3 * * *', async () => {
+  try {
+    const { classificarPendentes } = await import('./mkt-visao');
+    const r = await classificarPendentes(20);
+    if (r.feitos || r.erros) console.log('[MKT-VISAO] ' + r.feitos + ' classificado(s), ' + r.erros + ' erro(s)');
+  } catch (e: any) { console.error('[MKT-VISAO] cron falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
+cron.schedule('30 2 * * *', async () => {
+  try {
+    const { medir, expirar } = await import('./mkt-acoes');
+    const m = await medir(); const x = await expirar();
+    if (m || x) console.log('[MKT-ACOES] medidas ' + m + ', expiradas ' + x);
+  } catch (e: any) { console.error('[MKT-ACOES] medicao falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
 // ---------------------------------------------------------------------------

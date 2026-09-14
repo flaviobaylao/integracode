@@ -1045,7 +1045,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     } catch {}
   }
   try {
-    const a: any = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento FROM agentes_config WHERE id = ${agentId} LIMIT 1`);
+    const a: any = await db.execute(sql`SELECT id, nome, modelo, system_prompt, base_conhecimento, ferramentas FROM agentes_config WHERE id = ${agentId} LIMIT 1`);
     const agent = a.rows?.[0];
     if (!agent) return { ok: false, error: 'agente nao encontrado' };
     const g: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'base_comum' LIMIT 1`);
@@ -1102,11 +1102,19 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     // sem precisar de deploy. Instagram continua sempre com o pacote completo.
     const _canal = String((ctx as any)?.channel || '');
     const _vendasFora = !!ctx && _canal !== 'instagram' && (await getSetting('ia_wpp_vendas', 'off')) === 'on';
-    const tools = ctx
+    let tools = ctx
       ? ((_canal === 'instagram' || _vendasFora)
           ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL, CARD_LINK_TOOL]
           : [...TOOL_DEFS, CARD_LINK_TOOL])
       : undefined;
+    // CAIXA DE DECISOES (set/2026): `agentes_config.ferramentas` era gravado pela tela e
+    // IGNORADO aqui — o gestor achava que limitava as ferramentas e nao limitava. Lista
+    // NAO vazia agora restringe (transferir_humano fica sempre). Vazia/nula = como antes.
+    try {
+      const permitidas: string[] = Array.isArray(agent.ferramentas) ? agent.ferramentas.map(String)
+        : (typeof agent.ferramentas === 'string' ? JSON.parse(agent.ferramentas || '[]') : []);
+      if (tools && permitidas.length) tools = tools.filter((t: any) => t.name === 'transferir_humano' || permitidas.includes(t.name));
+    } catch {}
     const usedTools: string[] = [];
     // Buraco 7: o custo de UMA resposta e a soma de TODAS as rodadas de tool-use.
     // Medir so a ultima subestimaria em ate 4x nas conversas que usam ferramenta.

@@ -309,11 +309,28 @@ export async function enviarParaRevisao(id: string, atorId?: string | null): Pro
     achados = [{ regra: 'revisor indisponivel', gravidade: 'bloqueio', explicacao: String(e?.message || e) }];
   }
 
+  // SPRINT 2 (set/2026): revisor LLM DEPOIS do regex. O regex e a trava dura; a IA
+  // confere fato, claim, foto e tom. So roda se o regex nao bloqueou (nao gasta
+  // token em peca que ja caiu). Falha da IA vira 'atencao', nunca bloqueio.
+  let resumoIA: string | null = null;
+  if (veredito !== 'bloqueado') {
+    try {
+      const { revisarComIA } = await import('./mkt-revisor');
+      const ia = await revisarComIA({ id, copy: String(p.copy || ''), canal: String(p.canal || 'instagram'), gancho: p.gancho, assetIds: Array.isArray(p.asset_ids) ? p.asset_ids : [] });
+      achados = [...achados, ...ia.achados];
+      if (ia.veredito === 'bloqueado') veredito = 'bloqueado';
+      else if (ia.veredito === 'ajuste' && veredito === 'aprovado') veredito = 'ajuste';
+      resumoIA = ia.resumo || null;
+    } catch (e: any) {
+      achados.push({ regra: 'revisor_ia', gravidade: 'atencao', explicacao: 'revisor de IA falhou: ' + String(e?.message || e).slice(0, 120) });
+    }
+  }
+
   try {
     await db.execute(sql`
       INSERT INTO mkt_reviews (piece_id, agente, veredito, itens, motivo, rodada, versao_marca)
-      VALUES (${id}, 'mkt_compliance', ${veredito}, ${JSON.stringify(achados)}::jsonb,
-              ${achados.filter((a: any) => a.gravidade === 'bloqueio').map((a: any) => a.regra).join(' · ') || null},
+      VALUES (${id}, ${resumoIA ? 'mkt_compliance+mkt_revisor' : 'mkt_compliance'}, ${veredito}, ${JSON.stringify(achados)}::jsonb,
+              ${achados.filter((a: any) => a.gravidade === 'bloqueio').map((a: any) => a.regra).join(' · ') || resumoIA || null},
               ${rodada}, ${versaoMarca})
     `);
   } catch { /* o veredito ja vale mesmo se o historico falhar */ }
@@ -496,7 +513,8 @@ export async function marcarPublicada(id: string, dados?: { externalMediaId?: st
   let postId: string | null = null;
   try {
     const { registrarDaPeca } = await import('./mkt-posts');
-    const rp = await registrarDaPeca({ ...p, permalink: dados?.permalink || p.permalink }, dados?.permalink, dados?.quem);
+    // external_media_id vem de `dados` (o publicador acabou de receber da Meta); `p` e a foto ANTES do UPDATE.
+    const rp = await registrarDaPeca({ ...p, permalink: dados?.permalink || p.permalink, external_media_id: dados?.externalMediaId || p.external_media_id }, dados?.permalink, dados?.quem);
     if (rp.ok) postId = rp.id || null;
   } catch { /* o registro do post nao pode impedir a peca de ser marcada como publicada */ }
 

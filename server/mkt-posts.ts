@@ -358,8 +358,12 @@ export async function modoColeta(): Promise<{ modo: string; pronto: boolean; fal
     if (v) modo = String(v).replace(/^"|"$/g, '');
   } catch { /* padrao off */ }
   const falta: string[] = [];
-  if (!process.env.IG_PAGE_TOKEN) falta.push('IG_PAGE_TOKEN');
-  if (!process.env.IG_BUSINESS_ID) falta.push('IG_BUSINESS_ID (id da conta profissional)');
+  // Token conectado pela Central (mkt-ig-auth) tem prioridade; o env e o caminho antigo.
+  const { credenciais } = await import('./mkt-ig-auth');
+  const c = await credenciais();
+  if (c.origem === 'nenhuma') falta.push('Instagram nao conectado (botao Conectar Instagram) nem IG_PAGE_TOKEN');
+  else if (!c.ok) falta.push('token do Instagram vencido - reconectar');
+  else if (c.origem === 'env' && !process.env.IG_BUSINESS_ID) falta.push('IG_BUSINESS_ID (id da conta profissional)');
   return { modo, pronto: falta.length === 0, falta };
 }
 
@@ -510,10 +514,11 @@ function baseGraph(): string {
 
 /** GET na Graph API devolvendo corpo + erro normalizado, sem nunca vazar o token. */
 async function pegarGraph(caminho: string, params: Record<string, string>): Promise<{ ok: boolean; corpo: any; erro?: string; codigo?: number; subcodigo?: number; http?: number }> {
-  const token = String(process.env.IG_PAGE_TOKEN || '');
-  const qs = new URLSearchParams({ ...params, access_token: token }).toString();
+  const { credenciais } = await import('./mkt-ig-auth');
+  const c = await credenciais();
+  const qs = new URLSearchParams({ ...params, access_token: c.token }).toString();
   try {
-    const r = await fetch(`${baseGraph()}/${caminho}?${qs}`);
+    const r = await fetch(`${c.ok ? c.base : baseGraph()}/${caminho}?${qs}`);
     const j: any = await r.json().catch(() => ({}));
     if (!r.ok || j?.error) {
       return {
@@ -551,7 +556,9 @@ export async function sondarInstagram(limite = 5): Promise<SondaInstagram> {
       veredito: 'Falta ' + st.falta.join(' e ') + ' no Railway. Sem isso nao da nem para perguntar.',
     };
   }
-  const contaId = String(process.env.IG_BUSINESS_ID);
+  const { credenciais } = await import('./mkt-ig-auth');
+  const cred = await credenciais();
+  const contaId = cred.origem === 'instagram_login' ? 'me' : String(cred.userId || process.env.IG_BUSINESS_ID || 'me');
   const n = Math.min(Math.max(Number(limite) || 5, 1), 25);
 
   // Degrau 1 - a conta responde?

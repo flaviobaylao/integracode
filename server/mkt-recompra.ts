@@ -124,6 +124,12 @@ export async function ensureMktRecompraSchema(): Promise<{ ok: boolean; steps: a
     "status varchar NOT NULL DEFAULT 'previsto', " +   // previsto | liberado | descartado
     "criado_em timestamptz NOT NULL DEFAULT now(), liberado_em timestamptz, liberado_por varchar)");
 
+  // Caixa de Decisões: a ação que originou o lote/toque (nulo = montado à mão)
+  await run('col_fila_acao', "ALTER TABLE mkt_fila_toques ADD COLUMN IF NOT EXISTS acao_id varchar");
+  await run('col_lotes_acao', "ALTER TABLE mkt_lotes ADD COLUMN IF NOT EXISTS acao_id varchar");
+  // Sprint 3: sugestao personalizada (ultimo pedido) — vai para o atendente quando o cliente responde
+  await run('col_fila_sugestao', "ALTER TABLE mkt_fila_toques ADD COLUMN IF NOT EXISTS sugestao text");
+
   // Caso de uso próprio na fila do 1841 (o enum já existe; só acrescenta o valor).
   await run('enum_recompra', "ALTER TYPE dispatch_use_case ADD VALUE IF NOT EXISTS 'recompra'");
 
@@ -328,7 +334,35 @@ export async function categoriasAprovadas(): Promise<{ mapa: Map<string, string>
   return { mapa, faltando: rotulos.filter(l => !mapa.has(l)) };
 }
 
-export async function montarLote(opts: { regua?: string; limite?: number; criadoPor?: string }): Promise<any> {
+// CAIXA DE DECISOES: `clientesIds` restringe o lote a um publico ja escolhido
+// (a acao aprovada) e `acaoId` carimba lote e toques com a acao de origem.
+/**
+ * SPRINT 3: o ultimo pedido de cada cliente, em uma linha — "28/08: 6x Laranja 300ml, 4x Uva 300ml".
+ * E a sugestao que a regua carrega: quando o cliente responde ao lembrete, o
+ * atendente (agent-runtime) recebe isso no contexto e monta o pedido "igual ao
+ * ultimo" sem perguntar. Deterministico, do banco — nada de IA inventar sabor.
+ */
+export async function ultimosPedidos(clientesIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!clientesIds.length) return out;
+  try {
+    const r: any = await db.execute(sql`
+      SELECT DISTINCT ON (customer_id) customer_id, created_at, products, sale_value
+        FROM sales_cards
+       WHERE customer_id IN (${sql.join(clientesIds.map(i => sql`${i}`), sql`, `)})
+         AND COALESCE(sale_value,0) > 0 AND COALESCE(status,'') NOT IN ('cancelled','no_sale','failed','telemarketing')
+       ORDER BY customer_id, created_at DESC`);
+    for (const row of (r.rows || [])) {
+      const dia = new Date(row.created_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+      const prods = Array.isArray(row.products) ? row.products : [];
+      const itens = prods.slice(0, 6).map((p: any) => (p?.quantity ? Number(p.quantity) + 'x ' : '') + String(p?.name || '').slice(0, 40)).filter(Boolean);
+      out.set(String(row.customer_id), dia + ': ' + (itens.length ? itens.join(', ') : 'R$ ' + Number(row.sale_value || 0).toFixed(2)));
+    }
+  } catch (e: any) { console.error('[MKT-RECOMPRA] ultimosPedidos:', e?.message || e); }
+  return out;
+}
+
+export async function montarLote(opts: { regua?: string; limite?: number; criadoPor?: string; clientesIds?: string[]; acaoId?: string | null }): Promise<any> {
   if (!(await garantirSchema())) throw new Error('schema da recompra indisponivel');
 
   const pularInad = (await cfg('mkt_recompra_pular_inadimplente')) === 'on';
@@ -336,7 +370,11 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
   const teto = Math.min(Number(opts.limite) || await n('mkt_recompra_lote_max'), 500);
 
   const retrato = await retratoDaBase();
-  const candidatos = await classificar(retrato, opts.regua);
+  let candidatos = await classificar(retrato, opts.regua);
+  if (opts.clientesIds?.length) {
+    const so = new Set(opts.clientesIds.map(String));
+    candidatos = candidatos.filter(c => so.has(String(c.cliente.id)));
+  }
 
   // Quem já recebeu toque recente (qualquer régua) — o frequency cap vale para o
   // cliente, não para a régua. Sem isso, alguém que se encaixa em duas réguas em
@@ -362,11 +400,12 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
   const templatesFaltando = cats.faltando;
 
   const loteId: string = (await db.execute(sql`
-    INSERT INTO mkt_lotes (regua, status) VALUES (${opts.regua || 'todas'}, 'previsto') RETURNING id`) as any)
+    INSERT INTO mkt_lotes (regua, status, acao_id) VALUES (${opts.regua || 'todas'}, 'previsto', ${opts.acaoId || null}) RETURNING id`) as any)
       .rows?.[0]?.id;
 
   let incluidos = 0, bloqueados = 0, custo = 0, receita = 0;
   const porRegua: Record<string, { total: number; custo: number; receita: number }> = {};
+  const sugestoes = await ultimosPedidos(candidatos.map(c => String(c.cliente.id)));
 
   for (const { cliente: c, regua: rid } of candidatos) {
     const regua = reguaPorId(rid)!;
@@ -385,13 +424,13 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
       INSERT INTO mkt_fila_toques
         (lote_id, regua, cliente_id, cliente_nome, telefone, vendedor, ciclo_dias, dias_desde_compra,
          ticket_medio, skus, ultima_compra, template_label, params, custo_estimado, receita_esperada,
-         status, motivo_bloqueio)
+         status, motivo_bloqueio, acao_id, sugestao)
       VALUES
         (${loteId}, ${rid}, ${c.id}, ${c.name}, ${String(c.phone || '').replace(/\D/g, '')}, ${c.seller_id || null},
          ${c.ciclo_dias}, ${c.dias_desde_compra}, ${ticket}, ${c.skus}, ${c.ultima_compra},
          ${regua.templateLabel}, ${JSON.stringify([String(c.name || '').split(' ')[0] || 'tudo bem'])}::jsonb,
          ${bloqueio ? 0 : custoUnit}, ${receitaEsperada.toFixed(2)},
-         ${bloqueio ? 'bloqueado' : 'previsto'}, ${bloqueio})`);
+         ${bloqueio ? 'bloqueado' : 'previsto'}, ${bloqueio}, ${opts.acaoId || null}, ${sugestoes.get(String(c.id)) || null})`);
 
     if (bloqueio) { bloqueados++; continue; }
     incluidos++; custo += custoUnit; receita += receitaEsperada;
