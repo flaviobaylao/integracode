@@ -264,7 +264,17 @@ export default function ProductManagement() {
               <CardContent className="p-6">
                 <div className="space-y-3">
                   <div>
-                    <h3 className="font-semibold text-gray-800">{product.name}</h3>
+                    <h3 className="font-semibold text-gray-800">
+                      {product.name}
+                      {(product as any).internalOnly === true && (
+                        <span
+                          className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300"
+                          title="Fora do catálogo de vendas: invisível para vendedor, telemarketing, motorista, indústria e site"
+                        >
+                          Uso interno
+                        </span>
+                      )}
+                    </h3>
                     {product.description && (
                       <p className="text-sm text-gray-600 line-clamp-2">{product.description}</p>
                     )}
