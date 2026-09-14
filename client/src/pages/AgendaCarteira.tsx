@@ -698,8 +698,9 @@ export default function AgendaCarteira() {
                       A comparação é sempre <b>por pessoa, nunca pela soma</b>. Sem o filtro de vendedor o número da
                       célula é a soma de todos, mas o amarelo continua apontando quem estourou: passe o mouse para ver
                       o nome e o quanto. <b>Leads ficam de fora</b> da conta e <b>semanas passadas não ficam
-                      amarelas</b> — dia cheio que já passou não tem conserto. Cada célula amarela abre um aviso na
-                      Inbox do admin, e o aviso <b>some sozinho</b> quando o dia volta a caber.
+                      amarelas</b> — dia cheio que já passou não tem conserto. A Inbox do admin recebe <b>um aviso
+                      por dia</b>, às 7h, com <b>todos</b> os dias acima do teto de uma vez — não um cartão por
+                      célula. O aviso do dia substitui o da véspera, e some sozinho quando tudo volta a caber.
                     </p>
                     <p>
                       <b className="text-blue-600">Cidade em azul</b> embaixo do número = naquele dia há atendimento{" "}
