@@ -15,9 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { MessageThread } from "@/components/change-request/ChangeRequestControl";
+import { MessageThread, ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check } from "lucide-react";
+import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -137,6 +137,17 @@ function PendingCard({ r }: { r: any }) {
     },
     onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  // 💬 Réplica do admin ao vendedor (report): registra a mensagem na conversa e MANTÉM
+  // o report pendente — vira um vai-e-volta admin↔vendedor, igual à Solicitação de Alteração.
+  const replyMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/reply`, { text: note.trim() }),
+    onSuccess: () => {
+      toast({ title: "Réplica enviada", description: "O vendedor recebe a resposta no card do atendimento." });
+      setNote("");
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao enviar réplica", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   const busy = resolveMut.isPending || inativarMut.isPending;
   // 🗂️ Report do vendedor (não-venda, justificativa, atendimento virtual, desfecho de lead):
   // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
@@ -194,16 +205,33 @@ function PendingCard({ r }: { r: any }) {
       )}
 
       <div className="space-y-1">
-        <Textarea placeholder="Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado" value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+        <Textarea placeholder={isReport ? "Escreva uma réplica ao vendedor (ou observação ao marcar como lido)…" : "Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado"} value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         <VoiceDictateButton onText={(t) => setNote((p) => (p ? p.trim() + " " : "") + t)} testId="cr-admin-obs-audio" />
       </div>
 
+      {/* 📋 Solicitar Alteração a partir do report — abre uma solicitação formal p/ o mesmo cliente/lead. */}
+      {isReport && (r.entityType === "customer" || r.entityType === "lead") && (
+        <div className="flex justify-end">
+          <ChangeRequestControl
+            entityType={r.entityType as any}
+            entityId={String(r.entityId)}
+            customerId={r.customerId || r.entityId}
+            entityName={r.entityName}
+            sellerId={r.sellerId}
+            sellerName={r.sellerName || r.requestedByName}
+          />
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
-        {isReport ? (
+        {isReport ? (<>
+          <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" disabled={busy || replyMut.isPending || !note.trim()} onClick={() => replyMut.mutate()}>
+            {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Réplica</>}
+          </Button>
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={busy} onClick={() => resolveMut.mutate("lido")}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
           </Button>
-        ) : (<>
+        </>) : (<>
         <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => resolveMut.mutate("efetuadas")}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Efetuadas</>}
         </Button>
