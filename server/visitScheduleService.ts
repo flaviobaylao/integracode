@@ -302,12 +302,14 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
   } catch (e: any) { console.warn('[agenda] checagem de cadastro incompleto falhou:', e?.message); }
 
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-  // Remove SEMPRE as visitas futuras ainda pendentes (não toca no passado/realizado).
-  // Isso elimina o RESÍDUO quando o cliente perde o dia de rota (weekdays vazio).
+  const tomorrow = new Date(today); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  // 🛡️ NUNCA remove a ocorrência de HOJE (nem o passado): só limpa o resíduo pendente de
+  // AMANHÃ em diante. Assim a Rota do Dia nunca encolhe quando a regeneração roda no meio do
+  // dia — mesma proteção da regeneração de telemarketing. A visita de hoje já agendada fica.
   await db.delete(visitAgenda).where(and(
     eq(visitAgenda.customerId, customerId),
     eq(visitAgenda.visitStatus, 'pending'),
-    gte(visitAgenda.scheduledDate, today),
+    gte(visitAgenda.scheduledDate, tomorrow),
   ));
 
   const serviceStart = c.serviceStartDate ? new Date(c.serviceStartDate) : undefined;
@@ -371,6 +373,10 @@ async function __gravarAgendaDatas(c: any, periodicity: string, dates: Date[]): 
   let created = 0;
   for (const dt of dates) {
     const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
+    // 🛡️ Não duplica um dia que já tem linha (ex.: a visita de HOJE preservada no delete acima).
+    const isoDay = ds.toISOString().slice(0, 10);
+    const jaTem: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${c.id} AND scheduled_date::date = ${isoDay}::date LIMIT 1`);
+    if (((jaTem.rows || []) as any[]).length > 0) continue;
     await db.insert(visitAgenda).values({
       customerId: c.id,
       sellerId: c.sellerId,
