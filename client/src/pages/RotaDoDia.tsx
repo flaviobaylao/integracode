@@ -30,7 +30,7 @@ import NoSaleModal from "@/components/NoSaleModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
-import { ChangeRequestControl, useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
+import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportReplyControl, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
@@ -1186,6 +1186,8 @@ export default function RotaDoDia() {
     return ks;
   }, [filteredPresentialVisits, filteredVirtualVisits, filteredRepescagem]);
   const changeRequestStates = useChangeRequestStates(changeRequestKeys, selectedDate);
+  // 💬 Réplicas de report do admin (Inbox) que o vendedor pode ver/responder no card.
+  const reportStates = useReportStates(changeRequestKeys);
 
   // 📋 Solicitar Alteração — regras de UI:
   //  - Efetuadas: card cinza/inativo, não clicável e FORA da contagem de clientes da rota (mas visível).
@@ -3087,6 +3089,12 @@ export default function RotaDoDia() {
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
+                                )}
+                                {/* 💬 Resposta do admin a um report deste cliente (o vendedor vê e responde). */}
+                                {visit.customerId && reportStates[crKey('customer', String(visit.customerId))] && (
+                                  <div onClick={(e) => e.stopPropagation()}>
+                                    <ReportReplyControl reportState={reportStates[crKey('customer', String(visit.customerId))]} />
+                                  </div>
                                 )}
                                 {/* 📋 Solicitar Alteração — no mobile fica ABAIXO dos ícones; no desktop, inline. */}
                                 {visit.customerId && (
