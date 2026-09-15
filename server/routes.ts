@@ -10646,6 +10646,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Reject (delete) released blocked orders (only admin, coordinator, administrative)
+  // EDITAR pedido bloqueado (produtos/quantidades, valor, forma, operacao). Um pedido bloqueado
+  // NAO e item do billing_pipeline (vive em blocked_orders + sales_cards), entao o PATCH do
+  // pipeline (/api/billing-pipeline/:id) nao o alcancava: atualizava zero linhas e ainda respondia
+  // 200 "Pedido atualizado" — a edicao "nao pegava" e o card voltava ao valor antigo. Aqui gravamos
+  // no blocked_orders E espelhamos no sales_card, para a liberacao levar o dado corrigido.
+  app.patch('/api/blocked-orders/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { products, paymentMethod, operationType, saleValue } = req.body;
+      const rows = await db.select().from(blockedOrders).where(eq(blockedOrders.id, id)).limit(1);
+      if (rows.length === 0) return res.status(404).json({ message: 'Pedido bloqueado nao encontrado' });
+      const order = rows[0];
+      const upd: any = {};
+      if (products !== undefined) {
+        const prods = Array.isArray(products) ? products : [];
+        upd.products = prods;
+        // Valor total = soma das linhas (fonte da verdade), para bater com os itens editados.
+        const total = prods.reduce((t: number, p: any) => {
+          const line = (p && p.totalPrice != null && String(p.totalPrice) !== '')
+            ? (parseFloat(String(p.totalPrice)) || 0)
+            : (parseFloat(String(p?.quantity ?? 0)) || 0) * (parseFloat(String(p?.unitPrice ?? 0)) || 0);
+          return t + (isNaN(line) ? 0 : line);
+        }, 0);
+        upd.totalAmount = total.toFixed(2);
+      } else if (saleValue !== undefined && saleValue !== null && String(saleValue) !== '') {
+        upd.totalAmount = String(saleValue);
+      }
+      if (paymentMethod !== undefined) upd.paymentMethod = paymentMethod || null;
+      if (operationType !== undefined) upd.operationType = operationType || null;
+      if (Object.keys(upd).length) { await db.update(blockedOrders).set({ ...upd, updatedAt: new Date() } as any).where(eq(blockedOrders.id, id)); }
+      // Espelha no sales_card: a liberacao (release) monta o pedido a partir do card + snapshot,
+      // entao o card tem de refletir a correcao para nao reintroduzir a quantidade/valor antigos.
+      try {
+        const cardUpd: any = {};
+        if (upd.products !== undefined) cardUpd.products = upd.products;
+        if (upd.totalAmount !== undefined) cardUpd.saleValue = upd.totalAmount;
+        if (paymentMethod !== undefined) cardUpd.paymentMethod = paymentMethod || null;
+        if (operationType !== undefined) cardUpd.operationType = operationType || null;
+        if (Object.keys(cardUpd).length && order.salesCardId) await storage.updateSalesCard(order.salesCardId, cardUpd);
+      } catch (e: any) { console.warn('[BLOCKED-EDIT] espelho no card (segue):', e?.message); }
+      const [updated] = await db.select().from(blockedOrders).where(eq(blockedOrders.id, id)).limit(1);
+      console.log('[BLOCKED-EDIT] pedido bloqueado ' + id + ' editado por ' + (req.currentUser?.email || '?'));
+      res.json(updated || { id });
+    } catch (error: any) {
+      console.error('Erro ao editar pedido bloqueado:', error?.message);
+      res.status(500).json({ message: error?.message || 'Erro ao editar pedido bloqueado' });
+    }
+  });
+
   app.post('/api/blocked-orders/reject', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { orderIds } = req.body;
