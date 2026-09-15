@@ -485,6 +485,60 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // GET /api/change-requests/pending-replies?keys=customer:ID,lead:ID
+  //   Para o VENDEDOR: mapa { "type:id": <report/solicitação> } dos cadastros cujo
+  //   ADMIN deixou uma RÉPLICA (mensagem kind='reply') ainda NÃO RESPONDIDA pelo
+  //   vendedor. Usado no Fechar Rota para EXIGIR resposta antes de fechar o dia.
+  //   Considera reports E solicitações; avalia a mais recente por cadastro.
+  //   "Respondida" = existe mensagem do vendedor (role='seller') após a última
+  //   réplica do admin. Resoluções ("lido"/efetuadas…) NÃO contam como réplica.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/pending-replies", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const raw = String(req.query.keys || "").trim();
+    if (!raw) return res.json({});
+    const wanted = new Set<string>();
+    const ids: string[] = [];
+    for (const p of raw.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 800)) {
+      const idx = p.indexOf(":");
+      if (idx <= 0) continue;
+      const t = p.slice(0, idx);
+      const id = p.slice(idx + 1);
+      if (!VALID_ENTITY.has(t) || !id) continue;
+      wanted.add(t + ":" + id);
+      ids.push(id);
+    }
+    if (ids.length === 0) return res.json({});
+    const uniqIds = Array.from(new Set(ids));
+    const inList = sql.join(uniqIds.map((id) => sql`${id}`), sql`, `);
+    const rows = rowsOf(await db.execute(sql`
+      SELECT * FROM change_requests
+      WHERE entity_id IN (${inList}) AND kind IN ('report', 'solicitacao') AND status <> 'cancelled'
+      ORDER BY created_at DESC`));
+    const out: Record<string, any> = {};
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const key = r.entity_type + ":" + r.entity_id;
+      if (!wanted.has(key) || seen.has(key)) continue;
+      seen.add(key); // avalia SOMENTE a solicitação/report mais recente do cadastro
+      const msgs = Array.isArray(r.messages) ? r.messages : [];
+      let lastAdminReply = -1;
+      for (let i = 0; i < msgs.length; i++) {
+        const m = msgs[i];
+        if (m && m.role === "admin" && m.kind === "reply") lastAdminReply = i;
+      }
+      if (lastAdminReply < 0) continue; // sem réplica do admin
+      let answered = false;
+      for (let i = lastAdminReply + 1; i < msgs.length; i++) {
+        if (msgs[i] && msgs[i].role === "seller") { answered = true; break; }
+      }
+      if (answered) continue; // vendedor já respondeu → não trava
+      out[key] = { ...mapRow(r), pendingReply: true };
+    }
+    return res.json(out);
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/resolve — admin fecha a tarefa.
   //   body: { status: 'efetuadas'|'parcial'|'rejeitadas', note?: string }
   // --------------------------------------------------------------------------
