@@ -448,6 +448,15 @@ export default function RotaDoDia() {
       return next;
     });
   };
+  // Remove manualmente o "em atendimento" (o vendedor tira pela tag) — card volta a não atendido.
+  const unmarkEmAndamento = (customerId: string) => {
+    setEmAndamentoIds(prev => {
+      if (!prev.has(customerId)) return prev;
+      const next = new Set(prev); next.delete(customerId);
+      try { localStorage.setItem(emAndamentoKey, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
   const openWhatsappCentral = async (customerId?: string, phoneHint?: string) => {
     let phone = phoneHint;
     if (!phone && customerId) {
@@ -2891,6 +2900,8 @@ export default function RotaDoDia() {
                                   name: visit.customerName
                                 });
                                 setShowVirtualActionModal(true);
+                                // Abrir o card marca o cliente como "em atendimento" (amarelo) até registrar.
+                                markEmAndamento(visit.customerId);
                               }
                             }}
                           >
@@ -2978,11 +2989,21 @@ export default function RotaDoDia() {
                                     {isEmAndamento && (
                                       <Badge
                                         variant="outline"
-                                        className="text-xs border-yellow-500 text-yellow-700 bg-yellow-100 dark:text-yellow-300 dark:bg-yellow-900"
+                                        className="text-xs border-yellow-500 text-yellow-700 bg-yellow-100 dark:text-yellow-300 dark:bg-yellow-900 gap-1 pr-1"
                                         data-testid={`virtual-inprogress-badge-${visit.customerId}`}
                                       >
-                                        <Clock className="h-3 w-3 mr-1" />
-                                        Atendimento em andamento
+                                        <Clock className="h-3 w-3" />
+                                        Em atendimento
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); if (visit.customerId) unmarkEmAndamento(visit.customerId); }}
+                                          title="Tirar de 'em atendimento' (volta a não atendido)"
+                                          aria-label="Remover em atendimento"
+                                          className="ml-0.5 rounded-full p-0.5 hover:bg-yellow-200 dark:hover:bg-yellow-800"
+                                          data-testid={`virtual-inprogress-clear-${visit.customerId}`}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </button>
                                       </Badge>
                                     )}
                                     {isFinalized && (
