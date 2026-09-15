@@ -377,14 +377,19 @@ export function registerChangeRequestsRoutes(app: Express) {
     // Contagem de pendentes (para o badge do menu).
     const cnt = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM change_requests WHERE status = 'pending'`));
     const mapped = rows.map(mapRow);
-    // 📲 Enriquece cada card com o telefone do cliente/lead para o botão "Enviar para wzap".
+    // 📲 Enriquece cada card: telefone (cliente/lead) + flag de REPESCAGEM (assignment pendente).
     try {
       const custIds = Array.from(new Set(mapped.filter((m: any) => m.entityType === "customer").map((m: any) => m.customerId || m.entityId).filter(Boolean)));
       const leadIds = Array.from(new Set(mapped.filter((m: any) => m.entityType === "lead").map((m: any) => m.entityId).filter(Boolean)));
       const phoneByKey = new Map<string, string>();
+      const repescagemSet = new Set<string>();
       if (custIds.length) {
-        const cr = rowsOf(await db.execute(sql`SELECT id, phone FROM customers WHERE id IN (${sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `)})`));
+        const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
+        const cr = rowsOf(await db.execute(sql`SELECT id, phone FROM customers WHERE id IN (${inCust})`));
         for (const c of cr) if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
+        // Repescagem: cliente com atribuição de repescagem PENDENTE.
+        const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
+        for (const r of rp) if (r.customer_id) repescagemSet.add(String(r.customer_id));
       }
       if (leadIds.length) {
         const lr = rowsOf(await db.execute(sql`SELECT id, phone FROM leads WHERE id IN (${sql.join((leadIds as string[]).map((id) => sql`${id}`), sql`, `)})`));
@@ -393,8 +398,9 @@ export function registerChangeRequestsRoutes(app: Express) {
       for (const m of mapped as any[]) {
         const key = m.entityType === "customer" ? "customer:" + (m.customerId || m.entityId) : m.entityType + ":" + m.entityId;
         m.phone = phoneByKey.get(key) || null;
+        m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
-    } catch { /* telefone é um enriquecimento opcional — nunca quebra a listagem */ }
+    } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
     res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped });
   }));
 
