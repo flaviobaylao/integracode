@@ -153,7 +153,44 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
     },
     onError: (e: any) => toast({ title: "Erro ao enviar réplica", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
-  const busy = resolveMut.isPending || inativarMut.isPending;
+  // 🚫 Inativar Cliente (no card de report): mesma ação/regras/impactos do "Inativar" do Integra
+  // (POST /api/customers/bulk-inactivate, com auditoria) e, em seguida, fecha o report (status "lido").
+  const inativarReportMut = useMutation({
+    mutationFn: async () => {
+      const cid = r.customerId || r.entityId;
+      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo: note.trim() || "Inativado via report do Inbox." });
+      return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
+    },
+    onSuccess: () => {
+      toast({ title: "Cliente inativado", description: "Saiu dos Clientes Ativos e o report foi para Resolvidas." });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  // 🕒 Quarentena: atualiza a "Data de Início do Fornecimento" (serviceStartDate) do cliente —
+  // mesmo caminho do formulário "Editar Dados do Cliente" (PATCH /api/customers/:id, regenera agenda) —
+  // e fecha o report (status "lido").
+  const [quarentenaOpen, setQuarentenaOpen] = useState(false);
+  const [quarentenaDate, setQuarentenaDate] = useState("");
+  const quarentenaMut = useMutation({
+    mutationFn: async () => {
+      const cid = r.customerId || r.entityId;
+      await apiRequest("PATCH", `/api/customers/${cid}`, { serviceStartDate: quarentenaDate });
+      return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
+    },
+    onSuccess: () => {
+      toast({ title: "Quarentena aplicada", description: "Data de Início do Fornecimento atualizada e report enviado para Resolvidas." });
+      setQuarentenaOpen(false); setQuarentenaDate("");
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao aplicar quarentena", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const busy = resolveMut.isPending || inativarMut.isPending || inativarReportMut.isPending || quarentenaMut.isPending;
   // 🗂️ Report do vendedor (não-venda, justificativa, atendimento virtual, desfecho de lead):
   // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
   const isReport = r?.kind === "report";
@@ -233,6 +270,15 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={busy} onClick={() => resolveMut.mutate("lido")}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
           </Button>
+          {r.entityType === "customer" && (<>
+            <Button size="sm" variant="outline" className="border-red-400 text-red-700 hover:bg-red-50" disabled={busy}
+              onClick={() => { if (window.confirm("Inativar este cliente? Ele sai dos Clientes Ativos (mesmas regras da inativação) e o report vai para Resolvidas.")) inativarReportMut.mutate(); }}>
+              {inativarReportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar Cliente</>}
+            </Button>
+            <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 hover:bg-amber-50" disabled={busy} onClick={() => setQuarentenaOpen((o) => !o)}>
+              <Clock className="h-4 w-4 mr-1" /> Quarentena
+            </Button>
+          </>)}
         </>) : (<>
         <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => resolveMut.mutate("efetuadas")}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Efetuadas</>}
@@ -258,6 +304,20 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
         )}
         </>)}
       </div>
+
+      {isReport && quarentenaOpen && r.entityType === "customer" && (
+        <div className="flex flex-wrap items-end gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 p-2.5">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300 mb-1">Data de Início do Fornecimento</div>
+            <input type="date" value={quarentenaDate} onChange={(e) => setQuarentenaDate(e.target.value)} className="border rounded-md px-2 py-1 text-sm bg-white dark:bg-transparent" data-testid="cr-quarentena-date" />
+            <div className="text-[10px] text-muted-foreground mt-1">Data a partir da qual as visitas/fornecimento serão iniciados.</div>
+          </div>
+          <Button size="sm" className="bg-amber-600 hover:bg-amber-700" disabled={!quarentenaDate || quarentenaMut.isPending} onClick={() => quarentenaMut.mutate()}>
+            {quarentenaMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Clock className="h-4 w-4 mr-1" /> Aplicar quarentena</>}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => { setQuarentenaOpen(false); setQuarentenaDate(""); }}>Cancelar</Button>
+        </div>
+      )}
     </Card>
   );
 }
