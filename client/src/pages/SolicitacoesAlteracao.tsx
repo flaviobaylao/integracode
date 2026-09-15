@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply } from "lucide-react";
+import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, MessageCircle } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -246,6 +246,25 @@ function PendingCard({ r }: { r: any }) {
           </Button>
         )}
         </>)}
+        {/* 📲 Enviar para wzap: abre o WhatsApp (wa.me) do cliente/lead já com o texto do card. */}
+        {r.phone && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-green-500 text-green-700 hover:bg-green-50"
+            title="Abrir o WhatsApp do cliente com o texto do card"
+            data-testid="cr-enviar-wzap"
+            onClick={() => {
+              const digits = String(r.phone || "").replace(/\D/g, "");
+              if (!digits) return;
+              const withCountry = digits.length <= 11 ? "55" + digits : digits;
+              const texto = (note.trim() || rd.texto || rd.motivo || "").toString();
+              window.open("https://wa.me/" + withCountry + (texto ? "?text=" + encodeURIComponent(texto) : ""), "_blank", "noopener,noreferrer");
+            }}
+          >
+            <MessageCircle className="h-4 w-4 mr-1" /> Enviar para wzap
+          </Button>
+        )}
       </div>
     </Card>
   );
