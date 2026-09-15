@@ -10430,14 +10430,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const srcById = new Map<string, string>();
       const notesById = new Map<string, string>(); // observação escrita pelo vendedor na implantação
       const trocaPhotosById = new Map<string, string[]>(); // URLs das fotos anexadas na troca (order_pipeline_audit)
+      const parentById = new Map<string, string>(); // card-filho → card de ORIGEM (onde a foto da troca foi gravada)
       const paidSet = new Set<string>();
       if (scIds.length) {
         try {
-          const scs = await db.select({ id: salesCards.id, source: salesCards.source, notes: salesCards.notes })
+          const scs = await db.select({ id: salesCards.id, source: salesCards.source, notes: salesCards.notes, parentCardId: salesCards.parentCardId })
             .from(salesCards).where(inArray(salesCards.id, scIds as any));
           for (const s of scs as any[]) {
             if (s.source) srcById.set(String(s.id), String(s.source));
             if (s.notes && String(s.notes).trim()) notesById.set(String(s.id), String(s.notes));
+            // Card-filho (por pedido) tem id próprio, mas a foto da troca foi gravada no card de
+            // ORIGEM (parentCardId) durante a implantação. Guardamos o vínculo para achar a foto.
+            if (s.parentCardId) parentById.set(String(s.id), String(s.parentCardId));
           }
         } catch {}
         const idList = sql.join(scIds.map((c: any) => sql`${c}`), sql`, `);
@@ -10460,7 +10464,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // outcome='troca_photo'). O vendedor pode mandar ate 3 — traz TODAS, da mais antiga
         // para a mais nova, que e a ordem em que ele anexou.
         try {
-          const tp: any = await db.execute(sql`SELECT sales_card_id, error AS url FROM order_pipeline_audit WHERE outcome = 'troca_photo' AND sales_card_id IN (${idList}) ORDER BY sales_card_id, created_at ASC`);
+          // Busca as fotos pelos ids dos cards bloqueados E pelos ids dos cards de ORIGEM (pais),
+          // porque no card-filho a foto está gravada sob o id do card original.
+          const photoIds = Array.from(new Set([...scIds.map(String), ...Array.from(parentById.values())]));
+          const photoIdList = sql.join(photoIds.map((c: any) => sql`${c}`), sql`, `);
+          const tp: any = await db.execute(sql`SELECT sales_card_id, error AS url FROM order_pipeline_audit WHERE outcome = 'troca_photo' AND sales_card_id IN (${photoIdList}) ORDER BY sales_card_id, created_at ASC`);
           for (const x of (tp.rows || tp) as any[]) {
             if (!x.url) continue;
             const k = String(x.sales_card_id);
@@ -10471,6 +10479,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch {}
       }
 
+      // Fotos da troca do card: as próprias (por salesCardId) ou, se for card-filho, as do card
+      // de origem (parentCardId). Sem isto a troca liberada em card-filho perde a foto no card.
+      const fotosDoCard = (scid: any): string[] => {
+        const own = trocaPhotosById.get(String(scid)) || [];
+        if (own.length) return own;
+        const par = parentById.get(String(scid));
+        return (par && trocaPhotosById.get(String(par))) || [];
+      };
       // Buscar dados relacionados (cliente e vendedor)
       const enrichedOrders = await Promise.all(
         blockedOrdersData.map(async (order) => {
@@ -10484,8 +10500,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // O card bloqueado deve mostrá-la, e não apenas o motivo automático do bloqueio.
             sellerNotes: notesById.get(String(order.salesCardId)) || null,
             // `trocaPhotoUrl` fica por compatibilidade (primeira foto); a lista completa vai em `trocaPhotoUrls`.
-            trocaPhotoUrl: (trocaPhotosById.get(String(order.salesCardId)) || [])[0] || null,
-            trocaPhotoUrls: trocaPhotosById.get(String(order.salesCardId)) || [],
+            trocaPhotoUrl: fotosDoCard(order.salesCardId)[0] || null,
+            trocaPhotoUrls: fotosDoCard(order.salesCardId),
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
