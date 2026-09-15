@@ -2406,6 +2406,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const nv = Math.max(0, parseInt(String(b.naoVisitados), 10) || 0);
       const cfg = await getFechamentoConfig();
       if (cfg.travaObrigatoria && pend > 0) return res.status(400).json({ error: 'Ha ' + pend + ' cliente(s) sem justificativa. Justifique para fechar.', pendentes: pend });
+      // Trava: vendedor nao fecha a rota com questionamento (replica) do admin sem resposta.
+      const pendReplies = Math.max(0, parseInt(String(b.pendingReplies), 10) || 0);
+      if (pendReplies > 0) return res.status(400).json({ error: 'Ha ' + pendReplies + ' questionamento(s) do admin sem resposta. Responda para fechar a rota.', pendingReplies: pendReplies });
       await db.execute(sql`INSERT INTO route_closures (seller_id, close_date, closed_by, nao_visitados, justificados, pendentes) VALUES (${seller}, ${date}, ${seller}, ${nv}, ${just}, ${pend}) ON CONFLICT (seller_id, close_date) DO UPDATE SET closed_at = now(), closed_by = EXCLUDED.closed_by, nao_visitados = EXCLUDED.nao_visitados, justificados = EXCLUDED.justificados, pendentes = EXCLUDED.pendentes`);
       res.json({ ok: true, date, closed: true });
     } catch (e: any) { res.status(500).json({ error: String(e && e.message ? e.message : e).slice(0, 300) }); }
