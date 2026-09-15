@@ -101,7 +101,7 @@ async function main() {
   const pend = await pendentes();
   check(pend.length === 2, '2 pendentes');
   const texto = textoResumo(pend);
-  check(texto.includes('#' + a1.numero) && texto.includes('OK 12'.replace('12', String(a1.numero))) === false || texto.includes('OK 12'), 'resumo cita a acao');
+  check(texto.includes('#' + a1.numero) && texto.includes('/marketing/hoje') && texto.includes('OK 12'), 'resumo cita a acao e aponta para o Painel do dia');
   check((await responderWhatsApp('5562911119999', 'OK ' + a1.numero)) === null, 'numero desconhecido e ignorado');
   check((await responderWhatsApp('5562999990000', 'bom dia')) === null, 'conversa normal passa direto');
   check((await responderWhatsApp('5562999990000', 'ok')) === null, '"ok" sem numero passa direto');

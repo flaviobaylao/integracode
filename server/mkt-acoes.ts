@@ -571,6 +571,7 @@ export async function medir(): Promise<number> {
 // WhatsApp: o resumo do dia e a resposta "OK 12"
 // ---------------------------------------------------------------------------
 const brl = (v: any) => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const APP_URL_PUBLICA = () => String(process.env.APP_URL || 'https://integracode-production.up.railway.app').replace(/\/+$/, '');
 
 export async function aprovadores(): Promise<string[]> {
   const so = (s: string) => String(s || '').replace(/\D/g, '');
@@ -596,16 +597,15 @@ export function textoResumo(pend: any[], extras: { autoHoje?: any[]; medidas?: a
     const custo = pend.reduce((s, a) => s + Number(a.custo_estimado || 0), 0);
     linhas.push(pend.length + ' ação(ões) esperando você · ' + brl(receita) + ' esperados · custo ' + brl(custo));
     linhas.push('');
-    for (const a of pend.slice(0, 8)) {
+    // Aviso curto: a decisao e feita no Painel do dia (com justificativa, publico e resultado ao vivo).
+    for (const a of pend.slice(0, 5)) {
       const pub = Number(a.publico_total || 0);
-      linhas.push('*#' + a.numero + '* · ' + String(a.tipo).toUpperCase() + (a.modo_teste ? ' · teste' : ''));
-      linhas.push(String(a.titulo));
-      linhas.push((pub ? pub + ' cliente(s) · ' : '') + 'custo ' + brl(a.custo_estimado) + ' · esperado ' + brl(a.receita_esperada));
-      if (a.justificativa) linhas.push('_' + String(a.justificativa).slice(0, 220) + '_');
-      linhas.push('');
+      linhas.push('*#' + a.numero + '* ' + String(a.titulo).slice(0, 90) + ' — ' + (pub ? pub + ' cli · ' : '') + 'esp. ' + brl(a.receita_esperada) + (a.modo_teste ? ' (teste)' : ''));
     }
-    if (pend.length > 8) linhas.push('… e mais ' + (pend.length - 8) + ' na tela /marketing.');
-    linhas.push('Responda: *OK 12* · *NAO 12* · *OK TUDO* · *OK 12 MENOS 3,7* (tira o 3º e o 7º cliente) · *CAIXA* (lista de novo)');
+    if (pend.length > 5) linhas.push('… e mais ' + (pend.length - 5) + '.');
+    linhas.push('');
+    linhas.push('👉 Aprove no *Painel do dia*: ' + APP_URL_PUBLICA() + '/marketing/hoje');
+    linhas.push('_(por aqui também vale: OK 12 · NAO 12 · OK TUDO · CAIXA)_');
   } else {
     linhas.push('Nada esperando decisão hoje.');
   }
