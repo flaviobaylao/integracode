@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { MessageThread, ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
+import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply } from "lucide-react";
 
@@ -208,20 +208,6 @@ function PendingCard({ r }: { r: any }) {
         <Textarea placeholder={isReport ? "Escreva uma réplica ao vendedor (ou observação ao marcar como lido)…" : "Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado"} value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
         <VoiceDictateButton onText={(t) => setNote((p) => (p ? p.trim() + " " : "") + t)} testId="cr-admin-obs-audio" />
       </div>
-
-      {/* 📋 Solicitar Alteração a partir do report — abre uma solicitação formal p/ o mesmo cliente/lead. */}
-      {isReport && (r.entityType === "customer" || r.entityType === "lead") && (
-        <div className="flex justify-end">
-          <ChangeRequestControl
-            entityType={r.entityType as any}
-            entityId={String(r.entityId)}
-            customerId={r.customerId || r.entityId}
-            entityName={r.entityName}
-            sellerId={r.sellerId}
-            sellerName={r.sellerName || r.requestedByName}
-          />
-        </div>
-      )}
 
       <div className="flex flex-wrap gap-2">
         {isReport ? (<>

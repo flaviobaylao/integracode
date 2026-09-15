@@ -217,6 +217,68 @@ export async function registrarReportInbox(p: {
   }
 }
 
+// 🗂️ SOLICITAÇÃO → INBOX. Cria uma SOLICITAÇÃO DE ALTERAÇÃO real (kind='solicitacao', tipo "Outro"
+// com o texto do atendimento) que cai nas Pendentes do Inbox do admin. Usada quando o vendedor
+// registra um atendimento virtual com a flag "Solicitação de Alteração". Best-effort: respeita o
+// índice único (1 pendente por cliente) e nunca derruba a ação principal.
+export async function criarSolicitacaoInbox(p: {
+  entityType: "customer" | "lead";
+  entityId: string;
+  customerId?: string | null;
+  sellerId?: string | null;
+  sellerName?: string | null;
+  texto: string;
+}): Promise<void> {
+  try {
+    const texto = String(p?.texto || "").trim();
+    if (!texto || !p?.entityId) return;
+    await ensureTables();
+    // Já existe uma solicitação pendente para esta entidade? Não duplica (respeita ux_cr_pending_sol).
+    const existing = rowsOf(await db.execute(sql`
+      SELECT id FROM change_requests
+      WHERE entity_type = ${p.entityType} AND entity_id = ${p.entityId}
+        AND status = 'pending' AND kind = 'solicitacao' LIMIT 1`));
+    if (existing.length > 0) return;
+    let entityName: string | null = null;
+    try {
+      if (p.entityType === "customer") {
+        const cr = rowsOf(await db.execute(sql`SELECT fantasy_name, name FROM customers WHERE id = ${p.customerId || p.entityId} LIMIT 1`));
+        entityName = cr[0]?.fantasy_name || cr[0]?.name || null;
+      } else {
+        const lr = rowsOf(await db.execute(sql`SELECT fantasy_name FROM leads WHERE id = ${p.entityId} LIMIT 1`));
+        entityName = lr[0]?.fantasy_name || null;
+      }
+    } catch {}
+    let sellerName: string | null = p.sellerName ? String(p.sellerName).slice(0, 200) : null;
+    try {
+      if (!sellerName && p.sellerId) {
+        const ur = rowsOf(await db.execute(sql`SELECT first_name, last_name, email FROM users WHERE id = ${p.sellerId} LIMIT 1`));
+        const u = ur[0];
+        if (u) sellerName = (((u.first_name || "") + " " + (u.last_name || "")).trim() || (u.email ? String(u.email).split("@")[0] : "")) || null;
+      }
+    } catch {}
+    const details = { outro: texto.slice(0, 4000) };
+    const seedMsg = {
+      id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
+      text: texto.slice(0, 4000), at: new Date().toISOString(), kind: "request",
+    };
+    try {
+      await db.execute(sql`
+        INSERT INTO change_requests
+          (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+           types, details, status, kind, requested_by, requested_by_name, messages)
+        VALUES
+          (${p.entityType}, ${p.entityId}, ${p.customerId || null}, ${entityName}, ${p.sellerId || null}, ${sellerName},
+           ${JSON.stringify(["outro"])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'solicitacao', ${p.sellerId || null}, ${sellerName},
+           ${JSON.stringify([seedMsg])}::jsonb)`);
+    } catch (e: any) {
+      if (!String(e?.message || "").includes("ux_cr_pending")) throw e; // conflito de pendência = ok, ignora
+    }
+  } catch (e: any) {
+    console.warn("[SOLIC-INBOX] falha ao criar solicitação:", e?.message);
+  }
+}
+
 export function registerChangeRequestsRoutes(app: Express) {
   void ensureTables();
 

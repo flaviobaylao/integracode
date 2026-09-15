@@ -12,17 +12,23 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar, Thermometer } from "lucide-react";
+import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar, Thermometer, ClipboardList } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
 
-type ServiceType = 'debito_vencido' | 'venda' | 'nao_venda' | 'prospecao';
+type ServiceType = 'debito_vencido' | 'venda' | 'nao_venda' | 'prospecao' | 'solicitacao_alteracao' | 'registro';
 
 const serviceTypeLabels: Record<ServiceType, { label: string; color: string; icon: typeof DollarSign }> = {
   debito_vencido: { label: 'Débito Vencido', color: 'bg-red-100 text-red-700 border-red-200', icon: DollarSign },
   venda: { label: 'Venda', color: 'bg-green-100 text-green-700 border-green-200', icon: ShoppingCart },
   nao_venda: { label: 'Não Venda', color: 'bg-red-100 text-red-700 border-red-300', icon: X },
   prospecao: { label: 'Prospecção', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: Search },
+  solicitacao_alteracao: { label: 'Solicitação de Alteração', color: 'bg-indigo-100 text-indigo-700 border-indigo-300', icon: ClipboardList },
+  registro: { label: 'Registro', color: 'bg-slate-100 text-slate-700 border-slate-300', icon: FileText },
 };
+
+// Flags de tipo escolhíveis no atendimento de CLIENTE (virtual). 'venda' fica no fluxo de venda.
+const CUSTOMER_SERVICE_TYPES: ServiceType[] = ['nao_venda', 'solicitacao_alteracao', 'registro'];
 
 interface VirtualServiceLog {
   id: string;
@@ -64,7 +70,9 @@ export default function VirtualServiceLogModal({
   const [isCreating, setIsCreating] = useState(false);
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
-  const effectiveDefaultType = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'nao_venda');
+  const effectiveDefaultType: ServiceType = entityType === 'lead'
+    ? 'prospecao'
+    : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'nao_venda');
   const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [nextContactDate, setNextContactDate] = useState<string>("");
@@ -75,7 +83,9 @@ export default function VirtualServiceLogModal({
   // Reset serviceType when modal opens with a new defaultServiceType
   useEffect(() => {
     if (open) {
-      const newDefault = defaultServiceType || (entityType === 'lead' ? 'prospecao' : 'nao_venda');
+      const newDefault: ServiceType = entityType === 'lead'
+        ? 'prospecao'
+        : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'nao_venda');
       setServiceType(newDefault);
     }
   }, [open, defaultServiceType, entityType]);
@@ -341,10 +351,26 @@ export default function VirtualServiceLogModal({
                   <Label>Tipo de Atendimento</Label>
                 <div className="mt-2 flex gap-2 flex-wrap">
                   {entityType === 'customer' ? (
-                    <span className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 bg-red-100 text-red-700 border-red-300 font-medium">
-                      <X className="h-4 w-4" />
-                      Não Venda
-                    </span>
+                    CUSTOMER_SERVICE_TYPES.map((type) => {
+                      const config = serviceTypeLabels[type];
+                      const Icon = config.icon;
+                      const isSelected = serviceType === type;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setServiceType(type)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
+                            isSelected
+                              ? `${config.color} border-current font-medium shadow-sm`
+                              : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {config.label}
+                        </button>
+                      );
+                    })
                   ) : (
                     (Object.keys(serviceTypeLabels) as ServiceType[])
                       .filter((type) => type === 'prospecao')
@@ -390,21 +416,30 @@ export default function VirtualServiceLogModal({
 
                 {entityType === 'customer' && (
                   <div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={anexarConversaCentral}
-                      disabled={loadingConversa}
-                      className="gap-2"
-                    >
-                      {loadingConversa ? (
-                        <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
-                      ) : (
-                        <FileText className="h-4 w-4" />
-                      )}
-                      Puxar conversa da Central
-                    </Button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={anexarConversaCentral}
+                        disabled={loadingConversa}
+                        className="gap-2"
+                      >
+                        {loadingConversa ? (
+                          <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
+                        ) : (
+                          <FileText className="h-4 w-4" />
+                        )}
+                        Puxar conversa da Central
+                      </Button>
+                      {/* 📋 Solicitar Alteração — abre a solicitação formal p/ este cliente. */}
+                      <ChangeRequestControl
+                        entityType="customer"
+                        entityId={String(customerId)}
+                        customerId={customerId}
+                        entityName={customerName}
+                      />
+                    </div>
                     <p className="text-xs text-muted-foreground mt-1">
                       Anexa o histórico do chat do cliente (Central de Atendimento) nas notas acima.
                     </p>
