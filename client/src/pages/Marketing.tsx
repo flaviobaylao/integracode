@@ -13,6 +13,7 @@
 // entram aqui nos buracos seguintes.
 // ============================================================================
 import { useRef, useState } from "react";
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import CaixaDecisoes from "@/components/CaixaDecisoes";
@@ -227,7 +228,8 @@ export default function Marketing() {
           <h1 className="text-xl font-bold leading-tight">Central de Marketing</h1>
           <p className="text-xs text-muted-foreground">Fio de atribuição — quanto cada campanha vendeu de verdade</p>
         </div>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex gap-2 flex-wrap">
+          <Link href="/marketing/hoje"><Button size="sm" style={{ background: "#8b5cf6" }}>Painel do dia</Button></Link>
           {[7, 30, 90].map((x) => (
             <Button key={x} size="sm" variant={dias === x ? "default" : "outline"} onClick={() => setDias(x)}>
               {x} dias
