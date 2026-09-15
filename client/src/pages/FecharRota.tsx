@@ -22,8 +22,8 @@ import { getBrazilDateISO } from "@/lib/brazilTimezone";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic } from "lucide-react";
-import { useChangeRequestStates, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
+import { Flag, MapPin, CheckCircle2, AlertCircle, Lock, Mic, Bell, Send } from "lucide-react";
+import { useChangeRequestStates, crKey, isModalidadeOnlyRequest, MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { useVoiceToText } from "@/components/VoiceDictateButton";
 
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
@@ -123,6 +123,58 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
   return Array.from(dedup.values());
 }
 
+// 🔔 Card de QUESTIONAMENTO do admin (réplica) que o vendedor precisa responder
+// para poder fechar a rota. Cor distinta (rosa) para se destacar do débito (âmbar).
+function QuestionamentoCard({ q }: { q: any }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const replyMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${q.id}/reply`, { text: text.trim() }),
+    onSuccess: () => {
+      toast({ title: "Resposta enviada ao admin", description: "Questionamento respondido — você já pode fechar a rota." });
+      setText(""); setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/pending-replies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const kindLabel = q?.kind === "report"
+    ? ((q?.details && (q.details as any).reportLabel) || "Registro de atendimento")
+    : "Solicitação de alteração";
+  return (
+    <Card className="border-l-4 border-l-rose-500"><CardContent className="py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm">{q?.entityName || "Cadastro"}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">{kindLabel}</div>
+        </div>
+        <span className="text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-full flex items-center gap-1 shrink-0"><Bell className="w-3 h-3" /> Questionamento do admin</span>
+      </div>
+      {!open ? (
+        <button className="mt-2 w-full rounded-lg py-2.5 text-sm font-bold bg-rose-600 text-white flex items-center justify-center gap-2" onClick={() => setOpen(true)}>
+          <Bell className="w-4 h-4" /> Responder questionamento p/ fechar a rota
+        </button>
+      ) : (
+        <div className="mt-3 border-t border-dashed pt-3 space-y-2">
+          {Array.isArray(q?.messages) && q.messages.length > 0 && (
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-1">Conversa</div>
+              <MessageThread messages={q.messages} />
+            </div>
+          )}
+          <textarea className="w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Escreva sua resposta ao admin…" value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="flex gap-2">
+            <button className="flex-1 bg-gray-100 text-gray-600 rounded-lg py-2 text-sm font-semibold" onClick={() => setOpen(false)}>Cancelar</button>
+            <button className="flex-1 bg-rose-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-1" disabled={replyMut.isPending || !text.trim()} onClick={() => replyMut.mutate()}><Send className="w-4 h-4" /> Enviar resposta</button>
+          </div>
+        </div>
+      )}
+    </CardContent></Card>
+  );
+}
+
 export default function FecharRota({ embedded = false }: { embedded?: boolean }) {
   const { user } = useAuth();
   const uAny = user as any;
@@ -202,6 +254,20 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     return s;
   }, [route, overlay, crStates]);
 
+  // 🔔 Questionamentos do admin (réplicas) ainda não respondidos pelo vendedor.
+  // Travam o fechamento da rota: o vendedor precisa responder cada um para fechar.
+  const prParam = useMemo(() => Array.from(new Set(crKeys)).sort().join(","), [crKeys]);
+  const { data: pendingRepliesData } = useQuery<Record<string, any>>({
+    queryKey: ["/api/change-requests/pending-replies", prParam],
+    enabled: enabled && !!prParam,
+    queryFn: async () => { if (!prParam) return {}; return apiRequest("GET", `/api/change-requests/pending-replies?keys=${encodeURIComponent(prParam)}`); },
+    staleTime: 15_000,
+  });
+  const questionamentos = useMemo(() => {
+    const m = pendingRepliesData || {};
+    return Object.keys(m).map((k) => m[k]).filter((x) => x && x.pendingReply);
+  }, [pendingRepliesData]);
+
   const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem, suspVisita, suspDebito, crEfet, exigirDebito) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem, suspVisita, suspDebito, crEfet, exigirDebito]);
 
   const totalStops = useMemo(() => {
@@ -260,7 +326,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   });
 
   const fechar = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/vendedor/fechamento/fechar", { sellerId, date: today, pendentes: pendentes.length, justificados: Object.keys(justified).length, naoVisitados: naoVisitados.length }),
+    mutationFn: async () => apiRequest("POST", "/api/vendedor/fechamento/fechar", { sellerId, date: today, pendentes: pendentes.length, justificados: Object.keys(justified).length, naoVisitados: naoVisitados.length, pendingReplies: questionamentos.length }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/vendedor/fechamento/status", sellerId, today] });
       toast({ title: "Rota fechada!", description: "Resumo enviado ao gestor." });
@@ -302,6 +368,16 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
 
       {sellerId && !closed && route && (
         <>
+          {questionamentos.length > 0 && (
+            <div className="mt-5 space-y-2">
+              <div className="text-xs text-rose-900 bg-rose-50 border border-rose-200 rounded-xl p-3 flex gap-2">
+                <Bell className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>O admin deixou <b>{questionamentos.length === 1 ? "um questionamento" : questionamentos.length + " questionamentos"}</b> sobre {questionamentos.length === 1 ? "um registro/solicitação" : "registros/solicitações"}. <b>Responda para poder fechar a rota.</b></span>
+              </div>
+              {questionamentos.map((q: any) => <QuestionamentoCard key={q.id} q={q} />)}
+            </div>
+          )}
+
           <div className="grid grid-cols-4 gap-2 mt-5">
             <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold">{totalStops}</div><div className="text-[11px] text-muted-foreground">na rota</div></div>
             <div className="rounded-xl bg-white border p-3 text-center"><div className="text-xl font-bold text-green-600">{Math.max(0, totalStops - naoVisitados.filter((c) => !c.atendido).length)}</div><div className="text-[11px] text-muted-foreground">atendidos</div></div>
@@ -382,12 +458,17 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
 
           <div className="sticky bottom-0 bg-white border-t mt-6 -mx-4 md:-mx-6 px-4 md:px-6 py-3">
             <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-2"><Lock className="w-3 h-3" /> Trava obrigatória: <b className={cfg.travaObrigatoria ? "text-green-700" : "text-red-600"}>{cfg.travaObrigatoria ? "ligada" : "desligada"}</b> <span className="bg-gray-100 rounded px-1.5 py-0.5">definida pelo admin</span></div>
+            {questionamentos.length > 0 && (
+              <div className="text-[11px] text-rose-700 flex items-center gap-1 mb-2"><Bell className="w-3 h-3" /> Há <b>{questionamentos.length}</b> questionamento{questionamentos.length > 1 ? "s" : ""} do admin sem resposta — responda para liberar o fechamento.</div>
+            )}
             <button
               className="w-full bg-green-600 text-white rounded-xl py-3 text-base font-bold disabled:bg-gray-200 disabled:text-gray-400"
-              disabled={fechar.isPending || (cfg.travaObrigatoria && pendentes.length > 0)}
+              disabled={fechar.isPending || (cfg.travaObrigatoria && pendentes.length > 0) || questionamentos.length > 0}
               onClick={() => fechar.mutate()}
             >
-              Fechar rota do dia {pendentes.length > 0 ? `(faltam ${pendentes.length})` : "✓"}
+              {questionamentos.length > 0
+                ? `Responda ${questionamentos.length === 1 ? "o questionamento" : "os questionamentos"} p/ fechar`
+                : `Fechar rota do dia ${pendentes.length > 0 ? `(faltam ${pendentes.length})` : "✓"}`}
             </button>
           </div>
         </>
