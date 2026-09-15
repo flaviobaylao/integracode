@@ -219,16 +219,24 @@ export async function rodar(opts: { quem?: string; forcar?: boolean } = {}): Pro
 
 /** Valida e grava as propostas do modelo. Exportado para teste sem chamar a API. */
 export async function aplicarResposta(j: any, sinais: Sinais, modoTeste: boolean): Promise<{ criadas: any[]; descartadas: any[] }> {
-  // Segmentos já propostos hoje (evita duplicar se rodar 2×)
+  // Chaves já ocupadas: tudo que está PENDENTE (qualquer dia) + o que foi criado hoje.
+  // Mesma regra de chave que materializar() usa, por tipo — antes só a régua era
+  // conferida e o Radar repetia visita/alerta quando rodava 2× no dia.
   const jaHoje = new Set<string>();
   try {
-    const q: any = await db.execute(sql`SELECT evidencia->>'segmento' AS s, publico->>'segmento' AS p FROM mkt_acoes
-      WHERE agente = ${AGENTE} AND status IN ('proposta','aprovada','auto','executando','executada')
-        AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
-    for (const row of (q.rows || [])) { if (row.s) jaHoje.add(String(row.s)); if (row.p && String(row.p).startsWith('carteira:')) jaHoje.add('alerta:' + String(row.p).slice(9)); }
-    const qp: any = await db.execute(sql`SELECT parametros->>'gancho' AS g, parametros->>'publico' AS p FROM mkt_acoes WHERE agente = ${AGENTE} AND tipo = 'peca'
-      AND status NOT IN ('rejeitada','expirada') AND criado_em >= now() - interval '3 days'`);
-    for (const row of (qp.rows || [])) if (row.g) jaHoje.add('peca:' + row.g + ':' + (row.p || 'b2b'));
+    const q: any = await db.execute(sql`SELECT tipo, evidencia, publico, parametros FROM mkt_acoes
+      WHERE agente = ${AGENTE} AND (
+        status IN ('proposta','aprovada','auto','executando')
+        OR (status = 'executada' AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+        OR (tipo = 'peca' AND status NOT IN ('rejeitada','expirada') AND criado_em >= now() - interval '3 days'))`);
+    for (const row of (q.rows || [])) {
+      const ev = row.evidencia || {}, pub = row.publico || {}, par = row.parametros || {};
+      const tipo = String(row.tipo || '');
+      if (tipo === 'regua' && ev.segmento) jaHoje.add(String(ev.segmento));
+      else if (tipo === 'alerta') jaHoje.add('alerta:' + (ev.carteira?.vendedor || (String(pub.segmento || '').startsWith('carteira:') ? String(pub.segmento).slice(9) : 'gestor')));
+      else if (tipo === 'visita' || tipo === 'cupom') jaHoje.add(tipo + ':' + (ev.segmento || ev.carteira || 'x'));
+      else if (tipo === 'peca' && par.gancho) jaHoje.add('peca:' + par.gancho + ':' + (par.publico || 'b2b'));
+    }
   } catch {}
 
   const criadas: any[] = [], descartadas: any[] = [];

@@ -4384,6 +4384,12 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
+  // ── PAINEL DO DIA (/marketing/hoje): uma chamada com tudo que o gestor olha por dia ──
+  app.get("/api/mkt/hoje", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { painelDoDia } = await import('./mkt-hoje'); res.json(await painelDoDia()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
   // ── RADAR DE VENDAS (agente mkt_radar) ──
   app.get("/api/mkt/radar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { panorama } = await import('./mkt-radar'); res.json(await panorama()); }

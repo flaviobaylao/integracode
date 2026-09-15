@@ -109,6 +109,7 @@ import TabelaPrecos from "@/pages/TabelaPrecos";
 import PrecosGrade from "@/pages/PrecosGrade";
 import Cupons from "@/pages/Cupons";
 import Marketing from "@/pages/Marketing";
+import MarketingHoje from "@/pages/MarketingHoje";
 import Fornecedores from "@/pages/Fornecedores";
 import RecuperacaoFaturamento from "@/pages/RecuperacaoFaturamento";
 import ConciliacaoBancaria from "@/pages/ConciliacaoBancaria";
@@ -318,6 +319,7 @@ function Router() {
           <Route path="/precos-grade" component={PrecosGrade} />
           <Route path="/cupons" component={Cupons} />
           <Route path="/marketing" component={Marketing} />
+          <Route path="/marketing/hoje" component={MarketingHoje} />
           <Route path="/fornecedores" component={Fornecedores} />
           <Route path="/recuperacao-faturamento" component={RecuperacaoFaturamento} />
           <Route path="/conciliacao-bancaria" component={ConciliacaoBancaria} />

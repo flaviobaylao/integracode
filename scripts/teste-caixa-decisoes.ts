@@ -101,7 +101,7 @@ async function main() {
   const pend = await pendentes();
   check(pend.length === 2, '2 pendentes');
   const texto = textoResumo(pend);
-  check(texto.includes('#' + a1.numero) && texto.includes('OK 12'.replace('12', String(a1.numero))) === false || texto.includes('OK 12'), 'resumo cita a acao');
+  check(texto.includes('#' + a1.numero) && texto.includes('/marketing/hoje') && texto.includes('OK 12'), 'resumo cita a acao e aponta para o Painel do dia');
   check((await responderWhatsApp('5562911119999', 'OK ' + a1.numero)) === null, 'numero desconhecido e ignorado');
   check((await responderWhatsApp('5562999990000', 'bom dia')) === null, 'conversa normal passa direto');
   check((await responderWhatsApp('5562999990000', 'ok')) === null, '"ok" sem numero passa direto');
@@ -154,6 +154,16 @@ async function main() {
   ], leitura_do_dia: 'ok' };
   const ap = await aplicarResposta(fake, sin, true);
   check(ap.criadas.length === 2 && ap.descartadas.length === 4, 'radar: 2 validas, 4 descartadas (' + ap.descartadas.map(d => d.motivo).join(' | ') + ')');
+  // Rodar 2x no mesmo dia (ou com pendencia de ontem) nao pode repetir regua, alerta nem visita.
+  const apDup = await aplicarResposta({ acoes: [
+    { tipo: 'regua', segmento: 'regua:reativacao', regua: 'reativacao', max_clientes: 12, titulo: 'de novo', justificativa: '' },
+    { tipo: 'alerta', titulo: 'de novo', justificativa: 'j', alerta: { vendedor: 'Renata Souza', texto: 'x' } },
+    { tipo: 'visita', segmento: 'regua:ciclo_furado', max_clientes: 5, titulo: 'visita 1', justificativa: '' },
+    { tipo: 'visita', segmento: 'regua:ciclo_furado', max_clientes: 5, titulo: 'visita repetida', justificativa: '' },
+  ] }, sin, true);
+  await raw(`UPDATE mkt_acoes SET criado_em = criado_em - interval '1 day' WHERE tipo = 'visita'`);
+  const apDup2 = await aplicarResposta({ acoes: [ { tipo: 'visita', segmento: 'regua:ciclo_furado', max_clientes: 5, titulo: 'visita de ontem pendente', justificativa: '' } ] }, sin, true);
+  check(apDup.criadas.length === 1 && apDup.criadas[0].tipo === 'visita' && apDup.descartadas.length === 3 && apDup2.criadas.length === 0, 'radar: 2a rodada nao repete regua/alerta/visita, nem visita pendente de ontem (' + apDup.descartadas.map(d => d.motivo).join(' | ') + ')');
   const regua = ap.criadas.find(c => c.tipo === 'regua');
   const vr: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${regua.numero}`)) as any).rows[0];
   check(vr.publico_total <= 12 && vr.publico.clientes.every((c: any) => c.ticket >= 300) && Number(vr.custo_estimado) === Number((vr.publico_total * 0.04).toFixed(2)), 'publico filtrado por ticket, custo = n × 0,04 (' + vr.publico_total + ' clientes, R$ ' + vr.custo_estimado + ')');
@@ -391,6 +401,14 @@ async function main() {
   const larga = await sharpI({ create: { width: 3000, height: 1000, channels: 3, background: '#00ff00' } }).jpeg().toBuffer();
   const nl = await sharpI((await normalizarParaInstagram(larga))!).metadata();
   check(nl.width! <= 1440 && Math.abs((nl.width! / nl.height!) - 1.91) < 0.02, 'foto ?ig=1: 3:1 vira 1.91:1 e cabe em 1440px');
+
+  // ── Painel do dia ──
+  const { painelDoDia } = await import('../server/mkt-hoje');
+  const pd = await painelDoDia();
+  check(Array.isArray(pd.pendentes) && Array.isArray(pd.rodando) && Array.isArray(pd.agentes) && pd.resumoPendentes && typeof pd.resumoPendentes.n === 'number' && pd.pecas && typeof pd.pecas.fila === 'number' && pd.modos && pd.totaisAoVivo, 'painel do dia: ' + pd.pendentes.length + ' pendente(s), ' + pd.rodando.length + ' rodando, ' + pd.agentes.length + ' agente(s), ' + pd.pecas.fila + ' peça(s) na fila');
+  const exec = pd.rodando.find((r: any) => r.status === 'executada' && r.aoVivo);
+  check(!!exec && typeof exec.aoVivo.pedidos === 'number' && typeof exec.aoVivo.diasCorridos === 'number', 'painel do dia: ação executada traz resultado ao vivo (' + (exec ? exec.aoVivo.pedidos + ' pedido(s), R$ ' + exec.aoVivo.receita : 'nenhuma') + ')');
+  check(pd.auditor && typeof pd.auditor.nota === 'number' && pd.pecas.noAr.length >= 1, 'painel do dia: nota do auditor e peças no ar (' + pd.pecas.noAr.length + ')');
 
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
