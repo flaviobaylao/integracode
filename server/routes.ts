@@ -4601,6 +4601,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // NCM da NF-e tem 8 digitos. Cadastro com menos (ex.: "3923.90") era aceito e so
+  // estourava la na SEFAZ, com "Rejeicao: Informado NCM inexistente" depois do pedido
+  // pronto. Barrar aqui custa um toast; barrar la custa refazer o faturamento.
+  const validarNcm = (ncm: any): string | null => {
+    const d = String(ncm ?? '').replace(/\D/g, '');
+    if (!d) return null; // NCM em branco continua permitido (preenche depois)
+    if (d.length !== 8) return `NCM deve ter 8 digitos (recebido: ${d.length}). Ex.: 3923.90.00`;
+    return null;
+  };
+
   app.post('/api/products', authenticateUser, async (req: any, res) => {
     try {
       // Only admin, coordinators and administrative can manage products
@@ -4610,6 +4620,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
+      const _erroNcm = validarNcm(req.body?.ncm);
+      if (_erroNcm) return res.status(400).json({ message: _erroNcm, field: 'ncm' });
+
       const data = insertProductSchema.parse(req.body);
       const product = await storage.createProduct(data);
       res.json(product);
@@ -4633,6 +4646,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📝 [PUT /api/products/${id}] Payload recebido:`, JSON.stringify(req.body, null, 2));
       
+      const _erroNcmPut = validarNcm(req.body?.ncm);
+      if (_erroNcmPut) return res.status(400).json({ message: _erroNcmPut, field: 'ncm' });
+
       const data = insertProductSchema.partial().parse(req.body);
       console.log(`✅ [PUT /api/products/${id}] Dados após validação Zod:`, JSON.stringify(data, null, 2));
       
