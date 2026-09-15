@@ -1759,6 +1759,39 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
       const stage = req.query.stage as string | undefined;
       const items = await storage.getBillingPipelineItems(stage ? { stage } : undefined);
+      // FOTOS DA TROCA no card do pipeline: anexadas em order_pipeline_audit por sales_card_id. Só
+      // enriquecemos itens de troca/amostra/bonificacao (os que têm foto) para não pesar. O card-filho
+      // (por pedido) tem id próprio, mas a foto foi gravada no card de ORIGEM (parentCardId) — por isso
+      // resolvemos os dois ids. Sem isto a troca liberada perde a foto no card do pipeline.
+      try {
+        const comFoto = (items as any[]).filter(i => i.salesCardId
+          && ['troca', 'amostra', 'bonificacao'].includes(String(i.operationType || '').toLowerCase()));
+        const scIds = Array.from(new Set(comFoto.map((i: any) => String(i.salesCardId))));
+        if (scIds.length) {
+          const parentById = new Map<string, string>();
+          const allIds = new Set<string>(scIds);
+          try {
+            const scs: any = await db.execute(sql`SELECT id, parent_card_id FROM sales_cards WHERE id IN (${sql.join(scIds.map((c: any) => sql`${c}`), sql`, `)})`);
+            for (const s of (scs.rows || scs) as any[]) { if (s.parent_card_id) { parentById.set(String(s.id), String(s.parent_card_id)); allIds.add(String(s.parent_card_id)); } }
+          } catch {}
+          const photosById = new Map<string, string[]>();
+          const idArr = Array.from(allIds);
+          const tp: any = await db.execute(sql`SELECT sales_card_id, error AS url FROM order_pipeline_audit WHERE outcome = 'troca_photo' AND sales_card_id IN (${sql.join(idArr.map((c: any) => sql`${c}`), sql`, `)}) ORDER BY sales_card_id, created_at ASC`);
+          for (const x of (tp.rows || tp) as any[]) {
+            if (!x.url) continue;
+            const k = String(x.sales_card_id);
+            const lista = photosById.get(k) || [];
+            if (!lista.includes(String(x.url))) lista.push(String(x.url));
+            photosById.set(k, lista);
+          }
+          for (const it of comFoto) {
+            const own = photosById.get(String(it.salesCardId)) || [];
+            const par = parentById.get(String(it.salesCardId));
+            const fotos = own.length ? own : (par ? (photosById.get(par) || []) : []);
+            if (fotos.length) { (it as any).trocaPhotoUrls = fotos; (it as any).trocaPhotoUrl = fotos[0]; }
+          }
+        }
+      } catch (e: any) { console.warn('[BILLING-PIPELINE] enriquecimento de fotos da troca (segue):', e?.message); }
       res.json(items);
     } catch (error: any) {
       console.error('❌ [BILLING-PIPELINE] Error fetching items:', error);
