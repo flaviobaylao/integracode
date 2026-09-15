@@ -401,6 +401,7 @@ export default function RotaDoDia() {
     count: number;
     attendedCustomerIds: string[];
     noSaleCustomerIds: string[];
+    serviceTypeByCustomer?: Record<string, string>;
   }
   const { data: virtualServiceData } = useQuery<VirtualServiceData>({
     queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate, routeCustomerIds.length],
@@ -409,13 +410,23 @@ export default function RotaDoDia() {
       const res = await fetch(`/api/service-logs/count/customer?sellerId=${selectedSellerId}&date=${selectedDate}${idsParam}`, {
         credentials: 'include',
       });
-      if (!res.ok) return { count: 0, attendedCustomerIds: [], noSaleCustomerIds: [] };
+      if (!res.ok) return { count: 0, attendedCustomerIds: [], noSaleCustomerIds: [], serviceTypeByCustomer: {} };
       const data = await res.json();
-      return { count: data.count || 0, attendedCustomerIds: data.attendedCustomerIds || [], noSaleCustomerIds: data.noSaleCustomerIds || [] };
+      return { count: data.count || 0, attendedCustomerIds: data.attendedCustomerIds || [], noSaleCustomerIds: data.noSaleCustomerIds || [], serviceTypeByCustomer: data.serviceTypeByCustomer || {} };
     },
     enabled: !!selectedSellerId && !!selectedDate,
   });
   const virtualServiceCount = virtualServiceData?.count || 0;
+  // 🏷️ Selo do tipo do último atendimento por cliente (Não Venda / Solicitação de Alteração / Registro).
+  const SERVICE_TYPE_TAG: Record<string, { label: string; cls: string }> = {
+    nao_venda: { label: 'Não Venda', cls: 'bg-red-100 text-red-700 border-red-300' },
+    solicitacao_alteracao: { label: 'Solicitação de Alteração', cls: 'bg-indigo-100 text-indigo-700 border-indigo-300' },
+    registro: { label: 'Registro', cls: 'bg-slate-100 text-slate-700 border-slate-300' },
+    venda: { label: 'Venda', cls: 'bg-green-100 text-green-700 border-green-300' },
+    debito_vencido: { label: 'Débito Vencido', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
+    prospecao: { label: 'Prospecção', cls: 'bg-blue-100 text-blue-700 border-blue-300' },
+  };
+  const serviceTypeByCustomer = virtualServiceData?.serviceTypeByCustomer || {};
   const attendedCustomerIds = useMemo(() => new Set(virtualServiceData?.attendedCustomerIds || []), [virtualServiceData?.attendedCustomerIds]);
   const noSaleCustomerIds = useMemo(() => new Set(virtualServiceData?.noSaleCustomerIds || []), [virtualServiceData?.noSaleCustomerIds]);
 
@@ -2923,6 +2934,13 @@ export default function RotaDoDia() {
                                         <Copy className="h-3 w-3" />
                                       </button>
                                     </p>
+                                    {/* 🏷️ Selo do tipo do último atendimento (Não Venda / Solicitação de Alteração / Registro). */}
+                                    {(() => {
+                                      const st = serviceTypeByCustomer[String(visit.customerId)];
+                                      const meta = st ? SERVICE_TYPE_TAG[st] : null;
+                                      if (!meta) return null;
+                                      return <Badge variant="outline" className={`text-[10px] ${meta.cls}`}>{meta.label}</Badge>;
+                                    })()}
                                     <SalesCycleDots cycles={cyclesByCustomer.get(String(visit.customerId))} />
                                     {vExpanded && (<>
                                     <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
