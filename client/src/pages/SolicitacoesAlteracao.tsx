@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2 } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2 } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -283,8 +283,8 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
         <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => resolveMut.mutate("efetuadas")}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Efetuadas</>}
         </Button>
-        <Button size="sm" className="bg-amber-500 hover:bg-amber-600" disabled={busy} onClick={() => resolveMut.mutate("parcial")}>
-          <AlertTriangle className="h-4 w-4 mr-1" /> Parcial
+        <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" disabled={busy || replyMut.isPending || !note.trim()} onClick={() => replyMut.mutate()}>
+          {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Réplica</>}
         </Button>
         <Button size="sm" variant="destructive" disabled={busy} onClick={() => resolveMut.mutate("rejeitadas")}>
           <XCircle className="h-4 w-4 mr-1" /> Rejeitar
