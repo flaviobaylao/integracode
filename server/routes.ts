@@ -3521,8 +3521,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
       }
 
-      const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao'];
-      const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
+      const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao', 'solicitacao_alteracao', 'registro'];
+      const _fallbackType = entityType === 'lead' ? 'prospecao' : 'nao_venda';
+      const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : _fallbackType;
 
       // Vincula o atendimento à data da rota trabalhada (selectedDate). Ao meio-dia BRT
       // para que DATE(... AT TIME ZONE 'America/Sao_Paulo') caia no dia correto.
@@ -3578,23 +3579,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // 🗂️ REPORT → INBOX: atendimento virtual com observação ESCRITA vira report no Inbox.
+      // 🗂️ INBOX: atendimento virtual com observação ESCRITA gera item no Inbox.
+      //   - flag "Solicitação de Alteração" → cria uma SOLICITAÇÃO real (vai pras Pendentes do admin).
+      //   - demais tipos (Não Venda / Registro / Débito / Prospecção) → viram REPORT (marcado como lido).
       try {
         if (String(notes || '').trim()) {
-          const ST_LABEL: Record<string, string> = { debito_vencido: 'Débito vencido', venda: 'Venda', nao_venda: 'Não-venda', prospecao: 'Prospecção' };
-          const { registrarReportInbox } = await import('./change-requests-routes');
-          await registrarReportInbox({
-            entityType: entityType === 'lead' ? 'lead' : 'customer',
-            entityId: String(entityId),
-            customerId: entityType === 'lead' ? null : String(entityId),
-            sellerId: String(user?.id || ''),
-            sellerName: user?.name || (user?.email ? String(user.email).split('@')[0] : null),
-            reportKind: 'atendimento_virtual',
-            motivo: ST_LABEL[finalServiceType] || finalServiceType,
-            texto: String(notes || ''),
-          });
+          const ST_LABEL: Record<string, string> = { debito_vencido: 'Débito vencido', venda: 'Venda', nao_venda: 'Não-venda', prospecao: 'Prospecção', solicitacao_alteracao: 'Solicitação de Alteração', registro: 'Registro' };
+          const _sellerName = user?.name || (user?.email ? String(user.email).split('@')[0] : null);
+          if (finalServiceType === 'solicitacao_alteracao') {
+            const { criarSolicitacaoInbox } = await import('./change-requests-routes');
+            await criarSolicitacaoInbox({
+              entityType: entityType === 'lead' ? 'lead' : 'customer',
+              entityId: String(entityId),
+              customerId: entityType === 'lead' ? null : String(entityId),
+              sellerId: String(user?.id || ''),
+              sellerName: _sellerName,
+              texto: String(notes || ''),
+            });
+          } else {
+            const { registrarReportInbox } = await import('./change-requests-routes');
+            await registrarReportInbox({
+              entityType: entityType === 'lead' ? 'lead' : 'customer',
+              entityId: String(entityId),
+              customerId: entityType === 'lead' ? null : String(entityId),
+              sellerId: String(user?.id || ''),
+              sellerName: _sellerName,
+              reportKind: 'atendimento_virtual',
+              motivo: ST_LABEL[finalServiceType] || finalServiceType,
+              texto: String(notes || ''),
+            });
+          }
         }
-      } catch (_e: any) { console.warn('[REPORT-INBOX] atendimento virtual:', _e?.message); }
+      } catch (_e: any) { console.warn('[INBOX] atendimento virtual:', _e?.message); }
 
       res.json(serviceLog);
     } catch (error) {
@@ -3785,8 +3801,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Notas ou imagens são obrigatórias" });
       }
 
-      const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao'];
-      const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'prospecao';
+      const validServiceTypes = ['debito_vencido', 'venda', 'nao_venda', 'prospecao', 'solicitacao_alteracao', 'registro'];
+      const finalServiceType = validServiceTypes.includes(serviceType) ? serviceType : 'nao_venda';
 
       const result = await db.execute(sql`
         INSERT INTO virtual_service_logs (customer_id, entity_type, attendant_id, attendant_name, service_type, notes, images)
@@ -3907,7 +3923,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('[SERVICE-LOGS-COUNT] falha ao incluir não-venda (sales_cards):', (e as any)?.message);
       }
 
-      res.json({ count, attendedCustomerIds: Array.from(attendedSet), noSaleCustomerIds: Array.from(noSaleSet) });
+      // 🏷️ Tipo do ÚLTIMO atendimento do dia por cliente (p/ o selo no card da Rota do Dia).
+      const serviceTypeByCustomer: Record<string, string> = {};
+      try {
+        const lastTypes = await db.execute(sql`
+          SELECT DISTINCT ON (vsl.customer_id) vsl.customer_id, vsl.service_type
+          FROM virtual_service_logs vsl
+          INNER JOIN customers c ON vsl.customer_id = c.id
+          WHERE (c.seller_id = ${sellerId} OR vsl.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
+            AND vsl.entity_type = 'customer'
+            AND DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+          ORDER BY vsl.customer_id, vsl.attendance_date DESC
+        `);
+        (lastTypes.rows as any[]).forEach(row => { if (row.customer_id) serviceTypeByCustomer[String(row.customer_id)] = String(row.service_type || ''); });
+      } catch (e) { console.warn('[SERVICE-LOGS-COUNT] falha ao mapear tipos:', (e as any)?.message); }
+      // Não-venda vindo do card de venda entra como 'nao_venda' quando não há tipo mais recente.
+      noSaleSet.forEach((cid) => { if (!serviceTypeByCustomer[cid]) serviceTypeByCustomer[cid] = 'nao_venda'; });
+
+      res.json({ count, attendedCustomerIds: Array.from(attendedSet), noSaleCustomerIds: Array.from(noSaleSet), serviceTypeByCustomer });
 
     } catch (error) {
       console.error("Error counting service logs:", error);
