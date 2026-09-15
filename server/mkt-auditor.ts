@@ -98,7 +98,7 @@ export async function checar(): Promise<Checagem[]> {
     COUNT(*) FILTER (WHERE status = 'proposta' AND criado_em < now() - interval '24 hours')::int AS pend24,
     COUNT(*) FILTER (WHERE status = 'expirada' AND criado_em >= now() - interval '14 days')::int AS exp14,
     COUNT(*) FILTER (WHERE status = 'erro' AND criado_em >= now() - interval '7 days')::int AS erro7,
-    COUNT(*) FILTER (WHERE status = 'rejeitada' AND criado_em >= now() - interval '14 days')::int AS rej14,
+    COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%' AND criado_em >= now() - interval '14 days')::int AS rej14,
     COUNT(*) FILTER (WHERE status IN ('aprovada','executada') AND nivel_efetivo = 2 AND criado_em >= now() - interval '14 days')::int AS apr14,
     AVG(EXTRACT(EPOCH FROM (decidido_em - criado_em))/3600) FILTER (WHERE decidido_em IS NOT NULL AND criado_em >= now() - interval '14 days')::float AS horas
     FROM mkt_acoes`);
@@ -125,7 +125,7 @@ export async function checar(): Promise<Checagem[]> {
   } catch {}
   const pol = await q1(`SELECT nivel_padrao, amostra_minima, taxa_aprovacao_minima FROM mkt_politicas WHERE tipo = 'regua'`);
   if (pol.nivel_padrao != null && Number(pol.nivel_padrao) === 2) {
-    const h = await q1(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executada'))::int AS ap, COUNT(*) FILTER (WHERE status = 'rejeitada')::int AS rj FROM mkt_acoes WHERE tipo = 'regua' AND nivel_efetivo = 2 AND decidido_em >= now() - interval '30 days'`);
+    const h = await q1(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executada'))::int AS ap, COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rj FROM mkt_acoes WHERE tipo = 'regua' AND nivel_efetivo = 2 AND decidido_em >= now() - interval '30 days'`);
     const n = Number(h.ap) + Number(h.rj);
     if (n >= Number(pol.amostra_minima) && Number(h.ap) / n >= Number(pol.taxa_aprovacao_minima)) add('n1_elegivel', 'politica', 'atencao', 'Régua elegível para N1', 'você aprovou ' + h.ap + ' de ' + n + ' réguas em 30 d (' + Math.round(Number(h.ap) / n * 100) + '%). A política pode ir para N1: réguas utility dentro do teto saem sozinhas', { ap: h.ap, n });
   }

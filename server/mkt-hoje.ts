@@ -114,7 +114,7 @@ export async function painelDoDia(): Promise<any> {
   }
   let aprovadores: string[] = [];
   try { const { aprovadores: ap } = await import('./mkt-acoes'); aprovadores = await ap(); } catch {}
-  const decisoes7d = (await rows(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS aprovadas, COUNT(*) FILTER (WHERE status = 'rejeitada')::int AS rejeitadas FROM mkt_acoes WHERE decidido_em >= now() - interval '7 days'`))[0] || { aprovadas: 0, rejeitadas: 0 };
+  const decisoes7d = (await rows(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS aprovadas, COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rejeitadas FROM mkt_acoes WHERE decidido_em >= now() - interval '7 days'`))[0] || { aprovadas: 0, rejeitadas: 0 };
 
   let ig: any = null;
   try { const { status } = await import('./mkt-ig-auth'); const s = await status(); ig = { conectado: s.conectado, username: s.username, diasRestantes: s.diasRestantes, podePublicar: s.podePublicar }; } catch {}

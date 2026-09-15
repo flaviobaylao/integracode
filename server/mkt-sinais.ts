@@ -156,7 +156,7 @@ async function historicoAcoes(): Promise<Sinais['acoes']> {
     const r: any = await db.execute(sql.raw(`
       SELECT COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS aprovadas,
-             COUNT(*) FILTER (WHERE status = 'rejeitada')::int AS rejeitadas,
+             COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rejeitadas,
              COUNT(*) FILTER (WHERE status = 'executada')::int AS executadas,
              COALESCE(SUM((resultado->>'receita')::numeric),0)::float AS receita
         FROM mkt_acoes WHERE criado_em >= now() - interval '30 days' AND nivel_efetivo = 2`));

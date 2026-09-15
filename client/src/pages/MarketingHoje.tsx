@@ -45,9 +45,16 @@ export default function MarketingHoje() {
 
   async function decidir(ids: string[], decisao: "aprovar" | "rejeitar") {
     if (!ids.length) return;
+    let comentario: string | null = null;
+    if (decisao === "rejeitar") {
+      // O motivo vira aprendizado ("não propor X"); "duplicada" não conta como decisão de mérito.
+      const c = window.prompt("Motivo da rejeição (opcional — o Radar aprende com isso; escreva 'duplicada' se for repetição):", "");
+      if (c === null) return;
+      comentario = c.trim() || null;
+    }
     setOcupado(true);
     try {
-      const r = await apiPost("/api/mkt/acoes/decidir", { ids, decisao });
+      const r = await apiPost("/api/mkt/acoes/decidir", { ids, decisao, comentario });
       const falhas = (r.execucoes || []).filter((e: any) => !e.ok);
       toast({ title: (decisao === "aprovar" ? "Aprovadas: " : "Rejeitadas: ") + r.aplicadas, description: falhas.length ? falhas.map((f: any) => f.erro).join(" · ") : "", variant: falhas.length ? "destructive" : undefined });
       setMarcadas(new Set()); q.refetch();

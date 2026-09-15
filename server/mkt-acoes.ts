@@ -192,7 +192,7 @@ export async function nivelEfetivo(a: NovaAcao): Promise<{ nivel: 0 | 1 | 2; mot
   if (n + Number(gastoHoje.n || 0) > Number(p.max_clientes_dia)) return { nivel: 2, motivo: 'estoura ' + p.max_clientes_dia + ' clientes/dia' };
   const hist: any = (await db.execute(sql`
     SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS ap,
-           COUNT(*) FILTER (WHERE status = 'rejeitada')::int AS rj
+           COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rj
       FROM mkt_acoes WHERE tipo = ${a.tipo} AND nivel_efetivo = 2 AND decidido_em IS NOT NULL
        AND decidido_em >= now() - (${String(Number(p.dias_observacao) || 30)} || ' days')::interval`) as any).rows?.[0] || {};
   const dec = Number(hist.ap || 0) + Number(hist.rj || 0);
@@ -743,7 +743,7 @@ export async function panorama(): Promise<any> {
     SELECT COUNT(*) FILTER (WHERE status = 'proposta')::int AS pendentes,
            COUNT(*) FILTER (WHERE status IN ('executada') AND criado_em >= now() - interval '30 days')::int AS executadas30,
            COUNT(*) FILTER (WHERE nivel_efetivo < 2 AND criado_em >= now() - interval '30 days')::int AS automaticas30,
-           COUNT(*) FILTER (WHERE status = 'rejeitada' AND criado_em >= now() - interval '30 days')::int AS rejeitadas30,
+           COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%' AND criado_em >= now() - interval '30 days')::int AS rejeitadas30,
            COALESCE(SUM((resultado->>'receita')::numeric) FILTER (WHERE medido_em IS NOT NULL AND criado_em >= now() - interval '90 days'),0)::float AS receita90,
            COALESCE(SUM(custo_estimado) FILTER (WHERE status = 'executada' AND criado_em >= now() - interval '90 days'),0)::float AS custo90,
            COALESCE(SUM(receita_esperada) FILTER (WHERE status = 'proposta'),0)::float AS esperadoPendente,
