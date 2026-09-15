@@ -572,6 +572,24 @@ export default function BillingPipeline() {
     },
     onError: (e: any) => toast({ title: 'Erro ao salvar', description: e.message, variant: 'destructive' }),
   });
+  // Pedido BLOQUEADO não é item do pipeline (vive em blocked_orders) — a edição vai por um endpoint
+  // próprio, senão o PATCH do pipeline atualiza zero linhas e a alteração "não pega" no card.
+  const updateBlockedMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => await apiRequest('PATCH', `/api/blocked-orders/${id}`, data),
+    onSuccess: (_r: any) => {
+      toast({ title: 'Pedido atualizado' });
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      setEditMode(false);
+      setDetailItem((prev) => prev ? ({
+        ...prev,
+        products: _r?.products ?? prev.products,
+        saleValue: _r?.totalAmount ?? prev.saleValue,
+        paymentMethod: _r?.paymentMethod ?? prev.paymentMethod,
+        operationType: _r?.operationType ?? prev.operationType,
+      } as any) : prev);
+    },
+    onError: (e: any) => toast({ title: 'Erro ao salvar', description: e?.message || 'Erro', variant: 'destructive' }),
+  });
   const addNoteMutation = useMutation({
     mutationFn: async ({ id, text }: { id: string; text: string }) => await apiRequest('POST', `/api/billing-pipeline/${id}/note`, { text }),
     onSuccess: () => {
@@ -638,7 +656,13 @@ export default function BillingPipeline() {
     const data = restricted
       ? { products: editData.products, paymentMethod: editData.paymentMethod, scheduledBillingDate: editData.scheduledBillingDate, notes: editData.notes }
       : editData;
-    updateItemMutation.mutate({ id: detailItem.id, data });
+    // BLOQUEADO: id é do blocked_orders, não de um item do pipeline → endpoint próprio (senão a
+    // edição não persiste). O valor total é recalculado pela soma dos produtos no backend.
+    if (String(detailItem.stage) === 'bloqueado') {
+      updateBlockedMutation.mutate({ id: detailItem.id, data: { products: editData.products, paymentMethod: editData.paymentMethod, operationType: editData.operationType, saleValue: editData.saleValue } });
+    } else {
+      updateItemMutation.mutate({ id: detailItem.id, data });
+    }
   };
   const blockOrderMutation = useMutation({
     mutationFn: async (vars: { id: string; reason?: string }) => await apiRequest('POST', `/api/billing-pipeline/${vars.id}/block`, { reason: vars.reason || '' }),
@@ -1922,7 +1946,7 @@ export default function BillingPipeline() {
               {editMode && (
                 <div className="border-t pt-4 flex justify-end gap-2">
                   <Button variant="outline" size="sm" onClick={() => setEditMode(false)}>Cancelar</Button>
-                  <Button size="sm" onClick={saveEdit} disabled={updateItemMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white" data-testid="button-save-order">{updateItemMutation.isPending ? 'Salvando…' : 'Salvar alterações'}</Button>
+                  <Button size="sm" onClick={saveEdit} disabled={updateItemMutation.isPending || updateBlockedMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white" data-testid="button-save-order">{(updateItemMutation.isPending || updateBlockedMutation.isPending) ? 'Salvando…' : 'Salvar alterações'}</Button>
                 </div>
               )}
               {!editMode && (
