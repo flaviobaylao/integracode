@@ -137,14 +137,19 @@ function PendingCard({ r }: { r: any }) {
     },
     onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
-  // 💬 Réplica do admin ao vendedor (report): registra a mensagem na conversa e MANTÉM
-  // o report pendente — vira um vai-e-volta admin↔vendedor, igual à Solicitação de Alteração.
+  // 💬 Réplica do admin ao vendedor (report): registra a mensagem na conversa e, em seguida,
+  // FECHA o report (status "lido") — ao acionar "Réplica" o card SAI de pendentes. O vendedor
+  // continua recebendo a resposta no card do atendimento.
   const replyMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/reply`, { text: note.trim() }),
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/change-requests/${r.id}/reply`, { text: note.trim() });
+      return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
+    },
     onSuccess: () => {
-      toast({ title: "Réplica enviada", description: "O vendedor recebe a resposta no card do atendimento." });
+      toast({ title: "Réplica enviada", description: "O vendedor recebe a resposta e o card saiu de pendentes." });
       setNote("");
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
     },
     onError: (e: any) => toast({ title: "Erro ao enviar réplica", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
