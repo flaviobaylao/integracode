@@ -372,8 +372,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     if (!cid) return;
     setIsFetchingPrev(true);
     try {
-      const res = await apiRequest('GET', `/api/customers/${cid}/last-order`);
-      const data = await res.json();
+      // apiRequest JA devolve o JSON parseado (client/src/lib/queryClient.ts faz o
+      // JSON.parse e retorna o objeto, nao um Response). Chamar .json() em cima dele
+      // estourava "(intermediate value).json is not a function" e o botao nunca
+      // chegava a abrir o popup.
+      const data: any = await apiRequest('GET', `/api/customers/${cid}/last-order`);
+      // O pipeline pode gravar `products` como texto JSON; normaliza antes de checar.
+      if (data && typeof data.products === 'string') {
+        try { data.products = JSON.parse(data.products); } catch { data.products = []; }
+      }
       if (!data || !data.hasOrder || !Array.isArray(data.products) || data.products.length === 0) {
         toast({
           title: 'Sem pedido anterior',
