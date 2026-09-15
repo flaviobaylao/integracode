@@ -394,6 +394,12 @@ export const products = pgTable("products", {
   //   materia-prima e o item volta a ser vendido depois (ex.: UVA).
   // Liga/desliga por produto na tela de Produtos. Default true = nada muda.
   availableForSale: boolean("available_for_sale").notNull().default(true),
+  // USO INTERNO (set/2026) — itens que NAO sao do catalogo de vendas (ex.: bombonas
+  // plasticas vendidas como material reciclavel). Ficam invisiveis para vendedor,
+  // telemarketing, motorista e industria e nunca aparecem no hotsite; so admin,
+  // coordenador e administrativo enxergam e podem lancar pedido com eles.
+  // Default false = nenhum produto existente muda de comportamento.
+  internalOnly: boolean("internal_only").notNull().default(false),
   
   // Multi-tenant Omie: identificação da instância de origem
   omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem

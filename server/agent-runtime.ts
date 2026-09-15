@@ -359,8 +359,8 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
     const _tokens = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
     const _comFicha = await temTabelaFichas();
     const _all: any = _comFicha
-      ? await db.execute(sql`SELECT p.name, p.price, p.retail_price, p.resale_goiania_price, p.stock, p.available_for_sale, (d.product_id IS NOT NULL) AS tem_ficha FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id WHERE p.is_active=true ORDER BY p.name`)
-      : await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock, available_for_sale, false AS tem_ficha FROM products WHERE is_active=true ORDER BY name`);
+      ? await db.execute(sql`SELECT p.name, p.price, p.retail_price, p.resale_goiania_price, p.stock, p.available_for_sale, (d.product_id IS NOT NULL) AS tem_ficha FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id WHERE p.is_active=true AND p.internal_only = false ORDER BY p.name`)
+      : await db.execute(sql`SELECT name, price, retail_price, resale_goiania_price, stock, available_for_sale, false AS tem_ficha FROM products WHERE is_active=true AND internal_only = false ORDER BY name`);
     const _rows0 = (_all.rows || []).filter((p: any) => { const n = _norm(p.name); return _tokens.length ? _tokens.every((t: string) => n.includes(t)) : n.includes(_norm(termo)); }).slice(0, 8);
     const r: any = { rows: _rows0 };
       if (!r.rows?.length) return `Nenhum produto encontrado com "${termo}".`;
@@ -480,7 +480,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     // Catálogo ativo + matcher por tokens (mesma lógica do consultar_produto).
     const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const _stop = new Set(['de', 'da', 'do', 'com', 'e', 'a', 'o', 'os', 'as', 'para', 'por', 'sabor', 'ml', 'l', 'un', 'und', 'suco', 'sucos']);
-    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock, available_for_sale FROM products WHERE is_active=true ORDER BY name`);
+    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock, available_for_sale FROM products WHERE is_active=true AND internal_only = false ORDER BY name`);
     const catalog: any[] = _all.rows || [];
     const matchP = (termo: string) => {
       const toks = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));

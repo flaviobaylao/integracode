@@ -34,6 +34,8 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
     resaleGoianiaPrice: '',
     resaleInteriorPrice: '',
     resaleBrasiliaPrice: '',
+    // Item de USO INTERNO: fica fora do catalogo de vendas (ver checkbox no form).
+    internalOnly: false,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { toast } = useToast();
@@ -56,6 +58,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         resaleGoianiaPrice: editingProduct.resaleGoianiaPrice || '',
         resaleInteriorPrice: editingProduct.resaleInteriorPrice || '',
         resaleBrasiliaPrice: editingProduct.resaleBrasiliaPrice || '',
+        internalOnly: (editingProduct as any).internalOnly === true,
       });
     } else {
       setFormData({
@@ -73,6 +76,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         resaleGoianiaPrice: '',
         resaleInteriorPrice: '',
         resaleBrasiliaPrice: '',
+        internalOnly: false,
       });
     }
     setErrors({});
@@ -128,6 +132,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         resaleGoianiaPrice: formData.resaleGoianiaPrice !== '' ? parseFloat(formData.resaleGoianiaPrice) : undefined,
         resaleInteriorPrice: formData.resaleInteriorPrice !== '' ? parseFloat(formData.resaleInteriorPrice) : undefined,
         resaleBrasiliaPrice: formData.resaleBrasiliaPrice !== '' ? parseFloat(formData.resaleBrasiliaPrice) : undefined,
+        internalOnly: formData.internalOnly === true,
       };
 
       const validatedData = insertProductSchema.parse(dataToValidate);
@@ -211,6 +216,24 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
           
           <div className="border-t border-gray-200 pt-4">
             <h3 className="text-sm font-semibold mb-3">Fiscal e tabelas de preço (opcional)</h3>
+            <label className="flex items-start gap-2 mb-4 p-3 rounded-md border border-amber-300 bg-amber-50 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={formData.internalOnly}
+                onChange={(e) => setFormData(prev => ({ ...prev, internalOnly: e.target.checked }))}
+                data-testid="input-internal-only"
+              />
+              <span className="text-sm">
+                <b>Item de uso interno</b> — fora do catálogo de vendas
+                <span className="block text-xs text-gray-600">
+                  Ex.: bombonas e outros materiais recicláveis. Não aparece para vendedor,
+                  telemarketing, motorista nem indústria, e nunca vai para o site. Só admin,
+                  coordenador e administrativo podem lançar pedido com ele.
+                </span>
+              </span>
+            </label>
+
             <p className="text-xs text-gray-500 mb-3">
               Pode deixar em branco e preencher depois — nada aqui impede salvar o produto.
               Sem NCM, a NF-e do produto será recusada até que ele seja informado.
