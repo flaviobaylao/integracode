@@ -11,6 +11,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import WhatsAppButton from "./WhatsAppButton";
 import EditablePhoneField from "./EditablePhoneField";
+import { ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
 import { 
   Calendar, 
   Clock, 
@@ -946,7 +947,17 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           </div>
         )}
 
-        <div className="flex justify-end space-x-3 pt-4">
+        <div className="flex flex-wrap justify-end items-center gap-3 pt-4">
+          {/* 📋 Solicitar Alteração — abre a solicitação formal p/ este cliente. */}
+          {card?.customer?.id && (
+            <ChangeRequestControl
+              entityType="customer"
+              entityId={String(card.customer.id)}
+              customerId={card.customer.id}
+              entityName={card.customer.fantasyName || card.customer.name}
+              sellerId={(card as any).sellerId ?? card.seller?.id}
+            />
+          )}
           <Button variant="outline" onClick={onClose}>
             Fechar
           </Button>
