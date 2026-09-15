@@ -2698,6 +2698,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // LIMPEZA DE PENDENCIAS VENCIDAS (por cliente): CANCELA (visit_status='cancelled', reversivel)
+  // as visitas da AGENDA que ficaram PENDENTES em datas ANTERIORES a hoje (residuo/duplicatas de
+  // cadencia antiga que nunca foram atendidas). NAO toca em hoje, no futuro, nem nas concluidas.
+  // Escopo OBRIGATORIO por customerId (evita cancelar o backlog de nao-visitados do sistema todo).
+  // { "dryRun": true } (padrao) so conta; { "dryRun": false } aplica.
+  app.post('/api/admin/overdue-agenda/clean', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false; // padrao: dry-run
+      const customerId = req.body?.customerId ? String(req.body.customerId) : null;
+      if (!customerId) return res.status(400).json({ ok: false, error: 'customerId e obrigatorio' });
+      const n = ((await db.execute(sql`
+        SELECT COUNT(*)::int AS n
+          FROM visit_agenda va
+         WHERE va.visit_status = 'pending'
+           AND va.customer_id = ${customerId}
+           AND va.scheduled_date < (now() AT TIME ZONE 'UTC')::date
+      `)).rows[0] as any).n;
+      if (dryRun) return res.json({ ok: true, dryRun: true, afetadas: n });
+      await db.execute(sql`
+        UPDATE visit_agenda AS vu
+           SET visit_status = 'cancelled', updated_at = now()
+          FROM (
+            SELECT va.id
+              FROM visit_agenda va
+             WHERE va.visit_status = 'pending'
+               AND va.customer_id = ${customerId}
+               AND va.scheduled_date < (now() AT TIME ZONE 'UTC')::date
+          ) t
+         WHERE vu.id = t.id
+      `);
+      res.json({ ok: true, dryRun: false, canceladas: n });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
   app.post('/api/customers', authenticateUser, requirePermission("Clientes / Carteira", "criar"), async (req: any, res) => {
     try {
       // 🔍 LOG 1: Payload recebido do frontend
