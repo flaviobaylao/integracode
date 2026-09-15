@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, MessageCircle } from "lucide-react";
+import { Inbox, CheckCircle2, AlertTriangle, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2 } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -90,7 +90,7 @@ function Detalhes({ details }: { details: any }) {
   );
 }
 
-function PendingCard({ r }: { r: any }) {
+function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boolean; onToggleSelect?: (id: string) => void }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
   // Item 4: ao retornar "Efetuadas", a rota do dia do vendedor é reotimizada automaticamente.
@@ -164,6 +164,16 @@ function PendingCard({ r }: { r: any }) {
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-semibold flex items-center gap-1.5">
+            {onToggleSelect && (
+              <input
+                type="checkbox"
+                checked={!!selected}
+                onChange={() => onToggleSelect(r.id)}
+                className="h-4 w-4 shrink-0 accent-indigo-600 cursor-pointer"
+                title="Selecionar para limpar em lote"
+                data-testid={`cr-select-${r.id}`}
+              />
+            )}
             <span>{r.entityName || r.entityId}</span>
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
@@ -246,25 +256,6 @@ function PendingCard({ r }: { r: any }) {
           </Button>
         )}
         </>)}
-        {/* 📲 Enviar para wzap: abre o WhatsApp (wa.me) do cliente/lead já com o texto do card. */}
-        {r.phone && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-green-500 text-green-700 hover:bg-green-50"
-            title="Abrir o WhatsApp do cliente com o texto do card"
-            data-testid="cr-enviar-wzap"
-            onClick={() => {
-              const digits = String(r.phone || "").replace(/\D/g, "");
-              if (!digits) return;
-              const withCountry = digits.length <= 11 ? "55" + digits : digits;
-              const texto = (note.trim() || rd.texto || rd.motivo || "").toString();
-              window.open("https://wa.me/" + withCountry + (texto ? "?text=" + encodeURIComponent(texto) : ""), "_blank", "noopener,noreferrer");
-            }}
-          >
-            <MessageCircle className="h-4 w-4 mr-1" /> Enviar para wzap
-          </Button>
-        )}
       </div>
     </Card>
   );
@@ -374,6 +365,25 @@ export default function SolicitacoesAlteracao() {
   // Filtro por vendedor (quem solicitou; aplica a Pendentes e Resolvidas).
   const [filtroVendedor, setFiltroVendedor] = useState("");
 
+  // ✅ Seleção em lote + "Limpar caixa de pendentes": marca solicitações e as resolve
+  // (status "lido") de uma vez — elas saem de Pendentes e vão para Resolvidas.
+  const { toast } = useToast();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const bulkClear = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(ids.map((id) => apiRequest("POST", `/api/change-requests/${id}/resolve`, { status: "lido" })));
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      return { ok, fail: results.length - ok };
+    },
+    onSuccess: ({ ok, fail }: any) => {
+      toast({ title: "Caixa de pendentes limpa", description: `${ok} solicitação(ões) enviada(s) para Resolvidas${fail ? ` · ${fail} falharam` : ""}.` });
+      setSelected(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao limpar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+
   if (!isAdmin) {
     return <div className="p-6 text-sm text-muted-foreground">Acesso restrito aos administradores.</div>;
   }
@@ -398,6 +408,16 @@ export default function SolicitacoesAlteracao() {
   const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName));
   const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName));
   const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s));
+
+  // Seleção em lote (escopada à lista de pendentes já filtrada).
+  const selectedIds = pendingF.filter((r) => selected.has(r.id)).map((r) => r.id);
+  const allSelected = pendingF.length > 0 && selectedIds.length === pendingF.length;
+  const toggleSelect = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleSelectAll = () => setSelected(() => (allSelected ? new Set<string>() : new Set(pendingF.map((r) => r.id))));
+  const limparCaixa = () => {
+    if (selectedIds.length === 0) return;
+    if (window.confirm(`Limpar ${selectedIds.length} solicitação(ões) da caixa de pendentes? Elas vão para Resolvidas (marcadas como lidas).`)) bulkClear.mutate(selectedIds);
+  };
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
@@ -445,12 +465,25 @@ export default function SolicitacoesAlteracao() {
               {sugestoesF.map((s) => <CarteiraSugestaoCard key={s.id} s={s} />)}
             </div>
           )}
+          {pendingF.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pb-2 border-b">
+              <Button variant="outline" size="sm" className="gap-1" onClick={toggleSelectAll} data-testid="cr-selecionar-tudo">
+                {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                {allSelected ? "Desmarcar tudo" : "Selecionar tudo"}
+              </Button>
+              <span className="text-xs text-muted-foreground">{selectedIds.length} selecionada(s)</span>
+              <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 ml-auto gap-1" disabled={selectedIds.length === 0 || bulkClear.isPending} onClick={limparCaixa} data-testid="cr-limpar-caixa">
+                {bulkClear.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Limpar caixa de pendentes{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+              </Button>
+            </div>
+          )}
           {loadingP ? (
             <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
           ) : pendingF.length === 0 ? (
             sugestoesF.length === 0 ? <div className="text-sm text-muted-foreground py-8 text-center">Nenhuma solicitação pendente. 🎉</div> : null
           ) : (
-            pendingF.map((r) => <PendingCard key={r.id} r={r} />)
+            pendingF.map((r) => <PendingCard key={r.id} r={r} selected={selected.has(r.id)} onToggleSelect={toggleSelect} />)
           )}
         </TabsContent>
 
