@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { CanalBadge, CanalLegenda } from "@/components/CanalBadge";
 
 const ROXO = "#8b5cf6";
 
@@ -110,6 +111,7 @@ export default function CaixaDecisoes() {
             A IA propõe; você decide; o sistema executa e mede. Pelo WhatsApp funciona igual: <code>OK 12</code>, <code>NAO 12</code>, <code>OK TUDO</code>.
             {d.aprovadores?.length ? " Aprovadores: " + d.aprovadores.join(", ") : " Nenhum aprovador cadastrado — defina telefone_gestor_relatorios."}
           </p>
+          <CanalLegenda />
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
@@ -144,6 +146,7 @@ export default function CaixaDecisoes() {
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap gap-1 items-center text-xs">
                         <span className="font-mono font-semibold">#{a.numero}</span>
+                        <CanalBadge canal={a.canal} via={a.canal_via} quem={a.canal_quem} />
                         <Badge variant="outline">{TIPO_LABEL[a.tipo] || a.tipo}</Badge>
                         <Badge variant="outline" style={{ borderColor: NIVEL[a.nivel_efetivo]?.cor, color: NIVEL[a.nivel_efetivo]?.cor }}>{NIVEL[a.nivel_efetivo]?.t}</Badge>
                         {a.modo_teste && <Badge variant="outline">modo teste — não executa</Badge>}

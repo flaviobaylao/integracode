@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { CanalBadge, CanalLegenda } from "@/components/CanalBadge";
 
 async function apiGet(url: string) {
   const r = await fetch(url, { credentials: "include", cache: "no-store" });
@@ -109,7 +110,7 @@ export default function MarketingHoje() {
       {/* Números do dia */}
       <Card>
         <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-          <Kpi t="Esperando você" v={num(d.resumoPendentes?.n)} sub={brl(d.resumoPendentes?.receita) + " esperados"} destaque />
+          <Kpi t="Esperando você" v={num(d.resumoPendentes?.n)} sub={porCanal(pendentes) || (brl(d.resumoPendentes?.receita) + " esperados")} destaque />
           <Kpi t="Rodando (14d)" v={num(d.totaisAoVivo?.acoes)} sub={brl(d.totaisAoVivo?.custo) + " gastos"} />
           <Kpi t="Rendeu ao vivo" v={brl(d.totaisAoVivo?.receita)} sub={num(d.totaisAoVivo?.pedidos) + " pedido(s) dos tocados"} />
           <Kpi t="Decisões 7d" v={num(d.decisoes7d?.aprovadas) + " ✓ / " + num(d.decisoes7d?.rejeitadas) + " ✗"} sub="rumo ao N1 (10 com ≥ 90%)" />
@@ -122,6 +123,7 @@ export default function MarketingHoje() {
           {modoBadge("mkt_radar_modo", "Radar")}{modoBadge("mkt_conteudo_modo", "Conteúdo")}{modoBadge("mkt_publicador_modo", "Publicador")}{modoBadge("mkt_insights_modo", "Insights")}{modoBadge("mkt_capi_mode", "CAPI")}
           {d.ig?.conectado && <Badge variant="outline" style={{ borderColor: VERDE, color: VERDE }}>@{d.ig.username} · {d.ig.diasRestantes}d</Badge>}
         </CardContent>
+        <CardContent className="px-3 pb-3 pt-0"><CanalLegenda /></CardContent>
       </Card>
 
       {/* 1. O que os agentes fizeram */}
@@ -185,6 +187,7 @@ export default function MarketingHoje() {
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1">
                     <b>#{p.numero}</b>
+                    <CanalBadge canal={p.canal} via={p.canalVia?.canal} quem={p.canalQuem} grande />
                     <Badge variant="outline">{p.tipoNome}</Badge>
                     {p.categoria && <Badge variant="outline">{p.categoria}</Badge>}
                     {p.modo_teste && <Badge variant="outline" style={{ color: ROXO, borderColor: ROXO }}>teste — só simula</Badge>}
@@ -192,6 +195,7 @@ export default function MarketingHoje() {
                   </div>
                   <div className="font-medium">{p.titulo}</div>
                   <div className="text-xs text-muted-foreground">{num(p.publico_total)} cliente(s) · custo {brl(p.custo)} → esperado <b style={{ color: VERDE }}>{brl(p.receita)}</b></div>
+                  {p.canalQuem && <div className="text-[11px] text-muted-foreground">{p.canalQuem}</div>}
                   <button className="text-xs underline" onClick={() => setAberta(aberta === p.id ? null : p.id)}>{aberta === p.id ? "esconder" : "por quê?"}</button>
                   {aberta === p.id && <div className="text-xs mt-1 whitespace-pre-wrap">{p.justificativa}</div>}
                 </div>
@@ -210,7 +214,7 @@ export default function MarketingHoje() {
               {d.pecas.filaLista.map((x: any) => (
                 <div key={x.id} className="border rounded p-2 text-sm mt-1 flex gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] text-muted-foreground">#{x.numero} · {x.canal} · {x.gancho}{x.rodada > 1 ? " · rodada " + x.rodada : ""}</div>
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1">#{x.numero} <CanalBadge canal={x.canalInfo?.canal} /> {x.gancho}{x.rodada > 1 ? " · rodada " + x.rodada : ""}</div>
                     <div>{x.trecho}…</div>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -232,7 +236,7 @@ export default function MarketingHoje() {
           {rodando.map((r: any) => (
             <div key={r.id} className="border rounded p-2">
               <div className="flex flex-wrap items-center gap-1">
-                <b>#{r.numero}</b><Badge variant="outline">{r.tipoNome}</Badge>
+                <b>#{r.numero}</b><CanalBadge canal={r.canal} via={r.canalVia?.canal} quem={r.canalQuem} /><Badge variant="outline">{r.tipoNome}</Badge>
                 <Badge variant="outline" style={{ color: r.status === "erro" ? VERM : r.status === "executada" ? VERDE : ROXO, borderColor: r.status === "erro" ? VERM : r.status === "executada" ? VERDE : ROXO }}>{r.status}{r.modoTeste ? " (simulada)" : ""}</Badge>
                 <span className="text-[11px] text-muted-foreground">{dataHora(r.executadaEm)}{r.decididoVia ? " · via " + r.decididoVia : ""}</span>
               </div>
@@ -258,7 +262,7 @@ export default function MarketingHoje() {
           {(d.pecas?.noAr || []).length === 0 && <div className="text-muted-foreground">Nenhuma peça publicada nos últimos 14 dias.</div>}
           {(d.pecas?.noAr || []).map((p: any) => (
             <div key={p.id} className="border rounded p-2 flex flex-wrap items-center gap-2">
-              <span><b>#{p.numero}</b> {p.gancho ? <Badge variant="outline">{p.gancho}</Badge> : null} {p.titulo}</span>
+              <span><b>#{p.numero}</b> <CanalBadge canal={p.canalInfo?.canal} /> {p.gancho ? <Badge variant="outline">{p.gancho}</Badge> : null} {p.titulo}</span>
               <span className="text-xs text-muted-foreground ml-auto">
                 {p.metricas ? "alcance " + num(p.metricas.alcance) + " · curtidas " + num(p.metricas.curtidas) + " · salvos " + num(p.metricas.salvos) : "sem métricas ainda"} · {num(p.cliques)} clique(s)
                 {p.permalink && <> · <a className="underline" href={p.permalink} target="_blank" rel="noreferrer">abrir</a></>}
@@ -269,6 +273,13 @@ export default function MarketingHoje() {
       </Card>
     </div>
   );
+}
+
+function porCanal(lista: any[]): string {
+  const m: Record<string, number> = {};
+  for (const p of lista || []) if (p.canal) m[p.canal] = (m[p.canal] || 0) + 1;
+  const nomes: Record<string, string> = { whatsapp: "WhatsApp", instagram: "Instagram", facebook: "Facebook", google: "Google", loja: "Loja", presencial: "Visita", integra: "Integra" };
+  return Object.entries(m).map(([c, n]) => n + " " + (nomes[c] || c)).join(" · ");
 }
 
 function Kpi({ t, v, sub, destaque }: { t: string; v: string; sub?: string; destaque?: boolean }) {

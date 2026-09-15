@@ -19,6 +19,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { canalDaAcao, CANAL_ROTULO, CANAL_EMOJI } from './mkt-canal';
 
 export type TipoAcao = 'regua' | 'alerta' | 'peca' | 'campanha' | 'cupom' | 'visita' | 'anuncio' | 'sistema';
 
@@ -231,13 +232,19 @@ export async function listar(opts: { status?: string; limite?: number } = {}): P
   const r: any = opts.status
     ? await db.execute(sql`SELECT * FROM mkt_acoes WHERE status = ${opts.status} ORDER BY receita_esperada DESC, criado_em DESC LIMIT ${lim}`)
     : await db.execute(sql`SELECT * FROM mkt_acoes ORDER BY (status = 'proposta') DESC, criado_em DESC LIMIT ${lim}`);
-  return r.rows || [];
+  return (r.rows || []).map(comCanal);
+}
+
+/** Anexa o canal (whatsapp/instagram/...) a linha da acao — regra unica em mkt-canal.ts. */
+function comCanal(a: any): any {
+  const c = canalDaAcao(a);
+  return { ...a, canal: c.canal, canal_nome: CANAL_ROTULO[c.canal], canal_via: c.via || null, canal_via_nome: c.via ? CANAL_ROTULO[c.via] : null, canal_quem: c.quem };
 }
 
 export async function pendentes(): Promise<any[]> {
   if (!(await garantirSchema())) return [];
   const r: any = await db.execute(sql`SELECT * FROM mkt_acoes WHERE status = 'proposta' ORDER BY receita_esperada DESC, numero ASC`);
-  return r.rows || [];
+  return (r.rows || []).map(comCanal);
 }
 
 export async function ver(idOuNumero: string): Promise<any | null> {
@@ -600,7 +607,8 @@ export function textoResumo(pend: any[], extras: { autoHoje?: any[]; medidas?: a
     // Aviso curto: a decisao e feita no Painel do dia (com justificativa, publico e resultado ao vivo).
     for (const a of pend.slice(0, 5)) {
       const pub = Number(a.publico_total || 0);
-      linhas.push('*#' + a.numero + '* ' + String(a.titulo).slice(0, 90) + ' — ' + (pub ? pub + ' cli · ' : '') + 'esp. ' + brl(a.receita_esperada) + (a.modo_teste ? ' (teste)' : ''));
+      const cn = canalDaAcao(a);
+      linhas.push(CANAL_EMOJI[cn.canal] + ' *#' + a.numero + '* ' + String(a.titulo).slice(0, 90) + ' — ' + CANAL_ROTULO[cn.canal] + (cn.via ? ' + ' + CANAL_ROTULO[cn.via] : '') + ' · ' + (pub ? pub + ' cli · ' : '') + 'esp. ' + brl(a.receita_esperada) + (a.modo_teste ? ' (teste)' : ''));
     }
     if (pend.length > 5) linhas.push('… e mais ' + (pend.length - 5) + '.');
     linhas.push('');
