@@ -201,7 +201,10 @@ const NCM_INVALIDOS = new Set(['20098900', '22029000', '00000000']);
 function ncmDoProduto(raw: unknown): string {
   const d = String(raw ?? '').replace(/\D/g, '');
   if (!d) return NCM_SUCO_MISTO;
-  const v = d.padStart(8, '0').slice(0, 8);
+  // Mesma regra do normalizeNcm (sefaz-service): NCM incompleto completa a
+  // DIREITA, porque o codigo e hierarquico. Antes completava a esquerda e
+  // "3923.90" virava 00392390, que nao existe -> NF rejeitada pela SEFAZ.
+  const v = (d.length === 7 ? d.padStart(8, '0') : d.padEnd(8, '0')).slice(0, 8);
   return NCM_INVALIDOS.has(v) ? NCM_SUCO_MISTO : v;
 }
 
