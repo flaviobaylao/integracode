@@ -179,6 +179,7 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
+            {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
             {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
@@ -275,6 +276,7 @@ function ResolvedCard({ r }: { r: any }) {
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
+            {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
             {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span>{fmtDate(r.createdAt)}</span>
