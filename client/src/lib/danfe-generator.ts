@@ -114,6 +114,10 @@ export interface DanfeInvoice {
   emissionDate: string;
   authorizationDate?: string;
   createdAt: string;
+  // Informações complementares gravadas na emissão (= <infCpl> do XML).
+  infCpl?: string | null;
+  xmlAutorizacao?: string | null;
+  xmlEnvio?: string | null;
   // Volumes transportados (set/2026) — gravados na emissão, iguais ao XML.
   volQuantidade?: number | null;
   volEspecie?: string | null;
@@ -174,6 +178,21 @@ export async function generateDanfePdf(invoice: DanfeInvoice) {
   const nfNum = invoice.invoiceNumber || '0';
   const fileName = `DANFE_${nfNum}_${invoice.environment === 'homologacao' ? 'HOM' : 'PROD'}.pdf`;
   doc.save(fileName);
+}
+
+// Texto das informações complementares, na ordem de confiança: campo gravado na
+// emissão → <infCpl> do XML autorizado/enviado → observações do pedido.
+export function resolveInfCpl(invoice: any): string {
+  const gravado = String(invoice?.infCpl ?? invoice?.inf_cpl ?? '').trim();
+  if (gravado) return gravado;
+  const xml = String(invoice?.xmlAutorizacao || invoice?.xml_autorizacao || invoice?.xmlEnvio || invoice?.xml_envio || '');
+  const m = xml.match(/<infCpl>([\s\S]*?)<\/infCpl>/);
+  if (m && m[1]) {
+    return m[1]
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&')
+      .trim();
+  }
+  return String(invoice?.notes || '').trim();
 }
 
 export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string | null = null) {
@@ -654,7 +673,7 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
 
   const infoW = contentWidth * 0.65;
   const fiscoW = contentWidth - infoW;
-  const infoH = 20;
+  const infoH = 26;
   drawBox(margin, y, infoW, infoH);
   drawBox(margin + infoW, y, fiscoW, infoH);
 
@@ -665,10 +684,18 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   doc.text('RESERVADO AO FISCO', margin + infoW + 2, y + 3);
   doc.setTextColor(0);
 
-  doc.setFontSize(5.5);
-  const notesText = invoice.notes || '';
-  const noteLines = doc.splitTextToSize(notesText, infoW - 4);
-  doc.text(noteLines.slice(0, 6), margin + 2, y + 6);
+  // INFORMAÇÕES COMPLEMENTARES (set/2026): imprime o <infCpl> que foi no XML
+  // (observações + legendas do Simples Nacional / crédito de ICMS / RCTE / e-mail),
+  // gravado na nota na emissão. Nota antiga sem o campo gravado: lê do XML
+  // autorizado. Sem nenhum dos dois, cai nas observações, como antes.
+  const infCplText = resolveInfCpl(invoice);
+  doc.setFontSize(6);
+  const noteLines = infCplText
+    .split(' | ')
+    .map(p => p.trim())
+    .filter(Boolean)
+    .flatMap(p => doc.splitTextToSize(p, infoW - 4) as string[]);
+  doc.text(noteLines.slice(0, 9), margin + 2, y + 6, { lineHeightFactor: 1.15 });
 
   y += infoH;
 

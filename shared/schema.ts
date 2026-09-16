@@ -2820,6 +2820,13 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   // fardos arredondados para cima). Gravado aqui para a DANFE imprimir EXATAMENTE
   // o que foi à SEFAZ. Nulo = nota emitida sem volumes (produto sem cadastro).
   // ⚠️ Colunas no schema drizzle → o ALTER precisa rodar no boot (server/index.ts).
+  // INFORMAÇÕES COMPLEMENTARES (set/2026) — o <infAdic><infCpl> EXATAMENTE como
+  // foi no XML (observações do pedido + legendas legais: RCTE, Simples Nacional,
+  // crédito de ICMS do art. 23 da LC 123, e-mail do destinatário). A DANFE
+  // imprime daqui. A emissão já gravava este campo, mas sem a coluna no schema
+  // o drizzle descartava — por isso o rodapé da DANFE saía só com as observações.
+  // ⚠️ Coluna no schema drizzle → o ALTER precisa rodar no boot (server/index.ts).
+  infCpl: text("inf_cpl"),
   volQuantidade: integer("vol_quantidade"),
   volEspecie: varchar("vol_especie"),
   pesoLiquidoKg: decimal("peso_liquido_kg", { precision: 12, scale: 3 }),

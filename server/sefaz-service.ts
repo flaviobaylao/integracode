@@ -796,6 +796,7 @@ function buildDocumento(
   snCreditAliq: number = 0,
   duplicatas: NfeDuplicata[] | null = null,
   volumes: NfeVolumes | null = null,
+  destEmail: string | null = null,
 ): { documento: Record<string, any>; cNF: string; cUF: string; modelo: string } {
   const modelo = (invoice as any).invoiceModel || '55';
   const isNFCe = modelo === '65';
@@ -903,6 +904,10 @@ function buildDocumento(
       dest = { idEstrangeiro: '', xNome: destName, indIEDest: '9' };
     }
   }
+
+  // E-mail do destinatário (cadastro do cliente): vai no <dest><email> — a SEFAZ
+  // usa para o envio automático do XML — e repetido nas informações complementares.
+  if (dest && destEmail) dest.email = sanitizeStr(destEmail, 60);
 
   // O grupo enderDest é OBRIGATÓRIO na NF-e (modelo 55). Antes ele só era emitido
   // quando a nota tinha endereço OU cidade — cliente cadastrado sem nenhum dos
@@ -1817,6 +1822,7 @@ function buildDocumento(
     },
     ...((() => {
       const parts: string[] = [];
+      if (destEmail) parts.push(`Email do Destinatario: ${sanitizeStr(destEmail, 60)}`);
       if (invoice.notes) parts.push(String(invoice.notes).trim());
       if (usedRcteRedBc) {
         const rcteTxt = 'Reducao de base de calculo conforme: Artigo 8o, inciso VIII, do Anexo IX do RCTE/GO';
@@ -1827,7 +1833,7 @@ function buildDocumento(
       // destinatário, nos termos do art. 23 da LC 123/2006.
       if (crt === '1' || crt === '2') {
         const fmtBR = (n: number, d: number) => n.toFixed(d).replace('.', ',');
-        let snTxt = 'Documento emitido por ME ou EPP optante pelo Simples Nacional. Nao gera direito a credito fiscal de IPI.';
+        let snTxt = 'Inf. Contribuinte: I-Documento emitido por ME ou EPP, optante pelo Simples Nacional. II-Nao gera direito a credito fiscal de IPI.';
         if (sumVCredSN > 0 && snCredAliqUsed > 0) {
           snTxt += ` Permite o aproveitamento de credito do ICMS de R$ ${fmtBR(sumVCredSN, 2)} conforme aliquota do Simples Nacional de ${fmtBR(snCredAliqUsed, 2)}%, nos termos do art. 23 da LC 123.`;
         }
@@ -2310,8 +2316,17 @@ export class SefazService {
       if (pagamentoCartao) (invoice as any).pagamentoCartao = pagamentoCartao;
       // Volumes (fardos) e pesos totalizados, do cadastro logístico dos produtos.
       const volumesNf = await loadVolumesDaNf(items);
+      // E-mail do destinatário, do cadastro do cliente (best-effort; sem e-mail a nota sai como antes).
+      let destEmailNf: string | null = null;
+      try {
+        if (invoice.customerId) {
+          const er: any = await db.execute(sql`SELECT email FROM customers WHERE id = ${invoice.customerId}`);
+          const em = String(er.rows?.[0]?.email || '').trim();
+          if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) destEmailNf = em;
+        }
+      } catch (e: any) { console.warn('[SEFAZ] e-mail do destinatário não carregado:', e?.message); }
       if (volumesNf) console.log(`[SEFAZ] <vol>: ${volumesNf.qVol} ${volumesNf.esp}, líq. ${volumesNf.pesoL.toFixed(3)} kg, bruto ${volumesNf.pesoB.toFixed(3)} kg`);
-      const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq, duplicatasNf, volumesNf);
+      const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq, duplicatasNf, volumesNf, destEmailNf);
       const isNFCe = modelo === '65';
 
       // ── Persiste valores de impostos calculados nos itens e na nota ───────
