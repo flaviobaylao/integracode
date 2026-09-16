@@ -400,7 +400,24 @@ export const products = pgTable("products", {
   // coordenador e administrativo enxergam e podem lancar pedido com eles.
   // Default false = nenhum produto existente muda de comportamento.
   internalOnly: boolean("internal_only").notNull().default(false),
-  
+
+  // LOGÍSTICA (set/2026) — peso, dimensões, fardo e paletização. São as ENTRADAS
+  // medidas na fábrica; tudo o que deriva delas (medidas e peso do fardo, palete,
+  // pesos totalizados da NF-e) é calculado em shared/logistica-produto.ts.
+  // Pesos em GRAMAS, medidas em CENTÍMETROS. Tudo opcional: produto sem esses
+  // dados continua vendendo normalmente — só não entra no <vol> da NF-e.
+  // ⚠️ Colunas no schema drizzle → o ALTER precisa rodar no boot (server/index.ts).
+  pesoBrutoG: decimal("peso_bruto_g", { precision: 8, scale: 1 }),       // garrafa cheia, com tampa e rótulo
+  pesoEmbalagemG: decimal("peso_embalagem_g", { precision: 8, scale: 1 }), // só o plástico da garrafa
+  diametroCm: decimal("diametro_cm", { precision: 6, scale: 1 }),
+  alturaCm: decimal("altura_cm", { precision: 6, scale: 1 }),
+  fardoFilas: integer("fardo_filas"),          // filas de garrafas no fardo
+  fardoPorFila: integer("fardo_por_fila"),     // garrafas por fila
+  fardoFilmeG: decimal("fardo_filme_g", { precision: 6, scale: 1 }), // filme termoencolhível (default 30 g)
+  paletFardosCamada: integer("palet_fardos_camada"),
+  paletCamadas: integer("palet_camadas"),
+  paletTipo: varchar("palet_tipo"),            // ex.: "PBR-1 1,20 × 1,00 m"
+
   // Multi-tenant Omie: identificação da instância de origem
   omieInstanceId: varchar("omie_instance_id"), // Referência à instância Omie de origem
   
@@ -1369,7 +1386,36 @@ export const insertProductSchema = createInsertSchema(products).omit({
   resaleGoianiaPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
   resaleInteriorPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
   resaleBrasiliaPrice: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).optional().nullable(),
+  // Logística: decimais aceitam número ou string (vírgula inclusive); vazio vira null.
+  pesoBrutoG: zDecimalOpcional(),
+  pesoEmbalagemG: zDecimalOpcional(),
+  diametroCm: zDecimalOpcional(),
+  alturaCm: zDecimalOpcional(),
+  fardoFilmeG: zDecimalOpcional(),
+  fardoFilas: zInteiroOpcional(),
+  fardoPorFila: zInteiroOpcional(),
+  paletFardosCamada: zInteiroOpcional(),
+  paletCamadas: zInteiroOpcional(),
 });
+
+function zDecimalOpcional() {
+  return z.union([z.string(), z.number(), z.null()])
+    .transform(val => {
+      if (val === null || val === '') return null;
+      const n = typeof val === 'number' ? val : parseFloat(String(val).replace(',', '.'));
+      return Number.isFinite(n) ? String(n) : null;
+    })
+    .optional().nullable();
+}
+function zInteiroOpcional() {
+  return z.union([z.string(), z.number(), z.null()])
+    .transform(val => {
+      if (val === null || val === '') return null;
+      const n = typeof val === 'number' ? val : parseInt(String(val), 10);
+      return Number.isFinite(n) ? Math.trunc(n) : null;
+    })
+    .optional().nullable();
+}
 
 export const insertProductReviewSchema = createInsertSchema(productReviews).omit({
   id: true,
@@ -2769,6 +2815,15 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   orderHistoryId: varchar("order_history_id"),
   referencedAccessKey: varchar("referenced_access_key"),
   finNFe: varchar("fin_nfe").default('1'),
+  // VOLUMES TRANSPORTADOS (set/2026) — grupo <transp><vol> da NF-e, calculado
+  // na emissão a partir do cadastro logístico dos produtos (peso × quantidade,
+  // fardos arredondados para cima). Gravado aqui para a DANFE imprimir EXATAMENTE
+  // o que foi à SEFAZ. Nulo = nota emitida sem volumes (produto sem cadastro).
+  // ⚠️ Colunas no schema drizzle → o ALTER precisa rodar no boot (server/index.ts).
+  volQuantidade: integer("vol_quantidade"),
+  volEspecie: varchar("vol_especie"),
+  pesoLiquidoKg: decimal("peso_liquido_kg", { precision: 12, scale: 3 }),
+  pesoBrutoKg: decimal("peso_bruto_kg", { precision: 12, scale: 3 }),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
