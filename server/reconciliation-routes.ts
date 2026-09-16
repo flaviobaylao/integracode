@@ -8,6 +8,7 @@ import { settleBoletoCharge } from "./bb-boleto-service";
 import { fetchExtrato, diagnosticarExtrato } from "./bb-extrato-service";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { lerSentinelaWebhook } from "./webhook-security";
+import { registerCieloEdi, cieloAposImportacao, cieloAoDesfazer } from "./cielo-edi";
 const FIN_ROLES = ["admin", "coordinator", "administrative"]; // FASE 1c
 
 // ---------------------------------------------------------------------------
@@ -1871,6 +1872,7 @@ export function registerReconciliation(app: Express) {
               matched_by = ${by}, match_confidence = null, notes = null
           WHERE id = ${id}`);
       });
+      try { await cieloAoDesfazer(id, by); } catch {}
       await logReconAudit({ action: "undo", itemId: id, statementId: item.statement_id || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: matches.map((m: any) => ({ receivable_id: m.receivable_id, payable_id: m.payable_id, amount: m.amount, settled: m.title_amount_settled })), by, details: { reverted } });
       return { ok: true, status: ehEspelho ? "mirror" : "pending", reverted };
     }
@@ -1888,7 +1890,7 @@ export function registerReconciliation(app: Express) {
           SELECT bank_statement_item_id AS iid,
                  sum(COALESCE(title_amount_settled, amount)::numeric) AS soma,
                  count(*) AS titulos,
-                 bool_or(COALESCE(match_kind, '') = 'vinculo_sem_baixa') AS tem_vinculo
+                 bool_or(COALESCE(match_kind, '') IN ('vinculo_sem_baixa', 'cielo_vinculo', 'cielo_taxa', 'cielo_auto')) AS tem_vinculo
           FROM bank_statement_item_matches GROUP BY 1)
         SELECT i.id, to_char(i.transaction_date, 'YYYY-MM-DD') AS data, i.type AS tipo,
                round(i.amount::numeric, 2) AS valor_extrato, round(m.soma, 2) AS total_titulos,
@@ -2434,7 +2436,10 @@ export function registerReconciliation(app: Express) {
       let pixVinculados = 0;
       try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
       catch (e: any) { console.warn("[import-ofx] auto-link PIX webhook falhou:", e?.message || e); }
-      res.json({ ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, enriquecidos: r.enriquecidos, skipped: r.skipped, pixVinculados, totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
+      // Cielo (Extrato Eletrônico): casa repasses já importados com os créditos CIELO deste extrato.
+      let cielo: any = null;
+      try { cielo = await cieloAposImportacao(by); } catch {}
+      res.json({ ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, enriquecidos: r.enriquecidos, skipped: r.skipped, pixVinculados, cielo, totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2), period: { start: parsed.dtStart, end: parsed.dtEnd }, account: acc.name, instance: instanceId });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -2497,9 +2502,12 @@ export function registerReconciliation(app: Express) {
       let pixVinculados = 0;
       try { const pr = await conciliarPixWebhook(by, false); pixVinculados = pr.conciliados || 0; }
       catch (e: any) { console.warn("[import-bb-api] auto-link PIX webhook falhou:", e?.message || e); }
+      // Cielo (Extrato Eletrônico): casa repasses já importados com os créditos CIELO deste extrato.
+      let cielo: any = null;
+      try { cielo = await cieloAposImportacao(by); } catch {}
       res.json({
         ok: true, statementId: r.statementId, fileName, inserted: r.inserted, espelhados: r.espelhados, enriquecidos: r.enriquecidos,
-        skipped: r.skipped, pixVinculados, periodo: { de, ate }, paginas: ex.paginas,
+        skipped: r.skipped, pixVinculados, cielo, periodo: { de, ate }, paginas: ex.paginas,
         totalCredits: r.totalC.toFixed(2), totalDebits: r.totalD.toFixed(2),
         account: acc.name, instance: acc.omie_instance_id || null,
       });
@@ -4493,4 +4501,6 @@ export function registerReconciliation(app: Express) {
     }
   });
 
+  // ---- CIELO — Extrato Eletrônico (EDI): repasses conciliados com as vendas + taxa ----
+  registerCieloEdi(app, { settleReceivable, settlePayable, ensureSupplier, logReconAudit });
 }
