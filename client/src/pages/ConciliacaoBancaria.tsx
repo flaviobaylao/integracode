@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useCieloEdi, CieloBotoes, CieloLista, CieloPainel, CieloChip } from "@/components/CieloEdiPanel";
 import { hojeBR, diaMaisBR } from '@shared/tempo';
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import RelatorioConciliacao from "@/pages/RelatorioConciliacao";
@@ -399,6 +400,9 @@ export default function ConciliacaoBancaria() {
   // ABA DE TOPO: "Conciliar" (a tela de sempre) x "Relatórios" (modulo fixo de
   // relatorios de conciliacao). Read-only, nao interfere na conciliacao.
   const [abaTopo, setAbaTopo] = useState<"conciliar" | "relatorios">("conciliar");
+  // CIELO (Extrato Eletrônico): painel de repasses aberto na direita (id do arquivo ou "__all__")
+  const [cieloView, setCieloView] = useState<string | null>(null);
+  const cieloReloadRef = useRef<null | (() => void)>(null);
 
   const accountOptions = useMemo(
     () => accounts.filter((a) => !instance || a.omie_instance_id === instance),
@@ -415,17 +419,20 @@ export default function ConciliacaoBancaria() {
       : `/api/reconciliation/statements/${s.id}/items`;
     return fetch(url, { credentials: "include" })
       .then((r) => r.json())
-      .then((d) => setDetail(d))
+      .then((d) => { setDetail(d); try { cieloReloadRef.current && cieloReloadRef.current(); } catch {} })
       .catch(() => setDetail({ items: [], matchesByItem: {}, suggestions: {} }))
       .finally(() => setLoadingDetail(false));
   };
-  const openStatement = (s: Statement) => { setSelected(s); setDetail(null); setPage(0); setFilterText(""); setFilterStatus(""); loadDetail(s); };
+  const openStatement = (s: Statement) => { setCieloView(null); setSelected(s); setDetail(null); setPage(0); setFilterText(""); setFilterStatus(""); loadDetail(s); };
   // Livro único da conta: cada lançamento uma vez, todos os status (visão padrão).
   // Abre SEMPRE ordenado por data decrescente -> 1ª página = último lançamento.
   const openLedger = () => { setSortKey("date"); setSortDir("desc"); openStatement({ id: "__ledger__", file_name: "Livro da conta — todos os lançamentos" } as any); };
   // FASE 3.4b - visao consolidada: pendentes de todos os extratos da conta
   const openPendentes = () => openStatement({ id: "__pendentes__", file_name: "Pendentes — todos os extratos" } as any);
   const refresh = async () => { if (selected) await loadDetail(selected); await loadStatements(); };
+  const openCielo = (id: string) => { setSelected(null); setDetail(null); setCieloView(id); };
+  // Ir do repasse Cielo para o lançamento correspondente no Livro da conta
+  const irParaItem = (itemId: string) => { setFilterText(""); setFNome(""); setFValor(""); setFData(""); setFilterStatus(""); openLedger(); setTimeout(() => setDetId(itemId), 800); };
 
   const post = async (url: string, body: any) => {
     const r = await fetch(url, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -444,6 +451,15 @@ export default function ConciliacaoBancaria() {
       throw new Error((j?.error || ("HTTP " + r.status)) + problemas + numeros);
     }
     return j;
+  };
+
+  // CIELO: estado/chamadas do Extrato Eletrônico (arquivos, repasses, casamento com o BB)
+  const cielo = useCieloEdi({ me, post, refresh });
+  cieloReloadRef.current = cielo.loadSugestoes;
+  const doDeleteCielo = async (a: any) => {
+    if (!window.confirm(`Remover o arquivo Cielo "${a.file_name || a.id}"? (só é permitido se nenhum repasse dele estiver conciliado)`)) return;
+    try { await post(`/api/reconciliation/cielo-edi/arquivos/${a.id}/delete`, { by: me }); await cielo.loadArquivos(); await cielo.loadSugestoes(); if (cieloView === a.id) setCieloView("__all__"); }
+    catch (e: any) { alert("Erro ao remover: " + e.message); }
   };
 
   const items: Item[] = detail?.items || [];
@@ -857,6 +873,7 @@ export default function ConciliacaoBancaria() {
         <button onClick={() => runBatch("/api/reconciliation/conciliar-tarifas", "Conciliar tarifas do BB")} disabled={busy === "batch"} title="Concilia (dá baixa) as tarifas bancárias do BB pendentes — ação manual, não roda na importação" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">🧾 Conciliar tarifas BB</button>
         <button onClick={() => runBatch("/api/reconciliation/conciliar-pix-webhook", "Conciliar PIX recebidos")} disabled={busy === "batch"} title="Vincula os PIX recebidos já baixados via webhook aos títulos — ação manual, não roda na importação" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">↔ Conciliar PIX recebidos</button>
         <button onClick={runDedup} disabled={busy === "batch"} title="Colapsa duplicatas legadas (mesma transação em várias linhas) em uma só — reversível, não apaga nada" className="px-3 py-2 text-sm rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50">🧹 Deduplicar</button>
+        <CieloBotoes c={cielo} />
         <input ref={fileRef} type="file" accept=".ofx,.OFX,text/plain" className="hidden" onChange={onOfxFile} />
         <button onClick={onPickOfx} disabled={importing} title={account ? "Importar arquivo .ofx do banco" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{importing ? "Importando…" : "⬆ Importar OFX"}</button>
         <button onClick={abrirBbApi} disabled={importing} title={account ? "Puxar o extrato direto do Banco do Brasil (traz contraparte, CPF/CNPJ e hora)" : "Selecione a conta antes de importar"} className="px-3 py-2 text-sm rounded border border-yellow-500 text-yellow-800 bg-yellow-50 hover:bg-yellow-100 disabled:opacity-50">🏦 Importar via BB API</button>
@@ -893,12 +910,13 @@ export default function ConciliacaoBancaria() {
                 <button onClick={(e) => doDeleteStatement(s, e)} disabled={busy === "stmt:" + s.id} title={(s.reconciled || 0) > 0 ? "Desfaça as conciliações antes de remover" : "Remover extrato importado"} className="absolute top-2 right-2 text-gray-300 hover:text-red-600 text-sm disabled:opacity-40">🗑</button>
               </div>
             ))}
+            <CieloLista c={cielo} ativo={cieloView} onOpen={openCielo} onDelete={doDeleteCielo} />
           </div>
         </div>
 
         <div className="border rounded-lg overflow-hidden">
           <div className="px-4 py-2 border-b bg-gray-50 flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-sm">{selected ? `${selected.file_name || "Extrato"}` : "Selecione um extrato"}</span>
+            <span className="font-semibold text-sm">{cieloView ? (cieloView === "__all__" ? "Repasses Cielo — todos os arquivos" : `Extrato Cielo — ${cielo.arquivos.find((a: any) => a.id === cieloView)?.file_name || ""}`) : selected ? `${selected.file_name || "Extrato"}` : "Selecione um extrato"}</span>
             {selected && <span className="text-xs text-gray-500">{viewItems.length} lançamentos · <span className="text-amber-600">{pend} pend.</span> · <span className="text-green-600">{conc} conc.</span></span>}
             <div className="flex-1" />
             {selected && (
@@ -931,7 +949,8 @@ export default function ConciliacaoBancaria() {
               </>
             )}
           </div>
-          {!selected && <div className="p-8 text-center text-gray-400">Selecione um extrato na lista ao lado</div>}
+          {cieloView && <CieloPainel c={cielo} arquivoId={cieloView} accounts={accounts} onIrParaItem={irParaItem} />}
+          {!selected && !cieloView && <div className="p-8 text-center text-gray-400">Selecione um extrato na lista ao lado</div>}
           {selected && loadingDetail && <div className="p-8 text-center text-gray-400">Carregando itens…</div>}
           {selected && !loadingDetail && (
             <>
@@ -1002,6 +1021,7 @@ export default function ConciliacaoBancaria() {
                                 ))}
                               </div>
                             )}
+                            {cielo.sugPorItem[it.id] && <CieloChip s={cielo.sugPorItem[it.id]} />}
                             {ms.length === 0 && sg && sg.counterparty && (
                               <div className="text-xs">
                                 <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 mr-1">sugestão</span>
@@ -1025,7 +1045,7 @@ export default function ConciliacaoBancaria() {
                             {ms.length === 0 && sg && sg.pix && (
                               <div className="text-[11px] text-sky-700 mt-0.5">PIX recebido via webhook{sg.pix.pagador ? ` · pagador: ${sg.pix.pagador}` : ""}</div>
                             )}
-                            {ms.length === 0 && !sg && st === "pending" && <span className="text-xs text-gray-300">sem sugestão</span>}
+                            {ms.length === 0 && !sg && !cielo.sugPorItem[it.id] && st === "pending" && <span className="text-xs text-gray-300">sem sugestão</span>}
                             {st === "ignored" && it.notes && <span className="text-[11px] text-gray-400">{it.notes.split("|")[0]}</span>}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
