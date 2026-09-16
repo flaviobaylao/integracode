@@ -326,6 +326,37 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     }
   } catch (e) { console.warn('[computeRedCandidates] sales_cards check-in:', (e as any)?.message); }
 
+  // 3.2) Check-in da AGENDA de visita (visit_agenda.actual_check_in) — quando o vendedor faz o
+  // check-in na Rota do Dia, o registro pode ficar so' aqui. Conta como "visita feita" (data BR).
+  try {
+    const vac = (await db.execute(sql`
+      SELECT customer_id AS cid,
+             (actual_check_in AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d
+      FROM visit_agenda
+      WHERE actual_check_in IS NOT NULL AND customer_id IS NOT NULL
+        AND (actual_check_in AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= ${startDate}
+        AND (actual_check_in AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date <= ${endDate}
+      GROUP BY customer_id, d
+    `)).rows as any[];
+    for (const r of vac) { if (r.cid && r.d) checkpointSet.add(`${r.cid}_${r.d}`); }
+  } catch (e) { console.warn('[computeRedCandidates] visit_agenda check-in:', (e as any)?.message); }
+
+  // 3.3) Atendimento REGISTRADO na propria repescagem (assignment concluido) — o atendente marcou
+  // o cliente como atendido. Conta como atendimento (data da conclusao, BR), mesmo que por algum
+  // motivo nao haja log virtual espelhado. Garante que "atendido nao cai no dia seguinte".
+  try {
+    const rc = (await db.execute(sql`
+      SELECT customer_id AS cid,
+             (completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d
+      FROM repescagem_assignments
+      WHERE status = 'completed' AND completed_at IS NOT NULL AND customer_id IS NOT NULL
+        AND (completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= ${startDate}
+        AND (completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date <= ${endDate}
+      GROUP BY customer_id, d
+    `)).rows as any[];
+    for (const r of rc) { if (r.cid && r.d) checkpointSet.add(`${r.cid}_${r.d}`); }
+  } catch (e) { console.warn('[computeRedCandidates] repescagem concluida:', (e as any)?.message); }
+
   // 3.5) Atendimentos virtuais (registrados em resgate) contam como visita
   const vlogs = await db.select({
     customerId: virtualServiceLogs.customerId,
