@@ -20,7 +20,7 @@ import { type Express } from "express";
 import { authenticateUser } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { foraDaDivida } from "./divida-viva";
+import { foraDaDivida, naoEVenda } from "./divida-viva";
 
 // Decisão do Flavio (04/ago/2026): o Extrato é uma tela de CONSULTA (só GET, nada
 // editável) e fica liberada para TODOS os perfis, sem filtro de carteira —
@@ -495,6 +495,21 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const hojeDia = hojeBR(); // dia de hoje em America/Sao_Paulo (YYYY-MM-DD)
       const linhas: any[] = [];
 
+      // SÓ NOTA FISCAL DE VENDA (16/set/2026): transferência entre estabelecimentos
+      // e faturamento de outra praça/empresa do grupo ([GYN]/[BSB]/[IND]/[SERV])
+      // não são venda para este cliente — somem da lista e de TODOS os totais,
+      // junto com os pagamentos ligados a elas. Ver divida-viva.ts.
+      const naoVenda: Array<{ nf: string; valor: number }> = [];
+      for (const [chave, nota] of Array.from(notas.entries())) {
+        if (naoEVenda(nota.descricao)) {
+          naoVenda.push({ nf: nota.nf, valor: nota.valor });
+          notas.delete(chave);
+        }
+      }
+      if (naoVenda.length) {
+        console.log(`[extrato-cliente] ${naoVenda.length} nota(s) fora do extrato (transferencia/outra praca) p/ cliente ${customerId}`);
+      }
+
       // Operações informativas (não são dívida): DEVOLUÇÃO, outra praça
       // ([GYN]/[BSB]/[IND]), TROCA, AMOSTRA e CFOP 5949/6949. A regra mora em
       // divida-viva.ts e vale também no badge da rota, no bloqueio de crédito e
@@ -727,6 +742,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
         baixasEstimadas: linhas.filter((l) => l.estimado).length,
         // Duplicatas de reparo de órfãos: as sem baixa foram REMOVIDAS do extrato;
         // as com baixa continuam visíveis e só são sinalizadas.
+        // Notas que nem entram no extrato (transferencia / outra praca / outra empresa).
+        notasNaoVenda: naoVenda.length,
+        valorNaoVenda: Math.round(naoVenda.reduce((s2, x) => s2 + x.valor, 0) * 100) / 100,
         titulosFantasma: fantasmasIgnorados.length,
         valorFantasma:
           Math.round(fantasmasIgnorados.reduce((s2, r) => s2 + num(r.amount), 0) * 100) / 100,
