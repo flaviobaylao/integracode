@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2 } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -190,7 +190,20 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
     },
     onError: (e: any) => toast({ title: "Erro ao aplicar quarentena", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
-  const busy = resolveMut.isPending || inativarMut.isPending || inativarReportMut.isPending || quarentenaMut.isPending;
+  // 📲 Envio Whatsapp (card de report): o servidor recorta o report (cliente, motivo, observação
+  // do vendedor, quem/quando) e manda pelo WhatsApp da Honest para o número de
+  // "DÉBITOS - Inbox de Informações" (+55 62 9451-1997; ajustável em system_settings
+  // 'inbox_whatsapp_destino'). A observação digitada no card vai junto como "Obs. do admin".
+  // Não muda o status do report — fica registrado na conversa do card.
+  const whatsappMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/whatsapp`, { extra: note.trim() || undefined }),
+    onSuccess: (data: any) => {
+      toast({ title: "Enviado por WhatsApp", description: `Recorte do report enviado para +${data?.destino || "55 62 9451-1997"}.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Erro no envio por WhatsApp", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const busy = resolveMut.isPending || inativarMut.isPending || inativarReportMut.isPending || quarentenaMut.isPending || whatsappMut.isPending;
   // 🗂️ Report do vendedor (não-venda, justificativa, atendimento virtual, desfecho de lead):
   // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
   const isReport = r?.kind === "report";
@@ -271,6 +284,12 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={busy} onClick={() => resolveMut.mutate("lido")}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
           </Button>
+          <Button size="sm" variant="outline" className="border-green-500 text-green-700 hover:bg-green-50" disabled={busy}
+            title="Envia o recorte deste report para DÉBITOS - Inbox de Informações (+55 62 9451-1997)"
+            data-testid={`cr-whatsapp-${r.id}`}
+            onClick={() => whatsappMut.mutate()}>
+            {whatsappMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><MessageCircle className="h-4 w-4 mr-1" /> Envio Whatsapp</>}
+          </Button>
           {r.entityType === "customer" && (<>
             <Button size="sm" variant="outline" className="border-red-400 text-red-700 hover:bg-red-50" disabled={busy}
               onClick={() => { if (window.confirm("Inativar este cliente? Ele sai dos Clientes Ativos (mesmas regras da inativação) e o report vai para Resolvidas.")) inativarReportMut.mutate(); }}>
@@ -324,9 +343,19 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
 }
 
 function ResolvedCard({ r }: { r: any }) {
+  const { toast } = useToast();
   const m = RESULT_META[r.status];
   const isReport = r?.kind === "report";
   const rd = r?.details || {};
+  // 📲 Envio Whatsapp também no report já resolvido (mesma rota do card pendente).
+  const whatsappMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/whatsapp`, {}),
+    onSuccess: (data: any) => {
+      toast({ title: "Enviado por WhatsApp", description: `Recorte do report enviado para +${data?.destino || "55 62 9451-1997"}.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Erro no envio por WhatsApp", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -366,7 +395,17 @@ function ResolvedCard({ r }: { r: any }) {
       {(!Array.isArray(r.messages) || r.messages.length === 0) && r.resolutionNote && (
         <div className="text-xs">Obs.: {r.resolutionNote}</div>
       )}
-      <div className="text-xs text-muted-foreground">Resolvido por {r.resolvedByName || "—"} • {fmtDate(r.resolvedAt)}</div>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-xs text-muted-foreground">Resolvido por {r.resolvedByName || "—"} • {fmtDate(r.resolvedAt)}</div>
+        {isReport && (
+          <Button size="sm" variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs" disabled={whatsappMut.isPending}
+            title="Envia o recorte deste report para DÉBITOS - Inbox de Informações (+55 62 9451-1997)"
+            data-testid={`cr-whatsapp-resolved-${r.id}`}
+            onClick={() => whatsappMut.mutate()}>
+            {whatsappMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><MessageCircle className="h-3.5 w-3.5 mr-1" /> Envio Whatsapp</>}
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }
