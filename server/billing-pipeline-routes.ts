@@ -3392,6 +3392,31 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       return await danfeNfceDoCard(salesCardId); // idempotente: ja faturado
     }
 
+    // 1b) ESTOQUE DA GYN. A venda de balcao sai do estoque fisico de Goiania.
+    //     O CONSUMIDOR BALCAO e sintetico e nao tem instancia, entao o item
+    //     nascia sem omieInstanceId e deductStockForBilling pulava a baixa
+    //     inteira ("sem omieInstanceId"). Alem disso o card do PDV grava o
+    //     produto em `productId`, e a baixa/NF leem `id`. Fixa as duas coisas
+    //     no item do pipeline ANTES do claim, para baixa, emitente e ambiente
+    //     fiscal sairem todos da GYN (o emitente ja caia no fallback GYN).
+    try {
+      const gyn: any = (await storage.getOmieInstances()).find((i: any) => String(i?.name || '').toUpperCase().trim() === 'GYN');
+      const prods = Array.isArray(item.products) ? item.products : [];
+      const prodsNorm = prods.map((p: any) => (p && !p.id && p.productId ? { ...p, id: p.productId } : p));
+      const precisaProd = prodsNorm.some((p: any, i: number) => p !== prods[i]);
+      const precisaInst = !!gyn && item.omieInstanceId !== gyn.id;
+      if (precisaInst || precisaProd) {
+        const patch: any = {};
+        if (precisaInst) { patch.omieInstanceId = gyn.id; patch.omieInstanceName = gyn.displayName || 'GYN'; }
+        if (precisaProd) patch.products = prodsNorm;
+        await storage.updateBillingPipelineItem(item.id, patch);
+        item = { ...item, ...patch };
+      }
+      if (!gyn) console.warn('[BALCAO] instancia GYN nao encontrada; baixa de estoque pode nao ocorrer.');
+    } catch (e: any) {
+      console.warn('[BALCAO] nao foi possivel fixar a instancia GYN (segue):', e?.message);
+    }
+
     // 2) Claim atomico — mesma trava do faturamento manual. Duas chamadas
     //    concorrentes (reenvio do app, dedo duplo) nao emitem duas notas.
     const claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now()
