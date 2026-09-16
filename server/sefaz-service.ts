@@ -28,6 +28,7 @@ const carregaCertificadoBase64: any = _nfe.certificado?.carregaCertificadoBase64
 const emitir: any = _nfe.nf?.emitir ?? _nfe.emitir;
 const statusServico: any = _nfe.nf?.statusServico ?? _nfe.statusServico;
 const cancelar: any = _nfe.nf?.cancelar ?? _nfe.cancelar;
+const inutilizarLib: any = _nfe.nf?.inutilizar ?? _nfe.inutilizar;
 
 // Formas de pagamento liquidadas NO ATO: indPag=0 e XML SEM bloco <cobr>/<dup>.
 // Inclui as variantes de cartao vindas do hotsite ('card'), do link de pagamento do
@@ -3808,5 +3809,86 @@ export async function manifestarCiencia(params: {
   const ok = ['135', '136', '573'].includes(String(cStat || ''));
   return { ok, cStat: cStat ? String(cStat) : null, xMotivo: xMotivo || null };
 }
+
+// ─── Inutilização de numeração (NFeInutilizacao4) ────────────────────────────
+// Ajuste SINIEF 07/05, cláusula 14ª: número NÃO usado (nem autorizado, cancelado
+// ou denegado) deve ser inutilizado até o 10º dia do mês seguinte à quebra.
+// O use-case do node-nfe-nfce monta o <inutNFe>, assina <infInut> com o A1 do CNPJ
+// e escolhe o webservice pela UF + modelo (GO próprio; DF → SVRS; 65 → NFC-e).
+// cStat 102 = inutilização homologada. Qualquer outro cStat = rejeitado (a SEFAZ
+// recusa a faixa INTEIRA se um único número já tiver sido usado ou inutilizado).
+export interface InutilizacaoResult {
+  ok: boolean;
+  cStat: string | null;
+  xMotivo: string | null;
+  protocolo: string | null;
+  dhRecbto: string | null;
+  xmlEnviado?: string;
+  xmlRecebido?: string;
+  xmlCompleto?: string;
+  error?: string;
+}
+
+export async function inutilizarNumeracao(params: {
+  cnpj: string;
+  uf: string;
+  modelo: '55' | '65';
+  serie: number;
+  ano: number;
+  numeroInicial: number;
+  numeroFinal: number;
+  justificativa: string;
+  ambiente: 'producao' | 'homologacao';
+}): Promise<InutilizacaoResult> {
+  const vazio = { ok: false, cStat: null, xMotivo: null, protocolo: null, dhRecbto: null };
+  if (!inutilizarLib) return { ...vazio, error: 'node-nfe-nfce sem o use-case inutilizar nesta versão.' };
+  const cnpj = onlyDigits(params.cnpj);
+  const uf = String(params.uf || '').toUpperCase();
+  const cUf = UF_CODES[uf];
+  if (!cUf) return { ...vazio, error: `UF inválida: ${params.uf}` };
+  if (cnpj.length !== 14) return { ...vazio, error: 'CNPJ inválido.' };
+  const ini = Math.trunc(Number(params.numeroInicial));
+  const fim = Math.trunc(Number(params.numeroFinal));
+  if (!(ini >= 1 && fim >= ini && fim <= 999999999)) return { ...vazio, error: 'Faixa inválida.' };
+  const anoAtual = componentesBR(agora()).ano;
+  const ano = Math.trunc(Number(params.ano));
+  if (!(ano >= 2006 && ano <= anoAtual)) return { ...vazio, error: `Ano deve estar entre 2006 e ${anoAtual}.` };
+  // Mesmo saneamento do cancelamento: TJust = 15..255, sem branco nas pontas, sem acento.
+  const xJust = String(params.justificativa || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\x00-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 255);
+  if (xJust.length < 15) return { ...vazio, error: 'Justificativa deve ter pelo menos 15 caracteres.' };
+
+  const certId = await findCertificateForCnpj(cnpj);
+  if (!certId) return { ...vazio, error: `Nenhum certificado A1 válido para o CNPJ ${cnpj}.` };
+  const certData = await loadCertFromStorage(certId);
+  if (!certData) return { ...vazio, error: 'Falha ao carregar o certificado digital.' };
+
+  const configuracao = {
+    empresa: { pem: certData.pem, key: certData.key, password: certData.password },
+    geral: { versao: '4.00', ambiente: SEFAZ_AMBIENTE[params.ambiente] || '1', modelo: params.modelo },
+  };
+  try {
+    const r: any = await inutilizarLib({
+      configuracao,
+      dados: {
+        ano, modelo: params.modelo, serie: Number(params.serie), cUf, cnpj,
+        numeroInicial: ini, numeroFinal: fim, xJustificativa: xJust,
+      },
+    });
+    const inf = r?.procInutNFe?.retInutNFe?.infInut || {};
+    return {
+      ok: !!r?.success,
+      cStat: inf.cStat ? String(inf.cStat) : null,
+      xMotivo: inf.xMotivo || r?.mensagem || null,
+      protocolo: inf.nProt ? String(inf.nProt) : null,
+      dhRecbto: inf.dhRecbto ? String(inf.dhRecbto) : null,
+      xmlEnviado: r?.xml_enviado, xmlRecebido: r?.xml_recebido, xmlCompleto: r?.xml_completo,
+    };
+  } catch (e: any) {
+    return { ...vazio, error: `Erro ao transmitir à SEFAZ: ${e?.message || e}` };
+  }
+}
+
 
 export const sefazService = new SefazService();
