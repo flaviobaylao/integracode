@@ -382,22 +382,34 @@ export function registerChangeRequestsRoutes(app: Express) {
       const custIds = Array.from(new Set(mapped.filter((m: any) => m.entityType === "customer").map((m: any) => m.customerId || m.entityId).filter(Boolean)));
       const leadIds = Array.from(new Set(mapped.filter((m: any) => m.entityType === "lead").map((m: any) => m.entityId).filter(Boolean)));
       const phoneByKey = new Map<string, string>();
+      const cityByKey = new Map<string, string>();
+      const bairroByKey = new Map<string, string>();
       const repescagemSet = new Set<string>();
       if (custIds.length) {
         const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
-        const cr = rowsOf(await db.execute(sql`SELECT id, phone FROM customers WHERE id IN (${inCust})`));
-        for (const c of cr) if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
+        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood FROM customers WHERE id IN (${inCust})`));
+        for (const c of cr) {
+          if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
+          if (c.city) cityByKey.set("customer:" + c.id, String(c.city));
+          if (c.neighborhood) bairroByKey.set("customer:" + c.id, String(c.neighborhood));
+        }
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
         const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
         for (const r of rp) if (r.customer_id) repescagemSet.add(String(r.customer_id));
       }
       if (leadIds.length) {
-        const lr = rowsOf(await db.execute(sql`SELECT id, phone FROM leads WHERE id IN (${sql.join((leadIds as string[]).map((id) => sql`${id}`), sql`, `)})`));
-        for (const l of lr) if (l.phone) phoneByKey.set("lead:" + l.id, String(l.phone));
+        const lr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood FROM leads WHERE id IN (${sql.join((leadIds as string[]).map((id) => sql`${id}`), sql`, `)})`));
+        for (const l of lr) {
+          if (l.phone) phoneByKey.set("lead:" + l.id, String(l.phone));
+          if (l.city) cityByKey.set("lead:" + l.id, String(l.city));
+          if (l.neighborhood) bairroByKey.set("lead:" + l.id, String(l.neighborhood));
+        }
       }
       for (const m of mapped as any[]) {
         const key = m.entityType === "customer" ? "customer:" + (m.customerId || m.entityId) : m.entityType + ":" + m.entityId;
         m.phone = phoneByKey.get(key) || null;
+        m.city = cityByKey.get(key) || null;
+        m.neighborhood = bairroByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
     } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
