@@ -27,11 +27,37 @@ import { naoEFantasmaText } from "./ghost-receivables";
 
 /** Padrão único. Ao acrescentar um marcador, mexa SÓ aqui. */
 export const FORA_DA_DIVIDA_RE =
-  /DEVOLU|\[GYN\]|\[BSB\]|\[IND\]|TROCA|AMOSTRA|OUTRAS?\s+SA[IÍ]DAS?/i;
+  /DEVOLU|\[GYN\]|\[BSB\]|\[IND\]|\[SERV\]|TROCA|AMOSTRA|OUTRAS?\s+SA[IÍ]DAS?/i;
 
 /** Versão JS: recebe a descrição (ou categoria) já resolvida. */
 export function foraDaDivida(descricao: any): boolean {
   return FORA_DA_DIVIDA_RE.test(String(descricao || ""));
+}
+
+// ============================================================================
+// SÓ NOTA FISCAL DE VENDA — o que nem sequer aparece no Extrato do Cliente
+// ----------------------------------------------------------------------------
+// Decisão do Flavio (16/set/2026): o Extrato do Cliente é o histórico de VENDAS
+// para aquele cliente. TRANSFERÊNCIA entre estabelecimentos (CFOP 5151/6151,
+// "TRANSFERENCIA DE PRODUCAO DO ESTABELECIMENTO") e faturamento de outra praça
+// ou empresa do grupo ([GYN] Goiânia, [BSB] Brasília, [IND] Puro Indústria,
+// [SERV] Puro Serviços) não são venda para ele: somem da lista E de todos os
+// totais, junto com os pagamentos ligados a essas notas.
+//
+// Diferente de FORA_DA_DIVIDA_RE: devolução, troca, amostra e CFOP 5949
+// CONTINUAM aparecendo no extrato (sem tag de situação, fora do saldo devedor) —
+// fazem parte da história da conta do cliente. Estas aqui não.
+//
+// Aplicar SOMENTE à descrição da NOTA. A descrição de um PAGAMENTO pode conter
+// "TRANSFERÊNCIA RECEBIDA - ..." (texto do extrato bancário) e é a baixa legítima
+// de uma venda — essa não pode sumir.
+// ============================================================================
+
+/** Não é nota fiscal de venda deste cliente: nem aparece no Extrato. */
+export const NAO_E_VENDA_RE = /TRANSFER|\[GYN\]|\[BSB\]|\[IND\]|\[SERV\]/i;
+
+export function naoEVenda(descricao: any): boolean {
+  return NAO_E_VENDA_RE.test(String(descricao || ""));
 }
 
 /**
@@ -47,7 +73,7 @@ export function ehDividaVivaText(alias: string): string {
   // escape e DUPLO (`\\[`), para chegar ao Postgres como `\[`. Regressao real em
   // 02/set/2026: o badge e o bloqueio de credito zeraram por causa disto.
   // O literal vai entre aspas simples (standard_conforming_strings): a barra chega intacta.
-  const marcadores = "(DEVOLU|\\[GYN\\]|\\[BSB\\]|\\[IND\\]|TROCA|AMOSTRA|OUTRAS?[[:space:]]+SA[IÍ]DAS?)";
+  const marcadores = "(DEVOLU|\\[GYN\\]|\\[BSB\\]|\\[IND\\]|\\[SERV\\]|TROCA|AMOSTRA|OUTRAS?[[:space:]]+SA[IÍ]DAS?)";
   return `(COALESCE(${alias}.description, '') || ' ' || COALESCE(${alias}.category, '')) !~* '${marcadores}'`;
 }
 
