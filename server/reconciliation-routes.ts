@@ -76,6 +76,21 @@ export function registerReconciliation(app: Express) {
     __rawColReady = true;
   }
 
+  // CONCILIACAO EM CONJUNTO (16/09/2026): dois ou mais lancamentos do extrato
+  // quitando UM mesmo titulo (cliente pagou em duas partes, PIX + transferencia,
+  // etc.). O titulo e baixado UMA vez com o valor combinado e cada lancamento
+  // guarda a sua fatia no match. As linhas do grupo compartilham um
+  // reconciliation_group_id; desfazer qualquer uma desfaz o grupo inteiro.
+  let __groupColsReady = false;
+  async function ensureGroupColumns() {
+    if (__groupColsReady) return;
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS reconciliation_group_id text`); } catch {}
+    try { await db.execute(sql`ALTER TABLE bank_statement_item_matches ADD COLUMN IF NOT EXISTS group_id text`); } catch {}
+    try { await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsi_recon_group ON bank_statement_items (reconciliation_group_id) WHERE reconciliation_group_id IS NOT NULL`); } catch {}
+    try { await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsim_group ON bank_statement_item_matches (group_id) WHERE group_id IS NOT NULL`); } catch {}
+    __groupColsReady = true;
+  }
+
   // Trilha de auditoria (append-only) de TODAS as conciliacoes e estornos, para
   // rastreabilidade do processo mesmo se o item for reimportado/duplicado/desfeito.
   let __auditReady = false;
@@ -306,13 +321,14 @@ export function registerReconciliation(app: Express) {
   app.get("/api/reconciliation/pending-items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       await ensureMirrorColumn();
+      await ensureGroupColumns();
       const accountId = (req.query.accountId as string) || null;
       const instanceId = (req.query.instanceId as string) || null;
       const r = await db.execute(sql`
         SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
                i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
                i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes, s.file_name, fa.name AS account_name
+               i.match_confidence, i.notes, i.reconciliation_group_id, s.file_name, fa.name AS account_name
         FROM bank_statement_items i
         JOIN bank_statements s ON s.id = i.statement_id
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
@@ -354,13 +370,14 @@ export function registerReconciliation(app: Express) {
   app.get("/api/reconciliation/ledger", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       await ensureMirrorColumn();
+      await ensureGroupColumns();
       const accountId = (req.query.accountId as string) || null;
       const instanceId = (req.query.instanceId as string) || null;
       const r = await db.execute(sql`
         SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
                i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
                i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes, s.file_name, fa.name AS account_name
+               i.match_confidence, i.notes, i.reconciliation_group_id, s.file_name, fa.name AS account_name
         FROM bank_statement_items i
         JOIN bank_statements s ON s.id = i.statement_id
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
@@ -376,7 +393,7 @@ export function registerReconciliation(app: Express) {
       if (canonIds.length) {
         const mR = await db.execute(sql`
           SELECT m.bank_statement_item_id, m.receivable_id, m.payable_id, m.amount, m.match_kind,
-                 m.title_amount_settled, m.interest, m.discount,
+                 m.title_amount_settled, m.interest, m.discount, m.group_id,
                  r.title_number AS r_title, r.customer_name AS r_name, r.amount AS r_amount, r.due_date AS r_due,
                  p.title_number AS p_title, p.supplier_name AS p_name, p.amount AS p_amount, p.due_date AS p_due
           FROM bank_statement_item_matches m
@@ -396,6 +413,7 @@ export function registerReconciliation(app: Express) {
   app.get("/api/reconciliation/statements/:id/items", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
       await ensureMirrorColumn();
+      await ensureGroupColumns();
       const id = req.params.id;
       // Resolve linhas "espelho" (mirror_of) ao vivo pelo item canonico: status,
       // conciliacao e origem vem do canonico. Assim o extrato mostra TODOS os
@@ -410,6 +428,7 @@ export function registerReconciliation(app: Express) {
                COALESCE(c.matched_by, i.matched_by) AS matched_by,
                COALESCE(c.match_confidence, i.match_confidence) AS match_confidence,
                i.notes,
+               COALESCE(c.reconciliation_group_id, i.reconciliation_group_id) AS reconciliation_group_id,
                (i.mirror_of IS NOT NULL) AS is_mirror,
                cs.file_name AS mirror_from,
                COALESCE(i.mirror_of, i.id) AS canonical_id
@@ -427,7 +446,7 @@ export function registerReconciliation(app: Express) {
       if (canonIds.length) {
         const mR = await db.execute(sql`
           SELECT m.bank_statement_item_id, m.receivable_id, m.payable_id, m.amount,
-                 m.match_kind, m.title_amount_settled, m.interest, m.discount,
+                 m.match_kind, m.title_amount_settled, m.interest, m.discount, m.group_id,
                  r.title_number AS r_title, r.customer_name AS r_name, r.amount AS r_amount, r.due_date AS r_due,
                  p.title_number AS p_title, p.supplier_name AS p_name, p.amount AS p_amount, p.due_date AS p_due
           FROM bank_statement_item_matches m
@@ -1170,6 +1189,267 @@ export function registerReconciliation(app: Express) {
   });
 
 
+  // =========================================================================
+  // CONCILIACAO EM CONJUNTO (16/09/2026): N lancamentos do extrato -> 1+ titulos
+  //
+  // Caso real: o cliente paga um titulo em duas partes (dois PIX no mesmo dia,
+  // PIX + transferencia, entrada + saldo). Antes, cada lancamento so podia ser
+  // conciliado sozinho e a soma tinha que fechar com o extrato (FASE 3.4y) —
+  // entao um titulo de R$ 1.000 pago com R$ 300 + R$ 700 nao tinha caminho:
+  // baixar parcial duas vezes ate funcionaria no titulo comum, mas no caminho
+  // do BOLETO o settleBoletoCharge recusa a segunda baixa do mesmo nosso-numero
+  // (guarda anti-duplicidade) e o boleto ja estaria 'liquidado' na primeira.
+  //
+  // Regra: a soma dos LANCAMENTOS selecionados (todos do mesmo sentido C/D,
+  // todos pendentes, nenhum espelho) = soma dos TITULOS (principal + juros -
+  // desconto), tolerancia de 1 centavo. Os titulos sao baixados UMA unica vez
+  // com o valor combinado (mesmo settle da conciliacao simples). Depois cada
+  // lancamento recebe a SUA fatia em bank_statement_item_matches (rateio em
+  // cascata, na ordem data/id), de modo que por lancamento a soma dos matches
+  // continua igual ao valor do extrato — o relatorio de divergencias e o de
+  // conciliacao nao mudam. Juros/desconto de cada titulo ficam na MAIOR
+  // fatia desse titulo (o undo soma por titulo, entao tanto faz onde fica).
+  //
+  // Todas as linhas do grupo recebem reconciliation_group_id (e os matches,
+  // group_id). DESFAZER qualquer lancamento do grupo desfaz o grupo inteiro:
+  // o titulo foi baixado numa linha de pagamento so, nao da para devolver
+  // "metade" — ver undoGrupo() dentro de undoReconciliation.
+  // =========================================================================
+  app.post("/api/reconciliation/items/reconcile-group", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureMirrorColumn();
+      await ensureGroupColumns();
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const dryRun = !!req.body?.dryRun;
+      const itemIds: string[] = Array.isArray(req.body?.itemIds) ? Array.from(new Set(req.body.itemIds.map((x: any) => String(x)).filter(Boolean))) : [];
+      const titles: any[] = Array.isArray(req.body?.titles) ? req.body.titles : [];
+      if (itemIds.length < 2) return res.status(400).json({ error: "Selecione pelo menos 2 lancamentos para conciliar em conjunto (itemIds[])." });
+      if (itemIds.length > 20) return res.status(400).json({ error: "No maximo 20 lancamentos por conciliacao em conjunto." });
+      if (!titles.length) return res.status(400).json({ error: "titles[] obrigatorio" });
+
+      const itensRaw = rowsOf(await db.execute(sql`
+        SELECT i.*, s.omie_instance_id AS s_instance, s.financial_account_id AS s_account
+        FROM bank_statement_items i JOIN bank_statements s ON s.id = i.statement_id
+        WHERE i.id IN (${inList(itemIds)})
+        ORDER BY i.transaction_date, i.id`));
+      if (itensRaw.length !== itemIds.length) {
+        const achados = new Set(itensRaw.map((i: any) => String(i.id)));
+        return res.status(404).json({ error: "lancamento nao encontrado: " + itemIds.filter((x) => !achados.has(x)).join(", ") });
+      }
+      const problemasItens: string[] = [];
+      const tipo = String(itensRaw[0].type || "").toUpperCase();
+      for (const it of itensRaw) {
+        const rot = `${String(it.transaction_date || "").slice(0, 10)} R$ ${Math.abs(Number(money(it.amount)))}`;
+        if (it.mirror_of) problemasItens.push(`${rot}: lancamento espelho (ja importado em outro extrato)`);
+        else if (it.reconciliation_status === "reconciled") problemasItens.push(`${rot}: ja conciliado`);
+        else if (it.reconciliation_status === "ignored") problemasItens.push(`${rot}: esta ignorado — desfaca o ignore antes`);
+        if (String(it.type || "").toUpperCase() !== tipo) problemasItens.push(`${rot}: sentido diferente (credito e debito nao se combinam)`);
+      }
+      if (problemasItens.length) return res.status(422).json({ error: "Conciliacao em conjunto nao executada.", problemas: problemasItens });
+
+      const first = itensRaw[0];
+      const method = (req.body?.paymentMethod || pickMethod(first.description)).toString();
+      // Data da baixa = data do ULTIMO lancamento do grupo (foi quando o titulo ficou quitado).
+      const last = itensRaw[itensRaw.length - 1];
+      const paidAtISO = (req.body?.paidAt ? new Date(req.body.paidAt) : new Date(last.transaction_date || Date.now())).toISOString();
+      const accountId = first.s_account || null;
+      const contasDistintas = Array.from(new Set(itensRaw.map((i: any) => String(i.s_account || ""))));
+
+      const plan = titles.map((t) => ({
+        kind: t.kind === "payable" ? "payable" : "receivable",
+        id: String(t.id),
+        amount: Number(t.amount || 0),
+        interest: Number(t.interest || 0),
+        discount: Number(t.discount || 0),
+        chartAccountId: t.chartAccountId ? String(t.chartAccountId) : null,
+        settled: Number((Number(t.amount || 0) + Number(t.interest || 0) - Number(t.discount || 0)).toFixed(2)),
+        modo: "baixar" as "baixar" | "vincular",
+      }));
+      if (plan.some((t) => !(t.settled > 0))) return res.status(400).json({ error: "Todo titulo do carrinho precisa ter valor maior que zero." });
+
+      // ---- a soma dos LANCAMENTOS tem que fechar com a soma dos TITULOS ----
+      const valorExtrato = Number(itensRaw.reduce((acc: number, i: any) => acc + Math.abs(Number(money(i.amount))), 0).toFixed(2));
+      const totalTitulos = Number(plan.reduce((acc, t) => acc + t.settled, 0).toFixed(2));
+      const difExtrato = Number((totalTitulos - valorExtrato).toFixed(2));
+      const aceitaDif = req.body?.aceitarDiferenca === true;
+      const motivoDif = String(req.body?.motivoDiferenca || "").slice(0, 200);
+      if (Math.abs(difExtrato) > 0.01) {
+        if (!aceitaDif) return res.status(422).json({
+          error: "A soma dos titulos nao fecha com a soma dos lancamentos selecionados.",
+          valorExtrato, totalTitulos, diferenca: difExtrato,
+          comoProsseguir: "Ajuste principal/juros/desconto ate zerar, ou reenvie com aceitarDiferenca:true e motivoDiferenca.",
+        });
+        if (!motivoDif) return res.status(400).json({ error: "Informe motivoDiferenca para aceitar conciliacao fora do valor do extrato." });
+      }
+
+      // ---- conferir TODOS os titulos antes de baixar qualquer um (FASE 3.4z) ----
+      {
+        const problemas: string[] = [];
+        for (const t of plan) {
+          const row = t.kind === "receivable"
+            ? rowsOf(await db.execute(sql`SELECT r.status::text AS status, r.amount::numeric AS amount, COALESCE(r.amount_paid, 0)::numeric AS pago, r.deleted_at, r.title_number AS num, EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.receivable_id = r.id) AS conciliado FROM receivables r WHERE r.id = ${t.id}`))[0]
+            : rowsOf(await db.execute(sql`SELECT p.status::text AS status, p.amount::numeric AS amount, COALESCE(p.amount_paid, 0)::numeric AS pago, p.deleted_at, p.title_number AS num, EXISTS(SELECT 1 FROM bank_statement_item_matches m WHERE m.payable_id = p.id) AS conciliado FROM payables p WHERE p.id = ${t.id}`))[0];
+          const nome = row?.num ? String(row.num) : String(t.id).slice(0, 8);
+          if (!row) { problemas.push(`titulo ${nome} nao encontrado`); continue; }
+          if (row.deleted_at) { problemas.push(`titulo ${nome} esta excluido`); continue; }
+          if (String(row.status) === "cancelada") { problemas.push(`titulo ${nome} esta cancelado`); continue; }
+          const saldo = Number(row.amount || 0) - Number(row.pago || 0);
+          if (saldo <= 0.005) {
+            if (row.conciliado === true) { problemas.push(`titulo ${nome} ja esta quitado e ja tem vinculo bancario; desfaca a conciliacao de origem antes`); continue; }
+            t.modo = "vincular";
+            continue;
+          }
+          const emAberto = Number((saldo - t.discount).toFixed(2));
+          if (t.amount > emAberto + 0.005) {
+            problemas.push(`titulo ${nome}: baixa de R$ ${t.amount.toFixed(2)} maior que o saldo em aberto (R$ ${emAberto.toFixed(2)})`);
+          }
+        }
+        if (problemas.length) return res.status(422).json({ error: "Conciliacao em conjunto nao executada — nenhum titulo foi baixado.", problemas });
+      }
+
+      // ---- rateio em cascata: cada lancamento recebe fatias dos titulos ----------
+      // Percorre lancamentos e titulos na ordem; a fatia e o minimo entre o que
+      // resta do lancamento e o que resta do titulo. Ultima fatia absorve o resto
+      // (centavos de arredondamento), para que a soma bata exatamente.
+      type Fatia = { itemId: string; tituloIdx: number; settled: number; interest: number; discount: number; amount: number };
+      const fatias: Fatia[] = [];
+      {
+        const restoTitulo = plan.map((t) => t.settled);
+        let ti = 0;
+        for (let ii = 0; ii < itensRaw.length; ii++) {
+          let restoItem = Math.abs(Number(money(itensRaw[ii].amount)));
+          if (ii === itensRaw.length - 1) restoItem = Number((restoItem + difExtrato).toFixed(2)); // diferenca aceita cai no ultimo
+          while (restoItem > 0.005 && ti < plan.length) {
+            if (restoTitulo[ti] <= 0.005) { ti++; continue; }
+            const fat = Number(Math.min(restoItem, restoTitulo[ti]).toFixed(2));
+            fatias.push({ itemId: String(itensRaw[ii].id), tituloIdx: ti, settled: fat, interest: 0, discount: 0, amount: fat });
+            restoItem = Number((restoItem - fat).toFixed(2));
+            restoTitulo[ti] = Number((restoTitulo[ti] - fat).toFixed(2));
+          }
+        }
+        // sobra de centavos por arredondamento: joga na ultima fatia
+        const sobra = Number(restoTitulo.reduce((a, b) => a + b, 0).toFixed(2));
+        if (Math.abs(sobra) > 0.005 && fatias.length) fatias[fatias.length - 1].settled = Number((fatias[fatias.length - 1].settled + sobra).toFixed(2));
+        // juros/desconto do titulo ficam na MAIOR fatia desse titulo; `amount` (principal
+        // da fatia) = dinheiro - juros + desconto. O undo soma por titulo, entao a
+        // posicao nao importa para o estorno — importa so para a leitura do match.
+        for (let k = 0; k < plan.length; k++) {
+          const doTitulo = fatias.filter((f) => f.tituloIdx === k);
+          if (!doTitulo.length) return res.status(422).json({ error: "Rateio falhou: titulo sem fatia. Confira os valores." });
+          const maior = doTitulo.reduce((a, b) => (b.settled > a.settled ? b : a), doTitulo[0]);
+          maior.interest = plan[k].interest; maior.discount = plan[k].discount;
+          for (const f of doTitulo) f.amount = Number(Math.max(0, f.settled - f.interest + f.discount).toFixed(2));
+        }
+      }
+
+      const groupId = `grp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      if (dryRun) {
+        return res.json({ ok: true, dryRun: true, groupId, itens: itensRaw.map((i: any) => ({ id: i.id, amount: i.amount, type: i.type, date: i.transaction_date, description: i.description })), method, paidAtISO, accountId, contasDistintas, plan, fatias, valorExtrato, totalTitulos, diferenca: difExtrato });
+      }
+
+      // ---- categoria DRE (mesma regra da conciliacao simples) ------------------
+      {
+        const wanted = Array.from(new Set(plan.map((t) => t.chartAccountId).filter(Boolean))) as string[];
+        if (wanted.length) {
+          const okIds = new Set(rowsOf(await db.execute(sql`
+            SELECT id FROM chart_of_accounts
+            WHERE is_active = true AND code LIKE '%.%' AND id IN (${inList(wanted)})`)).map((c: any) => String(c.id)));
+          const bad = wanted.find((w) => !okIds.has(String(w)));
+          if (bad) return res.status(400).json({ error: "Categoria DRE invalida ou inativa. Selecione uma categoria do plano de contas." });
+        }
+        let defRecv: string | null = null;
+        for (const t of plan) {
+          if (t.kind === "receivable") {
+            if (t.chartAccountId) {
+              await db.execute(sql`UPDATE receivables SET chart_account_id = ${t.chartAccountId} WHERE id = ${t.id}`);
+            } else {
+              const cur = rowsOf(await db.execute(sql`SELECT chart_account_id FROM receivables WHERE id = ${t.id}`))[0];
+              if (cur && !cur.chart_account_id) {
+                if (defRecv === null) {
+                  const q = rowsOf(await db.execute(sql`SELECT id FROM chart_of_accounts WHERE dre_group = 'receita_bruta' AND code LIKE '%.%' AND is_active = true ORDER BY code LIMIT 1`));
+                  defRecv = (q[0]?.id as string) || "";
+                }
+                if (defRecv) await db.execute(sql`UPDATE receivables SET chart_account_id = ${defRecv} WHERE id = ${t.id}`);
+              }
+            }
+          } else {
+            if (t.chartAccountId) {
+              await db.execute(sql`UPDATE payables SET chart_account_id = ${t.chartAccountId} WHERE id = ${t.id}`);
+            } else {
+              const cur = rowsOf(await db.execute(sql`SELECT chart_account_id FROM payables WHERE id = ${t.id}`))[0];
+              if (cur && !cur.chart_account_id) return res.status(400).json({ error: "Selecione a categoria DRE (plano de contas) do titulo a pagar. Nenhuma baixa sem categoria." });
+            }
+          }
+        }
+      }
+
+      // ---- baixa: UMA vez por titulo, com o valor combinado ----------------------
+      const results: any[] = [];
+      let cpInfo: any = null;
+      const jaBaixados: any[] = [];
+      let baixados = 0, vinculados = 0;
+      try {
+        for (const t of plan) {
+          const vincular = t.modo === "vincular";
+          if (t.kind === "receivable") {
+            if (vincular) { results.push({ id: t.id, kind: "receivable", via: "vinculo_sem_baixa" }); vinculados++; }
+            else {
+              const r = await settleReceivable(t.id, t.settled, method, accountId, paidAtISO, by, { principal: t.amount, interest: t.interest, discount: t.discount });
+              results.push({ id: t.id, kind: "receivable", ...r }); baixados++;
+            }
+            if (!cpInfo) { const rec: any = await storage.getReceivable(t.id); if (rec) cpInfo = { type: "customer", id: rec.customerId || null, name: rec.customerName || null, document: rec.customerDocument || null, category: rec.category || null }; }
+          } else {
+            if (vincular) { results.push({ id: t.id, kind: "payable", via: "vinculo_sem_baixa" }); vinculados++; }
+            else {
+              const r = await settlePayable(t.id, t.settled, method, accountId, paidAtISO, by, { principal: t.amount, interest: t.interest, discount: t.discount });
+              results.push({ id: t.id, kind: "payable", ...r }); baixados++;
+            }
+            if (!cpInfo) { const pay: any = await storage.getPayable(t.id); if (pay) cpInfo = { type: "supplier", id: null, name: pay.supplierName || null, document: pay.supplierDocument || null, category: pay.category || null }; }
+          }
+          if (!vincular) jaBaixados.push({ id: t.id, kind: t.kind, valor: t.settled });
+        }
+        // matches: uma linha por (lancamento, titulo) com a fatia daquele lancamento
+        for (const f of fatias) {
+          const t = plan[f.tituloIdx];
+          const vincular = t.modo === "vincular";
+          await db.execute(sql`
+            INSERT INTO bank_statement_item_matches (id, bank_statement_item_id, receivable_id, payable_id, amount, match_kind, title_amount_settled, interest, discount, created_by, created_at, group_id)
+            VALUES (gen_random_uuid(), ${f.itemId}, ${t.kind === "receivable" ? t.id : null}, ${t.kind === "payable" ? t.id : null}, ${f.amount.toFixed(2)}, ${vincular ? "vinculo_sem_baixa" : "manual_grupo"}, ${vincular ? "0.00" : f.settled.toFixed(2)}, ${f.interest.toFixed(2)}, ${f.discount.toFixed(2)}, ${by}, now(), ${groupId})`);
+        }
+      } catch (erroLaco: any) {
+        try {
+          await logReconAudit({ action: "reconcile_group", itemId: String(first.id), statementId: first.statement_id || null, accountId,
+            instanceId: first.s_instance || null, amount: valorExtrato, itemType: first.type || null,
+            transactionDate: first.transaction_date || null, description: first.description || "", titles: plan,
+            counterpart: cpInfo || null, by, details: { groupId, itemIds, parcial: true, jaBaixados, erro: String(erroLaco?.message || erroLaco).slice(0, 200) } });
+        } catch (_e) { }
+        return res.status(500).json({
+          error: "A conciliacao em conjunto falhou no meio: " + String(erroLaco?.message || erroLaco).slice(0, 200),
+          parcial: true, jaBaixados,
+          comoTratar: "Estes titulos JA foram baixados e os lancamentos NAO foram marcados como conciliados. Desfaca a baixa destes titulos antes de tentar de novo.",
+        });
+      }
+
+      const firstRecv = plan.find((t) => t.kind === "receivable")?.id || null;
+      const firstPay = plan.find((t) => t.kind === "payable")?.id || null;
+      const rotulos = itensRaw.map((i: any) => `${String(i.transaction_date || "").slice(0, 10)} R$ ${Math.abs(Number(money(i.amount)))}`).join(" + ");
+      const note = `Conciliado EM CONJUNTO por ${by} em ${new Date().toISOString()} (${itensRaw.length} lancamentos: ${rotulos}${titles.length > 1 ? "; " + titles.length + " titulos" : ""}) [grupo ${groupId}]`
+        + (vinculados ? ` [${vinculados} titulo(s) ja estavam baixados: vinculo sem nova baixa]` : "")
+        + (Math.abs(difExtrato) > 0.01 ? ` [DIFERENCA vs extrato R$ ${difExtrato.toFixed(2)}: ${motivoDif}]` : "")
+        + (contasDistintas.length > 1 ? ` [lancamentos de ${contasDistintas.length} contas distintas]` : "");
+      await db.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = 'reconciled', matched_receivable_id = ${firstRecv}, matched_payable_id = ${firstPay},
+            matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}, reconciliation_group_id = ${groupId}
+        WHERE id IN (${inList(itemIds)})`);
+      if (cpInfo) { for (const it of itensRaw) await evolvePattern(it, cpInfo, it.s_instance || null, by); }
+      for (const it of itensRaw) {
+        await logReconAudit({ action: "reconcile_group", itemId: String(it.id), statementId: it.statement_id || null, accountId: it.s_account || null, instanceId: it.s_instance || null, amount: money(it.amount), itemType: it.type || null, transactionDate: it.transaction_date || null, description: it.description || "", titles: plan, counterpart: cpInfo || null, by, details: { groupId, itemIds, results, fatias: fatias.filter((f) => f.itemId === String(it.id)), valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null } });
+      }
+      res.json({ ok: true, status: "reconciled", kind: "manual_grupo", groupId, itens: itemIds.length, results, baixados, vinculados, fatias });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
   // ---- FASE 3.4c: cadastros no "Criar Novo" -------------------------------
   // Busca fornecedores no cadastro (autocomplete do modal).
   app.get("/api/reconciliation/suppliers/search", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
@@ -1369,6 +1649,93 @@ export function registerReconciliation(app: Express) {
   // FASE 3.4s: o corpo virou a função `undoReconciliation(id, by)` para poder ser
   // reusada pela correção em lote de BAIXA DUPLA (`fix-baixa-dupla`). A rota abaixo
   // continua idêntica no comportamento e no formato da resposta.
+  // Desfaz uma CONCILIACAO EM CONJUNTO inteira: estorna cada titulo UMA vez
+  // (somando as fatias de todos os lancamentos do grupo), apaga os matches do
+  // grupo e devolve todos os lancamentos a 'pending'. Mesmas regras de estorno
+  // da conciliacao simples (principal = settled - juros + desconto; devolve o
+  // desconto ao titulo; apaga UMA linha de pagamento com o principal).
+  async function undoGrupo(groupId: string, by: string): Promise<{ ok: boolean; status?: string; reverted?: any; error?: string; code?: number }> {
+    const itens = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_items WHERE reconciliation_group_id = ${groupId} ORDER BY transaction_date, id`));
+    if (!itens.length) return { ok: false, error: "grupo de conciliacao nao encontrado", code: 404 };
+    const matches = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_item_matches WHERE group_id = ${groupId}`));
+    // agrega por titulo
+    type Agg = { kind: "receivable" | "payable"; id: string; settled: number; interest: number; discount: number; vinculo: boolean };
+    const porTitulo = new Map<string, Agg>();
+    for (const m of matches) {
+      const kind: "receivable" | "payable" = m.receivable_id ? "receivable" : "payable";
+      const tid = String(m.receivable_id || m.payable_id);
+      const key = kind + ":" + tid;
+      const a = porTitulo.get(key) || { kind, id: tid, settled: 0, interest: 0, discount: 0, vinculo: false };
+      if (String(m.match_kind) === "vinculo_sem_baixa") a.vinculo = true;
+      else a.settled = Number((a.settled + Number(m.title_amount_settled ?? m.amount ?? 0)).toFixed(2));
+      a.interest = Number((a.interest + Number(m.interest || 0)).toFixed(2));
+      a.discount = Number((a.discount + Number(m.discount || 0)).toFixed(2));
+      porTitulo.set(key, a);
+    }
+    const _pastDueBR = (d: Date | null) => !!d && d.toLocaleDateString('en-CA', { timeZone: 'UTC' }) < new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const reverted: any[] = [];
+    for (const a of Array.from(porTitulo.values())) {
+      if (a.vinculo || a.settled <= 0.005) { reverted.push({ kind: a.kind, id: a.id, via: "vinculo_sem_baixa", titulo: "intacto" }); continue; }
+      const principal = Number(Math.max(0, a.settled - a.interest + a.discount).toFixed(2));
+      if (a.kind === "receivable") {
+        const rec: any = await storage.getReceivable(a.id);
+        if (!rec) continue;
+        const newPaid = Math.max(0, Number(rec.amountPaid || 0) - principal);
+        const amt = Number((Number(rec.amount || 0) + a.discount).toFixed(2));
+        const due = rec.dueDate ? new Date(rec.dueDate) : null;
+        const status = amt > 0 && newPaid >= amt - 0.005 ? "recebida" : (_pastDueBR(due) ? "vencida" : "a_vencer");
+        const patch: any = { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true };
+        if (a.discount > 0) patch.amount = amt.toFixed(2);
+        await storage.updateReceivable(a.id, patch);
+        const delR: any = await db.execute(sql`
+          DELETE FROM receivable_payments WHERE ctid IN (
+            SELECT rp.ctid FROM receivable_payments rp
+            WHERE rp.receivable_id = ${a.id}
+              AND rp.amount = ${principal.toFixed(2)}
+              AND rp.deleted_at IS NULL
+              AND (rp.reference = 'conciliacao-bancaria'
+                   OR rp.reference IN (SELECT bc.nosso_numero FROM boleto_charges bc WHERE bc.receivable_id = ${a.id}))
+            ORDER BY rp.created_at DESC LIMIT 1)`);
+        const okR = (delR?.rowCount ?? 0) > 0;
+        reverted.push({ kind: "receivable", id: a.id, status, estornado: principal, juros: a.interest || undefined, descontoDevolvido: a.discount || undefined, pagamentoRemovido: okR, ...(okR ? {} : { atencao: "linha de pagamento nao encontrada para estorno" }) });
+      } else {
+        const pay: any = await storage.getPayable(a.id);
+        if (!pay) continue;
+        const newPaid = Math.max(0, Number(pay.amountPaid || 0) - principal);
+        const amt = Number((Number(pay.amount || 0) + a.discount).toFixed(2));
+        const due = pay.dueDate ? new Date(pay.dueDate) : null;
+        const status = amt > 0 && newPaid >= amt - 0.005 ? "paga" : (_pastDueBR(due) ? "vencida" : "a_vencer");
+        const patch: any = { amountPaid: newPaid.toFixed(2), status, __allowUnsettle: true };
+        if (a.discount > 0) patch.amount = amt.toFixed(2);
+        await storage.updatePayable(a.id, patch);
+        const delP: any = await db.execute(sql`
+          DELETE FROM payable_payments WHERE ctid IN (
+            SELECT pp.ctid FROM payable_payments pp
+            WHERE pp.payable_id = ${a.id}
+              AND pp.amount = ${principal.toFixed(2)}
+              AND pp.reference = 'conciliacao-bancaria'
+            ORDER BY pp.created_at DESC LIMIT 1)`);
+        const okP = (delP?.rowCount ?? 0) > 0;
+        reverted.push({ kind: "payable", id: a.id, status, estornado: principal, juros: a.interest || undefined, descontoDevolvido: a.discount || undefined, pagamentoRemovido: okP, ...(okP ? {} : { atencao: "linha de pagamento nao encontrada para estorno" }) });
+      }
+    }
+    const ids = itens.map((i: any) => String(i.id));
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('integra.permitir_desconciliar', 'on', true)`);
+      await tx.execute(sql`DELETE FROM bank_statement_item_matches WHERE group_id = ${groupId} OR bank_statement_item_id IN (${inList(ids)})`);
+      await tx.execute(sql`
+        UPDATE bank_statement_items
+        SET reconciliation_status = CASE WHEN mirror_of IS NOT NULL THEN 'mirror' ELSE 'pending' END,
+            matched_receivable_id = null, matched_payable_id = null, matched_at = null,
+            matched_by = ${by}, match_confidence = null, notes = null, reconciliation_group_id = null
+        WHERE id IN (${inList(ids)})`);
+    });
+    for (const it of itens) {
+      await logReconAudit({ action: "undo_group", itemId: String(it.id), statementId: it.statement_id || null, amount: money(it.amount), itemType: it.type || null, transactionDate: it.transaction_date || null, description: it.description || "", titles: Array.from(porTitulo.values()), by, details: { groupId, itens: ids, reverted } });
+    }
+    return { ok: true, status: "pending", reverted: { grupo: groupId, lancamentos: ids.length, titulos: reverted } };
+  }
+
   async function undoReconciliation(id: string, by: string): Promise<{ ok: boolean; status?: string; reverted?: any; error?: string; code?: number }> {
     {
       const item = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_items WHERE id = ${id}`))[0];
@@ -1377,6 +1744,11 @@ export function registerReconciliation(app: Express) {
         await db.execute(sql`UPDATE bank_statement_items SET reconciliation_status='pending', matched_by=${by}, matched_at=null, notes=null WHERE id=${id}`);
         return { ok: true, status: "pending", reverted: "ignored" };
       }
+      // CONCILIACAO EM CONJUNTO (16/09/2026): lancamento que faz parte de um grupo
+      // nao se desfaz sozinho — o titulo foi baixado UMA vez com a soma do grupo.
+      // Desfaz o grupo inteiro (todos os lancamentos voltam a pendente).
+      await ensureGroupColumns();
+      if (item.reconciliation_group_id) return await undoGrupo(String(item.reconciliation_group_id), by);
       const matches = rowsOf(await db.execute(sql`SELECT * FROM bank_statement_item_matches WHERE bank_statement_item_id = ${id}`));
       // FASE 3.5d: ESTADO INCONSISTENTE tambem tem que poder ser desfeito.
       // Existe titulo baixado com vinculo (bank_statement_item_matches) cujo
