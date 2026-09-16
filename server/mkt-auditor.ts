@@ -198,6 +198,15 @@ export async function autocorrigir(checagens: Checagem[]): Promise<any[]> {
 // ---------------------------------------------------------------------------
 // 3. MELHORIAS (modelo) -> acoes 'sistema'
 // ---------------------------------------------------------------------------
+/** Chave do ASSUNTO de uma ação 'sistema' (independe do título e do valor proposto). */
+export function assuntoSistema(p: any): string | null {
+  if (!p || typeof p !== 'object') return null;
+  if (p.tipo === 'setting' && p.chave) return 'setting:' + String(p.chave);
+  if (p.tipo === 'politica' && p.tipo_acao) return 'politica:' + String(p.tipo_acao) + ':' + Object.keys(p.campos || {}).sort().join(',');
+  if (p.tipo === 'prompt' && p.agente) return 'prompt:' + String(p.agente);
+  return null;
+}
+
 const PROMPT_PADRAO = `Você é o auditor da Central de Marketing da Honest Sucos — um sistema em que agentes de IA propõem ações de venda (réguas de WhatsApp, alertas a vendedores, peças de conteúdo, visitas, cupons), um humano aprova, e o sistema executa e mede. Você recebe: as checagens do dia (com gravidade), as autocorreções já feitas, os parâmetros atuais e seus limites, as políticas de autonomia e os números de tendência. Sua função é propor de 0 a 5 MELHORIAS no próprio sistema, ranqueadas por impacto em vendas ÷ risco.
 
 Tipos de melhoria permitidos:
@@ -256,6 +265,15 @@ async function materializarMelhorias(melhorias: any[], checagens: Checagem[]): P
   const auto = await autoajuste();
   const out: any[] = [];
   const jaProposto = new Set((await rows(`SELECT titulo FROM mkt_acoes WHERE tipo IN ('sistema','alerta') AND agente = '${AGENTE}' AND status IN ('proposta','aprovada','auto','executada') AND criado_em >= now() - interval '7 days'`)).map(r => String(r.titulo)));
+  // Assunto já em aberto: mesma chave de setting / mesma política+campos / mesmo agente de prompt
+  // com uma ação 'sistema' ainda pendente. Antes só o título era conferido e o Auditor propunha
+  // "cadência 3/semana" num dia e "cadência 2/semana" no outro — duas ações para a mesma decisão.
+  const assuntosAbertos = new Map<string, number>();
+  for (const r of await rows(`SELECT numero, parametros FROM mkt_acoes WHERE tipo = 'sistema' AND status IN ('proposta','aprovada','executando')`)) {
+    const p = typeof r.parametros === 'string' ? (() => { try { return JSON.parse(r.parametros); } catch { return {}; } })() : (r.parametros || {});
+    const k = assuntoSistema(p); if (k) assuntosAbertos.set(k, Number(r.numero));
+  }
+  const assuntoAberto = (p: any): string | null => { const k = assuntoSistema(p); return k && assuntosAbertos.has(k) ? k + ' (#' + assuntosAbertos.get(k) + ')' : null; };
   for (const m of melhorias) {
     const titulo = String(m?.titulo || '').slice(0, 200); if (!titulo || jaProposto.has(titulo)) continue;
     const motivo = String(m?.motivo || '').slice(0, 1200);
@@ -265,17 +283,20 @@ async function materializarMelhorias(melhorias: any[], checagens: Checagem[]): P
         const chave = String(m.setting?.chave || ''); const regra = AJUSTES_PERMITIDOS[chave]; const v = Number(m.setting?.valor);
         if (!regra || !Number.isFinite(v) || v < regra.min || v > regra.max) { out.push({ titulo, descartada: 'setting fora da lista/limites' }); continue; }
         const atual = Number(await getSetting(chave, '')) ; if (atual === v) { out.push({ titulo, descartada: 'valor igual ao atual' }); continue; }
+        const ab = assuntoAberto({ tipo: 'setting', chave }); if (ab) { out.push({ titulo, descartada: 'assunto ja pendente: ' + ab }); continue; }
         const a = await criarAcao({ tipo: 'sistema', agente: AGENTE, titulo, justificativa: motivo, evidencia: { checagens: checagens.filter(c => c.gravidade !== 'ok').map(c => c.id), impacto: m.impacto }, parametros: { tipo: 'setting', chave, valor: v, antes: atual }, custoEstimado: 0, receitaEsperada: 0, nivelSugerido: auto ? 1 : 2 });
         if (auto) { await db.execute(sql`UPDATE mkt_acoes SET status = 'auto', nivel_efetivo = 1, motivo_nivel = 'mkt_auditor_autoajuste=on (parametro dentro dos limites)' WHERE id = ${a.id} AND status = 'proposta'`); const ex = await executar(a.id); out.push({ titulo, numero: a.numero, auto: true, ok: ex.ok, detalhe: ex.detalhe || ex.erro }); }
         else out.push({ titulo, numero: a.numero, auto: false });
       } else if (tipo === 'politica') {
         const ta = String(m.politica?.tipo_acao || ''); const campos = m.politica?.campos || {};
         if (!ta || !Object.keys(campos).length) { out.push({ titulo, descartada: 'politica sem campos' }); continue; }
+        const ab = assuntoAberto({ tipo: 'politica', tipo_acao: ta, campos }); if (ab) { out.push({ titulo, descartada: 'assunto ja pendente: ' + ab }); continue; }
         const a = await criarAcao({ tipo: 'sistema', agente: AGENTE, titulo, justificativa: motivo, evidencia: { impacto: m.impacto }, parametros: { tipo: 'politica', tipo_acao: ta, campos }, custoEstimado: 0, receitaEsperada: 0, nivelSugerido: 2 });
         out.push({ titulo, numero: a.numero, auto: false });
       } else if (tipo === 'prompt') {
         const ag = String(m.prompt?.agente || ''); const sp = String(m.prompt?.system_prompt || '');
         if (!/^mkt_/.test(ag) || sp.length < 80) { out.push({ titulo, descartada: 'prompt invalido' }); continue; }
+        const ab = assuntoAberto({ tipo: 'prompt', agente: ag }); if (ab) { out.push({ titulo, descartada: 'assunto ja pendente: ' + ab }); continue; }
         const a = await criarAcao({ tipo: 'sistema', agente: AGENTE, titulo, justificativa: motivo, evidencia: { impacto: m.impacto }, parametros: { tipo: 'prompt', agente: ag, system_prompt: sp, motivo: titulo }, custoEstimado: 0, receitaEsperada: 0, nivelSugerido: 2 });
         out.push({ titulo, numero: a.numero, auto: false });
       } else {

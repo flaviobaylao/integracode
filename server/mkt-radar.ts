@@ -81,8 +81,26 @@ export async function garantirAgente(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Validação: cada proposta vira ação SOMENTE se bater com os sinais
 // ---------------------------------------------------------------------------
-async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Set<string>): Promise<{ acao?: NovaAcao; descarte?: string }> {
+/** Públicos já cobertos por ações pendentes: [tipo, ids de cliente]. Preenchido em aplicarResposta(). */
+type PublicoPendente = { tipo: string; numero: number | null; ids: Set<string> };
+
+/** Duplicata por público: a proposta repete ≥60% dos clientes de uma ação pendente do mesmo grupo
+ *  (visita/alerta/cupom entre si; régua com régua). Pega o caso "mesmos 5 clientes, título diferente". */
+function publicoRepetido(tipo: string, clientes: any[], pendentes: PublicoPendente[]): string | null {
+  const ids = new Set(clientes.map(c => String(c?.id ?? '')).filter(Boolean));
+  if (!ids.size) return null;
+  const grupo = (t: string) => (t === 'regua' ? 'regua' : (t === 'visita' || t === 'alerta' || t === 'cupom') ? 'contato' : t);
+  for (const p of pendentes) {
+    if (grupo(p.tipo) !== grupo(tipo) || !p.ids.size) continue;
+    let comum = 0; ids.forEach(id => { if (p.ids.has(id)) comum++; });
+    if (comum / ids.size >= 0.6) return 'publico repetido: ' + comum + '/' + ids.size + ' cliente(s) ja em ' + p.tipo + (p.numero ? ' #' + p.numero : '');
+  }
+  return null;
+}
+
+async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Set<string>, publicos: PublicoPendente[] = []): Promise<{ acao?: NovaAcao; descarte?: string }> {
   const tipo = String(prop?.tipo || '');
+  const registrar = (acao: NovaAcao) => { publicos.push({ tipo: acao.tipo, numero: null, ids: new Set(((acao.publico as any)?.clientes || []).map((c: any) => String(c.id))) }); return acao; };
   if (tipo === 'regua') {
     const seg = segmentoPorId(s, String(prop.segmento || ''));
     if (!seg || seg.tipo !== 'regua') return { descarte: 'segmento inexistente: ' + prop.segmento };
@@ -97,11 +115,12 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
     const max = Math.max(1, Math.min(Number(prop.max_clientes) || 40, 200));
     clientes = clientes.slice(0, max);
     if (!clientes.length) return { descarte: 'segmento sem cliente elegivel apos filtro' };
+    const rep = publicoRepetido('regua', clientes, publicos); if (rep) return { descarte: rep };
     const conv = seg.conversaoMedida ?? seg.conversaoEsperada;
     const custo = Number((clientes.length * seg.custoUnit).toFixed(2));
     const receita = Number(clientes.reduce((t, c) => t + (c.ticket || seg.ticketMedio) * conv, 0).toFixed(2));
     jaHoje.add(seg.id);
-    return { acao: {
+    return { acao: registrar({
       tipo: 'regua', agente: AGENTE,
       titulo: String(prop.titulo || (regua.nome + ' — ' + clientes.length + ' cliente(s)')).slice(0, 200),
       justificativa: String(prop.justificativa || '').slice(0, 1200),
@@ -110,7 +129,7 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
       parametros: { regua: regua.id, template: regua.templateLabel },
       custoEstimado: custo, receitaEsperada: receita,
       categoria: seg.categoria as any, nivelSugerido: seg.categoria === 'UTILITY' ? 1 : 2, modoTeste,
-    } };
+    }) };
   }
   if (tipo === 'alerta') {
     const al = prop.alerta || {};
@@ -119,18 +138,23 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
     if (!texto) return { descarte: 'alerta sem texto' };
     const chave = 'alerta:' + (cart?.vendedor || 'gestor');
     if (jaHoje.has(chave)) return { descarte: 'alerta repetido: ' + chave };
+    // Alerta sobre os mesmos clientes de uma visita/alerta/cupom pendente = repetição com outro título
+    const segAl = prop.segmento ? segmentoPorId(s, String(prop.segmento)) : null;
+    const clientesAl = cart?.clientesCairam?.length ? cart.clientesCairam : (segAl ? segAl.clientes.filter(c => !c.optout && !c.inadimplente).sort((a, b) => b.ticket - a.ticket).slice(0, Math.max(1, Math.min(Number(prop.max_clientes) || 8, 20))) : []);
+    const repAl = publicoRepetido('alerta', clientesAl, publicos); if (repAl) return { descarte: repAl };
     jaHoje.add(chave);
     const corpo = '📣 *Radar de Vendas*\n' + String(prop.titulo || '') + '\n\n' + texto
       + (cart?.clientesCairam?.length ? '\n\nQuem mais caiu (30d × 30d anteriores):\n' + cart.clientesCairam.slice(0, 5).map(c => '• ' + c.nome + ': R$ ' + c.anterior.toFixed(0) + ' → R$ ' + c.atual.toFixed(0)).join('\n') : '');
-    return { acao: {
+    return { acao: registrar({
       tipo: 'alerta', agente: AGENTE,
       titulo: String(prop.titulo || ('Alerta para ' + (cart?.vendedor || 'gestor'))).slice(0, 200),
       justificativa: String(prop.justificativa || '').slice(0, 1200),
       evidencia: { carteira: cart ? { vendedor: cart.vendedor, atual: cart.atual, anterior: cart.anterior, deltaPct: cart.deltaPct } : null, prioridade: prop.prioridade ?? null },
-      publico: cart ? { segmento: 'carteira:' + cart.vendedor, clientes: cart.clientesCairam.map(c => ({ id: c.id, nome: c.nome, vendedor: cart.vendedorId, ticket: c.anterior })) } : undefined,
+      publico: cart ? { segmento: 'carteira:' + cart.vendedor, clientes: cart.clientesCairam.map(c => ({ id: c.id, nome: c.nome, vendedor: cart.vendedorId, ticket: c.anterior })) }
+        : (clientesAl.length ? { segmento: segAl?.id, clientes: clientesAl.map((c: any) => ({ id: c.id, nome: c.nome, vendedor: c.vendedor, ticket: c.ticket })) } : undefined),
       parametros: { vendedor_id: cart?.vendedorId || null, texto: corpo },
       custoEstimado: 0, receitaEsperada: 0, categoria: null, nivelSugerido: 0, modoTeste,
-    } };
+    }) };
   }
   if (tipo === 'visita' || tipo === 'cupom') {
     // Publico: um segmento de regua (com filtro) ou os clientes que mais cairam numa carteira
@@ -144,23 +168,24 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
     if (!clientes.length) return { descarte: tipo + ' sem publico' };
     const chave = tipo + ':' + (prop.segmento || prop.filtro?.vendedor || 'x');
     if (jaHoje.has(chave)) return { descarte: tipo + ' repetido: ' + chave };
+    const repVc = publicoRepetido(tipo, clientes, publicos); if (repVc) return { descarte: repVc };
     jaHoje.add(chave);
     const ticketMedio = clientes.reduce((t, c) => t + Number(c.ticket || 0), 0) / clientes.length;
     if (tipo === 'visita') {
-      return { acao: { tipo: 'visita', agente: AGENTE, titulo: String(prop.titulo || ('Visita a ' + clientes.length + ' cliente(s)')).slice(0, 200),
+      return { acao: registrar({ tipo: 'visita', agente: AGENTE, titulo: String(prop.titulo || ('Visita a ' + clientes.length + ' cliente(s)')).slice(0, 200),
         justificativa: String(prop.justificativa || '').slice(0, 1200), evidencia: { segmento: seg?.id || null, carteira: prop.filtro?.vendedor || null, ticket_medio: Number(ticketMedio.toFixed(2)), prioridade: prop.prioridade ?? null },
         publico: { segmento: seg?.id, clientes: clientes.map(c => ({ id: c.id, nome: c.nome, vendedor: c.vendedor, ticket: c.ticket })) },
         parametros: { dias: Number(prop.visita?.dias) || 1, motivo: String(prop.visita?.motivo || prop.titulo || '').slice(0, 200) },
-        custoEstimado: 0, receitaEsperada: Number((ticketMedio * clientes.length * 0.3).toFixed(2)), categoria: null, nivelSugerido: 2, modoTeste } };
+        custoEstimado: 0, receitaEsperada: Number((ticketMedio * clientes.length * 0.3).toFixed(2)), categoria: null, nivelSugerido: 2, modoTeste }) };
     }
     const pct = Math.min(15, Math.max(3, Number(prop.cupom?.percentual) || 10));
     const regua = seg?.regua && reguaPorId(seg.regua) ? seg.regua : null;
-    return { acao: { tipo: 'cupom', agente: AGENTE, titulo: String(prop.titulo || ('Cupom ' + pct + '% para ' + clientes.length + ' cliente(s)')).slice(0, 200),
+    return { acao: registrar({ tipo: 'cupom', agente: AGENTE, titulo: String(prop.titulo || ('Cupom ' + pct + '% para ' + clientes.length + ' cliente(s)')).slice(0, 200),
       justificativa: String(prop.justificativa || '').slice(0, 1200), evidencia: { segmento: seg?.id || null, ticket_medio: Number(ticketMedio.toFixed(2)), percentual: pct, prioridade: prop.prioridade ?? null },
       publico: { segmento: seg?.id, regua: regua || undefined, clientes: clientes.map(c => ({ id: c.id, nome: c.nome, vendedor: c.vendedor, ticket: c.ticket })) },
       parametros: { percentual: pct, validade_dias: Number(prop.cupom?.validade_dias) || 14, regua },
       custoEstimado: Number(((regua ? clientes.length * (seg?.custoUnit || 0.04) : 0) + ticketMedio * clientes.length * 0.1 * (pct / 100)).toFixed(2)),
-      receitaEsperada: Number((ticketMedio * clientes.length * 0.1).toFixed(2)), categoria: seg?.categoria as any || null, nivelSugerido: 2, modoTeste } };
+      receitaEsperada: Number((ticketMedio * clientes.length * 0.1).toFixed(2)), categoria: seg?.categoria as any || null, nivelSugerido: 2, modoTeste }) };
   }
   if (tipo === 'peca') {
     const pc = prop.peca || {};
@@ -247,15 +272,19 @@ export async function aplicarResposta(j: any, sinais: Sinais, modoTeste: boolean
   // Mesma regra de chave que materializar() usa, por tipo — antes só a régua era
   // conferida e o Radar repetia visita/alerta quando rodava 2× no dia.
   const jaHoje = new Set<string>();
+  const publicos: PublicoPendente[] = [];
   try {
-    const q: any = await db.execute(sql`SELECT tipo, evidencia, publico, parametros FROM mkt_acoes
-      WHERE agente = ${AGENTE} AND (
+    const q: any = await db.execute(sql`SELECT numero, agente, tipo, evidencia, publico, parametros FROM mkt_acoes
+      WHERE (
         status IN ('proposta','aprovada','auto','executando')
         OR (status = 'executada' AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)
         OR (tipo = 'peca' AND status NOT IN ('rejeitada','expirada') AND criado_em >= now() - interval '3 days'))`);
     for (const row of (q.rows || [])) {
       const ev = row.evidencia || {}, pub = row.publico || {}, par = row.parametros || {};
       const tipo = String(row.tipo || '');
+      // Público (qualquer agente, inclusive ações criadas à mão): serve ao teste de repetição por cliente
+      if (Array.isArray(pub.clientes) && pub.clientes.length) publicos.push({ tipo, numero: row.numero != null ? Number(row.numero) : null, ids: new Set(pub.clientes.map((c: any) => String(c?.id ?? '')).filter(Boolean)) });
+      if (String(row.agente || '') !== AGENTE) continue; // chaves por tipo só valem para o próprio Radar
       if (tipo === 'regua' && ev.segmento) jaHoje.add(String(ev.segmento));
       else if (tipo === 'alerta') jaHoje.add('alerta:' + (ev.carteira?.vendedor || (String(pub.segmento || '').startsWith('carteira:') ? String(pub.segmento).slice(9) : 'gestor')));
       else if (tipo === 'visita' || tipo === 'cupom') jaHoje.add(tipo + ':' + (ev.segmento || ev.carteira || 'x'));
@@ -266,7 +295,7 @@ export async function aplicarResposta(j: any, sinais: Sinais, modoTeste: boolean
 
   const criadas: any[] = [], descartadas: any[] = [];
   for (const prop of j.acoes.slice(0, 8)) {
-    const mt = await materializar(prop, sinais, modoTeste, jaHoje);
+    const mt = await materializar(prop, sinais, modoTeste, jaHoje, publicos);
     if (!mt.acao) { descartadas.push({ prop: { tipo: prop?.tipo, segmento: prop?.segmento, titulo: prop?.titulo }, motivo: mt.descarte }); continue; }
     try {
       const c = await criarAcao(mt.acao);

@@ -164,6 +164,17 @@ async function main() {
   await raw(`UPDATE mkt_acoes SET criado_em = criado_em - interval '1 day' WHERE tipo = 'visita'`);
   const apDup2 = await aplicarResposta({ acoes: [ { tipo: 'visita', segmento: 'regua:ciclo_furado', max_clientes: 5, titulo: 'visita de ontem pendente', justificativa: '' } ] }, sin, true);
   check(apDup.criadas.length === 1 && apDup.criadas[0].tipo === 'visita' && apDup.descartadas.length === 3 && apDup2.criadas.length === 0, 'radar: 2a rodada nao repete regua/alerta/visita, nem visita pendente de ontem (' + apDup.descartadas.map(d => d.motivo).join(' | ') + ')');
+  // Mesmos clientes, outro tipo/outro titulo (o caso "#18 alerta gestor" x "#26 alerta vendedor" x "#17 visita"):
+  // um alerta/cupom sobre os clientes da visita pendente e repeticao por publico, mesmo com chave diferente.
+  const apPub = await aplicarResposta({ acoes: [
+    { tipo: 'alerta', segmento: 'regua:ciclo_furado', max_clientes: 5, titulo: 'Alerta: 5 clientes parados — contato imediato', justificativa: 'j', alerta: { texto: 'gestor, olha isso' } },
+    { tipo: 'cupom', segmento: 'regua:ciclo_furado', max_clientes: 5, titulo: 'Cupom para os mesmos 5', justificativa: '', cupom: { percentual: 10 } },
+  ] }, sin, true);
+  check(apPub.criadas.length === 0 && apPub.descartadas.length === 2 && apPub.descartadas.every(d => /publico repetido/.test(String(d.motivo))), 'radar: alerta/cupom sobre os mesmos clientes da visita pendente = publico repetido (' + apPub.descartadas.map(d => d.motivo).join(' | ') + ')');
+  const { assuntoSistema } = await import('../server/mkt-auditor');
+  check(assuntoSistema({ tipo: 'setting', chave: 'mkt_conteudo_cadencia_semana', valor: 3 }) === assuntoSistema({ tipo: 'setting', chave: 'mkt_conteudo_cadencia_semana', valor: 2 })
+    && assuntoSistema({ tipo: 'politica', tipo_acao: 'regua', campos: { nivel_padrao: 1 } }) === 'politica:regua:nivel_padrao' && assuntoSistema({ tipo: 'prompt', agente: 'mkt_radar' }) === 'prompt:mkt_radar' && assuntoSistema({}) === null,
+    'auditor: assunto da acao sistema independe do valor/titulo (cadencia 3 = cadencia 2)');
   const regua = ap.criadas.find(c => c.tipo === 'regua');
   const vr: any = ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${regua.numero}`)) as any).rows[0];
   check(vr.publico_total <= 12 && vr.publico.clientes.every((c: any) => c.ticket >= 300) && Number(vr.custo_estimado) === Number((vr.publico_total * 0.04).toFixed(2)), 'publico filtrado por ticket, custo = n × 0,04 (' + vr.publico_total + ' clientes, R$ ' + vr.custo_estimado + ')');
