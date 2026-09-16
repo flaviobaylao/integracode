@@ -563,6 +563,8 @@ run();
     } catch (e: any) {
       console.warn('[MKT-CTWA-MIGRATION] falha (ignorada):', e?.message);
     }
+    try { const { ensureMktAdsSchema } = await import('./mkt-meta-ads'); await ensureMktAdsSchema(); console.log('[MKT-ADS-MIGRATION] ok'); }
+    catch (e: any) { console.warn('[MKT-ADS-MIGRATION] falha (ignorada):', e?.message); }
   })();
 
   // ==========================================================================
@@ -4432,6 +4434,25 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   app.get("/api/mkt/hoje", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { painelDoDia } = await import('./mkt-hoje'); res.json(await painelDoDia()); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // ── ANUNCIO PAGO NA META (Click-to-WhatsApp) ──
+  app.get("/api/mkt/ads", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const ads = await import('./mkt-meta-ads'); res.json({ status: await ads.status(), anuncios: await ads.listar() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/ads/modo", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const ads = await import('./mkt-meta-ads'); const r = await ads.definirModo(String(req.body?.modo || ''), String(req.user?.username || 'admin')); if (!r.ok) return res.status(400).json({ error: r.erro }); res.json({ ok: true, modo: await ads.modo() }); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/ads/:id/pausar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const ads = await import('./mkt-meta-ads'); res.json(await ads.pausar(String(req.params.id))); } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/ads/:id/ativar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try { const ads = await import('./mkt-meta-ads'); res.json(await ads.ativar(String(req.params.id))); } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+  app.post("/api/mkt/ads/coletar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const ads = await import('./mkt-meta-ads'); res.json(await ads.coletarInsights()); } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 
   // ── RADAR DE VENDAS (agente mkt_radar) ──

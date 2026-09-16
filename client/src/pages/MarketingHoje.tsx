@@ -120,7 +120,7 @@ export default function MarketingHoje() {
           </>}
         </CardContent>
         <CardContent className="px-3 pb-3 pt-0 flex flex-wrap gap-1">
-          {modoBadge("mkt_radar_modo", "Radar")}{modoBadge("mkt_conteudo_modo", "Conteúdo")}{modoBadge("mkt_publicador_modo", "Publicador")}{modoBadge("mkt_insights_modo", "Insights")}{modoBadge("mkt_capi_mode", "CAPI")}
+          {modoBadge("mkt_radar_modo", "Radar")}{modoBadge("mkt_conteudo_modo", "Conteúdo")}{modoBadge("mkt_publicador_modo", "Publicador")}{modoBadge("mkt_insights_modo", "Insights")}{modoBadge("mkt_capi_mode", "CAPI")}{modoBadge("mkt_ads_modo", "Anúncios")}
           {d.ig?.conectado && <Badge variant="outline" style={{ borderColor: VERDE, color: VERDE }}>@{d.ig.username} · {d.ig.diasRestantes}d</Badge>}
         </CardContent>
         <CardContent className="px-3 pb-3 pt-0"><CanalLegenda /></CardContent>
@@ -243,6 +243,9 @@ export default function MarketingHoje() {
               <div>{r.titulo}</div>
               {r.erro && <div className="text-xs text-red-600">{r.erro}</div>}
               {r.toques && <div className="text-xs text-muted-foreground">{num(r.toques.enviados)} mensagem(ns) enviada(s) · {num(r.toques.responderam)} responderam{r.toques.bloqueados ? " · " + num(r.toques.bloqueados) + " bloqueada(s)" : ""}</div>}
+              {r.anuncio && (
+                <div className="text-xs text-muted-foreground">📘 gasto {brl(r.anuncio.gasto)} de {brl(r.anuncio.orcamentoDia * r.anuncio.dias)} · {num(r.anuncio.impressoes)} impressões · {num(r.anuncio.cliques)} cliques · <b>{num(r.anuncio.conversas)} conversa(s) no WhatsApp</b> · {r.anuncio.status}{r.anuncio.link && <> · <a className="underline" href={r.anuncio.link} target="_blank" rel="noreferrer">Gerenciador</a></>}</div>
+              )}
               {r.aoVivo && (
                 <div className="grid grid-cols-3 gap-1 mt-1 text-xs">
                   <div className="border rounded p-1"><div className="text-muted-foreground">Pedidos</div><b>{num(r.aoVivo.pedidos)}</b> de {num(r.aoVivo.publico)} tocados ({Math.round(r.aoVivo.taxa * 100)}%)</div>

@@ -66,11 +66,12 @@ Regras:
 - VISITA: para clientes de ticket alto que pararam (ou os que mais caíram numa carteira), prefira "visita" (o vendedor vai lá) a mensagem. Use "segmento" ou "filtro.vendedor"; max_clientes ≤ 8.
 - CUPOM: só como 3º toque de reativação (segmento regua:reativacao) ou para carteira em queda forte; percentual 5–15; sempre com "regua" do segmento para o lembrete sair junto. Nunca cupom a inadimplente.
 - CONTEÚDO: se "conteudo.cabe_esta_semana" > 0, "pecas_na_fila_de_aprovacao" + "pecas_aprovadas_nao_postadas" < 3 e existe gancho em "ganchos_com_foto_elegivel", proponha até 2 ações do tipo "peca" (uma pauta cada: gancho + público), preferindo o gancho de melhor "receitaPorUso" confiável e variando o gancho em relação às peças recentes. Peça é rascunho: vai para o revisor e para a fila — não vai ao ar sozinha.
+- ANÚNCIO PAGO: só quando "anuncios_pagos.conta_pronta" for true, "modo" ≠ off e houver "pecas_candidatas". No máximo 1 por dia e só se "ativos_agora" = 0. Escolha a peça de melhor alcance/curtidas orgânicas; orçamento diário ≤ "teto_por_dia_brl" (se 0, não proponha); duração 3 a 7 dias. É Click-to-WhatsApp: a conversa que nasce dele já entra no atendimento. Justifique com o que a peça rendeu organicamente.
 - Título: até 90 caracteres, direto. Justificativa: 1 a 3 frases, com os números, em português do Brasil, sem jargão.
 - Seja conservador com "max_clientes": lotes pequenos, especialmente enquanto a conversão medida for nula.
 
 Responda SOMENTE com JSON válido no formato:
-{"acoes":[{"tipo":"regua"|"alerta"|"peca"|"visita"|"cupom","segmento":"regua:reativacao","regua":"reativacao","max_clientes":40,"prioridade":1,"filtro":{"vendedor":null,"ticket_min":null},"titulo":"...","justificativa":"...","alerta":{"vendedor":"nome exato da carteira","texto":"mensagem pronta para o vendedor"},"peca":{"gancho":"margem","publico":"b2b"},"visita":{"dias":1,"motivo":"..."},"cupom":{"percentual":10,"validade_dias":14}}],"leitura_do_dia":"2 frases sobre o estado geral"}`;
+{"acoes":[{"tipo":"regua"|"alerta"|"peca"|"visita"|"cupom"|"anuncio","segmento":"regua:reativacao","regua":"reativacao","max_clientes":40,"prioridade":1,"filtro":{"vendedor":null,"ticket_min":null},"titulo":"...","justificativa":"...","alerta":{"vendedor":"nome exato da carteira","texto":"mensagem pronta para o vendedor"},"peca":{"gancho":"margem","publico":"b2b"},"visita":{"dias":1,"motivo":"..."},"cupom":{"percentual":10,"validade_dias":14},"anuncio":{"peca_id":"...","orcamento_dia":20,"dias":5}}],"leitura_do_dia":"2 frases sobre o estado geral"}`;
 
 export async function garantirAgente(): Promise<void> {
   const { garantirAgenteConfig } = await import('./mkt-llm');
@@ -179,6 +180,29 @@ async function materializar(prop: any, s: Sinais, modoTeste: boolean, jaHoje: Se
       custoEstimado: 0.1, receitaEsperada: 0, categoria: null, nivelSugerido: 0, modoTeste,
     } };
   }
+  if (tipo === 'anuncio') {
+    const an = prop.anuncio || {};
+    if (!s.anuncios.pronto) return { descarte: 'conta de anuncios nao configurada' };
+    if (s.anuncios.modo === 'off') return { descarte: 'anuncios desligados' };
+    if (s.anuncios.ativos > 0) return { descarte: 'ja existe anuncio ativo' };
+    const peca = s.anuncios.pecasCandidatas.find(p => p.id === String(an.peca_id || '') || p.numero === Number(an.peca_id)) || s.anuncios.pecasCandidatas[0];
+    if (!peca) return { descarte: 'nenhuma peca candidata para anuncio' };
+    const teto = Number(s.anuncios.tetoDia || 0);
+    if (teto <= 0) return { descarte: 'politica anuncio sem teto por dia' };
+    const orc = Math.min(teto, Math.max(5, Number(an.orcamento_dia) || teto));
+    const dias = Math.min(7, Math.max(3, Number(an.dias) || 5));
+    const chave = 'anuncio:' + peca.id;
+    if (jaHoje.has(chave)) return { descarte: 'anuncio repetido: ' + chave };
+    jaHoje.add(chave);
+    return { acao: {
+      tipo: 'anuncio', agente: AGENTE,
+      titulo: String(prop.titulo || ('Anúncio Click-to-WhatsApp da peça #' + peca.numero + ' · R$ ' + orc + '/dia por ' + dias + ' dias')).slice(0, 200),
+      justificativa: String(prop.justificativa || '').slice(0, 1200),
+      evidencia: { peca: peca.numero, gancho: peca.gancho, alcance_organico: peca.alcance, curtidas: peca.curtidas, teto_dia: teto, prioridade: prop.prioridade ?? null },
+      parametros: { canal: 'facebook', plataforma: 'meta', peca_id: peca.id, asset_id: peca.assetId, orcamento_dia: orc, dias },
+      custoEstimado: Number((orc * dias).toFixed(2)), receitaEsperada: Number((orc * dias * 2).toFixed(2)), categoria: null, nivelSugerido: 2, modoTeste,
+    } };
+  }
   return { descarte: 'tipo desconhecido: ' + tipo };
 }
 
@@ -236,6 +260,7 @@ export async function aplicarResposta(j: any, sinais: Sinais, modoTeste: boolean
       else if (tipo === 'alerta') jaHoje.add('alerta:' + (ev.carteira?.vendedor || (String(pub.segmento || '').startsWith('carteira:') ? String(pub.segmento).slice(9) : 'gestor')));
       else if (tipo === 'visita' || tipo === 'cupom') jaHoje.add(tipo + ':' + (ev.segmento || ev.carteira || 'x'));
       else if (tipo === 'peca' && par.gancho) jaHoje.add('peca:' + par.gancho + ':' + (par.publico || 'b2b'));
+      else if (tipo === 'anuncio' && par.peca_id) jaHoje.add('anuncio:' + par.peca_id);
     }
   } catch {}
 

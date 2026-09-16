@@ -218,6 +218,7 @@ export default function CaixaDecisoes() {
 
       <Radar politicas={d.politicas || []} aoMudar={recarregar} />
       <AgentesConteudo />
+      <AnunciosMeta />
       <Aprendizados aoMudar={recarregar} />
       <Auditor aoMudar={recarregar} />
     </>
@@ -492,6 +493,69 @@ function InstagramConectado() {
         {p.fila && <span className="text-[11px] text-muted-foreground">{num(p.fila.aprovadas)} aprovada(s) · {num(p.fila.agendadas)} agendada(s) · {num(p.fila.publicadas30)} publicada(s) em 30d</span>}
       </div>
     </div>
+  );
+}
+
+function AnunciosMeta() {
+  const { toast } = useToast();
+  const q = useQuery<any>({ queryKey: ["/api/mkt/ads"], queryFn: () => apiGet("/api/mkt/ads") });
+  const st = q.data?.status || {};
+  const lista: any[] = q.data?.anuncios || [];
+  async function modo(m: string) {
+    try { await apiPost("/api/mkt/ads/modo", { modo: m }); toast({ title: "Anúncios em " + m }); q.refetch(); }
+    catch (e: any) { toast({ title: "Não deu", description: e.message, variant: "destructive" }); }
+  }
+  async function acao(id: string, o: "pausar" | "ativar") {
+    try { const r = await apiPost("/api/mkt/ads/" + id + "/" + o, {}); toast({ title: r.ok ? (o === "pausar" ? "Pausado" : "Ativado") : "Não deu", description: r.erro || "", variant: r.ok ? undefined : "destructive" }); q.refetch(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  async function coletar() {
+    try { const r = await apiPost("/api/mkt/ads/coletar", {}); toast({ title: r.anuncios + " anúncio(s) · " + r.linhas + " dia(s) atualizados", description: r.erros ? r.erros + " erro(s)" : "" }); q.refetch(); }
+    catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  }
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+          <i className="fab fa-facebook text-muted-foreground" /> Anúncio pago na Meta (Click-to-WhatsApp)
+          <Badge variant="outline">{st.modo || "…"}</Badge>
+          {st.pronto === false && <Badge variant="destructive">faltam {(st.falta || []).join(", ")}</Badge>}
+          {st.erro && <Badge variant="destructive">conta não respondeu</Badge>}
+          <span className="ml-auto flex gap-1 flex-wrap">
+            <Button size="sm" variant={st.modo === "off" ? "default" : "outline"} onClick={() => modo("off")}>Desligar</Button>
+            <Button size="sm" variant={st.modo === "test" ? "default" : "outline"} onClick={() => modo("test")}>Modo teste</Button>
+            <Button size="sm" variant={st.modo === "on" ? "default" : "outline"} onClick={() => modo("on")}>Ligar</Button>
+            <Button size="sm" variant="outline" disabled={!st.pronto} onClick={coletar}>Atualizar gastos</Button>
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          O Radar propõe no máximo 1 anúncio por dia (só com a conta configurada, sem anúncio ativo e com peça já aprovada/publicada com foto), dentro do teto R$/dia da política <b>Anúncio</b>. Aprovado: campanha + conjunto (destino WhatsApp 1841, raio de {st.raioKm || 40} km) + criativo com a foto da peça. Nasce pausado; em <b>ligado</b> ativa na hora. A conversa chega com <code>ctwa_clid</code> e o pedido volta pela CAPI. Gasto e conversas atualizam a cada 3 h.
+          {st.pronto === false && <> Configure no Railway: <code>META_AD_ACCOUNT_ID</code> (act_…), <code>META_ADS_TOKEN</code> (usuário do sistema com ads_management), <code>META_PAGE_ID</code>; opcional <code>META_IG_ACTOR_ID</code>.</>}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm">
+        {st.pronto && !st.erro && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <Kpi t="Conta" v={String(st.nome || st.conta)} />
+            <Kpi t="Gasto 30d" v={brl(st.gasto30d)} />
+            <Kpi t="Conversas 30d" v={num(st.conversas30d)} />
+            <Kpi t="Ativos agora" v={num(st.ativos)} destaque={!!st.ativos} />
+          </div>
+        )}
+        {st.erro && <div className="text-xs text-red-600">{st.erro}</div>}
+        {lista.length === 0 && <div className="text-xs text-muted-foreground">Nenhum anúncio criado pela Central ainda.</div>}
+        {lista.map((a: any) => (
+          <div key={a.id} className="border rounded p-2 flex flex-wrap items-center gap-2">
+            <Badge variant="outline" style={{ color: a.status === "ativo" ? "#16a34a" : "#6b7280", borderColor: a.status === "ativo" ? "#16a34a" : "#9ca3af" }}>{a.status}</Badge>
+            <span className="font-medium">{a.nome}</span>
+            <span className="text-xs text-muted-foreground">R$ {Number(a.orcamento_dia).toFixed(0)}/dia · {a.dias} d · gasto {brl(a.gasto)} · {num(a.conversas)} conversa(s)</span>
+            <span className="ml-auto flex gap-1">
+              {a.status === "ativo" ? <Button size="sm" variant="outline" onClick={() => acao(a.id, "pausar")}>Pausar</Button> : a.status === "pausado" ? <Button size="sm" variant="outline" onClick={() => acao(a.id, "ativar")}>Ativar</Button> : null}
+            </span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -310,6 +310,7 @@ export async function executar(id: string): Promise<{ id: string; ok: boolean; d
       case 'visita': detalhe = await executarVisita(a); break;
       case 'cupom': detalhe = await executarCupom(a); break;
       case 'sistema': detalhe = await executarSistema(a); break;
+      case 'anuncio': detalhe = await executarAnuncio(a); break;
       default: throw new Error('executor para tipo ' + a.tipo + ' ainda nao existe');
     }
     await db.execute(sql`UPDATE mkt_acoes SET status='executada', executada_em=now(), execucao=${JSON.stringify(detalhe || {})}::jsonb WHERE id=${a.id}`);
@@ -448,6 +449,28 @@ async function executarVisita(a: any): Promise<any> {
 // atendente oferece o codigo quando o cliente responde (template UTILITY nao
 // leva texto livre). Percentual limitado por codigo (teto 15%).
 // ---------------------------------------------------------------------------
+/** ANUNCIO (N2): cria campanha Click-to-WhatsApp na Meta a partir da peca; em modo teste so valida a conta. */
+async function executarAnuncio(a: any): Promise<any> {
+  const p = a.parametros || {};
+  const ads = await import('./mkt-meta-ads');
+  const pr = ads.pronto();
+  if (!pr.ok) throw new Error('conta de anúncios não configurada: faltam ' + pr.falta.join(', '));
+  const m = await ads.modo();
+  if (m === 'off') throw new Error('anúncios desligados (mkt_ads_modo=off)');
+  const peca: any = p.peca_id ? (await db.execute(sql`SELECT id, numero, copy, titulo, asset_ids FROM mkt_pieces WHERE id = ${String(p.peca_id)} LIMIT 1`) as any).rows?.[0] : null;
+  const assetId = Number(p.asset_id || (peca?.asset_ids?.[0]) || 0);
+  if (!assetId) throw new Error('anúncio sem foto');
+  const legenda = String(p.legenda || peca?.copy || a.titulo || '').trim();
+  if (a.modo_teste || m === 'test') {
+    const st = await ads.status();
+    if (st.erro) throw new Error('conta de anúncios não respondeu: ' + st.erro);
+    return { simulado: true, conta: st.nome || st.conta, moeda: st.moeda, orcamentoDia: p.orcamento_dia, dias: p.dias, peca: peca?.numero || null };
+  }
+  const r = await ads.criarAnuncioCTWA({ nome: 'Integra · ' + String(a.titulo || '').slice(0, 80), legenda, assetId, orcamentoDia: Number(p.orcamento_dia) || 10, dias: Number(p.dias) || 5, acaoId: String(a.id), pecaId: peca?.id || null, ativar: true });
+  if (!r.ok) throw new Error('Meta (' + (r.etapa || '?') + '): ' + r.erro);
+  return { adId: r.adId, campanhaMetaId: r.campanhaMetaId, link: r.link, aviso: r.erro || null, peca: peca?.numero || null, orcamentoDia: p.orcamento_dia, dias: p.dias };
+}
+
 async function executarCupom(a: any): Promise<any> {
   const p = a.parametros || {};
   const pct = Math.min(15, Math.max(3, Number(p.percentual) || 10));
@@ -571,6 +594,19 @@ export async function medir(): Promise<number> {
     } catch {}
     n++;
   }
+  // Anuncio pago: o resultado vem dos insights da Meta (gasto, conversas) e dos pedidos CTWA — fecha quando a campanha termina.
+  try {
+    const ads = await import('./mkt-meta-ads');
+    const an: any = await db.execute(sql`SELECT id, executada_em FROM mkt_acoes WHERE status = 'executada' AND medido_em IS NULL AND tipo = 'anuncio' AND modo_teste = false`);
+    for (const a of (an.rows || [])) {
+      const r = await ads.resultadoDoAnuncio(String(a.id));
+      if (!r) continue;
+      const resultado = { gasto: r.gasto, impressoes: r.impressoes, cliques: r.cliques, conversas: r.conversas, pedidos: r.pedidosCtwa, receita: r.receitaCtwa, custo: r.gasto, taxa: r.conversas ? Number((r.pedidosCtwa / r.conversas).toFixed(3)) : 0, janelaDias: r.dias };
+      const fechou = r.status === 'encerrado' || (r.fim && new Date(r.fim).getTime() < Date.now() - 86400000);
+      await db.execute(sql`UPDATE mkt_acoes SET resultado = ${JSON.stringify(resultado)}::jsonb ${fechou ? sql`, medido_em = now()` : sql``} WHERE id = ${a.id}`);
+      n++;
+    }
+  } catch (e: any) { console.error('[MKT-ACOES] medir anuncios:', e?.message || e); }
   return n;
 }
 

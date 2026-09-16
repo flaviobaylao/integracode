@@ -966,6 +966,12 @@ cron.schedule('20 4 * * 0', async () => {
   catch (e: any) { console.error('[MKT-IG] renovacao falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
+// A cada 3h (8h-23h) — gasto e conversas dos anuncios pagos (Meta insights) -> mkt_ads_diario
+cron.schedule('20 8-23/3 * * *', async () => {
+  try { const ads = await import('./mkt-meta-ads'); const r = await ads.coletarInsights(); if (r.anuncios) console.log('[MKT-ADS] ' + r.anuncios + ' anuncio(s), ' + r.linhas + ' dia(s), ' + r.erros + ' erro(s)'); }
+  catch (e: any) { console.error('[MKT-ADS] coleta falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
 // Segunda 06:00 — otimizador: o que a Central fez x o que rendeu -> mkt_learnings
 cron.schedule('0 6 * * 1', async () => {
   try { const { rodar } = await import('./mkt-otimizador'); const r = await rodar({ quem: 'cron' }); console.log('[MKT-OTIMIZADOR] ' + (r.ok ? (r.gravados?.length || 0) + ' aprendizado(s)' : r.motivo)); }
