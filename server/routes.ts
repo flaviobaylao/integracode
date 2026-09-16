@@ -417,6 +417,52 @@ async function __reprogramarLeadsVencidos(sellerId: string, todayStr: string): P
   }
 }
 
+// Nucleo da reprogramacao de leads VENCIDOS por COORDENADA (dia de rota da regiao), para UM
+// vendedor (onlySeller) ou TODOS (null). NAO depende de existir rota do dia — varre a tabela leads
+// direto. Idempotente (so mexe em quem esta vencido). Devolve diagnostico p/ o endpoint/log.
+async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: string): Promise<{ encontrados: number; reprogramados: number; perSeller: Record<string, number>; erros: string[] }> {
+  const perSeller: Record<string, number> = {};
+  const erros: string[] = [];
+  let reprogramados = 0;
+  const overdue: any = await db.execute(sql`
+    SELECT id, assigned_to AS seller, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng
+    FROM leads
+    WHERE status = 'scheduled'
+      AND COALESCE(route_type, 'dia') <> 'prospeccao'
+      AND assigned_to IS NOT NULL
+      AND next_contact_date IS NOT NULL
+      AND (next_contact_date)::date < ${todayStr}::date
+      AND latitude IS NOT NULL AND longitude IS NOT NULL
+      ${onlySeller ? sql`AND assigned_to = ${onlySeller}` : sql``}
+  `);
+  const rows = (overdue?.rows || []) as any[];
+  const base0 = new Date(`${todayStr}T00:00:00Z`);
+  const custCache: Record<string, any[]> = {};
+  for (const r of rows) {
+    try {
+      const seller = String((r as any).seller || '');
+      if (!seller) continue;
+      if (!custCache[seller]) custCache[seller] = await __sellerCustomers(seller);
+      const wd = __regionTargetWeekday(custCache[seller], Number((r as any).lat), Number((r as any).lng));
+      let next: Date;
+      if (wd !== null) {
+        next = __snapToWeekday(new Date(base0), wd, 6, new Date(base0), null);
+      } else {
+        next = new Date(base0);
+        const dow = next.getUTCDay();
+        if (dow === 6) next.setUTCDate(next.getUTCDate() + 2);
+        else if (dow === 0) next.setUTCDate(next.getUTCDate() + 1);
+      }
+      await db.execute(sql`UPDATE leads SET next_contact_date = ${next}, updated_at = NOW() WHERE id = ${(r as any).id}`);
+      reprogramados++;
+      perSeller[seller] = (perSeller[seller] || 0) + 1;
+    } catch (e: any) {
+      if (erros.length < 8) erros.push(String(e?.message || e));
+    }
+  }
+  return { encontrados: rows.length, reprogramados, perSeller, erros };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -9082,6 +9128,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   let __lastTmRegenCheckMs = 0;
   const TM_AUTOREGEN_KEY = 'telemarketing_last_autoregen';
   const TM_AUTOREGEN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+  // Reprogramacao diaria de leads vencidos (todos os vendedores) — estado do throttle.
+  let __lastVencidosCheckMs = 0;
+  const VENCIDOS_REPROG_KEY = 'reprog_vencidos_last_day';
 
   async function runTelemarketingRegen(sellerIdsFilter?: string[]): Promise<any> {
     const { calculateNextVisitDate } = await import('../shared/visitSchedule');
@@ -9193,6 +9242,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e) {
       __tmRegenRunning = false;
       console.warn('[TM-AUTOREGEN] check falhou:', (e as any)?.message);
+    }
+  }
+
+  // 🔁 Reprograma, no maximo 1x por dia (BRT) e por instancia, TODOS os leads vencidos por
+  // coordenada (dia de rota da regiao). Roda em background no 1o GET de rota do dia — cobre TODOS
+  // os vendedores, inclusive quem nao teve a rota aberta. Guarda persistida em system_settings.
+  async function maybeReprogramarVencidosDiario(): Promise<void> {
+    const nowMs = Date.now();
+    if ((nowMs - __lastVencidosCheckMs) < 1800000) return; // checa no max. a cada 30 min por instancia
+    __lastVencidosCheckMs = nowMs;
+    try {
+      const hoje = getBrazilDateString();
+      const settings = await storage.getSystemSettings();
+      const row = (settings as any[]).find((s: any) => s.key === VENCIDOS_REPROG_KEY);
+      if (row && String(row.value) === hoje) return; // ja rodou hoje
+      // Marca ANTES de rodar p/ evitar corrida entre requests/instancias.
+      await storage.upsertSystemSetting({ key: VENCIDOS_REPROG_KEY, value: hoje, description: 'Ultimo dia (BRT) em que os leads vencidos foram reprogramados por coordenada', updatedBy: 'system' });
+      reprogramarVencidosGlobal(null, hoje)
+        .then((r) => console.log(`🔁 [VENCIDOS-DIARIO] ${r.reprogramados}/${r.encontrados} leads vencidos reprogramados (${Object.keys(r.perSeller).length} vendedores).`))
+        .catch((e) => console.warn('[VENCIDOS-DIARIO] falha:', (e as any)?.message));
+    } catch (e) {
+      console.warn('[VENCIDOS-DIARIO] check falhou:', (e as any)?.message);
     }
   }
 
@@ -16260,6 +16331,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔁 Reprograma leads VENCIDOS por COORDENADA (dia de rota da regiao) para TODOS os vendedores
+  // (ou um especifico via body.sellerId), sem depender de existir rota do dia. Admin apenas.
+  app.post('/api/admin/leads/reprogramar-vencidos', authenticateUser, async (req: any, res) => {
+    try {
+      const _u: any = (req as any).currentUser || (req as any).user;
+      if (!_u || _u.role !== 'admin') return res.status(403).json({ message: 'Apenas administrador.' });
+      const onlySeller = (req.body && req.body.sellerId) ? String(req.body.sellerId) : null;
+      const hoje = getBrazilDateString();
+      const r = await reprogramarVencidosGlobal(onlySeller, hoje);
+      res.json({ ok: true, hoje, ...r });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
   // Buscar rota do dia atual para um vendedor
   app.get('/api/daily-routes/:sellerId/today', authenticateUser, async (req: any, res) => {
     try {
@@ -16273,6 +16359,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Auto-regeneração semanal de telemarketing (throttled, fire-and-forget).
       maybeAutoRegenTelemarketing();
+      maybeReprogramarVencidosDiario();
 
       // Usar timezone do Brasil para garantir que encontramos a rota correta
       const todayBrazil = dataCalendario(hojeBR());
@@ -16706,6 +16793,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Auto-regeneração semanal de telemarketing (throttled, fire-and-forget).
       maybeAutoRegenTelemarketing();
+      maybeReprogramarVencidosDiario();
 
       // Parse date string as UTC midnight (matches how routes are stored)
       const routeDate = new Date(`${date}T00:00:00.000Z`);
