@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { storage } from "./storage";
 import { sefazService } from "./sefaz-service";
+import { registerInutilizacaoRoutes } from "./nfe-inutilizacao";
 import { nowBrazil } from "./brazilTimezone";
 import crypto from "crypto";
 import { z } from "zod";
@@ -196,6 +197,9 @@ const cancelInvoiceSchema = z.object({
 });
 
 export function registerNfeRoutes(app: Express) {
+  // Inutilização de numeração NF-e/NFC-e (levantamento de lacunas + NFeInutilizacao4)
+  registerInutilizacaoRoutes(app);
+
 
   // ============================================================================
   // COMPANY DATA PER INSTANCE
