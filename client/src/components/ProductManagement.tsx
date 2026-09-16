@@ -9,6 +9,7 @@ import { RefreshCw, Images, X, Upload, Check, Pencil, FileText, Download, Trash2
 import ProductModal from "@/components/ProductModal";
 import { apiRequest } from "@/lib/queryClient";
 import type { Product } from "@shared/schema";
+import { calcularLogistica } from "@shared/logistica-produto";
 
 type FichaMeta = {
   fileName: string;
@@ -378,6 +379,27 @@ export default function ProductManagement() {
                     )}
                   </div>
 
+                  {/* LOGÍSTICA (set/2026): resumo do cadastro de peso/fardo/palete. */}
+                  {(() => {
+                    const lg = calcularLogistica(product as any);
+                    return (
+                      <div className="text-[11px] leading-tight text-gray-600 rounded border border-gray-100 bg-gray-50 px-2 py-1.5" data-testid={`logistica-${product.id}`}>
+                        <span className="font-medium text-gray-700">Logística: </span>
+                        {lg ? (
+                          <>
+                            {lg.unidade.pesoBrutoG} g
+                            {lg.unidade.diametroCm > 0 && lg.unidade.alturaCm > 0 && <> · Ø {lg.unidade.diametroCm} × {lg.unidade.alturaCm} cm</>}
+                            {lg.fardo.unidades > 0 && <> · fardo {lg.fardo.unidades} un ({lg.fardo.filas} × {lg.fardo.porFila}), {lg.fardo.pesoBrutoKg} kg</>}
+                            {lg.palete.fardos > 0 && <> · palete {lg.palete.fardos} fardos / {lg.palete.unidades} un</>}
+                            {lg.palete.alertas.length > 0 && <span className="text-amber-700"> · ⚠ revisar palete</span>}
+                          </>
+                        ) : (
+                          <span className="text-amber-700">sem peso/medidas — a NF-e sai sem volumes. Preencha em "Editar Produto".</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   <Button
                     variant="outline"
                     className="w-full"
@@ -607,6 +629,40 @@ export default function ProductManagement() {
                             )}
                           </label>
                         </div>
+
+                        {/* FICHA LOGÍSTICA (set/2026): PDF gerado do cadastro (peso, fardo, palete). */}
+                        {(() => {
+                          const lg = calcularLogistica(product as any);
+                          return (
+                            <div className="border rounded-lg p-3 space-y-2 bg-slate-50" data-testid={`ficha-logistica-${product.id}`}>
+                              <p className="text-sm font-medium">Ficha logística (gerada do cadastro)</p>
+                              {lg ? (
+                                <p className="text-xs text-slate-600">
+                                  {lg.unidade.pesoBrutoG} g bruto / {lg.unidade.pesoLiquidoG} g líquido · Ø {lg.unidade.diametroCm} × {lg.unidade.alturaCm} cm
+                                  {lg.fardo.unidades > 0 && <> · fardo {lg.fardo.unidades} un {lg.fardo.compCm} × {lg.fardo.largCm} × {lg.fardo.altCm} cm, {lg.fardo.pesoBrutoKg} kg</>}
+                                  {lg.palete.fardos > 0 && <> · palete {lg.palete.fardosPorCamada} × {lg.palete.camadas} = {lg.palete.fardos} fardos ({lg.palete.unidades} un), {lg.palete.alturaTotalCm} cm, {lg.palete.pesoTotalKg} kg</>}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-amber-700">Sem peso e medidas cadastrados — preencha em "Editar Produto" para gerar a ficha.</p>
+                              )}
+                              <div className="flex gap-2">
+                                <Button variant="outline" size="sm" asChild disabled={!lg}>
+                                  <a href={`/api/products/${product.id}/ficha-logistica`} target="_blank" rel="noreferrer">
+                                    <FileText className="mr-2 h-4 w-4" /> Visualizar
+                                  </a>
+                                </Button>
+                                <Button variant="outline" size="sm" asChild disabled={!lg}>
+                                  <a href={`/api/products/${product.id}/ficha-logistica?download=1`}>
+                                    <Download className="mr-2 h-4 w-4" /> Baixar PDF
+                                  </a>
+                                </Button>
+                              </div>
+                              <p className="text-[11px] text-slate-500">
+                                Layout de enfardamento, paletização e regras de transporte. A IA também envia esse link ao cliente.
+                              </p>
+                            </div>
+                          );
+                        })()}
 
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                           <p className="text-xs text-blue-700">

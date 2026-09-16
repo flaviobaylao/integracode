@@ -4,6 +4,7 @@
 // FERRAMENTAS (tool-use): transferir_humano, buscar_boleto, consultar_debitos, consultar_produto,
 //                          consultar_ficha_tecnica.
 import { db } from './db';
+import { textoLogistica } from './ficha-logistica';
 import { sql } from 'drizzle-orm';
 import { whereDebitoVivoSql } from './divida-viva';
 
@@ -45,7 +46,7 @@ const TOOL_DEFS: any[] = [
   { name: 'consultar_pedido', description: 'Le o pedido do cliente e devolve tudo sobre ele: numero, data, situacao, valor, forma de pagamento, previsao de entrega, nota fiscal e a LISTA DE PRODUTOS com quantidades. Use SEMPRE que o cliente perguntar qualquer coisa sobre "esse pedido" / "meu pedido" — o que veio, quando chega, quanto ficou, por que travou. NAO peca CPF/CNPJ nem diga que nao ha pedido nesta conversa: consulte primeiro.', input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'numero do pedido, apenas se o cliente citar um especifico' } }, required: [] } },
   { name: 'segunda_via', description: 'Envia a 2ª via de TODOS os títulos vencidos em aberto do cliente: um PIX copia-e-cola por título, com número, vencimento e valor, mais o total. Use SEMPRE que o cliente pedir 2ª via, boleto, chave PIX, "como pago" ou responder pedindo a via de um aviso de pedido. Você JÁ sabe quem é o cliente pela conversa — NÃO peça CPF/CNPJ.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ, apenas se o cliente informar espontaneamente' } }, required: [] } },
   { name: 'consultar_produto', description: 'Consulta preço e disponibilidade de um produto pelo nome/termo.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome ou parte do nome do produto' } }, required: ['termo'] } },
-  { name: 'consultar_ficha_tecnica', description: 'Le a FICHA TECNICA oficial do produto (o PDF que a equipe anexou no catalogo) e devolve o conteudo dela em texto, mais o link do PDF. Use SEMPRE que o cliente perguntar composicao, ingredientes, informacao nutricional, calorias, acucar, conservante, corante, alergenico, gluten, lactose, se e vegano, validade, prazo de consumo, modo de conservacao, rendimento, embalagem, peso, registro/MAPA ou qualquer detalhe tecnico do produto. NAO responda esse tipo de pergunta de cabeca: consulte a ficha e responda SO com o que estiver escrita nela. Se o produto nao tiver ficha anexada, diga que vai confirmar com a equipe — nunca invente numero de rotulo. Pode buscar tambem por atributo (ex.: "sem acucar") quando o cliente nao citar o produto pelo nome.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome do produto, ou o atributo procurado quando o cliente nao citar o produto' } }, required: ['termo'] } },
+  { name: 'consultar_ficha_tecnica', description: 'Le a FICHA TECNICA oficial do produto (o PDF que a equipe anexou no catalogo) e devolve o conteudo dela em texto, mais o link do PDF. Use SEMPRE que o cliente perguntar composicao, ingredientes, informacao nutricional, calorias, acucar, conservante, corante, alergenico, gluten, lactose, se e vegano, validade, prazo de consumo, modo de conservacao, rendimento, embalagem, peso, registro/MAPA ou qualquer detalhe tecnico do produto. NAO responda esse tipo de pergunta de cabeca: consulte a ficha e responda SO com o que estiver escrita nela. Se o produto nao tiver ficha anexada, diga que vai confirmar com a equipe — nunca invente numero de rotulo. PESO, MEDIDAS DA GARRAFA, FARDO (quantas unidades, medidas, peso) e PALETIZACAO vem do cadastro do produto e aparecem no bloco LOGISTICA da resposta, com link da ficha logistica em PDF — use esses numeros para cliente de rede, distribuidor ou transportadora. Pode buscar tambem por atributo (ex.: "sem acucar") quando o cliente nao citar o produto pelo nome.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome do produto, ou o atributo procurado quando o cliente nao citar o produto' } }, required: ['termo'] } },
 ];
 
 // Ferramenta EXTRA (só habilitada no canal Instagram): registra um pedido no pipeline de faturamento.
@@ -408,9 +409,12 @@ async function consultarFichaTecnica(input: any): Promise<string> {
     return 'Nenhuma ficha tecnica cadastrada ainda. NAO invente dados de rotulo — diga ao cliente que vai confirmar com a equipe.';
   }
   const all: any = await db.execute(sql`
-    SELECT p.id, p.name, d.file_name, d.extract_status, d.extracted_text
+    SELECT p.id, p.name, d.file_name, d.extract_status, d.extracted_text,
+           p.peso_bruto_g, p.peso_embalagem_g, p.diametro_cm, p.altura_cm,
+           p.fardo_filas, p.fardo_por_fila, p.fardo_filme_g,
+           p.palet_fardos_camada, p.palet_camadas, p.palet_tipo
     FROM products p LEFT JOIN product_datasheets d ON d.product_id = p.id
-    WHERE p.is_active = true ORDER BY p.name`);
+    WHERE p.is_active = true AND p.internal_only = false ORDER BY p.name`);
   const rows: any[] = all.rows || [];
   if (!rows.length) return 'Catalogo vazio.';
 
@@ -432,7 +436,22 @@ async function consultarFichaTecnica(input: any): Promise<string> {
     }
   }
 
+  // LOGÍSTICA (set/2026): peso, medidas, fardo e palete vêm do CADASTRO do produto,
+  // não do PDF — e valem mesmo para produto sem ficha anexada.
+  const logisticaDe = (p: any) => textoLogistica({
+    pesoBrutoG: p.peso_bruto_g, pesoEmbalagemG: p.peso_embalagem_g, diametroCm: p.diametro_cm, alturaCm: p.altura_cm,
+    fardoFilas: p.fardo_filas, fardoPorFila: p.fardo_por_fila, fardoFilmeG: p.fardo_filme_g,
+    paletFardosCamada: p.palet_fardos_camada, paletCamadas: p.palet_camadas, paletTipo: p.palet_tipo,
+  });
   const comFicha = achados.filter((p: any) => p.extracted_text || p.file_name);
+  if (!comFicha.length) {
+    const comLogistica = achados.filter((p: any) => logisticaDe(p));
+    if (comLogistica.length) {
+      return comLogistica.slice(0, 3).map((p: any) =>
+        `[${p.name}] Sem ficha técnica (PDF) anexada — só dados LOGÍSTICOS do cadastro: ${logisticaDe(p)} Ficha logística em PDF: ${APP_URL}/api/public/products/${p.id}/ficha-logistica . Para composição/nutricional, diga que vai confirmar com a equipe.`
+      ).join('\n\n');
+    }
+  }
   if (!comFicha.length) {
     const nomes = achados.slice(0, 5).map((p: any) => p.name).join(', ');
     return `Sem ficha tecnica anexada para: ${nomes}. NAO invente dados de rotulo — diga ao cliente que vai confirmar essa informacao com a equipe.`;
@@ -442,10 +461,12 @@ async function consultarFichaTecnica(input: any): Promise<string> {
   const limite = comFicha.length === 1 ? 12000 : 4000;
   const partes = comFicha.slice(0, 3).map((p: any) => {
     const link = `${APP_URL}/api/public/products/${p.id}/ficha-tecnica`;
+    const logistica = logisticaDe(p);
+    const blocoLogistica = logistica ? `\nLOGÍSTICA (cadastro): ${logistica} Ficha logística em PDF: ${APP_URL}/api/public/products/${p.id}/ficha-logistica` : '';
     if (!p.extracted_text) {
-      return `### ${p.name}\nFicha anexada (${p.file_name}), mas o PDF nao tem texto legivel (provavelmente digitalizado). Envie o link ao cliente e nao afirme nada sobre o conteudo: ${link}`;
+      return `### ${p.name}\nFicha anexada (${p.file_name}), mas o PDF nao tem texto legivel (provavelmente digitalizado). Envie o link ao cliente e nao afirme nada sobre o conteudo: ${link}${blocoLogistica}`;
     }
-    return `### ${p.name}\nPDF para enviar ao cliente: ${link}\nCONTEUDO DA FICHA TECNICA:\n${String(p.extracted_text).slice(0, limite)}`;
+    return `### ${p.name}\nPDF para enviar ao cliente: ${link}${blocoLogistica}\nCONTEUDO DA FICHA TECNICA:\n${String(p.extracted_text).slice(0, limite)}`;
   });
 
   const cabecalho = porAtributo

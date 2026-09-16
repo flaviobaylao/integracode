@@ -22,6 +22,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
+import { registerFichaLogisticaRoutes } from "./ficha-logistica";
 import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
@@ -378,6 +379,8 @@ run();
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
+  // Ficha logística do produto (PDF gerado do cadastro: peso, fardo, palete).
+  try { registerFichaLogisticaRoutes(app); } catch (e) { console.error('[ficha-logistica]', e); }
 
   // 🛡️ CRÍTICO (fix loop Rota do Dia): estas colunas estão no schema Drizzle, então SEM o
   // ALTER todo SELECT da tabela quebra (500 → o front fica re-tentando = "loop"). Rodam
@@ -391,11 +394,46 @@ run();
       'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS is_priority boolean NOT NULL DEFAULT false',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS internal_only boolean NOT NULL DEFAULT false',
+      // LOGÍSTICA DO PRODUTO (set/2026): peso, dimensões, fardo e paletização.
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_bruto_g numeric(8,1)',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_embalagem_g numeric(8,1)',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS diametro_cm numeric(6,1)',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS altura_cm numeric(6,1)',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS fardo_filas integer',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS fardo_por_fila integer',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS fardo_filme_g numeric(6,1)',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS palet_fardos_camada integer',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS palet_camadas integer',
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS palet_tipo varchar',
+      // VOLUMES da NF-e (<transp><vol>), espelhados na nota para a DANFE.
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_quantidade integer',
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_especie varchar',
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS peso_liquido_kg numeric(12,3)',
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS peso_bruto_kg numeric(12,3)',
     ];
     for (const _stmt of _critCols) {
       try { await db.execute(sql.raw(_stmt)); }
       catch (e: any) { console.warn('[CRIT-MIGRATION] falha (ignorada):', _stmt, e?.message); }
     }
+    // PREENCHIMENTO INICIAL da logística (set/2026) — medições da fábrica para as
+    // duas embalagens. Só entra onde o peso ainda está VAZIO: o que o usuário
+    // editar na tela de Produtos nunca é sobrescrito por este bloco.
+    //   350 ml: 370 g, garrafa 17,5 g, Ø 6 × 17,5 cm, fardo 12 (3 × 4) → palete 25 fardos/camada × 7
+    //   900 ml: 930 g, garrafa 28 g,   Ø 7 × 24 cm,   fardo 6 (2 × 3)  → palete 39 fardos/camada × 4
+    try {
+      await db.execute(sql.raw(
+        "UPDATE products SET peso_bruto_g = 370, peso_embalagem_g = 17.5, diametro_cm = 6, altura_cm = 17.5, " +
+        "fardo_filas = 3, fardo_por_fila = 4, fardo_filme_g = 30, palet_fardos_camada = 25, palet_camadas = 7, " +
+        "palet_tipo = 'PBR-1 1,20 × 1,00 m' " +
+        "WHERE peso_bruto_g IS NULL AND internal_only = false AND name ~* '350\\s*ml'"
+      ));
+      await db.execute(sql.raw(
+        "UPDATE products SET peso_bruto_g = 930, peso_embalagem_g = 28, diametro_cm = 7, altura_cm = 24, " +
+        "fardo_filas = 2, fardo_por_fila = 3, fardo_filme_g = 30, palet_fardos_camada = 39, palet_camadas = 4, " +
+        "palet_tipo = 'PBR-1 1,20 × 1,00 m' " +
+        "WHERE peso_bruto_g IS NULL AND internal_only = false AND name ~* '900\\s*ml'"
+      ));
+    } catch (e: any) { console.warn('[LOGISTICA-SEED] falha (ignorada):', e?.message); }
   })();
 
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──

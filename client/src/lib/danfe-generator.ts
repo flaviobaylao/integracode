@@ -114,6 +114,11 @@ export interface DanfeInvoice {
   emissionDate: string;
   authorizationDate?: string;
   createdAt: string;
+  // Volumes transportados (set/2026) — gravados na emissão, iguais ao XML.
+  volQuantidade?: number | null;
+  volEspecie?: string | null;
+  pesoBrutoKg?: string | number | null;
+  pesoLiquidoKg?: string | number | null;
   items?: DanfeInvoiceItem[];
 }
 
@@ -563,13 +568,21 @@ export function renderDanfeToDoc(doc: jsPDF, invoice: DanfeInvoice, logo: string
   drawField('CNPJ / CPF', '', margin + trNameW + trFreteW + trAnttW + trPlacaW + trUfTrW, y, trCnpjTrW, 10);
   y += 10;
 
+  // Volumes transportados (set/2026): vem gravado na nota EXATAMENTE como foi no
+  // XML (<transp><vol>), calculado na emissão do cadastro logístico dos produtos.
+  // Nota sem cadastro de peso sai em branco, como antes.
+  const volQtd = (invoice as any).volQuantidade ?? (invoice as any).vol_quantidade;
+  const volEsp = (invoice as any).volEspecie ?? (invoice as any).vol_especie;
+  const pesoB = (invoice as any).pesoBrutoKg ?? (invoice as any).peso_bruto_kg;
+  const pesoL = (invoice as any).pesoLiquidoKg ?? (invoice as any).peso_liquido_kg;
+  const kg3 = (v: any) => (v === null || v === undefined || v === '' || isNaN(Number(v))) ? '' : Number(v).toFixed(3).replace('.', ',');
   const trQtdW = contentWidth / 6;
-  drawField('QUANTIDADE', '', margin, y, trQtdW, 10);
-  drawField('ESPÉCIE', '', margin + trQtdW, y, trQtdW, 10);
+  drawField('QUANTIDADE', volQtd ? String(volQtd) : '', margin, y, trQtdW, 10);
+  drawField('ESPÉCIE', volQtd && volEsp ? String(volEsp) : '', margin + trQtdW, y, trQtdW, 10);
   drawField('MARCA', '', margin + trQtdW * 2, y, trQtdW, 10);
   drawField('NUMERAÇÃO', '', margin + trQtdW * 3, y, trQtdW, 10);
-  drawField('PESO BRUTO (KG)', '', margin + trQtdW * 4, y, trQtdW, 10);
-  drawField('PESO LÍQUIDO (KG)', '', margin + trQtdW * 5, y, trQtdW, 10);
+  drawField('PESO BRUTO (KG)', kg3(pesoB), margin + trQtdW * 4, y, trQtdW, 10);
+  drawField('PESO LÍQUIDO (KG)', kg3(pesoL), margin + trQtdW * 5, y, trQtdW, 10);
   y += 10;
 
   drawBox(margin, y, contentWidth, 5);
