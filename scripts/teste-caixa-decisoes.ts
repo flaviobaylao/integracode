@@ -410,6 +410,17 @@ async function main() {
   check(!!exec && typeof exec.aoVivo.pedidos === 'number' && typeof exec.aoVivo.diasCorridos === 'number', 'painel do dia: ação executada traz resultado ao vivo (' + (exec ? exec.aoVivo.pedidos + ' pedido(s), R$ ' + exec.aoVivo.receita : 'nenhuma') + ')');
   check(pd.auditor && typeof pd.auditor.nota === 'number' && pd.pecas.noAr.length >= 1, 'painel do dia: nota do auditor e peças no ar (' + pd.pecas.noAr.length + ')');
 
+  // ── Canal por acao ──
+  const { canalDaAcao } = await import('../server/mkt-canal');
+  check(canalDaAcao({ tipo: 'regua' }).canal === 'whatsapp' && canalDaAcao({ tipo: 'alerta' }).canal === 'whatsapp' && canalDaAcao({ tipo: 'visita' }).canal === 'presencial' && canalDaAcao({ tipo: 'visita' }).via === 'whatsapp'
+    && canalDaAcao({ tipo: 'cupom' }).canal === 'loja' && canalDaAcao({ tipo: 'peca', parametros: {} }).canal === 'instagram' && canalDaAcao({ tipo: 'anuncio', parametros: { canal: 'google' } }).canal === 'google'
+    && canalDaAcao({ tipo: 'anuncio', parametros: { canal: 'facebook' } }).canal === 'facebook' && canalDaAcao({ tipo: 'sistema' }).canal === 'integra', 'canal: regra unica por tipo (whatsapp/instagram/facebook/google/loja/presencial/integra)');
+  const pendC = await pendentes();
+  const pd2 = await painelDoDia();
+  check(pendC.every((a: any) => a.canal && a.canal_nome) && pd2.pendentes.every((a: any) => a.canal && a.canalNome), 'canal: presente em pendentes() e no painel do dia');
+  const txC = textoResumo(pendC);
+  check(/💬|📸|🚗|🛒|⚙️/.test(txC) && /WhatsApp|Instagram|Visita presencial|Loja online/.test(txC), 'canal: resumo do WhatsApp mostra o canal de cada acao');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

@@ -19,6 +19,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { canalDaAcao, CANAL_ROTULO, CANAL_EMOJI } from './mkt-canal';
 
 export type TipoAcao = 'regua' | 'alerta' | 'peca' | 'campanha' | 'cupom' | 'visita' | 'anuncio' | 'sistema';
 
@@ -192,7 +193,7 @@ export async function nivelEfetivo(a: NovaAcao): Promise<{ nivel: 0 | 1 | 2; mot
   if (n + Number(gastoHoje.n || 0) > Number(p.max_clientes_dia)) return { nivel: 2, motivo: 'estoura ' + p.max_clientes_dia + ' clientes/dia' };
   const hist: any = (await db.execute(sql`
     SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS ap,
-           COUNT(*) FILTER (WHERE status = 'rejeitada')::int AS rj
+           COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rj
       FROM mkt_acoes WHERE tipo = ${a.tipo} AND nivel_efetivo = 2 AND decidido_em IS NOT NULL
        AND decidido_em >= now() - (${String(Number(p.dias_observacao) || 30)} || ' days')::interval`) as any).rows?.[0] || {};
   const dec = Number(hist.ap || 0) + Number(hist.rj || 0);
@@ -231,13 +232,19 @@ export async function listar(opts: { status?: string; limite?: number } = {}): P
   const r: any = opts.status
     ? await db.execute(sql`SELECT * FROM mkt_acoes WHERE status = ${opts.status} ORDER BY receita_esperada DESC, criado_em DESC LIMIT ${lim}`)
     : await db.execute(sql`SELECT * FROM mkt_acoes ORDER BY (status = 'proposta') DESC, criado_em DESC LIMIT ${lim}`);
-  return r.rows || [];
+  return (r.rows || []).map(comCanal);
+}
+
+/** Anexa o canal (whatsapp/instagram/...) a linha da acao — regra unica em mkt-canal.ts. */
+function comCanal(a: any): any {
+  const c = canalDaAcao(a);
+  return { ...a, canal: c.canal, canal_nome: CANAL_ROTULO[c.canal], canal_via: c.via || null, canal_via_nome: c.via ? CANAL_ROTULO[c.via] : null, canal_quem: c.quem };
 }
 
 export async function pendentes(): Promise<any[]> {
   if (!(await garantirSchema())) return [];
   const r: any = await db.execute(sql`SELECT * FROM mkt_acoes WHERE status = 'proposta' ORDER BY receita_esperada DESC, numero ASC`);
-  return r.rows || [];
+  return (r.rows || []).map(comCanal);
 }
 
 export async function ver(idOuNumero: string): Promise<any | null> {
@@ -600,7 +607,8 @@ export function textoResumo(pend: any[], extras: { autoHoje?: any[]; medidas?: a
     // Aviso curto: a decisao e feita no Painel do dia (com justificativa, publico e resultado ao vivo).
     for (const a of pend.slice(0, 5)) {
       const pub = Number(a.publico_total || 0);
-      linhas.push('*#' + a.numero + '* ' + String(a.titulo).slice(0, 90) + ' — ' + (pub ? pub + ' cli · ' : '') + 'esp. ' + brl(a.receita_esperada) + (a.modo_teste ? ' (teste)' : ''));
+      const cn = canalDaAcao(a);
+      linhas.push(CANAL_EMOJI[cn.canal] + ' *#' + a.numero + '* ' + String(a.titulo).slice(0, 90) + ' — ' + CANAL_ROTULO[cn.canal] + (cn.via ? ' + ' + CANAL_ROTULO[cn.via] : '') + ' · ' + (pub ? pub + ' cli · ' : '') + 'esp. ' + brl(a.receita_esperada) + (a.modo_teste ? ' (teste)' : ''));
     }
     if (pend.length > 5) linhas.push('… e mais ' + (pend.length - 5) + '.');
     linhas.push('');
@@ -743,7 +751,7 @@ export async function panorama(): Promise<any> {
     SELECT COUNT(*) FILTER (WHERE status = 'proposta')::int AS pendentes,
            COUNT(*) FILTER (WHERE status IN ('executada') AND criado_em >= now() - interval '30 days')::int AS executadas30,
            COUNT(*) FILTER (WHERE nivel_efetivo < 2 AND criado_em >= now() - interval '30 days')::int AS automaticas30,
-           COUNT(*) FILTER (WHERE status = 'rejeitada' AND criado_em >= now() - interval '30 days')::int AS rejeitadas30,
+           COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%' AND criado_em >= now() - interval '30 days')::int AS rejeitadas30,
            COALESCE(SUM((resultado->>'receita')::numeric) FILTER (WHERE medido_em IS NOT NULL AND criado_em >= now() - interval '90 days'),0)::float AS receita90,
            COALESCE(SUM(custo_estimado) FILTER (WHERE status = 'executada' AND criado_em >= now() - interval '90 days'),0)::float AS custo90,
            COALESCE(SUM(receita_esperada) FILTER (WHERE status = 'proposta'),0)::float AS esperadoPendente,

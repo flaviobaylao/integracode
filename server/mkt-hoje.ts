@@ -13,6 +13,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { canalDaAcao, canalDaPeca, CANAL_ROTULO, CANAL_EMOJI, CANAL_COR } from './mkt-canal';
 
 async function rows(q: string): Promise<any[]> { try { const r: any = await db.execute(sql.raw(q)); return r.rows || []; } catch { return []; } }
 
@@ -55,6 +56,12 @@ async function toquesDaAcao(acaoId: string): Promise<{ enviados: number; bloquea
   } catch { return null; }
 }
 
+function canalRotulo(c: any) { return { canal: c, canalNome: CANAL_ROTULO[c as keyof typeof CANAL_ROTULO], canalEmoji: CANAL_EMOJI[c as keyof typeof CANAL_EMOJI], canalCor: CANAL_COR[c as keyof typeof CANAL_COR] }; }
+function canalInfo(a: any) {
+  const c = canalDaAcao(a);
+  return { ...canalRotulo(c.canal), canalVia: c.via ? canalRotulo(c.via) : null, canalQuem: c.quem };
+}
+
 export async function painelDoDia(): Promise<any> {
   // 1. Agentes: o que rodou desde ontem 00:00 (BRT), por agente, com custo e ultimo erro.
   const agentes = (await rows(`
@@ -67,20 +74,20 @@ export async function painelDoDia(): Promise<any> {
 
   // 2. O que espera voce
   const pendentes = (await rows(`
-    SELECT id, numero, tipo, titulo, justificativa, publico_total, custo_estimado::float AS custo, receita_esperada::float AS receita,
+    SELECT id, numero, tipo, titulo, justificativa, publico_total, parametros, custo_estimado::float AS custo, receita_esperada::float AS receita,
            nivel_efetivo, motivo_nivel, modo_teste, categoria, agente, criado_em, expira_em, evidencia
-      FROM mkt_acoes WHERE status = 'proposta' ORDER BY receita_esperada DESC, criado_em ASC LIMIT 40`)).map(a => ({ ...a, tipoNome: TIPOS[a.tipo] || a.tipo }));
+      FROM mkt_acoes WHERE status = 'proposta' ORDER BY receita_esperada DESC, criado_em ASC LIMIT 40`)).map(a => ({ ...a, tipoNome: TIPOS[a.tipo] || a.tipo, ...canalInfo(a) }));
 
   // 3. Rodando e rendendo: executadas nos ultimos 14 dias (+ auto/executando), com resultado ao vivo.
   const rodando: any[] = [];
   for (const a of await rows(`
-    SELECT id, numero, tipo, titulo, status, publico, publico_total, custo_estimado::float AS custo, receita_esperada::float AS receita,
+    SELECT id, numero, tipo, titulo, status, publico, publico_total, parametros, custo_estimado::float AS custo, receita_esperada::float AS receita,
            executada_em, medido_em, resultado, modo_teste, execucao, decidido_via, decidido_por
       FROM mkt_acoes WHERE status IN ('executada','executando','auto','erro') AND COALESCE(executada_em, criado_em) >= now() - interval '14 days'
       ORDER BY COALESCE(executada_em, criado_em) DESC LIMIT 40`)) {
     const aoVivo = a.status === 'executada' && !a.modo_teste && ['regua', 'cupom', 'visita'].includes(a.tipo) ? await resultadoAoVivo(a) : null;
     const toques = a.tipo === 'regua' ? await toquesDaAcao(a.id) : null;
-    rodando.push({ id: a.id, numero: a.numero, tipo: a.tipo, tipoNome: TIPOS[a.tipo] || a.tipo, titulo: a.titulo, status: a.status, modoTeste: a.modo_teste,
+    rodando.push({ id: a.id, numero: a.numero, tipo: a.tipo, tipoNome: TIPOS[a.tipo] || a.tipo, ...canalInfo(a), titulo: a.titulo, status: a.status, modoTeste: a.modo_teste,
       publicoTotal: a.publico_total, custo: a.custo, receitaEsperada: a.receita, executadaEm: a.executada_em, decididoVia: a.decidido_via,
       erro: a.status === 'erro' ? String(a.execucao?.erro || '').slice(0, 200) : null, aoVivo, toques, resultadoOficial: a.resultado || null });
   }
@@ -88,13 +95,13 @@ export async function painelDoDia(): Promise<any> {
 
   // 4. Pecas: fila + no ar (com ultimo numero do Instagram)
   const fila = await rows(`SELECT COUNT(*)::int AS n FROM mkt_pieces WHERE estado = 'aguardando_aprovacao'`);
-  const pecasFila = await rows(`SELECT id, numero, canal, gancho, titulo, LEFT(copy, 160) AS trecho, rodada, criado_em FROM mkt_pieces WHERE estado = 'aguardando_aprovacao' ORDER BY criado_em ASC LIMIT 10`);
-  const noAr = await rows(`
-    SELECT p.id, p.numero, p.gancho, p.titulo, p.permalink, p.publicado_em, sp.id AS post_id,
+  const pecasFila = (await rows(`SELECT id, numero, canal, gancho, titulo, LEFT(copy, 160) AS trecho, rodada, criado_em FROM mkt_pieces WHERE estado = 'aguardando_aprovacao' ORDER BY criado_em ASC LIMIT 10`)).map(x => ({ ...x, canalInfo: canalRotulo(canalDaPeca(x.canal)) }));
+  const noAr = (await rows(`
+    SELECT p.id, p.numero, p.canal, p.gancho, p.titulo, p.permalink, p.publicado_em, sp.id AS post_id,
            (SELECT row_to_json(m) FROM (SELECT alcance, impressoes, curtidas, comentarios, salvos, compartilhamentos, data FROM social_metrics WHERE post_id = sp.id ORDER BY data DESC LIMIT 1) m) AS metricas,
            (SELECT COALESCE(SUM(cliques),0)::int FROM mkt_links WHERE post_ref = p.id) AS cliques
       FROM mkt_pieces p LEFT JOIN social_posts sp ON sp.piece_id = p.id
-     WHERE p.estado = 'publicado' AND p.publicado_em >= now() - interval '14 days' ORDER BY p.publicado_em DESC LIMIT 10`);
+     WHERE p.estado = 'publicado' AND p.publicado_em >= now() - interval '14 days' ORDER BY p.publicado_em DESC LIMIT 10`)).map(x => ({ ...x, canalInfo: canalRotulo(canalDaPeca(x.canal)) }));
   const pecasHoje = await rows(`SELECT COUNT(*)::int AS n FROM mkt_pieces WHERE origem = 'agente' AND criado_em >= (date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo')) AT TIME ZONE 'America/Sao_Paulo'`);
 
   // 5. Auditor, aprendizados, radar
@@ -114,7 +121,7 @@ export async function painelDoDia(): Promise<any> {
   }
   let aprovadores: string[] = [];
   try { const { aprovadores: ap } = await import('./mkt-acoes'); aprovadores = await ap(); } catch {}
-  const decisoes7d = (await rows(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS aprovadas, COUNT(*) FILTER (WHERE status = 'rejeitada')::int AS rejeitadas FROM mkt_acoes WHERE decidido_em >= now() - interval '7 days'`))[0] || { aprovadas: 0, rejeitadas: 0 };
+  const decisoes7d = (await rows(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS aprovadas, COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rejeitadas FROM mkt_acoes WHERE decidido_em >= now() - interval '7 days'`))[0] || { aprovadas: 0, rejeitadas: 0 };
 
   let ig: any = null;
   try { const { status } = await import('./mkt-ig-auth'); const s = await status(); ig = { conectado: s.conectado, username: s.username, diasRestantes: s.diasRestantes, podePublicar: s.podePublicar }; } catch {}

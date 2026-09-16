@@ -27,7 +27,7 @@ export async function evidencias(): Promise<any> {
     rows(`SELECT numero, tipo, titulo, evidencia->>'segmento' AS segmento, parametros->>'regua' AS regua, publico_total, custo_estimado::float AS custo,
                  receita_esperada::float AS esperado, (resultado->>'receita')::float AS receita, (resultado->>'pedidos')::int AS pedidos, (resultado->>'taxa')::float AS taxa, executada_em::date AS dia
             FROM mkt_acoes WHERE status = 'executada' AND resultado IS NOT NULL AND modo_teste = false AND executada_em >= now() - interval '60 days' ORDER BY executada_em DESC LIMIT 60`),
-    rows(`SELECT numero, tipo, titulo, comentario, decidido_em::date AS dia FROM mkt_acoes WHERE status = 'rejeitada' AND criado_em >= now() - interval '30 days' ORDER BY decidido_em DESC LIMIT 30`),
+    rows(`SELECT numero, tipo, titulo, comentario, decidido_em::date AS dia FROM mkt_acoes WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%' AND criado_em >= now() - interval '30 days' ORDER BY decidido_em DESC LIMIT 30`),
     rows(`SELECT f.regua, COUNT(*)::int AS enviados, COUNT(sc.id)::int AS pedidos, ROUND(COALESCE(SUM(sc.sale_value),0),2)::float AS receita, ROUND(COALESCE(SUM(f.custo_estimado),0),2)::float AS custo
             FROM mkt_fila_toques f LEFT JOIN sales_cards sc ON sc.customer_id = f.cliente_id AND sc.created_at BETWEEN f.liberado_em AND f.liberado_em + interval '14 days'
            WHERE f.status = 'enfileirado' AND f.liberado_em >= now() - interval '90 days' GROUP BY f.regua`),
