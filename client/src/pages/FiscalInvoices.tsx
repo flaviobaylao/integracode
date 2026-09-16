@@ -1396,7 +1396,7 @@ export default function FiscalInvoices() {
               </div>
               <div>
                 <Label>CFOP</Label>
-                <Input value={newInvoice.cfop} onChange={e => setNewInvoice(p => ({ ...p, cfop: e.target.value }))} placeholder="5102" />
+                <Input value={newInvoice.cfop} onChange={e => setNewInvoice(p => ({ ...p, cfop: e.target.value }))} placeholder="5101" />
               </div>
             </div>
             <div>

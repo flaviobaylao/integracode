@@ -5095,7 +5095,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const results: any[] = [];
 
       // Ft. Atual = faturamento realizado a partir das NOTAS FISCAIS (fiscal_invoices):
-      // autorizadas, CFOP de venda (5102/5405/6102), deduplicadas por chave de acesso, e
+      // autorizadas, CFOP de venda (5101/5102/5405/6101/6102), deduplicadas por chave de acesso, e
       // atribuidas ao vendedor pelo card de venda e, na falta, pelo vendedor que registrou o pedido (billing_pipeline).
       // Estas datas entram em SQL montado como texto (sql.raw), entao sao validadas aqui.
       // parseInt ja garante numero, mas NaN geraria '2026-NaN-01' e quebraria a rota.
@@ -5129,7 +5129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           FROM (SELECT DISTINCT ON (COALESCE(access_key, id)) * FROM fiscal_invoices ORDER BY COALESCE(access_key, id), created_at DESC) fi
           LEFT JOIN sales_cards sc ON sc.id = fi.sales_card_id
           LEFT JOIN (SELECT DISTINCT ON (inv_num) inv_num, bp_seller_id FROM (SELECT NULLIF(regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g'), '')::bigint AS inv_num, seller_id AS bp_seller_id, created_at FROM billing_pipeline WHERE regexp_replace(COALESCE(invoice_number, ''), '[^0-9]', '', 'g') <> '') t ORDER BY inv_num, created_at DESC) bp ON bp.inv_num = fi.invoice_number
-          WHERE fi.status = 'authorized' AND fi.cfop IN ('5102', '5405', '6102') AND fi.emission_date >= '${_startStr}'::date AND fi.emission_date < '${_endStr}'::date
+          WHERE fi.status = 'authorized' AND fi.cfop IN ('5101', '5102', '5405', '6101', '6102') AND fi.emission_date >= '${_startStr}'::date AND fi.emission_date < '${_endStr}'::date
         ) sub
         GROUP BY seller_key, omie_instance_id`;
       const pipelineRevenueResult: any = await db.execute(

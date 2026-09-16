@@ -438,6 +438,26 @@ run();
     } catch (e: any) { console.warn('[LOGISTICA-SEED] falha (ignorada):', e?.message); }
   })();
 
+  // ── CFOP DE VENDA PADRÃO (set/2026): cenários fiscais 5102/6102 → 5101/6101 ──
+  // Roda UMA vez (marca system_settings 'cfop_venda_5101_migrado'); se alguém
+  // cadastrar 5102 depois pela tela, este bloco não reverte — a emissão é que força 5101/6101.
+  (async () => {
+    try {
+      const f: any = await db.execute(sql`SELECT 1 FROM system_settings WHERE key = 'cfop_venda_5101_migrado'`);
+      if ((f?.rows || f || []).length > 0) return;
+      const r1: any = await db.execute(sql.raw(
+        "UPDATE fiscal_scenarios SET cfop = '5101', " +
+        "nature_of_operation = CASE WHEN nature_of_operation ~* 'adquirid|terceiros|revenda' THEN 'Venda de produção do estabelecimento' ELSE nature_of_operation END " +
+        "WHERE regexp_replace(cfop, '\\D', '', 'g') = '5102'"));
+      const r2: any = await db.execute(sql.raw(
+        "UPDATE fiscal_scenarios SET cfop = '6101', " +
+        "nature_of_operation = CASE WHEN nature_of_operation ~* 'adquirid|terceiros|revenda' THEN 'Venda de produção do estabelecimento' ELSE nature_of_operation END " +
+        "WHERE regexp_replace(cfop, '\\D', '', 'g') = '6102'"));
+      await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('cfop_venda_5101_migrado', ${new Date().toISOString()}, 'cfop-migration') ON CONFLICT (key) DO NOTHING`);
+      console.log(`[CFOP-5101] cenários fiscais migrados: 5102→5101 (${r1?.rowCount ?? '?'}), 6102→6101 (${r2?.rowCount ?? '?'})`);
+    } catch (e: any) { console.warn('[CFOP-5101] migração de cenários falhou (ignorada):', e?.message); }
+  })();
+
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
   (async () => {
     try {

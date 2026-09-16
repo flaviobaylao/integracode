@@ -3001,7 +3001,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   const isWithinState = issuerUf === customerUf;
   const operationType = item.operationType || 'venda';
 
-  let cfop = isWithinState ? '5102' : '6102';
+  let cfop = isWithinState ? '5101' : '6101'; // venda padrão (set/2026: era 5102/6102)
   let natureOfOperation = 'Venda de mercadoria';
   let fiscalScenarioId: string | null = null;
   if (operationType === 'bonificacao') {
@@ -3036,10 +3036,10 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   // onerosa sai como contribuinte SUBSTITUIDO - CFOP 5405 (interno DF) / 6404
   // (interestadual) e CSOSN 500 (ICMS-ST ja recolhido). Espelha a regra de
   // bsbStSaleOverride() do sefaz-service para o registro salvo + DANFE nascerem
-  // iguais ao XML. So afeta a venda padrao (5102/6102); bonificacao/amostra/
+  // iguais ao XML. So afeta a venda padrao (5101/6101); bonificacao/amostra/
   // troca/transferencia mantem o CFOP proprio.
   const _isBsbIssuer = String(issuerCnpj || '').replace(/\D/g, '') === '28295493000315';
-  if (_isBsbIssuer && /^[56]102$/.test(cfop)) {
+  if (_isBsbIssuer && /^[56]10[12]$/.test(cfop)) {
     cfop = isWithinState ? '5405' : '6404';
   }
 
