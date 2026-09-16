@@ -328,6 +328,22 @@ export default function ConciliacaoBancaria() {
       } catch { setSupSug([]); }
     }, 250);
   };
+  // Busca clientes no cadastro p/ o campo Cliente de Conta a Receber (nome/razao/cnpj/cpf).
+  // Antes o campo era texto livre e o titulo nascia sem customer_id.
+  const [custSug, setCustSug] = useState<any[]>([]);
+  const custTimer = useRef<any>(null);
+  const buscarClientes = (v: string) => {
+    if (custTimer.current) clearTimeout(custTimer.current);
+    const q = v.trim();
+    if (q.length < 2) { setCustSug([]); return; }
+    custTimer.current = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/reconciliation/customers/search?q=" + encodeURIComponent(q), { credentials: "include" });
+        const j = await r.json();
+        setCustSug(Array.isArray(j.customers) ? j.customers : []);
+      } catch { setCustSug([]); }
+    }, 250);
+  };
   const buscarCategorias = (v: string) => {
     if (catTimer.current) clearTimeout(catTimer.current);
     const q = v.trim();
@@ -633,6 +649,7 @@ export default function ConciliacaoBancaria() {
       // nao com o historico bruto; documento vem do CPF/CNPJ do lancamento.
       name: parseLanc(modalItem).contraparte || modalItem.description || "",
       document: parseLanc(modalItem).doc || "",
+      customerId: "",
       amount: itemAmt,
       issueDate: d, dueDate: d,
       description: [parseLanc(modalItem).tipo, modalItem.description].filter(Boolean).join(" — "),
@@ -652,7 +669,7 @@ export default function ConciliacaoBancaria() {
     setBusy(modalItem.id);
     try {
       await post(`/api/reconciliation/items/${modalItem.id}/create-and-reconcile`, {
-        by: me, tipo: novo.tipo, name: novo.name, document: novo.document,
+        by: me, tipo: novo.tipo, name: novo.name, document: novo.document, customerId: novo.customerId || null,
         amount: amt, issueDate: novo.issueDate || null, dueDate: novo.dueDate || null,
         description: novo.description, category: novo.category || null, chartAccountId: novo.chartAccountId || null, omieInstanceId: novo.omieInstanceId || null,
       });
@@ -1108,7 +1125,7 @@ export default function ConciliacaoBancaria() {
             <div className="px-5 pt-2 flex gap-4 text-sm border-b">
               <button onClick={() => setTab("sug")} className={`pb-2 ${tab === "sug" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>✨ Sugestões</button>
               <button onClick={() => { setTab("search"); if (!searchResults.length) searchTitles(""); }} className={`pb-2 ${tab === "search" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>🔎 Buscar Título</button>
-              <button onClick={() => { setTab("novo"); initNovo(); }} className={`pb-2 ${tab === "novo" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>➕ Criar Novo</button>
+              <button onClick={() => { setTab("novo"); setCustSug([]); initNovo(); }} className={`pb-2 ${tab === "novo" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>➕ Criar Novo</button>
             </div>
 
             <div className="px-5 py-3 overflow-auto flex-1">
@@ -1206,7 +1223,18 @@ export default function ConciliacaoBancaria() {
                   </div>
                   <div className="relative">
                     <label className="block text-xs text-gray-600 mb-1">{novo.tipo === "receber" ? "Cliente" : "Fornecedor"}</label>
-                    <input value={novo.name || ""} onChange={(e) => { const v = e.target.value; setNovo({ ...novo, name: v }); if (novo.tipo === "pagar") buscarFornecedores(v); }} className="w-full border rounded px-3 py-1.5" placeholder={novo.tipo === "pagar" ? "Busque no cadastro de fornecedores…" : "Nome do cliente"} autoComplete="off" />
+                    <input value={novo.name || ""} onChange={(e) => { const v = e.target.value; setNovo({ ...novo, name: v, customerId: novo.tipo === "receber" ? "" : novo.customerId }); if (novo.tipo === "pagar") buscarFornecedores(v); else buscarClientes(v); }} className="w-full border rounded px-3 py-1.5" placeholder={novo.tipo === "pagar" ? "Busque no cadastro de fornecedores…" : "Busque no cadastro de clientes…"} autoComplete="off" />
+                    {novo.tipo === "receber" && custSug.length > 0 && (
+                      <div className="absolute z-30 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">
+                        {custSug.map((c: any) => (
+                          <button key={c.id} onClick={() => { setNovo({ ...novo, name: c.name || c.company_name || "", document: c.cnpj || c.cpf || novo.document || "", customerId: c.id }); setCustSug([]); }} className="block w-full text-left px-3 py-1.5 text-sm hover:bg-green-50">
+                            {c.name || c.company_name}{(c.company_name && c.company_name !== c.name) ? <span className="text-gray-500 text-xs"> · {c.company_name}</span> : null}{(c.cnpj || c.cpf) ? <span className="text-gray-400 text-xs"> · {c.cnpj || c.cpf}</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {novo.tipo === "receber" && novo.customerId && <div className="text-[11px] text-green-700 mt-0.5">Cliente do cadastro selecionado — o título será vinculado a ele.</div>}
+                    {novo.tipo === "receber" && !novo.customerId && String(novo.name || "").trim().length >= 3 && custSug.length === 0 && <div className="text-[11px] text-amber-600 mt-0.5">Nenhum cliente do cadastro selecionado — o título será criado só com o nome.</div>}
                     {novo.tipo === "pagar" && supSug.length > 0 && (
                       <div className="absolute z-30 left-0 right-0 mt-1 bg-white border rounded shadow max-h-44 overflow-auto">
                         {supSug.map((s: any) => (
