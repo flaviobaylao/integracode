@@ -21,6 +21,7 @@ type Item = {
   description: string; document: string; origin_name?: string | null; origin_document?: string | null; reconciliation_status: string | null;
   matched_at: string | null; notes: string | null;
   is_mirror?: boolean; mirror_from?: string | null;
+  reconciliation_group_id?: string | null;
 };
 type Title = { kind: string; id: string; title: string | null; name: string | null; document?: string | null; amount: any; due?: any; instance?: string | null; score?: number; motivos?: string[]; restante?: any; chartAccountId?: string | null; chartLabel?: string | null; jaBaixado?: boolean };
 type CartLine = { kind: string; id: string; title: string | null; name: string | null; amount: number; interest: number; discount: number; chartAccountId: string; chartLabel: string };
@@ -288,6 +289,10 @@ export default function ConciliacaoBancaria() {
 
   // modal de conciliação
   const [modalItem, setModalItem] = useState<Item | null>(null);
+  // CONCILIACAO EM CONJUNTO (16/09/2026): 2+ lancamentos selecionados quitando um
+  // mesmo titulo. `modalGroup` guarda os lancamentos; `modalItem` vira um item
+  // sintetico com a SOMA (o carrinho e as travas funcionam iguais).
+  const [modalGroup, setModalGroup] = useState<Item[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [tab, setTab] = useState<"sug" | "search" | "novo">("sug");
   const [novo, setNovo] = useState<any>({});
@@ -526,7 +531,10 @@ export default function ConciliacaoBancaria() {
     finally { setBusy(""); }
   };
   const doUndo = async (item: Item) => {
-    if (!window.confirm(`Desfazer a conciliação/ignore deste lançamento? Reverte a baixa (o título volta a ficar em aberto).`)) return;
+    const msg = item.reconciliation_group_id
+      ? `Este lançamento foi conciliado EM CONJUNTO com outro(s). Desfazer reverte o GRUPO INTEIRO: todos os lançamentos do conjunto voltam a pendente e a baixa do título é estornada. Continuar?`
+      : `Desfazer a conciliação/ignore deste lançamento? Reverte a baixa (o título volta a ficar em aberto).`;
+    if (!window.confirm(msg)) return;
     setBusy(item.id);
     try { await post(`/api/reconciliation/items/${item.id}/undo`, { by: me }); await refresh(); }
     catch (e: any) { alert("Erro ao desfazer: " + e.message); }
@@ -592,7 +600,40 @@ export default function ConciliacaoBancaria() {
   const openModal = (it: Item) => {
     setModalItem(it); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
   };
-  const closeModal = () => { setModalItem(null); setCart([]); setCartCatSug(null); };
+  // Abre o modal com os lancamentos SELECIONADOS somados (2 a 20, todos pendentes,
+  // mesmo sentido). O titulo e baixado uma unica vez pelo total; cada lancamento
+  // guarda a sua fatia. Desfazer qualquer um desfaz o conjunto.
+  const groupSel = useMemo(() => items.filter((it) => selectedIds.has(it.id) && (it.reconciliation_status || "pending") === "pending" && !it.is_mirror), [items, selectedIds]);
+  const groupTipos = useMemo(() => new Set(groupSel.map((it) => (it.type === "C" ? "C" : "D"))), [groupSel]);
+  const canGroup = groupSel.length >= 2 && groupSel.length <= 20 && groupTipos.size === 1 && groupSel.length === selectedIds.size;
+  const groupSum = groupSel.reduce((acc, it) => acc + Math.abs(num(it.amount)), 0);
+  const openGroupModal = () => {
+    if (groupSel.length < 2) { alert("Selecione pelo menos 2 lançamentos pendentes para conciliar em conjunto."); return; }
+    if (groupTipos.size !== 1) { alert("Crédito e débito não se combinam: selecione lançamentos do mesmo sentido."); return; }
+    if (groupSel.length !== selectedIds.size) { alert("Só lançamentos PENDENTES entram na conciliação em conjunto. Desmarque os conciliados/ignorados."); return; }
+    const ordenados = groupSel.slice().sort((a, b) => String(a.transaction_date).localeCompare(String(b.transaction_date)));
+    const sint: Item = {
+      id: "__grupo__", transaction_date: ordenados[ordenados.length - 1].transaction_date, amount: groupSum.toFixed(2),
+      type: ordenados[0].type, description: `${ordenados.length} lançamentos em conjunto`, document: "", reconciliation_status: "pending", matched_at: null, notes: null,
+    };
+    setModalGroup(ordenados); setModalItem(sint); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
+  };
+  const closeModal = () => { setModalItem(null); setModalGroup([]); setCart([]); setCartCatSug(null); };
+  const isGroupModal = modalGroup.length >= 2;
+  // Sugestoes do conjunto = uniao das sugestoes de cada lancamento (sem repetir titulo)
+  const groupSuggestion = useMemo(() => {
+    if (!isGroupModal) return null;
+    const seen = new Set<string>(); const titles: Title[] = [];
+    let counterparty: any = null; let pix: any = null;
+    for (const it of modalGroup) {
+      const sg = suggestions[it.id]; if (!sg) continue;
+      if (!counterparty && sg.counterparty) counterparty = sg.counterparty;
+      if (!pix && sg.pix) pix = sg.pix;
+      for (const t of (sg.titles || []) as Title[]) { const k = t.kind + ":" + t.id; if (seen.has(k)) continue; seen.add(k); titles.push(t); }
+    }
+    titles.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    return { titles, counterparty, pix };
+  }, [isGroupModal, modalGroup, suggestions]);
   const itemAmt = modalItem ? Math.abs(num(modalItem.amount)) : 0;
   const cartTotal = cart.reduce((s, c) => s + (num(c.amount) + num(c.interest) - num(c.discount)), 0);
   const delta = Math.round((itemAmt - cartTotal) * 100) / 100;
@@ -627,12 +668,25 @@ export default function ConciliacaoBancaria() {
     if (!modalItem || !cart.length) return;
     if (Math.abs(delta) >= 0.01) { alert(`O total do carrinho (${fmtMoney(cartTotal)}) precisa igualar o valor do extrato (${fmtMoney(itemAmt)}). Δ = ${fmtMoney(delta)}.`); return; }
     if (cart.some((c) => c.kind === "payable" && !c.chartAccountId)) { alert("Selecione a categoria DRE de todos os títulos a pagar do carrinho. Nenhuma baixa sem categoria."); return; }
+    const titlesBody = cart.map((c) => ({ kind: c.kind, id: c.id, amount: num(c.amount), interest: num(c.interest), discount: num(c.discount), chartAccountId: c.chartAccountId || null }));
+    if (isGroupModal) {
+      if (!window.confirm(`Conciliar EM CONJUNTO ${modalGroup.length} lançamentos (total ${fmtMoney(itemAmt)}) com ${cart.length} título(s)? O título é baixado uma única vez pelo total; os lançamentos ficam vinculados como um conjunto.`)) return;
+      setBusy(modalItem.id);
+      try {
+        await post(`/api/reconciliation/items/reconcile-group`, { by: me, itemIds: modalGroup.map((g) => g.id), titles: titlesBody });
+        closeModal();
+        setSelectedIds(new Set());
+        await refresh();
+      } catch (e: any) { alert("Erro ao conciliar em conjunto: " + e.message); }
+      finally { setBusy(""); }
+      return;
+    }
     if (!window.confirm(`Conciliar ${fmtMoney(itemAmt)} com ${cart.length} título(s)? Isso DÁ BAIXA (marca como pago).`)) return;
     setBusy(modalItem.id);
     try {
       await post(`/api/reconciliation/items/${modalItem.id}/reconcile`, {
         by: me,
-        titles: cart.map((c) => ({ kind: c.kind, id: c.id, amount: num(c.amount), interest: num(c.interest), discount: num(c.discount), chartAccountId: c.chartAccountId || null })),
+        titles: titlesBody,
       });
       closeModal();
       await refresh();
@@ -849,6 +903,13 @@ export default function ConciliacaoBancaria() {
             <div className="flex-1" />
             {selected && (
               <>
+                {selectedIds.size >= 2 && (
+                  <button onClick={openGroupModal} disabled={busy === "batch" || !canGroup}
+                    title={canGroup ? `Concilia os ${groupSel.length} lançamentos selecionados juntos contra um mesmo título (soma ${fmtMoney(groupSum)})` : groupTipos.size > 1 ? "Selecione lançamentos do mesmo sentido (só créditos ou só débitos)" : groupSel.length !== selectedIds.size ? "Só lançamentos pendentes entram no conjunto" : "Selecione de 2 a 20 lançamentos pendentes"}
+                    className="px-2.5 py-1 rounded bg-green-600 hover:bg-green-700 text-white text-xs font-medium disabled:opacity-50">
+                    🔗 Conciliar em conjunto ({selectedIds.size}{canGroup ? ` · ${fmtMoney(groupSum)}` : ""})
+                  </button>
+                )}
                 {selectedIds.size > 0 && (
                   <button onClick={doIgnoreBatch} disabled={busy === "batch"} className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium disabled:opacity-50">
                     {busy === "batch" ? "Ignorando…" : `Ignorar selecionados (${selectedIds.size})`}
@@ -928,6 +989,9 @@ export default function ConciliacaoBancaria() {
                           <td className="px-3 py-2">
                             {ms.length > 0 && (
                               <div className="space-y-1">
+                                {it.reconciliation_group_id && (
+                                  <span className="inline-block px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 text-[10px] font-medium" title="Conciliado em conjunto com outro(s) lançamento(s): o valor abaixo é a fatia deste lançamento no título. Desfazer reverte o conjunto inteiro.">🔗 em conjunto</span>
+                                )}
                                 {ms.map((m, idx) => (
                                   <div key={idx} className="text-xs">
                                     <span className="text-gray-500">{m.receivable_id ? "Receber" : "Pagar"} </span>
@@ -1058,7 +1122,15 @@ export default function ConciliacaoBancaria() {
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-3 border-b flex items-start justify-between">
               <div>
-                <div className="font-bold text-gray-800">Conciliar Transação</div>
+                <div className="font-bold text-gray-800">{isGroupModal ? `Conciliar em Conjunto — ${modalGroup.length} lançamentos` : "Conciliar Transação"}</div>
+                {isGroupModal ? (
+                  <div className="text-xs text-gray-600 mt-0.5 space-y-0.5">
+                    <div>{modalItem.type === "C" ? "Créditos" : "Débitos"} somados: <span className="font-medium">{fmtMoney(itemAmt)}</span> · o título será baixado UMA vez pelo total</div>
+                    {modalGroup.map((g) => { const L = parseLanc(g); return (
+                      <div key={g.id} className="text-[11px] text-gray-500 truncate">• {fmtDate(g.transaction_date)} · <b>{fmtMoney(g.amount)}</b> · {L.contraparte || L.tipo || L.memo || "—"}{L.doc ? ` · ${fmtDoc(L.doc)}` : ""}</div>
+                    ); })}
+                  </div>
+                ) : (
                 <div className="text-xs text-gray-500 mt-0.5">
                   {modalItem.type === "C" ? "Crédito" : "Débito"}: <span className="font-medium">{fmtMoney(modalItem.amount)}</span> em {fmtDate(modalItem.transaction_date)}
                   {(() => {
@@ -1074,6 +1146,7 @@ export default function ConciliacaoBancaria() {
                     return <> — <span className="text-gray-700">{p.join(" · ")}</span></>;
                   })()}
                 </div>
+                )}
               </div>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
             </div>
@@ -1082,7 +1155,7 @@ export default function ConciliacaoBancaria() {
             <div className="px-5 py-3 border-b bg-gray-50">
               <div className="flex items-center justify-between text-xs mb-2">
                 <span className="font-semibold text-gray-600">🛒 Carrinho de Conciliação</span>
-                <span>Extrato: <b>{fmtMoney(itemAmt)}</b> · Carrinho: <b className={cartTotal ? "" : "text-gray-400"}>{fmtMoney(cartTotal)}</b> · Δ <b className={Math.abs(delta) < 0.01 ? "text-green-600" : "text-red-600"}>{fmtMoney(delta)}</b></span>
+                <span>{isGroupModal ? "Lançamentos (soma)" : "Extrato"}: <b>{fmtMoney(itemAmt)}</b> · Carrinho: <b className={cartTotal ? "" : "text-gray-400"}>{fmtMoney(cartTotal)}</b> · Δ <b className={Math.abs(delta) < 0.01 ? "text-green-600" : "text-red-600"}>{fmtMoney(delta)}</b></span>
               </div>
               {cart.length === 0 && <div className="text-xs text-gray-400 italic">Adicione um ou mais títulos abaixo. Você pode informar juros e desconto; o total (principal + juros − desconto) deve igualar o valor do extrato.</div>}
               {cart.map((c, idx) => (
@@ -1125,14 +1198,14 @@ export default function ConciliacaoBancaria() {
             <div className="px-5 pt-2 flex gap-4 text-sm border-b">
               <button onClick={() => setTab("sug")} className={`pb-2 ${tab === "sug" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>✨ Sugestões</button>
               <button onClick={() => { setTab("search"); if (!searchResults.length) searchTitles(""); }} className={`pb-2 ${tab === "search" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>🔎 Buscar Título</button>
-              <button onClick={() => { setTab("novo"); setCustSug([]); initNovo(); }} className={`pb-2 ${tab === "novo" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>➕ Criar Novo</button>
+              {!isGroupModal && <button onClick={() => { setTab("novo"); setCustSug([]); initNovo(); }} className={`pb-2 ${tab === "novo" ? "border-b-2 border-green-600 text-green-700 font-medium" : "text-gray-500"}`}>➕ Criar Novo</button>}
             </div>
 
             <div className="px-5 py-3 overflow-auto flex-1">
               {tab === "sug" && (
                 <div className="space-y-2">
                   {(() => {
-                    const sg = suggestions[modalItem.id];
+                    const sg = isGroupModal ? groupSuggestion : suggestions[modalItem.id];
                     const titles: Title[] = (sg?.titles || []);
                     const pixBox = sg?.pix ? (
                       <div className="border border-sky-200 bg-sky-50 text-sky-800 rounded px-3 py-2 text-xs">
@@ -1165,10 +1238,10 @@ export default function ConciliacaoBancaria() {
                           <b>Padrão aprendido:</b> {cp.name}{cp.category ? <span className="text-indigo-700"> · {cp.category}</span> : null}
                           <span className="text-indigo-400"> · {cp.via === "cpf_cnpj" ? "por documento" : "por descrição"} ({cp.matchCount}×)</span>
                         </div>
-                        <button onClick={usarPadrao} className="px-2 py-1 rounded bg-indigo-600 text-white text-xs whitespace-nowrap">➕ Usar no Criar Novo</button>
+                        {!isGroupModal && <button onClick={usarPadrao} className="px-2 py-1 rounded bg-indigo-600 text-white text-xs whitespace-nowrap">➕ Usar no Criar Novo</button>}
                       </div>
                     ) : null;
-                    if (!titles.length) return <>{pixBox}{cpBox}<div className="text-sm text-gray-400 mt-2">{cp ? "Nenhum título em aberto casa com este lançamento — use o padrão acima para criar a conta (com nome e categoria já preenchidos) e conciliar." : "Sem sugestão automática. Use “Buscar Título” ou “Criar Novo”."}</div></>;
+                    if (!titles.length) return <>{pixBox}{cpBox}<div className="text-sm text-gray-400 mt-2">{isGroupModal ? "Sem sugestão automática para o conjunto. Use “Buscar Título” e adicione o título até o Δ zerar." : cp ? "Nenhum título em aberto casa com este lançamento — use o padrão acima para criar a conta (com nome e categoria já preenchidos) e conciliar." : "Sem sugestão automática. Use “Buscar Título” ou “Criar Novo”."}</div></>;
                     return (
                       <>
                         {pixBox}
@@ -1302,7 +1375,7 @@ export default function ConciliacaoBancaria() {
               <span className="text-xs text-gray-500">{modalItem.type === "C" ? "Recebimento (títulos a receber)" : "Pagamento (títulos a pagar)"}</span>
               <div className="flex gap-2">
                 <button onClick={closeModal} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
-                <button onClick={confirmReconcile} disabled={!cart.length || Math.abs(delta) >= 0.01 || cart.some((c) => c.kind === "payable" && !c.chartAccountId) || busy === modalItem.id} className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-40">Conciliar {cart.length ? `(${fmtMoney(cartTotal)})` : ""}</button>
+                <button onClick={confirmReconcile} disabled={!cart.length || Math.abs(delta) >= 0.01 || cart.some((c) => c.kind === "payable" && !c.chartAccountId) || busy === modalItem.id} className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-40">{isGroupModal ? "Conciliar em conjunto" : "Conciliar"} {cart.length ? `(${fmtMoney(cartTotal)})` : ""}</button>
               </div>
             </div>
           </div>
