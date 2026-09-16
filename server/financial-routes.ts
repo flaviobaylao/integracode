@@ -247,7 +247,8 @@ export function registerFinancialRoutes(app: Express) {
         ORDER BY p.created_at DESC`));
       const linhas: any[] = listQ?.rows || listQ || [];
       const total = linhas.reduce((acc: number, x: any) => acc + parseFloat(x.amount || '0'), 0);
-      const amostra = linhas.slice(0, 200).map((x: any) => ({
+      const limite = Number(req.body?.limite) > 0 ? Number(req.body.limite) : 2000;
+      const amostra = linhas.slice(0, limite).map((x: any) => ({
         titulo: x.title_number, cliente: String(x.customer_name || '').slice(0, 30), valor: x.amount,
         antes: x.antes, depois: x.depois, registradaEm: x.registrada_em,
       }));
