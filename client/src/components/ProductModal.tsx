@@ -8,7 +8,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertProductSchema, type Product } from "@shared/schema";
+import { calcularLogistica, sugerirPaletizacao, PALETE_PADRAO } from "@shared/logistica-produto";
 import { z } from "zod";
+
+// Campos logísticos do form (todos texto, para aceitar vírgula e ficar vazio).
+const LOGISTICA_VAZIA = {
+  pesoBrutoG: '', pesoEmbalagemG: '', diametroCm: '', alturaCm: '',
+  fardoFilas: '', fardoPorFila: '', fardoFilmeG: '',
+  paletFardosCamada: '', paletCamadas: '', paletTipo: '',
+};
+const LOGISTICA_CAMPOS = Object.keys(LOGISTICA_VAZIA) as (keyof typeof LOGISTICA_VAZIA)[];
+const fmtNum = (v: any) => (v === null || v === undefined ? '' : String(v));
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -36,6 +46,8 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
     resaleBrasiliaPrice: '',
     // Item de USO INTERNO: fica fora do catalogo de vendas (ver checkbox no form).
     internalOnly: false,
+    // LOGÍSTICA: peso, dimensões, fardo e paletização (ver seção no form).
+    ...LOGISTICA_VAZIA,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { toast } = useToast();
@@ -59,6 +71,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         resaleInteriorPrice: editingProduct.resaleInteriorPrice || '',
         resaleBrasiliaPrice: editingProduct.resaleBrasiliaPrice || '',
         internalOnly: (editingProduct as any).internalOnly === true,
+        ...Object.fromEntries(LOGISTICA_CAMPOS.map(k => [k, fmtNum((editingProduct as any)[k])])) as typeof LOGISTICA_VAZIA,
       });
     } else {
       setFormData({
@@ -77,6 +90,7 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         resaleInteriorPrice: '',
         resaleBrasiliaPrice: '',
         internalOnly: false,
+        ...LOGISTICA_VAZIA,
       });
     }
     setErrors({});
@@ -133,6 +147,9 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         resaleInteriorPrice: formData.resaleInteriorPrice !== '' ? parseFloat(formData.resaleInteriorPrice) : undefined,
         resaleBrasiliaPrice: formData.resaleBrasiliaPrice !== '' ? parseFloat(formData.resaleBrasiliaPrice) : undefined,
         internalOnly: formData.internalOnly === true,
+        // LOGÍSTICA: vazio vai como null (permite apagar um valor); o schema
+        // converte vírgula em ponto e valida número.
+        ...Object.fromEntries(LOGISTICA_CAMPOS.map(k => [k, formData[k] === '' ? null : formData[k]])),
       };
 
       const validatedData = insertProductSchema.parse(dataToValidate);
@@ -149,6 +166,9 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
       }
     }
   };
+
+  // Prévia calculada ao vivo (mesma função usada pela NF-e e pela ficha logística).
+  const logistica = calcularLogistica(formData);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -316,6 +336,118 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
                   />
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* ── LOGÍSTICA: peso, dimensões, fardo e paletização (set/2026) ───────── */}
+          <div className="border-t border-gray-200 pt-4">
+            <h3 className="text-sm font-semibold mb-1">Logística — peso, dimensões e paletização</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Pesos em gramas, medidas em centímetros. O peso totalizado vai para a NF-e
+              (peso bruto/líquido e nº de fardos); fardo e palete entram na ficha logística.
+            </p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="pesoBrutoG" className="text-xs">Peso da unidade cheia (g)</Label>
+                  <Input id="pesoBrutoG" inputMode="decimal" value={formData.pesoBrutoG}
+                    onChange={(e) => setFormData(prev => ({ ...prev, pesoBrutoG: e.target.value }))}
+                    placeholder="Ex: 370" data-testid="input-peso-bruto" />
+                  <p className="text-[11px] text-gray-500 mt-0.5">Garrafa com produto, tampa e rótulo.</p>
+                </div>
+                <div>
+                  <Label htmlFor="pesoEmbalagemG" className="text-xs">Plástico da garrafa (g)</Label>
+                  <Input id="pesoEmbalagemG" inputMode="decimal" value={formData.pesoEmbalagemG}
+                    onChange={(e) => setFormData(prev => ({ ...prev, pesoEmbalagemG: e.target.value }))}
+                    placeholder="Ex: 17,5" data-testid="input-peso-embalagem" />
+                  <p className="text-[11px] text-gray-500 mt-0.5">Peso líquido = cheia − plástico.</p>
+                </div>
+                <div>
+                  <Label htmlFor="diametroCm" className="text-xs">Diâmetro da garrafa (cm)</Label>
+                  <Input id="diametroCm" inputMode="decimal" value={formData.diametroCm}
+                    onChange={(e) => setFormData(prev => ({ ...prev, diametroCm: e.target.value }))}
+                    placeholder="Ex: 6" data-testid="input-diametro" />
+                </div>
+                <div>
+                  <Label htmlFor="alturaCm" className="text-xs">Altura da garrafa (cm)</Label>
+                  <Input id="alturaCm" inputMode="decimal" value={formData.alturaCm}
+                    onChange={(e) => setFormData(prev => ({ ...prev, alturaCm: e.target.value }))}
+                    placeholder="Ex: 17,5" data-testid="input-altura" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <Label htmlFor="fardoFilas" className="text-xs">Fardo: filas</Label>
+                  <Input id="fardoFilas" inputMode="numeric" value={formData.fardoFilas}
+                    onChange={(e) => setFormData(prev => ({ ...prev, fardoFilas: e.target.value.replace(/\D/g, '') }))}
+                    placeholder="Ex: 3" data-testid="input-fardo-filas" />
+                </div>
+                <div>
+                  <Label htmlFor="fardoPorFila" className="text-xs">Garrafas por fila</Label>
+                  <Input id="fardoPorFila" inputMode="numeric" value={formData.fardoPorFila}
+                    onChange={(e) => setFormData(prev => ({ ...prev, fardoPorFila: e.target.value.replace(/\D/g, '') }))}
+                    placeholder="Ex: 4" data-testid="input-fardo-por-fila" />
+                </div>
+                <div>
+                  <Label htmlFor="fardoFilmeG" className="text-xs">Filme do fardo (g)</Label>
+                  <Input id="fardoFilmeG" inputMode="decimal" value={formData.fardoFilmeG}
+                    onChange={(e) => setFormData(prev => ({ ...prev, fardoFilmeG: e.target.value }))}
+                    placeholder="30" data-testid="input-fardo-filme" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 items-end">
+                <div>
+                  <Label htmlFor="paletFardosCamada" className="text-xs">Palete: fardos/camada</Label>
+                  <Input id="paletFardosCamada" inputMode="numeric" value={formData.paletFardosCamada}
+                    onChange={(e) => setFormData(prev => ({ ...prev, paletFardosCamada: e.target.value.replace(/\D/g, '') }))}
+                    placeholder="Ex: 25" data-testid="input-palet-fardos-camada" />
+                </div>
+                <div>
+                  <Label htmlFor="paletCamadas" className="text-xs">Camadas</Label>
+                  <Input id="paletCamadas" inputMode="numeric" value={formData.paletCamadas}
+                    onChange={(e) => setFormData(prev => ({ ...prev, paletCamadas: e.target.value.replace(/\D/g, '') }))}
+                    placeholder="Ex: 7" data-testid="input-palet-camadas" />
+                </div>
+                <Button type="button" variant="outline" size="sm" className="h-9"
+                  disabled={!logistica || !(logistica.fardo.unidades > 0)}
+                  onClick={() => {
+                    if (!logistica) return;
+                    const s = sugerirPaletizacao(logistica.fardo.compCm, logistica.fardo.largCm, logistica.fardo.altCm, logistica.fardo.pesoBrutoKg);
+                    setFormData(prev => ({ ...prev, paletFardosCamada: String(s.fardosPorCamada || ''), paletCamadas: String(s.camadas || ''), paletTipo: prev.paletTipo || PALETE_PADRAO.tipo }));
+                  }}
+                  data-testid="button-sugerir-palete">
+                  Sugerir
+                </Button>
+              </div>
+              <p className="text-[11px] text-gray-500 -mt-1">
+                "Sugerir" calcula o máximo seguro no palete {PALETE_PADRAO.tipo}: sem beirada,
+                até {PALETE_PADRAO.alturaMaxCm} cm de altura total e {PALETE_PADRAO.pesoMaxKg} kg de carga.
+              </p>
+
+              {logistica && (
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 space-y-1" data-testid="preview-logistica">
+                  <p><b>Unidade:</b> {logistica.unidade.pesoBrutoG} g bruto · {logistica.unidade.pesoLiquidoG} g líquido
+                    {logistica.unidade.diametroCm > 0 && logistica.unidade.alturaCm > 0 && <> · Ø {logistica.unidade.diametroCm} × {logistica.unidade.alturaCm} cm</>}
+                  </p>
+                  {logistica.fardo.unidades > 0 && (
+                    <p><b>Fardo:</b> {logistica.fardo.unidades} un ({logistica.fardo.filas} filas × {logistica.fardo.porFila}) ·
+                      {' '}{logistica.fardo.compCm} × {logistica.fardo.largCm} × {logistica.fardo.altCm} cm ·
+                      {' '}{logistica.fardo.pesoBrutoKg} kg bruto / {logistica.fardo.pesoLiquidoKg} kg líquido
+                    </p>
+                  )}
+                  {logistica.palete.fardos > 0 && (
+                    <p><b>Palete:</b> {logistica.palete.fardosPorCamada} fardos/camada ({logistica.palete.arranjo.descricao}) × {logistica.palete.camadas} camadas
+                      {' '}= <b>{logistica.palete.fardos} fardos / {logistica.palete.unidades} un</b> ·
+                      {' '}{logistica.palete.alturaTotalCm} cm · {logistica.palete.pesoTotalKg} kg · ocupação {logistica.palete.ocupacaoPct}%
+                    </p>
+                  )}
+                  {logistica.palete.alertas.map((a, i) => (
+                    <p key={i} className="text-amber-700">⚠ {a}</p>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
