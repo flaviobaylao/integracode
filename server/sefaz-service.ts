@@ -9,6 +9,7 @@ import { nowBrazil } from './brazilTimezone';
 import { agora, isoOffsetBR, componentesBR } from '@shared/tempo';
 import { isValidFiscalDoc } from './fiscal-doc';
 import { normalizeUf, ufFromCep } from './cep-uf';
+import { pesosParaNf } from '@shared/logistica-produto';
 import type { FiscalInvoice, FiscalInvoiceItem, FiscalScenario } from '@shared/schema';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -746,6 +747,45 @@ export async function loadDuplicatasDaNf(invoiceId: string, totalInvoice: number
   }
 }
 
+// ── VOLUMES TRANSPORTADOS (set/2026) ─────────────────────────────────────────
+// <transp><vol> com quantidade de fardos, espécie e pesos TOTALIZADOS, a partir
+// do cadastro logístico de cada produto (peso da unidade × quantidade vendida;
+// fardos arredondados para cima por produto). Se algum item da nota não tem
+// peso cadastrado, a nota sai SEM <vol> (o grupo é opcional na NF-e) e o log
+// diz qual produto falta — peso parcial na nota seria informação errada.
+export interface NfeVolumes { qVol: number; esp: string; pesoL: number; pesoB: number }
+export async function loadVolumesDaNf(items: FiscalInvoiceItem[]): Promise<NfeVolumes | null> {
+  try {
+    const ids = Array.from(new Set(items.map(i => i.productId).filter(Boolean))) as string[];
+    if (!ids.length) return null;
+    const r: any = await db.execute(sql`
+      SELECT id, name, peso_bruto_g, peso_embalagem_g, diametro_cm, altura_cm,
+             fardo_filas, fardo_por_fila, fardo_filme_g
+      FROM products WHERE id = ANY(string_to_array(${ids.join(',')}, ','))`);
+    const porId = new Map<string, any>();
+    for (const row of r.rows || []) {
+      porId.set(String(row.id), {
+        pesoBrutoG: row.peso_bruto_g, pesoEmbalagemG: row.peso_embalagem_g,
+        diametroCm: row.diametro_cm, alturaCm: row.altura_cm,
+        fardoFilas: row.fardo_filas, fardoPorFila: row.fardo_por_fila, fardoFilmeG: row.fardo_filme_g,
+      });
+    }
+    const tot = pesosParaNf(items.map(i => ({
+      quantidade: i.quantity as any,
+      produto: i.productId ? porId.get(String(i.productId)) : null,
+      nome: i.productName,
+    })));
+    if (!tot.completo) {
+      if (tot.semCadastro.length) console.warn(`[SEFAZ] <vol> omitido: sem peso cadastrado em ${tot.semCadastro.join(', ')}`);
+      return null;
+    }
+    return { qVol: tot.volumes, esp: tot.especie, pesoL: tot.pesoLiquidoKg, pesoB: tot.pesoBrutoKg };
+  } catch (e: any) {
+    console.warn('[SEFAZ] loadVolumesDaNf falhou (nota segue sem <vol>):', e?.message);
+    return null;
+  }
+}
+
 function buildDocumento(
   invoice: FiscalInvoice,
   items: FiscalInvoiceItem[],
@@ -755,6 +795,7 @@ function buildDocumento(
   allScenarios?: any[],
   snCreditAliq: number = 0,
   duplicatas: NfeDuplicata[] | null = null,
+  volumes: NfeVolumes | null = null,
 ): { documento: Record<string, any>; cNF: string; cUF: string; modelo: string } {
   const modelo = (invoice as any).invoiceModel || '55';
   const isNFCe = modelo === '65';
@@ -1619,6 +1660,16 @@ function buildDocumento(
     },
     transp: {
       modFrete: '9',
+      // Volumes transportados (fardos) com peso bruto/líquido totalizados — só na
+      // NF-e (modelo 55) e só quando todos os itens têm peso cadastrado.
+      ...(!isNFCe && volumes && volumes.qVol > 0 ? {
+        vol: [{
+          qVol: String(volumes.qVol),
+          esp: sanitizeStr(volumes.esp || 'FARDO', 60),
+          pesoL: volumes.pesoL.toFixed(3),
+          pesoB: volumes.pesoB.toFixed(3),
+        }],
+      } : {}),
     },
     ...(!isNFCe ? (() => {
       const pm = String(invoice.paymentMethod || 'a_prazo').trim().toLowerCase();
@@ -2257,7 +2308,10 @@ export class SefazService {
       // `invoice`, para o grupo card (YA04) chegar completo ao XML. Ver a coleta
       // logo apos o carregamento do certificado.
       if (pagamentoCartao) (invoice as any).pagamentoCartao = pagamentoCartao;
-      const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq, duplicatasNf);
+      // Volumes (fardos) e pesos totalizados, do cadastro logístico dos produtos.
+      const volumesNf = await loadVolumesDaNf(items);
+      if (volumesNf) console.log(`[SEFAZ] <vol>: ${volumesNf.qVol} ${volumesNf.esp}, líq. ${volumesNf.pesoL.toFixed(3)} kg, bruto ${volumesNf.pesoB.toFixed(3)} kg`);
+      const { documento, cNF, cUF, modelo } = buildDocumento(invoice, items, scenario, ambiente, crt, allScenarios, snCreditAliq, duplicatasNf, volumesNf);
       const isNFCe = modelo === '65';
 
       // ── Persiste valores de impostos calculados nos itens e na nota ───────
@@ -2309,6 +2363,11 @@ export class SefazService {
             // legendas legais, incl. crédito de ICMS do Simples Nacional art. 23
             // LC 123) para a DANFE imprimir o mesmo texto enviado à SEFAZ.
             infCpl: (documento as any)?.infAdic?.infCpl || null,
+            // Volumes/pesos exatamente como foram no XML (a DANFE lê daqui).
+            volQuantidade: volumesNf ? volumesNf.qVol : null,
+            volEspecie: volumesNf ? volumesNf.esp : null,
+            pesoLiquidoKg: volumesNf ? volumesNf.pesoL.toFixed(3) : null,
+            pesoBrutoKg: volumesNf ? volumesNf.pesoB.toFixed(3) : null,
           } as any);
         } catch (totErr: any) {
           console.warn(`[SEFAZ] ⚠️ Falha ao persistir totais de impostos da NF-e ${invoiceId}: ${totErr.message}`);
