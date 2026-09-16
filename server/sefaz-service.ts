@@ -200,6 +200,18 @@ export function bsbStSaleOverride(
   return { cfop: isInterstate ? '6404' : '5405', csosn: '500' };
 }
 
+// CFOP DE VENDA PADRÃO (set/2026): por decisão do Flavio, toda venda que saía
+// em 5102/6102 (revenda de mercadoria adquirida) passa a sair em 5101/6101
+// (venda de produção do estabelecimento). Aplicado na emissão (XML + registro
+// gravado), então vale também para rascunhos/retentativas criados antes da
+// mudança. Não mexe em ST (5405/6404), bonificação, troca, amostra nem transferência.
+export function cfopVendaPadrao(cfop: string | null | undefined): string | null {
+  const c = String(cfop || '').replace(/\D/g, '');
+  if (c === '5102') return '5101';
+  if (c === '6102') return '6101';
+  return null;
+}
+
 // Recalcula a DIREÇÃO do CFOP (interno x interestadual) preservando a natureza
 // da operação: troca só o 1º dígito (5↔6 saídas, 1↔2 entradas/devolução), com o
 // par de ST 5405↔6404 como exceção (não é troca simples de dígito). Retorna
@@ -984,11 +996,12 @@ function buildDocumento(
   const _isBsbIssuer = _issuerCnpjDigits === '28295493000315';
   const _defaultCfop = _isBsbIssuer
     ? (isInterstateOp ? '6404' : '5405')
-    : '5102';
+    : '5101';
   const _defaultCsosn = _isBsbIssuer ? '500' : '102';
 
   const primaryCfopCandidates = [items[0]?.cfop, invoice.cfop, scenario?.cfop, _defaultCfop];
-  const primaryCfop = primaryCfopCandidates.find(c => c && /^\d{4}$/.test(c)) || _defaultCfop;
+  const _primaryRaw = primaryCfopCandidates.find(c => c && /^\d{4}$/.test(c)) || _defaultCfop;
+  const primaryCfop = cfopVendaPadrao(_primaryRaw) || _primaryRaw;
   const cfopFirstDigit = primaryCfop.charAt(0);
   // idDest pela COMPARAÇÃO REAL de UFs (emitente x destinatário), não pelo 1º
   // dígito do CFOP gravado: um CFOP desatualizado na NF/itens não pode mais
@@ -1051,6 +1064,11 @@ function buildDocumento(
   const detList = items.map((item, idx) => {
     const cfopCandidates = [item.cfop, invoice.cfop, scenario?.cfop, _defaultCfop];
     let cfop = cfopCandidates.find(c => c && /^\d{4}$/.test(c)) || _defaultCfop;
+    const _vendaPadrao = cfopVendaPadrao(cfop);
+    if (_vendaPadrao) {
+      console.log(`🔧 [NFE-XML] CFOP ${cfop} → ${_vendaPadrao} (venda padrão 5101/6101)`);
+      cfop = _vendaPadrao;
+    }
     // Direção do CFOP sempre coerente com a operação REAL (UF emitente x UF
     // destinatário) — proteção final contra CFOP desatualizado gravado na
     // NF/itens/cenário (o recálculo persistente acontece no _doEmitNfe).
@@ -2186,6 +2204,25 @@ export class SefazService {
           };
         }
       }
+
+      // ── CFOP DE VENDA PADRÃO: 5102/6102 gravados → 5101/6101 (NF-e e NFC-e) ──
+      try {
+        const _invUpdV: Record<string, any> = {};
+        const _novoInvCfop = cfopVendaPadrao(invoice.cfop);
+        if (_novoInvCfop) _invUpdV.cfop = _novoInvCfop;
+        let _itensV = 0;
+        for (const it of items) {
+          const to = cfopVendaPadrao((it as any).cfop);
+          if (to) { await storage.updateFiscalInvoiceItem((it as any).id, { cfop: to } as any); _itensV++; }
+        }
+        if (_novoInvCfop) await storage.updateFiscalInvoice(invoiceId, _invUpdV as any);
+        if (_novoInvCfop || _itensV > 0) {
+          console.log(`[SEFAZ] 🔁 NF #${invoice.invoiceNumber}: CFOP de venda ${invoice.cfop || ''} → ${_novoInvCfop || '(itens)'}; ${_itensV} item(ns)`);
+          invoice = (await storage.getFiscalInvoice(invoiceId)) || invoice;
+          const _recarregados = await storage.getFiscalInvoiceItems(invoiceId);
+          if (_recarregados && _recarregados.length > 0) { items.length = 0; items.push(..._recarregados); }
+        }
+      } catch (e: any) { console.warn('[SEFAZ] ajuste CFOP venda padrão falhou (segue; XML já força 5101/6101):', e?.message); }
 
       // ── REVISITA o cadastro do cliente e RECALCULA o CFOP (toda tentativa) ──
       // Caso "Casa de Marias" (NF 104152, 10/jul/2026): a NF nasceu com CFOP
