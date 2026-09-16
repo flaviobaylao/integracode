@@ -1326,10 +1326,26 @@ export function registerReconciliation(app: Express) {
         if (!doc && supplierInfo.document) doc = String(supplierInfo.document);
       }
 
-      let titleId: string; let kind: "receivable" | "payable";
+      let titleId: string; let kind: "receivable" | "payable"; let createdCustomerId: string | null = null;
       if (tipo === "receber") {
-        const rec: any = await storage.createReceivable({ customerName: name, customerDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, category, chartAccountId: chartAccountId, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", createdBy: by } as any);
-        titleId = rec.id; kind = "receivable";
+        // Vincula o titulo ao cadastro do cliente: id vindo do autocomplete ou,
+        // na falta, resolvido pelo CNPJ/CPF. Antes nascia sem customer_id.
+        let customerId: string | null = b.customerId ? String(b.customerId) : null;
+        if (customerId) {
+          const ok = rowsOf(await db.execute(sql`SELECT id, name, company_name, cnpj, cpf FROM customers WHERE id = ${customerId}`))[0];
+          if (!ok) customerId = null;
+          else if (!doc && (ok.cnpj || ok.cpf)) doc = String(ok.cnpj || ok.cpf);
+        }
+        if (!customerId && onlyDigits(doc)) {
+          const byDoc = rowsOf(await db.execute(sql`
+            SELECT id FROM customers WHERE (is_supplier IS NOT TRUE)
+              AND (regexp_replace(COALESCE(cnpj, ''), '[^0-9]', '', 'g') = ${onlyDigits(doc)}
+                OR regexp_replace(COALESCE(cpf, ''), '[^0-9]', '', 'g') = ${onlyDigits(doc)})
+            ORDER BY (is_active IS TRUE) DESC LIMIT 1`))[0];
+          if (byDoc) customerId = String(byDoc.id);
+        }
+        const rec: any = await storage.createReceivable({ customerId, customerName: name, customerDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, category, chartAccountId: chartAccountId, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", createdBy: by } as any);
+        titleId = rec.id; kind = "receivable"; createdCustomerId = customerId;
         await settleReceivable(titleId, amount, method, accountId, paidAtISO, by);
       } else {
         const pay: any = await storage.createPayable({ supplierName: name, supplierDocument: doc || null, amount: amount.toFixed(2), issueDate: issue as any, dueDate: due as any, description: desc, chartAccountId: chartAccountId, omieInstanceId: instanceId, financialAccountId: accountId, status: "a_vencer", source: "manual", createdBy: by, notes: category ? ("Categoria: " + category) : null } as any);
@@ -1344,7 +1360,7 @@ export function registerReconciliation(app: Express) {
         UPDATE bank_statement_items SET reconciliation_status = 'reconciled',
           matched_receivable_id = ${kind === "receivable" ? titleId : null}, matched_payable_id = ${kind === "payable" ? titleId : null},
           matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note} WHERE id = ${id}`);
-      try { await evolvePattern(item, { type: kind === "receivable" ? "customer" : "supplier", id: null, name, document: doc || null, category }, instanceId, by); } catch {}
+      try { await evolvePattern(item, { type: kind === "receivable" ? "customer" : "supplier", id: kind === "receivable" ? createdCustomerId : null, name, document: doc || null, category }, instanceId, by); } catch {}
       res.json({ ok: true, status: "reconciled", created: { kind, id: titleId }, supplier: supplierInfo });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
