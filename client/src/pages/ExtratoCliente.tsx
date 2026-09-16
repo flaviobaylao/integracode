@@ -115,6 +115,8 @@ type Extrato = {
     atrasoMedioDias: number | null;
     notasCanceladas: number;
     baixasEstimadas: number;
+    notasNaoVenda?: number;
+    valorNaoVenda?: number;
     titulosFantasma?: number;
     valorFantasma?: number;
     duplicadasComBaixa?: number;
@@ -558,6 +560,13 @@ export default function ExtratoCliente() {
                 <div className="mt-3 text-[11px] text-amber-700 dark:text-amber-300">
                   ⚠ {r?.baixasEstimadas} baixa(s) vieram do histórico importado sem data de pagamento — foram lançadas na data
                   de vencimento e aparecem marcadas como <em>data estimada</em>.
+                </div>
+              ) : null}
+              {(r?.notasNaoVenda || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.notasNaoVenda} nota(s) de {fmtBRL(r?.valorNaoVenda)} ficaram <strong>fora do extrato</strong>: transferência
+                  entre estabelecimentos ou faturamento de outra praça/empresa do grupo ([GYN], [BSB], [IND], [SERV]) — não são
+                  venda para este cliente.
                 </div>
               ) : null}
               {(r?.titulosFantasma || 0) > 0 ? (
