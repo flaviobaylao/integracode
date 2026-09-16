@@ -406,6 +406,8 @@ run();
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS palet_camadas integer',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS palet_tipo varchar',
       // VOLUMES da NF-e (<transp><vol>), espelhados na nota para a DANFE.
+      // INFORMAÇÕES COMPLEMENTARES da NF-e (infCpl do XML), para a DANFE.
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS inf_cpl text',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_quantidade integer',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_especie varchar',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS peso_liquido_kg numeric(12,3)',
