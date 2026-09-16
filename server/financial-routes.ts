@@ -200,6 +200,75 @@ export function registerFinancialRoutes(app: Express) {
   // A rota responde 410 (em vez de sumir) para que qualquer script ou atalho antigo
   // receba o MOTIVO, e nao um 404 que alguem "consertaria" recriando o endpoint.
   // ============================================================================
+  // ── REPARO: baixa de boleto BB gravada com DIA e MES trocados ──────────────
+  // De 10/set/2026 em diante, o BB passou a mandar a data de liquidacao COM HORA.
+  // O parser (toISO em bb-boleto-service.ts) nao cobria esse formato, devolvia a
+  // string crua e `new Date("10/09/2026 11:57")` era lida como MM/DD pelo JS ->
+  // 9 de OUTUBRO. Resultado: pagamento gravado no FUTURO, contaminando DRE, fluxo
+  // de caixa, dias de atraso e o Extrato do Cliente. O parser ja foi corrigido;
+  // este endpoint conserta o que ja estava gravado.
+  //
+  // Reparo = desfazer a troca (dia <-> mes), o que recupera data E hora reais.
+  // Trava de seguranca: so grava se a data corrigida cair a menos de 2 dias de
+  // quando a baixa foi REGISTRADA (created_at) — o webhook chega no dia do
+  // pagamento, entao isso confirma que o swap e a explicacao certa.
+  // Body: { dryRun?: boolean = true }.
+  app.post('/api/admin/financial/reparar-datas-boleto', authenticateUser, isFinancialAuthorized, async (req: any, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false; // default TRUE (so lista)
+      const base = `
+        FROM receivable_payments p
+        JOIN receivables r ON r.id = p.receivable_id
+        WHERE p.deleted_at IS NULL
+          AND p.notes ILIKE 'Baixa automatica boleto BB%'
+          AND p.paid_at > p.created_at + INTERVAL '1 day'
+          AND EXTRACT(DAY FROM p.paid_at) <= 12
+          AND ABS(EXTRACT(EPOCH FROM (
+                make_timestamp(
+                  EXTRACT(YEAR FROM p.paid_at)::int,
+                  EXTRACT(DAY FROM p.paid_at)::int,
+                  EXTRACT(MONTH FROM p.paid_at)::int,
+                  EXTRACT(HOUR FROM p.paid_at)::int,
+                  EXTRACT(MINUTE FROM p.paid_at)::int,
+                  FLOOR(EXTRACT(SECOND FROM p.paid_at))
+                ) - p.created_at))) < 172800`;
+      const listQ: any = await db.execute(sql.raw(`
+        SELECT p.id, r.title_number, r.customer_name, p.amount,
+               p.paid_at AS antes, p.created_at AS registrada_em,
+               make_timestamp(
+                 EXTRACT(YEAR FROM p.paid_at)::int,
+                 EXTRACT(DAY FROM p.paid_at)::int,
+                 EXTRACT(MONTH FROM p.paid_at)::int,
+                 EXTRACT(HOUR FROM p.paid_at)::int,
+                 EXTRACT(MINUTE FROM p.paid_at)::int,
+                 FLOOR(EXTRACT(SECOND FROM p.paid_at))
+               ) AS depois
+        ${base}
+        ORDER BY p.created_at DESC`));
+      const linhas: any[] = listQ?.rows || listQ || [];
+      const total = linhas.reduce((acc: number, x: any) => acc + parseFloat(x.amount || '0'), 0);
+      const amostra = linhas.slice(0, 200).map((x: any) => ({
+        titulo: x.title_number, cliente: String(x.customer_name || '').slice(0, 30), valor: x.amount,
+        antes: x.antes, depois: x.depois, registradaEm: x.registrada_em,
+      }));
+      if (dryRun) return res.json({ ok: true, dryRun: true, pagamentos: linhas.length, valor: total.toFixed(2), amostra });
+      const upd: any = await db.execute(sql.raw(`
+        UPDATE receivable_payments p SET paid_at = make_timestamp(
+          EXTRACT(YEAR FROM p.paid_at)::int,
+          EXTRACT(DAY FROM p.paid_at)::int,
+          EXTRACT(MONTH FROM p.paid_at)::int,
+          EXTRACT(HOUR FROM p.paid_at)::int,
+          EXTRACT(MINUTE FROM p.paid_at)::int,
+          FLOOR(EXTRACT(SECOND FROM p.paid_at))
+        )
+        WHERE p.id IN (SELECT p.id ${base})`));
+      console.log(`[REPARO-DATAS-BOLETO] ${upd?.rowCount ?? '?'} pagamento(s) corrigido(s) por ${req.currentUser?.email}`);
+      res.json({ ok: true, dryRun: false, pagamentos: linhas.length, valor: total.toFixed(2), atualizados: upd?.rowCount ?? null, amostra });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
   app.post('/api/admin/financial/repair-baixas', authenticateUser, isFinancialAuthorized, async (_req: any, res) => {
     res.status(410).json({
       error: 'Endpoint removido em 04/08/2026.',
