@@ -85,11 +85,16 @@ export async function painelDoDia(): Promise<any> {
            executada_em, medido_em, resultado, modo_teste, execucao, decidido_via, decidido_por
       FROM mkt_acoes WHERE status IN ('executada','executando','auto','erro') AND COALESCE(executada_em, criado_em) >= now() - interval '14 days'
       ORDER BY COALESCE(executada_em, criado_em) DESC LIMIT 40`)) {
-    const aoVivo = a.status === 'executada' && !a.modo_teste && ['regua', 'cupom', 'visita'].includes(a.tipo) ? await resultadoAoVivo(a) : null;
+    let aoVivo = a.status === 'executada' && !a.modo_teste && ['regua', 'cupom', 'visita'].includes(a.tipo) ? await resultadoAoVivo(a) : null;
+    let anuncio: any = null;
+    if (a.tipo === 'anuncio' && a.status === 'executada' && !a.modo_teste) {
+      try { const ads = await import('./mkt-meta-ads'); anuncio = await ads.resultadoDoAnuncio(String(a.id)); } catch {}
+      if (anuncio) aoVivo = { clientes: anuncio.conversas, pedidos: anuncio.pedidosCtwa, receita: anuncio.receitaCtwa, taxa: anuncio.conversas ? anuncio.pedidosCtwa / anuncio.conversas : 0, publico: anuncio.alcance, diasCorridos: Math.min(anuncio.dias || 0, Math.max(0, Math.floor((Date.now() - new Date(anuncio.inicio).getTime()) / 86400000))), fechado: anuncio.status === 'encerrado', gasto: anuncio.gasto, conversas: anuncio.conversas, cliques: anuncio.cliques, link: anuncio.link, statusAnuncio: anuncio.status };
+    }
     const toques = a.tipo === 'regua' ? await toquesDaAcao(a.id) : null;
     rodando.push({ id: a.id, numero: a.numero, tipo: a.tipo, tipoNome: TIPOS[a.tipo] || a.tipo, ...canalInfo(a), titulo: a.titulo, status: a.status, modoTeste: a.modo_teste,
       publicoTotal: a.publico_total, custo: a.custo, receitaEsperada: a.receita, executadaEm: a.executada_em, decididoVia: a.decidido_via,
-      erro: a.status === 'erro' ? String(a.execucao?.erro || '').slice(0, 200) : null, aoVivo, toques, resultadoOficial: a.resultado || null });
+      erro: a.status === 'erro' ? String(a.execucao?.erro || '').slice(0, 200) : null, aoVivo, toques, anuncio, resultadoOficial: a.resultado || null });
   }
   const totaisAoVivo = rodando.reduce((t, r) => { if (r.aoVivo) { t.receita += r.aoVivo.receita; t.pedidos += r.aoVivo.pedidos; t.custo += Number(r.custo || 0); t.acoes++; } return t; }, { receita: 0, pedidos: 0, custo: 0, acoes: 0 });
 
@@ -115,14 +120,16 @@ export async function painelDoDia(): Promise<any> {
   let numeros: any = null;
   try { const { numerosDoDia } = await import('./mkt-analista'); numeros = await numerosDoDia(); } catch {}
   const modos: Record<string, string> = {};
-  for (const k of ['mkt_radar_modo', 'mkt_conteudo_modo', 'mkt_publicador_modo', 'mkt_insights_modo', 'mkt_capi_mode']) {
+  for (const k of ['mkt_radar_modo', 'mkt_conteudo_modo', 'mkt_publicador_modo', 'mkt_insights_modo', 'mkt_capi_mode', 'mkt_ads_modo']) {
     const r = await rows(`SELECT value FROM system_settings WHERE key = '${k}' LIMIT 1`);
-    modos[k] = r[0]?.value ? String(r[0].value).replace(/^"|"$/g, '') : (k === 'mkt_radar_modo' || k === 'mkt_publicador_modo' ? 'test' : 'off');
+    modos[k] = r[0]?.value ? String(r[0].value).replace(/^"|"$/g, '') : (k === 'mkt_radar_modo' || k === 'mkt_publicador_modo' || k === 'mkt_ads_modo' ? 'test' : 'off');
   }
   let aprovadores: string[] = [];
   try { const { aprovadores: ap } = await import('./mkt-acoes'); aprovadores = await ap(); } catch {}
   const decisoes7d = (await rows(`SELECT COUNT(*) FILTER (WHERE status IN ('aprovada','executando','executada'))::int AS aprovadas, COUNT(*) FILTER (WHERE status = 'rejeitada' AND COALESCE(comentario,'') NOT ILIKE 'duplicada%')::int AS rejeitadas FROM mkt_acoes WHERE decidido_em >= now() - interval '7 days'`))[0] || { aprovadas: 0, rejeitadas: 0 };
 
+  let ads: any = null;
+  try { const m = await import('./mkt-meta-ads'); const pr = m.pronto(); ads = { pronto: pr.ok, falta: pr.falta, modo: await m.modo() }; } catch {}
   let ig: any = null;
   try { const { status } = await import('./mkt-ig-auth'); const s = await status(); ig = { conectado: s.conectado, username: s.username, diasRestantes: s.diasRestantes, podePublicar: s.podePublicar }; } catch {}
 
@@ -132,6 +139,6 @@ export async function painelDoDia(): Promise<any> {
     pendentes, resumoPendentes: { n: pendentes.length, receita: pendentes.reduce((t, p) => t + Number(p.receita || 0), 0), custo: pendentes.reduce((t, p) => t + Number(p.custo || 0), 0) },
     rodando, totaisAoVivo,
     pecas: { fila: Number(fila[0]?.n || 0), filaLista: pecasFila, noAr, escritasHoje: Number(pecasHoje[0]?.n || 0) },
-    auditor, aprendizados, numeros, modos, aprovadores: aprovadores.length, decisoes7d, ig,
+    auditor, aprendizados, numeros, modos, aprovadores: aprovadores.length, decisoes7d, ig, ads,
   };
 }

@@ -73,6 +73,11 @@ export async function checar(): Promise<Checagem[]> {
     const pubModo = await getSetting('mkt_publicador_modo', 'test');
     add('publicador_modo', 'conteudo', pubModo === 'on' ? 'ok' : 'atencao', 'Publicador do Instagram', pubModo === 'on' ? 'ligado: peça aprovada vai ao ar sozinha' : pubModo === 'test' ? 'em teste: a Meta valida a foto, mas quem posta ainda é o humano' : 'desligado', pubModo);
   } catch {}
+  try {
+    const ads = await import('./mkt-meta-ads');
+    const pr = ads.pronto(); const am = await ads.modo();
+    add('meta_ads', 'anuncio', pr.ok ? (am === 'on' ? 'ok' : 'atencao') : 'atencao', 'Anúncio pago na Meta', pr.ok ? (am === 'on' ? 'conta configurada, anúncios ligados' : 'conta configurada, modo ' + am + ' (anúncio aprovado só valida a conta)') : 'sem conta: faltam ' + pr.falta.join(', ') + ' — o Radar não propõe anúncio', { pronto: pr.ok, modo: am });
+  } catch {}
   const aprov = await (await import('./mkt-acoes')).aprovadores();
   add('aprovadores', 'caixa', aprov.length ? 'ok' : 'alerta', 'Aprovadores no WhatsApp', aprov.length ? aprov.length + ' número(s)' : 'nenhum: resumo e decisões por WhatsApp não funcionam (telefone_gestor_relatorios / mkt_aprovadores)', aprov.length);
   const disp = await getSetting('oficial_dispatch_mode', 'off'), rec = await getSetting('oficial_recompra', 'off');

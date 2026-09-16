@@ -421,6 +421,68 @@ async function main() {
   const txC = textoResumo(pendC);
   check(/💬|📸|🚗|🛒|⚙️/.test(txC) && /WhatsApp|Instagram|Visita presencial|Loja online/.test(txC), 'canal: resumo do WhatsApp mostra o canal de cada acao');
 
+  // ── Sprint 7: anuncio pago na Meta (Click-to-WhatsApp) ──
+  const ads = await import('../server/mkt-meta-ads');
+  delete process.env.META_AD_ACCOUNT_ID;
+  check(!ads.pronto().ok && ads.pronto().falta.includes('META_AD_ACCOUNT_ID'), 'ads: sem conta = nao pronto');
+  process.env.META_AD_ACCOUNT_ID = '123456'; process.env.META_ADS_TOKEN = 'ADSTOKEN'; process.env.META_PAGE_ID = '9999';
+  check(ads.pronto().ok && ads.config().conta === 'act_123456', 'ads: config normaliza act_');
+  await raw(`UPDATE mkt_politicas SET teto_custo_dia = 25 WHERE tipo = 'anuncio'`);
+  const chamadasAds: string[] = [];
+  const fetchReal2 = globalThis.fetch;
+  (globalThis as any).fetch = async (url: any, init?: any) => {
+    const u = String(url); const b = String(init?.body || ''); chamadasAds.push((init?.method || 'GET') + ' ' + u.split('?')[0] + (b ? ' ' + b.slice(0, 400) : ''));
+    const json = (o: any, status = 200) => ({ ok: status < 400, status, json: async () => o });
+    if (/act_123456\?/.test(u)) return json({ name: 'Honest Ads', currency: 'BRL', account_status: 1, amount_spent: '12345' });
+    if (/act_123456\/campaigns$/.test(u)) return json({ id: 'CAMP1' });
+    if (/act_123456\/adsets$/.test(u)) return b.includes('WHATSAPP') && b.includes('daily_budget=2000') ? json({ id: 'SET1' }) : json({ error: { message: 'adset ruim: ' + b.slice(0, 80) } }, 400);
+    if (/act_123456\/adimages$/.test(u)) return json({ images: { 'x.jpg': { hash: 'HASH1' } } });
+    if (/act_123456\/adcreatives$/.test(u)) return b.includes('WHATSAPP_MESSAGE') && b.includes('HASH1') ? json({ id: 'CR1' }) : json({ error: { message: 'creative ruim' } }, 400);
+    if (/act_123456\/ads$/.test(u)) return json({ id: 'AD1' });
+    if (/\/(CAMP1|SET1|AD1)$/.test(u)) return json({ success: true });
+    if (/CAMP1\/insights/.test(u)) return json({ data: [{ date_start: '2026-09-15', spend: '18.50', impressions: '4200', clicks: '61', reach: '3100', actions: [{ action_type: 'onsite_conversion.messaging_conversation_started_7d', value: '9' }] }] });
+    return json({ error: { message: 'rota nao simulada: ' + u } }, 400);
+  };
+  const stA = await ads.status();
+  check(stA.pronto && stA.nome === 'Honest Ads' && stA.moeda === 'BRL', 'ads: status le a conta');
+  const sinA = await lerSinais();
+  check(sinA.anuncios.pronto && sinA.anuncios.tetoDia === 25 && sinA.anuncios.pecasCandidatas.length >= 1, 'sinais: anuncios pronto, teto 25, ' + sinA.anuncios.pecasCandidatas.length + ' peca(s) candidata(s)');
+  const apA = await aplicarResposta({ acoes: [
+    { tipo: 'anuncio', titulo: 'Impulsionar a peca que mais rendeu', justificativa: 'alcance organico alto', anuncio: { peca_id: sinA.anuncios.pecasCandidatas[0].id, orcamento_dia: 40, dias: 20 } },
+    { tipo: 'anuncio', titulo: 'repetido', justificativa: '', anuncio: { peca_id: sinA.anuncios.pecasCandidatas[0].id, orcamento_dia: 10, dias: 3 } },
+  ] }, sinA, false);
+  const acA = apA.criadas.find(c => c.tipo === 'anuncio');
+  const rowA: any = acA ? ((await raw(`SELECT * FROM mkt_acoes WHERE numero=${acA.numero}`)) as any).rows[0] : null;
+  check(!!acA && apA.descartadas.length === 1 && rowA.parametros.orcamento_dia === 25 && rowA.parametros.dias === 7 && Number(rowA.custo_estimado) === 175 && rowA.nivel_efetivo === 2, 'radar: anuncio cortado no teto (R$ 25/dia, 7 dias = R$ 175), N2, repetido descartado');
+  // modo teste: aprovar so valida a conta
+  chamadasAds.length = 0;
+  const decA = await decidir({ ids: [rowA.id], decisao: 'aprovar', quem: 'teste', via: 'tela' });
+  const rowA2: any = ((await raw(`SELECT status, execucao FROM mkt_acoes WHERE id='${rowA.id}'`)) as any).rows[0];
+  check(decA.aplicadas === 1 && rowA2.status === 'executada' && rowA2.execucao?.simulado === true && !chamadasAds.some(c => /campaigns/.test(c)), 'anuncio em modo teste: aprovado valida a conta e nao cria campanha');
+  // modo on: cria tudo pausado e ativa
+  await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('mkt_ads_modo','on','t') ON CONFLICT (key) DO UPDATE SET value='on'`);
+  await raw(`UPDATE mkt_acoes SET status='proposta', executada_em=NULL, execucao=NULL, decidido_em=NULL WHERE id='${rowA.id}'`);
+  await raw(`UPDATE mkt_acoes SET parametros = parametros || '{"orcamento_dia":20,"dias":5}'::jsonb WHERE id='${rowA.id}'`);
+  chamadasAds.length = 0;
+  const decB = await decidir({ ids: [rowA.id], decisao: 'aprovar', quem: 'teste', via: 'tela' });
+  const rowB: any = ((await raw(`SELECT status, execucao FROM mkt_acoes WHERE id='${rowA.id}'`)) as any).rows[0];
+  const adRow: any = ((await raw(`SELECT * FROM mkt_ads WHERE acao_id='${rowA.id}'`)) as any).rows[0];
+  const ordem = chamadasAds.map(c => c.replace(/^POST https:\/\/graph\.facebook\.com\/v[\d.]+\/act_123456\//, '').split(' ')[0]);
+  check(decB.aplicadas === 1 && rowB.status === 'executada' && rowB.execucao?.adId && adRow && adRow.status === 'ativo' && adRow.campanha_meta_id === 'CAMP1' && adRow.ad_meta_id === 'AD1' && ordem.slice(0, 5).join(',') === 'campaigns,adsets,adimages,adcreatives,ads', 'anuncio ligado: campanha -> conjunto -> imagem -> criativo -> anuncio, tudo pausado e depois ativado (' + ordem.slice(0, 5).join(' > ') + ')');
+  check(chamadasAds.some(c => /adsets .*destination_type=WHATSAPP|adsets .*WHATSAPP/.test(c)) && chamadasAds.filter(c => /\/(CAMP1|SET1|AD1) status=ACTIVE/.test(c)).length === 3, 'anuncio: destino WhatsApp e ativacao nos 3 niveis');
+  const col = await ads.coletarInsights();
+  const res = await ads.resultadoDoAnuncio(rowA.id);
+  check(col.anuncios === 1 && col.linhas === 1 && res && res.gasto === 18.5 && res.conversas === 9 && res.cliques === 61, 'anuncio: insights viram mkt_ads_diario (gasto 18,50, 9 conversas)');
+  const pdA = await painelDoDia();
+  const rA = pdA.rodando.find((r: any) => r.tipo === 'anuncio');
+  check(rA && rA.anuncio && rA.anuncio.conversas === 9 && rA.aoVivo && rA.aoVivo.gasto === 18.5 && rA.canal === 'facebook', 'painel: anuncio rodando com gasto/conversas ao vivo e canal facebook');
+  const mA = await medir();
+  const rowC: any = ((await raw(`SELECT resultado FROM mkt_acoes WHERE id='${rowA.id}'`)) as any).rows[0];
+  check(mA >= 1 && rowC.resultado && rowC.resultado.conversas === 9 && rowC.resultado.gasto === 18.5, 'medir: acao de anuncio recebe resultado dos insights');
+  const pz = await ads.pausar(adRow.id);
+  check(pz.ok && ((await raw(`SELECT status FROM mkt_ads WHERE id='${adRow.id}'`)) as any).rows[0].status === 'pausado', 'anuncio: pausar');
+  (globalThis as any).fetch = fetchReal2;
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

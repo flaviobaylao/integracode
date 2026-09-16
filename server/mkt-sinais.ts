@@ -41,6 +41,7 @@ export type Sinais = {
   aprendizados: string[];
   avisos: string[];
   conteudo: { modo: string; cotaSemana: number; feitasSemana: number; cabe: number; naFila: number; aprovadasNaoPostadas: number; ganchosComFoto: Array<{ gancho: string; publico: string; fotos: number }>; desempenhoGancho: Array<{ gancho: string; usos: number; receitaPorUso: number; confiavel: boolean }> };
+  anuncios: { pronto: boolean; modo: string; tetoDia: number; ativos: number; gasto30d: number; conversas30d: number; pecasCandidatas: Array<{ id: string; numero: number; gancho: string | null; publico: string | null; assetId: number; alcance: number | null; curtidas: number | null; titulo: string | null }> };
 };
 
 const hojeBR = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })).toISOString().slice(0, 10);
@@ -176,6 +177,33 @@ async function custoIaMes(): Promise<number> {
   } catch { return 0; }
 }
 
+/** Anuncio pago: conta pronta? teto da politica? quais pecas ja aprovadas/publicadas (com foto) podem virar anuncio. */
+async function anuncios(): Promise<Sinais['anuncios']> {
+  const out: Sinais['anuncios'] = { pronto: false, modo: 'off', tetoDia: 0, ativos: 0, gasto30d: 0, conversas30d: 0, pecasCandidatas: [] };
+  try {
+    const ads = await import('./mkt-meta-ads');
+    out.pronto = ads.pronto().ok; out.modo = await ads.modo();
+    await ads.ensureMktAdsSchema();
+    const pol: any = await db.execute(sql.raw(`SELECT teto_custo_dia::float AS t FROM mkt_politicas WHERE tipo = 'anuncio' LIMIT 1`));
+    out.tetoDia = Number(pol.rows?.[0]?.t || 0);
+    if (!out.pronto || out.modo === 'off') return out;
+    const st: any = await db.execute(sql.raw(`SELECT COUNT(*) FILTER (WHERE status = 'ativo')::int AS ativos FROM mkt_ads`)).catch(() => ({ rows: [] }));
+    out.ativos = Number(st.rows?.[0]?.ativos || 0);
+    const g: any = await db.execute(sql.raw(`SELECT COALESCE(SUM(gasto),0)::float AS g, COALESCE(SUM(conversas),0)::int AS c FROM mkt_ads_diario WHERE data >= CURRENT_DATE - 30`)).catch(() => ({ rows: [] }));
+    out.gasto30d = Number(g.rows?.[0]?.g || 0); out.conversas30d = Number(g.rows?.[0]?.c || 0);
+    const pc: any = await db.execute(sql.raw(`
+      SELECT p.id, p.numero, p.gancho, p.titulo, (p.asset_ids->>0)::int AS asset_id,
+             (SELECT alcance FROM social_metrics m JOIN social_posts sp ON sp.id = m.post_id WHERE sp.piece_id = p.id ORDER BY m.data DESC LIMIT 1) AS alcance,
+             (SELECT curtidas FROM social_metrics m JOIN social_posts sp ON sp.id = m.post_id WHERE sp.piece_id = p.id ORDER BY m.data DESC LIMIT 1) AS curtidas
+        FROM mkt_pieces p
+       WHERE p.estado IN ('publicado','aprovado') AND jsonb_array_length(COALESCE(p.asset_ids,'[]'::jsonb)) > 0 AND p.criado_em >= now() - interval '45 days'
+         AND NOT EXISTS (SELECT 1 FROM mkt_ads a WHERE a.peca_id = p.id AND a.status IN ('ativo','pausado'))
+       ORDER BY COALESCE((SELECT curtidas FROM social_metrics m JOIN social_posts sp ON sp.id = m.post_id WHERE sp.piece_id = p.id ORDER BY m.data DESC LIMIT 1),0) DESC, p.criado_em DESC LIMIT 5`));
+    out.pecasCandidatas = (pc.rows || []).map((r: any) => ({ id: String(r.id), numero: Number(r.numero), gancho: r.gancho || null, publico: null, assetId: Number(r.asset_id), alcance: r.alcance != null ? Number(r.alcance) : null, curtidas: r.curtidas != null ? Number(r.curtidas) : null, titulo: r.titulo || null }));
+  } catch (e: any) { console.error('[MKT-SINAIS] anuncios:', e?.message || e); }
+  return out;
+}
+
 async function conteudo(): Promise<Sinais['conteudo']> {
   const out: Sinais['conteudo'] = { modo: 'off', cotaSemana: 0, feitasSemana: 0, cabe: 0, naFila: 0, aprovadasNaoPostadas: 0, ganchosComFoto: [], desempenhoGancho: [] };
   try {
@@ -209,8 +237,8 @@ export async function lerSinais(): Promise<Sinais> {
   const avisos: string[] = [];
   const retrato = await retratoDaBase().catch((e: any) => { avisos.push('retrato da base falhou: ' + (e?.message || e)); return [] as Retrato[]; });
   const r14 = await reguas14d();
-  const [segmentos, cart, pos, acoes, custo, aprend, cont] = await Promise.all([
-    segmentosPorRegua(retrato, r14), carteiras(), positivacao(), historicoAcoes(), custoIaMes(), aprendizados(), conteudo(),
+  const [segmentos, cart, pos, acoes, custo, aprend, cont, ads] = await Promise.all([
+    segmentosPorRegua(retrato, r14), carteiras(), positivacao(), historicoAcoes(), custoIaMes(), aprendizados(), conteudo(), anuncios(),
   ]);
   const cats = await categoriasAprovadas();
   if (cats.faltando.length) avisos.push('templates sem cadastro em whatsapp_templates: ' + cats.faltando.join(', ') + ' (custo e palpite; liberacao falharia)');
@@ -223,7 +251,7 @@ export async function lerSinais(): Promise<Sinais> {
       inadimplentes: retrato.filter(r => r.inadimplente).length,
       optout: retrato.filter(r => r.optout).length,
     },
-    segmentos, carteiras: cart, positivacao: pos, reguas14d: r14, acoes, custoIaMes: custo, aprendizados: aprend, avisos, conteudo: cont,
+    segmentos, carteiras: cart, positivacao: pos, reguas14d: r14, acoes, custoIaMes: custo, aprendizados: aprend, avisos, conteudo: cont, anuncios: ads,
   };
 
   // Snapshot (sem a lista nominal — só os números; a lista vive na ação)
@@ -262,6 +290,8 @@ export function sinaisParaPrompt(s: Sinais): any {
     conteudo: { agente_modo: s.conteudo.modo, cota_semana: s.conteudo.cotaSemana, feitas_semana: s.conteudo.feitasSemana, cabe_esta_semana: s.conteudo.cabe,
       pecas_na_fila_de_aprovacao: s.conteudo.naFila, pecas_aprovadas_nao_postadas: s.conteudo.aprovadasNaoPostadas,
       ganchos_com_foto_elegivel: s.conteudo.ganchosComFoto, desempenho_por_gancho_90d: s.conteudo.desempenhoGancho },
+    anuncios_pagos: { conta_pronta: s.anuncios.pronto, modo: s.anuncios.modo, teto_por_dia_brl: s.anuncios.tetoDia, ativos_agora: s.anuncios.ativos, gasto_30d: s.anuncios.gasto30d, conversas_30d: s.anuncios.conversas30d,
+      pecas_candidatas: s.anuncios.pecasCandidatas.map(p => ({ peca_id: p.id, numero: p.numero, gancho: p.gancho, titulo: p.titulo, alcance_organico: p.alcance, curtidas: p.curtidas })) },
     aprendizados: s.aprendizados,
     avisos: s.avisos,
   };
