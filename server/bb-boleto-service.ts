@@ -446,16 +446,32 @@ function pick(obj: any, keys: string[]): any {
 }
 
 // Aceita dd.mm.aaaa, dd/mm/aaaa ou aaaa-mm-dd -> ISO (aaaa-mm-dd)
+// Converte a data que o BB devolve para ISO. NUNCA devolve a string crua: quem
+// consome faz `new Date(...)`, e `new Date("10/09/2026 11:57")` e lido como
+// MM/DD pelo JS -> 9 de OUTUBRO. Foi exatamente isso que aconteceu a partir de
+// 10/set/2026, quando o BB passou a mandar a data COM HORA: o regex antigo exigia
+// a string inteira (`$`), nao casava, caia no `return s` e TODA baixa automatica
+// de boleto gravou o pagamento com dia e mes trocados (data no futuro).
+// Regra: formato reconhecido -> ISO; formato desconhecido -> null (o chamador cai
+// para "agora", que e o dia real da baixa). Melhor sem data que com data errada.
 function toISO(d: any): string | null {
   if (!d) return null;
   const s = String(d).trim();
   if (!s || s === '0' || s === '00000000') return null;
-  const m = s.match(/^(\d{2})[.\/-](\d{2})[.\/-](\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  // dd/mm/yyyy (ou dd.mm.yyyy / dd-mm-yyyy), com hora OPCIONAL logo depois.
+  const m = s.match(/^(\d{2})[.\/-](\d{2})[.\/-](\d{4})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) {
+    const data = `${m[3]}-${m[2]}-${m[1]}`;
+    // Hora do BB e horario de Brasilia: fixamos o offset para nao virar o dia.
+    return m[4] ? `${data}T${m[4]}:${m[5]}:${m[6] || '00'}-03:00` : data;
+  }
   // BB tambem devolve data como ddmmyyyy sem separador em alguns campos.
   const m2 = s.match(/^(\d{2})(\d{2})(\d{4})$/);
   if (m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
-  return s;
+  // Ja vem em ISO (yyyy-mm-dd, com ou sem hora): passa direto.
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+  console.warn('[BB-BOLETO] data em formato desconhecido, usando a data da baixa:', JSON.stringify(s));
+  return null;
 }
 
 async function findFinancialAccountForConvenio(numeroConvenio: string | null): Promise<any | null> {
