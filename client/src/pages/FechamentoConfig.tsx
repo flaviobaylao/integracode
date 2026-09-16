@@ -305,7 +305,7 @@ function HistoricoTab() {
                     <td className="py-2 px-2 whitespace-nowrap tabular-nums">{fmtDataBR(r.data)}</td>
                     <td className="py-2 px-2">
                       <div className="font-semibold">{r.cliente}</div>
-                      {r.cidade ? <div className="text-[11px] text-muted-foreground">{r.cidade}</div> : null}
+                      {(r.bairro || r.cidade) ? <div className="text-[11px] text-muted-foreground">{[r.bairro, r.cidade].filter(Boolean).join(" · ")}</div> : null}
                     </td>
                     <td className="py-2 px-2">{r.vendedor || "—"}</td>
                     <td className="py-2 px-2">
