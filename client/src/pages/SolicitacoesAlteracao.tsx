@@ -221,6 +221,7 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
+          {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
         </div>
       </div>
 
@@ -341,6 +342,7 @@ function ResolvedCard({ r }: { r: any }) {
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span>{fmtDate(r.createdAt)}</span>
           </div>
+          {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
         </div>
         {m && <Badge variant="outline" className={m.cls}>{m.label}</Badge>}
       </div>
