@@ -493,11 +493,13 @@ export function registerChangeRequestsRoutes(app: Express) {
     for (const r of rows) {
       const key = r.entity_type + ":" + r.entity_id;
       if (!wanted.has(key) || out[key]) continue;
-      const msgs = Array.isArray(r.messages) ? r.messages : [];
+      // Registro de "Envio Whatsapp" (kind='whatsapp') é só trilha do admin — não conta como
+      // réplica ao vendedor nem entra na conversa que ele vê no card.
+      const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
       const hasAdminReply = msgs.some((m: any) => m && m.role === "admin");
       if (!hasAdminReply) continue; // só interessa ao vendedor quando o admin respondeu
       const last = msgs[msgs.length - 1] || {};
-      out[key] = { ...mapRow(r), hasAdminReply, lastRole: last.role || null };
+      out[key] = { ...mapRow(r), messages: msgs, hasAdminReply, lastRole: last.role || null };
     }
     return res.json(out);
   }));
@@ -557,6 +559,50 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // GET /api/change-requests/inbox-pendencias?sellerId=ID&date=YYYY-MM-DD
+  //   Box "Pendências do Inbox" da Rota do Dia (16/set/2026). Para o VENDEDOR: todos os seus
+  //   reports/solicitações em que o ADMIN deixou uma RÉPLICA (mensagem kind='reply') que ele
+  //   ainda NÃO respondeu — independentemente de o cliente estar na rota de hoje ou de a rota
+  //   do dia do report já ter sido fechada. O cliente filtra os que já estão nos cards da rota
+  //   (esses seguem com o selo "Resposta do admin" no próprio card).
+  //   - pendentes:       réplica do admin sem resposta do vendedor
+  //   - respondidasHoje: respondidas pelo vendedor em `date` (linha verde no box)
+  //   Só comunicação: não cria parada, não conta como cliente e não trava o Fechar Rota.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/inbox-pendencias", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const isGestor = ["admin", "coordinator", "administrative"].includes(String(u?.role || ""));
+    let sellerId = String(req.query.sellerId || "").trim();
+    if (!isGestor || !sellerId) sellerId = String(u?.id || "");
+    if (!sellerId) return res.json({ pendentes: [], respondidasHoje: [] });
+    const dateQ = String(req.query.date || "");
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    const diaBRT = (iso: string) => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso)); } catch { return ""; } };
+
+    const rows = rowsOf(await db.execute(sql`
+      SELECT * FROM change_requests
+      WHERE (seller_id = ${sellerId} OR requested_by = ${sellerId})
+        AND kind IN ('report', 'solicitacao') AND status <> 'cancelled'
+        AND created_at >= now() - interval '90 days'
+      ORDER BY created_at DESC LIMIT 300`));
+    const pendentes: any[] = [];
+    const respondidasHoje: any[] = [];
+    for (const r of rows) {
+      const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
+      let lastAdminReply = -1;
+      for (let i = 0; i < msgs.length; i++) if (msgs[i].role === "admin" && msgs[i].kind === "reply") lastAdminReply = i;
+      if (lastAdminReply < 0) continue;
+      let answeredAt: string | null = null;
+      for (let i = lastAdminReply + 1; i < msgs.length; i++) if (msgs[i].role === "seller") { answeredAt = msgs[i].at || null; break; }
+      const base = { ...mapRow(r), messages: msgs, adminReplyAt: msgs[lastAdminReply].at || null };
+      if (!answeredAt) pendentes.push({ ...base, pendingReply: true });
+      else if (answeredAt && diaBRT(answeredAt) === date) respondidasHoje.push({ ...base, answeredAt });
+    }
+    res.json({ sellerId, date, pendentes, respondidasHoje });
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/resolve — admin fecha a tarefa.
   //   body: { status: 'efetuadas'|'parcial'|'rejeitadas', note?: string }
   // --------------------------------------------------------------------------
@@ -600,6 +646,69 @@ export function registerChangeRequestsRoutes(app: Express) {
       RETURNING *`));
     if (updated.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
     res.json(mapRow(updated[0]));
+  }));
+
+  // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/whatsapp — "Envio Whatsapp" do card de REPORT do Inbox.
+  //   Monta um recorte do report (cliente, tipo, motivo, observação do vendedor, quem e quando)
+  //   e envia pelo WhatsApp da Honest (enviarInterno: cadeia 2630 → 7169 → 1841) para o número
+  //   de "DÉBITOS - Inbox de Informações": system_settings 'inbox_whatsapp_destino'
+  //   (padrão 5562994511997). O envio fica registrado na conversa do card (kind 'whatsapp'),
+  //   sem mudar o status do report.
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/whatsapp", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const cur = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE id = ${id} LIMIT 1`));
+    if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+    const row = cur[0];
+    if ((row.kind || "solicitacao") !== "report") return res.status(400).json({ error: "O envio por WhatsApp é só para cards de report." });
+
+    // Destino configurável (Administração > system_settings). Sem a chave, vai para o 62 9451-1997.
+    let destino = "5562994511997";
+    try {
+      const s = rowsOf(await db.execute(sql`SELECT value FROM system_settings WHERE key = 'inbox_whatsapp_destino' LIMIT 1`));
+      const v = String(s[0]?.value ?? "").replace(/^"|"$/g, "").replace(/\D/g, "");
+      if (v) destino = v;
+    } catch {}
+
+    const d: any = row.details || {};
+    const extra = String((req.body || {}).extra || "").trim().slice(0, 1000);
+    const quando = new Date(row.created_at || Date.now()).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    // Bairro/cidade não ficam em change_requests: vêm do cadastro (cliente ou lead), como na listagem.
+    let local = "";
+    try {
+      const tbl = row.entity_type === "lead" ? sql`leads` : sql`customers`;
+      const cid = row.customer_id || row.entity_id;
+      const c = rowsOf(await db.execute(sql`SELECT city, neighborhood FROM ${tbl} WHERE id = ${cid} LIMIT 1`));
+      local = [c[0]?.neighborhood, c[0]?.city].filter(Boolean).join(" · ");
+    } catch {}
+    const linhas: string[] = [];
+    linhas.push(`📋 *Report do Inbox — ${d.reportLabel || "Registro"}*`);
+    linhas.push(`*Cliente:* ${row.entity_name || row.entity_id}${local ? " (" + local + ")" : ""}`);
+    if (d.motivo) linhas.push(`*Motivo:* ${d.motivo}`);
+    if (d.texto) linhas.push(`*Observação do vendedor:*\n${String(d.texto).trim()}`);
+    linhas.push(`*Vendedor:* ${row.seller_name || row.requested_by_name || "—"} · ${quando}`);
+    if (extra) linhas.push(`*Obs. do admin:* ${extra}`);
+    linhas.push(`_Integra 2.0 — enviado por ${userName(u)}_`);
+    const texto = linhas.join("\n");
+
+    const { enviarInterno } = await import("./envio-texto");
+    const r = await enviarInterno(destino, texto);
+    if (!r?.success) {
+      const { explicaFalha } = await import("./envio-texto");
+      console.warn(`[INBOX-WHATSAPP] falhou id=${id} destino=${destino}: ${r?.error}`, r?.tentativas);
+      return res.status(502).json({ error: "Não foi possível enviar: " + explicaFalha(r?.error || "", r?.via || destino), tentativas: r?.tentativas });
+    }
+    const msg = mkMsg("admin", u, `Enviado por WhatsApp para +${destino} (via ${r.via || "Honest"}).`, "whatsapp", { destino, via: r.via || null, messageId: r.messageId || null });
+    const updated = rowsOf(await db.execute(sql`
+      UPDATE change_requests
+      SET messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+      WHERE id = ${id}
+      RETURNING *`));
+    console.log(`[INBOX-WHATSAPP] id=${id} destino=${destino} via=${r.via} por=${userName(u)}`);
+    res.json({ ok: true, destino, via: r.via, request: mapRow(updated[0]) });
   }));
 
   // --------------------------------------------------------------------------

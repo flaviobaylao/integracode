@@ -2573,7 +2573,31 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const fBusca = busca ? sql` AND lower(COALESCE(c.name, '')) LIKE ${'%' + busca.toLowerCase() + '%'}` : sql``;
       const fMes = /^\d{4}-\d{2}$/.test(mesF) ? sql` AND to_char(vj.visit_date, 'YYYY-MM') = ${mesF}` : sql``;
       const rh: any = await db.execute(sql`SELECT to_char(vj.visit_date, 'YYYY-MM-DD') AS data, vj.customer_id AS cid, vj.seller_id AS sid, COALESCE(c.name, vj.customer_id) AS cliente, c.city AS cidade, c.neighborhood AS bairro, (SELECT NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), '') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id, ''), 'omie-vendor-', '') OR u.id = vj.seller_id LIMIT 1) AS vendedor, vj.reason AS motivo, vj.notes AS obs FROM visit_justifications vj LEFT JOIN customers c ON c.id = vj.customer_id WHERE vj.reason <> 'removido'${fSid}${fBusca}${fMes} ORDER BY vj.visit_date DESC, cliente ASC LIMIT 500`);
-      const registros = ((rh.rows || rh) as any[]).map((x: any) => ({ data: String(x.data || ''), customerId: String(x.cid), sellerId: String(x.sid || ''), cliente: x.cliente || x.cid, cidade: x.cidade || '', bairro: x.bairro || '', vendedor: x.vendedor || '', motivo: x.motivo, obs: String(x.obs || '').trim() }));
+      const registros = ((rh.rows || rh) as any[]).map((x: any) => ({ data: String(x.data || ''), customerId: String(x.cid), sellerId: String(x.sid || ''), cliente: x.cliente || x.cid, cidade: x.cidade || '', bairro: x.bairro || '', vendedor: x.vendedor || '', motivo: x.motivo, obs: String(x.obs || '').trim(), conversa: [] as any[] }));
+      // 💬 Troca de mensagens (Inbox): a justificativa com observação vira report em change_requests
+      // (kind='report', reportKind 'justificativa'|'debito', mesmo cliente/vendedor, criado no dia).
+      // Anexa a conversa (réplicas do admin e respostas do vendedor) a cada linha — sem a mensagem
+      // inicial (é a própria observação) e sem a trilha de "Envio Whatsapp".
+      try {
+        const cids = Array.from(new Set(registros.map((r: any) => r.customerId).filter(Boolean)));
+        if (cids.length) {
+          const inC = sql.join(cids.map((id: string) => sql`${id}`), sql`, `);
+          const rc: any = await db.execute(sql`SELECT id, customer_id AS cid, seller_id AS sid, messages,
+              to_char(created_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') AS dia
+            FROM change_requests
+            WHERE kind = 'report' AND customer_id IN (${inC}) AND (details->>'reportKind') IN ('justificativa', 'debito')
+              AND jsonb_array_length(COALESCE(messages, '[]'::jsonb)) > 1
+            ORDER BY created_at DESC`);
+          const byKey = new Map<string, any[]>();
+          for (const c of ((rc.rows || rc) as any[])) {
+            const k = `${c.cid}|${c.sid}|${c.dia}`;
+            if (byKey.has(k)) continue; // o mais recente do dia
+            const msgs = (Array.isArray(c.messages) ? c.messages : []).filter((m: any) => m && m.kind !== 'report' && m.kind !== 'whatsapp');
+            if (msgs.length) byKey.set(k, msgs.map((m: any) => ({ role: m.role, byName: m.byName || null, text: m.text || '', at: m.at || null })));
+          }
+          for (const r of registros) { const c = byKey.get(`${r.customerId}|${r.sellerId}|${r.data}`); if (c) r.conversa = c; }
+        }
+      } catch (_e: any) { console.warn('[FECHAMENTO-HISTORICO] conversa do Inbox:', _e?.message); }
       const rvd: any = await db.execute(sql.raw("SELECT vj.seller_id AS sid, (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.omie_vendor_code = vj.seller_id OR u.omie_vendor_code = replace(COALESCE(vj.seller_id,''),'omie-vendor-','') OR u.id = vj.seller_id LIMIT 1) AS vendedor FROM visit_justifications vj WHERE vj.reason <> 'removido' GROUP BY vj.seller_id ORDER BY vendedor"));
       const vendedores = ((rvd.rows || rvd) as any[]).map((x: any) => ({ sellerId: String(x.sid || ''), vendedor: x.vendedor || x.sid })).filter((v: any) => v.sellerId);
       res.json({ ok: true, sellerId: sid || null, busca, registros, vendedores, total: registros.length });

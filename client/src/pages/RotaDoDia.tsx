@@ -30,7 +30,7 @@ import NoSaleModal from "@/components/NoSaleModal";
 import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib/geoUtils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
-import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportReplyControl, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
+import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportReplyControl, InboxPendenciasBox, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
@@ -1205,6 +1205,18 @@ export default function RotaDoDia() {
     for (const r of (filteredRepescagem || [])) { if ((r as any).assignmentId) ks.push(crKey('repescagem', String((r as any).assignmentId))); }
     return ks;
   }, [filteredPresentialVisits, filteredVirtualVisits, filteredRepescagem]);
+  // 🔔 Chaves de TODOS os cards da rota (sem busca/filtro) — o box de Pendências do Inbox
+  // esconde os que já estão na rota de hoje, mesmo que o vendedor tenha filtrado a lista.
+  const rotaKeysTodos = useMemo(() => {
+    const ks: string[] = [];
+    for (const v of ((presentialVisits || []) as any[])) {
+      const isLead = v.visitType === 'lead';
+      const id = isLead ? (v.entityId || v.leadId || v.customerId) : v.customerId;
+      if (id) ks.push(crKey(isLead ? 'lead' : 'customer', String(id)));
+    }
+    for (const v of ((allVirtualVisits || []) as any[])) { if (v.customerId) ks.push(crKey('customer', String(v.customerId))); }
+    return ks;
+  }, [presentialVisits, allVirtualVisits]);
   const changeRequestStates = useChangeRequestStates(changeRequestKeys, selectedDate);
   // 💬 Réplicas de report do admin (Inbox) que o vendedor pode ver/responder no card.
   const reportStates = useReportStates(changeRequestKeys);
@@ -2242,6 +2254,14 @@ export default function RotaDoDia() {
               </CardContent>
               )}
             </Card>
+          )}
+
+          {/* 🔔 Pendências do Inbox (16/set/2026): réplicas do admin a registros do vendedor ainda
+              sem resposta (inclusive as que chegaram após a rota do dia ser fechada) voltam aqui,
+              acima das visitas. Só comunicação — não conta como cliente nem trava o Fechar Rota.
+              Cards que já estão na rota de hoje ficam de fora (têm o selo no próprio card). */}
+          {selectedSellerId && (
+            <InboxPendenciasBox sellerId={selectedSellerId} date={selectedDate} excludeKeys={rotaKeysTodos} />
           )}
 
           <Card>

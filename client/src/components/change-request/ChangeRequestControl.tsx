@@ -106,6 +106,14 @@ export function MessageThread({ messages }: { messages?: CRMessage[] }) {
     <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
       {list.map((m, i) => {
         const admin = m.role === "admin";
+        // Trilha do "Envio Whatsapp" (Inbox): linha discreta, sem balão de conversa.
+        if ((m as any).kind === "whatsapp") {
+          return (
+            <div key={m.id || i} className="text-[10px] text-green-700 dark:text-green-400 italic px-1">
+              📲 {m.text}{m.byName ? ` · ${m.byName}` : ""}{m.at ? ` · ${fmtWhen(m.at)}` : ""}
+            </div>
+          );
+        }
         return (
           <div key={m.id || i} className={`flex ${admin ? "justify-start" : "justify-end"}`}>
             <div className={`rounded-lg px-2.5 py-1.5 text-xs max-w-[85%] ${admin ? "bg-indigo-50 text-indigo-900 border border-indigo-200" : "bg-emerald-50 text-emerald-900 border border-emerald-200"}`}>
@@ -671,5 +679,132 @@ export function ChangeRequestControl(props: ControlProps) {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 🔔 PENDÊNCIAS DO INBOX — box da Rota do Dia (16/set/2026).
+//    Réplicas do admin (Inbox) a reports/solicitações do vendedor ainda sem resposta —
+//    inclusive as que chegaram depois de a rota do dia ser fechada — voltam aqui, ACIMA
+//    das visitas, até o vendedor responder. Só comunicação: não é parada, não conta como
+//    cliente da rota e não trava o Fechar Rota. Ao responder, o card recolhe para uma
+//    linha verde com o nome do cliente (fica até o fim do dia).
+//    `excludeKeys`: cards que já estão na rota de hoje (ficam com o selo no próprio card).
+// ---------------------------------------------------------------------------
+const REPORT_LABEL_UI: Record<string, string> = {
+  nao_venda: "Não venda", justificativa: "Justificativa", debito: "Débito",
+  atendimento_virtual: "Atend. virtual", lead_desfecho: "Lead",
+};
+function reportBadge(r: any) {
+  const d = r?.details || {};
+  if (r?.kind === "report") return REPORT_LABEL_UI[d.reportKind] || d.reportLabel || "Report";
+  return "Solicitação";
+}
+
+function PendenciaCard({ r, date }: { r: any; date: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [text, setText] = useState("");
+  const replyMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/reply`, { text: text.trim() }),
+    onSuccess: () => {
+      toast({ title: "Resposta enviada", description: "O admin vê sua resposta no Inbox." });
+      setText("");
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/inbox-pendencias"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/pending-replies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const quando = (s?: string) => (s ? fmtWhen(s) : "");
+  return (
+    <div className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-900 p-3 space-y-2" data-testid={`inbox-pendencia-${r.id}`}>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <div className="font-semibold text-sm flex items-center gap-2 flex-wrap">
+            <span>{r.entityName || r.entityId}</span>
+            <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">{reportBadge(r)}</Badge>
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">
+            Seu registro de {quando(r.createdAt)} · réplica do admin em {quando(r.adminReplyAt)}
+          </div>
+        </div>
+        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-300 gap-1 text-[10px] sm:text-xs">
+          <Bell className="h-3 w-3 animate-pulse" /> Resposta do admin
+        </Badge>
+      </div>
+      <MessageThread messages={r.messages} />
+      <div className="pt-2 border-t border-dashed space-y-1.5">
+        <div className="text-[11px] font-semibold text-muted-foreground">Sua resposta ao admin</div>
+        <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder="Escreva sua resposta…" data-testid={`inbox-pendencia-text-${r.id}`} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={replyMut.isPending || !text.trim()} onClick={() => replyMut.mutate()} data-testid={`inbox-pendencia-send-${r.id}`}>
+            {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enviar resposta"}
+          </Button>
+          <span className="text-[11px] text-muted-foreground">Ao enviar, o card recolhe e o admin recebe no Inbox.</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RespondidaLinha({ r }: { r: any }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 px-3 py-1.5 text-sm flex items-center gap-2 flex-wrap" data-testid={`inbox-respondida-${r.id}`}>
+        <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+        <span className="font-semibold text-green-700 dark:text-green-400">{r.entityName || r.entityId}</span>
+        <Badge variant="outline" className="text-[10px] bg-white/60 dark:bg-transparent text-green-700 border-green-300">{reportBadge(r)}</Badge>
+        <span className="text-[11px] text-muted-foreground">respondido {r.answeredAt ? fmtWhen(r.answeredAt) : "hoje"}</span>
+        <button type="button" className="ml-auto text-[11px] underline text-muted-foreground hover:text-foreground" onClick={() => setOpen(true)}>ver conversa</button>
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{r.entityName || r.entityId}</DialogTitle>
+            <DialogDescription>{reportBadge(r)} · conversa com o admin</DialogDescription>
+          </DialogHeader>
+          <MessageThread messages={r.messages} />
+          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Fechar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function InboxPendenciasBox({ sellerId, date, excludeKeys }: { sellerId: string; date: string; excludeKeys?: string[] }) {
+  const { data } = useQuery<{ pendentes: any[]; respondidasHoje: any[] }>({
+    queryKey: ["/api/change-requests/inbox-pendencias", sellerId, date],
+    queryFn: async () => {
+      const r = await fetch(`/api/change-requests/inbox-pendencias?sellerId=${encodeURIComponent(sellerId)}&date=${encodeURIComponent(date)}`, { credentials: "include" });
+      if (!r.ok) return { pendentes: [], respondidasHoje: [] };
+      return r.json();
+    },
+    enabled: !!sellerId && !!date,
+    staleTime: 30_000,
+    refetchInterval: 120_000,
+  });
+  const excl = useMemo(() => new Set((excludeKeys || []).filter(Boolean)), [(excludeKeys || []).join("|")]);
+  const pendentes = (data?.pendentes || []).filter((r) => !excl.has(crKey(r.entityType, String(r.entityId))));
+  const respondidas = data?.respondidasHoje || [];
+  if (pendentes.length === 0 && respondidas.length === 0) return null;
+  const total = pendentes.length + respondidas.length;
+  return (
+    <div className="rounded-xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-3 sm:p-4 space-y-3" data-testid="inbox-pendencias-box">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="text-base sm:text-lg font-bold text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
+          <Bell className="h-5 w-5" />
+          Pendências do Inbox ({pendentes.length === total ? total : `${pendentes.length} de ${total}`})
+        </h3>
+        <span className="text-xs text-muted-foreground">Respostas do admin a registros seus — leia e responda quando puder</span>
+      </div>
+      <div className="space-y-2">
+        {pendentes.map((r) => <PendenciaCard key={r.id} r={r} date={date} />)}
+        {respondidas.map((r) => <RespondidaLinha key={r.id} r={r} />)}
+      </div>
+      <div className="text-[11px] text-muted-foreground">Estes cards não entram na contagem da rota nem impedem o Fechar Rota. Sem resposta, voltam amanhã.</div>
+    </div>
   );
 }

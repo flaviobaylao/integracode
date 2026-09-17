@@ -198,6 +198,9 @@ const HIST_MOTIVO_LABEL: Record<string, string> = {
   sem_interesse: "Sem interesse",
   outro: "Outro",
 };
+function fmtHoraBR(iso: string): string {
+  try { return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
+}
 function fmtDataBR(iso: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || "—";
   const [y, m, d] = iso.split("-");
@@ -256,7 +259,7 @@ function HistoricoTab() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2"><History className="w-4 h-4" /> Histórico de justificativas</CardTitle>
-          <div className="text-xs text-muted-foreground mt-1">Cada linha é uma justificativa registrada pelo vendedor no fechamento da rota: a data, o motivo e a observação escrita na caixa de texto. Use o filtro por vendedor e a busca por cliente.</div>
+          <div className="text-xs text-muted-foreground mt-1">Cada linha é uma justificativa registrada pelo vendedor no fechamento da rota: a data, o motivo e a observação escrita na caixa de texto — e, quando houve, a troca de mensagens com o admin pelo Inbox. Use o filtro por vendedor e a busca por cliente.</div>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -311,7 +314,19 @@ function HistoricoTab() {
                     <td className="py-2 px-2">
                       <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold ${r.motivo === "debito" ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}>{HIST_MOTIVO_LABEL[r.motivo] || r.motivo}</span>
                     </td>
-                    <td className="py-2 px-2 text-muted-foreground whitespace-pre-wrap max-w-md">{r.obs ? r.obs : <span className="italic text-gray-300">—</span>}</td>
+                    <td className="py-2 px-2 text-muted-foreground whitespace-pre-wrap max-w-md">
+                      {r.obs ? r.obs : <span className="italic text-gray-300">—</span>}
+                      {/* 💬 Troca de mensagens pelo Inbox (réplica do admin ⇄ resposta do vendedor) */}
+                      {Array.isArray(r.conversa) && r.conversa.length > 0 && (
+                        <div className="mt-1.5 space-y-1 border-l-2 border-indigo-200 pl-2" data-testid={`hist-conversa-${r.customerId}-${r.data}`}>
+                          {r.conversa.map((m: any, j: number) => (
+                            <div key={j} className={`text-[12px] whitespace-pre-wrap ${m.role === "admin" ? "text-indigo-700 dark:text-indigo-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+                              <span className="font-semibold">{m.role === "admin" ? "Admin" : "Vendedor"}{m.byName ? ` · ${m.byName}` : ""}{m.at ? ` · ${fmtHoraBR(m.at)}` : ""}:</span> {m.text}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
