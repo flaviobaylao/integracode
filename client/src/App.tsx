@@ -123,6 +123,7 @@ import FluxoCaixa from "@/pages/FluxoCaixa";
 import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
 import AmbienteFiscal from "@/pages/AmbienteFiscal";
 import InutilizacaoNF from "@/pages/InutilizacaoNF";
+import Contabilidade from "@/pages/Contabilidade";
 
 // Casca que exibe a sidebar de seções persistente nas páginas de módulo
 // (rotas autenticadas que renderizam fora do Layout do Dashboard).
@@ -336,6 +337,7 @@ function Router() {
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
           <Route path="/inutilizacao-nf" component={InutilizacaoNF} />
+          <Route path="/contabilidade" component={Contabilidade} />
           <Route path="/estoque" component={Inventory} />
           <Route path="/billing-pipeline" component={BillingPipeline} />
           <Route path="/fluxo-entregas" component={FluxoEntregas} />
