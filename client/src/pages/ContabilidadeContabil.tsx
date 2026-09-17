@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import FiltroInstancia from "@/components/FiltroInstancia";
+import SeletorMes from "@/components/SeletorMes";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONTÁBIL — razão de estoque por período e por instância: saldo inicial,
@@ -15,14 +16,22 @@ const n4 = (v: any) => (Number(v) || 0).toLocaleString("pt-BR", { maximumFractio
 const brl = (v: any) =>
   v === null || v === undefined ? "—" : (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// O período padrão é o MÊS CORRENTE FECHADO (1º ao último dia), para o seletor
+// de mês já abrir mostrando o nome do mês em vez de "Personalizado".
+const p2 = (n: number) => String(n).padStart(2, "0");
 const inicioDoMes = () => {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`;
+};
+const fimDoMes = () => {
+  const d = new Date();
+  const u = new Date(Date.UTC(d.getFullYear(), d.getMonth() + 1, 0));
+  return `${u.getUTCFullYear()}-${p2(u.getUTCMonth() + 1)}-${p2(u.getUTCDate())}`;
 };
 
 export default function ContabilidadeContabil() {
   const [inicio, setInicio] = useState(inicioDoMes());
-  const [fim, setFim] = useState(new Date().toISOString().slice(0, 10));
+  const [fim, setFim] = useState(fimDoMes());
   const [instancias, setInstancias] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   const [buscaAplicada, setBuscaAplicada] = useState("");
@@ -94,6 +103,11 @@ export default function ContabilidadeContabil() {
         <CardContent className="p-4 space-y-3">
           <FiltroInstancia valor={instancias} aoMudar={setInstancias} />
           <div className="flex flex-wrap items-end gap-3">
+            <SeletorMes
+              inicio={inicio}
+              fim={fim}
+              aoMudar={(i, f) => { setInicio(i); setFim(f); }}
+            />
             <div>
               <label className="block text-xs text-gray-500 mb-1">De</label>
               <Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} className="w-40" data-testid="contabil-data-inicio" />
