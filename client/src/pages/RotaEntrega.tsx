@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera, RotateCcw } from "lucide-react";
+import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera, RotateCcw, Thermometer } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { format } from "date-fns";
@@ -35,6 +36,8 @@ interface DeliveryStop {
   photos: string[] | null;
   notes: string | null;
   orderNumber: string | null;
+  temperaturaCarga?: number | null;
+  temperaturaRegistradaEm?: string | null;
 }
 
 interface DeliveryRoute {
@@ -70,6 +73,10 @@ const vehicleIcons: Record<string, string> = {
   carro: '🚗',
   moto: '🏍️'
 };
+
+// 🌡️ Rotas de caminhão exigem a temperatura da carga entre "Iniciar Entrega" e a finalização.
+const isCaminhao = (v: any) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().startsWith('caminh');
+const fmtTemp = (t: number) => `${t.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} °C`;
 
 // Persistência da entrega em andamento (sobrevive a um reinício do app no celular).
 const PENDING_DELIVERY_KEY = 'integra_pending_delivery_v1';
@@ -292,6 +299,32 @@ export default function RotaEntrega() {
       });
     },
   });
+
+  // 🌡️ Temperatura da carga (caminhão): valor digitado por parada + modo edição.
+  const [tempDigitada, setTempDigitada] = useState<Record<string, string>>({});
+  const [tempEditando, setTempEditando] = useState<Record<string, boolean>>({});
+  const temperaturaMutation = useMutation({
+    mutationFn: async ({ stopId, temperatura }: { stopId: string; temperatura: number }) => {
+      return await apiRequest('POST', `/api/delivery-routes/stops/${stopId}/temperatura`, { temperatura });
+    },
+    onSuccess: (_d: any, vars) => {
+      toast({ title: "Temperatura registrada", description: fmtTemp(vars.temperatura) });
+      setTempEditando(prev => ({ ...prev, [vars.stopId]: false }));
+      refetch();
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro ao registrar temperatura", description: error.message, variant: "destructive" });
+    },
+  });
+  const salvarTemperatura = (stopId: string) => {
+    const raw = String(tempDigitada[stopId] ?? '').replace(',', '.').trim();
+    const n = Number(raw);
+    if (raw === '' || !Number.isFinite(n) || n < -30 || n > 40) {
+      toast({ title: "Temperatura inválida", description: "Digite a temperatura da carga em °C (ex.: 3,5 ou -2).", variant: "destructive" });
+      return;
+    }
+    temperaturaMutation.mutate({ stopId, temperatura: Math.round(n * 10) / 10 });
+  };
 
   // Relógio para o cronômetro "em entrega há X min" (re-render a cada 30s)
   const [, setTickRelogio] = useState(0);
@@ -561,6 +594,9 @@ export default function RotaEntrega() {
             const isPending = delivery.status === 'pendente' || delivery.status === 'pending';
             const canAct = (delivery.routeStatus === 'em_andamento' || delivery.routeStatus === 'rota_enviada') && isPending;
             const emEntrega = !!delivery.deliveryStartedAt && isPending;
+            const caminhao = isCaminhao((delivery as any).vehicleType);
+            const temTemp = delivery.temperaturaCarga != null;
+            const faltaTemp = caminhao && emEntrega && !temTemp;
 
             return (
               <Card
@@ -651,6 +687,12 @@ export default function RotaEntrega() {
                         </p>
                       )}
                       
+                      {caminhao && temTemp && !isPending && (
+                        <p className="text-xs text-sky-700 flex items-center gap-1 mt-1">
+                          <Thermometer className="h-3 w-3" /> Carga: {fmtTemp(delivery.temperaturaCarga as number)}
+                        </p>
+                      )}
+
                       {/* Miniatura da foto da entrega */}
                       {delivery.photos && delivery.photos.length > 0 && (
                         <div className="mt-2">
@@ -675,6 +717,53 @@ export default function RotaEntrega() {
                       )}
                     </div>
                   </div>
+
+                  {/* 🌡️ Temperatura da carga (caminhão) — depois de Iniciar Entrega, antes de finalizar */}
+                  {caminhao && canAct && emEntrega && (
+                    <div className={`mb-3 rounded-lg border p-3 ${temTemp && !tempEditando[delivery.id] ? 'border-sky-200 bg-sky-50' : 'border-amber-300 bg-amber-50'}`} data-testid={`bloco-temperatura-${delivery.id}`}>
+                      {temTemp && !tempEditando[delivery.id] ? (
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm text-sky-800 flex items-center gap-1">
+                            <Thermometer className="h-4 w-4" />
+                            Temperatura da carga: <b>{fmtTemp(delivery.temperaturaCarga as number)}</b>
+                            {delivery.temperaturaRegistradaEm && (
+                              <span className="text-xs text-sky-600"> · {formatInTimeZone(new Date(delivery.temperaturaRegistradaEm), 'America/Sao_Paulo', 'HH:mm')}</span>
+                            )}
+                          </p>
+                          <Button size="sm" variant="ghost" className="text-sky-700" onClick={() => {
+                            setTempDigitada(prev => ({ ...prev, [delivery.id]: String(delivery.temperaturaCarga).replace('.', ',') }));
+                            setTempEditando(prev => ({ ...prev, [delivery.id]: true }));
+                          }}>Alterar</Button>
+                        </div>
+                      ) : (
+                        <>
+                          <Label className="text-sm font-medium text-amber-900 flex items-center gap-1 mb-2">
+                            <Thermometer className="h-4 w-4" /> Temperatura da carga (°C) *
+                          </Label>
+                          <div className="flex gap-2">
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Ex.: 3,5"
+                              className="h-12 text-lg bg-white"
+                              value={tempDigitada[delivery.id] ?? ''}
+                              onChange={(e) => setTempDigitada(prev => ({ ...prev, [delivery.id]: e.target.value.replace(/[^0-9,.\-]/g, '') }))}
+                              data-testid={`input-temperatura-${delivery.id}`}
+                            />
+                            <Button
+                              className="h-12 bg-sky-600 hover:bg-sky-700"
+                              onClick={() => salvarTemperatura(delivery.id)}
+                              disabled={temperaturaMutation.isPending}
+                              data-testid={`btn-salvar-temperatura-${delivery.id}`}
+                            >
+                              {temperaturaMutation.isPending ? 'Salvando...' : 'Registrar'}
+                            </Button>
+                          </div>
+                          <p className="text-xs text-amber-800 mt-1">Obrigatório para liberar Entregar/Devolver.</p>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   {/* Action Buttons - Simplified */}
                   <div className="flex gap-2">
@@ -716,6 +805,8 @@ export default function RotaEntrega() {
                           size="lg"
                           className="flex-1 bg-green-600 hover:bg-green-700 h-12"
                           onClick={() => handleDeliveryClick(delivery.id)}
+                          disabled={faltaTemp}
+                          title={faltaTemp ? 'Registre a temperatura da carga' : undefined}
                         >
                           <Camera className="h-5 w-5 mr-2" />
                           Entregar
@@ -726,6 +817,8 @@ export default function RotaEntrega() {
                           variant="destructive"
                           className="flex-1 h-12"
                           onClick={() => handleReturnClick(delivery.id)}
+                          disabled={faltaTemp}
+                          title={faltaTemp ? 'Registre a temperatura da carga' : undefined}
                         >
                           <RotateCcw className="h-5 w-5 mr-2" />
                           Devolver
