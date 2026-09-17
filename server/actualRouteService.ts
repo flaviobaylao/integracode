@@ -51,18 +51,25 @@ function isForaPerimetro(lat: number, lon: number, homeLat: number, homeLon: num
 // proximo do 1o ponto fora → pontos fora (em ordem) → Casa. 0 se nenhum ponto fora.
 async function computeIntermunicipalKm(
   pts: Array<{ lat: number; lon: number }>,
-  homeLat: number, homeLon: number
+  homeLat: number, homeLon: number,
+  opts: { skipGateIfFirstPoint?: boolean; capKm?: number } = {}
 ): Promise<number> {
   if (!coordOk(homeLat, homeLon)) return 0;
   const fora = pts.filter((p) => isForaPerimetro(p.lat, p.lon, homeLat, homeLon));
   if (fora.length === 0) return 0;
+  // (16/set/2026) No modo 'dia' a ida casa→1º check-in NAO conta no total. Se o 1º ponto
+  // fora do perimetro E o 1º check-in do dia, o trecho portão→1º ponto faz parte dessa ida
+  // e nao pode entrar no intermunicipal (antes o recorte ficava MAIOR que o total).
+  const firstIsOrigin = !!opts.skipGateIfFirstPoint && pts.length > 0 && fora[0] === pts[0];
   const gate = nearestGate(fora[0].lat, fora[0].lon);
-  let km = 0, prevLat = gate[0], prevLon = gate[1];
+  let km = 0, prevLat = firstIsOrigin ? fora[0].lat : gate[0], prevLon = firstIsOrigin ? fora[0].lon : gate[1];
   for (const p of fora) {
     try { km += (await calculateRealDistance(prevLat, prevLon, p.lat, p.lon)) / 1000; } catch { /* trecho com erro = 0 */ }
     prevLat = p.lat; prevLon = p.lon;
   }
   try { km += (await calculateRealDistance(prevLat, prevLon, homeLat, homeLon)) / 1000; } catch { /* retorno com erro = 0 */ }
+  // O intermunicipal e um RECORTE do total pago: nunca pode passar dele.
+  if (typeof opts.capKm === 'number' && isFinite(opts.capKm)) km = Math.min(km, Math.max(0, opts.capKm));
   return Math.round(km * 100) / 100;
 }
 
@@ -164,7 +171,7 @@ export async function calculateActualRouteDistance(
     const pInterPts = leadRows
       .map((r: any) => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon) }))
       .filter((p: any) => coordOk(p.lat, p.lon));
-    const pInter = await computeIntermunicipalKm(pInterPts, pHomeLat, pHomeLon);
+    const pInter = await computeIntermunicipalKm(pInterPts, pHomeLat, pHomeLon, { capKm: Math.round(pTotal * 100) / 100 });
     return {
       totalDistance: Math.round(pTotal * 100) / 100,
       intermunicipalDistance: pInter,
@@ -306,7 +313,7 @@ export async function calculateActualRouteDistance(
 
   // Recorte INTERMUNICIPAL do dia (portão → pontos fora → casa). É 0 quando o
   // vendedor não passou por nenhum portão. Informativo: não altera o total pago.
-  const intermunicipalDistance = await computeIntermunicipalKm(validPts, homeLat, homeLon);
+  const intermunicipalDistance = await computeIntermunicipalKm(validPts, homeLat, homeLon, { skipGateIfFirstPoint: true, capKm: Math.round(totalDistance * 100) / 100 });
 
   return {
     totalDistance: Math.round(totalDistance * 100) / 100,
