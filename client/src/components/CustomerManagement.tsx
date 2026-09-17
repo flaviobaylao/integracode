@@ -23,7 +23,7 @@ import WhatsAppButton from "./WhatsAppButton";
 import GeocodeAllButton from "./GeocodeAllButton";
 import CustomerHistoryBox from "./CustomerHistoryBox";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
-import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Clock, AlertCircle, Calendar, Upload, History, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, X, Clock, AlertCircle, Calendar, Upload, History, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
 function normalizeWeekdays(weekdays: string | string[]): string[] {
@@ -552,9 +552,20 @@ export default function CustomerManagement() {
                 placeholder="Buscar..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 h-9"
+                className="pl-10 pr-8 h-9"
                 data-testid="input-search-customer"
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Limpar busca"
+                  data-testid="clear-search-customer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
 
             <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-customers" />
