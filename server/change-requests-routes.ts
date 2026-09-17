@@ -122,6 +122,11 @@ function summarizeRequest(types: string[], details: any): string {
 function newMsgId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
+// 🗑️ Pendência removida pelo admin: mensagem admin kind='pendencia_removida' DEPOIS da última
+// réplica encerra a pendência (some do box da rota, do selo no card e da trava do Fechar Rota)
+// sem apagar o report nem a conversa. Uma NOVA réplica do admin reabre normalmente.
+const pendenciaRemovida = (msgs: any[], lastAdminReply: number) =>
+  msgs.some((m: any, i: number) => i > lastAdminReply && m && m.role === "admin" && m.kind === "pendencia_removida");
 function mkMsg(role: "seller" | "admin", u: any, text: string, kind: string, extra?: any) {
   return {
     id: newMsgId(), role, by: u?.id || null, byName: userName(u),
@@ -498,6 +503,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
       const hasAdminReply = msgs.some((m: any) => m && m.role === "admin");
       if (!hasAdminReply) continue; // só interessa ao vendedor quando o admin respondeu
+      { let lr = -1; msgs.forEach((m: any, i: number) => { if (m.role === "admin" && m.kind === "reply") lr = i; }); if (lr >= 0 && pendenciaRemovida(msgs, lr)) continue; }
       const last = msgs[msgs.length - 1] || {};
       out[key] = { ...mapRow(r), messages: msgs, hasAdminReply, lastRole: last.role || null };
     }
@@ -548,6 +554,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         if (m && m.role === "admin" && m.kind === "reply") lastAdminReply = i;
       }
       if (lastAdminReply < 0) continue; // sem réplica do admin
+      if (pendenciaRemovida(msgs, lastAdminReply)) continue; // excluída pelo admin → não trava
       let answered = false;
       for (let i = lastAdminReply + 1; i < msgs.length; i++) {
         if (msgs[i] && msgs[i].role === "seller") { answered = true; break; }
@@ -569,6 +576,25 @@ export function registerChangeRequestsRoutes(app: Express) {
   //   - respondidasHoje: respondidas pelo vendedor em `date` (linha verde no box)
   //   Só comunicação: não cria parada, não conta como cliente e não trava o Fechar Rota.
   // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/remover-pendencia — admin exclui o card de pendência da
+  //   Rota do Dia do vendedor (só a pendência: report, conversa e histórico ficam).
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/remover-pendencia", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const cur = rowsOf(await db.execute(sql`SELECT id FROM change_requests WHERE id = ${id} LIMIT 1`));
+    if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+    const msg = mkMsg("admin", u, "Pendência removida da rota pelo admin.", "pendencia_removida");
+    const updated = rowsOf(await db.execute(sql`
+      UPDATE change_requests
+      SET messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+      WHERE id = ${id}
+      RETURNING *`));
+    res.json(mapRow(updated[0]));
+  }));
+
   app.get("/api/change-requests/inbox-pendencias", authenticateUser, safe(async (req, res) => {
     await ensureTables();
     const u = (req as any).currentUser;
@@ -593,6 +619,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       let lastAdminReply = -1;
       for (let i = 0; i < msgs.length; i++) if (msgs[i].role === "admin" && msgs[i].kind === "reply") lastAdminReply = i;
       if (lastAdminReply < 0) continue;
+      if (pendenciaRemovida(msgs, lastAdminReply)) continue; // excluída pelo admin
       let answeredAt: string | null = null;
       for (let i = lastAdminReply + 1; i < msgs.length; i++) if (msgs[i].role === "seller") { answeredAt = msgs[i].at || null; break; }
       const base = { ...mapRow(r), messages: msgs, adminReplyAt: msgs[lastAdminReply].at || null };
