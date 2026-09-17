@@ -8,8 +8,20 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { planilhaPadraoAbas, enviarPlanilha } from "./excel-export";
-import type { AbaExcel } from "@shared/excel-padrao";
+import XLSX from "xlsx";
+
+type AbaExcel = { nome: string; linhas: Record<string, any>[]; opcoes?: any };
+// xlsx em ESM: o pacote é CJS, então o import default é o objeto com utils/write.
+function planilhaAbas(abas: AbaExcel[]): Buffer {
+  const wb = XLSX.utils.book_new();
+  for (const a of abas) {
+    const ws = XLSX.utils.json_to_sheet(a.linhas);
+    const cols = Object.keys(a.linhas[0] || {});
+    ws["!cols"] = cols.map((c) => ({ wch: Math.min(60, Math.max(c.length, ...a.linhas.map((l) => String(l[c] ?? "").length)) + 2) }));
+    XLSX.utils.book_append_sheet(wb, ws, a.nome.slice(0, 31));
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
 import { levantarLacunas } from "./nfe-inutilizacao";
 
 let _ok = false;
@@ -110,7 +122,7 @@ export async function gerarRelatorioLacunasNF(quem: string | null) {
     ],
   });
 
-  const buf = planilhaPadraoAbas(abas);
+  const buf = planilhaAbas(abas);
   const hoje = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
   const nome = `NF_a_inutilizar_por_empresa_${hoje}.xlsx`;
   const totais = { faixas: resumo.reduce((a, r) => a + r["Faixas a inutilizar"], 0), numeros: resumo.reduce((a, r) => a + r["Números a inutilizar"], 0) };
@@ -143,7 +155,9 @@ export function registerContabilidadeRoutes(app: Express) {
       const r: any = await db.execute(sql`SELECT nome_arquivo, mime, conteudo_base64 FROM contabilidade_relatorios WHERE id = ${req.params.id}`);
       const row = (r.rows || r)[0];
       if (!row) return res.status(404).json({ error: "não encontrado" });
-      enviarPlanilha(res, Buffer.from(row.conteudo_base64, "base64"), row.nome_arquivo);
+      res.setHeader("Content-Type", row.mime);
+      res.setHeader("Content-Disposition", `attachment; filename=${row.nome_arquivo}`);
+      res.send(Buffer.from(row.conteudo_base64, "base64"));
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
