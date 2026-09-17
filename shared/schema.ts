@@ -165,7 +165,10 @@ export type InsertOmieInstance = z.infer<typeof insertOmieInstanceSchema>;
 export type OmieInstance = typeof omieInstances.$inferSelect;
 
 // User roles enum
-export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria']);
+// 'contador': acesso de LEITURA a todo o sistema (tratado como admin nas leituras pelo
+// authMiddleware) e BLOQUEADO em qualquer escrita pelo middleware somenteLeituraContador.
+// ATENCAO: o valor precisa existir no enum do banco -- o ALTER TYPE roda no boot (server/routes.ts).
+export const userRoleEnum = pgEnum('user_role', ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista', 'industria', 'contador']);
 
 // User storage table.
 export const users = pgTable("users", {

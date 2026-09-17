@@ -539,6 +539,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       telemarketing: 'Telemarketing',
       motorista: 'Motorista',
       industria: 'Indústria',
+      contador: 'Contador',
     };
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
@@ -938,6 +939,18 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
+      {/* Perfil Contador: faixa fixa avisando que a sessao e somente leitura */}
+      {(user as any)?._perfilContador && (
+        <div
+          className="bg-amber-100 border-b border-amber-300 text-amber-900 text-xs md:text-sm px-4 py-2 flex items-center gap-2 flex-shrink-0"
+          data-testid="faixa-contador-somente-leitura"
+        >
+          <i className="fas fa-lock"></i>
+          <span>
+            <strong>Perfil Contador — somente leitura.</strong> Você enxerga o sistema inteiro, mas nenhuma alteração é gravada.
+          </span>
+        </div>
+      )}
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200 px-4 md:px-6 py-4 flex items-center justify-between flex-shrink-0">
         {/* Mobile Menu Button */}
@@ -962,7 +975,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                       {user?.firstName} {user?.lastName}
                     </p>
                     <p className="text-xs text-gray-600">
-                      {user?.role && getRoleLabel((user as any)._perfilIndustria ? 'industria' : user.role)}
+                      {user?.role && getRoleLabel((user as any)._perfilContador ? 'contador' : (user as any)._perfilIndustria ? 'industria' : user.role)}
                     </p>
                   </div>
                 </div>
@@ -1086,7 +1099,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 {user?.firstName} {user?.lastName}
               </p>
               <p className="text-xs text-gray-600">
-                {user?.role && getRoleLabel((user as any)._perfilIndustria ? 'industria' : user.role)}
+                {user?.role && getRoleLabel((user as any)._perfilContador ? 'contador' : (user as any)._perfilIndustria ? 'industria' : user.role)}
               </p>
             </div>
             <Avatar>

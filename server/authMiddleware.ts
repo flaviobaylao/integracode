@@ -60,6 +60,14 @@ export const authenticateUser = async (req: Request, res: Response, next: NextFu
       user = { ...user, role: 'admin' } as any;
     }
 
+    // Perfil "Contador": VE tudo, NAO altera nada. Tratado como ADMIN aqui (para passar em
+    // todos os requireRole de leitura) -- a trava de escrita e o middleware
+    // somenteLeituraContador, montado logo apos a sessao em server/routes.ts.
+    if (user.role === 'contador') {
+      (req as any).perfilContador = true;
+      user = { ...user, role: 'admin' } as any;
+    }
+
     // 🔁 "Entrar como" (impersonação de ADMIN): permite ao admin ver o sistema com a visão de
     // outra função. Só se aplica quando a função REAL é admin (impede escalonamento de privilégio).
     const _impUserId = (req.session as any)?.impersonateUserId;
@@ -143,6 +151,13 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
       user = { ...user, role: 'admin' } as any;
     }
 
+    // Perfil "Contador": leitura tambem nas rotas administrativas (escrita ja foi barrada
+    // antes, pelo somenteLeituraContador).
+    if (user && user.role === 'contador') {
+      (req as any).perfilContador = true;
+      user = { ...user, role: 'admin' } as any;
+    }
+
     if (!user || !user.isActive || user.role !== 'admin') {
       return res.status(403).json({ message: "Admin access required" });
     }
@@ -153,6 +168,65 @@ export const authenticateAdmin = async (req: Request, res: Response, next: NextF
   } catch (error) {
     console.error("Admin authentication error:", error);
     res.status(500).json({ message: "Authentication error" });
+  }
+};
+
+// ==========================================================================
+// PERFIL CONTADOR -- somente leitura em TODO o sistema (set/2026)
+//
+// O contador enxerga o sistema inteiro (o authMiddleware o trata como admin nas leituras),
+// mas nao pode alterar NADA. Esta e a trava unica e central: em vez de tocar nas centenas
+// de requireRole([...]) espalhados, barramos por METODO HTTP antes das rotas.
+//
+// Regra: qualquer POST/PUT/PATCH/DELETE em /api/* de um usuario com role='contador'
+// responde 403. Excecoes (LISTA_LEITURA_POST) sao rotas que usam POST mas so LEEM,
+// alem das rotas da propria conta (login/senha).
+// ==========================================================================
+const METODOS_SEGUROS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+const LISTA_LEITURA_POST = [
+  '/api/auth/login',
+  '/api/auth/local-login',
+  '/api/auth/change-password',
+  '/api/reports/execute',
+  '/api/fiscal-invoices/batch',
+  '/api/billing-pipeline/charges',
+];
+
+const _cacheContador = new Map<string, { role: string; at: number }>();
+const _CACHE_MS = 60000;
+
+export const somenteLeituraContador = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (METODOS_SEGUROS.has(req.method)) return next();
+    if (!req.path.startsWith('/api/')) return next();
+    if (LISTA_LEITURA_POST.some((p) => req.path === p || req.path.startsWith(p + '/'))) return next();
+
+    const sess: any = req.session as any;
+    const userId: string | null = sess?.userId || sess?.user?.claims?.sub || null;
+    if (!userId) return next();
+
+    let role: string | null = null;
+    const cached = _cacheContador.get(userId);
+    if (cached && Date.now() - cached.at < _CACHE_MS) {
+      role = cached.role;
+    } else {
+      let u = await storage.getUser(userId);
+      if (!u && sess?.userEmail) u = await storage.getUserByEmail(sess.userEmail);
+      role = (u?.role as string) || '';
+      _cacheContador.set(userId, { role, at: Date.now() });
+    }
+
+    if (role !== 'contador') return next();
+
+    console.log('[CONTADOR] Escrita bloqueada: ' + req.method + ' ' + req.path + ' (usuario ' + userId + ')');
+    return res.status(403).json({
+      message: 'Perfil Contador e somente leitura. Esta acao nao e permitida.',
+      perfilContador: true,
+    });
+  } catch (error) {
+    console.error('[CONTADOR] Erro no middleware somente-leitura:', error);
+    return next();
   }
 };
 
