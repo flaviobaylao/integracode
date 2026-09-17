@@ -17280,21 +17280,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   AND (ac.customer_id = ${customers.id}
                     OR (ac.document <> '' AND ac.document = regexp_replace(COALESCE(${customers.cnpj}, ${customers.cpf}, ''), '[^0-9]', '', 'g')))
               )
-            )`,
-            // 🗓️ MENSAL JÁ COMPROU NO MÊS: cliente com periodicidade MENSAL que já tem
-            // compra (pedido de venda) dentro do mês vigente da rota NÃO aparece de novo
-            // na rota do dia — já foi atendido no ciclo mensal.
-            sql`NOT (
-              lower(COALESCE(${customers.visitPeriodicity}::text, '')) = 'mensal'
-              AND EXISTS (
-                SELECT 1 FROM billing_pipeline bp
-                WHERE bp.customer_id = ${customers.id}
-                  AND COALESCE(bp.operation_type, 'venda') = 'venda'
-                  AND date_trunc('month', COALESCE(bp.scheduled_billing_date::date,
-                        (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date))
-                      = date_trunc('month', ${date}::date)
-              )
             )`
+            // Regra "MENSAL ja comprou no mes" REMOVIDA (set/2026, pedido do admin): o cliente
+            // aparece na rota do dia conforme periodicidade + dia da semana, mesmo que ja tenha
+            // comprado no mes/ciclo.
           ));
 
         const inactiveCount = customerIds.length - customersData.length;
@@ -17455,53 +17444,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('⚠️ [MANUAL-ADD] Erro ao buscar visitas adicionadas manualmente (não crítico):', manualErr);
       }
 
-      // 🛒 REGRA (cadência): cliente que já comprou (VENDA real) DENTRO da sua periodicidade
-      // ANTES desta data não aparece no card da rota — já foi atendido no ciclo. Mesma regra da
-      // Repescagem ("não cai se comprou dentro da periodicidade"). Só afeta paradas PRESENCIAIS
-      // de cliente (não mexe em leads nem em atendimentos virtuais).
-      // Janela: venda em (D - periodDays, D). Venda NO dia D não exclui (aparece com o selo do pedido).
-      try {
-        const custStopIds: string[] = visits
-          .filter((v: any) => v && v.visitType === 'customer' && v.customerId)
-          .map((v: any) => v.customerId);
-        if (custStopIds.length > 0) {
-          const salesRes: any = await db.execute(sql`
-            SELECT customer_id, MAX(DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) AS last_venda
-            FROM billing_pipeline
-            WHERE customer_id = ANY(string_to_array(${custStopIds.join(',')}, ','))
-              AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') <= ${date}::date
-              AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') >= (${date}::date - INTERVAL '28 days')
-              AND LOWER(COALESCE(NULLIF(operation_type::text, ''), 'venda')) = 'venda'
-            GROUP BY customer_id
-          `);
-          const lastVendaByCust = new Map<string, string>();
-          for (const r of (salesRes.rows as any[])) {
-            if (r.customer_id && r.last_venda) lastVendaByCust.set(String(r.customer_id), String(r.last_venda).slice(0, 10));
-          }
-          const PERIOD_DAYS: Record<string, number> = { semanal: 7, quinzenal: 14, mensal: 28 };
-          const dRef = new Date(`${date}T00:00:00.000Z`).getTime();
-          const removidos: string[] = [];
-          for (let i = visits.length - 1; i >= 0; i--) {
-            const v: any = visits[i];
-            if (!v || v.visitType !== 'customer' || !v.customerId) continue;
-            if (manualCustomerIds.has(v.customerId)) continue; // adicionado manualmente: sempre aparece na rota
-            const lv = lastVendaByCust.get(v.customerId);
-            if (!lv) continue;
-            const period = PERIOD_DAYS[(v.visitPeriodicity as string) || 'semanal'] || 7;
-            const daysSince = Math.floor((dRef - new Date(`${lv}T00:00:00.000Z`).getTime()) / 86400000);
-            // >0 garante que venda no próprio dia D não remove; <period mantém quem já venceu o ciclo.
-            if (daysSince > 0 && daysSince < period) {
-              removidos.push(`${v.customerName || v.customerId} (comprou há ${daysSince}d, ${period}d)`);
-              visits.splice(i, 1);
-            }
-          }
-          if (removidos.length) {
-            console.log(`🛒 [ROTA] ${removidos.length} cliente(s) removido(s) por compra dentro da periodicidade: ${removidos.slice(0, 15).join(' | ')}`);
-          }
-        }
-      } catch (recentSaleErr) {
-        console.warn('⚠️ [ROTA] Falha ao aplicar regra de venda recente (mantendo visitas):', recentSaleErr);
-      }
+      // 🛒 REGRA (cadência) REMOVIDA (set/2026, pedido do admin): o cliente NÃO some mais da
+      // rota do dia por ter comprado (VENDA) dentro do ciclo. Todos os clientes aparecem
+      // regularmente conforme a periodicidade + dia da semana (a agenda/optimizedOrder já
+      // controla quando cada cliente cai na rota). Clientes adicionados manualmente também
+      // continuam sempre aparecendo.
 
       // ✅ CORREÇÃO: Buscar clientes virtuais programados para esta data
       // Virtual customers são separados na geração da rota e precisam ser adicionados aqui
