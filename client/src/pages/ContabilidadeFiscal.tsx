@@ -26,6 +26,10 @@ export default function ContabilidadeFiscal() {
   const [busca, setBusca] = useState("");
   const [buscaAplicada, setBuscaAplicada] = useState("");
   const [aberta, setAberta] = useState<{ id: string; tipo: string } | null>(null);
+  // SPED: exige UMA instância (cada CNPJ entrega o seu arquivo).
+  const [sped, setSped] = useState<any>(null);
+  const [gerandoSped, setGerandoSped] = useState(false);
+  const [erroSped, setErroSped] = useState("");
 
   const params = new URLSearchParams({ inicio, fim, tipo });
   if (instancias.length) params.set("instancias", instancias.join(","));
@@ -49,6 +53,25 @@ export default function ContabilidadeFiscal() {
       return r.json();
     },
   });
+
+  const instanciaUnica = instancias.length === 1 ? instancias[0] : null;
+
+  const gerarSped = async () => {
+    if (!instanciaUnica) return;
+    setGerandoSped(true);
+    setErroSped("");
+    setSped(null);
+    try {
+      const r = await fetch(`/api/contabilidade/fiscal/sped?instancia=${instanciaUnica}&inicio=${inicio}&fim=${fim}`, { credentials: "include" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setSped(j);
+    } catch (e: any) {
+      setErroSped(e.message);
+    } finally {
+      setGerandoSped(false);
+    }
+  };
 
   const t = notas.data?.totais;
   const linhas: any[] = notas.data?.linhas || [];
@@ -98,6 +121,78 @@ export default function ContabilidadeFiscal() {
             </div>
             <Button onClick={() => setBuscaAplicada(busca)} data-testid="fiscal-aplicar">Aplicar</Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-4 space-y-3" data-testid="fiscal-sped">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium text-gray-900">SPED Fiscal — EFD ICMS/IPI</div>
+              <div className="text-sm text-gray-500">
+                Gera o arquivo do período com os blocos 0, C (saídas e entradas), E, G, H (inventário), K e 9.
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={gerarSped} disabled={!instanciaUnica || gerandoSped} data-testid="fiscal-sped-gerar">
+                {gerandoSped ? "Gerando…" : "Gerar prévia"}
+              </Button>
+              {sped && (
+                <a
+                  href={`/api/contabilidade/fiscal/sped?instancia=${instanciaUnica}&inicio=${inicio}&fim=${fim}&download=1`}
+                  className="inline-flex items-center px-4 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700"
+                  data-testid="fiscal-sped-baixar"
+                >
+                  Baixar .txt
+                </a>
+              )}
+            </div>
+          </div>
+
+          {!instanciaUnica && (
+            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Selecione <strong>uma</strong> instância no filtro acima. Cada CNPJ entrega o seu próprio SPED.
+            </div>
+          )}
+          {erroSped && <div className="text-sm text-red-600">{erroSped}</div>}
+
+          {sped && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                {[
+                  ["Notas de saída", `${sped.resumo.notasSaida}`],
+                  ["Notas de entrada", `${sped.resumo.notasEntrada}`],
+                  ["Participantes", `${sped.resumo.participantes}`],
+                  ["Itens no inventário", `${sped.resumo.itensInventario}`],
+                  ["Valor do inventário", brl(sped.resumo.valorInventario)],
+                  ["ICMS a pagar", brl(sped.resumo.icmsAPagar)],
+                ].map(([r, v]) => (
+                  <div key={r} className="bg-white border rounded-lg px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wide text-gray-500">{r}</div>
+                    <div className="text-base font-semibold text-gray-900">{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {sped.pendencias?.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                  <div className="text-sm font-medium text-amber-900 mb-1">
+                    Pendências para o contador conferir antes de transmitir
+                  </div>
+                  <ul className="list-disc pl-5 text-sm text-amber-800 space-y-0.5">
+                    {sped.pendencias.map((p: string, k: number) => <li key={k}>{p}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              <details className="text-sm">
+                <summary className="cursor-pointer text-gray-600">Ver as primeiras linhas do arquivo</summary>
+                <pre className="mt-2 bg-gray-50 border rounded-lg p-3 overflow-x-auto text-[11px] leading-relaxed">
+                  {sped.previa.join("\n")}
+                </pre>
+              </details>
+            </div>
+          )}
         </CardContent>
       </Card>
 
