@@ -18,6 +18,7 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { inutilizarNumeracao, UF_CODES } from "./sefaz-service";
+import { registerContabilidadeRoutes } from "./contabilidade";
 
 const CUF_UF: Record<string, string> = Object.fromEntries(Object.entries(UF_CODES).map(([uf, c]) => [c, uf]));
 
@@ -111,7 +112,8 @@ export async function levantarLacunas(filtro: { cnpj?: string; desde?: string })
   // Notas do Integra que TÊM número mas não consumiram (rejeitada/erro/rascunho) — explica a lacuna.
   const presas: any = await db.execute(sql`
     SELECT regexp_replace(coalesce(issuer_cnpj,''),'[^0-9]','','g') c, coalesce(invoice_model,'55') m,
-           coalesce(nullif(series,''),'1')::int s, invoice_number n, lower(coalesce(status,'')) st
+           coalesce(nullif(series,''),'1')::int s, invoice_number n, lower(coalesce(status,'')) st,
+           (created_at > now() - interval '15 days') recente
     FROM fiscal_invoices
     WHERE environment = 'producao' AND invoice_number IS NOT NULL
       AND NOT (lower(coalesce(status,'')) IN ('authorized','cancelled','canceled','denied','inutilizada')
@@ -130,7 +132,12 @@ export async function levantarLacunas(filtro: { cnpj?: string; desde?: string })
     } else {
       const partes = subtrair([{ ini: Number(row.ini), fim: Number(row.fim) }],
         inutRows.filter((i) => i.cnpj === row.c && i.modelo === row.m && Number(i.serie) === Number(row.s))
-          .map((i) => ({ ini: Number(i.numero_inicial), fim: Number(i.numero_final) })));
+          .map((i) => ({ ini: Number(i.numero_inicial), fim: Number(i.numero_final) }))
+          // Nota recente (15 dias) com número reservado e ainda sem desfecho (rascunho,
+          // pendente, rejeitada aguardando reenvio) pode ser reemitida com o MESMO
+          // número — nunca inutilizar esse número.
+          .concat(presasRows.filter((x) => x.recente && x.c === row.c && x.m === row.m && Number(x.s) === Number(row.s))
+            .map((x) => ({ ini: Number(x.n), fim: Number(x.n) }))));
       const depois = row.dt_depois ? new Date(row.dt_depois) : null;
       for (const p of partes) {
         const st = presasRows.filter((x) => x.c === row.c && x.m === row.m && Number(x.s) === Number(row.s) && Number(x.n) >= p.ini && Number(x.n) <= p.fim).map((x) => x.st);
@@ -154,6 +161,7 @@ export async function levantarLacunas(filtro: { cnpj?: string; desde?: string })
 }
 
 export function registerInutilizacaoRoutes(app: Express) {
+  registerContabilidadeRoutes(app);
   const roles = requireRole(["admin", "administrative", "coordinator"]);
   const rolesEnvio = requireRole(["admin", "administrative"]);
 
