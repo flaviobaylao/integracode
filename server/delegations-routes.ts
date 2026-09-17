@@ -26,6 +26,23 @@ import {
   customers, insertDelegationSchema,
 } from "@shared/schema";
 import { authenticateAdmin, authenticateUser } from "./authMiddleware";
+import { logCustomerNote } from "./customerAudit";
+
+// Nome de exibição de vários usuários (para o histórico de delegação). Nunca lança.
+async function nomesDeUsuarios(ids: (string | null | undefined)[]): Promise<Record<string, string>> {
+  const uniq = Array.from(new Set(ids.filter(Boolean).map(String)));
+  const map: Record<string, string> = {};
+  for (const id of uniq) {
+    try {
+      const r: any = await db.execute(sql`SELECT first_name, last_name, email FROM users WHERE id = ${id} LIMIT 1`);
+      const u = (r.rows || r)[0];
+      if (u) map[id] = [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || u.email || id;
+    } catch { /* noop */ }
+  }
+  return map;
+}
+const nomeAtor = (u: any): string => u ? ([u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || u.id || "Sistema") : "Sistema";
+const fmtDataBR = (d: Date): string => { try { return d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }); } catch { return String(d); } };
 
 // wrapper: captura qualquer rejeição do handler async e responde 500 (nunca derruba o processo)
 const safe = (fn: (req: Request, res: Response) => Promise<any>) =>
@@ -238,6 +255,8 @@ export async function runDelegationReturns(): Promise<void> {
         ? await db.select({ id: customers.id, sellerId: customers.sellerId }).from(customers).where(inArray(customers.id, _custIds))
         : [];
       const _curMap = new Map(_cur.map((x: any) => [String(x.id), String(x.sellerId || "")]));
+      const _nomesR = await nomesDeUsuarios([d.fromUserId]);
+      const _titularNomeR = _nomesR[String(d.fromUserId || "")] || "titular";
       for (const c of rows) {
         try {
           const atual = _curMap.get(String(c.customerId));
@@ -245,6 +264,7 @@ export async function runDelegationReturns(): Promise<void> {
           if (!delegado || atual !== delegado) { mantidos++; continue; }
           await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId));
           ok++;
+          await logCustomerNote({ customerId: c.customerId, label: "Delegação encerrada", text: `Carteira devolvida a ${_titularNomeR} (fim do período)`, actor: { name: "Sistema (agendador)" }, source: "delegacao" });
         } catch (e: any) {
           fail++;
           console.error("[acessos-delegacoes] devolução falhou p/ cliente", c.customerId, e?.message);
@@ -282,6 +302,8 @@ export async function runDelegationActivations(): Promise<void> {
         : [];
       const _curMap = new Map(_cur.map((x: any) => [String(x.id), String(x.sellerId || "")]));
       const _titular = String(d.fromUserId || "");
+      const _nomes = await nomesDeUsuarios([d.fromUserId, ...rows.map((r) => r.toUserId)]);
+      const _titularNome = _nomes[_titular] || "titular";
       for (const c of rows) {
         try {
           const atual = _curMap.get(String(c.customerId));
@@ -289,6 +311,7 @@ export async function runDelegationActivations(): Promise<void> {
           if (_titular && atual !== _titular) { mantidos++; continue; }
           await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId));
           ok++;
+          await logCustomerNote({ customerId: c.customerId, label: "Delegação", text: `Carteira delegada de ${_titularNome} para ${_nomes[String(c.toUserId)] || String(c.toUserId)} — até ${fmtDataBR(d.endsAt)}`, actor: { name: "Sistema (agendador)" }, source: "delegacao" });
         } catch (e: any) {
           fail++;
           console.error("[acessos-delegacoes] ativação falhou p/ cliente", c.customerId, e?.message);
@@ -393,8 +416,15 @@ export function registerDelegationRoutes(app: Express) {
     // (Se for agendada p/ o futuro, o agendador move quando começar.)
     if (b.type !== "acesso_funcao" && starts <= new Date()) {
       const rows = await db.select().from(delegationCustomers).where(eq(delegationCustomers.delegationId, deleg.id));
+      const nomes = await nomesDeUsuarios([b.fromUserId, ...rows.map((c: any) => c.toUserId)]);
+      const titular = (b.fromUserId && nomes[String(b.fromUserId)]) || "titular";
+      const ator = { id: createdBy, name: nomeAtor((req as any).currentUser) };
       for (const c of rows) {
-        try { await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId)); }
+        try {
+          await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId));
+          const delegado = nomes[String(c.toUserId)] || String(c.toUserId);
+          await logCustomerNote({ customerId: c.customerId, label: "Delegação", text: `Carteira delegada de ${titular} para ${delegado} — até ${fmtDataBR(ends)}`, actor: ator, source: "delegacao" });
+        }
         catch (e: any) { console.error("[acessos-delegacoes] move imediato falhou p/ cliente", c.customerId, e?.message); }
       }
     }
@@ -470,8 +500,14 @@ export function registerDelegationRoutes(app: Express) {
     const [d] = await db.select().from(delegations).where(eq(delegations.id, id));
     if (d && d.status === "ativa" && d.fromUserId && d.type !== "acesso_funcao") {
       const rows = await db.select().from(delegationCustomers).where(eq(delegationCustomers.delegationId, id));
+      const nomesRv = await nomesDeUsuarios([d.fromUserId]);
+      const titularRv = nomesRv[String(d.fromUserId)] || "titular";
+      const atorRv = { id: (req as any).currentUser?.id, name: nomeAtor((req as any).currentUser) };
       for (const c of rows) {
-        try { await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId)); }
+        try {
+          await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId));
+          await logCustomerNote({ customerId: c.customerId, label: "Delegação revogada", text: `Carteira devolvida a ${titularRv}`, actor: atorRv, source: "delegacao" });
+        }
         catch (e: any) { console.error("[acessos-delegacoes] revoke devolução falhou p/ cliente", c.customerId, e?.message); }
       }
     }
