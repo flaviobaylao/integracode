@@ -6,7 +6,7 @@ import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFIC
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./session";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
-import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess, gone, rateLimitPorIp } from "./authMiddleware";
+import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess, gone, rateLimitPorIp, somenteLeituraContador } from "./authMiddleware";
 import { requirePermission } from "./delegations-routes";
 import { generateVisitAgenda, ensureFutureAgendaCoverage, updateExistingSalesCardsFromCustomer, propagateRecurrenceChange, regenerateCustomerAgenda } from "./visitScheduleService";
 import { logCustomerChanges, getCustomerChangeHistory, logCustomerNote } from "./customerAudit";
@@ -467,6 +467,15 @@ async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: st
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
+
+  // Perfil CONTADOR -- somente leitura. Precisa vir DEPOIS da sessao (setupAuth) e ANTES
+  // de qualquer rota: barra POST/PUT/PATCH/DELETE em /api/* para usuarios role='contador'.
+  app.use(somenteLeituraContador);
+
+  // Garante que o papel 'contador' existe no enum do banco (aditivo, idempotente).
+  try {
+    await db.execute(sql`ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'contador'`);
+  } catch (e: any) { console.warn('ALTER TYPE user_role contador:', e?.message); }
 
   // Garante a coluna de Segmento Principal (derivado do CNAE do CNPJ) — aditivo e idempotente
   try {
@@ -975,7 +984,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const user = await storage.getUser(userId);
         if (user) {
           // 🏭 Perfil "Indústria": acesso total — o front recebe role 'admin' (crachá continua "Indústria" via _perfilIndustria).
-          const u: any = user.role === 'industria' ? { ...user, role: 'admin', _perfilIndustria: true } : user;
+          // Perfil "Contador": o front recebe role 'admin' (menu completo) + _perfilContador
+          // para exibir o cracha "Contador" e a faixa de somente-leitura.
+          let u: any = user.role === 'industria' ? { ...user, role: 'admin', _perfilIndustria: true } : user;
+          if (user.role === 'contador') u = { ...user, role: 'admin', _perfilContador: true };
           // 🔁 "Entrar como": expõe a função impersonada + a real para o front (só admin real).
           const impUserId = (req.session as any)?.impersonateUserId;
           if (impUserId && u.role === 'admin') {
