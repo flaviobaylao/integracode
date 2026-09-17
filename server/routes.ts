@@ -379,7 +379,7 @@ async function __reprogramarLeadsVencidos(sellerId: string, todayStr: string): P
   if (!sellerId || !todayStr) return 0;
   try {
     const overdue: any = await db.execute(sql`
-      SELECT id, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng
+      SELECT id, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng, COALESCE(next_contact_locked, false) AS locked
       FROM leads
       WHERE status = 'scheduled'
         AND assigned_to = ${sellerId}
@@ -394,6 +394,12 @@ async function __reprogramarLeadsVencidos(sellerId: string, todayStr: string): P
     const base0 = new Date(`${todayStr}T00:00:00Z`); // hoje (BR) como meia-noite UTC
     let n = 0;
     for (const r of rows) {
+      // 🔒 Cadeado: data alterada manualmente pelo admin. Respeita por 1 ciclo — abre o cadeado
+      // agora (consome o ciclo) e NAO reprograma nesta rodada; a proxima ja segue a regra normal.
+      if ((r as any).locked === true) {
+        await db.execute(sql`UPDATE leads SET next_contact_locked = false, updated_at = NOW() WHERE id = ${(r as any).id}`);
+        continue;
+      }
       const lat = Number((r as any).lat), lng = Number((r as any).lng);
       const wd = __regionTargetWeekday(custs, lat, lng);
       let next: Date;
@@ -426,7 +432,7 @@ async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: st
   const erros: string[] = [];
   let reprogramados = 0;
   const overdue: any = await db.execute(sql`
-    SELECT id, assigned_to AS seller, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng
+    SELECT id, assigned_to AS seller, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng, COALESCE(next_contact_locked, false) AS locked
     FROM leads
     WHERE status = 'scheduled'
       AND COALESCE(route_type, 'dia') <> 'prospeccao'
@@ -443,6 +449,11 @@ async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: st
     try {
       const seller = String((r as any).seller || '');
       if (!seller) continue;
+      // 🔒 Cadeado: data alterada manualmente. Abre o cadeado (consome 1 ciclo) e NAO reprograma agora.
+      if ((r as any).locked === true) {
+        await db.execute(sql`UPDATE leads SET next_contact_locked = false, updated_at = NOW() WHERE id = ${(r as any).id}`);
+        continue;
+      }
       if (!custCache[seller]) custCache[seller] = await __sellerCustomers(seller);
       const wd = __regionTargetWeekday(custCache[seller], Number((r as any).lat), Number((r as any).lng));
       let next: Date;
@@ -22709,6 +22720,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
+        nextContactLocked: leads.nextContactLocked,
         postponementCount: leads.postponementCount,
         nonConversionReason: leads.nonConversionReason,
         returnOverdue: leads.returnOverdue,
@@ -22741,6 +22753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
+        nextContactLocked: row.nextContactLocked === true,
         postponementCount: Number(row.postponementCount || 0),
         nonConversionReason: row.nonConversionReason || null,
         returnOverdue: row.returnOverdue === true,
@@ -23165,6 +23178,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           updateData.nextContactDate = new Date(_v);
         }
+        // 🔒 Edicao MANUAL da data fecha o cadeado: a data fica imune a reprogramacao automatica
+        // por coordenada por 1 ciclo (a 1a vez que a regra tentaria mexer, ela apenas abre o cadeado).
+        if (updateData.nextContactLocked === undefined) updateData.nextContactLocked = true;
       }
 
       const lead = await storage.updateLead(id, updateData);
@@ -23198,6 +23214,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else {
             patch.nextContactDate = new Date(v);
           }
+          // 🔒 Alteracao MANUAL em massa da data tambem fecha o cadeado (imune por 1 ciclo).
+          patch.nextContactLocked = true;
         }
       }
       if (Object.keys(patch).length === 0) {
