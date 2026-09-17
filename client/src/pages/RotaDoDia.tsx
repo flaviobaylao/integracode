@@ -133,6 +133,9 @@ export default function RotaDoDia() {
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   const isVendedor = user?.role === 'vendedor';
   const isTelemarketing = user?.role === 'telemarketing';
+  // 🗑️ Exclusao de visita/card na Rota do Dia: SOMENTE admin e administrativo. Os demais
+  // (coordenador, vendedor, telemarketing) nao veem nem usam a lixeira. (set/2026)
+  const canDeleteVisit = user?.role === 'admin' || user?.role === 'administrative';
   // Cobertura temporaria: Robson cobre as carteiras de Maria E. e Natalia B. em 17/07/2026 (06h-18h BRT).
   const COVERAGE_GRANT = {
     granteeId: 'omie-vendor-4077616122', // Robson
@@ -2808,8 +2811,8 @@ export default function RotaDoDia() {
                             </Button>
                           )}
                           
-                          {/* Botão Deletar — leads: SOMENTE admin; clientes: admin e vendedor/telemarketing */}
-                          {(isLead ? isAdmin : (isAdmin || isVendedor || isTelemarketing)) && route.id && (
+                          {/* Botão Deletar (lixeira) — SOMENTE admin e administrativo. */}
+                          {canDeleteVisit && route.id && (
                             <Button
                               size="icon"
                               variant="ghost"
@@ -3130,8 +3133,8 @@ export default function RotaDoDia() {
                                     <FileText className="h-4 w-4" />
                                   </Button>
                                 )}
-                                {/* Botão Excluir card (apenas Administradores) */}
-                                {visit.customerId && isAdmin && route.id && (
+                                {/* Botão Excluir card (SOMENTE admin e administrativo) */}
+                                {visit.customerId && canDeleteVisit && route.id && (
                                   <Button
                                     size="icon"
                                     variant="ghost"
