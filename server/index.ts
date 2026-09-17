@@ -23,6 +23,7 @@ import { registerRoutes } from "./routes";
 import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { registerFichaLogisticaRoutes } from "./ficha-logistica";
+import { registerTemperaturaEntregasRoutes } from "./temperatura-entregas";
 import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
@@ -381,6 +382,7 @@ run();
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
   // Ficha logística do produto (PDF gerado do cadastro: peso, fardo, palete).
   try { registerFichaLogisticaRoutes(app); } catch (e) { console.error('[ficha-logistica]', e); }
+  try { registerTemperaturaEntregasRoutes(app); } catch (e) { console.error('[temperatura-entregas]', e); }
 
   // 🛡️ CRÍTICO (fix loop Rota do Dia): estas colunas estão no schema Drizzle, então SEM o
   // ALTER todo SELECT da tabela quebra (500 → o front fica re-tentando = "loop"). Rodam
