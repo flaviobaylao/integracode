@@ -31,7 +31,7 @@ const MENU_CARD: Record<string, string> = {
   products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   "gestao-debito-vendas": "Débito e Variação de Vendas", "painel-atendimento": "Painel de Atendimento",
   estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores",
-  billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "inutilizacao-nf": "Inutilização de NF", contabilidade: "Contabilidade", "billing-pipeline": "Pipeline Faturamento",
+  billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "inutilizacao-nf": "Inutilização de NF", contabilidade: "Contabilidade", "contabilidade-fiscal": "Fiscal", "contabilidade-contabil": "Contábil", "billing-pipeline": "Pipeline Faturamento",
   "recuperacao-faturamento": "Recuperação de Faturamento",
   "fin-receivables": "Contas a Receber", "fin-payables": "Contas a Pagar", "fin-overdue": "Débitos Vencidos",
   "fin-blocked": "Pedidos Bloqueados", "fin-chart": "Plano de Contas / DRE", "fin-dre": "Plano de Contas / DRE",
@@ -362,6 +362,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       hexColor: '#64748b',
       icon: 'fas fa-calculator',
       items: [
+        { id: 'contabilidade-fiscal', label: 'Fiscal', icon: 'fas fa-file-invoice-dollar', available: canAccessReports, badge: null },
+        { id: 'contabilidade-contabil', label: 'Contábil', icon: 'fas fa-book', available: canAccessReports, badge: null },
         { id: 'contabilidade', label: 'Relatórios Contábeis', icon: 'fas fa-folder-open', available: canAccessReports, badge: null },
       ],
     },
@@ -641,7 +643,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
+    const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');
