@@ -1739,6 +1739,10 @@ export const leads = pgTable("leads", {
   // Data do próximo contato / RETORNO (auto: cadastro + 15 dias, encaixada na rota; travada p/ o vendedor)
   nextContactDate: timestamp("next_contact_date"),
 
+  // 🔒 Cadeado da data: quando o admin altera a data MANUALMENTE, fecha (true) e a reprogramação
+  // automática por coordenada não mexe por 1 ciclo; na 1ª rodada que tentaria, o cadeado abre (false).
+  nextContactLocked: boolean("next_contact_locked").default(false),
+
   // Fluxo de retorno de lead (15 dias)
   originalReturnDate: timestamp("original_return_date"), // 1a data de retorno calculada (auditoria; nao muda na prorrogacao)
   postponementCount: integer("postponement_count").notNull().default(0), // nº de prorrogacoes ja feitas (TRAVA em 1)
