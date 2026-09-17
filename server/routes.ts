@@ -18813,9 +18813,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.currentUser;
       const { routeId, visitId } = req.params;
       
-      // Apenas administradores podem excluir visitas
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem excluir visitas.' });
+      // Exclusao de visita na Rota do Dia: SOMENTE admin e administrativo (nao coordenador/vendedor).
+      if (!['admin', 'administrative'].includes(user.role)) {
+        return res.status(403).json({ message: 'Acesso negado. Apenas admin e administrativo podem excluir visitas.' });
       }
       
       // Buscar rota
