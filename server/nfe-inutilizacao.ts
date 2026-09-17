@@ -18,7 +18,7 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { inutilizarNumeracao, UF_CODES } from "./sefaz-service";
-import { registerContabilidadeRoutes } from "./contabilidade";
+import { registerContabilidadeRoutes, registerContabilidadeFiscal, registerContabilidadeContabil } from "./contabilidade";
 
 const CUF_UF: Record<string, string> = Object.fromEntries(Object.entries(UF_CODES).map(([uf, c]) => [c, uf]));
 
@@ -162,6 +162,8 @@ export async function levantarLacunas(filtro: { cnpj?: string; desde?: string })
 
 export function registerInutilizacaoRoutes(app: Express) {
   registerContabilidadeRoutes(app);
+  registerContabilidadeFiscal(app);
+  registerContabilidadeContabil(app);
   const roles = requireRole(["admin", "administrative", "coordinator"]);
   const rolesEnvio = requireRole(["admin", "administrative"]);
 
