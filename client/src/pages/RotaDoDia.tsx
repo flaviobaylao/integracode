@@ -2261,7 +2261,7 @@ export default function RotaDoDia() {
               acima das visitas. Só comunicação — não conta como cliente nem trava o Fechar Rota.
               Cards que já estão na rota de hoje ficam de fora (têm o selo no próprio card). */}
           {selectedSellerId && (
-            <InboxPendenciasBox sellerId={selectedSellerId} date={selectedDate} excludeKeys={rotaKeysTodos} />
+            <InboxPendenciasBox sellerId={selectedSellerId} date={selectedDate} excludeKeys={rotaKeysTodos} canRemove={isAdmin} />
           )}
 
           <Card>
