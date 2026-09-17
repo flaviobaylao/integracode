@@ -73,6 +73,7 @@ import fs from 'fs';
 import { APP_VERSION, VERSION_HISTORY } from '../shared/version';
 import { calculateDeliveryDaysFromMultipleRoutes } from '../shared/deliveryDaysCalculator';
 import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
+import { exigirTemperaturaCaminhao, temperaturasDasParadas } from "./temperatura-entregas";
 import { handlerDebitosVencidosPorCliente } from "./overdue-debts-por-cliente";
 
 // Configurar multer para upload de arquivos
@@ -12350,6 +12351,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (e: any) {
         console.warn('[DRIVER-ROUTES] tempo médio por cliente (ignorado):', e?.message);
       }
+
+      // 🌡️ Temperatura da carga já registrada (rotas de caminhão). Best-effort.
+      try {
+        const idsStops = (routesWithStops as any[]).flatMap((r: any) => (r.stops || []).map((s: any) => String(s.id)));
+        const mapaTemp = await temperaturasDasParadas(idsStops);
+        for (const r of routesWithStops as any[]) {
+          for (const s of (r.stops || [])) {
+            const t = mapaTemp.get(String(s.id));
+            (s as any).temperaturaCarga = t ? t.temperatura : null;
+            (s as any).temperaturaRegistradaEm = t ? t.em : null;
+          }
+        }
+      } catch (e: any) {
+        console.warn('[DRIVER-ROUTES] temperatura (ignorado):', e?.message);
+      }
       
       console.log(`✅ [DRIVER-ROUTES] Encontradas ${routesWithStops.length} rotas para ${userEmail}`);
       res.json(routesWithStops);
@@ -13035,6 +13051,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
+
+      // 🌡️ Caminhão: temperatura da carga obrigatória antes de finalizar.
+      const erroTemp = await exigirTemperaturaCaminhao(route[0], stopId, req.body?.temperatura);
+      if (erroTemp) return res.status(400).json({ message: erroTemp, code: 'TEMPERATURA_OBRIGATORIA' });
       
       // Processar foto
       let photoUrl: string | null = null;
@@ -13177,6 +13197,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!normalizedUserEmail || routeDriverEmail !== normalizedUserEmail) {
         return res.status(403).json({ message: "Você não tem permissão para esta parada" });
       }
+
+      // 🌡️ Caminhão: temperatura da carga obrigatória antes de finalizar (também na devolução).
+      const erroTempDev = await exigirTemperaturaCaminhao(route[0], stopId, req.body?.temperatura);
+      if (erroTempDev) return res.status(400).json({ message: erroTempDev, code: 'TEMPERATURA_OBRIGATORIA' });
       
       // Processar foto se enviada
       let photoUrl: string | null = null;
