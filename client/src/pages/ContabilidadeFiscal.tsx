@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import FiltroInstancia from "@/components/FiltroInstancia";
+import SeletorMes from "@/components/SeletorMes";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FISCAL — listagem unificada de notas emitidas e recebidas, com os tributos de
@@ -15,12 +16,14 @@ const brl = (v: any) =>
   (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dia = (v: any) => (v ? new Date(v).toLocaleDateString("pt-BR") : "—");
 
+// Padrão: ANO CORRENTE FECHADO, para o seletor de mês abrir em "Ano todo" em
+// vez de "Personalizado". Datas futuras sem nota não mudam nada no resultado.
 const primeiroDiaDoAno = `${new Date().getFullYear()}-01-01`;
-const hoje = new Date().toISOString().slice(0, 10);
+const ultimoDiaDoAno = `${new Date().getFullYear()}-12-31`;
 
 export default function ContabilidadeFiscal() {
   const [inicio, setInicio] = useState(primeiroDiaDoAno);
-  const [fim, setFim] = useState(hoje);
+  const [fim, setFim] = useState(ultimoDiaDoAno);
   const [instancias, setInstancias] = useState<string[]>([]);
   const [tipo, setTipo] = useState<"todas" | "saida" | "entrada">("todas");
   const [busca, setBusca] = useState("");
@@ -89,6 +92,11 @@ export default function ContabilidadeFiscal() {
         <CardContent className="p-4 space-y-3">
           <FiltroInstancia valor={instancias} aoMudar={setInstancias} />
           <div className="flex flex-wrap items-end gap-3">
+            <SeletorMes
+              inicio={inicio}
+              fim={fim}
+              aoMudar={(i, f) => { setInicio(i); setFim(f); }}
+            />
             <div>
               <label className="block text-xs text-gray-500 mb-1">De</label>
               <Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} className="w-40" data-testid="fiscal-data-inicio" />
