@@ -27,7 +27,7 @@ const MENU_CARD: Record<string, string> = {
   "rota-entrega": "Minhas Entregas", "entregas-do-dia": "Entregas do Dia", "validacao-rotas": "Validação de Rotas",
   "check-in-audit": "Auditoria de Check-ins", "delivery-dashboard": "Dashboard de Entregas",
   "delivery-management": "Gestão de Entregas", "delivery-routes": "Resumo das Rotas",
-  "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas",
+  "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas", "temperatura-entregas": "Temperatura das Entregas",
   products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   "gestao-debito-vendas": "Débito e Variação de Vendas", "painel-atendimento": "Painel de Atendimento",
   estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores",
@@ -310,6 +310,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'mapa-clientes', label: 'Mapa de Clientes', icon: 'fas fa-map-marked-alt', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'driver-management', label: 'Motoristas', icon: 'fas fa-user-tie', available: canAccessReports, badge: null },
         { id: 'delivery-reports', label: 'Relatórios de Entregas', icon: 'fas fa-chart-line', available: canAccessReports, badge: null },
+        { id: 'temperatura-entregas', label: 'Temperatura das Entregas', icon: 'fas fa-temperature-low', available: canAccessReports || canAccessIndustria, badge: null },
       ],
     },
     {
@@ -628,7 +629,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
+    const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');
