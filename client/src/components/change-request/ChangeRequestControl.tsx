@@ -107,10 +107,10 @@ export function MessageThread({ messages }: { messages?: CRMessage[] }) {
       {list.map((m, i) => {
         const admin = m.role === "admin";
         // Trilha do "Envio Whatsapp" (Inbox): linha discreta, sem balão de conversa.
-        if ((m as any).kind === "whatsapp") {
+        if ((m as any).kind === "whatsapp" || (m as any).kind === "pendencia_removida") {
           return (
             <div key={m.id || i} className="text-[10px] text-green-700 dark:text-green-400 italic px-1">
-              📲 {m.text}{m.byName ? ` · ${m.byName}` : ""}{m.at ? ` · ${fmtWhen(m.at)}` : ""}
+              {(m as any).kind === "whatsapp" ? "📲 " : "🗑️ "}{m.text}{m.byName ? ` · ${m.byName}` : ""}{m.at ? ` · ${fmtWhen(m.at)}` : ""}
             </div>
           );
         }
@@ -701,10 +701,21 @@ function reportBadge(r: any) {
   return "Solicitação";
 }
 
-function PendenciaCard({ r, date }: { r: any; date: string }) {
+function PendenciaCard({ r, date, canRemove }: { r: any; date: string; canRemove?: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
+  // 🗑️ Admin/gestor exclui o card de pendência da rota (report e conversa continuam no Inbox).
+  const removeMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/remover-pendencia`, {}),
+    onSuccess: () => {
+      toast({ title: "Pendência excluída", description: "O card saiu da rota do vendedor. O report continua no Inbox." });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/inbox-pendencias"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/pending-replies"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível excluir", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   const replyMut = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/reply`, { text: text.trim() }),
     onSuccess: () => {
@@ -730,9 +741,19 @@ function PendenciaCard({ r, date }: { r: any; date: string }) {
             Seu registro de {quando(r.createdAt)} · réplica do admin em {quando(r.adminReplyAt)}
           </div>
         </div>
-        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-300 gap-1 text-[10px] sm:text-xs">
-          <Bell className="h-3 w-3 animate-pulse" /> Resposta do admin
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-300 gap-1 text-[10px] sm:text-xs">
+            <Bell className="h-3 w-3 animate-pulse" /> Resposta do admin
+          </Badge>
+          {canRemove && (
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50" disabled={removeMut.isPending}
+              title="Excluir esta pendência da rota do vendedor (o report e a conversa ficam no Inbox)"
+              data-testid={`inbox-pendencia-remove-${r.id}`}
+              onClick={() => { if (window.confirm("Excluir esta pendência da rota do vendedor? O report e a conversa continuam no Inbox.")) removeMut.mutate(); }}>
+              {removeMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Excluir</>}
+            </Button>
+          )}
+        </div>
       </div>
       <MessageThread messages={r.messages} />
       <div className="pt-2 border-t border-dashed space-y-1.5">
@@ -774,7 +795,9 @@ function RespondidaLinha({ r }: { r: any }) {
   );
 }
 
-export function InboxPendenciasBox({ sellerId, date, excludeKeys }: { sellerId: string; date: string; excludeKeys?: string[] }) {
+export function InboxPendenciasBox({ sellerId, date, excludeKeys, canRemove }: { sellerId: string; date: string; excludeKeys?: string[]; canRemove?: boolean }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data } = useQuery<{ pendentes: any[]; respondidasHoje: any[] }>({
     queryKey: ["/api/change-requests/inbox-pendencias", sellerId, date],
     queryFn: async () => {
@@ -789,6 +812,17 @@ export function InboxPendenciasBox({ sellerId, date, excludeKeys }: { sellerId: 
   const excl = useMemo(() => new Set((excludeKeys || []).filter(Boolean)), [(excludeKeys || []).join("|")]);
   const pendentes = (data?.pendentes || []).filter((r) => !excl.has(crKey(r.entityType, String(r.entityId))));
   const respondidas = data?.respondidasHoje || [];
+  // 🗑️ Excluir todas as pendências visíveis (admin/gestor), uma a uma pela mesma rota.
+  const removeAllMut = useMutation({
+    mutationFn: async () => { for (const r of pendentes) await apiRequest("POST", `/api/change-requests/${r.id}/remover-pendencia`, {}); },
+    onSuccess: () => {
+      toast({ title: "Pendências excluídas", description: "Os cards saíram da rota do vendedor. Os reports continuam no Inbox." });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/inbox-pendencias"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/pending-replies"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível excluir", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   if (pendentes.length === 0 && respondidas.length === 0) return null;
   const total = pendentes.length + respondidas.length;
   return (
@@ -798,10 +832,19 @@ export function InboxPendenciasBox({ sellerId, date, excludeKeys }: { sellerId: 
           <Bell className="h-5 w-5" />
           Pendências do Inbox ({pendentes.length === total ? total : `${pendentes.length} de ${total}`})
         </h3>
-        <span className="text-xs text-muted-foreground">Respostas do admin a registros seus — leia e responda quando puder</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">Respostas do admin a registros seus — leia e responda quando puder</span>
+          {canRemove && pendentes.length > 1 && (
+            <Button size="sm" variant="outline" className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-50" disabled={removeAllMut.isPending}
+              data-testid="inbox-pendencias-remove-all"
+              onClick={() => { if (window.confirm(`Excluir as ${pendentes.length} pendências da rota deste vendedor? Os reports e as conversas continuam no Inbox.`)) removeAllMut.mutate(); }}>
+              {removeAllMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><XCircle className="h-3.5 w-3.5 mr-1" /> Excluir todas</>}
+            </Button>
+          )}
+        </div>
       </div>
       <div className="space-y-2">
-        {pendentes.map((r) => <PendenciaCard key={r.id} r={r} date={date} />)}
+        {pendentes.map((r) => <PendenciaCard key={r.id} r={r} date={date} canRemove={canRemove} />)}
         {respondidas.map((r) => <RespondidaLinha key={r.id} r={r} />)}
       </div>
       <div className="text-[11px] text-muted-foreground">Estes cards não entram na contagem da rota nem impedem o Fechar Rota. Sem resposta, voltam amanhã.</div>
