@@ -19,6 +19,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { inutilizarNumeracao, UF_CODES } from "./sefaz-service";
 import { registerContabilidadeRoutes, registerContabilidadeFiscal, registerContabilidadeContabil } from "./contabilidade";
+import { registerSpedFiscal } from "./sped-fiscal";
 
 const CUF_UF: Record<string, string> = Object.fromEntries(Object.entries(UF_CODES).map(([uf, c]) => [c, uf]));
 
@@ -164,6 +165,7 @@ export function registerInutilizacaoRoutes(app: Express) {
   registerContabilidadeRoutes(app);
   registerContabilidadeFiscal(app);
   registerContabilidadeContabil(app);
+  registerSpedFiscal(app);
   const roles = requireRole(["admin", "administrative", "coordinator"]);
   const rolesEnvio = requireRole(["admin", "administrative"]);
 
