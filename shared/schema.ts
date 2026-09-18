@@ -3013,6 +3013,10 @@ export const inventoryLots = pgTable("inventory_lots", {
   // ou remanejamento) — a tela mostra "—", nunca R$ 0,00.
   unitCost: decimal("unit_cost", { precision: 14, scale: 4 }),
   totalCost: decimal("total_cost", { precision: 14, scale: 2 }),
+  // true = unitCost e uma ESTIMATIVA (media ponderada do produto), aplicada a lotes
+  // antigos de filial cuja origem nao existe mais. A tela marca esses lotes; informar
+  // o custo real na mao volta este campo para false.
+  cmvEstimado: boolean("cmv_estimado").notNull().default(false),
   productionOrderId: varchar("production_order_id"),
   isActive: boolean("is_active").notNull().default(true),
   notes: text("notes"),
