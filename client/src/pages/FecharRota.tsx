@@ -135,6 +135,7 @@ function QuestionamentoCard({ q }: { q: any }) {
       toast({ title: "Resposta enviada ao admin", description: "Questionamento respondido — você já pode fechar a rota." });
       setText(""); setOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/pending-replies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/inbox-pendencias"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
     },
@@ -263,10 +264,22 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     queryFn: async () => { if (!prParam) return {}; return apiRequest("GET", `/api/change-requests/pending-replies?keys=${encodeURIComponent(prParam)}`); },
     staleTime: 15_000,
   });
+  // 🔔 Pendências do Inbox (17/set/2026): TODAS as réplicas do admin sem resposta do vendedor
+  // (inclusive de reports de dias anteriores, que aparecem no box da Rota do Dia) também travam
+  // o fechamento. União com as da rota de hoje, sem duplicar.
+  const { data: inboxPendData } = useQuery<{ pendentes: any[] }>({
+    queryKey: ["/api/change-requests/inbox-pendencias", sellerId, today],
+    enabled: enabled && !!sellerId,
+    queryFn: async () => apiRequest("GET", `/api/change-requests/inbox-pendencias?sellerId=${encodeURIComponent(sellerId)}&date=${today}`),
+    staleTime: 15_000,
+  });
   const questionamentos = useMemo(() => {
     const m = pendingRepliesData || {};
-    return Object.keys(m).map((k) => m[k]).filter((x) => x && x.pendingReply);
-  }, [pendingRepliesData]);
+    const list = Object.keys(m).map((k) => m[k]).filter((x) => x && x.pendingReply);
+    const seen = new Set(list.map((x: any) => String(x.id)));
+    for (const p of (inboxPendData?.pendentes || [])) { if (p && !seen.has(String(p.id))) { seen.add(String(p.id)); list.push(p); } }
+    return list;
+  }, [pendingRepliesData, inboxPendData]);
 
   const naoVisitados = useMemo(() => route ? computeNaoVisitados(route, svcData, overlay, orders, debts, allowed, today, incluiRepescagem, suspVisita, suspDebito, crEfet, exigirDebito) : [], [route, svcData, overlay, orders, debts, statusData, incluiRepescagem, suspVisita, suspDebito, crEfet, exigirDebito]);
 
