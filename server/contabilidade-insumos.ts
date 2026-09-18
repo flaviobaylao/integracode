@@ -184,6 +184,169 @@ export function registerContabilidadeInsumos(app: Express) {
       res.status(500).json({ error: e?.message || String(e) });
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ESTOQUE MENSAL ESTIMADO DE INSUMOS (Flavio, 18/set/2026)
+  //
+  // O livro de movimentos de insumo so comeca em maio, e mesmo depois e esparso:
+  // janeiro a abril nao tem NADA lancado. Entao o estoque mes a mes nao pode ser
+  // lido do livro — tem de ser estimado. O que temos de confiavel:
+  //
+  //   • o saldo de HOJE (o Flavio confirmou que os insumos atuais estao certos);
+  //   • o CONSUMO de cada mes, deduzido das vendas daquele mes pela ficha tecnica
+  //     (recipes/recipe_items) — o mesmo calculo do razao de insumos.
+  //
+  // Falta a terceira peca, as COMPRAS, que quase nao foram lancadas. Uma equacao,
+  // duas incognitas: e preciso uma premissa. A escolhida (pelo Flavio) e COBERTURA
+  // CONSTANTE — a empresa mantem, ao longo do ano, a mesma cobertura em meses de
+  // producao que o estoque tem hoje:
+  //
+  //     cobertura = saldo de hoje / consumo medio mensal
+  //     alvo de fechamento do mes m = cobertura x consumo do mes seguinte
+  //
+  // A partir dai a serie e construida PARA FRENTE, com tres travas que a tornam
+  // fisicamente possivel — as mesmas garantias da reconstrucao de produto acabado:
+  //
+  //   1. A abertura de cada mes cobre a producao daquele mes (regra do Flavio).
+  //   2. A compra de cada mes nunca e negativa (nao existe compra negativa).
+  //   3. A serie fecha EXATAMENTE no saldo de hoje. Se, mesmo com compra zero, o
+  //      estoque tivesse de cair mais do que as vendas explicam, a diferenca vai
+  //      para `residuo`: saiu sem ser vendido nem lancado (perda, quebra, consumo
+  //      nao registrado). Numero declarado, nunca escondido.
+  //
+  // ⚠️ Isto e ESTIMATIVA, nao o livro. Nada aqui e gravado em raw_material_movements:
+  // a rota so calcula e devolve. O dado real continua intacto.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/contabilidade/contabil/insumos-mensal", authenticateUser, ver, async (req: any, res) => {
+    try {
+      const ano = parseInt(String(req.query.ano || new Date().getFullYear()), 10);
+      if (!Number.isFinite(ano) || ano < 2020 || ano > 2100) {
+        return res.status(400).json({ error: "Ano invalido." });
+      }
+      const instancias = listaDeIds(req.query.instancias);
+      const hoje = new Date();
+      const ateMes = hoje.getFullYear() === ano ? hoje.getMonth() + 1 : 12;
+
+      const equivalentes: string[] = [];
+      for (const i of instancias) {
+        const eq = await equivalentesInstancia(i);
+        if (eq) equivalentes.push(...eq);
+      }
+      const filtro = equivalentes.length
+        ? sql`AND (m.instance_id = ANY(${arraySql(equivalentes)})
+                   OR UPPER(TRIM(COALESCE(m.instance_name, ''))) = ANY(${arraySql(equivalentes.map((e) => e.toUpperCase()))}))`
+        : sql``;
+
+      const rMat: any = await db.execute(sql`
+        SELECT m.id, m.name, m.code, m.category, m.unit, m.quantity, m.unit_cost,
+               m.instance_id, m.instance_name, oi.display_name AS instancia
+          FROM raw_materials m
+          LEFT JOIN omie_instances oi ON oi.id = m.instance_id
+         WHERE COALESCE(m.is_active, true) = true ${filtro}
+         ORDER BY m.name`);
+      const materiais = rMat.rows || rMat;
+      if (!materiais.length) {
+        return res.json({ ano, meses: [], linhas: [], totais: null, avisos: ["Nenhum insumo cadastrado para esta instancia."] });
+      }
+
+      // Consumo de cada mes, pela ficha tecnica das vendas daquele mes.
+      const meses: string[] = [];
+      const consumoMes: Map<string, number>[] = [];
+      for (let k = 1; k <= ateMes; k++) {
+        const p = String(k).padStart(2, "0");
+        const ultimo = new Date(Date.UTC(ano, k, 0)).getUTCDate();
+        meses.push(`${ano}-${p}`);
+        consumoMes.push(await consumoPelasVendas(`${ano}-${p}-01`, `${ano}-${p}-${String(ultimo).padStart(2, "0")}`, instancias));
+      }
+
+      const N = meses.length;
+      const linhas = materiais.map((mat: any) => {
+        const id = String(mat.id);
+        const c = consumoMes.map((mm) => mm.get(id) || 0);
+        const saldoHoje = n(mat.quantity);
+
+        const positivos = c.filter((x) => x > EPS);
+        const mediaConsumo = positivos.length ? positivos.reduce((a, b) => a + b, 0) / positivos.length : 0;
+        const cobertura = mediaConsumo > EPS ? saldoHoje / mediaConsumo : 0;
+
+        // Alvo de fechamento: cobrir o consumo do mes seguinte. O ultimo mes fecha
+        // no saldo real de hoje, que e o ancoradouro de toda a serie.
+        const alvo = new Array(N).fill(0);
+        for (let m = 0; m < N - 1; m++) alvo[m] = cobertura * c[m + 1];
+        alvo[N - 1] = saldoHoje;
+        // Trava 1: o mes abre com o suficiente para a propria producao. Como a
+        // abertura E, por aritmetica, o fechamento do mes anterior, a exigencia recai
+        // sobre o mes ANTERIOR — ele fecha com pelo menos o consumo do mes seguinte.
+        // Levantar a abertura direto faria estoque surgir do nada; assim a diferenca
+        // vira COMPRA no mes anterior, que e o que de fato aconteceu.
+        for (let m = 1; m < N; m++) alvo[m - 1] = Math.max(alvo[m - 1], c[m]);
+
+        const abertura = new Array(N).fill(0);
+        const fechamento = new Array(N).fill(0);
+        const compras = new Array(N).fill(0);
+        abertura[0] = Math.max(c[0], cobertura * c[0]);
+        for (let m = 0; m < N; m++) {
+          compras[m] = Math.max(0, alvo[m] - (abertura[m] - c[m])); // trava 2
+          fechamento[m] = abertura[m] - c[m] + compras[m];
+          if (m + 1 < N) abertura[m + 1] = fechamento[m];           // encadeamento
+        }
+        const residuo = Math.max(0, fechamento[N - 1] - saldoHoje); // trava 3
+        if (residuo > EPS) fechamento[N - 1] = saldoHoje;
+
+        const custo = n(mat.unit_cost);
+        const r2 = (v: number) => Number(v.toFixed(3));
+        return {
+          insumoId: id,
+          codigo: mat.code || null,
+          produto: mat.name,
+          categoria: mat.category || null,
+          unidade: mat.unit || "UN",
+          instancia: mat.instancia || mat.instance_name || "—",
+          cobertura: Number(cobertura.toFixed(2)),
+          consumo: c.map(r2),
+          abertura: abertura.map(r2),
+          compras: compras.map(r2),
+          fechamento: fechamento.map(r2),
+          residuo: residuo > EPS ? r2(residuo) : 0,
+          custoUnitario: custo > 0 ? custo : null,
+          valorFechamento: custo > 0 ? fechamento.map((v) => Number((v * custo).toFixed(2))) : null,
+          saldoHoje: r2(saldoHoje),
+          estimado: true,
+        };
+      });
+
+      const zeros = () => new Array(N).fill(0);
+      const totais = {
+        consumo: zeros(), abertura: zeros(), compras: zeros(), fechamento: zeros(), valorFechamento: zeros(),
+        itens: linhas.length,
+      };
+      for (const l of linhas) {
+        for (let m = 0; m < N; m++) {
+          totais.consumo[m] += l.consumo[m]; totais.abertura[m] += l.abertura[m];
+          totais.compras[m] += l.compras[m]; totais.fechamento[m] += l.fechamento[m];
+          totais.valorFechamento[m] += l.valorFechamento ? l.valorFechamento[m] : 0;
+        }
+      }
+      for (const k of ["consumo", "abertura", "compras", "fechamento", "valorFechamento"] as const) {
+        (totais as any)[k] = (totais as any)[k].map((v: number) => Number(v.toFixed(2)));
+      }
+
+      const avisos: string[] = [
+        "Estoque mensal ESTIMADO, nao lancado: o livro de movimentos de insumo nao cobre o periodo. Premissa: a empresa mantem ao longo do ano a mesma cobertura (em meses de producao) que o estoque tem hoje. A serie fecha no saldo atual, nunca fica negativa, e cada mes abre com o suficiente para a producao vendida naquele mes.",
+      ];
+      const comResiduo = linhas.filter((l: any) => l.residuo > EPS).length;
+      if (comResiduo) {
+        avisos.push(`${comResiduo} insumos tem residuo: mesmo sem nenhuma compra, o estoque teria de cair mais do que as vendas explicam. Essa diferenca saiu sem ser vendida nem lancada (perda, quebra ou consumo nao registrado).`);
+      }
+      const semConsumo = linhas.filter((l: any) => l.cobertura === 0).length;
+      if (semConsumo) avisos.push(`${semConsumo} insumos nao aparecem em receita de nenhum produto vendido no periodo — para esses nao ha como estimar consumo, e a serie so mostra o saldo de hoje.`);
+
+      res.json({ ano, meses, linhas, totais, avisos, estimativa: true });
+    } catch (e: any) {
+      console.error("[CONTABIL/INSUMOS-MENSAL]", e?.message);
+      res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────────────
