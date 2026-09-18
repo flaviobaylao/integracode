@@ -981,6 +981,92 @@ export function registerPurchaseRoutes(app: Express) {
     }
   });
 
+  // Reverter entrada de estoque de uma NF de compra (Flavio 18/set).
+  // Desfaz o que /process-stock (produtos) e /process-raw-materials (matéria-prima)
+  // gravaram, lança o movimento de saída correspondente e volta stockProcessed=false,
+  // para a NF poder ser processada de novo (ex.: mapeamento errado) ou cancelada.
+  // Idempotência: cada movimento de entrada estornado ganha '[estornado]' nas notes
+  // e o filtro ignora quem já tem o marcador.
+  app.post("/api/purchases/:id/revert-stock", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: any, res) => {
+    const EST = "[estornado]";
+    const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+    try {
+      const [invoice] = await db.select().from(purchaseInvoices).where(eq(purchaseInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ error: "NF de compra não encontrada" });
+      if (!invoice.stockProcessed) return res.status(400).json({ error: "A entrada de estoque desta NF não foi processada" });
+
+      const by = req.currentUser?.email || req.currentUser?.id || req.user?.email || "radar-compras";
+      const motivo = String(req.body?.reason || "").trim().slice(0, 300);
+      const rotulo = `Estorno entrada NF ${invoice.invoiceNumber || "SN"} - ${invoice.supplierName}${motivo ? ` (${motivo})` : ""} ${EST}`;
+      const notaEntradaMp = `Entrada NF ${invoice.invoiceNumber || "SN"} - ${invoice.supplierName}`;
+
+      const result = await db.transaction(async (tx) => {
+        const produtos: any[] = [];
+        const materias: any[] = [];
+
+        // 1) Produtos acabados (inventory_lots / inventory_movements, amarrados por source_id)
+        const movs = rowsOf(await tx.execute(sql`
+          SELECT id, product_id, instance_id, quantity FROM inventory_movements
+          WHERE source_type = 'invoice' AND source_id = ${invoice.id} AND movement_type = 'replenish'
+            AND COALESCE(notes, '') NOT LIKE ${"%" + EST + "%"}
+          FOR UPDATE
+        `));
+        for (const m of movs) {
+          const qty = Number(m.quantity) || 0;
+          const lot = rowsOf(await tx.execute(sql`
+            SELECT id, quantity, lot_number FROM inventory_lots
+            WHERE product_id = ${m.product_id} AND instance_id = ${m.instance_id} AND stock_type = 'in_use'
+            LIMIT 1 FOR UPDATE
+          `))[0];
+          if (!lot) throw new Error(`Lote do produto ${m.product_id} não encontrado para estornar`);
+          const prev = Number(lot.quantity) || 0;
+          const next = prev - qty;
+          await tx.execute(sql`UPDATE inventory_lots SET quantity = ${next}, updated_at = NOW() WHERE id = ${lot.id}`);
+          await tx.execute(sql`
+            INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, source_type, source_id, quantity, previous_quantity, new_quantity, lot_number, notes, created_by, created_at)
+            VALUES (gen_random_uuid(), ${lot.id}, ${m.product_id}, ${m.instance_id}, 'adjust', 'invoice', ${invoice.id}, ${qty}, ${prev}, ${next}, ${lot.lot_number}, ${rotulo}, ${by}, NOW())
+          `);
+          await tx.execute(sql`UPDATE inventory_movements SET notes = COALESCE(notes, '') || ${" " + EST} WHERE id = ${m.id}`);
+          produtos.push({ productId: m.product_id, quantity: qty, previousQuantity: prev, newQuantity: next, negativo: next < 0 });
+        }
+
+        // 2) Matéria-prima (raw_materials / raw_material_movements, amarrados pela nota da entrada)
+        const mpMovs = rowsOf(await tx.execute(sql`
+          SELECT id, raw_material_id, quantity, unit_cost FROM raw_material_movements
+          WHERE movement_type = 'entrada_compra' AND notes = ${notaEntradaMp}
+          FOR UPDATE
+        `));
+        for (const m of mpMovs) {
+          const qty = Number(m.quantity) || 0;
+          const cur = rowsOf(await tx.execute(sql`SELECT quantity, unit_cost FROM raw_materials WHERE id = ${m.raw_material_id} LIMIT 1 FOR UPDATE`))[0];
+          if (!cur) continue;
+          const prev = Number(cur.quantity) || 0;
+          const next = prev - qty;
+          await tx.execute(sql`UPDATE raw_materials SET quantity = ${next}, updated_at = NOW() WHERE id = ${m.raw_material_id}`);
+          await tx.execute(sql`
+            INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, notes, created_by, created_at, unit_cost)
+            VALUES (gen_random_uuid(), ${m.raw_material_id}, 'saida', ${qty}, ${prev}, ${next}, ${rotulo}, ${by}, NOW(), ${m.unit_cost})
+          `);
+          await tx.execute(sql`UPDATE raw_material_movements SET notes = notes || ${" " + EST} WHERE id = ${m.id}`);
+          materias.push({ rawMaterialId: m.raw_material_id, quantity: qty, previousQuantity: prev, newQuantity: next, negativo: next < 0 });
+        }
+
+        const carimbo = `[${agora().toLocaleString("pt-BR")}] Entrada de estoque estornada por ${by} (${produtos.length} produto(s), ${materias.length} matéria(s)-prima)${motivo ? ` — ${motivo}` : ""}`;
+        const [updatedInvoice] = await tx.update(purchaseInvoices)
+          .set({ stockProcessed: false, notes: invoice.notes ? `${invoice.notes}\n${carimbo}` : carimbo, updatedAt: agora() })
+          .where(eq(purchaseInvoices.id, invoice.id))
+          .returning();
+        return { invoice: updatedInvoice, produtos, materias };
+      });
+
+      console.log("[PURCHASES] Estorno de estoque NF", invoice.invoiceNumber, "produtos:", result.produtos.length, "MP:", result.materias.length, "por", by);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[PURCHASES] Revert stock error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // ===== Fornecedores — cadastro GERIDO no 2.0 (suppliers, sync do 1.0 cortado) =====
   const supDigits = (v: any) => (v == null ? "" : String(v)).replace(/\D/g, "");
