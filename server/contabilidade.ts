@@ -449,6 +449,11 @@ export function registerContabilidadeContabil(app: Express) {
                SUM(CASE WHEN l.unit_cost IS NULL THEN 0
                         ELSE l.quantity::numeric * l.unit_cost::numeric END)   AS valor_atual,
                SUM(CASE WHEN l.unit_cost IS NULL THEN l.quantity::numeric ELSE 0 END) AS qtd_sem_custo,
+               -- Quanto da valorizacao vem de CMV ESTIMADO (media do produto) em vez
+               -- de custo apurado do lote. Reportado a parte para a tela poder dizer
+               -- que parte do numero e estimativa.
+               SUM(CASE WHEN COALESCE(l.cmv_estimado, false) AND l.unit_cost IS NOT NULL
+                        THEN l.quantity::numeric * l.unit_cost::numeric ELSE 0 END) AS valor_estimado,
                -- CMV = CUSTO MEDIO PONDERADO (decisao do Flavio, 17/set/2026):
                -- soma(qtd x custo do lote) / soma(qtd dos lotes COM custo).
                -- Lotes sem unit_cost ficam de fora da media e sao reportados em qtdSemCusto.
@@ -488,7 +493,7 @@ export function registerContabilidadeContabil(app: Express) {
       type Linha = {
         produtoId: string; instanciaId: string; tipoEstoque: string;
         saldoInicial: number; entradas: number; saidas: number; ajustes: number;
-        saldoFinal: number; custoUnitario: number | null; valorFinal: number | null;
+        saldoFinal: number; custoUnitario: number | null; valorFinal: number | null; valorEstimado: number;
         qtdSemCusto: number; movimentos: number; baixaNaoRegistrada: number;
       };
       const mapa = new Map<string, Linha>();
@@ -498,7 +503,7 @@ export function registerContabilidadeContabil(app: Express) {
         if (!l) {
           l = { produtoId: p, instanciaId: i, tipoEstoque: t || "in_use", saldoInicial: 0,
                 entradas: 0, saidas: 0, ajustes: 0, saldoFinal: 0, custoUnitario: null,
-                valorFinal: null, qtdSemCusto: 0, movimentos: 0, baixaNaoRegistrada: 0 };
+                valorFinal: null, qtdSemCusto: 0, valorEstimado: 0, movimentos: 0, baixaNaoRegistrada: 0 };
           mapa.set(k, l);
         }
         return l;
@@ -509,6 +514,7 @@ export function registerContabilidadeContabil(app: Express) {
         l.saldoFinal = num(a.qtd_atual);
         l.custoUnitario = a.custo_unit === null || a.custo_unit === undefined ? null : num(a.custo_unit);
         l.qtdSemCusto = num(a.qtd_sem_custo);
+        l.valorEstimado = num(a.valor_estimado);
       }
 
       const limiteFim = new Date(fim + "T23:59:59.999Z").getTime();
@@ -618,9 +624,10 @@ export function registerContabilidadeContabil(app: Express) {
         t.saldoInicial += l.saldoInicial; t.entradas += l.entradas; t.saidas += l.saidas;
         t.ajustes += l.ajustes; t.saldoFinal += l.saldoFinal;
         t.valorFinal += l.valorFinal || 0; t.qtdSemCusto += l.qtdSemCusto;
+        t.valorEstimado += l.valorEstimado || 0;
         t.baixaNaoRegistrada += l.baixaNaoRegistrada;
         return t;
-      }, { saldoInicial: 0, entradas: 0, saidas: 0, ajustes: 0, saldoFinal: 0, valorFinal: 0, qtdSemCusto: 0, baixaNaoRegistrada: 0 });
+      }, { saldoInicial: 0, entradas: 0, saidas: 0, ajustes: 0, saldoFinal: 0, valorFinal: 0, qtdSemCusto: 0, valorEstimado: 0, baixaNaoRegistrada: 0 });
 
       res.json({
         periodo: { inicio, fim },
@@ -634,6 +641,13 @@ export function registerContabilidadeContabil(app: Express) {
           : null,
         aviso: totais.qtdSemCusto > 0
           ? `${Math.round(totais.qtdSemCusto)} unidades estao sem custo conhecido (lote sem unit_cost) e nao entram na valorizacao.`
+          : null,
+        // Parte da valorizacao que repousa em CMV ESTIMADO (media ponderada do
+        // produto), aplicado a lotes antigos de filial cuja origem nao existe mais.
+        // Vai separado do total para ninguem ler estimativa como custo apurado.
+        valorEstimado: Number(totais.valorEstimado.toFixed(2)),
+        avisoEstimativa: totais.valorEstimado > 0.009
+          ? `R$ ${totais.valorEstimado.toFixed(2)} da valorizacao vem de CMV ESTIMADO (media ponderada do produto), nao do custo apurado do lote. Sao lotes antigos de filial cujo lote de origem nao existe mais. Informe o custo real do lote para substituir a estimativa.`
           : null,
       });
     } catch (e: any) {
