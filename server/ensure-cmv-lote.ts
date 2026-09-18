@@ -17,7 +17,7 @@ import { sql } from "drizzle-orm";
  *
  * Idempotente: roda no boot, so cria o que falta e so preenche linha com custo nulo.
  */
-export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?: number; repaired?: number; error?: string }> {
+export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?: number; repaired?: number; herdados?: number; error?: string }> {
   try {
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(14,4)`);
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS total_cost NUMERIC(14,2)`);
@@ -115,10 +115,49 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
       console.warn('⚠️ [CMV-LOTE] reparo unico nao aplicado:', e?.message || e);
     }
 
+    // ── CMV DA FILIAL = CMV DA IND (Flavio, 18/set/2026) ────────────────────
+    // Lotes que chegaram nas filiais por transferencia antes de 18/set nasceram sem
+    // custo, porque a entrada espelho so copiava o CMV quando a linha do pedido o
+    // trazia. Resultado: BSB e GYN com estoque subavaliado e vendendo sem saber a
+    // margem.
+    //
+    // Mesmo numero de lote = mesma mercadoria, mesma OP, mesmo custo. Entao aqui o
+    // lote sem custo herda o custo de um lote IRMAO (mesmo produto, mesmo numero de
+    // lote, em outra instancia) que tenha CMV.
+    //
+    // Roda sempre, mas SO onde unit_cost IS NULL: nunca sobrescreve um custo ja
+    // gravado, seja ele da producao ou uma correcao feita a mao. Por isso e seguro
+    // em todo boot, e nao precisa de marca em system_settings.
+    let herdados = 0;
+    try {
+      const her: any = await db.execute(sql`
+        UPDATE inventory_lots destino
+           SET unit_cost  = origem.unit_cost,
+               total_cost = ROUND(origem.unit_cost * COALESCE(destino.quantity, 0), 2),
+               updated_at = now()
+          FROM (
+            SELECT DISTINCT ON (product_id, TRIM(lot_number))
+                   product_id, TRIM(lot_number) AS lote, instance_id, unit_cost
+              FROM inventory_lots
+             WHERE unit_cost IS NOT NULL AND unit_cost > 0
+               AND lot_number IS NOT NULL AND TRIM(lot_number) <> ''
+             ORDER BY product_id, TRIM(lot_number), production_order_id NULLS LAST, updated_at DESC
+          ) origem
+         WHERE destino.unit_cost IS NULL
+           AND destino.product_id = origem.product_id
+           AND TRIM(destino.lot_number) = origem.lote
+           AND destino.instance_id IS DISTINCT FROM origem.instance_id
+        RETURNING destino.id`);
+      herdados = (her.rows || []).length;
+      if (herdados) console.log(`✅ [CMV-LOTE] ${herdados} lote(s) de filial herdaram o CMV do lote de origem`);
+    } catch (e: any) {
+      console.warn('⚠️ [CMV-LOTE] heranca de CMV entre filiais nao aplicada:', e?.message || e);
+    }
+
     const backfilled = (fill.rows || []).length;
     console.log(`✅ [CMV-LOTE] colunas ok — vinculados ${(link.rows || []).length} lote(s) a ordens, `
-      + `CMV preenchido em ${backfilled}, reparados ${repaired}`);
-    return { ok: true, backfilled, repaired };
+      + `CMV preenchido em ${backfilled}, reparados ${repaired}, herdados por filial ${herdados}`);
+    return { ok: true, backfilled, repaired, herdados };
   } catch (e: any) {
     console.warn('⚠️ [CMV-LOTE] ensureCmvLoteColumns falhou:', e?.message || e);
     return { ok: false, error: String(e?.message || e) };
