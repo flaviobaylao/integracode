@@ -36,6 +36,8 @@ export default function ContabilidadeContabil() {
   const [busca, setBusca] = useState("");
   const [buscaAplicada, setBuscaAplicada] = useState("");
   const [mensal, setMensal] = useState(false);
+  // Duas visões: produto acabado (inventory_lots) e insumo de produção (raw_materials).
+  const [visao, setVisao] = useState<"produtos" | "insumos">("produtos");
 
   const params = new URLSearchParams({ inicio, fim });
   if (instancias.length) params.set("instancias", instancias.join(","));
@@ -51,14 +53,25 @@ export default function ContabilidadeContabil() {
     },
   });
 
-  const linhas: any[] = razao.data?.linhas || [];
-  const t = razao.data?.totais;
+  const insumos = useQuery<any>({
+    queryKey: ["/api/contabilidade/contabil/insumos", params.toString()],
+    enabled: visao === "insumos",
+    queryFn: async () => {
+      const r = await fetch(`/api/contabilidade/contabil/insumos?${params.toString()}`, { credentials: "include" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `HTTP ${r.status}`);
+      return r.json();
+    },
+  });
+
+  const fonte = visao === "insumos" ? insumos : razao;
+  const linhas: any[] = fonte.data?.linhas || [];
+  const t = fonte.data?.totais;
 
   // Inventário mensal: o backend devolve um fechamento por mês com os saldos por
   // (produto, instância). Aqui viramos isso em uma linha por item e uma coluna por mês.
   const meses: string[] = (razao.data?.mensal || []).map((m: any) => m.fechamento);
   const linhasMensais = (() => {
-    if (!mensal || !meses.length) return [] as any[];
+    if (!mensal || visao !== "produtos" || !meses.length) return [] as any[];
     const idx = new Map<string, any>();
     for (const l of linhas) idx.set(`${l.produtoId}|${l.instanciaId}|${l.tipoEstoque}`, l);
     const mapa = new Map<string, any>();
@@ -77,16 +90,16 @@ export default function ContabilidadeContabil() {
   })();
 
   const baixarCsv = () => {
-    const cab = ["Instancia", "Codigo", "Produto", "Tipo", "SaldoInicial", "Entradas", "Saidas", "Ajustes", "SaldoFinal", "CustoUnitario", "ValorFinal"];
+    const cab = ["Instancia", "Codigo", "Item", "Tipo", "SaldoInicial", "Entradas", "Saidas", "Ajustes", "BaixaNaoRegistrada", "SaldoFinal", "ConsumoEsperado", "CustoUnitario", "ValorFinal"];
     const corpo = linhas.map((l) => [
-      l.instancia, l.codigo || "", l.produto, l.tipoEstoque,
-      l.saldoInicial, l.entradas, l.saidas, l.ajustes, l.saldoFinal,
-      l.custoUnitario ?? "", l.valorFinal ?? "",
+      l.instancia, l.codigo || "", l.produto, visao === "insumos" ? (l.categoria || "insumo") : l.tipoEstoque,
+      l.saldoInicial, l.entradas, l.saidas, l.ajustes ?? "", l.baixaNaoRegistrada ?? 0, l.saldoFinal,
+      l.consumoEsperado ?? "", l.custoUnitario ?? "", l.valorFinal ?? "",
     ].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";"));
     const blob = new Blob(["﻿" + [cab.join(";"), ...corpo].join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `razao-estoque-${inicio}-a-${fim}.csv`;
+    a.download = `razao-${visao}-${inicio}-a-${fim}.csv`;
     a.click();
   };
 
@@ -95,13 +108,25 @@ export default function ContabilidadeContabil() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Contábil</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Razão de estoque por período: insumos, produtos e demais itens de cada instância, com saldo inicial, movimentação e valorização.
+          Razão de estoque por período, de produtos acabados e de insumos de produção, com saldo inicial, movimentação, valorização e a reconstrução que impede saldo negativo.
         </p>
       </div>
 
       <Card>
         <CardContent className="p-4 space-y-3">
           <FiltroInstancia valor={instancias} aoMudar={setInstancias} />
+          <div className="flex gap-1">
+            {([["produtos", "Produtos acabados"], ["insumos", "Insumos de produção"]] as const).map(([k, rotulo]) => (
+              <button
+                key={k}
+                onClick={() => setVisao(k as any)}
+                className={`px-3 py-2 rounded-md text-sm border ${visao === k ? "bg-slate-800 text-white border-slate-800" : "bg-white border-gray-300 hover:bg-gray-50"}`}
+                data-testid={`contabil-visao-${k}`}
+              >
+                {rotulo}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap items-end gap-3">
             <SeletorMes
               inicio={inicio}
@@ -128,28 +153,33 @@ export default function ContabilidadeContabil() {
             </div>
             <Button onClick={() => setBuscaAplicada(busca)} data-testid="contabil-aplicar">Aplicar</Button>
             <Button variant="outline" onClick={baixarCsv} disabled={!linhas.length} data-testid="contabil-csv">Baixar CSV</Button>
-            <label className="flex items-center gap-2 text-sm text-gray-700 select-none">
-              <input type="checkbox" checked={mensal} onChange={(e) => setMensal(e.target.checked)} data-testid="contabil-mensal" />
-              Inventário mensal (fechamento de cada mês)
-            </label>
+            {visao === "produtos" && (
+              <label className="flex items-center gap-2 text-sm text-gray-700 select-none">
+                <input type="checkbox" checked={mensal} onChange={(e) => setMensal(e.target.checked)} data-testid="contabil-mensal" />
+                Inventário mensal (fechamento de cada mês)
+              </label>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {razao.data?.aviso && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-2" data-testid="contabil-aviso">
-          {razao.data.aviso}
-        </div>
-      )}
+      {[fonte.data?.avisoReconstrucao, fonte.data?.aviso, ...(fonte.data?.avisos || [])]
+        .filter(Boolean)
+        .map((a: string, k: number) => (
+          <div key={k} className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-2" data-testid="contabil-aviso">
+            {a}
+          </div>
+        ))}
 
       {t && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2" data-testid="contabil-totais">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-2" data-testid="contabil-totais">
           {[
             ["Itens", `${t.itens}`],
             ["Saldo inicial", n4(t.saldoInicial)],
             ["Entradas", n4(t.entradas)],
             ["Saídas", n4(t.saidas)],
             ["Saldo final", n4(t.saldoFinal)],
+            ["Baixa não registrada", n4(t.baixaNaoRegistrada || 0)],
             ["Valorização", `R$ ${brl(t.valorFinal)}`],
           ].map(([r, v]) => (
             <div key={r} className="bg-white border rounded-lg px-3 py-2">
@@ -194,13 +224,16 @@ export default function ContabilidadeContabil() {
 
       <Card>
         <CardContent className="p-0 overflow-x-auto">
-          {razao.isLoading && <div className="p-6 text-sm text-gray-500">Reconstruindo o razão de estoque…</div>}
-          {razao.error && <div className="p-6 text-sm text-red-600">{String((razao.error as any).message)}</div>}
-          {!razao.isLoading && !razao.error && (
+          {fonte.isLoading && <div className="p-6 text-sm text-gray-500">Reconstruindo o razão de estoque…</div>}
+          {fonte.error && <div className="p-6 text-sm text-red-600">{String((fonte.error as any).message)}</div>}
+          {!fonte.isLoading && !fonte.error && (
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-600">
                 <tr className="text-left">
-                  {["Instância", "Código", "Produto", "Tipo", "Saldo inicial", "Entradas", "Saídas", "Ajustes", "Saldo final", "Custo unit.", "Valor final"].map((h) => (
+                  {(visao === "insumos"
+                    ? ["Instância", "Código", "Insumo", "Categoria", "Un.", "Saldo inicial", "Entradas", "Saídas", "Baixa não registrada", "Saldo final", "Consumo esperado", "Custo unit.", "Valor final"]
+                    : ["Instância", "Código", "Produto", "Tipo", "Saldo inicial", "Entradas", "Saídas", "Ajustes", "Baixa não registrada", "Saldo final", "Custo unit.", "Valor final"]
+                  ).map((h) => (
                     <th key={h} className="px-2 py-2 font-medium whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -211,18 +244,35 @@ export default function ContabilidadeContabil() {
                     <td className="px-2 py-1.5 whitespace-nowrap">{l.instancia}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{l.codigo || "—"}</td>
                     <td className="px-2 py-1.5 max-w-[260px] truncate" title={l.produto}>{l.produto}</td>
-                    <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{l.tipoEstoque === "blocked" ? "Bloqueado" : "Em uso"}</td>
+                    {visao === "insumos" ? (
+                      <>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{l.categoria || "—"}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{l.unidade}</td>
+                      </>
+                    ) : (
+                      <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{l.tipoEstoque === "blocked" ? "Bloqueado" : "Em uso"}</td>
+                    )}
                     <td className="px-2 py-1.5 text-right">{n4(l.saldoInicial)}</td>
                     <td className="px-2 py-1.5 text-right text-emerald-700">{n4(l.entradas)}</td>
                     <td className="px-2 py-1.5 text-right text-rose-700">{n4(l.saidas)}</td>
-                    <td className="px-2 py-1.5 text-right">{n4(l.ajustes)}</td>
+                    {visao === "produtos" && <td className="px-2 py-1.5 text-right">{n4(l.ajustes)}</td>}
+                    <td className="px-2 py-1.5 text-right" title="Diferença entre os movimentos lançados e o saldo de hoje: saiu sem ser registrada.">
+                      {l.baixaNaoRegistrada > 0
+                        ? <span className="text-amber-700 font-medium">{n4(l.baixaNaoRegistrada)}</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
                     <td className="px-2 py-1.5 text-right font-medium">{n4(l.saldoFinal)}</td>
+                    {visao === "insumos" && (
+                      <td className="px-2 py-1.5 text-right text-gray-600" title="Quanto as vendas do período consumiriam deste insumo, pela ficha técnica.">
+                        {l.consumoEsperado > 0 ? n4(l.consumoEsperado) : <span className="text-gray-300">—</span>}
+                      </td>
+                    )}
                     <td className="px-2 py-1.5 text-right">{l.custoUnitario === null ? <span className="text-gray-400">—</span> : brl(l.custoUnitario)}</td>
                     <td className="px-2 py-1.5 text-right">{l.valorFinal === null ? <span className="text-gray-400">—</span> : brl(l.valorFinal)}</td>
                   </tr>
                 ))}
                 {linhas.length === 0 && (
-                  <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-500">Nenhum item de estoque com esses filtros.</td></tr>
+                  <tr><td colSpan={13} className="px-4 py-8 text-center text-gray-500">Nenhum item com esses filtros.</td></tr>
                 )}
               </tbody>
             </table>
