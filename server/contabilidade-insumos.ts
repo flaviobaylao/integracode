@@ -28,6 +28,7 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { reconstruirEstoque, type MovimentoRec } from "./reconstrucao-estoque";
+import { equivalentesInstancia } from "./resolver-instancia";
 
 const n = (v: any): number => {
   if (v === null || v === undefined || v === "") return 0;
@@ -56,7 +57,23 @@ export function registerContabilidadeInsumos(app: Express) {
       const instancias = listaDeIds(req.query.instancias);
       const busca = String(req.query.busca || "").trim().toLowerCase();
 
-      const filtro = instancias.length ? sql`AND m.instance_id = ANY(${arraySql(instancias)})` : sql``;
+      // ⚠️ raw_materials.instance_id esta NULL em producao (conferido 18/set): a
+      // instancia do insumo vive em raw_materials.instance_name ("IND"). Filtrar so
+      // pelo UUID nao achava nada e a aba Contabil mostrava "Nenhum insumo cadastrado
+      // para esta instancia" mesmo com 38 insumos cadastrados.
+      //
+      // Entao o filtro aceita as duas formas: o UUID em instance_id OU o nome/apelido
+      // em instance_name. `equivalentes` traz id, name e display_name de cada
+      // instancia pedida, entao qualquer uma das convencoes casa.
+      const equivalentes: string[] = [];
+      for (const i of instancias) {
+        const eq = await equivalentesInstancia(i);
+        if (eq) equivalentes.push(...eq);
+      }
+      const filtro = equivalentes.length
+        ? sql`AND (m.instance_id = ANY(${arraySql(equivalentes)})
+                   OR UPPER(TRIM(COALESCE(m.instance_name, ''))) = ANY(${arraySql(equivalentes.map((e) => e.toUpperCase()))}))`
+        : sql``;
 
       // Cadastro + saldo de hoje.
       const rMat: any = await db.execute(sql`
