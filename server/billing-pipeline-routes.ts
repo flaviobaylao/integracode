@@ -2701,6 +2701,32 @@ async function validateStockForBilling(item: any): Promise<{ valid: boolean; sho
 // aquele destino, SOMA nele em vez de criar um segundo. Duas transferencias do mesmo
 // lote em dias diferentes tem de convergir num saldo so.
 // ===========================================================================
+// CMV do lote que SAIU da origem, pelo numero do lote. Usado quando a linha da
+// transferencia nao trouxe o custo. Nao filtra por stock_type nem por is_active de
+// proposito: o lote de origem costuma estar zerado (ou ja desativado) no momento em
+// que a entrada no destino e processada, e o custo continua valendo.
+async function cmvDoLoteDeOrigem(productId: string, origemId: string | null, lotNumber: string): Promise<string | null> {
+  if (!productId || !origemId || !lotNumber) return null;
+  try {
+    const { db } = await import('./db');
+    const { sql } = await import('drizzle-orm');
+    const r: any = await db.execute(sql`
+      SELECT unit_cost FROM inventory_lots
+       WHERE product_id = ${productId}
+         AND instance_id = ${origemId}
+         AND TRIM(lot_number) = ${lotNumber}
+         AND unit_cost IS NOT NULL
+       ORDER BY updated_at DESC NULLS LAST
+       LIMIT 1`);
+    const v = ((r.rows || r)[0] || {}).unit_cost;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n.toFixed(4) : null;
+  } catch (e: any) {
+    console.warn('[TRANSFER] falha ao buscar CMV do lote de origem:', e?.message);
+    return null;
+  }
+}
+
 // exportada para o harness server/__tests__/harness-mirror.ts
 export async function mirrorTransferToDestination(item: any, user: any): Promise<void> {
   if (String(item?.operationType || '').toLowerCase() !== 'transferencia') return;
@@ -2729,16 +2755,41 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
     });
     const mesmoLote = existentes.find((l: any) => String(l.lotNumber).trim() === lotNumber);
 
-    const unitCost = p.cmvUnit != null ? Number(p.cmvUnit).toFixed(4) : null;
+    // CMV DA FILIAL = CMV DA IND (regra do Flavio, 18/set/2026). O custo de
+    // producao nao muda ao atravessar a rua, entao o lote no destino nasce com
+    // exatamente o custo do lote de origem.
+    //
+    // O pedido de transferencia (tela TRF) ja manda `cmvUnit` na linha. Mas nem
+    // toda NF de transferencia nasce ali: quando a linha vem sem CMV, o destino
+    // ficava com custo nulo e a filial vendia sem saber a margem — era esse o
+    // buraco. Aqui, faltando `cmvUnit`, buscamos o custo no PROPRIO lote de origem
+    // (mesmo numero de lote, instancia de origem). Se nem isso existir, fica null
+    // mesmo: a tela mostra "—", que e honesto, em vez de um zero que parece custo.
+    let unitCost = p.cmvUnit != null ? Number(p.cmvUnit).toFixed(4) : null;
+    if (!unitCost) {
+      unitCost = await cmvDoLoteDeOrigem(p.id, item.omieInstanceId, lotNumber);
+      if (unitCost) {
+        console.log(`🔁 [TRANSFER] ${lotNumber}: CMV ${unitCost} herdado do lote de origem (linha veio sem cmvUnit)`);
+      } else {
+        console.warn(`⚠️ [TRANSFER] ${lotNumber}: sem CMV na linha e sem CMV no lote de origem — destino fica sem custo`);
+      }
+    }
 
     if (mesmoLote) {
       const prev = parseFloat(mesmoLote.quantity?.toString() || '0');
       const novo = prev + qty;
       await storage.updateInventoryLot(mesmoLote.id, {
         quantity: novo.toFixed(4),
-        // So preenche o custo se o lote de destino ainda nao tiver um. Sobrescrever
-        // apagaria a media de uma remessa anterior com preco diferente.
-        ...(unitCost && !mesmoLote.unitCost ? { unitCost } : {}),
+        // Mesmo numero de lote = mesma mercadoria fisica, produzida na mesma OP,
+        // logo o mesmo custo: nao ha media a preservar aqui. Preenchemos quando
+        // falta e corrigimos quando diverge, para o lote no destino ficar igual ao
+        // da origem, que e a regra. O total acompanha o novo saldo.
+        ...(unitCost
+          ? {
+              unitCost,
+              totalCost: (Number(unitCost) * novo).toFixed(2),
+            }
+          : {}),
       } as any);
       await storage.createInventoryMovement({
         lotId: mesmoLote.id,
