@@ -17,12 +17,14 @@ import { sql } from "drizzle-orm";
  *
  * Idempotente: roda no boot, so cria o que falta e so preenche linha com custo nulo.
  */
-export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?: number; repaired?: number; herdados?: number; error?: string }> {
+export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?: number; repaired?: number; herdados?: number; estimados?: number; error?: string }> {
   try {
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(14,4)`);
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS total_cost NUMERIC(14,2)`);
     await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS production_order_id VARCHAR`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_inventory_lots_prod_order ON inventory_lots (production_order_id)`);
+    // true = unit_cost e uma ESTIMATIVA (media do produto), nao o custo daquele lote.
+    await db.execute(sql`ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS cmv_estimado BOOLEAN NOT NULL DEFAULT false`);
 
     // ── Backfill dos lotes que ja existem ────────────────────────────────────
     // O vinculo lote -> ordem NAO vem do texto de notes (fragil: "Produzido via
@@ -128,24 +130,30 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
     // Roda sempre, mas SO onde unit_cost IS NULL: nunca sobrescreve um custo ja
     // gravado, seja ele da producao ou uma correcao feita a mao. Por isso e seguro
     // em todo boot, e nao precisa de marca em system_settings.
+    // A comparacao normaliza MAIUSCULAS e espacos: em producao convivem "H180626" e
+    // "h180626" para o mesmo lote, e sem LOWER() eles nao casavam.
     let herdados = 0;
     try {
       const her: any = await db.execute(sql`
         UPDATE inventory_lots destino
            SET unit_cost  = origem.unit_cost,
                total_cost = ROUND(origem.unit_cost * COALESCE(destino.quantity, 0), 2),
+               cmv_estimado = false,
                updated_at = now()
           FROM (
-            SELECT DISTINCT ON (product_id, TRIM(lot_number))
-                   product_id, TRIM(lot_number) AS lote, instance_id, unit_cost
+            SELECT DISTINCT ON (product_id, LOWER(REPLACE(TRIM(lot_number), ' ', '')))
+                   product_id,
+                   LOWER(REPLACE(TRIM(lot_number), ' ', '')) AS lote,
+                   instance_id, unit_cost
               FROM inventory_lots
              WHERE unit_cost IS NOT NULL AND unit_cost > 0
                AND lot_number IS NOT NULL AND TRIM(lot_number) <> ''
-             ORDER BY product_id, TRIM(lot_number), production_order_id NULLS LAST, updated_at DESC
+             ORDER BY product_id, LOWER(REPLACE(TRIM(lot_number), ' ', '')),
+                      production_order_id NULLS LAST, updated_at DESC
           ) origem
          WHERE destino.unit_cost IS NULL
            AND destino.product_id = origem.product_id
-           AND TRIM(destino.lot_number) = origem.lote
+           AND LOWER(REPLACE(TRIM(destino.lot_number), ' ', '')) = origem.lote
            AND destino.instance_id IS DISTINCT FROM origem.instance_id
         RETURNING destino.id`);
       herdados = (her.rows || []).length;
@@ -154,10 +162,53 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
       console.warn('⚠️ [CMV-LOTE] heranca de CMV entre filiais nao aplicada:', e?.message || e);
     }
 
+    // ── CMV ESTIMADO (Flavio, 18/set/2026, opcao "b") ───────────────────────
+    // A heranca acima resolve o lote que ainda tem irmao na origem. Mas os lotes
+    // antigos das filiais (maio/junho) nao tem: a linha correspondente na IND ja
+    // sumiu. Conferido em producao: 23 lotes com saldo, 7.368 unidades, NENHUM com
+    // irmao — nem com as ordens de producao.
+    //
+    // Entao esses recebem uma ESTIMATIVA: o custo medio ponderado daquele produto,
+    // calculado sobre os lotes que TEM custo conhecido. A ponderacao usa a
+    // quantidade produzida de cada lote, que se recupera de total_cost / unit_cost
+    // (unit_cost foi definido como total_cost / quantidade produzida). E a mesma
+    // media ponderada que o modulo contabil usa para CMV.
+    //
+    // ⚠️ Estimativa NAO e custo. Por isso grava cmv_estimado = true, e a tela mostra
+    // esses lotes marcados. Quem quiser o numero real informa o custo do lote na mao,
+    // e a partir dai cmv_estimado vira false e esta rotina nunca mais toca nele
+    // (so mexe onde unit_cost IS NULL).
+    let estimados = 0;
+    try {
+      const est: any = await db.execute(sql`
+        UPDATE inventory_lots destino
+           SET unit_cost    = media.custo,
+               total_cost   = ROUND(media.custo * COALESCE(destino.quantity, 0), 2),
+               cmv_estimado = true,
+               updated_at   = now()
+          FROM (
+            SELECT product_id,
+                   SUM(total_cost) / NULLIF(SUM(total_cost / unit_cost), 0) AS custo
+              FROM inventory_lots
+             WHERE unit_cost IS NOT NULL AND unit_cost > 0
+               AND total_cost IS NOT NULL AND total_cost > 0
+               AND COALESCE(cmv_estimado, false) = false
+             GROUP BY product_id
+          ) media
+         WHERE destino.unit_cost IS NULL
+           AND destino.product_id = media.product_id
+           AND media.custo IS NOT NULL AND media.custo > 0
+        RETURNING destino.id`);
+      estimados = (est.rows || []).length;
+      if (estimados) console.log(`✅ [CMV-LOTE] ${estimados} lote(s) receberam CMV ESTIMADO (media ponderada do produto)`);
+    } catch (e: any) {
+      console.warn('⚠️ [CMV-LOTE] estimativa de CMV nao aplicada:', e?.message || e);
+    }
+
     const backfilled = (fill.rows || []).length;
     console.log(`✅ [CMV-LOTE] colunas ok — vinculados ${(link.rows || []).length} lote(s) a ordens, `
-      + `CMV preenchido em ${backfilled}, reparados ${repaired}, herdados por filial ${herdados}`);
-    return { ok: true, backfilled, repaired, herdados };
+      + `CMV preenchido em ${backfilled}, reparados ${repaired}, herdados por filial ${herdados}, estimados ${estimados}`);
+    return { ok: true, backfilled, repaired, herdados, estimados };
   } catch (e: any) {
     console.warn('⚠️ [CMV-LOTE] ensureCmvLoteColumns falhou:', e?.message || e);
     return { ok: false, error: String(e?.message || e) };
