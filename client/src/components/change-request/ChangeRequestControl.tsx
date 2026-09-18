@@ -763,7 +763,7 @@ function PendenciaCard({ r, date, canRemove }: { r: any; date: string; canRemove
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={replyMut.isPending || !text.trim()} onClick={() => replyMut.mutate()} data-testid={`inbox-pendencia-send-${r.id}`}>
             {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enviar resposta"}
           </Button>
-          <span className="text-[11px] text-muted-foreground">Ao enviar, o card recolhe e o admin recebe no Inbox.</span>
+          <span className="text-[11px] text-muted-foreground">Ao enviar, o card recolhe e o admin recebe no Inbox. Sem resposta, a rota não fecha.</span>
         </div>
       </div>
     </div>
@@ -847,7 +847,7 @@ export function InboxPendenciasBox({ sellerId, date, excludeKeys, canRemove }: {
         {pendentes.map((r) => <PendenciaCard key={r.id} r={r} date={date} canRemove={canRemove} />)}
         {respondidas.map((r) => <RespondidaLinha key={r.id} r={r} />)}
       </div>
-      <div className="text-[11px] text-muted-foreground">Estes cards não entram na contagem da rota nem impedem o Fechar Rota. Sem resposta, voltam amanhã.</div>
+      <div className="text-[11px] text-muted-foreground">Estes cards não entram na contagem da rota, mas precisam ser respondidos para fechar a rota do dia.</div>
     </div>
   );
 }
