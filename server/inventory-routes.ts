@@ -236,6 +236,9 @@ export function registerInventoryRoutes(app: Express) {
           // dimensionar a transferencia. totalCost e o custo da producao inteira e
           // nao acompanha o consumo — os tres sao coisas diferentes de proposito.
           cmvUnit: unit,
+          // true = o CMV deste lote e estimado (media ponderada do produto), nao o
+          // custo real daquele lote. A tela marca; a valorizacao conta a parte.
+          cmvEstimado: unit != null ? !!(lot as any).cmvEstimado : false,
           cmvTotalProduzido: lot.totalCost != null ? Number(lot.totalCost) : null,
           cmvStock: unit != null ? Number((unit * qty).toFixed(2)) : null,
           productionOrderNumber: lot.productionOrderId ? (opMap.get(String(lot.productionOrderId)) || null) : null,
@@ -258,6 +261,9 @@ export function registerInventoryRoutes(app: Express) {
         // em vez de apresentar um total que finge estar completo.
         valorEmEstoque: Number(valorEmEstoque.toFixed(2)),
         lotesSemCmv: summary.filter((l: any) => l.cmvUnit == null).length,
+        // Quanto da valorizacao acima repousa em estimativa, e nao em custo apurado.
+        lotesCmvEstimado: summary.filter((l: any) => l.cmvEstimado).length,
+        valorEstimado: Number(summary.reduce((s2: number, l: any) => s2 + (l.cmvEstimado ? (l.cmvStock || 0) : 0), 0).toFixed(2)),
         lotesTravados: summary.filter((l: any) => l.transferLock).length,
       });
     } catch (error: any) {
