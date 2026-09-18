@@ -2131,6 +2131,14 @@ function EstoqueTab() {
                   {l.cmvUnit != null ? (
                     <>
                       {fmtBRL(l.cmvUnit)}
+                      {l.cmvEstimado && (
+                        <Badge
+                          className="ml-1 bg-amber-100 text-amber-800 hover:bg-amber-100 align-middle text-[10px] px-1 py-0"
+                          title="CMV estimado pela media ponderada do produto — nao e o custo apurado deste lote. Informe o custo real para substituir."
+                        >
+                          est.
+                        </Badge>
+                      )}
                       {l.productionOrderNumber && (
                         <span className="block text-[10px] text-gray-400 font-mono">{l.productionOrderNumber}</span>
                       )}
