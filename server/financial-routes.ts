@@ -4333,8 +4333,15 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
 
   app.get('/api/financial/sped-exports', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
-      const instanceId = req.query.instanceId as string | undefined;
-      const exports = await storage.getSpedExports(instanceId);
+      // sped_exports guarda o que a tela mandou na época: os registros antigos têm
+      // o apelido ("BSB") e os novos têm o UUID. Filtramos aqui, aceitando os dois,
+      // para que o histórico não desapareça da lista.
+      const { equivalentesInstancia } = await import('./resolver-instancia');
+      const equivalentes = await equivalentesInstancia(req.query.instanceId);
+      const todos = await storage.getSpedExports();
+      const exports = !equivalentes || !equivalentes.length
+        ? todos
+        : todos.filter((e: any) => equivalentes.includes(String(e.omieInstanceId || '')));
       res.json(exports);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -4344,22 +4351,34 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   app.post('/api/financial/sped-exports/generate', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = actorOf(req);
-      const { type, periodStart, periodEnd, omieInstanceId } = req.body;
+      const { type, periodStart, periodEnd } = req.body;
 
       if (!type || !periodStart || !periodEnd) {
         return res.status(400).json({ message: 'Tipo, período inicial e final são obrigatórios' });
       }
 
+      // A tela manda o apelido ("BSB", "GYN"), mas fiscal_invoices.omie_instance_id
+      // guarda o UUID. Sem normalizar, o filtro não casava com nada e o SPED saía
+      // vazio sem erro nenhum. Filtramos por todos os valores equivalentes, e se o
+      // valor não corresponder a instância alguma recusamos, em vez de gerar um
+      // arquivo silenciosamente errado.
+      const { equivalentesInstancia, resolverInstanciaId } = await import('./resolver-instancia');
+      const equivalentes = await equivalentesInstancia(req.body.omieInstanceId);
+      if (equivalentes === null) {
+        return res.status(400).json({ message: `Instância "${req.body.omieInstanceId}" não encontrada.` });
+      }
+      const omieInstanceId = await resolverInstanciaId(req.body.omieInstanceId);
+
       const { db } = await import('./db');
       const { fiscalInvoices, fiscalInvoiceItems } = await import('@shared/schema');
-      const { eq, and, gte, lte, desc } = await import('drizzle-orm');
+      const { eq, and, gte, lte, desc, inArray } = await import('drizzle-orm');
 
       const conditions: any[] = [
         gte(fiscalInvoices.emissionDate, new Date(periodStart)),
         lte(fiscalInvoices.emissionDate, new Date(periodEnd)),
       ];
-      if (omieInstanceId) {
-        conditions.push(eq(fiscalInvoices.omieInstanceId, omieInstanceId));
+      if (equivalentes.length) {
+        conditions.push(inArray(fiscalInvoices.omieInstanceId, equivalentes));
       }
 
       const invoices = await db.select().from(fiscalInvoices)
@@ -4373,14 +4392,19 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         allItems.push(...items.map(item => ({ ...item, invoice: inv })));
       }
 
+      // receivables/payables continuam recebendo o valor como veio da tela: essas
+      // tabelas são antigas e gravam a instância pelo apelido. Mexer nelas aqui
+      // seria trocar um filtro que funciona por um que eu não consigo verificar.
+      const instanciaLegado = req.body.omieInstanceId || undefined;
+
       const receivablesList = await storage.getReceivables({
-        instanceId: omieInstanceId,
+        instanceId: instanciaLegado,
         startDate: new Date(periodStart),
         endDate: new Date(periodEnd),
       });
 
       const payablesList = await storage.getPayables({
-        instanceId: omieInstanceId,
+        instanceId: instanciaLegado,
         startDate: new Date(periodStart),
         endDate: new Date(periodEnd),
       });
