@@ -578,7 +578,10 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       stageHistory: [{
         stage: stage,
         changedAt: paredeBR(salesCard.completedDate ? new Date(salesCard.completedDate) : agora()),
-        changedBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`
+        // A 1ª entrada do histórico ("Pedido"/"Agendado") é a IMPLANTAÇÃO do pedido — deve mostrar
+        // QUEM implantou (o vendedor/telemarketing atribuído), não "auto (system)". Cai no rótulo
+        // automático só se não houver vendedor resolvido.
+        changedBy: pedidoSellerName ? `${pedidoSellerName} (implantação)` : `auto (${_cbe || internalBillingActivatedBy || 'system'})`
       }],
       createdBy: `auto (${_cbe || internalBillingActivatedBy || 'system'})`,
       // DATA DE REGISTRO do pedido = quando a VENDA foi registrada (completedDate do sales_card).
