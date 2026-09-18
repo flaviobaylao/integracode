@@ -8,6 +8,7 @@ import type { Express } from "express";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { reconstruirEstoque, type MovimentoRec } from "./reconstrucao-estoque";
 import XLSX from "xlsx";
 
 type AbaExcel = { nome: string; linhas: Record<string, any>[]; opcoes?: any };
@@ -488,7 +489,7 @@ export function registerContabilidadeContabil(app: Express) {
         produtoId: string; instanciaId: string; tipoEstoque: string;
         saldoInicial: number; entradas: number; saidas: number; ajustes: number;
         saldoFinal: number; custoUnitario: number | null; valorFinal: number | null;
-        qtdSemCusto: number; movimentos: number;
+        qtdSemCusto: number; movimentos: number; baixaNaoRegistrada: number;
       };
       const mapa = new Map<string, Linha>();
       const pega = (p: string, i: string, t: string): Linha => {
@@ -497,7 +498,7 @@ export function registerContabilidadeContabil(app: Express) {
         if (!l) {
           l = { produtoId: p, instanciaId: i, tipoEstoque: t || "in_use", saldoInicial: 0,
                 entradas: 0, saidas: 0, ajustes: 0, saldoFinal: 0, custoUnitario: null,
-                valorFinal: null, qtdSemCusto: 0, movimentos: 0 };
+                valorFinal: null, qtdSemCusto: 0, movimentos: 0, baixaNaoRegistrada: 0 };
           mapa.set(k, l);
         }
         return l;
@@ -512,25 +513,41 @@ export function registerContabilidadeContabil(app: Express) {
 
       const limiteFim = new Date(fim + "T23:59:59.999Z").getTime();
       const limiteIni = new Date(inicio + "T00:00:00.000Z").getTime();
+      // RECONSTRUCAO SEM SALDO NEGATIVO (Flavio, 17/set/2026).
+      //
+      // A conta antiga era saldoInicial = saldoFinal - (entradas - saidas + ajustes),
+      // e produzia saldo NEGATIVO quando o livro de movimentos estava incompleto —
+      // um numero fisicamente impossivel na tela. O algoritmo novo esta em
+      // server/reconstrucao-estoque.ts (com testes em __tests__): o saldo inicial
+      // e o menor valor que respeita ao mesmo tempo "fechar no saldo de hoje" e
+      // "nunca ficar negativo", e quando os dois nao cabem juntos a diferenca vira
+      // `baixaNaoRegistrada` — estoque que saiu sem ter sido lancado.
+      const porChave = new Map<string, MovimentoRec[]>();
       for (const m of (movs.rows || movs)) {
-        const t = new Date(m.created_at).getTime();
-        const l = pega(m.product_id, m.instance_id, m.stock_type);
-        const d = delta(m);
-        if (t > limiteFim) {
-          // movimento posterior ao periodo: desfaz do saldo atual
-          l.saldoFinal -= d;
-          continue;
-        }
-        if (t < limiteIni) continue;
-        l.movimentos++;
-        if (m.movement_type === "adjust" || m.movement_type === "cancel_reversal") l.ajustes += d;
-        else if (d >= 0) l.entradas += d;
-        else l.saidas += -d;
+        const k = chave(m.product_id, m.instance_id, m.stock_type);
+        const arr = porChave.get(k) || [];
+        arr.push({
+          t: new Date(m.created_at).getTime(),
+          delta: delta(m),
+          ajuste: m.movement_type === "adjust" || m.movement_type === "cancel_reversal",
+        });
+        porChave.set(k, arr);
+      }
+
+      for (const l of Array.from(mapa.values())) {
+        const movsDaChave = porChave.get(chave(l.produtoId, l.instanciaId, l.tipoEstoque)) || [];
+        const r = reconstruirEstoque(l.saldoFinal /* saldo de HOJE */, movsDaChave, limiteIni, limiteFim);
+        l.saldoInicial = r.saldoInicial;
+        l.saldoFinal = r.saldoFinal;
+        l.entradas = r.entradas;
+        l.saidas = r.saidas;
+        l.ajustes = r.ajustes;
+        l.movimentos = r.movimentos;
+        l.baixaNaoRegistrada = r.baixaNaoRegistrada;
       }
 
       const linhas: any[] = [];
       for (const l of Array.from(mapa.values())) {
-        l.saldoInicial = l.saldoFinal - (l.entradas - l.saidas + l.ajustes);
         l.valorFinal = l.custoUnitario === null ? null : l.saldoFinal * l.custoUnitario;
         linhas.push(l);
       }
@@ -558,7 +575,8 @@ export function registerContabilidadeContabil(app: Express) {
           for (const m of movsArr) {
             if (new Date(m.created_at).getTime() <= lim) continue;
             const k = chave(m.product_id, m.instance_id, m.stock_type);
-            snap.set(k, (snap.get(k) || 0) - delta(m));
+            // Mesma trava do razao: saldo negativo e impossivel, entao segura em zero.
+            snap.set(k, Math.max(0, (snap.get(k) || 0) - delta(m)));
           }
           mensal.push({ fechamento: f, saldos: Array.from(snap.entries()).map(([k, q]) => {
             const [produtoId, instanciaId, tipoEstoque] = k.split("|");
@@ -600,8 +618,9 @@ export function registerContabilidadeContabil(app: Express) {
         t.saldoInicial += l.saldoInicial; t.entradas += l.entradas; t.saidas += l.saidas;
         t.ajustes += l.ajustes; t.saldoFinal += l.saldoFinal;
         t.valorFinal += l.valorFinal || 0; t.qtdSemCusto += l.qtdSemCusto;
+        t.baixaNaoRegistrada += l.baixaNaoRegistrada;
         return t;
-      }, { saldoInicial: 0, entradas: 0, saidas: 0, ajustes: 0, saldoFinal: 0, valorFinal: 0, qtdSemCusto: 0 });
+      }, { saldoInicial: 0, entradas: 0, saidas: 0, ajustes: 0, saldoFinal: 0, valorFinal: 0, qtdSemCusto: 0, baixaNaoRegistrada: 0 });
 
       res.json({
         periodo: { inicio, fim },
@@ -610,6 +629,9 @@ export function registerContabilidadeContabil(app: Express) {
         totais: { ...totais, itens: saida.length },
         criterioValorizacao: "custo medio ponderado por produto/instancia (lotes com custo)",
         mensal,
+        avisoReconstrucao: totais.baixaNaoRegistrada > 0.0001
+          ? `${Math.round(totais.baixaNaoRegistrada)} unidades sairam sem serem lancadas: os movimentos registrados nao fecham com o saldo de hoje. O saldo inicial foi reconstruido para nunca ficar negativo, e essa diferenca esta na coluna "Baixa nao registrada".`
+          : null,
         aviso: totais.qtdSemCusto > 0
           ? `${Math.round(totais.qtdSemCusto)} unidades estao sem custo conhecido (lote sem unit_cost) e nao entram na valorizacao.`
           : null,
