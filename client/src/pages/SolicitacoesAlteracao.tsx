@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -34,6 +34,23 @@ const RESULT_META: Record<string, { label: string; cls: string }> = {
   rejeitadas: { label: "Rejeitadas", cls: "bg-red-100 text-red-800 border-red-300" },
   lido: { label: "Lido", cls: "bg-indigo-100 text-indigo-800 border-indigo-300" },
 };
+
+// 🛒 Última compra do cliente (último faturamento). Mostra a data e há quantos dias.
+const fmtDiaBR = (s?: string) => {
+  if (!s) return "";
+  try { return new Date(s).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric" }); }
+  catch { return ""; }
+};
+function UltimaCompra({ iso }: { iso?: string | null }) {
+  if (!iso) return <span className="text-[11px] text-muted-foreground flex items-center gap-1"><ShoppingCart className="h-3 w-3" /> Sem compra registrada</span>;
+  const dias = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
+  const cls = dias >= 60 ? "text-red-700" : dias >= 30 ? "text-amber-700" : "text-emerald-700";
+  return (
+    <span className={`text-[11px] flex items-center gap-1 ${cls}`} title="Data do último pedido faturado deste cliente">
+      <ShoppingCart className="h-3 w-3" /> Última compra: <b>{fmtDiaBR(iso)}</b> ({dias === 0 ? "hoje" : dias === 1 ? "há 1 dia" : `há ${dias} dias`})
+    </span>
+  );
+}
 
 const fmtDate = (s?: string) => {
   if (!s) return "";
@@ -231,10 +248,15 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
             {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
             {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
+            {/* 🔁 Voltou ao Inbox porque o vendedor respondeu à réplica do admin */}
+            {isReport && Array.isArray(r.messages) && r.messages.length > 0 && r.messages[r.messages.length - 1]?.role === "seller" && r.messages[r.messages.length - 1]?.kind === "reply" && (
+              <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300"><Reply className="h-3 w-3 mr-1" /> Tréplica do vendedor</Badge>
+            )}
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
           {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
+          {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
         </div>
       </div>
 
@@ -372,6 +394,7 @@ function ResolvedCard({ r }: { r: any }) {
             <span>{fmtDate(r.createdAt)}</span>
           </div>
           {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
+          {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
         </div>
         {m && <Badge variant="outline" className={m.cls}>{m.label}</Badge>}
       </div>
