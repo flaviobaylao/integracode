@@ -37,7 +37,7 @@ export default function ContabilidadeContabil() {
   const [buscaAplicada, setBuscaAplicada] = useState("");
   const [mensal, setMensal] = useState(false);
   // Duas visões: produto acabado (inventory_lots) e insumo de produção (raw_materials).
-  const [visao, setVisao] = useState<"produtos" | "insumos">("produtos");
+  const [visao, setVisao] = useState<"produtos" | "insumos" | "insumosMensal">("produtos");
 
   const params = new URLSearchParams({ inicio, fim });
   if (instancias.length) params.set("instancias", instancias.join(","));
@@ -63,7 +63,23 @@ export default function ContabilidadeContabil() {
     },
   });
 
-  const fonte = visao === "insumos" ? insumos : razao;
+  // Estoque mensal ESTIMADO de insumos: reconstruido das receitas e das vendas,
+  // porque o livro de movimentos de insumo nao cobre o ano. Nao depende do periodo
+  // escolhido acima — e sempre o ano inteiro, de janeiro ate o mes corrente.
+  const anoSel = Number(inicio.slice(0, 4)) || new Date().getFullYear();
+  const paramsMensal = new URLSearchParams({ ano: String(anoSel) });
+  if (instancias.length) paramsMensal.set("instancias", instancias.join(","));
+  const insumosMensal = useQuery<any>({
+    queryKey: ["/api/contabilidade/contabil/insumos-mensal", paramsMensal.toString()],
+    enabled: visao === "insumosMensal",
+    queryFn: async () => {
+      const r = await fetch(`/api/contabilidade/contabil/insumos-mensal?${paramsMensal.toString()}`, { credentials: "include" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `HTTP ${r.status}`);
+      return r.json();
+    },
+  });
+
+  const fonte = visao === "insumosMensal" ? insumosMensal : visao === "insumos" ? insumos : razao;
   const linhas: any[] = fonte.data?.linhas || [];
   const t = fonte.data?.totais;
 
@@ -90,6 +106,23 @@ export default function ContabilidadeContabil() {
   })();
 
   const baixarCsv = () => {
+    // Na visao mensal de insumos o CSV e a propria matriz: um mes por coluna,
+    // com o fechamento estimado de cada um.
+    if (visao === "insumosMensal") {
+      const ms: string[] = insumosMensal.data?.meses || [];
+      const cabM = ["Instancia", "Codigo", "Insumo", "Unidade", "CoberturaMeses", ...ms.map((m) => `Fech ${m}`), "Residuo", "CustoUnitario"];
+      const corpoM = (insumosMensal.data?.linhas || []).map((l: any) => [
+        l.instancia, l.codigo || "", l.produto, l.unidade, l.cobertura,
+        ...l.fechamento, l.residuo ?? 0, l.custoUnitario ?? "",
+      ].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";"));
+      const blobM = new Blob(["\ufeff" + [cabM.join(";"), ...corpoM].join("\n")], { type: "text/csv;charset=utf-8" });
+      const aM = document.createElement("a");
+      aM.href = URL.createObjectURL(blobM);
+      aM.download = `insumos-mensal-estimado-${insumosMensal.data?.ano || anoSel}.csv`;
+      aM.click();
+      URL.revokeObjectURL(aM.href);
+      return;
+    }
     const cab = ["Instancia", "Codigo", "Item", "Tipo", "SaldoInicial", "Entradas", "Saidas", "Ajustes", "BaixaNaoRegistrada", "SaldoFinal", "ConsumoEsperado", "CustoUnitario", "ValorFinal"];
     const corpo = linhas.map((l) => [
       l.instancia, l.codigo || "", l.produto, visao === "insumos" ? (l.categoria || "insumo") : l.tipoEstoque,
@@ -116,7 +149,7 @@ export default function ContabilidadeContabil() {
         <CardContent className="p-4 space-y-3">
           <FiltroInstancia valor={instancias} aoMudar={setInstancias} />
           <div className="flex gap-1">
-            {([["produtos", "Produtos acabados"], ["insumos", "Insumos de produção"]] as const).map(([k, rotulo]) => (
+            {([["produtos", "Produtos acabados"], ["insumos", "Insumos de produção"], ["insumosMensal", "Insumos mês a mês (estimado)"]] as const).map(([k, rotulo]) => (
               <button
                 key={k}
                 onClick={() => setVisao(k as any)}
@@ -152,7 +185,7 @@ export default function ContabilidadeContabil() {
               />
             </div>
             <Button onClick={() => setBuscaAplicada(busca)} data-testid="contabil-aplicar">Aplicar</Button>
-            <Button variant="outline" onClick={baixarCsv} disabled={!linhas.length} data-testid="contabil-csv">Baixar CSV</Button>
+            <Button variant="outline" onClick={baixarCsv} disabled={visao === "insumosMensal" ? !(insumosMensal.data?.linhas || []).length : !linhas.length} data-testid="contabil-csv">Baixar CSV</Button>
             {visao === "produtos" && (
               <label className="flex items-center gap-2 text-sm text-gray-700 select-none">
                 <input type="checkbox" checked={mensal} onChange={(e) => setMensal(e.target.checked)} data-testid="contabil-mensal" />
@@ -171,7 +204,7 @@ export default function ContabilidadeContabil() {
           </div>
         ))}
 
-      {t && (
+      {t && visao !== "insumosMensal" && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-2" data-testid="contabil-totais">
           {[
             ["Itens", `${t.itens}`],
@@ -188,6 +221,76 @@ export default function ContabilidadeContabil() {
             </div>
           ))}
         </div>
+      )}
+
+      {visao === "insumosMensal" && (
+        <Card>
+          <CardContent className="p-0 overflow-x-auto">
+            <div className="px-4 py-3 border-b">
+              <div className="text-sm font-medium text-gray-700">
+                Estoque mensal de insumos — {insumosMensal.data?.ano || anoSel}
+                <span className="ml-2 inline-block rounded bg-amber-100 text-amber-800 text-[11px] px-1.5 py-0.5 align-middle">estimado</span>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                Fechamento de cada mês. Reconstruído das receitas e das vendas: a série fecha no saldo de hoje,
+                nunca fica negativa, e cada mês abre com o suficiente para a produção vendida naquele mês.
+              </div>
+            </div>
+            {insumosMensal.isLoading ? (
+              <div className="px-4 py-6 text-sm text-gray-500">Calculando…</div>
+            ) : (
+            <table className="w-full text-sm" data-testid="contabil-tabela-insumos-mensal">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-2 py-2 text-left">Insumo</th>
+                  <th className="px-2 py-2 text-left">Un.</th>
+                  <th className="px-2 py-2 text-right" title="Meses de produção que o estoque de hoje cobre">Cobert.</th>
+                  {(insumosMensal.data?.meses || []).map((m: string) => (
+                    <th key={m} className="px-2 py-2 text-right whitespace-nowrap">{m.slice(5)}/{m.slice(2, 4)}</th>
+                  ))}
+                  <th className="px-2 py-2 text-right">Resíduo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(insumosMensal.data?.linhas || []).map((l: any) => (
+                  <tr key={l.insumoId} className="border-t hover:bg-gray-50">
+                    <td className="px-2 py-1.5">
+                      <div className="text-gray-900">{l.produto}</div>
+                      <div className="text-[11px] text-gray-400">{l.codigo || ""} {l.instancia}</div>
+                    </td>
+                    <td className="px-2 py-1.5 text-gray-500">{l.unidade}</td>
+                    <td className="px-2 py-1.5 text-right text-gray-500">{l.cobertura ? `${n4(l.cobertura)}m` : "—"}</td>
+                    {l.fechamento.map((v: number, k: number) => (
+                      <td key={k} className="px-2 py-1.5 text-right whitespace-nowrap" title={`abre ${n4(l.abertura[k])} · consumo ${n4(l.consumo[k])} · compra ${n4(l.compras[k])}`}>
+                        {n4(v)}
+                      </td>
+                    ))}
+                    <td className="px-2 py-1.5 text-right text-amber-700">{l.residuo ? n4(l.residuo) : ""}</td>
+                  </tr>
+                ))}
+                {insumosMensal.data?.totais && (
+                  <tr className="border-t-2 bg-gray-50 font-medium">
+                    <td className="px-2 py-2" colSpan={3}>Total ({insumosMensal.data.totais.itens} insumos)</td>
+                    {insumosMensal.data.totais.fechamento.map((v: number, k: number) => (
+                      <td key={k} className="px-2 py-2 text-right whitespace-nowrap">{n4(v)}</td>
+                    ))}
+                    <td />
+                  </tr>
+                )}
+                {insumosMensal.data?.totais && (
+                  <tr className="bg-gray-50 text-gray-600">
+                    <td className="px-2 py-2" colSpan={3}>Valorização do fechamento</td>
+                    {insumosMensal.data.totais.valorFechamento.map((v: number, k: number) => (
+                      <td key={k} className="px-2 py-2 text-right whitespace-nowrap">R$ {brl(v)}</td>
+                    ))}
+                    <td />
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {mensal && meses.length > 0 && (
@@ -222,6 +325,7 @@ export default function ContabilidadeContabil() {
         </Card>
       )}
 
+      {visao !== "insumosMensal" && (
       <Card>
         <CardContent className="p-0 overflow-x-auto">
           {fonte.isLoading && <div className="p-6 text-sm text-gray-500">Reconstruindo o razão de estoque…</div>}
@@ -279,6 +383,7 @@ export default function ContabilidadeContabil() {
           )}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
