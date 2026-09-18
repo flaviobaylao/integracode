@@ -188,6 +188,26 @@ export default function PurchaseRadar() {
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
 
+  const revertStock = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason?: string }) => {
+      const res = await apiRequest("POST", `/api/purchases/${id}/revert-stock`, { reason });
+      return res;
+    },
+    onSuccess: (data: any) => {
+      const neg = [...(data.produtos || []), ...(data.materias || [])].some((x: any) => x.negativo);
+      toast({
+        title: "Entrada de estoque estornada",
+        description: `${(data.produtos || []).length} produto(s) e ${(data.materias || []).length} matéria(s)-prima revertidos${neg ? " — atenção: algum saldo ficou negativo" : ""}`,
+        variant: neg ? "destructive" : undefined,
+      });
+      if (data.invoice) setSelectedInvoice(data.invoice);
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/synced-table/raw_materials"] });
+    },
+    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
+
   // Conversao de unidade na entrada de estoque: o item de estoque tem sua unidade (kg/unidade);
   // a NF vem em outra (caixa, fardo, etc.). O fator diz "quanto cada unidade da NF vale na
   // unidade do estoque". Qtd no estoque = qtd da NF x fator; custo por unidade de estoque = custo NF / fator.
@@ -1066,6 +1086,24 @@ export default function PurchaseRadar() {
                 )}
                 {selectedInvoice.isStockPurchase && selectedInvoice.stockProcessed && (
                   <Badge className="bg-emerald-100 text-emerald-800 self-center"><CheckCircle2 className="h-3 w-3 mr-1 inline" />Estoque processado</Badge>
+                )}
+                {selectedInvoice.isStockPurchase && selectedInvoice.stockProcessed && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                    disabled={revertStock.isPending}
+                    onClick={() => {
+                      const reason = window.prompt(
+                        `Reverter a entrada no estoque da NF ${selectedInvoice.invoiceNumber || ""}?\n\nAs quantidades lançadas serão retiradas do estoque e a NF volta a ficar pendente de entrada.\n\nMotivo (opcional):`,
+                        ""
+                      );
+                      if (reason === null) return;
+                      revertStock.mutate({ id: selectedInvoice.id, reason });
+                    }}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-1" /> {revertStock.isPending ? "Revertendo..." : "Reverter entrada no estoque"}
+                  </Button>
                 )}
                 {selectedInvoice.status === "detected" && selectedInvoice.accessKey && selectedInvoice.omieInstanceId && (
                   <Button
