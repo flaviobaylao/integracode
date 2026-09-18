@@ -284,6 +284,35 @@ export async function criarSolicitacaoInbox(p: {
   }
 }
 
+// 🔔 Pendências do Inbox do vendedor (usado pelo box da Rota do Dia e pela trava do Fechar Rota):
+// reports/solicitações com réplica do admin (kind='reply') ainda sem resposta do vendedor e não
+// removidas pelo admin. `respondidasHoje` = respondidas em `date` (linha verde no box).
+export async function listarPendenciasInbox(sellerId: string, date: string): Promise<{ pendentes: any[]; respondidasHoje: any[] }> {
+  await ensureTables();
+  const diaBRT = (iso: string) => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso)); } catch { return ""; } };
+  const rows = rowsOf(await db.execute(sql`
+    SELECT * FROM change_requests
+    WHERE (seller_id = ${sellerId} OR requested_by = ${sellerId})
+      AND kind IN ('report', 'solicitacao') AND status <> 'cancelled'
+      AND created_at >= now() - interval '90 days'
+    ORDER BY created_at DESC LIMIT 300`));
+  const pendentes: any[] = [];
+  const respondidasHoje: any[] = [];
+  for (const r of rows) {
+    const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
+    let lastAdminReply = -1;
+    for (let i = 0; i < msgs.length; i++) if (msgs[i].role === "admin" && msgs[i].kind === "reply") lastAdminReply = i;
+    if (lastAdminReply < 0) continue;
+    if (pendenciaRemovida(msgs, lastAdminReply)) continue; // excluída pelo admin
+    let answeredAt: string | null = null;
+    for (let i = lastAdminReply + 1; i < msgs.length; i++) if (msgs[i].role === "seller") { answeredAt = msgs[i].at || null; break; }
+    const base = { ...mapRow(r), messages: msgs, adminReplyAt: msgs[lastAdminReply].at || null };
+    if (!answeredAt) pendentes.push({ ...base, pendingReply: true });
+    else if (answeredAt && diaBRT(answeredAt) === date) respondidasHoje.push({ ...base, answeredAt });
+  }
+  return { pendentes, respondidasHoje };
+}
+
 export function registerChangeRequestsRoutes(app: Express) {
   void ensureTables();
 
@@ -389,6 +418,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       const phoneByKey = new Map<string, string>();
       const cityByKey = new Map<string, string>();
       const bairroByKey = new Map<string, string>();
+      const lastOrderByKey = new Map<string, string>();
       const repescagemSet = new Set<string>();
       if (custIds.length) {
         const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
@@ -401,6 +431,16 @@ export function registerChangeRequestsRoutes(app: Express) {
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
         const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
         for (const r of rp) if (r.customer_id) repescagemSet.add(String(r.customer_id));
+        // 🛒 Última compra (18/set/2026): mesma fonte do resto do sistema — último item do
+        // billing_pipeline com nota fiscal atribuída (faturado→entregue), por cliente.
+        try {
+          const lo = rowsOf(await db.execute(sql`
+            SELECT customer_id, MAX(created_at) AS ultima
+            FROM billing_pipeline
+            WHERE invoice_number IS NOT NULL AND invoice_number <> '' AND customer_id IN (${inCust})
+            GROUP BY customer_id`));
+          for (const r of lo) if (r.customer_id && r.ultima) lastOrderByKey.set("customer:" + r.customer_id, new Date(r.ultima).toISOString());
+        } catch (_e: any) { console.warn("[INBOX] ultima compra:", _e?.message); }
       }
       if (leadIds.length) {
         const lr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood FROM leads WHERE id IN (${sql.join((leadIds as string[]).map((id) => sql`${id}`), sql`, `)})`));
@@ -415,6 +455,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.phone = phoneByKey.get(key) || null;
         m.city = cityByKey.get(key) || null;
         m.neighborhood = bairroByKey.get(key) || null;
+        m.lastOrderAt = lastOrderByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
     } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
@@ -596,7 +637,6 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   app.get("/api/change-requests/inbox-pendencias", authenticateUser, safe(async (req, res) => {
-    await ensureTables();
     const u = (req as any).currentUser;
     const isGestor = ["admin", "coordinator", "administrative"].includes(String(u?.role || ""));
     let sellerId = String(req.query.sellerId || "").trim();
@@ -604,28 +644,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     if (!sellerId) return res.json({ pendentes: [], respondidasHoje: [] });
     const dateQ = String(req.query.date || "");
     const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
-    const diaBRT = (iso: string) => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso)); } catch { return ""; } };
-
-    const rows = rowsOf(await db.execute(sql`
-      SELECT * FROM change_requests
-      WHERE (seller_id = ${sellerId} OR requested_by = ${sellerId})
-        AND kind IN ('report', 'solicitacao') AND status <> 'cancelled'
-        AND created_at >= now() - interval '90 days'
-      ORDER BY created_at DESC LIMIT 300`));
-    const pendentes: any[] = [];
-    const respondidasHoje: any[] = [];
-    for (const r of rows) {
-      const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
-      let lastAdminReply = -1;
-      for (let i = 0; i < msgs.length; i++) if (msgs[i].role === "admin" && msgs[i].kind === "reply") lastAdminReply = i;
-      if (lastAdminReply < 0) continue;
-      if (pendenciaRemovida(msgs, lastAdminReply)) continue; // excluída pelo admin
-      let answeredAt: string | null = null;
-      for (let i = lastAdminReply + 1; i < msgs.length; i++) if (msgs[i].role === "seller") { answeredAt = msgs[i].at || null; break; }
-      const base = { ...mapRow(r), messages: msgs, adminReplyAt: msgs[lastAdminReply].at || null };
-      if (!answeredAt) pendentes.push({ ...base, pendingReply: true });
-      else if (answeredAt && diaBRT(answeredAt) === date) respondidasHoje.push({ ...base, answeredAt });
-    }
+    const { pendentes, respondidasHoje } = await listarPendenciasInbox(sellerId, date);
     res.json({ sellerId, date, pendentes, respondidasHoje });
   }));
 
@@ -767,10 +786,16 @@ export function registerChangeRequestsRoutes(app: Express) {
       if (other.length > 0) return res.status(409).json({ error: "Já existe outra solicitação pendente para este cadastro." });
     }
 
+    // 🔁 Tréplica do vendedor (18/set/2026): quando o VENDEDOR responde um REPORT que o admin já
+    // fechou ("lido"), o card VOLTA para as Pendentes do Inbox com a conversa inteira — o admin
+    // precisa ver a resposta. Solicitações resolvidas seguem o fluxo de "resend" (reabrir), que
+    // respeita a trava de 1 pendente por cadastro.
+    const reabrirReport = role === "seller" && (row.kind || "solicitacao") === "report" && row.status !== "pending" && !resend;
+
     const msg = mkMsg(role, u, text || "Solicitação reenviada para nova análise.", resend ? "resend" : "reply");
     let updated;
     try {
-      if (resend) {
+      if (resend || reabrirReport) {
         updated = rowsOf(await db.execute(sql`
           UPDATE change_requests
           SET status = 'pending', resolved_by = NULL, resolved_by_name = NULL,
