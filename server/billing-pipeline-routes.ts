@@ -1138,6 +1138,36 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
 
+  // RETROATIVO: preenche o NOME DE QUEM IMPLANTOU na 1a entrada do historico de etapas.
+  // A entrada de implantacao ("Pedido"/"Agendado") era gravada como "auto (system)". Agora
+  // reescrevemos SO essa 1a entrada, quando ainda esta como "auto (...)", usando o sellerName
+  // do proprio item (que ja e o implantador pela regra de atribuicao). Demais entradas do
+  // historico nao sao tocadas. Idempotente: rodar de novo nao muda nada (ja nao casa "auto (").
+  app.post('/api/admin/pipeline/backfill-implantador-historico', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const items = await storage.getBillingPipelineItems();
+      let fixed = 0, semVendedor = 0, jaOk = 0;
+      for (const it of items as any[]) {
+        const hist = Array.isArray(it.stageHistory) ? it.stageHistory : [];
+        if (!hist.length) { jaOk++; continue; }
+        const first = hist[0];
+        const isAuto = first && typeof first.changedBy === 'string' && /^auto \(/i.test(first.changedBy);
+        if (!isAuto) { jaOk++; continue; }
+        const nome = String(it.sellerName || '').trim();
+        if (!nome) { semVendedor++; continue; }
+        const novo = hist.slice();
+        novo[0] = { ...first, changedBy: `${nome} (implantação)` };
+        try { await storage.updateBillingPipelineItem(it.id, { stageHistory: novo } as any); fixed++; }
+        catch (e: any) { console.warn('[BACKFILL-IMPLANTADOR] falha no item ' + it.id + ' (segue):', e?.message); }
+      }
+      console.log(`[BACKFILL-IMPLANTADOR] total=${items.length} corrigidos=${fixed} sem_vendedor=${semVendedor} ja_ok=${jaOk}`);
+      res.json({ ok: true, total: items.length, fixed, semVendedor, jaOk });
+    } catch (e: any) {
+      console.error('[BACKFILL-IMPLANTADOR] erro:', e?.message);
+      res.status(500).json({ message: e?.message || 'Erro' });
+    }
+  });
+
   // Move para a LIXEIRA os itens criados pela reconciliacao (pedidos fantasmas).
   // NAO apaga: um card nunca some do pipeline. Vao para 'lixeira' (restauravel) —
   // assim, se um desses cards foi de fato faturado depois (ex.: Figueira Branca /
