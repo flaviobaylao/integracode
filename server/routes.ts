@@ -475,6 +475,24 @@ async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: st
   return { encontrados: rows.length, reprogramados, perSeller, erros };
 }
 
+// 🗂️ INBOX de ações do card de LEAD: cada ação de atendimento (registro, converter, não
+// converter, prorrogar, resgatar, check-in) vira um report no inbox (Solicitações de Alteração),
+// MESMO sem texto escrito (usa a descrição da ação como conteúdo). Não bloqueia a resposta.
+async function __inboxLeadAcao(opts: { leadId: string; assignedTo?: string | null; userId?: string | null; userName?: string | null; motivo: string; texto?: string }): Promise<void> {
+  try {
+    const { registrarReportInbox } = await import('./change-requests-routes');
+    const t = (opts.texto && String(opts.texto).trim()) ? String(opts.texto).trim() : String(opts.motivo || '');
+    await registrarReportInbox({
+      entityType: 'lead', entityId: String(opts.leadId), customerId: null,
+      sellerId: String(opts.assignedTo || opts.userId || ''),
+      sellerName: opts.userName ? String(opts.userName) : null,
+      reportKind: 'lead_desfecho',
+      motivo: opts.motivo,
+      texto: t,
+    });
+  } catch (e: any) { console.warn('[INBOX-LEAD] falha:', e?.message || e); }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -23372,6 +23390,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       
       const visit = await storage.createLeadVisit(visitData);
+      // 🗂️ INBOX: registro de atendimento também notifica no inbox (Solicitações de Alteração).
+      await __inboxLeadAcao({ leadId: id, userId: user.id, userName: user.name || user.email, motivo: 'Registro de atendimento', texto: observation.trim() });
       console.log(`✅ Visita registrada no lead ${id} por ${user.email}`);
       res.status(201).json(visit);
     } catch (error) {
@@ -23562,21 +23582,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.log(`✅ Lead atualizado no banco de dados`);
 
-        // Registra a observação também no histórico de visitas do lead (lead_visits),
-        // para aparecer no histórico como uma visita registrada.
-        if (checkInNotes) {
+        // Registra SEMPRE no histórico do lead (com a observação escrita ou uma nota padrão)
+        // e também notifica no inbox (Solicitações de Alteração).
+        {
           try {
             const uName = `${(user as any)?.firstName || ''} ${(user as any)?.lastName || ''}`.trim() || (user as any)?.name || user.email || 'Usuário';
+            const _obsHist = checkInNotes ? `CHECK-IN — ${checkInNotes}` : 'CHECK-IN realizado';
             await storage.createLeadVisit({
               leadId: id,
               userId: user.id,
               userName: uName,
-              observation: checkInNotes,
+              observation: _obsHist,
             } as any);
-            console.log(`📝 Observação do check-in registrada no histórico do lead ${id}`);
+            console.log(`📝 Check-in registrado no histórico do lead ${id}`);
           } catch (obsErr: any) {
-            console.error('❌ Erro ao registrar observação do check-in no histórico:', obsErr?.message);
+            console.error('❌ Erro ao registrar check-in no histórico:', obsErr?.message);
           }
+          await __inboxLeadAcao({ leadId: id, userId: user.id, userName: user.name || user.email, motivo: 'Check-in realizado', texto: checkInNotes || '' });
         }
         
         // Registra a perna de km do lead na rota. "Registrar" (check-in) conta
@@ -23799,6 +23821,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         assignedTo: _sellerId || null
       });
 
+      // 🗂️ Histórico + INBOX: conversão do lead em cliente.
+      try {
+        await storage.createLeadVisit({ leadId: id, userId: req.currentUser?.id, userName: req.currentUser?.name || req.currentUser?.email, observation: `CONVERTIDO em cliente${customer?.name ? ' — ' + customer.name : ''}` } as any);
+      } catch (_e) {}
+      await __inboxLeadAcao({ leadId: id, assignedTo: _sellerId || (lead as any)?.assignedTo, userId: req.currentUser?.id, userName: req.currentUser?.name || req.currentUser?.email, motivo: `Convertido em cliente${customer?.name ? ' — ' + customer.name : ''}` });
+
       console.log(`✅ Lead ${lead.fantasyName} convertido em cliente ${customer.name}`);
       res.json({
         message: 'Lead convertido em cliente com sucesso',
@@ -23857,21 +23885,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } as any);
         } catch (_e) {}
         console.log(`🚫 [LEAD-DESFECHO] ${lead.fantasyName} finalizado como NÃO CONVERTIDO (${motivo}) por ${user.email}`);
-        // 🗂️ REPORT → INBOX: desfecho de lead (não-conversão) com observação ESCRITA vira report.
-        try {
-          if (String(observacao || '').trim()) {
-            const LEAD_MOTIVO: Record<string, string> = { preco: 'Preço', sem_interesse: 'Sem interesse', ja_tem_fornecedor: 'Já tem fornecedor', fechou: 'Fechou', sem_perfil: 'Sem perfil', sem_contato: 'Sem contato', outro: 'Outro' };
-            const { registrarReportInbox } = await import('./change-requests-routes');
-            await registrarReportInbox({
-              entityType: 'lead', entityId: String(id), customerId: null,
-              sellerId: String(lead.assignedTo || user.id || ''),
-              sellerName: user?.name || (user?.email ? String(user.email).split('@')[0] : null),
-              reportKind: 'lead_desfecho',
-              motivo: 'Não convertido — ' + (LEAD_MOTIVO[String(motivo)] || String(motivo)),
-              texto: String(observacao || ''),
-            });
-          }
-        } catch (_e: any) { console.warn('[REPORT-INBOX] lead desfecho:', _e?.message); }
+        // 🗂️ REPORT → INBOX: TODA não-conversão vira report no inbox (mesmo sem texto escrito).
+        {
+          const LEAD_MOTIVO: Record<string, string> = { preco: 'Preço', sem_interesse: 'Sem interesse', ja_tem_fornecedor: 'Já tem fornecedor', fechou: 'Fechou', sem_perfil: 'Sem perfil', sem_contato: 'Sem contato', outro: 'Outro' };
+          await __inboxLeadAcao({ leadId: String(id), assignedTo: lead.assignedTo, userId: user.id, userName: user?.name || (user?.email ? String(user.email).split('@')[0] : null), motivo: 'Não convertido — ' + (LEAD_MOTIVO[String(motivo)] || String(motivo)), texto: String(observacao || '') });
+        }
         return res.json({ message: 'Lead finalizado como não convertido.', status: 'discarded', reason: motivo });
       }
 
@@ -23916,6 +23934,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             observation: `PRORROGADO p/ ${_ret.toISOString().slice(0,10)}${observacao ? ' - ' + String(observacao) : ''}`,
           } as any);
         } catch (_e) {}
+        await __inboxLeadAcao({ leadId: String(id), assignedTo: lead.assignedTo, userId: user.id, userName: user.name || user.email, motivo: `Prorrogado p/ ${_ret.toISOString().slice(0,10)}`, texto: String(observacao || '') });
         console.log(`⏭️ [LEAD-DESFECHO] ${lead.fantasyName} PRORROGADO p/ ${_ret.toISOString().slice(0,10)} por ${user.email}`);
         return res.json({ message: 'Retorno prorrogado.', status: 'scheduled', returnDate: _ret.toISOString() });
       }
@@ -23946,6 +23965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             observation: `RESGATADO — voltou para a lista como novo (retorno ${_ret.toISOString().slice(0,10)})`,
           } as any);
         } catch (_e) {}
+        await __inboxLeadAcao({ leadId: String(id), assignedTo: lead.assignedTo, userId: user.id, userName: user.name || user.email, motivo: `Resgatado (retorno ${_ret.toISOString().slice(0,10)})` });
         console.log(`♻️ [LEAD-DESFECHO] ${lead.fantasyName} RESGATADO por ${user.email}`);
         return res.json({ message: 'Lead resgatado — voltou para a lista como novo.', status: 'scheduled', returnDate: _ret.toISOString() });
       }
