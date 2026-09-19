@@ -91,7 +91,9 @@ export default function CustomerManagement() {
   const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
   const [bulkSeller, setBulkSeller] = useState<string>('');
   const [bulkPeriodicity, setBulkPeriodicity] = useState<string>('');
+  const [bulkSemana, setBulkSemana] = useState<string>('');
   const [bulkSituacao, setBulkSituacao] = useState<string>(''); // '' | 'ativo' | 'inativo'
+  const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["ultima","Última do mês"]];
   const [bulkTipo, setBulkTipo] = useState<string>(''); // '' (não alterar) | 'cliente' | 'fornecedor'
   const [bulkSaving, setBulkSaving] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
@@ -110,6 +112,7 @@ export default function CustomerManagement() {
   const [segmentMulti, setSegmentMulti] = useState<string[]>([]);
   const [selectedVirtualType, setSelectedVirtualType] = useState('');
   const [selectedPeriodicity, setSelectedPeriodicity] = useState('');
+  const [selectedSemana, setSelectedSemana] = useState('');
   const [selectedPersonType, setSelectedPersonType] = useState('');
   const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [neighborhoodMulti, setNeighborhoodMulti] = useState<string[]>([]);
@@ -202,6 +205,7 @@ export default function CustomerManagement() {
     const fields: any = {};
     if (bulkSeller) fields.sellerId = bulkSeller;
     if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
+    if (bulkSemana) fields.semanaAtendimento = bulkSemana;
     if (bulkWeekdays.length > 0) fields.weekdays = bulkWeekdays;
     if (bulkTipo === 'fornecedor') fields.isSupplier = true;
     else if (bulkTipo === 'cliente') fields.isSupplier = false;
@@ -234,7 +238,7 @@ export default function CustomerManagement() {
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/suppliers'] });
       setShowBulkEdit(false); setSelectedIds(new Set());
-      setBulkWeekdays([]); setBulkSeller(''); setBulkPeriodicity(''); setBulkSituacao(''); setBulkTipo('');
+      setBulkWeekdays([]); setBulkSeller(''); setBulkPeriodicity(''); setBulkSemana(''); setBulkSituacao(''); setBulkTipo('');
     } catch (e: any) {
       toast({ title: "Erro na edição em massa", description: e?.message || String(e), variant: "destructive" });
     } finally {
@@ -387,6 +391,7 @@ export default function CustomerManagement() {
     const matchesSegment = multiMatch(segmentMulti, customer.segmentoPrincipal || '(Sem segmento)');
     const matchesVirtualType = !selectedVirtualType || (selectedVirtualType === 'virtual' ? !!customer.virtualService : !customer.virtualService);
     const matchesPeriodicity = !selectedPeriodicity || customer.visitPeriodicity === selectedPeriodicity;
+    const matchesSemana = !selectedSemana || (String((customer as any).semanaAtendimento || 'toda') === selectedSemana);
     const ptDigits = String(customer.cnpj || customer.cpf || '').replace(/\D/g, '');
     const personType = (customer as any).customerType || (ptDigits.length === 14 ? 'pessoa_juridica' : ptDigits.length === 11 ? 'pessoa_fisica' : '');
     const matchesPersonType = !selectedPersonType || personType === selectedPersonType;
@@ -395,7 +400,7 @@ export default function CustomerManagement() {
     const matchesPhone = !phoneFilter || String(customer.phone || '').replace(/\D/g, '').includes(phoneFilter.replace(/\D/g, ''));
     const hasCoords = !!(customer.latitude && customer.longitude);
     const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
-    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone && matchesCoords;
+    return matchesSearch && matchesWeekday && matchesStatus && matchesSeller && matchesSellerMulti && matchesRouteDate && matchesPositivation && matchesSegment && matchesVirtualType && matchesPeriodicity && matchesSemana && matchesPersonType && matchesCity && matchesNeighborhood && matchesPhone && matchesCoords;
   }) || [];
   if (nameSort) filteredCustomers.sort((a: any, b: any) => { const cmp = String(a.name || a.fantasyName || '').localeCompare(String(b.name || b.fantasyName || ''), 'pt-BR', { sensitivity: 'base' }); return nameSort === 'asc' ? cmp : -cmp; });
   const selectableIds = filteredCustomers.map((c: any) => c.id).filter(Boolean) as string[];
@@ -590,6 +595,17 @@ export default function CustomerManagement() {
                 <SelectItem value="semanal">Semanal</SelectItem>
                 <SelectItem value="quinzenal">Quinzenal</SelectItem>
                 <SelectItem value="mensal">Mensal</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={selectedSemana} onValueChange={setSelectedSemana}>
+              <SelectTrigger className="w-[130px] h-9" data-testid="select-semana-filter">
+                <SelectValue placeholder="Semana do mês" />
+              </SelectTrigger>
+              <SelectContent>
+                {SEMANA_OPCOES.map(([v, l]) => (
+                  <SelectItem key={v} value={v}>{l}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
@@ -972,6 +988,16 @@ export default function CustomerManagement() {
                   <SelectItem value="semanal">Semanal</SelectItem>
                   <SelectItem value="quinzenal">Quinzenal</SelectItem>
                   <SelectItem value="mensal">Mensal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Semana do Mês</label>
+              <Select value={bulkSemana} onValueChange={setBulkSemana}>
+                <SelectTrigger className="w-full h-9" data-testid="bulk-semana"><SelectValue placeholder="Não alterar" /></SelectTrigger>
+                <SelectContent>
+                  {SEMANA_OPCOES.map(([v, l]) => (<SelectItem key={v} value={v}>{l}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>
