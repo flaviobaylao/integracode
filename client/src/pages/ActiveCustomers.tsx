@@ -280,7 +280,7 @@ export default function ActiveCustomers() {
     // atualizava a lista de ativos, deixando a Gestão desatualizada (mostrando "Ativo").
     mutationFn: async ({ customerId }: { customerId: string; activeCustomerId?: string }) => {
       const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids: [customerId] });
-      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+      return (r ?? {});
     },
     onSuccess: (data: any) => {
       toast({
@@ -834,7 +834,7 @@ export default function ActiveCustomers() {
       let updated = 0; let agendaRegen = 0;
       if (Object.keys(fields).length > 0) {
         const r: any = await apiRequest('POST', '/api/customers/bulk-update', { ids, fields });
-        const j = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+        const j = (r ?? {});
         updated = j.updated ?? 0;
         agendaRegen = j.agendaRegenerada ?? 0;
       }
@@ -842,7 +842,7 @@ export default function ActiveCustomers() {
       let geocodeCount = 0;
       if (bulkGeocode && ids.length > 0) {
         const g: any = await apiRequest('POST', '/api/admin/customers/geocode-all', { apply: true, recalc: true, customerIds: ids });
-        const gj = await (g?.json ? g.json() : Promise.resolve({})).catch(() => ({}));
+        const gj = (g ?? {});
         geocodeCount = gj.candidates ?? ids.length;
       }
       return { updated, agendaRegen, geocoded: bulkGeocode, geocodeCount, hadFields: Object.keys(fields).length > 0 };
@@ -864,7 +864,7 @@ export default function ActiveCustomers() {
     mutationFn: async () => {
       const ids = Array.from(selectedCustomerIds);
       const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids });
-      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+      return (r ?? {});
     },
     onSuccess: (res: any) => {
       const extra: string[] = [];
