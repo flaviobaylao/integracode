@@ -716,6 +716,36 @@ async function main() {
     && vazio.mensagens.tempoRespostaMin === null,
     'digital: período sem movimento devolve zeros, não quebra');
 
+  // =========================================================================
+  console.log('12) ensaio geral: roda todas as rotinas e relata passo a passo');
+  // =========================================================================
+  const { rodarEnsaio } = await import('../server/mkt-ensaio');
+  const ens = await rodarEnsaio({ enviar: false, quem: 'teste' });
+
+  check(ens.resumo.total >= 20 && ens.passos.every(p => ['ok', 'falhou', 'pulado'].includes(p.estado))
+    && ens.passos.every(p => p.detalhe.length > 0),
+    'ensaio: percorre as rotinas e cada passo diz o que aconteceu (' + ens.resumo.total + ' passos: '
+      + ens.resumo.ok + ' ok, ' + ens.resumo.pulado + ' pulados, ' + ens.resumo.falhou + ' falhas)');
+
+  const grupos = Array.from(new Set(ens.passos.map(p => p.grupo)));
+  check(['Infra', 'Agentes', 'Caixa', 'Régua', 'Conteúdo', 'Entrega', 'Atendimento', 'Painéis', 'Limpeza'].every(g => grupos.includes(g)),
+    'ensaio: cobre infraestrutura, agentes, caixa, régua, conteúdo, entrega, atendimento, painéis e limpeza');
+
+  check(ens.modo.startsWith('seco'), 'ensaio: modo seco por padrão — não dispara mensagem sem pedido explícito');
+
+  // O passo da Caixa tem que ter exercitado o ciclo inteiro de verdade.
+  const pAlerta = ens.passos.find(p => /Alerta ao vendedor/.test(p.passo));
+  check(pAlerta?.estado === 'ok' && /proposta → aprovada →/.test(pAlerta.detalhe),
+    'ensaio: alerta percorre proposta → aprovada → executada (' + pAlerta?.detalhe?.slice(0, 70) + ')');
+  const pExpira = ens.passos.find(p => /expira sozinha/.test(p.passo));
+  const pRejeita = ens.passos.find(p => /Rejeitar uma proposta/.test(p.passo));
+  check(pExpira?.estado === 'ok' && pRejeita?.estado === 'ok',
+    'ensaio: prova a rejeição e a expiração automática');
+
+  // E não pode deixar rastro: nenhuma ação de ensaio sobrando.
+  const sobrou: any = ((await raw(`SELECT count(*)::int AS n FROM mkt_acoes WHERE titulo LIKE '[ensaio]%'`)) as any).rows[0];
+  check(sobrou.n === 0, 'ensaio: limpeza não deixa nenhuma ação de teste no banco (' + sobrou.n + ' sobrando)');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

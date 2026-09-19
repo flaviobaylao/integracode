@@ -203,21 +203,28 @@ export async function processDispatchQueueTick() {
     const lib = await templateLiberado(String(d.template_label));
     if (!lib.ok) { await mark(d.id, 'falha', lib.motivo || 'template desligado'); return; }
   } catch {}
-  let target = d.customer_phone;
-  if (m === 'test') {
-    // NUNCA cair para o cliente real quando o modo e teste.
-    const tp = testPhones()[0];
-    if (!tp) { await mark(d.id, 'falha', 'modo test sem INTEGRA_OFICIAL_TEST_PHONES configurada'); return; }
-    target = tp;
+  // Em modo teste a mensagem vai para TODOS os telefones de teste, nao so para o
+  // primeiro: quem acompanha o ensaio costuma ser mais de uma pessoa, e um
+  // aparelho so nao prova que a mensagem chegou legivel nos dois. Em modo real,
+  // um destino: o cliente.
+  const alvos = m === 'test' ? testPhones() : [d.customer_phone];
+  if (m === 'test' && !alvos.length) { await mark(d.id, 'falha', 'modo test sem INTEGRA_OFICIAL_TEST_PHONES configurada'); return; }
+
+  let enviouAlgum = false; let ultimoErro = ''; let chatId: any = null; let msgId: any = null;
+  for (const target of alvos) {
+    const exists = await officialCheckWhatsapp(target);
+    if (exists === false) { ultimoErro = 'numero sem whatsapp'; continue; }
+    const r = await sendOfficialTemplate(target, umblerId, (d.params as string[]) || []);
+    _sentMin++;
+    // O registro guarda o primeiro envio bem-sucedido — a linha e UMA, os
+    // destinos de teste sao copia. Sem isso um ensaio pareceria varios disparos.
+    if (r.success) { if (!enviouAlgum) { chatId = r.chatId || null; msgId = r.messageId || null; } enviouAlgum = true; }
+    else ultimoErro = r.error || 'erro envio';
   }
-  const exists = await officialCheckWhatsapp(target);
-  if (exists === false) { await mark(d.id, 'falha', 'numero sem whatsapp'); return; }
-  const r = await sendOfficialTemplate(target, umblerId, (d.params as string[]) || []);
-  _sentMin++;
-  if (r.success) {
-    await db.execute(sql`UPDATE official_dispatches SET status='enviada'::dispatch_status, chat_id=${r.chatId||null},
-      umbler_message_id=${r.messageId||null}, sent_at=now(), updated_at=now() WHERE id=${d.id}`);
-  } else { await mark(d.id, 'falha', r.error || 'erro envio'); }
+  if (enviouAlgum) {
+    await db.execute(sql`UPDATE official_dispatches SET status='enviada'::dispatch_status, chat_id=${chatId},
+      umbler_message_id=${msgId}, sent_at=now(), updated_at=now() WHERE id=${d.id}`);
+  } else { await mark(d.id, 'falha', ultimoErro || 'erro envio'); }
 }
 async function mark(id: string, status: string, error?: string) {
   await db.execute(sql`UPDATE official_dispatches SET status=${status}::dispatch_status, error=${error||null}, updated_at=now() WHERE id=${id}`);
