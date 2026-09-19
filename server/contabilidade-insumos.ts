@@ -250,14 +250,12 @@ export function registerContabilidadeInsumos(app: Express) {
       }
 
       // Consumo de cada mes, pela ficha tecnica das vendas daquele mes.
+      // UMA consulta para o ano inteiro, agrupada por mes. A 1a versao chamava
+      // consumoPelasVendas() doze vezes em sequencia e a rota passava dos 45s —
+      // o navegador desistia antes da resposta.
       const meses: string[] = [];
-      const consumoMes: Map<string, number>[] = [];
-      for (let k = 1; k <= ateMes; k++) {
-        const p = String(k).padStart(2, "0");
-        const ultimo = new Date(Date.UTC(ano, k, 0)).getUTCDate();
-        meses.push(`${ano}-${p}`);
-        consumoMes.push(await consumoPelasVendas(`${ano}-${p}-01`, `${ano}-${p}-${String(ultimo).padStart(2, "0")}`, instancias));
-      }
+      for (let k = 1; k <= ateMes; k++) meses.push(`${ano}-${String(k).padStart(2, "0")}`);
+      const consumoMes = await consumoPelasVendasPorMes(ano, ateMes, instancias);
 
       const N = meses.length;
       const linhas = materiais.map((mat: any) => {
@@ -303,6 +301,13 @@ export function registerContabilidadeInsumos(app: Express) {
           unidade: mat.unit || "UN",
           instancia: mat.instancia || mat.instance_name || "—",
           cobertura: Number(cobertura.toFixed(2)),
+          // Duas coisas diferentes que a cobertura zero confundia (bug pego em
+          // producao, 18/set): "nao entra em receita nenhuma" e "entra, mas o
+          // estoque esta zerado hoje". A polpa de maracuja e do segundo tipo —
+          // 14 t consumidas no ano, saldo zero — e o aviso a acusava de nao ter
+          // ficha tecnica. Agora cada condicao tem seu proprio campo.
+          entraEmReceita: mediaConsumo > EPS,
+          semEstoqueHoje: saldoHoje <= EPS,
           consumo: c.map(r2),
           abertura: abertura.map(r2),
           compras: compras.map(r2),
@@ -338,8 +343,12 @@ export function registerContabilidadeInsumos(app: Express) {
       if (comResiduo) {
         avisos.push(`${comResiduo} insumos tem residuo: mesmo sem nenhuma compra, o estoque teria de cair mais do que as vendas explicam. Essa diferenca saiu sem ser vendida nem lancada (perda, quebra ou consumo nao registrado).`);
       }
-      const semConsumo = linhas.filter((l: any) => l.cobertura === 0).length;
-      if (semConsumo) avisos.push(`${semConsumo} insumos nao aparecem em receita de nenhum produto vendido no periodo — para esses nao ha como estimar consumo, e a serie so mostra o saldo de hoje.`);
+      // NAO usar cobertura === 0 aqui: ela tambem zera quando o insumo e consumido
+      // normalmente mas esta sem saldo hoje. O teste certo e o consumo do periodo.
+      const semReceita = linhas.filter((l: any) => !l.entraEmReceita).length;
+      if (semReceita) avisos.push(`${semReceita} insumos nao aparecem em receita de nenhum produto vendido no periodo — para esses nao ha como estimar consumo, e a serie so mostra o saldo de hoje.`);
+      const zeradosEmUso = linhas.filter((l: any) => l.entraEmReceita && l.semEstoqueHoje).length;
+      if (zeradosEmUso) avisos.push(`${zeradosEmUso} insumos sao consumidos pelas receitas mas estao com saldo ZERO hoje — a serie mensal deles fecha em zero. Confira se e ruptura real ou baixa lancada a mais.`);
 
       res.json({ ano, meses, linhas, totais, avisos, estimativa: true });
     } catch (e: any) {
@@ -409,6 +418,85 @@ async function consumoPelasVendas(inicio: string, fim: string, instancias: strin
     }
   } catch (e: any) {
     console.warn("[CONTABIL/INSUMOS] consumo pelas vendas:", e?.message);
+  }
+  return out;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// A MESMA CONTA, O ANO INTEIRO, EM UMA CONSULTA SÓ.
+//
+// `consumoPelasVendas` responde por um período. Chamá-la mês a mês custava doze
+// idas ao banco em sequência, cada uma varrendo notas, produtos, receitas e
+// itens de receita — a rota mensal estourava os 45s do navegador.
+//
+// Aqui as vendas do ano saem agrupadas por (mês, produto) numa consulta, e as
+// receitas são lidas UMA vez. O resto é multiplicação em memória. O resultado é
+// idêntico ao do laço antigo: um Map por mês, na ordem dos meses.
+// ───────────────────────────────────────────────────────────────────────────
+async function consumoPelasVendasPorMes(
+  ano: number,
+  ateMes: number,
+  instancias: string[],
+): Promise<Map<string, number>[]> {
+  const out: Map<string, number>[] = Array.from({ length: ateMes }, () => new Map<string, number>());
+  try {
+    const filtro = instancias.length ? sql`AND fi.omie_instance_id = ANY(${arraySql(instancias)})` : sql``;
+    const inicio = `${ano}-01-01 00:00:00`;
+    const fim = `${ano}-${String(ateMes).padStart(2, "0")}-${String(new Date(Date.UTC(ano, ateMes, 0)).getUTCDate()).padStart(2, "0")} 23:59:59`;
+
+    // Vendas por MES e por produto. A deduplicacao por chave de acesso e a mesma
+    // do calculo por periodo — nota reemitida nao conta duas vezes.
+    const rVend: any = await db.execute(sql`
+      SELECT EXTRACT(MONTH FROM fi.emission_date)::int AS mes,
+             p.id AS product_id,
+             SUM(it.quantity::numeric) AS qtd
+        FROM fiscal_invoice_items it
+        JOIN (SELECT DISTINCT ON (COALESCE(access_key, id)) id, omie_instance_id, emission_date, status
+                FROM fiscal_invoices
+               ORDER BY COALESCE(access_key, id), created_at DESC) fi ON fi.id = it.invoice_id
+        JOIN products p ON p.omie_code = it.product_code
+       WHERE fi.emission_date >= ${inicio}::timestamp
+         AND fi.emission_date <= ${fim}::timestamp
+         AND COALESCE(fi.status, '') NOT IN ('cancelada', 'cancelled', 'denegada', 'rejeitada')
+         ${filtro}
+       GROUP BY 1, 2`);
+    const vendas = rVend.rows || rVend;
+    if (!vendas.length) return out;
+
+    const prodIds = Array.from(new Set(vendas.map((v: any) => String(v.product_id))));
+    const rRec: any = await db.execute(sql`
+      SELECT DISTINCT ON (r.product_id) r.id, r.product_id
+        FROM recipes r
+       WHERE r.product_id = ANY(${arraySql(prodIds)}) AND COALESCE(r.is_active, true) = true
+       ORDER BY r.product_id, r.updated_at DESC NULLS LAST`);
+    const receitaDoProduto = new Map<string, string>();
+    for (const r of (rRec.rows || rRec)) receitaDoProduto.set(String(r.product_id), String(r.id));
+    if (!receitaDoProduto.size) return out;
+
+    const recIds = Array.from(new Set(receitaDoProduto.values()));
+    const rIt: any = await db.execute(sql`
+      SELECT recipe_id, raw_material_id, quantity
+        FROM recipe_items WHERE recipe_id = ANY(${arraySql(recIds)})`);
+    const itensDaReceita = new Map<string, { insumo: string; qtd: number }[]>();
+    for (const it of (rIt.rows || rIt)) {
+      const arr = itensDaReceita.get(String(it.recipe_id)) || [];
+      arr.push({ insumo: String(it.raw_material_id), qtd: n(it.quantity) });
+      itensDaReceita.set(String(it.recipe_id), arr);
+    }
+
+    for (const v of vendas) {
+      const mes = Number(v.mes);
+      if (!Number.isFinite(mes) || mes < 1 || mes > ateMes) continue;
+      const rec = receitaDoProduto.get(String(v.product_id));
+      if (!rec) continue;
+      const qtdVendida = n(v.qtd);
+      const alvo = out[mes - 1];
+      for (const it of (itensDaReceita.get(rec) || [])) {
+        alvo.set(it.insumo, (alvo.get(it.insumo) || 0) + it.qtd * qtdVendida);
+      }
+    }
+  } catch (e: any) {
+    console.warn("[CONTABIL/INSUMOS] consumo por mes:", e?.message);
   }
   return out;
 }
