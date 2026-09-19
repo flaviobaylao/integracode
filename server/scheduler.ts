@@ -972,6 +972,15 @@ cron.schedule('20 8-23/3 * * *', async () => {
   catch (e: any) { console.error('[MKT-ADS] coleta falhou:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
+// A cada 10 min (7h-23h) — a mensagem chegou? Pergunta ao Umbler o estado dos
+// disparos recentes que ainda estao so 'enviada'. O webhook ja atualiza de graca
+// quando chega; isto cobre o que se perde no caminho, que e onde mora o engano:
+// "enviada" so diz que a Meta aceitou, nao que o aparelho recebeu.
+cron.schedule('*/10 7-23 * * *', async () => {
+  try { const { conferirEntregas } = await import('./official-entrega'); await conferirEntregas(); }
+  catch (e: any) { console.error('[ENTREGA-1841] conferencia falhou:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
 // Segunda 06:00 — otimizador: o que a Central fez x o que rendeu -> mkt_learnings
 cron.schedule('0 6 * * 1', async () => {
   try { const { rodar } = await import('./mkt-otimizador'); const r = await rodar({ quem: 'cron' }); console.log('[MKT-OTIMIZADOR] ' + (r.ok ? (r.gravados?.length || 0) + ' aprendizado(s)' : r.motivo)); }

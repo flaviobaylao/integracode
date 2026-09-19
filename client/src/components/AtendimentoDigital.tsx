@@ -25,7 +25,7 @@ import {
 } from 'recharts';
 
 type PorCanal = { canal: string; rotulo: string; recebidas: number; enviadas: number; ia: number; humano: number; sistema: number; conversas: number };
-type Template = { template: string; categoria: string; uso: string; enviados: number; responderam: number; falhas: number; fila: number; custo: number };
+type Template = { template: string; categoria: string; uso: string; enviados: number; entregues: number; lidas: number; responderam: number; falhas: number; fila: number; custo: number; ensaio: number };
 type Acao = {
   numero: number; tipo: string; tipoNome: string; titulo: string; status: string; dia: string;
   modoTeste: boolean; fechado: boolean; custo: number; receita: number | null; receitaEsperada: number;
@@ -42,7 +42,12 @@ type Digital = {
   };
   porCanal: PorCanal[];
   janela24h: { abertas: number; conversasOficiais: number };
-  disparos: { enviados: number; fila: number; falhas: number; responderam: number; custo: number; porTemplate: Template[]; porUso: { uso: string; enviados: number; custo: number }[] };
+  disparos: {
+    enviados: number; entregues: number; lidas: number; semConfirmacao: number;
+    pctEntrega: number | null; pctLeitura: number | null; ensaio: number;
+    fila: number; falhas: number; responderam: number; custo: number;
+    porTemplate: Template[]; porUso: { uso: string; enviados: number; custo: number }[];
+  };
   ia: { execucoes: number; erros: number; custo: number; duracaoMediaMs: number; porAgente: { agente: string; execucoes: number; custo: number; erros: number }[] };
   instagram: { posts: number; publicados: number; alcance: number; impressoes: number; curtidas: number; comentarios: number; salvos: number; compartilhamentos: number; cliquesLink: number; novosSeguidores: number; direct: PorCanal | null };
   ads: { anuncios: number; gasto: number; impressoes: number; cliques: number; conversas: number; alcance: number; custoPorConversa: number | null };
@@ -366,11 +371,48 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-            <div className="flex items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-50">Disparos oficiais por modelo</h3>
               <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">
-                {fmtInt(data.disparos.enviados)} enviados · {fmtInt(data.disparos.responderam)} responderam · {fmtBRL(data.disparos.custo)}
+                {fmtInt(data.disparos.enviados)} enviados · {fmtBRL(data.disparos.custo)}
+                {data.disparos.ensaio > 0 && <> · <span className="text-gray-400">{fmtInt(data.disparos.ensaio)} do ensaio</span></>}
               </span>
+            </div>
+
+            {/* A pergunta que faltava: chegou? "Enviada" só diz que a Meta aceitou. */}
+            <div className="grid grid-cols-2 gap-px border-b border-gray-200 bg-gray-200 dark:border-gray-700 dark:bg-gray-700 sm:grid-cols-4">
+              <div className="bg-white p-3 dark:bg-gray-900" data-testid="entrega-saiu">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Saíram</div>
+                <div className="mt-0.5 text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-50">{fmtInt(data.disparos.enviados)}</div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">a Meta aceitou</div>
+              </div>
+              <div className="bg-white p-3 dark:bg-gray-900" data-testid="entrega-chegou">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Chegaram no aparelho</div>
+                <div className="mt-0.5 flex items-baseline gap-2">
+                  <span className="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-50">{fmtInt(data.disparos.entregues)}</span>
+                  {data.disparos.pctEntrega != null && (
+                    <span className={`text-xs font-semibold tabular-nums ${data.disparos.pctEntrega >= 90 ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>{data.disparos.pctEntrega}%</span>
+                  )}
+                </div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">confirmado pelo WhatsApp</div>
+              </div>
+              <div className="bg-white p-3 dark:bg-gray-900" data-testid="entrega-lidas">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Lidas</div>
+                <div className="mt-0.5 flex items-baseline gap-2">
+                  <span className="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-50">{fmtInt(data.disparos.lidas)}</span>
+                  {data.disparos.pctLeitura != null && <span className="text-xs font-semibold tabular-nums text-gray-500">{data.disparos.pctLeitura}%</span>}
+                </div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">{fmtInt(data.disparos.responderam)} responderam</div>
+              </div>
+              <div className="bg-white p-3 dark:bg-gray-900" data-testid="entrega-sem-confirmacao">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Sem confirmação</div>
+                <div className={`mt-0.5 text-lg font-semibold tabular-nums ${data.disparos.semConfirmacao > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-gray-50'}`}>
+                  {fmtInt(data.disparos.semConfirmacao)}
+                </div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                  {data.disparos.falhas > 0 ? `+ ${fmtInt(data.disparos.falhas)} falha(s)` : 'nenhuma falha'}
+                </div>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm" data-testid="tabela-disparos">
@@ -379,6 +421,7 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
                     <th className="px-4 py-2 text-left font-medium">Modelo</th>
                     <th className="px-2 py-2 text-left font-medium">Tipo</th>
                     <th className="px-2 py-2 text-right font-medium">Enviados</th>
+                    <th className="px-2 py-2 text-right font-medium">Chegaram</th>
                     <th className="px-2 py-2 text-right font-medium">Responderam</th>
                     <th className="px-2 py-2 text-right font-medium">Falhas</th>
                     <th className="px-4 py-2 text-right font-medium">Custo</th>
@@ -386,10 +429,13 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
                 </thead>
                 <tbody>
                   {data.disparos.porTemplate.length === 0 ? (
-                    <tr><td colSpan={6} className="px-4 py-6 text-center text-sm text-gray-500">Nenhum disparo no período.</td></tr>
+                    <tr><td colSpan={7} className="px-4 py-6 text-center text-sm text-gray-500">Nenhum disparo no período.</td></tr>
                   ) : data.disparos.porTemplate.map(t => (
                     <tr key={t.template} className="border-b border-gray-100 last:border-0 dark:border-gray-800">
-                      <td className="px-4 py-2 font-medium text-gray-900 dark:text-gray-50">{t.template}</td>
+                      <td className="px-4 py-2 font-medium text-gray-900 dark:text-gray-50">
+                        {t.template}
+                        {t.ensaio > 0 && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">{t.ensaio} do ensaio</span>}
+                      </td>
                       <td className="px-2 py-2">
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${t.categoria === 'MARKETING'
                           ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
@@ -397,6 +443,14 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
                         <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{t.uso}</span>
                       </td>
                       <td className="px-2 py-2 text-right tabular-nums">{fmtInt(t.enviados)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">
+                        {fmtInt(t.entregues)}
+                        {t.enviados > 0 && (
+                          <span className={`ml-1 text-xs ${t.entregues / t.enviados >= 0.9 ? 'text-gray-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                            {Math.round((t.entregues / t.enviados) * 100)}%
+                          </span>
+                        )}
+                      </td>
                       <td className="px-2 py-2 text-right tabular-nums">
                         {fmtInt(t.responderam)}
                         {t.enviados > 0 && <span className="ml-1 text-xs text-gray-400">{Math.round((t.responderam / t.enviados) * 100)}%</span>}
@@ -414,6 +468,11 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
             Recebida = mensagem do cliente. Enviada = mensagem nossa na conversa, separada por quem escreveu (IA, atendente ou aviso do sistema);
             disparo de template é contado à parte, porque sai antes de existir conversa. Tempo de resposta = primeira resposta depois de uma mensagem
             do cliente, ignorando intervalos acima de 12 h. Janela aberta = conversa em que o cliente falou nas últimas 24 h, onde a mensagem é grátis.
+            <br />
+            <strong>Saiu ≠ chegou:</strong> “enviado” só quer dizer que a Meta aceitou o pedido. “Chegou” é o aparelho confirmando —
+            o sistema pergunta ao WhatsApp de 10 em 10 minutos. Mensagem que fica sem confirmação por muito tempo provavelmente não chegou
+            (aparelho desligado, número que bloqueou a empresa, chip cancelado). Linhas marcadas “do ensaio” são do teste geral da Central,
+            redirecionadas para os aparelhos de teste.
           </p>
         </>
       )}

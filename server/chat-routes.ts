@@ -1796,6 +1796,15 @@ export function registerChatRoutes(app: Express): void {
         const ut: any = req.body || {};
         const chat = (ut.Payload && ut.Payload.Content) || (ut.payload && ut.payload.content) || null;
         const lm = chat && (chat.LastMessage || chat.lastMessage);
+        // A MENSAGEM CHEGOU? O Umbler reenvia a mensagem quando o estado muda
+        // (Sent -> Delivered -> Read). Se aquele Id for um disparo nosso do 1841,
+        // e aqui que ele deixa de ser so "enviada" e passa a "entregue"/"lida".
+        // Fire-and-forget: rastreio de entrega nunca pode derrubar o webhook.
+        if (lm) {
+          import('./official-entrega')
+            .then(m => m.aplicarEstadoDoWebhook(lm))
+            .catch(() => {});
+        }
         if (chat && lm) {
           const contact = chat.Contact || chat.contact || {};
           const phoneRaw = contact.PhoneNumber || contact.phoneNumber || contact.Phone || '';

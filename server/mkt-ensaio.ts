@@ -16,9 +16,15 @@
 //                    nunca para cliente. Modo teste tambem ignora o expediente,
 //                    entao da para ensaiar a noite ou no fim de semana.
 //
-// O QUE NUNCA ACONTECE AQUI: mandar mensagem para cliente real, publicar no
-// Instagram, criar anuncio que gaste dinheiro, ou deixar lixo no banco — cada
-// passo registra o que criou e a limpeza desfaz no fim, mesmo se algo falhar.
+// O RASTRO FICA. O ensaio NAO apaga o que criou: mensagem enviada e mensagem
+// enviada de verdade, custou dinheiro de verdade, e tem que aparecer no painel
+// de atendimento — e justamente olhando o painel encher que se ve a Central
+// funcionando. Tudo que o ensaio cria leva a marca '[ensaio]' e o id da rodada,
+// entao da para distinguir no painel e apagar depois, de uma vez, com
+// POST /api/mkt/ensaio/limpar?id=<id>.
+//
+// O QUE NUNCA ACONTECE AQUI: mandar mensagem para CLIENTE real (modo teste
+// redireciona), publicar no Instagram, ou criar anuncio que gaste dinheiro.
 //
 // COMO LER O RELATORIO: cada passo devolve ok/falhou/pulado + detalhe. 'pulado'
 // nao e defeito: e uma rotina que depende de algo ausente naquele ambiente
@@ -76,10 +82,15 @@ const uma = async (texto: any): Promise<any> => { try { return ((await db.execut
 /**
  * O ensaio inteiro. `enviar` liga o disparo real (redirecionado aos telefones de teste).
  */
-export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}) {
+export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpar?: boolean } = {}) {
   const e = new Ensaio(!!opts.enviar);
   const quem = opts.quem || "ensaio";
   const t0 = Date.now();
+  // Id da rodada: carimba tudo que o ensaio criar, para dar para achar no painel
+  // e apagar depois sem varrer a marca junto com dado de verdade.
+  const ensaioId = "ens-" + new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  const marca = `${MARCA} ${ensaioId}`;
+  const limpar = opts.limpar === true; // padrao: NAO limpa — o rastro tem que aparecer no painel
 
   // Guarda os modos atuais para devolver tudo como estava no fim.
   const modosAntes: Record<string, string> = {};
@@ -178,14 +189,14 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
   /** Cria uma ação de ensaio, aprova, executa e conta o que houve. */
   const cicloDaAcao = async (tipo: any, titulo: string, extra: any = {}) => {
     const a = await criarAcao({
-      tipo, agente: "mkt_ensaio", titulo: `${MARCA} ${titulo}`,
+      tipo, agente: "mkt_ensaio", titulo: `${marca} ${titulo}`,
       justificativa: "Ação criada pelo ensaio geral. Não representa uma decisão de negócio.",
       custoEstimado: 0, receitaEsperada: 0, nivelSugerido: 2, modoTeste: !e.enviar,
       prazoHoras: 1, ...extra,
     });
     e.anotar("mkt_acoes", a.id);
     if (a.status !== "proposta") return { estado: "falhou" as Estado, detalhe: `nasceu como '${a.status}', esperava 'proposta' (N2)` };
-    const d = await decidir({ ids: [a.id], decisao: "aprovar", quem, via: "tela", comentario: MARCA });
+    const d = await decidir({ ids: [a.id], decisao: "aprovar", quem, via: "tela", comentario: marca });
     const depois: any = await ver(a.id);
     const ex = d.execucoes?.[0] || {};
     if (depois?.status === "erro") return { estado: "falhou" as Estado, detalhe: `executou com erro: ${String(depois?.execucao?.erro || ex.erro || "?").slice(0, 160)}` };
@@ -194,7 +205,7 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
 
   await e.passo("Caixa", "Alerta ao vendedor: propor → aprovar → executar", async () =>
     cicloDaAcao("alerta", "alerta ao vendedor", {
-      parametros: { texto: `${MARCA} Teste do ensaio geral da Central. Pode ignorar.`, vendedor_id: null },
+      parametros: { texto: `${marca} Teste do ensaio geral da Central. Pode ignorar.`, vendedor_id: null },
     }));
 
   await e.passo("Caixa", "Visita: propor → aprovar → entra na agenda", async () => {
@@ -202,7 +213,7 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
     if (!cli) return { estado: "pulado", detalhe: "nenhum cliente com telefone na base" };
     return cicloDaAcao("visita", "visita de ensaio", {
       publico: { clientes: [{ id: String(cli.id), nome: String(cli.name || "") }] },
-      parametros: { dias: 1, motivo: `${MARCA} visita de teste` },
+      parametros: { dias: 1, motivo: `${marca} visita de teste` },
     });
   });
 
@@ -217,12 +228,12 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
 
   await e.passo("Caixa", "Rejeitar uma proposta", async () => {
     const a = await criarAcao({
-      tipo: "alerta", agente: "mkt_ensaio", titulo: `${MARCA} proposta para rejeitar`,
+      tipo: "alerta", agente: "mkt_ensaio", titulo: `${marca} proposta para rejeitar`,
       justificativa: "ensaio", parametros: { texto: "x" }, custoEstimado: 0, receitaEsperada: 0,
       nivelSugerido: 2, modoTeste: true, prazoHoras: 1,
     });
     e.anotar("mkt_acoes", a.id);
-    const d = await decidir({ ids: [a.id], decisao: "rejeitar", quem, via: "tela", comentario: `${MARCA} rejeitada no ensaio` });
+    const d = await decidir({ ids: [a.id], decisao: "rejeitar", quem, via: "tela", comentario: `${marca} rejeitada no ensaio` });
     const depois: any = await ver(a.id);
     if (d.aplicadas !== 1 || depois?.status !== "rejeitada") return { estado: "falhou", detalhe: `status ficou '${depois?.status}'` };
     return "rejeição registrada com motivo";
@@ -230,7 +241,7 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
 
   await e.passo("Caixa", "Proposta vencida expira sozinha", async () => {
     const a = await criarAcao({
-      tipo: "alerta", agente: "mkt_ensaio", titulo: `${MARCA} proposta que vai expirar`,
+      tipo: "alerta", agente: "mkt_ensaio", titulo: `${marca} proposta que vai expirar`,
       justificativa: "ensaio", parametros: { texto: "x" }, custoEstimado: 0, receitaEsperada: 0,
       nivelSugerido: 2, modoTeste: true, prazoHoras: 1,
     });
@@ -333,6 +344,39 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
     return `${r.enviados} aviso(s) enfileirado(s) — ${r.detalhes.slice(0, 3).join(" | ")}`;
   });
 
+  // Os outros tres momentos: entrega feita (+ follow-up de 2 dias) e devolucao.
+  // Usa uma parada de verdade, sem mexer no status dela — so os avisos.
+  await e.passo("Entrega", "Entrega feita avisa e agenda a conferência de 2 dias", async () => {
+    let ec: any;
+    try { ec = await import("./entrega-cliente"); } catch { return { estado: "pulado", detalhe: "módulo ainda não está neste deploy" }; }
+    if (!e.enviar) return { estado: "pulado", detalhe: "ensaio seco" };
+    const parada = await uma(sql`SELECT s.id FROM delivery_route_stops s
+                                   JOIN customers c ON c.id = s.customer_id AND COALESCE(c.phone,'') <> ''
+                                  WHERE s.sales_card_id IS NOT NULL ORDER BY s.id DESC LIMIT 1`);
+    if (!parada) return { estado: "pulado", detalhe: "nenhuma parada com cliente e pedido para ensaiar" };
+    await set("oficial_mode_entrega", "test");
+    const r = await ec.avisarEntregaEfetuada(String(parada.id));
+    if (!String(r.agora).startsWith("enfileirado") && !/ja avisado/.test(String(r.agora)))
+      return { estado: "falhou", detalhe: `aviso de entrega: ${r.agora}` };
+    return `agora: ${r.agora}; em 2 dias: ${r.followUp}`;
+  });
+
+  await e.passo("Entrega", "Devolução avisa e cancela a conferência agendada", async () => {
+    let ec: any;
+    try { ec = await import("./entrega-cliente"); } catch { return { estado: "pulado", detalhe: "módulo ainda não está neste deploy" }; }
+    if (!e.enviar) return { estado: "pulado", detalhe: "ensaio seco" };
+    const parada = await uma(sql`SELECT s.id FROM delivery_route_stops s
+                                   JOIN customers c ON c.id = s.customer_id AND COALESCE(c.phone,'') <> ''
+                                  WHERE s.sales_card_id IS NOT NULL ORDER BY s.id DESC LIMIT 1`);
+    if (!parada) return { estado: "pulado", detalhe: "nenhuma parada para ensaiar" };
+    const r = await ec.avisarEntregaDevolvida(String(parada.id), `${marca} devolução simulada`);
+    if (!String(r).startsWith("enfileirado") && !/ja avisado/.test(String(r)))
+      return { estado: "falhou", detalhe: String(r) };
+    const cancelado = await uma(sql`SELECT count(*)::int AS n FROM official_dispatches
+                                     WHERE campaign LIKE 'card:%:pos2d' AND status::text = 'falha' AND error LIKE 'cancelado%'`);
+    return `${r}; ${cancelado?.n || 0} conferência(s) de 2 dias cancelada(s) por devolução`;
+  });
+
   // ========================================================================
   // 7. ATENDIMENTO — a IA responde quem escreve
   // ========================================================================
@@ -348,6 +392,51 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
     const horas = await get("ia_disparo_horas", "48");
     if (on !== "on") return { estado: "falhou", detalhe: "ia_disparo_reabre=off — resposta a template ficaria sem atendimento" };
     return `ligado, janela de ${horas} h`;
+  });
+
+  // O teste de verdade do atendimento: o telefone do ensaio escreve, e a IA tem
+  // que responder. Entra pelas MESMAS funcoes que o webhook do Umbler chama
+  // depois de normalizar o payload — o que nao se exercita aqui e so a leitura
+  // do payload cru, que e a parte que nao quebra sozinha.
+  await e.passo("Atendimento", e.enviar ? "Cliente escreve e a IA responde (ida e volta real)" : "Cliente escreve e a IA responde", async () => {
+    const fone = (process.env.INTEGRA_OFICIAL_TEST_PHONES || "").split(",").map(s => s.replace(/\D/g, "")).filter(Boolean)[0];
+    if (!fone) return { estado: "pulado", detalhe: "sem telefone de ensaio configurado" };
+    if ((await get("agents_runtime_mode", "off")) === "off") return { estado: "pulado", detalhe: "agents_runtime_mode=off" };
+
+    const { storage } = await import("./storage");
+    let conv: any = await uma(sql`SELECT id FROM chat_conversations WHERE right(regexp_replace(COALESCE(customer_phone,''),'\\D','','g'), 8) = ${fone.slice(-8)} LIMIT 1`);
+    if (!conv) {
+      const cc: any = await uma(sql`INSERT INTO chat_customers (name, phone) VALUES (${"Ensaio da Central"}, ${"+" + fone}) RETURNING id`);
+      conv = await uma(sql`INSERT INTO chat_conversations (customer_id, customer_name, customer_phone, status)
+                            VALUES (${cc?.id || null}, ${"Ensaio da Central"}, ${"+" + fone}, 'new') RETURNING id`);
+      if (conv?.id) e.anotar("chat_conversations", String(conv.id));
+    }
+    if (!conv?.id) return { estado: "falhou", detalhe: "não consegui abrir a conversa do ensaio" };
+
+    const pergunta = `${marca} Oi! Quanto custa a caixa de suco de laranja?`;
+    const msg = await storage.createChatMessage({
+      conversationId: String(conv.id), senderId: "cliente-ensaio", senderType: "customer",
+      content: pergunta, messageType: "text",
+    } as any);
+    if (msg?.id) e.anotar("chat_messages", String(msg.id));
+
+    const antes: any = await uma(sql`SELECT count(*)::int AS n FROM chat_messages
+                                      WHERE conversation_id = ${String(conv.id)} AND COALESCE(sender_id,'') LIKE 'agent:%'`);
+    const { maybeRunAgent } = await import("./agent-runtime");
+    const enviadas: string[] = [];
+    await maybeRunAgent({
+      phone: fone, conversationId: String(conv.id), incomingText: pergunta, channel: "whatsapp",
+      // Em ensaio seco a resposta e montada mas nao sai do predio.
+      sendText: async (_to: string, texto: string) => { enviadas.push(texto); if (!e.enviar) return { simulado: true }; const { sendOfficialText } = await import("./official-dispatch"); return sendOfficialText(fone, texto); },
+    });
+    const depois: any = await uma(sql`SELECT count(*)::int AS n FROM chat_messages
+                                       WHERE conversation_id = ${String(conv.id)} AND COALESCE(sender_id,'') LIKE 'agent:%'`);
+    if (!enviadas.length && Number(depois?.n) <= Number(antes?.n)) {
+      const t: any = await uma(sql`SELECT porta, detalhe FROM ia_trilha WHERE conversation_id = ${String(conv.id)} ORDER BY criado_at DESC LIMIT 1`);
+      return { estado: "falhou", detalhe: `a IA não respondeu${t ? ` — porta '${t.porta}' ${String(t.detalhe || "")}` : " (sem trilha registrada)"}` };
+    }
+    const r = enviadas[0] || "(gravada na conversa)";
+    return `respondeu em ${enviadas.length || 1} mensagem: “${r.slice(0, 110).replace(/\n/g, " ")}…”`;
   });
 
   // ========================================================================
@@ -373,27 +462,36 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
     const { textoResumo, enviarResumo, pendentes } = await import("./mkt-acoes");
     if (!e.enviar) {
       const p = await pendentes();
-      const t = textoResumo(p, { avisos: [`${MARCA} ensaio geral`] });
+      const t = textoResumo(p, { avisos: [`${marca} ensaio geral`] });
       if (!t) return { estado: "pulado", detalhe: "nada pendente para resumir agora" };
       return `${t.length} caracteres montados: “${t.slice(0, 90).replace(/\n/g, " ")}…”`;
     }
-    const r: any = await enviarResumo({ avisos: [`${MARCA} este resumo faz parte do ensaio geral`] });
+    const r: any = await enviarResumo({ avisos: [`${marca} este resumo faz parte do ensaio geral`] });
     return `${(r.enviados || []).length} envio(s), ${r.pendentes} pendente(s) no resumo`;
   });
 
   // ========================================================================
   // 9. LIMPEZA — nada do ensaio fica no banco
   // ========================================================================
-  await e.passo("Limpeza", "Desfazer tudo que o ensaio criou", async () => {
-    let n = 0;
-    for (const c of e.criados) {
-      try { await db.execute(sql.raw(`DELETE FROM ${c.tabela} WHERE id = '${String(c.id).replace(/'/g, "")}'`)); n++; } catch {}
+  // ========================================================================
+  // 9. FECHAMENTO — modos voltam ao normal; o RASTRO fica
+  // ========================================================================
+  await e.passo("Fechamento", "Devolver os modos ao que estavam", async () => {
+    const mudados: string[] = [];
+    for (const k of Object.keys(modosAntes)) {
+      const v = modosAntes[k];
+      if (v && v !== (await get(k, ""))) { await set(k, v); mudados.push(`${k}=${v}`); }
     }
-    // Toques e disparos do ensaio que ainda nao sairam: nao podem sobrar na fila.
-    try { await db.execute(sql`DELETE FROM mkt_fila_toques WHERE lote_id = ANY(${e.criados.filter(c => c.tabela === "mkt_lotes").map(c => c.id)})`); } catch {}
-    try { await db.execute(sql`DELETE FROM official_dispatches WHERE status::text = 'fila' AND campaign LIKE '%ensaio%'`); } catch {}
-    for (const [k, v] of Object.entries(modosAntes)) { if (v) await set(k, v); }
-    return `${n} registro(s) removido(s); modos devolvidos ao que estavam`;
+    return mudados.length ? `devolvidos: ${mudados.join(", ")}` : "nenhum modo precisou voltar";
+  });
+
+  await e.passo("Fechamento", limpar ? "Apagar o rastro do ensaio" : "Rastro preservado para o painel", async () => {
+    if (!limpar) {
+      return `${e.criados.length} registro(s) marcados '${ensaioId}' — vão aparecer no painel de atendimento. `
+        + `Para apagar depois: POST /api/mkt/ensaio/limpar?id=${ensaioId}`;
+    }
+    const n = await limparEnsaio(ensaioId);
+    return `${n.removidos} registro(s) removido(s)`;
   });
 
   const r = e.resumo;
@@ -407,19 +505,49 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string } = {}
   };
 }
 
+/**
+ * Apaga o rastro de uma rodada do ensaio. Nao toca em disparo JA ENVIADO: aquilo
+ * aconteceu, custou dinheiro, e apagar do banco nao desfaz a mensagem que chegou
+ * no aparelho — so faria o painel mentir. Some o que nao saiu e o que foi criado
+ * so para o teste.
+ */
+export async function limparEnsaio(ensaioId: string): Promise<{ removidos: number; detalhe: Record<string, number> }> {
+  const det: Record<string, number> = {};
+  const conta = async (t: string, texto: any) => {
+    try { const r: any = await db.execute(texto); det[t] = (det[t] || 0) + (r.rowCount ?? 0); } catch {}
+  };
+  const alvo = `%${ensaioId}%`;
+  await conta("mkt_fila_toques", sql`DELETE FROM mkt_fila_toques WHERE acao_id IN (SELECT id FROM mkt_acoes WHERE titulo LIKE ${alvo})`);
+  await conta("mkt_acoes", sql`DELETE FROM mkt_acoes WHERE titulo LIKE ${alvo} OR comentario LIKE ${alvo}`);
+  await conta("chat_messages", sql`DELETE FROM chat_messages WHERE content LIKE ${alvo}`);
+  await conta("official_dispatches", sql`DELETE FROM official_dispatches WHERE status::text = 'fila' AND campaign LIKE ${alvo}`);
+  const removidos = Object.values(det).reduce((t, n) => t + n, 0);
+  console.log(`[MKT-ENSAIO] limpeza de ${ensaioId}: ${removidos} registro(s)`, det);
+  return { removidos, detalhe: det };
+}
+
 export function registerMktEnsaio(app: Express) {
   // POST /api/mkt/ensaio           → ensaio seco (padrão, não envia nada)
   // POST /api/mkt/ensaio?enviar=1  → dispara de verdade, para os telefones de teste
   app.post("/api/mkt/ensaio", authenticateUser, requireRole(PAPEIS), async (req: Request, res: Response) => {
     try {
       const enviar = String(req.query.enviar || (req.body && (req.body as any).enviar) || "") === "1";
+      const limpar = String(req.query.limpar || "") === "1";
       const quem = String((req as any).user?.username || (req as any).user?.id || "admin");
       res.setHeader("Cache-Control", "no-store");
-      res.json(await rodarEnsaio({ enviar, quem }));
+      res.json(await rodarEnsaio({ enviar, quem, limpar }));
     } catch (e: any) {
       console.error("[MKT-ENSAIO]", e?.message || e);
       res.status(500).json({ error: (e && e.message) || String(e) });
     }
+  });
+  // POST /api/mkt/ensaio/limpar?id=ens-...  → apaga o rastro daquela rodada
+  app.post("/api/mkt/ensaio/limpar", authenticateUser, requireRole(PAPEIS), async (req: Request, res: Response) => {
+    try {
+      const id = String(req.query.id || (req.body && (req.body as any).id) || "").trim();
+      if (!/^ens-\d{8,}$/.test(id)) return res.status(400).json({ error: "informe o id da rodada (ens-...)" });
+      res.json(await limparEnsaio(id));
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
   console.log("[MKT-ENSAIO] registrado (POST /api/mkt/ensaio)");
 }

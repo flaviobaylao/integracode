@@ -146,10 +146,16 @@ export async function resumoDigital(de: string, ate: string) {
          FROM chat_conversations c
         WHERE to_jsonb(c) ->> 'last_inbound_channel' = 'oficial_1841'`),
 
-    // 5. disparos oficiais por template
+    // 5. disparos oficiais por template, com o caminho da entrega
+    //    'enviada' so diz que a Meta aceitou; 'entregue'/'lida' vem do estado que
+    //    o Umbler confirma (server/official-entrega.ts). Uma mensagem parada em
+    //    'enviada' meia hora depois provavelmente NAO chegou.
     q(`SELECT template_label AS template, COALESCE(category,'UTILITY') AS categoria,
               COALESCE(use_case::text,'—') AS uso,
+              count(*) FILTER (WHERE mode = 'test')::int AS ensaio,
               count(*) FILTER (WHERE status::text IN ('enviada','entregue','lida','resposta'))::int AS enviados,
+              count(*) FILTER (WHERE status::text IN ('entregue','lida','resposta'))::int AS entregues,
+              count(*) FILTER (WHERE status::text IN ('lida','resposta'))::int AS lidas,
               count(*) FILTER (WHERE status::text = 'resposta')::int AS responderam,
               count(*) FILTER (WHERE status::text = 'falha')::int AS falhas,
               count(*) FILTER (WHERE status::text = 'fila')::int AS fila,
@@ -320,6 +326,8 @@ export async function resumoDigital(de: string, ate: string) {
 
   const disparosEnviados = disparoTpl.reduce((t, r) => t + num(r.enviados), 0);
   const disparosCusto = disparoTpl.reduce((t, r) => t + num(r.custo), 0);
+  const disparosEntregues = disparoTpl.reduce((t, r) => t + num(r.entregues), 0);
+  const disparosLidas = disparoTpl.reduce((t, r) => t + num(r.lidas), 0);
   const respostas = num(rp.respostas);
   const entregas = { saiu: 0, entregue: 0, devolvida: 0, pos_entrega: 0, agendados: 0 };
   for (const r of entregaRow) {
@@ -392,14 +400,23 @@ export async function resumoDigital(de: string, ate: string) {
     janela24h: { abertas: num(jn.abertas), conversasOficiais: num(jn.oficiais) },
     disparos: {
       enviados: disparosEnviados,
+      entregues: disparosEntregues,
+      lidas: disparosLidas,
+      // Saiu, mas o aparelho ainda não confirmou. Zero é o esperado; número alto
+      // e persistente quer dizer que a mensagem não está chegando.
+      semConfirmacao: disparosEnviados - disparosEntregues,
+      pctEntrega: disparosEnviados ? Math.round((disparosEntregues / disparosEnviados) * 1000) / 10 : null,
+      pctLeitura: disparosEntregues ? Math.round((disparosLidas / disparosEntregues) * 1000) / 10 : null,
+      ensaio: disparoTpl.reduce((t, r) => t + num(r.ensaio), 0),
       fila: disparoTpl.reduce((t, r) => t + num(r.fila), 0),
       falhas: disparoTpl.reduce((t, r) => t + num(r.falhas), 0),
       responderam: disparoTpl.reduce((t, r) => t + num(r.responderam), 0),
       custo: Math.round(disparosCusto * 100) / 100,
       porTemplate: disparoTpl.map(r => ({
         template: String(r.template || "—"), categoria: String(r.categoria), uso: String(r.uso),
-        enviados: num(r.enviados), responderam: num(r.responderam), falhas: num(r.falhas),
-        fila: num(r.fila), custo: num(r.custo),
+        enviados: num(r.enviados), entregues: num(r.entregues), lidas: num(r.lidas),
+        responderam: num(r.responderam), falhas: num(r.falhas),
+        fila: num(r.fila), custo: num(r.custo), ensaio: num(r.ensaio),
       })),
       porUso: disparoUso.map(r => ({ uso: String(r.uso), enviados: num(r.enviados), custo: num(r.custo) })),
     },

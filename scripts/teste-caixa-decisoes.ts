@@ -728,8 +728,8 @@ async function main() {
       + ens.resumo.ok + ' ok, ' + ens.resumo.pulado + ' pulados, ' + ens.resumo.falhou + ' falhas)');
 
   const grupos = Array.from(new Set(ens.passos.map(p => p.grupo)));
-  check(['Infra', 'Agentes', 'Caixa', 'Régua', 'Conteúdo', 'Entrega', 'Atendimento', 'Painéis', 'Limpeza'].every(g => grupos.includes(g)),
-    'ensaio: cobre infraestrutura, agentes, caixa, régua, conteúdo, entrega, atendimento, painéis e limpeza');
+  check(['Infra', 'Agentes', 'Caixa', 'Régua', 'Conteúdo', 'Entrega', 'Atendimento', 'Painéis', 'Fechamento'].every(g => grupos.includes(g)),
+    'ensaio: cobre infraestrutura, agentes, caixa, régua, conteúdo, entrega, atendimento, painéis e fechamento');
 
   check(ens.modo.startsWith('seco'), 'ensaio: modo seco por padrão — não dispara mensagem sem pedido explícito');
 
@@ -742,9 +742,33 @@ async function main() {
   check(pExpira?.estado === 'ok' && pRejeita?.estado === 'ok',
     'ensaio: prova a rejeição e a expiração automática');
 
-  // E não pode deixar rastro: nenhuma ação de ensaio sobrando.
-  const sobrou: any = ((await raw(`SELECT count(*)::int AS n FROM mkt_acoes WHERE titulo LIKE '[ensaio]%'`)) as any).rows[0];
-  check(sobrou.n === 0, 'ensaio: limpeza não deixa nenhuma ação de teste no banco (' + sobrou.n + ' sobrando)');
+  // O rastro TEM que ficar: é olhando o painel encher que se vê a Central funcionando.
+  const rastro: any = ((await raw(`SELECT count(*)::int AS n FROM mkt_acoes WHERE titulo LIKE '[ensaio]%'`)) as any).rows[0];
+  const idRodada = (ens.passos.find(p => /Rastro preservado/.test(p.passo))?.detalhe || '').match(/ens-\d+/)?.[0];
+  check(rastro.n > 0 && !!idRodada && ens.passos.some(p => /Rastro preservado/.test(p.passo)),
+    'ensaio: o rastro fica no banco e aparece no painel (' + rastro.n + " ação(ões), rodada " + idRodada + ')');
+
+  // E a marca da rodada permite apagar tudo depois, de uma vez.
+  const { limparEnsaio } = await import('../server/mkt-ensaio');
+  const lp = await limparEnsaio(String(idRodada));
+  const depoisLimpeza: any = ((await raw(`SELECT count(*)::int AS n FROM mkt_acoes WHERE titulo LIKE '%${idRodada}%'`)) as any).rows[0];
+  check(lp.removidos > 0 && depoisLimpeza.n === 0,
+    'ensaio: limpar por id apaga só aquela rodada (' + lp.removidos + ' registro(s))');
+
+  // Rastreamento de entrega: o estado que o Umbler devolve vira nosso status.
+  const { traduzirEstado } = await import('../server/official-entrega');
+  check(traduzirEstado('Read') === 'lida' && traduzirEstado('Delivered') === 'entregue'
+    && traduzirEstado('Sent') === 'enviada' && traduzirEstado('Failed') === 'falha'
+    && traduzirEstado('Sending') === null && traduzirEstado('') === null,
+    'entrega: MessageState do Umbler vira status (lida/entregue/enviada/falha; "enviando" não mexe)');
+
+  const { ensureEntregaSchema, panoramaEntrega } = await import('../server/official-entrega');
+  await ensureEntregaSchema();
+  await raw(`UPDATE official_dispatches SET status='entregue'::dispatch_status, delivered_at = now(), sent_at = now() - interval '40 seconds'
+             WHERE template_label = 'pedido_saiu_entrega'`);
+  const pe = await panoramaEntrega(7);
+  check(pe.entregues >= 1 && pe.pctEntrega !== null && pe.segundosAteEntrega !== null,
+    'entrega: painel mostra quantas chegaram, a taxa e o tempo até a entrega (' + pe.pctEntrega + '%, ' + pe.segundosAteEntrega + 's)');
 
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
