@@ -17,6 +17,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
+import { escalaEixo, picoDaSerie } from "@/lib/escalaEixo";
 import AgendaCarteira from "@/pages/AgendaCarteira";
 import RedeClientes from "@/pages/RedeClientes";
 
@@ -30,18 +31,22 @@ const CINZA = "#898781";
 const COR_BARRA = { faturamento: "#2a78d6", debito: "#d03b3b", inativos: "#eda100", perdidos: "#4a3aa7" };
 // Data de conquista: azul = entrou ou voltou; vermelho = saiu.
 const COR_CONQUISTA = { entrada: "#2a78d6", saida: "#d03b3b" };
-// ── Escala fixa do gráfico de evolução ───────────────────────────────────────
-// Eixo travado, de 50 em 50 mil, para comparar um mês com o outro (e uma
-// carteira com a outra) sem a escala se mexer embaixo — escala automática dá a
-// ilusão de que todo mês tem a mesma altura.
-// DOIS TETOS, escolhidos pelo recorte: a carteira inteira chega a ~R$ 560 mil
-// num mês de pico, mas um cliente ou uma rede vive numa ordem de grandeza bem
-// menor. Um teto só serviria mal aos dois — no de 650 mil a linha de um cliente
-// ficava colada no zero.
-const Y_MAX_GERAL = 600000;   // sem filtro de cliente/rede
-const Y_MAX_RECORTE = 350000; // com um cliente ou uma rede escolhida
-const Y_PASSO = 50000;
-const ticksAte = (max: number) => Array.from({ length: max / Y_PASSO + 1 }, (_, i) => i * Y_PASSO);
+// ── Escala do gráfico de evolução ────────────────────────────────────────────
+// Antes eram dois tetos fixos (600 mil sem recorte, 350 mil com um cliente ou
+// uma rede). O teto fixo dava a comparação mês a mês, mas achatava o recorte
+// pequeno: uma rede de R$ 22 mil num eixo de 350 mil vira linha reta no zero.
+// Agora o teto sai do próprio pico do que está desenhado, sempre parando num
+// número redondo (1 / 2 / 2,5 / 5 vezes potência de 10). A escala continua
+// parada DENTRO do mesmo recorte — o que era o objetivo do teto fixo — e só se
+// mexe quando o recorte muda. Regra e testes em @/lib/escalaEixo.
+const PASSO_MINIMO_EIXO = 100; // em reais: evita eixo de centavos
+/** Rótulo curto do eixo: 25000 -> "25k", 2500 -> "2,5k", 2000000 -> "2M". */
+const rotuloEixo = (v: any) => {
+  const n = Number(v) || 0;
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}M`;
+  if (Math.abs(n) >= 1000) return `${(n / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}k`;
+  return n.toLocaleString("pt-BR");
+};
 
 const SERIE_TITULOS = "#2a78d6";
 const SERIE_NF = "#eb6834";
@@ -542,20 +547,37 @@ export default function GestaoCarteiras() {
     return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
   }, [d, clientes, meses, filtrarVend, clienteDaSerie, redeDaSerie]);
 
-  // Teto do eixo: 350 mil quando há um cliente ou uma rede escolhida, 600 mil
-  // na carteira inteira. Dentro de cada um dos dois casos a escala não se mexe,
-  // que é o que permite comparar um mês com o outro.
-  const yMax = alvoSerie ? Y_MAX_RECORTE : Y_MAX_GERAL;
-  const yTicks = useMemo(() => ticksAte(yMax), [yMax]);
+  // A linha laranja (NF-e) só existe na carteira inteira e sem recorte — quando
+  // ela aparece, o pico do eixo tem que considerar as DUAS linhas, senão a de
+  // cima sai cortada.
+  const mostraLinhaNf = !filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0;
 
-  // Com o eixo travado, mês acima do teto sai CORTADO no desenho. Cortar sem
-  // avisar é esconder — então a tela diz quais são e quanto deram.
-  const acimaDoTeto = useMemo(
-    () => (serie || [])
-      .filter((p: any) => Number(p?.valor || 0) > yMax)
-      .map((p: any) => ({ mes: p.mes, valor: Number(p.valor || 0) })),
-    [serie, yMax],
-  );
+  // Teto do eixo tirado do próprio desenho: número redondo logo acima do maior
+  // mês do recorte. Recorte pequeno (um cliente, uma rede) ganha uma escala do
+  // tamanho dele em vez de ficar achatado no pé de um eixo de centenas de
+  // milhares; dentro do mesmo recorte a escala fica parada, que é o que permite
+  // comparar um mês com o outro.
+  const escala = useMemo(() => {
+    const valores: Array<number | null | undefined> = [];
+    for (const p of (serie || []) as any[]) {
+      valores.push(Number(p?.valor));
+      if (mostraLinhaNf) valores.push(Number(p?.valorNf));
+    }
+    return escalaEixo(picoDaSerie(valores), { passoMinimo: PASSO_MINIMO_EIXO });
+  }, [serie, mostraLinhaNf]);
+
+  /** Em uma frase: sobre quantos clientes é a escala que está no eixo. */
+  const recorteDaSerie = useMemo(() => {
+    if (clienteDaSerie) return "1 cliente";
+    if (redeDaSerie) {
+      const n = Number(redeDaSerie.clientes) || 0;
+      return `rede com ${NUM(n)} ${n === 1 ? "filial" : "filiais"}`;
+    }
+    // Sem recorte de vendedor a linha vem pronta do servidor e é a carteira
+    // inteira — os filtros de tipo e cidade não mexem nela.
+    const n = filtrarVend ? clientes.length : todos.length;
+    return `${NUM(n)} ${n === 1 ? "cliente" : "clientes"}${filtrarVend ? " no filtro" : " da carteira"}`;
+  }, [clienteDaSerie, redeDaSerie, clientes, todos, filtrarVend]);
 
   const kpis = useMemo(() => {
     if (!filtrarVend) return d?.kpis || {};
@@ -1585,37 +1607,33 @@ export default function GestaoCarteiras() {
                 <LineChart data={serie} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#ececea" vertical={false} />
                   <XAxis dataKey="mes" tickFormatter={labelMes} tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={{ stroke: "#ececea" }} />
-                  {/* Eixo travado em 0–350 mil, de 50 em 50 mil. `allowDataOverflow`
-                      e' o que faz o limite valer de verdade — sem ele o Recharts
-                      estica o dominio para caber o dado e o eixo deixa de ser fixo.
+                  {/* Dominio e marcas vem do proprio recorte (ver @/lib/escalaEixo):
+                      numero redondo logo acima do maior mes desenhado, com no
+                      maximo 8 divisoes. `allowDataOverflow` faz o dominio valer
+                      de verdade — sem ele o Recharts estica o eixo por conta
+                      propria e as marcas deixam de bater com a grade.
                       `interval={0}` forca TODOS os rotulos: sem ele o Recharts
-                      esconde um sim outro nao quando ficam apertados, e a escala
-                      de 50 em 50 mil deixa de ser legivel. */}
+                      esconde um sim outro nao quando ficam apertados. */}
                   <YAxis
-                    domain={[0, yMax]}
-                    ticks={yTicks}
+                    domain={[0, escala.max]}
+                    ticks={escala.ticks}
                     interval={0}
                     allowDataOverflow
-                    tickFormatter={(v: any) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))}
+                    tickFormatter={rotuloEixo}
                     tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={false} width={52} />
                   <Tooltip formatter={(v: any, n: any) => [BRL(v), n]} labelFormatter={(l: any) => labelMes(String(l))} />
                   <Legend />
                   <Line type="linear" dataKey="valor" name="Faturamento (títulos emitidos)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-                  {!filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0 ? (
+                  {mostraLinhaNf ? (
                     <Line type="linear" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
                   ) : null}
                 </LineChart>
               </ResponsiveContainer>
-              <p className="text-xs text-muted-foreground mt-2">
-                Escala fixa de 0 a {BRL0(yMax)}, de {BRL0(Y_PASSO)} em {BRL0(Y_PASSO)}
-                {alvoSerie ? " — teto do recorte por cliente ou rede" : " — teto da carteira inteira"}.
-                {acimaDoTeto.length ? (
-                  <span className="text-amber-700 font-medium">
-                    {" "}{acimaDoTeto.length === 1 ? "1 mês passa" : `${acimaDoTeto.length} meses passam`} do teto e{" "}
-                    {acimaDoTeto.length === 1 ? "aparece cortado" : "aparecem cortados"}:{" "}
-                    {acimaDoTeto.map((p: any) => `${labelMes(p.mes)} ${BRL0(p.valor)}`).join(" · ")}.
-                  </span>
-                ) : null}
+              <p className="text-xs text-muted-foreground mt-2" data-testid="nota-escala-serie">
+                Escala de 0 a {BRL0(escala.max)}, de {BRL0(escala.passo)} em {BRL0(escala.passo)} — ajustada ao que
+                está selecionado ({recorteDaSerie}). Dentro do mesmo recorte a escala não se mexe, então dá para
+                comparar um mês com o outro; ao trocar de filtro, de cliente ou de rede, o teto acompanha o novo
+                tamanho. Compare alturas entre dois recortes só olhando o eixo.
               </p>
               {!filtrarVend && d?.excluidos?.valor > 0 ? (
                 <p className="text-xs text-muted-foreground mt-2">
