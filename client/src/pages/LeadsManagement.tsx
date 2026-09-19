@@ -1115,14 +1115,19 @@ export default function LeadsManagement() {
                       <td className="py-3 px-4 text-xs whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {isAdmin ? (
                           <div className="flex flex-col gap-0.5">
-                            <input
-                              type="date"
-                              value={(lead as any).nextContactDate ? diaCalendario((lead as any).nextContactDate) : ''}
-                              onChange={(e) => nextContactInlineMut.mutate({ id: lead.id, date: e.target.value })}
-                              className={`text-xs border rounded px-1.5 py-1 bg-transparent cursor-pointer ${descartado ? 'text-gray-400 border-gray-300' : ((lead as any).nextContactDate && diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600 border-red-300' : 'text-green-700 border-green-300')}`}
-                              title="Alterar data do próximo contato"
-                              data-testid={`input-next-contact-inline-${lead.id}`}
-                            />
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="date"
+                                value={(lead as any).nextContactDate ? diaCalendario((lead as any).nextContactDate) : ''}
+                                onChange={(e) => nextContactInlineMut.mutate({ id: lead.id, date: e.target.value })}
+                                className={`text-xs border rounded px-1.5 py-1 bg-transparent cursor-pointer ${descartado ? 'text-gray-400 border-gray-300' : ((lead as any).nextContactDate && diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600 border-red-300' : 'text-green-700 border-green-300')}`}
+                                title="Alterar data do próximo contato"
+                                data-testid={`input-next-contact-inline-${lead.id}`}
+                              />
+                              {(lead as any).nextContactLocked && (
+                                <span title="Data travada manualmente — imune à reprogramação automática por coordenada neste ciclo (abre sozinho na próxima rodada)." className="text-amber-600 dark:text-amber-400 shrink-0" data-testid={`lock-next-contact-${lead.id}`}>🔒</span>
+                              )}
+                            </div>
                             {(lead as any).nextContactDate && (
                               <span className="text-[11px] text-muted-foreground capitalize">
                                 {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
@@ -1131,8 +1136,11 @@ export default function LeadsManagement() {
                           </div>
                         ) : (lead as any).nextContactDate ? (
                           <div className="flex flex-col gap-0.5">
-                            <span className={`font-medium ${descartado ? 'text-gray-400' : (diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600' : 'text-green-600')}`}>
+                            <span className={`font-medium flex items-center gap-1 ${descartado ? 'text-gray-400' : (diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600' : 'text-green-600')}`}>
                               {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
+                              {(lead as any).nextContactLocked && (
+                                <span title="Data travada manualmente — imune à reprogramação automática por coordenada neste ciclo (abre sozinho na próxima rodada)." className="text-amber-600 dark:text-amber-400">🔒</span>
+                              )}
                             </span>
                             <span className="text-[11px] text-muted-foreground capitalize">
                               {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
