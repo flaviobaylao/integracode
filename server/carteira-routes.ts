@@ -621,6 +621,116 @@ export function registerCarteira(app: Express) {
         console.warn("[gestao-carteiras] historico de ativacao indisponivel:", e?.message || e);
       }
 
+      // 2e) IMPLANTACAO E REPESCAGEM — as tres medidas do relatorio da aba
+      //     "Implantação e repescagem" dentro de Clientes da carteira.
+      //
+      //     (i) IMPLANTADOR: quem digitou o ULTIMO pedido do cliente. Vale a regra
+      //     do implantador (o pedido fica com quem colocou, nao com o dono da
+      //     carteira), entao a resposta sai de billing_pipeline, nao do cadastro.
+      //     Ordem de resolucao do nome: seller_name gravado no pedido -> seller_id
+      //     resolvido em users -> e-mail dentro de created_by "auto (email)".
+      const implantadorPorCliente = new Map<string, { nome: string; data: string | null; pedido: string | null }>();
+      try {
+        const impRows = await q(`
+          SELECT p.customer_id,
+                 COALESCE(
+                   NULLIF(TRIM(p.seller_name),''),
+                   (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u
+                     WHERE u.id = p.seller_id OR u.omie_vendor_code = p.seller_id
+                        OR u.omie_vendor_code = replace(COALESCE(p.seller_id,''),'omie-vendor-','') LIMIT 1),
+                   (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u
+                     WHERE LOWER(u.email) = LOWER(TRIM(SUBSTRING(COALESCE(p.created_by,'') FROM '\\(([^)]*)\\)'))) LIMIT 1)
+                 ) AS nome,
+                 p.dt::date::text AS data,
+                 p.order_number
+          FROM (
+            SELECT DISTINCT ON (customer_id) customer_id, seller_id, seller_name, created_by, order_number,
+                   COALESCE(scheduled_billing_date::timestamp, created_at) AS dt
+            FROM billing_pipeline
+            WHERE customer_id IS NOT NULL AND COALESCE(stage::text,'') <> 'lixeira'
+            ORDER BY customer_id, COALESCE(scheduled_billing_date::timestamp, created_at) DESC
+          ) p`);
+        for (const r of impRows as any[]) {
+          implantadorPorCliente.set(String(r.customer_id), {
+            nome: String(r.nome || "").trim(),
+            data: r.data ? String(r.data) : null,
+            pedido: r.order_number ? String(r.order_number) : null,
+          });
+        }
+      } catch (e: any) {
+        console.warn("[gestao-carteiras] implantador indisponivel:", e?.message || e);
+      }
+
+      //     (ii) REPESCAGEM: quantas vezes o cliente caiu. A contagem canonica do
+      //     proprio modulo e COUNT(DISTINCT last_red_date) — uma contagem por CICLO
+      //     vermelho, nao por sorteio (o mesmo ciclo pode ser re-sorteado varias
+      //     vezes). O historico so existe a partir de quando a repescagem entrou no
+      //     ar; `repescagemDesde` vai no payload para a tela poder dizer isso.
+      const repescagemPorCliente = new Map<string, { vezes: number; ultima: string | null }>();
+      let repescagemDesde: string | null = null;
+      try {
+        const repRows = await q(`
+          SELECT customer_id, COUNT(DISTINCT last_red_date)::int AS vezes,
+                 MAX(last_red_date)::text AS ultima
+          FROM repescagem_assignments
+          WHERE customer_id IS NOT NULL
+          GROUP BY customer_id`);
+        for (const r of repRows as any[]) {
+          repescagemPorCliente.set(String(r.customer_id), {
+            vezes: Number(r.vezes) || 0,
+            ultima: r.ultima ? String(r.ultima) : null,
+          });
+        }
+        const desde = await q(`SELECT MIN(last_red_date)::text AS d FROM repescagem_assignments`);
+        repescagemDesde = (desde as any[])?.[0]?.d || null;
+      } catch (e: any) {
+        console.warn("[gestao-carteiras] repescagem indisponivel:", e?.message || e);
+      }
+
+      //     (iii) ULTIMA VENDA e MEDIA DOS 3 ULTIMOS FATURAMENTOS. Base = receivables,
+      //     casando por documento. As parcelas do mesmo faturamento sao agrupadas num
+      //     evento so (installment_group -> NF -> pedido -> id), senao um boleto em 3x
+      //     contaria como tres faturamentos e derrubaria a media. Mesmo FILTRO_VENDA
+      //     do resto da tela: aporte, devolucao, troca, amostra e empresa do grupo
+      //     ficam de fora. Aqui a janela e a VIDA TODA do cliente, nao o periodo da
+      //     tela — a pergunta e "quanto ele costuma comprar por pedido", que nao pode
+      //     depender do recorte escolhido no filtro de mes.
+      const fatPorDoc = new Map<string, { ultima: string | null; media3: number; eventos: number }>();
+      try {
+        const fatRows = await q(`
+          WITH rec AS (
+            SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
+                   COALESCE(NULLIF(installment_group,''), fiscal_invoice_id, billing_pipeline_id, id) AS evento,
+                   issue_date,
+                   COALESCE(NULLIF(amount::text,'')::numeric,0) AS v
+            FROM receivables
+            WHERE deleted_at IS NULL
+              AND issue_date IS NOT NULL
+              AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+              AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+              ${FILTRO_VENDA}
+          ), evt AS (
+            SELECT doc, evento, MAX(issue_date) AS dt, SUM(v) AS valor
+            FROM rec WHERE doc IS NOT NULL GROUP BY doc, evento
+          ), ord AS (
+            SELECT doc, dt, valor, ROW_NUMBER() OVER (PARTITION BY doc ORDER BY dt DESC) AS rn FROM evt
+          )
+          SELECT doc,
+                 MAX(dt) FILTER (WHERE rn = 1)::date::text AS ultima,
+                 ROUND(AVG(valor) FILTER (WHERE rn <= 3), 2)::float AS media3,
+                 MAX(rn)::int AS eventos
+          FROM ord GROUP BY doc`);
+        for (const r of fatRows as any[]) {
+          fatPorDoc.set(String(r.doc), {
+            ultima: r.ultima ? String(r.ultima) : null,
+            media3: Number(r.media3) || 0,
+            eventos: Number(r.eventos) || 0,
+          });
+        }
+      } catch (e: any) {
+        console.warn("[gestao-carteiras] media dos ultimos faturamentos indisponivel:", e?.message || e);
+      }
+
       // 3) Por cliente: total, titulos, meses com compra e o mapa mes -> valor.
       //    O cadastro entra por LEFT JOIN no documento (tipo, vendedor, cidade,
       //    segmento, ativo) — cliente sem cadastro fica com o nome do titulo.
@@ -725,6 +835,12 @@ export function registerCarteira(app: Express) {
         }
         eventos.sort((x, y) => x.data.localeCompare(y.data));
 
+        // Implantacao e repescagem casam pelo id do CADASTRO; o faturamento casa
+        // pelo DOCUMENTO (titulo antigo costuma vir sem customer_id).
+        const imp = r.cad_id ? implantadorPorCliente.get(String(r.cad_id)) : undefined;
+        const rp = r.cad_id ? repescagemPorCliente.get(String(r.cad_id)) : undefined;
+        const ft = doc ? fatPorDoc.get(doc) : undefined;
+
         return {
           chave: String(r.chave),
           // id do CADASTRO: e' o que a alteracao em massa precisa (bulk-update e
@@ -756,6 +872,19 @@ export function registerCarteira(app: Express) {
           primeiraVenda,
           eventos,
           potencialMes: ticketCli,
+          // ── Aba "Implantação e repescagem" ────────────────────────────────
+          // Quem digitou o ultimo pedido (regra do implantador), e quando.
+          implantador: imp?.nome || "",
+          implantadorData: imp?.data || null,
+          implantadorPedido: imp?.pedido || null,
+          // Quantas vezes o cliente caiu em repescagem (por ciclo vermelho).
+          repescagens: rp?.vezes || 0,
+          ultimaRepescagem: rp?.ultima || null,
+          // Ultima venda faturada de verdade e o valor medio dos 3 ultimos
+          // faturamentos (vida toda do cliente, nao o periodo da tela).
+          ultimaVendaData: ft?.ultima || null,
+          mediaUlt3: ft?.media3 || 0,
+          faturamentos: ft?.eventos || 0,
           debito: debitoCli,
           // Dias vencidos do titulo em aberto mais antigo (0 = nao deve nada hoje).
           diasVencido: diasVencidoPorChave.get(chaveCli) || 0,
@@ -911,6 +1040,8 @@ export function registerCarteira(app: Express) {
         serie,
         tipos,
         faixasTicket,
+        // Desde quando existe historico de repescagem (a aba avisa o leitor).
+        repescagemDesde,
         classes,
         classeRegra,
         segmentos,
