@@ -3458,6 +3458,12 @@ export const receivables = pgTable("receivables", {
   updatedBy: varchar("updated_by"),
   deletedAt: timestamp("deleted_at"),
   deletedBy: varchar("deleted_by"),
+  // PDD — Previsão de Devedor Duvidoso (19/set/2026). Título vencido que o admin
+  // classificou como PDD. O status gravado continua a_vencer/vencida; a classificação
+  // é esta marca (pdd_at preenchido = está em PDD).
+  pddAt: timestamp("pdd_at"),
+  pddBy: varchar("pdd_by"),
+  pddReason: text("pdd_reason"),
 }, (table) => [
   index("idx_receivables_customer").on(table.customerId),
   index("idx_receivables_status").on(table.status),

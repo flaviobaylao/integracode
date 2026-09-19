@@ -3167,6 +3167,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE receivable_payments ADD COLUMN IF NOT EXISTS discount numeric(12,2) DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE payable_payments ADD COLUMN IF NOT EXISTS discount numeric(12,2) DEFAULT 0`).catch(() => {});
   db.execute(sql`ALTER TABLE receivables ADD COLUMN IF NOT EXISTS original_amount numeric(12,2)`).catch(() => {});
+  // PDD (19/09/2026): classificação "Previsão de Devedor Duvidoso" no contas a receber.
+  db.execute(sql`ALTER TABLE receivables ADD COLUMN IF NOT EXISTS pdd_at timestamp`).catch(() => {});
+  db.execute(sql`ALTER TABLE receivables ADD COLUMN IF NOT EXISTS pdd_by varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE receivables ADD COLUMN IF NOT EXISTS pdd_reason text`).catch(() => {});
   db.execute(sql`ALTER TABLE payables ADD COLUMN IF NOT EXISTS original_amount numeric(12,2)`).catch(() => {});
   // MULTA e JUROS na baixa (05/08/2026). Mesma licao do desconto: declarar no
   // shared/schema.ts NAO basta (o `drizzle-kit push` do deploy nao criou as de

@@ -126,7 +126,10 @@ function isOverdueByDate(dueDate?: string) {
   return venc < hoje;
 }
 
-function getReceivableStatusBadge(status: string, dueDate?: string) {
+function getReceivableStatusBadge(status: string, dueDate?: string, pddAt?: string | null) {
+  if (pddAt && (status === 'a_vencer' || status === 'vencida')) {
+    return <Badge className="bg-purple-100 text-purple-800 border-purple-300" title="Previsão de Devedor Duvidoso">PDD</Badge>;
+  }
   // Título EM ABERTO (a_vencer/vencida): "Vencida" só se o vencimento JÁ PASSOU por
   // DIA-CALENDÁRIO (BRT). Um status 'vencida' gravado com vencimento hoje/futuro
   // (vencimento repostergado por renegociação/boleto unificado, ou baixa desfeita) NÃO é
@@ -797,6 +800,24 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   // BAIXA ADMINISTRATIVA (100%): fecha o título SEM entrada de dinheiro (perdão /
   // incobrável). Exige MOTIVO (obrigatório) e registra quem executou (backend grava
   // updated_by + auditoria financeira). Não conta como recebimento no caixa.
+  // PDD — só admin: move título vencido para PDD e de volta para Vencida.
+  const { user: pddUser } = useAuth();
+  const isAdminUser = (pddUser as any)?.role === 'admin';
+  const moverPdd = async (r: any) => {
+    const toPdd = !r.pddAt;
+    let reason: string | null = '';
+    if (toPdd) {
+      reason = window.prompt(`Mover o título "${r.titleNumber || r.customerName}" (${r.customerName || ''}) para PDD — previsão de devedor duvidoso?\n\nMotivo (opcional):`, '');
+      if (reason === null) return;
+    } else if (!confirm(`Tirar o título "${r.titleNumber || r.customerName}" de PDD e voltar para Vencida?`)) return;
+    try {
+      const rr = await fetch(`/api/financial/receivables/${r.id}/pdd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ pdd: toPdd, reason }) });
+      const j = await rr.json();
+      if (!rr.ok || !j.ok) { alert('Falha: ' + (j.message || 'erro ao atualizar PDD')); return; }
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
+    } catch (e: any) { alert('Erro: ' + (e?.message || e)); }
+  };
+
   const baixaAdministrativa = async (r: any) => {
     const saldo = Math.max(0, (Number(r.amount || 0) - Number(r.amountPaid || 0)));
     const motivo = window.prompt(`BAIXA ADMINISTRATIVA (100%) do título "${r.titleNumber || r.customerName}" — saldo ${formatCurrency(saldo)}.\n\nFecha o título SEM entrada de dinheiro (perdão / incobrável) e fica registrado com o seu usuário.\n\nDigite o MOTIVO (obrigatório):`);
@@ -914,6 +935,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
               <SelectItem value="a_vencer">A Vencer</SelectItem>
               <SelectItem value="recebida">Recebida</SelectItem>
               <SelectItem value="vencida">Vencida</SelectItem>
+              <SelectItem value="pdd">PDD (devedor duvidoso)</SelectItem>
               <SelectItem value="cancelada">Cancelada</SelectItem>
             </SelectContent>
           </Select>
@@ -1005,7 +1027,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                   <TableCell className="max-w-[200px] truncate">{r.description || '-'}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(r.amountPaid)}</TableCell>
-                  <TableCell>{getReceivableStatusBadge(r.status, r.dueDate)}{String(r.notes || '').includes('BAIXA ADMINISTRATIVA') && (<Badge variant="outline" className="ml-1 border-rose-400 text-rose-700 px-1.5 py-0" title="Baixa administrativa (perdão/incobrável)">Baixa adm.</Badge>)}</TableCell>
+                  <TableCell>{getReceivableStatusBadge(r.status, r.dueDate, r.pddAt)}{String(r.notes || '').includes('BAIXA ADMINISTRATIVA') && (<Badge variant="outline" className="ml-1 border-rose-400 text-rose-700 px-1.5 py-0" title="Baixa administrativa (perdão/incobrável)">Baixa adm.</Badge>)}</TableCell>
                   <TableCell><LancamentoBadges item={r} /></TableCell>
                   <TableCell>{formatDate(r.dueDate)}</TableCell>
                   <TableCell>{r.paymentMethod || '-'}</TableCell>
@@ -1017,6 +1039,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       {r.deliveryPhotos?.length ? (<Button variant="ghost" size="icon" title="Comprovante de entrega (foto do entregador)" onClick={() => { setPhotosItem(r); setShowPhotos(true); }}><Camera className="h-4 w-4 text-emerald-600" /></Button>) : null}
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
+                      {isAdminUser && ['a_vencer', 'vencida'].includes(String(r.status)) && (r.pddAt || isOverdueByDate(r.dueDate)) && (<Button variant="ghost" size="icon" title={r.pddAt ? 'Tirar de PDD (voltar para Vencida)' : 'Mover para PDD (previsão de devedor duvidoso)'} onClick={() => moverPdd(r)}><AlertTriangle className={`h-4 w-4 ${r.pddAt ? 'text-purple-700' : 'text-purple-400'}`} /></Button>)}
                       {!readOnly && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Baixa administrativa 100% (perdão/incobrável — exige motivo; NÃO conta como recebimento)" onClick={() => baixaAdministrativa(r)}><Ban className="h-4 w-4 text-rose-600" /></Button>)}
                       {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: hojeBR(), reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
                       <Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setForm({ ...r }); setShowEdit(true); }}><Edit className="h-4 w-4" /></Button>
