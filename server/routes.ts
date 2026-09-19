@@ -12822,6 +12822,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // coordenadores/admins e números fixos). Fire-and-forget: nunca trava o início da rota.
       notifyRotaIniciada(routeId).catch(() => {});
 
+      // 📲 Pós-venda: avisa CADA CLIENTE da rota que o pedido saiu para entrega.
+      // Fire-and-forget — o entregador nunca espera por WhatsApp.
+      import('./entrega-cliente')
+        .then(m => m.avisarRotaIniciada(routeId))
+        .catch((e: any) => console.error('[DRIVER-START] aviso ao cliente falhou:', e?.message));
+
       res.json({ message: "Rota iniciada com sucesso", route: updatedRoute[0] });
     } catch (error: any) {
       console.error("Error starting route:", error);
@@ -13201,6 +13207,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         duracaoSeg,
       }).catch(() => {});
 
+      // 📲 Pós-venda ao CLIENTE: "entrega feita" agora + "deu tudo certo?" em 2 dias.
+      import('./entrega-cliente')
+        .then(m => m.avisarEntregaEfetuada(stopId, now))
+        .catch((e: any) => console.error('[COMPLETE-DELIVERY] aviso ao cliente falhou:', e?.message));
+
       // (E4) Bloco de troca de etapa "Entregue" no Omie removido — Omie desligado (omieOrderId sempre NULL).
       
       // Verificar se rota foi totalmente concluída
@@ -13339,7 +13350,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         duracaoSeg: duracaoSegDev,
         motivo: reason.trim(),
       }).catch(() => {});
-      
+
+      // 📲 Pós-venda ao CLIENTE: lamenta a devolução e promete nova rota prioritária.
+      // Também cancela o follow-up de 2 dias, se havia um agendado para este pedido.
+      import('./entrega-cliente')
+        .then(m => m.avisarEntregaDevolvida(stopId, reason.trim()))
+        .catch((e: any) => console.error('[RETURN] aviso ao cliente falhou:', e?.message));
+
       // (E4) Bloco de troca de etapa "Aguardando Rota" no Omie removido — Omie desligado.
       
       // ↩️ PIPELINE: card volta para "Aguardando Rota" ou "Ag. Rota BSB",

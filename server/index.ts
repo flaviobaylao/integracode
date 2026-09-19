@@ -587,6 +587,9 @@ run();
     }
     try { const { ensureMktAdsSchema } = await import('./mkt-meta-ads'); await ensureMktAdsSchema(); console.log('[MKT-ADS-MIGRATION] ok'); }
     catch (e: any) { console.warn('[MKT-ADS-MIGRATION] falha (ignorada):', e?.message); }
+    // Pós-venda da entrega: caso de uso 'entrega' no enum + coluna scheduled_at na fila oficial.
+    try { const { ensureEntregaClienteSchema } = await import('./entrega-cliente'); await ensureEntregaClienteSchema(); console.log('[ENTREGA-CLIENTE-MIGRATION] ok'); }
+    catch (e: any) { console.warn('[ENTREGA-CLIENTE-MIGRATION] falha (ignorada):', e?.message); }
   })();
 
   // ==========================================================================
@@ -4490,6 +4493,12 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   // ── PAINEL DO DIA (/marketing/hoje): uma chamada com tudo que o gestor olha por dia ──
   app.get("/api/mkt/hoje", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const { painelDoDia } = await import('./mkt-hoje'); res.json(await painelDoDia()); }
+    catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
+
+  // ── PÓS-VENDA DA ENTREGA (avisos ao cliente disparados pelo app do entregador) ──
+  app.get("/api/mkt/entrega-cliente", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try { const { panorama } = await import('./entrega-cliente'); res.json(await panorama()); }
     catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
 

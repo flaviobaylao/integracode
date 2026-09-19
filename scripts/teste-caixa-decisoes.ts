@@ -494,6 +494,87 @@ async function main() {
   check(pz.ok && ((await raw(`SELECT status FROM mkt_ads WHERE id='${adRow.id}'`)) as any).rows[0].status === 'pausado', 'anuncio: pausar');
   (globalThis as any).fetch = fetchReal2;
 
+  // =========================================================================
+  console.log('10) pos-venda da entrega: app do entregador -> WhatsApp do cliente');
+  // =========================================================================
+  await raw(`DO $$ BEGIN CREATE TYPE dispatch_status AS ENUM ('fila','enviada','entregue','lida','resposta','falha'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+  await raw(`ALTER TYPE dispatch_use_case ADD VALUE IF NOT EXISTS 'entrega'`);
+  await raw(`CREATE TABLE IF NOT EXISTS official_dispatches (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, customer_phone varchar,
+    template_label varchar, category varchar, use_case dispatch_use_case, params jsonb, campaign varchar, estimated_cost numeric,
+    status dispatch_status DEFAULT 'fila', mode varchar, error text, sent_at timestamptz, chat_id varchar, umbler_message_id varchar,
+    created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
+  await raw(`CREATE TABLE IF NOT EXISTS delivery_routes (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), route_date date, status varchar, driver_email varchar, start_time timestamptz)`);
+  await raw(`CREATE TABLE IF NOT EXISTS delivery_route_stops (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), route_id varchar, sales_card_id varchar,
+    customer_id varchar, order_number varchar, stop_order int, status varchar DEFAULT 'pendente')`);
+  await raw(`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS operation_type varchar DEFAULT 'venda'`);
+  await raw(`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS delivery_failure_reason varchar`);
+  await raw(`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS order_number varchar`);
+  await raw(`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS operation_type varchar`);
+  await raw(`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS sales_card_id varchar`);
+  await raw(`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true`);
+  await raw(`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS corpo text`);
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES
+      ('pedido_saiu_entrega','u1','UTILITY','Ola {{1}}, seu pedido {{2}} saiu para entrega.'),
+      ('pedido_entregue','u2','UTILITY','Ola {{1}}, seu pedido {{2}} foi entregue.'),
+      ('entrega_nao_realizada','u3','UTILITY','Ola {{1}}, a entrega do pedido {{2}} nao saiu. Motivo: {{3}}.'),
+      ('pos_entrega_2d','u4','UTILITY','Oi, {{1}}! Seu pedido {{2}} chegou ha dois dias — deu tudo certo?')
+    ON CONFLICT (label) DO NOTHING`);
+  await raw(`INSERT INTO system_settings (key, value) VALUES ('oficial_dispatch_mode','on'),('oficial_entrega','on'),('oficial_templates_on','on')
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+  const ec = await import('../server/entrega-cliente');
+  await ec.ensureEntregaClienteSchema();
+
+  // Dois clientes na rota: um com telefone (avisa) e um sem (pula, sem derrubar o resto).
+  await raw(`INSERT INTO customers (id, name, phone) VALUES ('cliE1','Padaria do Ze','5562911119001'),('cliE2','Mercado Sem Fone', NULL) ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone`);
+  await raw(`INSERT INTO sales_cards (id, customer_id, operation_type) VALUES ('scE1','cliE1','venda'),('scE2','cliE2','venda') ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO billing_pipeline (id, customer_id, sales_card_id, order_number, operation_type) VALUES ('bpE1','cliE1','scE1','98765','venda') ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO delivery_routes (id, route_date, status, driver_email) VALUES ('rotE1', current_date, 'rota_enviada','motorista@honest.com') ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO delivery_route_stops (id, route_id, sales_card_id, customer_id, stop_order, status) VALUES
+      ('stE1','rotE1','scE1','cliE1',1,'pendente'), ('stE2','rotE1','scE2','cliE2',2,'pendente') ON CONFLICT (id) DO NOTHING`);
+
+  const ini = await ec.avisarRotaIniciada('rotE1');
+  const dSaiu: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:saiu%'`)) as any).rows[0];
+  check(ini.enviados === 1 && dSaiu && dSaiu.template_label === 'pedido_saiu_entrega' && dSaiu.params[0] === 'Padaria' && dSaiu.params[1] === '98765'
+    && dSaiu.use_case === 'entrega' && ini.detalhes.some((d: string) => /sem telefone/.test(d)),
+    'entrega: iniciar rota avisa cada cliente (nome curto + nº do pedido) e pula quem não tem telefone');
+
+  const iniDeNovo = await ec.avisarRotaIniciada('rotE1');
+  check(iniDeNovo.enviados === 0, 'entrega: iniciar a rota duas vezes não duplica o aviso');
+
+  // Entrega efetuada: aviso agora + follow-up agendado para dois dias depois, às 10h BRT.
+  await raw(`UPDATE delivery_route_stops SET status='efetuada' WHERE id='stE1'`);
+  const efe = await ec.avisarEntregaEfetuada('stE1', new Date('2026-09-19T14:00:00Z'));
+  const dEnt: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign='card:scE1:entregue'`)) as any).rows[0];
+  const dPos: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign='card:scE1:pos2d'`)) as any).rows[0];
+  const quando = dPos && new Date(dPos.scheduled_at).toISOString();
+  check(efe.agora.startsWith('enfileirado') && dEnt.template_label === 'pedido_entregue'
+    && dPos && dPos.status === 'fila' && quando === '2026-09-21T13:00:00.000Z',
+    'entrega: efetuada avisa na hora e agenda o "deu tudo certo?" para 2 dias depois, 10h de Brasília (' + quando + ')');
+
+  // A fila só pega o que já venceu: o follow-up não pode sair antes da hora.
+  const naFila: any = await raw(`SELECT count(*)::int n FROM official_dispatches WHERE status='fila'
+    AND (scheduled_at IS NULL OR scheduled_at <= now())`);
+  const agendados: any = await raw(`SELECT count(*)::int n FROM official_dispatches WHERE status='fila' AND scheduled_at > now()`);
+  check(agendados.rows[0].n === 1 && naFila.rows[0].n >= 1, 'entrega: follow-up fica esperando a data; o resto da fila continua saindo');
+
+  // Devolução: avisa e cancela o follow-up que estava agendado para aquele pedido.
+  await raw(`UPDATE delivery_route_stops SET status='devolvida' WHERE id='stE1'`);
+  await raw(`UPDATE sales_cards SET delivery_failure_reason='customer_absent' WHERE id='scE1'`);
+  const dev = await ec.avisarEntregaDevolvida('stE1', 'ninguem no local');
+  const dDev: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:devolvida%'`)) as any).rows[0];
+  const posDepois: any = ((await raw(`SELECT status, error FROM official_dispatches WHERE campaign='card:scE1:pos2d'`)) as any).rows[0];
+  check(dev.startsWith('enfileirado') && dDev.template_label === 'entrega_nao_realizada' && dDev.params.length === 3 && dDev.params[2] === 'ninguem no local'
+    && posDepois.status === 'falha' && /devolvido/.test(String(posDepois.error)),
+    'entrega: devolução avisa com o motivo e cancela o follow-up daquele pedido');
+
+  // Template novo (tom leve) assume assim que a Meta aprova, sem mexer em código.
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES ('entrega_saiu','u9','UTILITY','Oi, {{1}}! Seu pedido {{2}} saiu para entrega.') ON CONFLICT (label) DO UPDATE SET umbler_id='u9'`);
+  const esc = await ec.escolherTemplate('saiu');
+  await raw(`UPDATE whatsapp_templates SET is_active = false WHERE label='entrega_saiu'`);
+  const escOff = await ec.escolherTemplate('saiu');
+  check(esc?.label === 'entrega_saiu' && esc.novo === true && escOff?.label === 'pedido_saiu_entrega' && escOff.novo === false,
+    'entrega: usa o template novo quando aprovado e cai no antigo enquanto não está');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

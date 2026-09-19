@@ -184,7 +184,12 @@ export async function processDispatchQueueTick() {
   if ((st.rows?.[0]?.n || 0) >= await dailyCap()) return;
   // Pega ate 20 da fila e envia a primeira elegivel — assim uma linha "on" fora do
   // expediente nao trava as linhas "test" que estao atras dela.
-  const q: any = await db.execute(sql`SELECT * FROM official_dispatches WHERE status='fila' ORDER BY created_at LIMIT 20`);
+  // scheduled_at = "so a partir de" (follow-up pos-entrega). Nulo = assim que der.
+  // A coluna pode nao existir em bases antigas; o COALESCE em to_jsonb evita quebrar.
+  const q: any = await db.execute(sql`SELECT * FROM official_dispatches WHERE status='fila'
+    AND (to_jsonb(official_dispatches) ->> 'scheduled_at' IS NULL
+         OR (to_jsonb(official_dispatches) ->> 'scheduled_at')::timestamptz <= now())
+    ORDER BY created_at LIMIT 20`);
   const emHorario = withinBusinessHours();
   const d = (q.rows || []).find((r: any) => String(r.mode || 'on') !== 'on' || emHorario);
   if (!d) return;

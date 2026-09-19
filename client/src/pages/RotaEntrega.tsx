@@ -269,7 +269,8 @@ export default function RotaEntrega() {
       return await apiRequest('POST', `/api/delivery-routes/${routeId}/start`, {});
     },
     onSuccess: () => {
-      toast({ title: "Rota iniciada com sucesso!" });
+      // Ao iniciar a rota o sistema avisa cada cliente que o pedido saiu para entrega.
+      toast({ title: "Rota iniciada!", description: "Os clientes da rota já estão sendo avisados de que o pedido saiu para entrega." });
       refetch();
     },
     onError: (error: any) => {
