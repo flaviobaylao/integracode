@@ -575,6 +575,25 @@ async function main() {
   check(esc?.label === 'entrega_saiu' && esc.novo === true && escOff?.label === 'pedido_saiu_entrega' && escOff.novo === false,
     'entrega: usa o template novo quando aprovado e cai no antigo enquanto não está');
 
+  // Variante '_u': só assume se a Meta classificou como UTILITY. Reclassificada
+  // como MARKETING, é ignorada — o sistema nunca "força" categoria.
+  await raw(`UPDATE whatsapp_templates SET is_active = true WHERE label='entrega_saiu'`);
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES ('entrega_saiu_u','u10','MARKETING','Oi, {{1}}! O pedido {{2}} saiu.') ON CONFLICT (label) DO UPDATE SET categoria='MARKETING'`);
+  const escMkt = await ec.escolherTemplate('saiu');
+  await raw(`UPDATE whatsapp_templates SET categoria='UTILITY' WHERE label='entrega_saiu_u'`);
+  const escUtil = await ec.escolherTemplate('saiu');
+  check(escMkt?.label === 'entrega_saiu' && escUtil?.label === 'entrega_saiu_u',
+    'entrega: variante _u só entra se a Meta aprovar como UTILITY (se vier MARKETING, é ignorada)');
+
+  const rec = await import('../server/mkt-recompra');
+  await raw(`UPDATE whatsapp_templates SET categoria='MARKETING' WHERE label='recompra_reativacao'`);
+  const rOrig = await rec.rotuloEfetivo('recompra_reativacao');
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria) VALUES ('recompra_reativacao_u','u11','UTILITY') ON CONFLICT (label) DO NOTHING`);
+  const rU = await rec.rotuloEfetivo('recompra_reativacao');
+  check(rOrig.label === 'recompra_reativacao' && rOrig.categoria === 'MARKETING'
+    && rU.label === 'recompra_reativacao_u' && rU.categoria === 'UTILITY',
+    'régua: troca para a variante UTILITY quando ela existe (R$ 0,04 em vez de R$ 0,34)');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

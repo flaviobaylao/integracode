@@ -89,9 +89,26 @@ async function variaveisDo(label: string): Promise<number> {
   } catch { return 0; }
 }
 
-/** Escolhe o template: o novo se já está aprovado/ativo, senão o antigo. */
+/** O template só vale como variante UTILITY se a Meta o classificou assim. */
+async function ehUtility(label: string): Promise<boolean> {
+  try {
+    const r: any = await db.execute(sql`SELECT upper(COALESCE(categoria,'')) AS c FROM whatsapp_templates WHERE label = ${label} LIMIT 1`);
+    return String(r.rows?.[0]?.c || '') === 'UTILITY';
+  } catch { return false; }
+}
+
+/**
+ * Escolhe o template, nesta ordem:
+ *   1. '<novo>_u' — variante reescrita em moldura transacional, SE a Meta a aprovou
+ *      como UTILITY (0,04 por mensagem em vez de 0,34, e sem opt-out);
+ *   2. o novo (tom leve), se estiver ativo;
+ *   3. o antigo equivalente, enquanto a Meta não aprova o novo.
+ * A troca acontece sozinha quando a aprovação sai — sem deploy.
+ */
 export async function escolherTemplate(ev: keyof typeof TEMPLATES): Promise<{ label: string; novo: boolean } | null> {
   const t = TEMPLATES[ev];
+  const u = t.novo + '_u';
+  if (await templateAtivo(u) && await ehUtility(u)) return { label: u, novo: true };
   if (await templateAtivo(t.novo)) return { label: t.novo, novo: true };
   if (t.antigo && await templateAtivo(t.antigo)) return { label: t.antigo, novo: false };
   return null;
