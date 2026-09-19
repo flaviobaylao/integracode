@@ -79,7 +79,14 @@ type Cliente = {
   piorAtraso?: number; atrasoMedio?: number; diasVencido?: number;
   // Último título emitido no período: atraso em dias e em que estado ele está.
   atrasoUltimo?: number | null; situacaoUltimo?: string; vencimentoUltimo?: string | null;
+  // Aba "Implantação e repescagem".
+  implantador?: string; implantadorData?: string | null; implantadorPedido?: string | null;
+  repescagens?: number; ultimaRepescagem?: string | null;
+  ultimaVendaData?: string | null; mediaUlt3?: number; faturamentos?: number;
 };
+
+/** dd/mm/aaaa a partir de "aaaa-mm-dd"; traço quando vazio. */
+const dBR = (v?: string | null) => (v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—");
 
 /** As 8 classes na ordem da tela. Mesma lista do servidor (CLASSES_ORDEM). */
 const CLASSES_ORDEM = ["A+", "A-", "B+", "B-", "C+", "C-", "D+", "D-"];
@@ -240,6 +247,8 @@ export default function GestaoCarteiras() {
   const [classeSel, setClasseSel] = useState<"todas" | "A" | "B" | "C" | "D">("todas");
   const [sinalSel, setSinalSel] = useState<"todos" | "+" | "-">("todos");
   const [busca, setBusca] = useState("");
+  // Aba da tabela de clientes: a carteira em si ou o recorte de implantação/repescagem.
+  const [abaLista, setAbaLista] = useState<"carteira" | "implantacao">("carteira");
   // Ordenacao por coluna (A-Z / Z-A). Vazio = manda o botao "Por faturamento
   // total / Por media ponderada". Terceiro clique na mesma coluna desliga.
   const [ordCol, setOrdCol] = useState("");
@@ -628,6 +637,13 @@ export default function GestaoCarteiras() {
       case "mesesComCompra": return c.mesesComCompra || 0;
       case "ultimaCompra": return c.ultimaCompra || "";
       case "debito": return c.debito || 0;
+      case "implantador": return c.implantador || "zzz";
+      case "implantadorData": return c.implantadorData || "0000-00-00";
+      case "repescagens": return c.repescagens || 0;
+      case "ultimaRepescagem": return c.ultimaRepescagem || "0000-00-00";
+      case "ultimaVendaData": return c.ultimaVendaData || "0000-00-00";
+      case "mediaUlt3": return c.mediaUlt3 || 0;
+      case "faturamentos": return c.faturamentos || 0;
       default: return "";
     }
   };
@@ -891,6 +907,13 @@ export default function GestaoCarteiras() {
           "Atraso do último título (dias)": c.atrasoUltimo ?? "",
           "Situação do último título": c.situacaoUltimo || "",
           "Vencimento do último título": c.vencimentoUltimo || "",
+          "Quem implantou o último pedido": c.implantador || "",
+          "Data do último pedido": c.implantadorData || "",
+          "Repescagens (vezes)": c.repescagens || 0,
+          "Última repescagem": c.ultimaRepescagem || "",
+          "Última venda faturada": c.ultimaVendaData || "",
+          "Média últ. 3 faturamentos": Number((c.mediaUlt3 || 0).toFixed(2)),
+          "Qtd. faturamentos": c.faturamentos || 0,
         })),
       `gestao-carteiras_${inicio}_a_${fim}${classeSel !== "todas" ? `_classe-${classeSel}` : ""}${sinalSel !== "todos" ? (sinalSel === "+" ? "_em-dia" : "_atrasa") : ""}${nomesSel.size === 1 ? `_${Array.from(nomesSel)[0].replace(/[^A-Za-z0-9]+/g, "-")}` : ""}`,
     );
@@ -1652,9 +1675,40 @@ export default function GestaoCarteiras() {
                 <div>
                   <CardTitle>Clientes da carteira</CardTitle>
                   <CardDescription>
-                    Relação completa do período. Média ponderada dá mais peso aos meses recentes
-                    (o mês mais antigo do período pesa 1; o mais recente, {meses.length}).
+                    {abaLista === "carteira" ? (
+                      <>
+                        Relação completa do período. Média ponderada dá mais peso aos meses recentes
+                        (o mês mais antigo do período pesa 1; o mais recente, {meses.length}).
+                      </>
+                    ) : (
+                      <>
+                        Quem digitou o último pedido de cada cliente, quantas vezes ele caiu em repescagem
+                        e o valor médio dos 3 últimos faturamentos. Os mesmos filtros da outra aba valem aqui.
+                      </>
+                    )}
                   </CardDescription>
+                  {/* Abas da tabela — as duas leem a MESMA lista filtrada */}
+                  <div className="flex gap-1 pt-2" role="tablist">
+                    {([
+                      { k: "carteira", t: "Carteira" },
+                      { k: "implantacao", t: "Implantação e repescagem" },
+                    ] as const).map((a) => (
+                      <button
+                        key={a.k}
+                        role="tab"
+                        aria-selected={abaLista === a.k}
+                        onClick={() => setAbaLista(a.k)}
+                        data-testid={`tab-lista-${a.k}`}
+                        className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                          abaLista === a.k
+                            ? "bg-primary text-primary-foreground border-primary font-medium"
+                            : "bg-background text-muted-foreground border-border hover:bg-muted"
+                        }`}
+                      >
+                        {a.t}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Button size="sm" variant={ordem === "total" ? "default" : "outline"} onClick={() => setOrdem("total")} data-testid="button-ordem-total">Por faturamento total</Button>
@@ -1816,7 +1870,7 @@ export default function GestaoCarteiras() {
                   </Button>
                 </div>
               )}
-              <div className="[&>div]:max-h-[70vh] [&>div]:overflow-auto">
+              <div className={abaLista === "carteira" ? "[&>div]:max-h-[70vh] [&>div]:overflow-auto" : "hidden"}>
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
@@ -1953,6 +2007,96 @@ export default function GestaoCarteiras() {
                 </TableBody>
               </Table>
               </div>
+
+              {/* ── Aba IMPLANTAÇÃO E REPESCAGEM ─────────────────────────────
+                  Mesma `listaVisivel` da outra aba: todo filtro (vendedor, cidade,
+                  classe, sinal, status, busca) e toda ordenação já chegam aplicados,
+                  e o dado vem do endpoint a cada carga — muda cadastro ou carteira,
+                  muda aqui. */}
+              <div className={abaLista === "implantacao" ? "[&>div]:max-h-[70vh] [&>div]:overflow-auto" : "hidden"}>
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))]">
+                  <TableRow>
+                    <TableHead className="w-10">#</TableHead>
+                    {thOrdenavel("nome", "Cliente")}
+                    {thOrdenavel("classe", "Classe", "w-16")}
+                    {thOrdenavel("vendedor", "Vendedor da carteira")}
+                    {thOrdenavel("implantador", "Implantou o último pedido")}
+                    {thOrdenavel("implantadorData", "Data do pedido", "w-28")}
+                    {thOrdenavel("repescagens", "Repescagens", "text-right w-28", true)}
+                    {thOrdenavel("ultimaRepescagem", "Última repescagem", "w-32")}
+                    {thOrdenavel("ultimaVendaData", "Última venda", "w-28")}
+                    {thOrdenavel("mediaUlt3", "Média últ. 3 faturamentos", "text-right w-40", true)}
+                    {thOrdenavel("faturamentos", "Faturamentos", "text-right w-24", true)}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {listaVisivel.map((c, i) => {
+                    const letra = letraDe(c);
+                    const positivo = sinalDe(c) === "+";
+                    const outro = !!c.implantador && c.implantador !== c.vendedor;
+                    const rep = c.repescagens || 0;
+                    return (
+                      <TableRow key={c.chave} data-testid={`row-implantacao-${i}`}>
+                        <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                        <TableCell className="font-medium">
+                          {c.nome}
+                          {c.cidade ? <span className="block text-xs text-muted-foreground">{cidadePadrao(c.cidade)}</span> : null}
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className="text-xs font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: CLASSE_COR[letra] || CINZA, color: letra === "D" ? "#0f172a" : "#ffffff", opacity: positivo ? 1 : 0.75 }}
+                          >
+                            {letra}{positivo ? "+" : "−"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-sm">{c.vendedor}</TableCell>
+                        <TableCell className="text-sm">
+                          {c.implantador ? (
+                            <span
+                              className={outro ? "font-medium text-amber-700 dark:text-amber-400" : ""}
+                              title={outro ? "Quem digitou o pedido não é o dono da carteira" : "O próprio dono da carteira digitou o pedido"}
+                            >
+                              {c.implantador}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground" title="Cliente sem pedido registrado no pipeline (venda importada ou anterior ao fluxo de pedidos)">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">{dBR(c.implantadorData)}</TableCell>
+                        <TableCell className={`text-right font-medium ${rep === 0 ? "text-muted-foreground" : rep >= 8 ? "text-destructive" : ""}`}>
+                          {rep === 0 ? "—" : NUM(rep)}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">{dBR(c.ultimaRepescagem)}</TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">{dBR(c.ultimaVendaData)}</TableCell>
+                        <TableCell className="text-right font-medium whitespace-nowrap">
+                          {(c.mediaUlt3 || 0) > 0 ? BRL(c.mediaUlt3) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">{c.faturamentos || 0}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {listaFiltrada.length === 0 ? (
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-6">
+                      {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
+                    </TableCell></TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+              </div>
+
+              {abaLista === "implantacao" ? (
+                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                  <strong>Implantou o último pedido</strong> sai do pipeline de faturamento, não do cadastro: vale a regra
+                  de que o pedido fica com quem o digitou. Em âmbar quando é diferente do dono da carteira.
+                  {" "}<strong>Repescagens</strong> conta ciclos vermelhos distintos
+                  {d?.repescagemDesde ? <> — o histórico começa em {dBR(d.repescagemDesde)}</> : null}.
+                  {" "}<strong>Última venda</strong> e <strong>média dos 3 últimos faturamentos</strong> saem de Contas a Receber,
+                  com as parcelas do mesmo faturamento agrupadas, e consideram a vida toda do cliente — não o período do filtro.
+                </p>
+              ) : null}
+
               <div className="flex items-center justify-between gap-3 flex-wrap mt-3">
                 <p className="text-xs text-muted-foreground">
                   Mostrando {NUM(listaVisivel.length)} de {NUM(listaFiltrada.length)} clientes
