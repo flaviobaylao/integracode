@@ -57,6 +57,12 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+/**
+ * Chamada autenticada que ja devolve o JSON PARSEADO — nao um Response.
+ * Nao faca `(await apiRequest(...)).json()`: `.json` nao existe no retorno, o
+ * teste cai no ramo vazio e a tela passa a mostrar zero em tudo. Foi o que
+ * aconteceu nos avisos de edicao em massa ate 19/set/2026.
+ */
 export async function apiRequest(
   method: string,
   url: string,
