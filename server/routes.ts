@@ -493,6 +493,54 @@ async function __inboxLeadAcao(opts: { leadId: string; assignedTo?: string | nul
   } catch (e: any) { console.warn('[INBOX-LEAD] falha:', e?.message || e); }
 }
 
+// 🏘️ Preenche AUTOMATICAMENTE o bairro (neighborhood) dos leads a partir das coordenadas.
+// Fire-and-forget e throttled (no max. 1x/90s por instancia): processa um lote pequeno por vez,
+// dos leads mais novos para os mais antigos. Para nao regeocodificar eternamente quem nao tem
+// bairro resolvivel (rural/cidade pequena), conta tentativas em neighborhood_tries e desiste apos 3.
+let __lastBairroAutoMs = 0;
+let __bairroAutoRunning = false;
+function maybePreencherBairrosAuto(): void {
+  const nowMs = Date.now();
+  if (__bairroAutoRunning || (nowMs - __lastBairroAutoMs) < 90000) return;
+  __lastBairroAutoMs = nowMs;
+  __bairroAutoRunning = true;
+  (async () => {
+    try {
+      const { reverseGeocodeNeighborhood, geocodeThrottleMs } = await import('./geocode-provider');
+      const pend: any = await db.execute(sql`
+        SELECT id, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
+        FROM leads
+        WHERE (neighborhood IS NULL OR neighborhood = '')
+          AND COALESCE(neighborhood_tries, 0) < 3
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 30
+      `);
+      const rows = (pend?.rows || []) as any[];
+      if (!rows.length) return;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      let n = 0;
+      for (const r of rows) {
+        try {
+          const bairro = await reverseGeocodeNeighborhood((r as any).lat, (r as any).lng);
+          if (bairro) {
+            await db.execute(sql`UPDATE leads SET neighborhood = ${bairro}, updated_at = NOW() WHERE id = ${(r as any).id}`);
+            n++;
+          } else {
+            await db.execute(sql`UPDATE leads SET neighborhood_tries = COALESCE(neighborhood_tries, 0) + 1 WHERE id = ${(r as any).id}`);
+          }
+        } catch (_e) { /* segue para o proximo */ }
+        await wait(geocodeThrottleMs());
+      }
+      if (n) console.log(`🏘️ [BAIRRO-AUTO] ${n}/${rows.length} bairro(s) preenchido(s) automaticamente.`);
+    } catch (e: any) {
+      console.warn('[BAIRRO-AUTO] falha:', e?.message || e);
+    } finally {
+      __bairroAutoRunning = false;
+    }
+  })();
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -22677,6 +22725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { status: statusFilter, sellerId } = req.query;
       
       console.log('📋 [LEADS] Buscando leads... user:', user?.email);
+      maybePreencherBairrosAuto(); // 🏘️ preenche em 2o plano os bairros faltantes por coordenada
       
       const rows = await db.select({
         id: leads.id,
@@ -23090,6 +23139,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } catch (_e) { /* silencioso: município é complementar */ }
         })();
       }
+      // 🏘️ Preenche SEMPRE o bairro (neighborhood) via geocode reverso das coordenadas - best-effort.
+      // (o job automático em 2o plano tenta de novo se aqui falhar por rede)
+      (async () => {
+        try {
+          const { reverseGeocodeNeighborhood } = await import('./geocode-provider');
+          const bairro = await reverseGeocodeNeighborhood((lead as any).latitude, (lead as any).longitude);
+          if (bairro) await db.execute(sql`UPDATE leads SET neighborhood = ${bairro} WHERE id = ${lead.id}`);
+        } catch (_e) { /* silencioso: bairro é complementar */ }
+      })();
 
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
@@ -23140,6 +23198,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (String(updateData.latitude) !== String(existingLead.latitude) || String(updateData.longitude) !== String(existingLead.longitude)) &&
           updateData.coordinatesLocked === undefined) {
         updateData.coordinatesLocked = false;
+        // 🏘️ Coordenada mudou → limpa o bairro e zera as tentativas para RE-BUSCAR pelas novas
+        // coordenadas (o job automático preenche em seguida).
+        updateData.neighborhood = null;
+        try { await db.execute(sql`UPDATE leads SET neighborhood_tries = 0 WHERE id = ${id}`); } catch (_e) {}
         console.log(`🔓 [COORD-UNLOCK] Lead ${id}: coordenada alterada manualmente → destravada para reverificação no próximo check-in`);
       }
 
