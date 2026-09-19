@@ -727,6 +727,11 @@ export function registerCarteira(app: Express) {
 
         return {
           chave: String(r.chave),
+          // id do CADASTRO: e' o que a alteracao em massa precisa (bulk-update e
+          // bulk-inactivate trabalham com ids de customers). Fica null para quem
+          // so' existe como faturamento, sem cadastro — e a tela desabilita a
+          // selecao nesses casos.
+          customerId: r.cad_id ? String(r.cad_id) : null,
           doc,
           nome: String(r.cad_nome || r.nome || "(sem nome)"),
           tipo: classificaTipo(doc, r.customer_type),
