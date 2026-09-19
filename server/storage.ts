@@ -607,7 +607,7 @@ export interface IStorage {
   updatePixCharge(id: string, data: Partial<InsertPixCharge>): Promise<PixCharge>;
 
   // Financial Module - Receivables
-  getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]>;
+  getReceivables(filters?: { excludePdd?: boolean; customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]>;
   getReceivable(id: string): Promise<Receivable | undefined>;
   createReceivable(data: InsertReceivable): Promise<Receivable>;
   updateReceivable(id: string, data: Partial<InsertReceivable>): Promise<Receivable>;
@@ -8901,10 +8901,13 @@ export class DatabaseStorage implements IStorage {
   // Financial Module - Receivables
   // ============================================================================
 
-  async getReceivables(filters?: { customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]> {
+  async getReceivables(filters?: { excludePdd?: boolean; customerId?: string; status?: string; instanceId?: string; startDate?: Date; endDate?: Date; dueDateStart?: Date; dueDateEnd?: Date; paymentMethod?: string; chartAccountId?: string }): Promise<Receivable[]> {
     const conditions: any[] = [isNull(receivables.deletedAt)]; // FASE 1b: soft-delete fora das listas
     if (filters?.customerId) conditions.push(eq(receivables.customerId, filters.customerId));
-    if (filters?.status === 'vencida') {
+    if (filters?.status === 'pdd') {
+      // PDD = título EM ABERTO classificado pelo admin como Previsão de Devedor Duvidoso.
+      conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`${receivables.pddAt} IS NOT NULL`)!);
+    } else if (filters?.status === 'vencida') {
       // VENCIDA = título EM ABERTO (a_vencer/vencida) cujo vencimento JÁ PASSOU por
       // DIA-CALENDÁRIO (fuso Brasil). A régua é SEMPRE a data, NUNCA o flag gravado:
       // um título que já venceu e depois teve o vencimento REpostergado (renegociação /
@@ -8917,6 +8920,11 @@ export class DatabaseStorage implements IStorage {
       conditions.push(and(inArray(receivables.status, ['a_vencer', 'vencida'] as any), sql`(${receivables.dueDate})::date >= (now() AT TIME ZONE 'America/Sao_Paulo')::date`)!);
     } else if (filters?.status) {
       conditions.push(eq(receivables.status, filters.status as any));
+    }
+    // Tela Contas a Receber: com filtro Vencida/A Vencer, títulos em PDD saem da lista
+    // (têm o filtro próprio). Os demais chamadores (alertas, relatórios) não mudam.
+    if (filters?.excludePdd && (filters?.status === 'vencida' || filters?.status === 'a_vencer')) {
+      conditions.push(sql`${receivables.pddAt} IS NULL`);
     }
     if (filters?.instanceId) conditions.push(eq(receivables.omieInstanceId, filters.instanceId));
     if (filters?.startDate) conditions.push(gte(receivables.issueDate, filters.startDate));

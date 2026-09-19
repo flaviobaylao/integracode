@@ -2625,6 +2625,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (req.query.paymentMethod) filters.paymentMethod = req.query.paymentMethod;
       if (req.query.chartAccountId) filters.chartAccountId = req.query.chartAccountId;
       
+      if (filters.status) filters.excludePdd = true; // PDD tem filtro próprio na tela
       const receivables = await storage.getReceivables(filters);
       const all = receivables as any[];
       // FASE 3.2 - paginacao opcional (?limit=&offset=). Sem os parametros, retorna tudo.
@@ -2891,6 +2892,42 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       const msg = String(error?.message || error);
       if (msg.startsWith('BAIXA_TRAVADA')) return res.status(409).json({ message: msg.replace(/^BAIXA_TRAVADA:\s*/, '') });
       res.status(500).json({ message: msg });
+    }
+  });
+
+  // PDD — Previsão de Devedor Duvidoso (19/set/2026). Só ADMIN move um título
+  // VENCIDO (em aberto, vencimento já passou) para PDD, e de PDD de volta para Vencida.
+  // body: { pdd: true|false, reason?: string }. Não mexe em valor, status gravado nem
+  // cobrança — só a classificação. Trilha em financial_audit_log.
+  app.post('/api/financial/receivables/:id/pdd', authenticateUser, async (req: any, res) => {
+    try {
+      const user = req.currentUser || req.user;
+      if (!user || user.role !== 'admin') return res.status(403).json({ message: 'Somente administrador pode classificar títulos em PDD' });
+      const toPdd = req.body?.pdd !== false;
+      const reason = String(req.body?.reason || '').trim().slice(0, 500) || null;
+      const cur: any = await db.execute(sql`SELECT id, status, due_date, pdd_at, deleted_at FROM receivables WHERE id = ${req.params.id} LIMIT 1`);
+      const r = (cur.rows || [])[0];
+      if (!r || r.deleted_at) return res.status(404).json({ message: 'Título não encontrado' });
+      if (!['a_vencer', 'vencida'].includes(String(r.status))) return res.status(400).json({ message: 'Só títulos em aberto podem ir para PDD' });
+      if (toPdd) {
+        if (r.pdd_at) return res.status(400).json({ message: 'Título já está em PDD' });
+        const due = r.due_date ? new Date(r.due_date).toISOString().slice(0, 10) : null;
+        const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        if (!due || due >= hoje) return res.status(400).json({ message: 'Só títulos vencidos podem ir para PDD' });
+      } else if (!r.pdd_at) {
+        return res.status(400).json({ message: 'Título não está em PDD' });
+      }
+      const actor = user.email || user.id || 'admin';
+      const upd: any = toPdd
+        ? await db.execute(sql`UPDATE receivables SET pdd_at = now(), pdd_by = ${actor}, pdd_reason = ${reason}, updated_at = now(), updated_by = ${actor} WHERE id = ${req.params.id} RETURNING id, pdd_at, pdd_by, pdd_reason`)
+        : await db.execute(sql`UPDATE receivables SET pdd_at = NULL, pdd_by = NULL, pdd_reason = NULL, updated_at = now(), updated_by = ${actor} WHERE id = ${req.params.id} RETURNING id, pdd_at`);
+      try {
+        await logFinancialAudit({ req, action: toPdd ? 'pdd_incluir' : 'pdd_remover', entity: 'receivable', entityId: req.params.id,
+          before: { pddAt: r.pdd_at }, after: { pdd: toPdd, reason } } as any);
+      } catch {}
+      res.json({ ok: true, pdd: toPdd, row: (upd.rows || [])[0] });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message || String(error) });
     }
   });
 
