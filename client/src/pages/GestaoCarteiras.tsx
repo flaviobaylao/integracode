@@ -10,8 +10,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   LineChart, Line, BarChart, Bar, LabelList, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
-import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search, ArrowUp, ArrowDown, ChevronsUpDown, Clock } from "lucide-react";
+import { Briefcase, Users, TrendingUp, Wallet, Download, Info, Search, ArrowUp, ArrowDown, ChevronsUpDown, Clock, UserCog, Ban } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useAuth } from "@/hooks/useAuth";
+import { apiRequest } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 import AgendaCarteira from "@/pages/AgendaCarteira";
@@ -59,7 +62,7 @@ const labelMes = (m: string) => {
 };
 
 type Cliente = {
-  chave: string; doc: string | null; nome: string; tipo: string; vendedor: string; cidade: string;
+  chave: string; customerId?: string | null; doc: string | null; nome: string; tipo: string; vendedor: string; cidade: string;
   segmento: string; cadastrado: boolean; ativo: boolean; total: number; titulos: number;
   mesesComCompra: number; primeiraCompra: string | null; ultimaCompra: string | null;
   mediaSimples: number; mediaPonderada: number;
@@ -282,6 +285,17 @@ export default function GestaoCarteiras() {
     queryKey: ["/api/sellers/active"],
     staleTime: 30000,
   });
+
+  // ── SELEÇÃO E ALTERAÇÃO EM MASSA (só admin) ────────────────────────────────
+  // Trocar vendedor usa POST /api/customers/bulk-update (que passa por
+  // storage.updateCustomer e por isso já move a visit_agenda pendente para o
+  // novo vendedor). Inativar usa POST /api/customers/bulk-inactivate, que o
+  // servidor já restringe a admin.
+  const { user } = useAuth();
+  const ehAdmin = (user as any)?.role === "admin";
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [novoVendedor, setNovoVendedor] = useState("");
+  const [aplicando, setAplicando] = useState(false);
 
   const d = data || {};
   // Vendedor e telemarketing recebem do servidor SO a carteira deles — o filtro
@@ -680,6 +694,88 @@ export default function GestaoCarteiras() {
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
   const debitoFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + (c.debito || 0), 0), [listaFiltrada]);
+
+  // Só quem tem cadastro pode ser alterado: cliente que existe apenas como
+  // faturamento (sem linha em customers) não tem id para o bulk mexer.
+  const idsSelecionaveis = useMemo(
+    () => listaFiltrada.map((c) => c.customerId).filter((x): x is string => !!x),
+    [listaFiltrada],
+  );
+  const todosSelecionados = idsSelecionaveis.length > 0 && idsSelecionaveis.every((id) => selecionados.has(id));
+  const marcarTodos = () => {
+    setSelecionados((atual) => {
+      if (todosSelecionados) return new Set();
+      return new Set(idsSelecionaveis);
+    });
+  };
+  const alternarUm = (id?: string | null) => {
+    if (!id) return;
+    setSelecionados((atual) => {
+      const nova = new Set(atual);
+      if (nova.has(id)) nova.delete(id); else nova.add(id);
+      return nova;
+    });
+  };
+  // Filtro mudou: o que sumiu da lista não pode continuar selecionado escondido.
+  useEffect(() => {
+    setSelecionados((atual) => {
+      if (!atual.size) return atual;
+      const validos = new Set(idsSelecionaveis);
+      const nova = new Set(Array.from(atual).filter((id) => validos.has(id)));
+      return nova.size === atual.size ? atual : nova;
+    });
+  }, [idsSelecionaveis]);
+
+  const recarregar = () => {
+    qc.invalidateQueries({ queryKey: ["/api/reports/gestao-carteiras"] });
+    qc.invalidateQueries({ queryKey: ["/api/customers"] });
+    qc.invalidateQueries({ queryKey: ["/api/active-customers"] });
+  };
+
+  async function trocarVendedorEmMassa() {
+    const ids = Array.from(selecionados);
+    if (!ids.length || !novoVendedor) return;
+    const nome = vendedoresAtivos.find((v) => v.id === novoVendedor)?.name || "o vendedor escolhido";
+    if (!window.confirm(`Passar ${ids.length} cliente(s) para ${nome}?`)) return;
+    setAplicando(true);
+    try {
+      const r: any = await apiRequest("POST", "/api/customers/bulk-update", { ids, fields: { sellerId: novoVendedor } });
+      const j = typeof r?.json === "function" ? await r.json() : r;
+      alert(`${j?.updated ?? ids.length} cliente(s) passaram para ${nome}.`);
+      setSelecionados(new Set());
+      setNovoVendedor("");
+      recarregar();
+    } catch (e: any) {
+      alert(e?.message || "Não deu para trocar o vendedor.");
+    } finally {
+      setAplicando(false);
+    }
+  }
+
+  async function inativarEmMassa() {
+    const ids = Array.from(selecionados);
+    if (!ids.length) return;
+    const motivo = window.prompt(`Inativar ${ids.length} cliente(s). Qual o motivo?`);
+    if (motivo === null) return;
+    if (!motivo.trim()) { alert("O motivo é obrigatório para inativar."); return; }
+    if (!window.confirm(`Confirma inativar ${ids.length} cliente(s)? Os cards de venda futuros deles são apagados.`)) return;
+    setAplicando(true);
+    try {
+      const r: any = await apiRequest("POST", "/api/customers/bulk-inactivate", { ids, motivo: motivo.trim() });
+      const j = typeof r?.json === "function" ? await r.json() : r;
+      alert(
+        `${j?.inactivated ?? 0} cliente(s) inativado(s).`
+        + (j?.alreadyInactive ? ` ${j.alreadyInactive} já estavam inativos.` : "")
+        + (j?.deletedCards ? ` ${j.deletedCards} card(s) de venda futuros removidos.` : ""),
+      );
+      setSelecionados(new Set());
+      recarregar();
+    } catch (e: any) {
+      alert(e?.message || "Não deu para inativar.");
+    } finally {
+      setAplicando(false);
+    }
+  }
 
   // ── Situação da carteira (4 barras) ───────────────────────────────────────
   // Fluxos em R$/mês; o débito é estoque (total vencido em aberto hoje) e vai
@@ -1572,10 +1668,69 @@ export default function GestaoCarteiras() {
                   `overflow-x-auto` do wrapper vira o container de rolagem do sticky e
                   o cabeçalho gruda no topo da tabela inteira — ou seja, nunca acompanha
                   a rolagem. Com max-h + overflow-auto o cabeçalho fica de fato fixo. */}
+              {ehAdmin && selecionados.size > 0 && (
+                <div
+                  className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 mb-2 dark:border-amber-700 dark:bg-amber-950/40"
+                  data-testid="barra-massa-carteira"
+                >
+                  <span className="text-sm font-medium">
+                    {NUM(selecionados.size)} cliente{selecionados.size === 1 ? "" : "s"} selecionado{selecionados.size === 1 ? "" : "s"}
+                  </span>
+                  <Button size="sm" variant="ghost" onClick={() => setSelecionados(new Set())} data-testid="button-limpar-selecao">
+                    Limpar
+                  </Button>
+
+                  <div className="h-5 w-px bg-amber-300 dark:bg-amber-700" />
+
+                  <UserCog className="h-4 w-4 text-muted-foreground" />
+                  <Select value={novoVendedor} onValueChange={setNovoVendedor}>
+                    <SelectTrigger className="h-8 w-56 text-sm" data-testid="select-novo-vendedor">
+                      <SelectValue placeholder="Passar para o vendedor…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vendedoresAtivos.map((v) => (
+                        <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    disabled={!novoVendedor || aplicando}
+                    onClick={trocarVendedorEmMassa}
+                    data-testid="button-aplicar-vendedor"
+                  >
+                    {aplicando ? "Aplicando…" : "Trocar vendedor"}
+                  </Button>
+
+                  <div className="h-5 w-px bg-amber-300 dark:bg-amber-700" />
+
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={aplicando}
+                    onClick={inativarEmMassa}
+                    data-testid="button-inativar-massa"
+                  >
+                    <Ban className="h-4 w-4 mr-1" />
+                    Inativar selecionados
+                  </Button>
+                </div>
+              )}
               <div className="[&>div]:max-h-[70vh] [&>div]:overflow-auto">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
+                    {ehAdmin && (
+                      <TableHead className="w-8">
+                        <Checkbox
+                          checked={todosSelecionados}
+                          onCheckedChange={marcarTodos}
+                          aria-label="Selecionar todos os clientes filtrados"
+                          title={`Selecionar os ${NUM(idsSelecionaveis.length)} clientes do filtro atual (não só os que estão na tela)`}
+                          data-testid="check-todos-carteira"
+                        />
+                      </TableHead>
+                    )}
                     <TableHead className="w-10">#</TableHead>
                     {thOrdenavel("nome", "Cliente")}
                     {thOrdenavel("conquista", "Data de conquista", "w-32")}
@@ -1597,6 +1752,18 @@ export default function GestaoCarteiras() {
                     const positivo = sinalDe(c) === "+";
                     return (
                       <TableRow key={c.chave} data-testid={`row-cliente-${i}`}>
+                        {ehAdmin && (
+                          <TableCell>
+                            <Checkbox
+                              checked={!!c.customerId && selecionados.has(c.customerId)}
+                              onCheckedChange={() => alternarUm(c.customerId)}
+                              disabled={!c.customerId}
+                              aria-label={`Selecionar ${c.nome}`}
+                              title={c.customerId ? undefined : "Sem cadastro: só aparece pelo faturamento"}
+                              data-testid={`check-cliente-${i}`}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
                           {c.nome}
@@ -1679,7 +1846,7 @@ export default function GestaoCarteiras() {
                     );
                   })}
                   {listaFiltrada.length === 0 ? (
-                    <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground py-6">
+                    <TableRow><TableCell colSpan={ehAdmin ? 14 : 13} className="text-center text-muted-foreground py-6">
                       {busca.trim() ? "Nenhum cliente encontrado para essa busca." : "Nenhum cliente com faturamento no período."}
                     </TableCell></TableRow>
                   ) : null}
