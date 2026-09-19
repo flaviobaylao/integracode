@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
+import AtendimentoDigital from '@/components/AtendimentoDigital';
 import { useTableSort, SortableTh, exportToExcel, ExportExcelButton } from '@/lib/tableTools';
 import {
   Loader2, RefreshCw, Users, MapPin, Headset, ShoppingCart, Redo2, FileCheck2, Route, Clock,
@@ -378,6 +379,9 @@ export default function PainelAtendimento() {
           Barra = clientes que saíram no sorteio da repescagem naquele dia; a parte escura são os atendidos (fechados como concluídos). O rótulo é a taxa de atendimento do dia.
         </p>
       </div>
+
+      {/* A outra metade do painel: o que aconteceu por tela, não na rua. */}
+      <AtendimentoDigital dia={dia} ehHoje={ehHoje} intervalo={intervalo} aoVivo={aoVivo} />
 
       <p className="text-xs text-gray-500 dark:text-gray-400">
         Visita = check-in presencial (clientes distintos). Atendimento = cliente atendido por visita, atendimento virtual ou pedido.

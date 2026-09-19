@@ -334,6 +334,36 @@ export async function categoriasAprovadas(): Promise<{ mapa: Map<string, string>
   return { mapa, faltando: rotulos.filter(l => !mapa.has(l)) };
 }
 
+/**
+ * Variante UTILITY do mesmo aviso: '<rotulo>_u'.
+ *
+ * A Meta classifica pelo TEXTO, nao pelo que a gente pede. Dois avisos da regua
+ * ('recompra_reativacao', 'recompra_mix') voltaram como MARKETING — 0,34 por
+ * mensagem em vez de 0,04, e sujeitos a opt-out. Para cada um deles pode existir
+ * um irmao '<rotulo>_u' com o texto reescrito em moldura transacional (ancora no
+ * historico/pendencia do cliente em vez de oferecer venda).
+ *
+ * Esta funcao devolve o irmao SO SE a Meta o aprovou COMO UTILITY. Se ela
+ * reclassificar o irmao tambem, ele e ignorado e o original segue valendo — a
+ * troca acontece sozinha, sem deploy, e nunca "força" categoria nenhuma.
+ */
+export async function rotuloEfetivo(label: string): Promise<{ label: string; categoria: string }> {
+  const original = { label, categoria: 'MARKETING' };
+  try {
+    const r: any = await db.execute(sql`
+      SELECT label, upper(COALESCE(categoria, '')) AS categoria, umbler_id, COALESCE(is_active, true) AS ativo
+        FROM whatsapp_templates WHERE label IN (${label}, ${label + '_u'})`);
+    const linhas = (r.rows || []) as any[];
+    const o = linhas.find(x => String(x.label) === label);
+    if (o) original.categoria = String(o.categoria || 'MARKETING');
+    const u = linhas.find(x => String(x.label) === label + '_u');
+    if (u && u.umbler_id && u.ativo !== false && String(u.categoria) === 'UTILITY') {
+      return { label: String(u.label), categoria: 'UTILITY' };
+    }
+  } catch {}
+  return original;
+}
+
 // CAIXA DE DECISOES: `clientesIds` restringe o lote a um publico ja escolhido
 // (a acao aprovada) e `acaoId` carimba lote e toques com a acao de origem.
 /**
@@ -417,7 +447,11 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
 
     const ticket = Number(c.ticket_medio || 0);
     const receitaEsperada = bloqueio ? 0 : ticket * regua.conversaoEsperada;
-    const categoria = catDoTemplate.get(regua.templateLabel) || regua.categoria;
+    // Se existir uma variante UTILITY aprovada deste aviso, ela vale (custa 8x menos).
+    const efetivo = await rotuloEfetivo(regua.templateLabel);
+    const categoria = efetivo.label === regua.templateLabel
+      ? (catDoTemplate.get(regua.templateLabel) || regua.categoria)
+      : efetivo.categoria;
     const custoUnit = categoria === 'MARKETING' ? 0.34 : 0.04;
 
     await db.execute(sql`
@@ -428,7 +462,7 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
       VALUES
         (${loteId}, ${rid}, ${c.id}, ${c.name}, ${String(c.phone || '').replace(/\D/g, '')}, ${c.seller_id || null},
          ${c.ciclo_dias}, ${c.dias_desde_compra}, ${ticket}, ${c.skus}, ${c.ultima_compra},
-         ${regua.templateLabel}, ${JSON.stringify([String(c.name || '').split(' ')[0] || 'tudo bem'])}::jsonb,
+         ${efetivo.label}, ${JSON.stringify([String(c.name || '').split(' ')[0] || 'tudo bem'])}::jsonb,
          ${bloqueio ? 0 : custoUnit}, ${receitaEsperada.toFixed(2)},
          ${bloqueio ? 'bloqueado' : 'previsto'}, ${bloqueio}, ${opts.acaoId || null}, ${sugestoes.get(String(c.id)) || null})`);
 

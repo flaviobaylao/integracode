@@ -494,6 +494,282 @@ async function main() {
   check(pz.ok && ((await raw(`SELECT status FROM mkt_ads WHERE id='${adRow.id}'`)) as any).rows[0].status === 'pausado', 'anuncio: pausar');
   (globalThis as any).fetch = fetchReal2;
 
+  // =========================================================================
+  console.log('10) pos-venda da entrega: app do entregador -> WhatsApp do cliente');
+  // =========================================================================
+  await raw(`DO $$ BEGIN CREATE TYPE dispatch_status AS ENUM ('fila','enviada','entregue','lida','resposta','falha'); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+  await raw(`ALTER TYPE dispatch_use_case ADD VALUE IF NOT EXISTS 'entrega'`);
+  await raw(`CREATE TABLE IF NOT EXISTS official_dispatches (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, customer_phone varchar,
+    template_label varchar, category varchar, use_case dispatch_use_case, params jsonb, campaign varchar, estimated_cost numeric,
+    status dispatch_status DEFAULT 'fila', mode varchar, error text, sent_at timestamptz, chat_id varchar, umbler_message_id varchar,
+    created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
+  await raw(`CREATE TABLE IF NOT EXISTS delivery_routes (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), route_date date, status varchar, driver_email varchar, start_time timestamptz)`);
+  await raw(`CREATE TABLE IF NOT EXISTS delivery_route_stops (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), route_id varchar, sales_card_id varchar,
+    customer_id varchar, order_number varchar, stop_order int, status varchar DEFAULT 'pendente')`);
+  await raw(`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS operation_type varchar DEFAULT 'venda'`);
+  await raw(`ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS delivery_failure_reason varchar`);
+  await raw(`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS order_number varchar`);
+  await raw(`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS operation_type varchar`);
+  await raw(`ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS sales_card_id varchar`);
+  await raw(`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true`);
+  await raw(`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS corpo text`);
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES
+      ('pedido_saiu_entrega','u1','UTILITY','Ola {{1}}, seu pedido {{2}} saiu para entrega.'),
+      ('pedido_entregue','u2','UTILITY','Ola {{1}}, seu pedido {{2}} foi entregue.'),
+      ('entrega_nao_realizada','u3','UTILITY','Ola {{1}}, a entrega do pedido {{2}} nao saiu. Motivo: {{3}}.'),
+      ('pos_entrega_2d','u4','UTILITY','Oi, {{1}}! Seu pedido {{2}} chegou ha dois dias — deu tudo certo?')
+    ON CONFLICT (label) DO NOTHING`);
+  await raw(`INSERT INTO system_settings (key, value) VALUES ('oficial_dispatch_mode','on'),('oficial_entrega','on'),('oficial_templates_on','on')
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+  const ec = await import('../server/entrega-cliente');
+  await ec.ensureEntregaClienteSchema();
+
+  // Dois clientes na rota: um com telefone (avisa) e um sem (pula, sem derrubar o resto).
+  await raw(`INSERT INTO customers (id, name, phone) VALUES ('cliE1','Padaria do Ze','5562911119001'),('cliE2','Mercado Sem Fone', NULL) ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone`);
+  await raw(`INSERT INTO sales_cards (id, customer_id, operation_type) VALUES ('scE1','cliE1','venda'),('scE2','cliE2','venda') ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO billing_pipeline (id, customer_id, sales_card_id, order_number, operation_type) VALUES ('bpE1','cliE1','scE1','98765','venda') ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO delivery_routes (id, route_date, status, driver_email) VALUES ('rotE1', current_date, 'rota_enviada','motorista@honest.com') ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO delivery_route_stops (id, route_id, sales_card_id, customer_id, stop_order, status) VALUES
+      ('stE1','rotE1','scE1','cliE1',1,'pendente'), ('stE2','rotE1','scE2','cliE2',2,'pendente') ON CONFLICT (id) DO NOTHING`);
+
+  const ini = await ec.avisarRotaIniciada('rotE1');
+  const dSaiu: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:saiu%'`)) as any).rows[0];
+  check(ini.enviados === 1 && dSaiu && dSaiu.template_label === 'pedido_saiu_entrega' && dSaiu.params[0] === 'Padaria' && dSaiu.params[1] === '98765'
+    && dSaiu.use_case === 'entrega' && ini.detalhes.some((d: string) => /sem telefone/.test(d)),
+    'entrega: iniciar rota avisa cada cliente (nome curto + nº do pedido) e pula quem não tem telefone');
+
+  const iniDeNovo = await ec.avisarRotaIniciada('rotE1');
+  check(iniDeNovo.enviados === 0, 'entrega: iniciar a rota duas vezes não duplica o aviso');
+
+  // Entrega efetuada: aviso agora + follow-up agendado para dois dias depois, às 10h BRT.
+  await raw(`UPDATE delivery_route_stops SET status='efetuada' WHERE id='stE1'`);
+  const efe = await ec.avisarEntregaEfetuada('stE1', new Date('2026-09-19T14:00:00Z'));
+  const dEnt: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign='card:scE1:entregue'`)) as any).rows[0];
+  const dPos: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign='card:scE1:pos2d'`)) as any).rows[0];
+  const quando = dPos && new Date(dPos.scheduled_at).toISOString();
+  check(efe.agora.startsWith('enfileirado') && dEnt.template_label === 'pedido_entregue'
+    && dPos && dPos.status === 'fila' && quando === '2026-09-21T13:00:00.000Z',
+    'entrega: efetuada avisa na hora e agenda o "deu tudo certo?" para 2 dias depois, 10h de Brasília (' + quando + ')');
+
+  // A fila só pega o que já venceu: o follow-up não pode sair antes da hora.
+  const naFila: any = await raw(`SELECT count(*)::int n FROM official_dispatches WHERE status='fila'
+    AND (scheduled_at IS NULL OR scheduled_at <= now())`);
+  const agendados: any = await raw(`SELECT count(*)::int n FROM official_dispatches WHERE status='fila' AND scheduled_at > now()`);
+  check(agendados.rows[0].n === 1 && naFila.rows[0].n >= 1, 'entrega: follow-up fica esperando a data; o resto da fila continua saindo');
+
+  // Devolução: avisa e cancela o follow-up que estava agendado para aquele pedido.
+  await raw(`UPDATE delivery_route_stops SET status='devolvida' WHERE id='stE1'`);
+  await raw(`UPDATE sales_cards SET delivery_failure_reason='customer_absent' WHERE id='scE1'`);
+  const dev = await ec.avisarEntregaDevolvida('stE1', 'ninguem no local');
+  const dDev: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:devolvida%'`)) as any).rows[0];
+  const posDepois: any = ((await raw(`SELECT status, error FROM official_dispatches WHERE campaign='card:scE1:pos2d'`)) as any).rows[0];
+  check(dev.startsWith('enfileirado') && dDev.template_label === 'entrega_nao_realizada' && dDev.params.length === 3 && dDev.params[2] === 'ninguem no local'
+    && posDepois.status === 'falha' && /devolvido/.test(String(posDepois.error)),
+    'entrega: devolução avisa com o motivo e cancela o follow-up daquele pedido');
+
+  // Template novo (tom leve) assume assim que a Meta aprova, sem mexer em código.
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES ('entrega_saiu','u9','UTILITY','Oi, {{1}}! Seu pedido {{2}} saiu para entrega.') ON CONFLICT (label) DO UPDATE SET umbler_id='u9'`);
+  const esc = await ec.escolherTemplate('saiu');
+  await raw(`UPDATE whatsapp_templates SET is_active = false WHERE label='entrega_saiu'`);
+  const escOff = await ec.escolherTemplate('saiu');
+  check(esc?.label === 'entrega_saiu' && esc.novo === true && escOff?.label === 'pedido_saiu_entrega' && escOff.novo === false,
+    'entrega: usa o template novo quando aprovado e cai no antigo enquanto não está');
+
+  // Variante '_u': só assume se a Meta classificou como UTILITY. Reclassificada
+  // como MARKETING, é ignorada — o sistema nunca "força" categoria.
+  await raw(`UPDATE whatsapp_templates SET is_active = true WHERE label='entrega_saiu'`);
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES ('entrega_saiu_u','u10','MARKETING','Oi, {{1}}! O pedido {{2}} saiu.') ON CONFLICT (label) DO UPDATE SET categoria='MARKETING'`);
+  const escMkt = await ec.escolherTemplate('saiu');
+  await raw(`UPDATE whatsapp_templates SET categoria='UTILITY' WHERE label='entrega_saiu_u'`);
+  const escUtil = await ec.escolherTemplate('saiu');
+  check(escMkt?.label === 'entrega_saiu' && escUtil?.label === 'entrega_saiu_u',
+    'entrega: variante _u só entra se a Meta aprovar como UTILITY (se vier MARKETING, é ignorada)');
+
+  const rec = await import('../server/mkt-recompra');
+  await raw(`UPDATE whatsapp_templates SET categoria='MARKETING' WHERE label='recompra_reativacao'`);
+  const rOrig = await rec.rotuloEfetivo('recompra_reativacao');
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria) VALUES ('recompra_reativacao_u','u11','UTILITY') ON CONFLICT (label) DO NOTHING`);
+  const rU = await rec.rotuloEfetivo('recompra_reativacao');
+  check(rOrig.label === 'recompra_reativacao' && rOrig.categoria === 'MARKETING'
+    && rU.label === 'recompra_reativacao_u' && rU.categoria === 'UTILITY',
+    'régua: troca para a variante UTILITY quando ela existe (R$ 0,04 em vez de R$ 0,34)');
+
+  // =========================================================================
+  console.log('11) painel de atendimento digital: tudo que trocamos com cliente');
+  // =========================================================================
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_id varchar`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_phone varchar`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS last_inbound_channel varchar`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS window_open_until timestamptz`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS created_at timestamp DEFAULT (now() AT TIME ZONE 'UTC')`);
+  await raw(`CREATE TABLE IF NOT EXISTS chat_messages (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id varchar,
+    sender_id varchar, sender_type varchar, content text, created_at timestamp DEFAULT (now() AT TIME ZONE 'UTC'))`);
+  await raw(`CREATE TABLE IF NOT EXISTS social_metrics (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), post_id varchar, data date,
+    alcance int, impressoes int, curtidas int, comentarios int, salvos int, compartilhamentos int, cliques_link int, novos_seguidores int)`);
+
+  const hojeBRt = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  // Duas conversas: uma do WhatsApp oficial e uma do Instagram Direct.
+  await raw(`INSERT INTO chat_conversations (id, customer_id, customer_phone, last_inbound_channel, window_open_until)
+      VALUES ('cvW','cliE1','5562911119001','oficial_1841', now() + interval '10 hours'),
+             ('cvI','cliE1','ig:17841400000','instagram', NULL)
+      ON CONFLICT (id) DO NOTHING`);
+  // Cliente escreve 3x; a IA responde 2x (uma 4 min depois), o humano 1x, o sistema 1x.
+  const T = (min: number) => `(now() AT TIME ZONE 'UTC') - interval '${min} minutes'`;
+  await raw(`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, created_at) VALUES
+      ('cvW','cli','customer','oi',              ${T(60)}),
+      ('cvW','agent:sdr','system','ola!',        ${T(56)}),
+      ('cvW','cli','customer','quero repor',     ${T(40)}),
+      ('cvW','u1','agent','ja te mando',         ${T(30)}),
+      ('cvW','system','system','aviso',          ${T(20)}),
+      ('cvI','cli','customer','oi pelo direct',  ${T(50)}),
+      ('cvI','agent:instagram','system','oi!',   ${T(48)})`);
+  await raw(`INSERT INTO mkt_agent_runs (agente, gatilho, canal, modelo, custo_brl, duracao_ms, sucesso)
+      VALUES ('sdr','chat','whatsapp','x',0.12,900,true), ('sdr','chat','whatsapp','x',0.08,1100,false)`);
+  await raw(`INSERT INTO social_metrics (post_id, data, alcance, curtidas, comentarios) VALUES
+      ('p1','${hojeBRt}'::date, 900, 40, 5), ('p1','${hojeBRt}'::date - 1, 500, 20, 2), ('p2','${hojeBRt}'::date, 300, 10, 1)`);
+  await raw(`INSERT INTO mkt_ads_diario (ad_id, data, gasto, impressoes, cliques, conversas, alcance)
+      VALUES ('${adRow.id}','${hojeBRt}'::date, 20, 1000, 50, 4, 800) ON CONFLICT (ad_id, data) DO NOTHING`);
+
+  const { resumoDigital } = await import('../server/painel-atendimento-digital');
+  const dig = await resumoDigital(hojeBRt, hojeBRt);
+
+  check(dig.mensagens.recebidas === 3 && dig.mensagens.enviadas === 4 && dig.mensagens.ia === 2
+    && dig.mensagens.humano === 1 && dig.mensagens.sistema === 1 && dig.mensagens.conversas === 2,
+    'digital: separa recebidas de enviadas e quem enviou (IA/humano/sistema)');
+
+  const cW = dig.porCanal.find(c => c.canal === 'whatsapp_1841');
+  const cI = dig.porCanal.find(c => c.canal === 'instagram');
+  check(cW?.recebidas === 2 && cW?.enviadas === 3 && cI?.recebidas === 1 && cI?.enviadas === 1,
+    'digital: canal vem da conversa — WhatsApp oficial e Instagram Direct separados');
+
+  // 3 respostas a mensagem do cliente: IA 4 min, humano 10 min, IA 2 min => média 16/3
+  check(dig.mensagens.respostas === 3 && dig.mensagens.respostasIa === 2 && dig.mensagens.pctIa === 66.7
+    && dig.mensagens.tempoRespostaIaMin === 3 && dig.mensagens.tempoRespostaHumanoMin === 10,
+    'digital: tempo de resposta separa IA de humano (IA ' + dig.mensagens.tempoRespostaIaMin + ' min, humano ' + dig.mensagens.tempoRespostaHumanoMin + ' min)');
+
+  check(dig.janela24h.abertas === 1 && dig.janela24h.conversasOficiais === 1,
+    'digital: conta a janela de 24 h aberta (mensagem grátis)');
+
+  // Instagram é cumulativo por post: vale a ÚLTIMA leitura, não a soma dos dias.
+  check(dig.instagram.alcance === 1200 && dig.instagram.curtidas === 50 && dig.instagram.posts === 2,
+    'digital: Instagram usa a última leitura de cada post (900+300), não a soma dos dias (' + dig.instagram.alcance + ')');
+
+  check(dig.ads.gasto === 20 && dig.ads.conversas === 4 && dig.ads.custoPorConversa === 5,
+    'digital: anúncios somam por dia e calculam o custo por conversa (R$ 5,00)');
+
+  const sdr = dig.ia.porAgente.find(a => a.agente === 'sdr');
+  check(sdr?.execucoes === 2 && sdr?.erros === 1 && sdr?.custo === 0.2 && dig.ia.erros >= 1,
+    'digital: execuções, erros e custo dos agentes de IA, por agente');
+
+  // Um disparo sai de verdade: só aí ele entra em "enviados" e no bloco de entrega.
+  await raw(`UPDATE official_dispatches SET status='enviada'::dispatch_status, sent_at = (now() AT TIME ZONE 'UTC')
+      WHERE template_label = 'pedido_saiu_entrega'`);
+  const dig2 = await resumoDigital(hojeBRt, hojeBRt);
+  const tplSaiu = dig2.disparos.porTemplate.find(t => t.template === 'pedido_saiu_entrega');
+  check(dig2.disparos.enviados === 1 && dig2.disparos.fila === 2 && tplSaiu?.enviados === 1
+    && dig2.entregas.saiu === 1 && dig2.entregas.agendados >= 2 && dig2.disparos.custo === 0.04,
+    'digital: disparo enviado entra no total e no bloco de entrega; o que está na fila não conta como enviado');
+
+  const hojeSerie = dig.serie.find(s => s.dia === hojeBRt);
+  check(dig.serie.length === 1 && hojeSerie?.recebidas === 3 && hojeSerie?.enviadas === 4,
+    'digital: série por dia fecha com os totais');
+
+  // Custo e retorno por ação: uma régua medida (voltou 3×) e uma ainda medindo.
+  await raw(`INSERT INTO mkt_acoes (numero, tipo, agente, titulo, status, custo_estimado, receita_esperada,
+        executada_em, resultado, medido_em, publico_total, modo_teste)
+      VALUES (901,'regua','mkt_radar','Régua medida','executada', 4.00, 500,
+              now() - interval '10 days', '{"clientes":6,"pedidos":8,"receita":900,"custo":3.20}'::jsonb,
+              now() - interval '1 day', 80, false),
+             (902,'visita','mkt_radar','Visita ainda medindo','executada', 0, 1200,
+              now() - interval '2 days', NULL, NULL, 5, false)`);
+  await raw(`INSERT INTO mkt_fila_toques (lote_id, regua, cliente_id, telefone, template_label, custo_estimado, status, acao_id)
+      SELECT 'lx','reativacao','cliE1','5562911119001','recompra_reativacao', 0.04,
+             CASE WHEN g <= 80 THEN 'enfileirado' ELSE 'bloqueado' END,
+             (SELECT id FROM mkt_acoes WHERE numero = 901)
+        FROM generate_series(1, 90) g`);
+  const digA = await resumoDigital(hojeBRt, hojeBRt);
+  const a901 = digA.acoes.lista.find(a => a.numero === 901);
+  const a902 = digA.acoes.lista.find(a => a.numero === 902);
+  check(a901 && a901.custo === 3.2 && a901.receita === 900 && a901.retorno === 281.3 && a901.enviados === 80 && a901.fechado === true,
+    'ações: custo real (só os toques que saíram), receita medida e retorno por ação (' + a901?.retorno + '×)');
+  check(a902 && a902.receita === null && a902.retorno === null && a902.receitaEsperada === 1200 && a902.fechado === false,
+    'ações: a que ainda mede aparece sem receita, mostrando só o esperado');
+  // Os totais somam TODAS as ações da janela (o teste já criou outras antes), então
+  // o que se verifica aqui é a invariante da conta, não um número absoluto.
+  const medidas = digA.acoes.lista.filter(a => a.receita != null);
+  const custoDasMedidas = medidas.reduce((t, a) => t + a.custo, 0);
+  const receitaTot = medidas.reduce((t, a) => t + (a.receita || 0), 0);
+  check(digA.acoes.medidas === medidas.length && digA.acoes.medidas + digA.acoes.medindo === digA.acoes.total
+    && Math.abs(digA.acoes.receita - receitaTot) < 0.01
+    && digA.acoes.retorno === Math.round((receitaTot / custoDasMedidas) * 10) / 10
+    && custoDasMedidas < digA.acoes.custo,
+    'ações: o retorno divide a receita medida pelo custo DAS MEDIDAS, não pelo custo total (' + digA.acoes.retorno + '×)');
+  const tipoRegua = digA.acoes.porTipo.find(t => t.tipo === 'regua');
+  const tipoVisita = digA.acoes.porTipo.find(t => t.tipo === 'visita');
+  check(!!tipoRegua && tipoRegua.receita >= 900 && tipoRegua.retorno != null
+    && !!tipoVisita && tipoVisita.retorno === null
+    && digA.acoes.porTipo.reduce((t, x) => t + x.acoes, 0) === digA.acoes.total,
+    'ações: quebra por tipo soma o total; tipo sem custo (visita) fica sem múltiplo de retorno');
+
+  const vazio = await resumoDigital('2020-01-01', '2020-01-02');
+  check(vazio.mensagens.total === 0 && vazio.disparos.enviados === 0 && vazio.serie.length === 2
+    && vazio.mensagens.tempoRespostaMin === null,
+    'digital: período sem movimento devolve zeros, não quebra');
+
+  // =========================================================================
+  console.log('12) ensaio geral: roda todas as rotinas e relata passo a passo');
+  // =========================================================================
+  const { rodarEnsaio } = await import('../server/mkt-ensaio');
+  const ens = await rodarEnsaio({ enviar: false, quem: 'teste' });
+
+  check(ens.resumo.total >= 20 && ens.passos.every(p => ['ok', 'falhou', 'pulado'].includes(p.estado))
+    && ens.passos.every(p => p.detalhe.length > 0),
+    'ensaio: percorre as rotinas e cada passo diz o que aconteceu (' + ens.resumo.total + ' passos: '
+      + ens.resumo.ok + ' ok, ' + ens.resumo.pulado + ' pulados, ' + ens.resumo.falhou + ' falhas)');
+
+  const grupos = Array.from(new Set(ens.passos.map(p => p.grupo)));
+  check(['Infra', 'Agentes', 'Caixa', 'Régua', 'Conteúdo', 'Entrega', 'Atendimento', 'Painéis', 'Fechamento'].every(g => grupos.includes(g)),
+    'ensaio: cobre infraestrutura, agentes, caixa, régua, conteúdo, entrega, atendimento, painéis e fechamento');
+
+  check(ens.modo.startsWith('seco'), 'ensaio: modo seco por padrão — não dispara mensagem sem pedido explícito');
+
+  // O passo da Caixa tem que ter exercitado o ciclo inteiro de verdade.
+  const pAlerta = ens.passos.find(p => /Alerta ao vendedor/.test(p.passo));
+  check(pAlerta?.estado === 'ok' && /proposta → aprovada →/.test(pAlerta.detalhe),
+    'ensaio: alerta percorre proposta → aprovada → executada (' + pAlerta?.detalhe?.slice(0, 70) + ')');
+  const pExpira = ens.passos.find(p => /expira sozinha/.test(p.passo));
+  const pRejeita = ens.passos.find(p => /Rejeitar uma proposta/.test(p.passo));
+  check(pExpira?.estado === 'ok' && pRejeita?.estado === 'ok',
+    'ensaio: prova a rejeição e a expiração automática');
+
+  // O rastro TEM que ficar: é olhando o painel encher que se vê a Central funcionando.
+  const rastro: any = ((await raw(`SELECT count(*)::int AS n FROM mkt_acoes WHERE titulo LIKE '[ensaio]%'`)) as any).rows[0];
+  const idRodada = (ens.passos.find(p => /Rastro preservado/.test(p.passo))?.detalhe || '').match(/ens-\d+/)?.[0];
+  check(rastro.n > 0 && !!idRodada && ens.passos.some(p => /Rastro preservado/.test(p.passo)),
+    'ensaio: o rastro fica no banco e aparece no painel (' + rastro.n + " ação(ões), rodada " + idRodada + ')');
+
+  // E a marca da rodada permite apagar tudo depois, de uma vez.
+  const { limparEnsaio } = await import('../server/mkt-ensaio');
+  const lp = await limparEnsaio(String(idRodada));
+  const depoisLimpeza: any = ((await raw(`SELECT count(*)::int AS n FROM mkt_acoes WHERE titulo LIKE '%${idRodada}%'`)) as any).rows[0];
+  check(lp.removidos > 0 && depoisLimpeza.n === 0,
+    'ensaio: limpar por id apaga só aquela rodada (' + lp.removidos + ' registro(s))');
+
+  // Rastreamento de entrega: o estado que o Umbler devolve vira nosso status.
+  const { traduzirEstado } = await import('../server/official-entrega');
+  check(traduzirEstado('Read') === 'lida' && traduzirEstado('Delivered') === 'entregue'
+    && traduzirEstado('Sent') === 'enviada' && traduzirEstado('Failed') === 'falha'
+    && traduzirEstado('Sending') === null && traduzirEstado('') === null,
+    'entrega: MessageState do Umbler vira status (lida/entregue/enviada/falha; "enviando" não mexe)');
+
+  const { ensureEntregaSchema, panoramaEntrega } = await import('../server/official-entrega');
+  await ensureEntregaSchema();
+  await raw(`UPDATE official_dispatches SET status='entregue'::dispatch_status, delivered_at = now(), sent_at = now() - interval '40 seconds'
+             WHERE template_label = 'pedido_saiu_entrega'`);
+  const pe = await panoramaEntrega(7);
+  check(pe.entregues >= 1 && pe.pctEntrega !== null && pe.segundosAteEntrega !== null,
+    'entrega: painel mostra quantas chegaram, a taxa e o tempo até a entrega (' + pe.pctEntrega + '%, ' + pe.segundosAteEntrega + 's)');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }

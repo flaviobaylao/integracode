@@ -246,6 +246,11 @@ async function contextoDoAviso(phone: string): Promise<string> {
         pedido_saiu_entrega: 'avisamos que o pedido ' + (ps[1] || '') + ' SAIU PARA ENTREGA',
         pedido_entregue: 'avisamos que o pedido ' + (ps[1] || '') + ' foi ENTREGUE',
         entrega_nao_realizada: 'avisamos que a entrega do pedido ' + (ps[1] || '') + ' NAO foi concluida: ' + (ps[2] || ''),
+        // Pos-venda da entrega (app do entregador) — mesmo sentido, tom leve
+        entrega_saiu: 'avisamos que o pedido ' + (ps[1] || '') + ' SAIU PARA ENTREGA e chega hoje',
+        entrega_feita: 'avisamos que o pedido ' + (ps[1] || '') + ' foi ENTREGUE e pedimos que conte se algo veio diferente',
+        entrega_devolvida: 'avisamos que a entrega do pedido ' + (ps[1] || '') + ' NAO pode ser concluida e que vamos priorizar uma NOVA ROTA (o cliente pode querer combinar horario)',
+        pos_entrega_2d: 'perguntamos, dois dias depois da entrega, se deu tudo certo com o pedido ' + (ps[1] || '') + ' (e se precisa de algo)',
         cobranca_vencimento: 'avisamos o VENCIMENTO do titulo ' + (ps[1] || '') + ' (' + (ps[2] || '') + ') em ' + (ps[3] || ''),
         cobranca_vencida: 'cobramos o titulo ' + (ps[1] || '') + ' (' + (ps[2] || '') + ') vencido em ' + (ps[3] || ''),
         visita_rota_dia: 'avisamos a VISITA do vendedor ' + (ps[1] || '') + ' para ' + (ps[2] || ''),
