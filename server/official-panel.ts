@@ -24,7 +24,12 @@ async function setSetting(key: string, value: string): Promise<void> {
 // Sem ele nesta lista, `oficial_recompra` fica em 'off' por padrao e NAO HA COMO LIGAR:
 // /api/admin/oficial/set recusa a chave e o painel nem desenha o caso de uso.
 // Resultado: todo item do lote voltava 'desligado' em silencio.
-const USE_CASES = ['rota_do_dia','pipeline','cobranca','repescagem','sdr','retomada','recompra'];
+// 'entrega' = os avisos de pos-venda disparados pelo app do entregador
+// (entrega-cliente.ts). Caiu na MESMA armadilha do 'recompra' descrita acima: o
+// modulo nasceu assumindo 'on' como padrao, mas quem decide e `useCaseEnabled`,
+// que le 'off' por padrao — e sem estar nesta lista nao havia como ligar. O
+// ensaio geral achou: todo aviso de entrega voltava 'desligado' em silencio.
+const USE_CASES = ['rota_do_dia','pipeline','cobranca','repescagem','sdr','retomada','recompra','entrega'];
 
 export function registerOfficialPanel(app: any) {
   const guard = (req: any) => !process.env.OFICIAL_ADMIN_KEY || req.query.k === process.env.OFICIAL_ADMIN_KEY;
