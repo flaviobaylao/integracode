@@ -101,7 +101,7 @@ export async function resumoDigital(de: string, ate: string) {
   const [
     porQuemCanal, conversasRow, respostaRow, janelaRow,
     disparoTpl, disparoUso, iaRow, iaAgente,
-    igRow, igDm, adsRow, entregaRow, reguaRow, serieRow,
+    igRow, igDm, adsRow, entregaRow, reguaRow, serieRow, acaoRow,
   ] = await Promise.all([
     // 1. mensagens por quem enviou x canal
     q(`SELECT ${CANAL} AS canal, ${QUEM} AS quem, count(*)::int AS n,
@@ -251,6 +251,40 @@ export async function resumoDigital(de: string, ate: string) {
               COALESCE(dis.disparos,0)  AS disparos
          FROM d LEFT JOIN msg ON msg.dia = d.dia LEFT JOIN dis ON dis.dia = d.dia
         ORDER BY d.dia`),
+
+    // 13. acoes executadas: o que cada uma custou e o que voltou
+    //
+    // A janela e a do painel OU 14 dias, o que for maior: a medicao de uma acao
+    // corre por 14 dias depois da execucao, entao uma acao de ontem ainda esta
+    // rendendo hoje — corta-la no dia mostraria custo sem retorno.
+    //
+    // CUSTO: o real, somando os toques que de fato sairam (mkt_fila_toques em
+    // 'enfileirado'); so cai no custo_estimado da acao quando nao ha toque
+    // (visita, anuncio, ajuste de sistema).
+    // RECEITA: resultado->receita, gravado por medir(). Para anuncio o custo
+    // real e o gasto na Meta (resultado->gasto).
+    q(`SELECT a.numero, a.tipo, a.titulo, a.status::text AS status, a.modo_teste,
+              to_char(${diaDeTz("a.executada_em")}, 'YYYY-MM-DD') AS dia,
+              (a.medido_em IS NOT NULL) AS fechado,
+              round(COALESCE(a.custo_estimado,0)::numeric,2) AS custo_estimado,
+              round(COALESCE(a.receita_esperada,0)::numeric,2) AS receita_esperada,
+              round(COALESCE((a.resultado->>'gasto')::numeric, (a.resultado->>'custo')::numeric, t.custo_real, a.custo_estimado, 0)::numeric, 2) AS custo,
+              CASE WHEN a.resultado ? 'receita' THEN round((a.resultado->>'receita')::numeric, 2) END AS receita,
+              (a.resultado->>'pedidos')::int AS pedidos,
+              (a.resultado->>'clientes')::int AS clientes,
+              (a.resultado->>'conversas')::int AS conversas,
+              COALESCE(a.publico_total, 0)::int AS publico,
+              COALESCE(t.enviados, 0)::int AS enviados
+         FROM mkt_acoes a
+         LEFT JOIN LATERAL (
+           SELECT count(*) FILTER (WHERE status = 'enfileirado')::int AS enviados,
+                  sum(custo_estimado) FILTER (WHERE status = 'enfileirado') AS custo_real
+             FROM mkt_fila_toques WHERE acao_id = a.id
+         ) t ON true
+        WHERE a.status::text IN ('executada','executando')
+          AND a.executada_em IS NOT NULL
+          AND ${diaDeTz("a.executada_em")} BETWEEN LEAST(${ini}, ${fim} - 13) AND ${fim}
+        ORDER BY a.executada_em DESC LIMIT 60`),
   ]);
 
   // ── mensagens: totais e quebra por canal ──────────────────────────────────
@@ -299,6 +333,44 @@ export async function resumoDigital(de: string, ate: string) {
     if (k in reguas) (reguas as any)[k] += num(r.n);
     reguas.custo += num(r.custo);
   }
+
+  // ── acoes: custo real x retorno medido ────────────────────────────────────
+  const TIPOS: Record<string, string> = {
+    regua: "Régua WhatsApp", alerta: "Alerta ao vendedor", peca: "Peça de conteúdo",
+    campanha: "Campanha + link", cupom: "Cupom", visita: "Visita",
+    anuncio: "Anúncio pago", sistema: "Ajuste do sistema",
+  };
+  const acoes = acaoRow.map(r => {
+    const custo = num(r.custo), receita = r.receita == null ? null : num(r.receita);
+    return {
+      numero: num(r.numero), tipo: String(r.tipo), tipoNome: TIPOS[String(r.tipo)] || String(r.tipo),
+      titulo: String(r.titulo || ""), status: String(r.status), dia: String(r.dia || ""),
+      modoTeste: r.modo_teste === true, fechado: r.fechado === true,
+      custo, receita,
+      receitaEsperada: num(r.receita_esperada),
+      // Retorno = quantas vezes o custo voltou. Sem custo (alerta, visita) nao
+      // ha multiplo a calcular — o numero que vale ali e a receita em si.
+      retorno: receita != null && custo > 0 ? Math.round((receita / custo) * 10) / 10 : null,
+      pedidos: num(r.pedidos), clientes: num(r.clientes), conversas: num(r.conversas),
+      publico: num(r.publico), enviados: num(r.enviados),
+    };
+  });
+  const comReceita = acoes.filter(a => a.receita != null);
+  const custoAcoes = acoes.reduce((t, a) => t + a.custo, 0);
+  const receitaAcoes = comReceita.reduce((t, a) => t + (a.receita || 0), 0);
+  const custoMedido = comReceita.reduce((t, a) => t + a.custo, 0);
+  const porTipo = Object.values(acoes.reduce((acc: Record<string, any>, a) => {
+    const k = a.tipo;
+    acc[k] = acc[k] || { tipo: k, tipoNome: a.tipoNome, acoes: 0, custo: 0, receita: 0, medidas: 0 };
+    acc[k].acoes++; acc[k].custo += a.custo;
+    if (a.receita != null) { acc[k].receita += a.receita; acc[k].medidas++; }
+    return acc;
+  }, {})).map((t: any) => ({
+    ...t,
+    custo: Math.round(t.custo * 100) / 100,
+    receita: Math.round(t.receita * 100) / 100,
+    retorno: t.custo > 0 && t.medidas ? Math.round((t.receita / t.custo) * 10) / 10 : null,
+  })).sort((a: any, b: any) => b.receita - a.receita || b.custo - a.custo);
 
   return {
     de, ate, dias: Math.round((Date.parse(ate) - Date.parse(de)) / 86400000) + 1,
@@ -351,6 +423,20 @@ export async function resumoDigital(de: string, ate: string) {
     },
     entregas,
     reguas,
+    acoes: {
+      total: acoes.length,
+      medidas: comReceita.length,
+      medindo: acoes.length - comReceita.length,
+      custo: Math.round(custoAcoes * 100) / 100,
+      receita: Math.round(receitaAcoes * 100) / 100,
+      // Retorno so compara o que da para comparar: receita medida sobre o custo
+      // DAS ACOES MEDIDAS. Dividir pela conta toda, com metade ainda medindo,
+      // daria um numero baixo e falso.
+      retorno: custoMedido > 0 && comReceita.length ? Math.round((receitaAcoes / custoMedido) * 10) / 10 : null,
+      esperado: Math.round(acoes.reduce((t, a) => t + a.receitaEsperada, 0) * 100) / 100,
+      porTipo,
+      lista: acoes,
+    },
     serie: serieRow.map(r => ({
       dia: String(r.dia), recebidas: num(r.recebidas), enviadas: num(r.enviadas),
       ia: num(r.ia), disparos: num(r.disparos),

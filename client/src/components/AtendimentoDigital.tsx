@@ -17,8 +17,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  MessageSquare, Send, Bot, User, Clock, Wallet, Instagram, Megaphone, Truck,
-  Inbox, AlertTriangle, Loader2,
+  Send, Bot, Clock, Wallet, Instagram, Megaphone, Truck,
+  Inbox, AlertTriangle, Loader2, TrendingUp, FlaskConical,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -26,6 +26,11 @@ import {
 
 type PorCanal = { canal: string; rotulo: string; recebidas: number; enviadas: number; ia: number; humano: number; sistema: number; conversas: number };
 type Template = { template: string; categoria: string; uso: string; enviados: number; responderam: number; falhas: number; fila: number; custo: number };
+type Acao = {
+  numero: number; tipo: string; tipoNome: string; titulo: string; status: string; dia: string;
+  modoTeste: boolean; fechado: boolean; custo: number; receita: number | null; receitaEsperada: number;
+  retorno: number | null; pedidos: number; clientes: number; conversas: number; publico: number; enviados: number;
+};
 
 type Digital = {
   de: string; ate: string; dias: number; geradoEm: string;
@@ -43,6 +48,12 @@ type Digital = {
   ads: { anuncios: number; gasto: number; impressoes: number; cliques: number; conversas: number; alcance: number; custoPorConversa: number | null };
   entregas: { saiu: number; entregue: number; devolvida: number; pos_entrega: number; agendados: number };
   reguas: { previsto: number; liberado: number; enfileirado: number; bloqueado: number; erro: number; custo: number };
+  acoes: {
+    total: number; medidas: number; medindo: number; custo: number; receita: number;
+    retorno: number | null; esperado: number;
+    porTipo: { tipo: string; tipoNome: string; acoes: number; custo: number; receita: number; medidas: number; retorno: number | null }[];
+    lista: Acao[];
+  };
   serie: { dia: string; recebidas: number; enviadas: number; ia: number; disparos: number }[];
 };
 
@@ -64,7 +75,7 @@ function Kpi({ icone, rotulo, valor, sub, testid }: { icone: React.ReactNode; ro
 }
 
 /** Caixa de um canal: quanto entrou, quanto saiu e quem respondeu. */
-function CardCanal({ c }: { c: PorCanal }) {
+function CardCanal({ c, janelas }: { c: PorCanal; janelas?: number }) {
   const total = c.recebidas + c.enviadas;
   const pct = (v: number) => (c.enviadas > 0 ? Math.round((v / c.enviadas) * 100) : 0);
   return (
@@ -92,6 +103,11 @@ function CardCanal({ c }: { c: PorCanal }) {
         </>
       )}
       {total === 0 && <div className="mt-3 text-xs text-gray-400">Sem movimento no período.</div>}
+      {janelas !== undefined && (
+        <div className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400">
+          <strong className="tabular-nums text-gray-900 dark:text-gray-50">{fmtInt(janelas)}</strong> janela(s) de 24 h abertas agora — nessas, falar é de graça.
+        </div>
+      )}
     </div>
   );
 }
@@ -174,14 +190,19 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
               valor={`${m!.pctIa}%`} sub={`${fmtInt(m!.respostasIa)} de ${fmtInt(m!.respostas)} respostas`} />
             <Kpi icone={<Clock className="h-4 w-4" />} rotulo="Tempo de resposta" testid="kpi-tempo"
               valor={fmtMin(m!.tempoRespostaMin)} sub={`IA ${fmtMin(m!.tempoRespostaIaMin)} · humano ${fmtMin(m!.tempoRespostaHumanoMin)}`} />
-            <Kpi icone={<MessageSquare className="h-4 w-4" />} rotulo="Janelas abertas" testid="kpi-janela"
-              valor={fmtInt(data.janela24h.abertas)} sub="conversas em que dá para falar de graça" />
             <Kpi icone={<Wallet className="h-4 w-4" />} rotulo="Custo do período" testid="kpi-custo"
               valor={fmtBRL(custoTotal)} sub={`disparos ${fmtBRL(data.disparos.custo)} · IA ${fmtBRL(data.ia.custo)} · ads ${fmtBRL(data.ads.gasto)}`} />
+            <Kpi icone={<TrendingUp className="h-4 w-4" />} rotulo="Retorno das ações" testid="kpi-retorno"
+              valor={data.acoes.retorno == null ? '—' : `${data.acoes.retorno}×`}
+              sub={data.acoes.medidas
+                ? `${fmtBRL(data.acoes.receita)} sobre ${fmtBRL(data.acoes.custo)}${data.acoes.medindo ? ` · ${data.acoes.medindo} medindo` : ''}`
+                : data.acoes.total ? `${data.acoes.total} ação(ões) ainda medindo` : 'nenhuma ação executada'} />
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            {data.porCanal.map(c => <CardCanal key={c.canal} c={c} />)}
+            {data.porCanal.map(c => (
+              <CardCanal key={c.canal} c={c} janelas={c.canal === 'whatsapp_1841' ? data.janela24h.abertas : undefined} />
+            ))}
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
@@ -247,6 +268,101 @@ export default function AtendimentoDigital({ dia, ehHoje, intervalo, aoVivo }: {
               <Item rotulo="Réguas na fila" valor={fmtInt(data.reguas.previsto + data.reguas.liberado + data.reguas.enfileirado)} />
               <Item rotulo="Bloqueados" valor={fmtInt(data.reguas.bloqueado)} />
             </Quadro>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-gray-50">
+                <TrendingUp className="h-4 w-4 text-teal-600 dark:text-teal-400" />O que cada ação custou e o que voltou
+              </h3>
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs tabular-nums text-gray-500 dark:text-gray-400">
+                <span>Custo <strong className="text-gray-900 dark:text-gray-50">{fmtBRL(data.acoes.custo)}</strong></span>
+                <span>Receita medida <strong className="text-gray-900 dark:text-gray-50">{fmtBRL(data.acoes.receita)}</strong></span>
+                {data.acoes.retorno != null && (
+                  <span className={data.acoes.retorno >= 1 ? 'text-teal-700 dark:text-teal-400' : 'text-amber-700 dark:text-amber-400'}>
+                    Retorno <strong>{data.acoes.retorno}×</strong>
+                  </span>
+                )}
+                {data.acoes.medindo > 0 && <span>{fmtInt(data.acoes.medindo)} ainda medindo</span>}
+              </div>
+            </div>
+
+            {data.acoes.porTipo.length > 0 && (
+              <div className="grid grid-cols-2 gap-px border-b border-gray-200 bg-gray-200 dark:border-gray-700 dark:bg-gray-700 sm:grid-cols-3 lg:grid-cols-4">
+                {data.acoes.porTipo.map(t => (
+                  <div key={t.tipo} className="bg-white p-3 dark:bg-gray-900" data-testid={`acoes-tipo-${t.tipo}`}>
+                    <div className="truncate text-xs font-medium text-gray-500 dark:text-gray-400">{t.tipoNome}</div>
+                    <div className="mt-0.5 flex items-baseline gap-2">
+                      <span className="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-50">{fmtBRL(t.receita)}</span>
+                      {t.retorno != null && (
+                        <span className={`text-xs font-semibold tabular-nums ${t.retorno >= 1 ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>{t.retorno}×</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] tabular-nums text-gray-500 dark:text-gray-400">
+                      {fmtInt(t.acoes)} {t.acoes === 1 ? 'ação' : 'ações'} · custo {fmtBRL(t.custo)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="tabela-acoes">
+                <thead className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  <tr className="border-b border-gray-200 dark:border-gray-700">
+                    <th className="px-4 py-2 text-left font-medium">Ação</th>
+                    <th className="px-2 py-2 text-right font-medium">Alcance</th>
+                    <th className="px-2 py-2 text-right font-medium">Custo</th>
+                    <th className="px-2 py-2 text-right font-medium">Receita</th>
+                    <th className="px-4 py-2 text-right font-medium">Retorno</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.acoes.lista.length === 0 ? (
+                    <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-500">Nenhuma ação executada no período.</td></tr>
+                  ) : data.acoes.lista.map(a => (
+                    <tr key={a.numero} className="border-b border-gray-100 last:border-0 dark:border-gray-800">
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="tabular-nums text-xs text-gray-400">#{a.numero}</span>
+                          <span className="font-medium text-gray-900 dark:text-gray-50">{a.tipoNome}</span>
+                          {a.modoTeste && (
+                            <span className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                              <FlaskConical className="h-2.5 w-2.5" />teste
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-xs text-gray-500 dark:text-gray-400" title={a.titulo}>{a.titulo}</div>
+                      </td>
+                      <td className="px-2 py-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-400">
+                        {a.enviados > 0 ? `${fmtInt(a.enviados)} enviados` : a.conversas > 0 ? `${fmtInt(a.conversas)} conversas` : a.publico > 0 ? `${fmtInt(a.publico)} clientes` : '—'}
+                        {a.pedidos > 0 && <div>{fmtInt(a.pedidos)} pedidos</div>}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums">{a.custo > 0 ? fmtBRL(a.custo) : '—'}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">
+                        {a.receita == null
+                          ? <span className="text-xs text-gray-400">medindo…</span>
+                          : <span className="text-gray-900 dark:text-gray-50">{fmtBRL(a.receita)}</span>}
+                        {a.receita == null && a.receitaEsperada > 0 && (
+                          <div className="text-[11px] text-gray-400">esperado {fmtBRL(a.receitaEsperada)}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {a.retorno == null ? <span className="text-gray-400">—</span> : (
+                          <span className={`font-semibold ${a.retorno >= 1 ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>{a.retorno}×</span>
+                        )}
+                        {!a.fechado && a.receita != null && <div className="text-[10px] text-gray-400">parcial</div>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="border-t border-gray-100 px-4 py-2 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400">
+              Custo = o que realmente saiu (soma dos toques enviados; no anúncio, o gasto na Meta). Receita = tudo que os clientes tocados
+              compraram nos 14 dias seguintes — é atribuição generosa, não venda incremental provada. A medição fecha em 14 dias;
+              antes disso o retorno é parcial. Ações em teste aparecem com custo e receita zerados de propósito: nada foi enviado.
+            </p>
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">

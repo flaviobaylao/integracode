@@ -674,6 +674,43 @@ async function main() {
   check(dig.serie.length === 1 && hojeSerie?.recebidas === 3 && hojeSerie?.enviadas === 4,
     'digital: série por dia fecha com os totais');
 
+  // Custo e retorno por ação: uma régua medida (voltou 3×) e uma ainda medindo.
+  await raw(`INSERT INTO mkt_acoes (numero, tipo, agente, titulo, status, custo_estimado, receita_esperada,
+        executada_em, resultado, medido_em, publico_total, modo_teste)
+      VALUES (901,'regua','mkt_radar','Régua medida','executada', 4.00, 500,
+              now() - interval '10 days', '{"clientes":6,"pedidos":8,"receita":900,"custo":3.20}'::jsonb,
+              now() - interval '1 day', 80, false),
+             (902,'visita','mkt_radar','Visita ainda medindo','executada', 0, 1200,
+              now() - interval '2 days', NULL, NULL, 5, false)`);
+  await raw(`INSERT INTO mkt_fila_toques (lote_id, regua, cliente_id, telefone, template_label, custo_estimado, status, acao_id)
+      SELECT 'lx','reativacao','cliE1','5562911119001','recompra_reativacao', 0.04,
+             CASE WHEN g <= 80 THEN 'enfileirado' ELSE 'bloqueado' END,
+             (SELECT id FROM mkt_acoes WHERE numero = 901)
+        FROM generate_series(1, 90) g`);
+  const digA = await resumoDigital(hojeBRt, hojeBRt);
+  const a901 = digA.acoes.lista.find(a => a.numero === 901);
+  const a902 = digA.acoes.lista.find(a => a.numero === 902);
+  check(a901 && a901.custo === 3.2 && a901.receita === 900 && a901.retorno === 281.3 && a901.enviados === 80 && a901.fechado === true,
+    'ações: custo real (só os toques que saíram), receita medida e retorno por ação (' + a901?.retorno + '×)');
+  check(a902 && a902.receita === null && a902.retorno === null && a902.receitaEsperada === 1200 && a902.fechado === false,
+    'ações: a que ainda mede aparece sem receita, mostrando só o esperado');
+  // Os totais somam TODAS as ações da janela (o teste já criou outras antes), então
+  // o que se verifica aqui é a invariante da conta, não um número absoluto.
+  const medidas = digA.acoes.lista.filter(a => a.receita != null);
+  const custoDasMedidas = medidas.reduce((t, a) => t + a.custo, 0);
+  const receitaTot = medidas.reduce((t, a) => t + (a.receita || 0), 0);
+  check(digA.acoes.medidas === medidas.length && digA.acoes.medidas + digA.acoes.medindo === digA.acoes.total
+    && Math.abs(digA.acoes.receita - receitaTot) < 0.01
+    && digA.acoes.retorno === Math.round((receitaTot / custoDasMedidas) * 10) / 10
+    && custoDasMedidas < digA.acoes.custo,
+    'ações: o retorno divide a receita medida pelo custo DAS MEDIDAS, não pelo custo total (' + digA.acoes.retorno + '×)');
+  const tipoRegua = digA.acoes.porTipo.find(t => t.tipo === 'regua');
+  const tipoVisita = digA.acoes.porTipo.find(t => t.tipo === 'visita');
+  check(!!tipoRegua && tipoRegua.receita >= 900 && tipoRegua.retorno != null
+    && !!tipoVisita && tipoVisita.retorno === null
+    && digA.acoes.porTipo.reduce((t, x) => t + x.acoes, 0) === digA.acoes.total,
+    'ações: quebra por tipo soma o total; tipo sem custo (visita) fica sem múltiplo de retorno');
+
   const vazio = await resumoDigital('2020-01-01', '2020-01-02');
   check(vazio.mensagens.total === 0 && vazio.disparos.enviados === 0 && vazio.serie.length === 2
     && vazio.mensagens.tempoRespostaMin === null,
