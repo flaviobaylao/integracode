@@ -357,28 +357,46 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
     let ec: any;
     try { ec = await import("./entrega-cliente"); } catch { return { estado: "pulado", detalhe: "módulo ainda não está neste deploy" }; }
     if (!e.enviar) return { estado: "pulado", detalhe: "ensaio seco" };
-    const parada = await uma(sql`SELECT s.id FROM delivery_route_stops s
+    const parada = await uma(sql`SELECT s.id, s.sales_card_id FROM delivery_route_stops s
                                    JOIN customers c ON c.id = s.customer_id AND COALESCE(c.phone,'') <> ''
                                   WHERE s.sales_card_id IS NOT NULL ORDER BY s.id DESC LIMIT 1`);
     if (!parada) return { estado: "pulado", detalhe: "nenhuma parada com cliente e pedido para ensaiar" };
     await set("oficial_mode_entrega", "test");
     const r = await ec.avisarEntregaEfetuada(String(parada.id));
-    if (!String(r.agora).startsWith("enfileirado") && !/ja avisado/.test(String(r.agora)))
-      return { estado: "falhou", detalhe: `aviso de entrega: ${r.agora}` };
-    return `agora: ${r.agora}; em 2 dias: ${r.followUp}`;
+    const agora = String(r.agora);
+    // 'duplicado' nao e defeito: e a guarda anti-duplicidade dizendo que aquele
+    // pedido ja foi avisado. Num ensaio repetido essa e a resposta SAUDAVEL. O
+    // que o passo precisa provar e que existe a linha de disparo e que ela nao
+    // morreu no caminho — por isso o ensaio vai conferir a linha de qualquer jeito.
+    if (!agora.startsWith("enfileirado") && !/ja avisado/.test(agora) && agora !== "duplicado")
+      return { estado: "falhou", detalhe: `aviso de entrega: ${agora}` };
+    const linha = await uma(sql`SELECT status::text AS status, error FROM official_dispatches
+                                 WHERE campaign = ${`card:${String(parada.sales_card_id)}:entregue`}
+                                 ORDER BY created_at DESC LIMIT 1`);
+    if (!linha) return { estado: "falhou", detalhe: `${agora}, mas nenhum disparo de entrega ficou registrado` };
+    if (linha.status === "falha")
+      return { estado: "falhou", detalhe: `disparo registrado mas falhou: ${String(linha.error || "sem motivo").slice(0, 110)}` };
+    const nota = agora === "duplicado" ? "já avisado antes (guarda anti-duplicidade)" : agora;
+    return `agora: ${nota} — disparo está '${linha.status}'; em 2 dias: ${r.followUp}`;
   });
 
   await e.passo("Entrega", "Devolução avisa e cancela a conferência agendada", async () => {
     let ec: any;
     try { ec = await import("./entrega-cliente"); } catch { return { estado: "pulado", detalhe: "módulo ainda não está neste deploy" }; }
     if (!e.enviar) return { estado: "pulado", detalhe: "ensaio seco" };
-    const parada = await uma(sql`SELECT s.id FROM delivery_route_stops s
+    const parada = await uma(sql`SELECT s.id, s.sales_card_id FROM delivery_route_stops s
                                    JOIN customers c ON c.id = s.customer_id AND COALESCE(c.phone,'') <> ''
                                   WHERE s.sales_card_id IS NOT NULL ORDER BY s.id DESC LIMIT 1`);
     if (!parada) return { estado: "pulado", detalhe: "nenhuma parada para ensaiar" };
-    const r = await ec.avisarEntregaDevolvida(String(parada.id), `${marca} devolução simulada`);
-    if (!String(r).startsWith("enfileirado") && !/ja avisado/.test(String(r)))
-      return { estado: "falhou", detalhe: String(r) };
+    const r = String(await ec.avisarEntregaDevolvida(String(parada.id), `${marca} devolução simulada`));
+    if (!r.startsWith("enfileirado") && !/ja avisado/.test(r) && r !== "duplicado")
+      return { estado: "falhou", detalhe: r };
+    const linhaDev = await uma(sql`SELECT status::text AS status, error FROM official_dispatches
+                                    WHERE campaign LIKE ${`card:${String(parada.sales_card_id)}:devolvida:%`}
+                                    ORDER BY created_at DESC LIMIT 1`);
+    if (!linhaDev) return { estado: "falhou", detalhe: `${r}, mas nenhum aviso de devolução ficou registrado` };
+    if (linhaDev.status === "falha")
+      return { estado: "falhou", detalhe: `aviso registrado mas falhou: ${String(linhaDev.error || "sem motivo").slice(0, 110)}` };
     const cancelado = await uma(sql`SELECT count(*)::int AS n FROM official_dispatches
                                      WHERE campaign LIKE 'card:%:pos2d' AND status::text = 'falha' AND error LIKE 'cancelado%'`);
     return `${r}; ${cancelado?.n || 0} conferência(s) de 2 dias cancelada(s) por devolução`;
@@ -455,7 +473,15 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
     }
     const r = enviadas[0] || "(gravada na conversa)";
     const previa = `“${r.slice(0, 110).replace(/\n/g, " ")}…”`;
-    if (erroEnvio) return { estado: "falhou", detalhe: `a IA respondeu ${previa} mas o envio foi recusado: ${erroEnvio.slice(0, 120)} — texto livre só passa dentro da janela de 24 h` };
+    if (erroEnvio) {
+      // Fora da janela de 24 h o Umbler recusa texto livre, e isso nao e defeito
+      // do atendimento: e pre-requisito que falta. So se abre mandando uma
+      // mensagem DE VERDADE do telefone do ensaio para o WhatsApp da Honest.
+      const semJanela = /24\s*h|janela|window|outside|1013|131047|re-?engage/i.test(erroEnvio) || /\b400\b/.test(erroEnvio);
+      if (semJanela)
+        return { estado: "pulado", detalhe: `a IA respondeu ${previa} — mas não há janela de 24 h aberta, então nada saiu. Mande um "oi" do telefone do ensaio para o WhatsApp da Honest e rode o ensaio de novo para fechar essa ida e volta` };
+      return { estado: "falhou", detalhe: `a IA respondeu ${previa} mas o envio foi recusado: ${erroEnvio.slice(0, 120)}` };
+    }
     return `respondeu em ${enviadas.length || 1} mensagem: ${previa}`;
   });
 
