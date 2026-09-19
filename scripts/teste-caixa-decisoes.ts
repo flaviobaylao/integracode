@@ -594,6 +594,91 @@ async function main() {
     && rU.label === 'recompra_reativacao_u' && rU.categoria === 'UTILITY',
     'régua: troca para a variante UTILITY quando ela existe (R$ 0,04 em vez de R$ 0,34)');
 
+  // =========================================================================
+  console.log('11) painel de atendimento digital: tudo que trocamos com cliente');
+  // =========================================================================
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_id varchar`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_phone varchar`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS last_inbound_channel varchar`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS window_open_until timestamptz`);
+  await raw(`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS created_at timestamp DEFAULT (now() AT TIME ZONE 'UTC')`);
+  await raw(`CREATE TABLE IF NOT EXISTS chat_messages (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id varchar,
+    sender_id varchar, sender_type varchar, content text, created_at timestamp DEFAULT (now() AT TIME ZONE 'UTC'))`);
+  await raw(`CREATE TABLE IF NOT EXISTS social_metrics (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), post_id varchar, data date,
+    alcance int, impressoes int, curtidas int, comentarios int, salvos int, compartilhamentos int, cliques_link int, novos_seguidores int)`);
+
+  const hojeBRt = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  // Duas conversas: uma do WhatsApp oficial e uma do Instagram Direct.
+  await raw(`INSERT INTO chat_conversations (id, customer_id, customer_phone, last_inbound_channel, window_open_until)
+      VALUES ('cvW','cliE1','5562911119001','oficial_1841', now() + interval '10 hours'),
+             ('cvI','cliE1','ig:17841400000','instagram', NULL)
+      ON CONFLICT (id) DO NOTHING`);
+  // Cliente escreve 3x; a IA responde 2x (uma 4 min depois), o humano 1x, o sistema 1x.
+  const T = (min: number) => `(now() AT TIME ZONE 'UTC') - interval '${min} minutes'`;
+  await raw(`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, created_at) VALUES
+      ('cvW','cli','customer','oi',              ${T(60)}),
+      ('cvW','agent:sdr','system','ola!',        ${T(56)}),
+      ('cvW','cli','customer','quero repor',     ${T(40)}),
+      ('cvW','u1','agent','ja te mando',         ${T(30)}),
+      ('cvW','system','system','aviso',          ${T(20)}),
+      ('cvI','cli','customer','oi pelo direct',  ${T(50)}),
+      ('cvI','agent:instagram','system','oi!',   ${T(48)})`);
+  await raw(`INSERT INTO mkt_agent_runs (agente, gatilho, canal, modelo, custo_brl, duracao_ms, sucesso)
+      VALUES ('sdr','chat','whatsapp','x',0.12,900,true), ('sdr','chat','whatsapp','x',0.08,1100,false)`);
+  await raw(`INSERT INTO social_metrics (post_id, data, alcance, curtidas, comentarios) VALUES
+      ('p1','${hojeBRt}'::date, 900, 40, 5), ('p1','${hojeBRt}'::date - 1, 500, 20, 2), ('p2','${hojeBRt}'::date, 300, 10, 1)`);
+  await raw(`INSERT INTO mkt_ads_diario (ad_id, data, gasto, impressoes, cliques, conversas, alcance)
+      VALUES ('${adRow.id}','${hojeBRt}'::date, 20, 1000, 50, 4, 800) ON CONFLICT (ad_id, data) DO NOTHING`);
+
+  const { resumoDigital } = await import('../server/painel-atendimento-digital');
+  const dig = await resumoDigital(hojeBRt, hojeBRt);
+
+  check(dig.mensagens.recebidas === 3 && dig.mensagens.enviadas === 4 && dig.mensagens.ia === 2
+    && dig.mensagens.humano === 1 && dig.mensagens.sistema === 1 && dig.mensagens.conversas === 2,
+    'digital: separa recebidas de enviadas e quem enviou (IA/humano/sistema)');
+
+  const cW = dig.porCanal.find(c => c.canal === 'whatsapp_1841');
+  const cI = dig.porCanal.find(c => c.canal === 'instagram');
+  check(cW?.recebidas === 2 && cW?.enviadas === 3 && cI?.recebidas === 1 && cI?.enviadas === 1,
+    'digital: canal vem da conversa — WhatsApp oficial e Instagram Direct separados');
+
+  // 3 respostas a mensagem do cliente: IA 4 min, humano 10 min, IA 2 min => média 16/3
+  check(dig.mensagens.respostas === 3 && dig.mensagens.respostasIa === 2 && dig.mensagens.pctIa === 66.7
+    && dig.mensagens.tempoRespostaIaMin === 3 && dig.mensagens.tempoRespostaHumanoMin === 10,
+    'digital: tempo de resposta separa IA de humano (IA ' + dig.mensagens.tempoRespostaIaMin + ' min, humano ' + dig.mensagens.tempoRespostaHumanoMin + ' min)');
+
+  check(dig.janela24h.abertas === 1 && dig.janela24h.conversasOficiais === 1,
+    'digital: conta a janela de 24 h aberta (mensagem grátis)');
+
+  // Instagram é cumulativo por post: vale a ÚLTIMA leitura, não a soma dos dias.
+  check(dig.instagram.alcance === 1200 && dig.instagram.curtidas === 50 && dig.instagram.posts === 2,
+    'digital: Instagram usa a última leitura de cada post (900+300), não a soma dos dias (' + dig.instagram.alcance + ')');
+
+  check(dig.ads.gasto === 20 && dig.ads.conversas === 4 && dig.ads.custoPorConversa === 5,
+    'digital: anúncios somam por dia e calculam o custo por conversa (R$ 5,00)');
+
+  const sdr = dig.ia.porAgente.find(a => a.agente === 'sdr');
+  check(sdr?.execucoes === 2 && sdr?.erros === 1 && sdr?.custo === 0.2 && dig.ia.erros >= 1,
+    'digital: execuções, erros e custo dos agentes de IA, por agente');
+
+  // Um disparo sai de verdade: só aí ele entra em "enviados" e no bloco de entrega.
+  await raw(`UPDATE official_dispatches SET status='enviada'::dispatch_status, sent_at = (now() AT TIME ZONE 'UTC')
+      WHERE template_label = 'pedido_saiu_entrega'`);
+  const dig2 = await resumoDigital(hojeBRt, hojeBRt);
+  const tplSaiu = dig2.disparos.porTemplate.find(t => t.template === 'pedido_saiu_entrega');
+  check(dig2.disparos.enviados === 1 && dig2.disparos.fila === 2 && tplSaiu?.enviados === 1
+    && dig2.entregas.saiu === 1 && dig2.entregas.agendados >= 2 && dig2.disparos.custo === 0.04,
+    'digital: disparo enviado entra no total e no bloco de entrega; o que está na fila não conta como enviado');
+
+  const hojeSerie = dig.serie.find(s => s.dia === hojeBRt);
+  check(dig.serie.length === 1 && hojeSerie?.recebidas === 3 && hojeSerie?.enviadas === 4,
+    'digital: série por dia fecha com os totais');
+
+  const vazio = await resumoDigital('2020-01-01', '2020-01-02');
+  check(vazio.mensagens.total === 0 && vazio.disparos.enviados === 0 && vazio.serie.length === 2
+    && vazio.mensagens.tempoRespostaMin === null,
+    'digital: período sem movimento devolve zeros, não quebra');
+
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);
 }
