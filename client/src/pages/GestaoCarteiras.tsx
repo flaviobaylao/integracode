@@ -295,6 +295,11 @@ export default function GestaoCarteiras() {
   const ehAdmin = (user as any)?.role === "admin";
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [novoVendedor, setNovoVendedor] = useState("");
+  const [dataQuarentena, setDataQuarentena] = useState("");
+  // Status do CADASTRO (o mesmo que a coluna "Status atual" mostra) — não
+  // confundir com a situação da carteira, onde "perdido" é cadastro ativo que
+  // parou de comprar.
+  const [statusSel, setStatusSel] = useState<"todos" | "ativo" | "inativo" | "sem-cadastro">("todos");
   const [aplicando, setAplicando] = useState(false);
 
   const d = data || {};
@@ -666,6 +671,10 @@ export default function GestaoCarteiras() {
     const arr = clientes.filter((c) => {
       if (classeSel !== "todas" && letraDe(c) !== classeSel) return false;
       if (sinalSel !== "todos" && sinalDe(c) !== sinalSel) return false;
+      if (statusSel !== "todos") {
+        const st = !c.cadastrado ? "sem-cadastro" : c.ativo ? "ativo" : "inativo";
+        if (st !== statusSel) return false;
+      }
       if (!alvo) return true;
       return (
         c.nome.toLocaleLowerCase("pt-BR").includes(alvo) ||
@@ -686,10 +695,10 @@ export default function GestaoCarteiras() {
       arr.sort((a, b) => (ordem === "total" ? b.total - a.total : b.mediaPonderada - a.mediaPonderada));
     }
     return arr;
-  }, [clientes, classeSel, sinalSel, busca, ordem, ordCol, ordDir]);
+  }, [clientes, classeSel, sinalSel, statusSel, busca, ordem, ordCol, ordDir]);
 
   // Mexeu no filtro, volta para o começo da lista.
-  useEffect(() => { setVisiveis(50); }, [classeSel, sinalSel, busca, ordem, ordCol, ordDir, vendedores, inicio, fim]);
+  useEffect(() => { setVisiveis(50); }, [classeSel, sinalSel, statusSel, busca, ordem, ordCol, ordDir, vendedores, inicio, fim]);
 
   const listaVisivel = useMemo(() => listaFiltrada.slice(0, visiveis), [listaFiltrada, visiveis]);
   const totalFiltrado = useMemo(() => listaFiltrada.reduce((s, c) => s + c.total, 0), [listaFiltrada]);
@@ -747,6 +756,39 @@ export default function GestaoCarteiras() {
       recarregar();
     } catch (e: any) {
       alert(e?.message || "Não deu para trocar o vendedor.");
+    } finally {
+      setAplicando(false);
+    }
+  }
+
+  /**
+   * QUARENTENA — mesma ação e mesma regra do botão de quarentena do Inbox
+   * (SolicitacoesAlteracao.tsx): grava a "Data de Início do Fornecimento"
+   * (serviceStartDate) no cadastro. É essa data que faz a agenda ser
+   * regenerada e nenhuma visita ser marcada antes dela. Lá é um cliente por
+   * vez, pelo PATCH /api/customers/:id; aqui vai pelo bulk-update, que aceita
+   * o mesmo campo e regenera a agenda exatamente pelo mesmo motivo.
+   */
+  async function quarentenaEmMassa() {
+    const ids = Array.from(selecionados);
+    if (!ids.length || !dataQuarentena) return;
+    if (!window.confirm(
+      `Colocar ${ids.length} cliente(s) em quarentena até ${dataQuarentena.split("-").reverse().join("/")}?`
+      + " As visitas voltam a ser agendadas só a partir dessa data.",
+    )) return;
+    setAplicando(true);
+    try {
+      const r: any = await apiRequest("POST", "/api/customers/bulk-update", { ids, fields: { serviceStartDate: dataQuarentena } });
+      const j = typeof r?.json === "function" ? await r.json() : r;
+      alert(
+        `${j?.updated ?? ids.length} cliente(s) em quarentena até ${dataQuarentena.split("-").reverse().join("/")}.`
+        + (j?.agendaRegenerada ? ` Agenda regenerada para ${j.agendaRegenerada}.` : ""),
+      );
+      setSelecionados(new Set());
+      setDataQuarentena("");
+      recarregar();
+    } catch (e: any) {
+      alert(e?.message || "Não deu para aplicar a quarentena.");
     } finally {
       setAplicando(false);
     }
@@ -1645,6 +1687,24 @@ export default function GestaoCarteiras() {
                     </button>
                   ))}
                 </div>
+                {/* Status do CADASTRO — espelha exatamente a coluna "Status atual". */}
+                <div className="flex rounded-md border overflow-hidden">
+                  {([
+                    { k: "todos", t: "Todos os status" },
+                    { k: "ativo", t: `Ativos (${NUM(clientes.filter((c) => c.cadastrado && c.ativo).length)})` },
+                    { k: "inativo", t: `Inativos (${NUM(clientes.filter((c) => c.cadastrado && !c.ativo).length)})` },
+                    { k: "sem-cadastro", t: `Sem cadastro (${NUM(clientes.filter((c) => !c.cadastrado).length)})` },
+                  ] as const).map((o) => (
+                    <button
+                      key={o.k}
+                      onClick={() => setStatusSel(o.k)}
+                      data-testid={`chip-status-${o.k}`}
+                      className={`px-3 py-1.5 text-sm transition ${statusSel === o.k ? "bg-muted font-semibold" : "bg-background hover:bg-muted/60 text-muted-foreground"}`}
+                    >
+                      {o.t}
+                    </button>
+                  ))}
+                </div>
                 <div className="relative ml-auto w-[260px] max-w-full">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -1700,6 +1760,28 @@ export default function GestaoCarteiras() {
                     data-testid="button-aplicar-vendedor"
                   >
                     {aplicando ? "Aplicando…" : "Trocar vendedor"}
+                  </Button>
+
+                  <div className="h-5 w-px bg-amber-300 dark:bg-amber-700" />
+
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="date"
+                    value={dataQuarentena}
+                    onChange={(e) => setDataQuarentena(e.target.value)}
+                    className="h-8 rounded-md border px-2 text-sm bg-background"
+                    title="Data de Início do Fornecimento: as visitas só voltam a ser agendadas a partir dela"
+                    data-testid="input-data-quarentena"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-amber-500 text-amber-800 hover:bg-amber-100 dark:text-amber-300"
+                    disabled={!dataQuarentena || aplicando}
+                    onClick={quarentenaEmMassa}
+                    data-testid="button-quarentena-massa"
+                  >
+                    Quarentena
                   </Button>
 
                   <div className="h-5 w-px bg-amber-300 dark:bg-amber-700" />
