@@ -209,6 +209,7 @@ export default function ActiveCustomers() {
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [dayMulti, setDayMulti] = useState<string[]>([]);
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
+  const [selectedSemana, setSelectedSemana] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
@@ -249,7 +250,9 @@ export default function ActiveCustomers() {
   const [bulkVirtualType, setBulkVirtualType] = useState("");
   const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
   const [bulkStartDate, setBulkStartDate] = useState("");
+  const [bulkSemana, setBulkSemana] = useState("");
   const [bulkGeocode, setBulkGeocode] = useState(false);
+  const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["ultima","Última do mês"]];
   const { toast } = useToast();
 
   const updatePhoneMutation = useMutation({
@@ -759,6 +762,7 @@ export default function ActiveCustomers() {
       
       // Filtro de periodicidade
       const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
+      const matchesSemana = !selectedSemana || (String((ac.customer as any)?.semanaAtendimento || 'toda') === selectedSemana);
       
       // Filtro de tipo (virtual/presencial)
       const matchesVirtualType = !selectedVirtualType || 
@@ -787,7 +791,7 @@ export default function ActiveCustomers() {
       // Filtro de coordenadas (com/sem lat-long no cadastro)
       const hasCoords = !!((ac.customer as any)?.latitude && (ac.customer as any)?.longitude);
       const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesPhone && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -828,6 +832,7 @@ export default function ActiveCustomers() {
       const fields: any = {};
       if (bulkSeller) fields.sellerId = bulkSeller;
       if (bulkPeriodicity) fields.visitPeriodicity = bulkPeriodicity;
+      if (bulkSemana) fields.semanaAtendimento = bulkSemana;
       if (bulkWeekdays.length) fields.weekdays = bulkWeekdays;
       if (bulkStartDate) fields.serviceStartDate = bulkStartDate;
       if (bulkVirtualType) fields.virtualService = bulkVirtualType === 'virtual';
@@ -853,7 +858,7 @@ export default function ActiveCustomers() {
       if (res.agendaRegen > 0) parts.push(`agenda de ${res.agendaRegen} cliente(s) regenerada a partir da nova Data de Início`);
       if (res.geocoded) parts.push(`coordenadas de ${res.geocodeCount} cliente(s) sendo buscadas em segundo plano`);
       toast({ title: "Concluído", description: parts.join(' · ') || 'Nada para alterar.' });
-      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType(""); setBulkGeocode(false);
+      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkSemana(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType(""); setBulkGeocode(false);
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
     },
@@ -1147,7 +1152,18 @@ export default function ActiveCustomers() {
                   ))}
                 </SelectContent>
               </Select>
-              
+
+              <Select value={selectedSemana} onValueChange={setSelectedSemana}>
+                <SelectTrigger className="w-[130px] h-9" data-testid="select-semana-filter">
+                  <SelectValue placeholder="Semana do mês" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SEMANA_OPCOES.map(([v, l]) => (
+                    <SelectItem key={v} value={v}>{l}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <Select value={selectedPersonType} onValueChange={setSelectedPersonType}>
                 <SelectTrigger className="w-[120px] h-9" data-testid="select-persontype-filter">
                   <SelectValue placeholder="PJ / PF" />
@@ -1212,6 +1228,7 @@ export default function ActiveCustomers() {
                   setDayMulti([]);
                   setSelectedVirtualType("");
                   setSelectedPeriodicity("");
+                  setSelectedSemana("");
                   setSelectedDate("");
                   setSelectedPositivation("");
                   setSelectedPhone("");
@@ -1247,7 +1264,7 @@ export default function ActiveCustomers() {
                   🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedCustomerIds.size})`}
                 </Button>
               )}
-              {(searchTerm || selectedSeller || dayMulti.length > 0 || selectedPeriodicity || selectedVirtualType || selectedPositivation || selectedPhone || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
+              {(searchTerm || selectedSeller || dayMulti.length > 0 || selectedPeriodicity || selectedSemana || selectedVirtualType || selectedPositivation || selectedPhone || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
@@ -1683,6 +1700,13 @@ export default function ActiveCustomers() {
                   </select>
                 </div>
                 <div>
+                  <label className="block text-xs font-medium mb-1">Semana do Mês</label>
+                  <select value={bulkSemana} onChange={(e) => setBulkSemana(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-semana">
+                    <option value="">— não alterar —</option>
+                    {SEMANA_OPCOES.map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
+                  </select>
+                </div>
+                <div>
                   <label className="block text-xs font-medium mb-1">Tipo (Atendimento)</label>
                   <select value={bulkVirtualType} onChange={(e) => setBulkVirtualType(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-virtual-type">
                     <option value="">— não alterar —</option>
@@ -1716,7 +1740,7 @@ export default function ActiveCustomers() {
               <div className="px-5 py-3 border-t flex justify-end gap-2">
                 <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
                 <button
-                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkGeocode) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkSemana && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkGeocode) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
                   disabled={bulkUpdateMutation.isPending}
                   className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
                 >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
