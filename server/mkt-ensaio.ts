@@ -195,7 +195,14 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
       prazoHoras: 1, ...extra,
     });
     e.anotar("mkt_acoes", a.id);
-    if (a.status !== "proposta") return { estado: "falhou" as Estado, detalhe: `nasceu como '${a.status}', esperava 'proposta' (N2)` };
+    // N0/N1 executam sozinhas: a politica do tipo manda, nao o que o ensaio pede.
+    // Em modo teste toda acao vira N2, entao este caminho so aparece no ensaio real —
+    // e 'auto' ali e o comportamento CERTO, nao defeito.
+    if (a.status === "auto") {
+      const dep: any = await ver(a.id);
+      return { estado: "ok" as Estado, detalhe: `#${a.numero} nasceu N${a.nivel} (política do tipo) → executou sozinha → ${dep?.status}` };
+    }
+    if (a.status !== "proposta") return { estado: "falhou" as Estado, detalhe: `nasceu como '${a.status}', esperava 'proposta' ou 'auto'` };
     const d = await decidir({ ids: [a.id], decisao: "aprovar", quem, via: "tela", comentario: marca });
     const depois: any = await ver(a.id);
     const ex = d.execucoes?.[0] || {};
@@ -424,10 +431,21 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
                                       WHERE conversation_id = ${String(conv.id)} AND COALESCE(sender_id,'') LIKE 'agent:%'`);
     const { maybeRunAgent } = await import("./agent-runtime");
     const enviadas: string[] = [];
+    let erroEnvio = "";
     await maybeRunAgent({
       phone: fone, conversationId: String(conv.id), incomingText: pergunta, channel: "whatsapp",
       // Em ensaio seco a resposta e montada mas nao sai do predio.
-      sendText: async (_to: string, texto: string) => { enviadas.push(texto); if (!e.enviar) return { simulado: true }; const { sendOfficialText } = await import("./official-dispatch"); return sendOfficialText(fone, texto); },
+      sendText: async (_to: string, texto: string) => {
+        enviadas.push(texto);
+        if (!e.enviar) return { simulado: true };
+        const { sendOfficialText } = await import("./official-dispatch");
+        const r: any = await sendOfficialText(fone, texto);
+        // Texto livre so passa DENTRO da janela de 24 h. Fora dela o Umbler
+        // devolve 400 — a IA "respondeu" mas ninguem recebeu, e dar isso como
+        // sucesso e o tipo de falso positivo que o ensaio existe para evitar.
+        if (r && r.success === false) erroEnvio = String(r.error || "envio recusado");
+        return r;
+      },
     });
     const depois: any = await uma(sql`SELECT count(*)::int AS n FROM chat_messages
                                        WHERE conversation_id = ${String(conv.id)} AND COALESCE(sender_id,'') LIKE 'agent:%'`);
@@ -436,7 +454,9 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
       return { estado: "falhou", detalhe: `a IA não respondeu${t ? ` — porta '${t.porta}' ${String(t.detalhe || "")}` : " (sem trilha registrada)"}` };
     }
     const r = enviadas[0] || "(gravada na conversa)";
-    return `respondeu em ${enviadas.length || 1} mensagem: “${r.slice(0, 110).replace(/\n/g, " ")}…”`;
+    const previa = `“${r.slice(0, 110).replace(/\n/g, " ")}…”`;
+    if (erroEnvio) return { estado: "falhou", detalhe: `a IA respondeu ${previa} mas o envio foi recusado: ${erroEnvio.slice(0, 120)} — texto livre só passa dentro da janela de 24 h` };
+    return `respondeu em ${enviadas.length || 1} mensagem: ${previa}`;
   });
 
   // ========================================================================

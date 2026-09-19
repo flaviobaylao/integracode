@@ -63,6 +63,13 @@ export async function ensureEntregaClienteSchema(): Promise<void> {
   try {
     await db.execute(sql`ALTER TABLE official_dispatches ADD COLUMN IF NOT EXISTS scheduled_at timestamptz`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS official_dispatches_agendado_idx ON official_dispatches (scheduled_at) WHERE status = 'fila'`);
+    // Liga o caso de uso na PRIMEIRA vez. Quem decide se o disparo sai e
+    // `useCaseEnabled` em official-dispatch, que le 'off' por padrao — este
+    // modulo lia 'on', e os dois discordavam: todo aviso voltava 'desligado'
+    // em silencio. So escreve se a chave nunca existiu; se alguem desligou de
+    // proposito, fica desligado.
+    await db.execute(sql`INSERT INTO system_settings (key, value, updated_by, updated_at)
+      VALUES ('oficial_entrega', 'on', 'entrega-cliente', now()) ON CONFLICT (key) DO NOTHING`);
     _schemaOk = true;
   } catch (e: any) { console.warn('[ENTREGA-CLIENTE] schema:', e?.message); }
 }
