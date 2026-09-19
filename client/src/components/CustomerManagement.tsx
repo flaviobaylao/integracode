@@ -164,7 +164,7 @@ export default function CustomerManagement() {
     mutationFn: async () => {
       const ids = Array.from(selectedIds);
       const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids });
-      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+      return (r ?? {});
     },
     onSuccess: (res: any) => {
       const extra: string[] = [];
@@ -182,7 +182,7 @@ export default function CustomerManagement() {
     mutationFn: async () => {
       const ids = Array.from(selectedIds);
       const r: any = await apiRequest('POST', '/api/customers/bulk-reactivate', { ids });
-      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+      return (r ?? {});
     },
     onSuccess: (res: any) => {
       const extra: string[] = [];
@@ -212,7 +212,7 @@ export default function CustomerManagement() {
       let msg: string[] = [];
       if (Object.keys(fields).length > 0) {
         const r: any = await apiRequest('POST', '/api/customers/bulk-update', { ids, fields });
-        const res = await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+        const res = (r ?? {});
         msg.push(`${res.updated ?? ids.length} atualizado(s)`);
       }
       if (bulkSituacao === 'ativo') {

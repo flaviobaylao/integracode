@@ -79,7 +79,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     mutationFn: async (next: boolean) => {
       const url = next ? '/api/customers/bulk-reactivate' : '/api/customers/bulk-inactivate';
       const r: any = await apiRequest('POST', url, { ids: [customer!.id] });
-      return await (r?.json ? r.json() : Promise.resolve({})).catch(() => ({}));
+      return (r ?? {});
     },
     onSuccess: (_data: any, next: boolean) => {
       setLocalActive(next);
