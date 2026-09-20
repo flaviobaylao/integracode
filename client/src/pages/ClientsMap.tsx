@@ -125,9 +125,10 @@ const SEMANA_LABELS: Record<string, string> = {
   '1': '1ª semana',
   '2': '2ª semana',
   '3': '3ª semana',
+  '4': '4ª semana',
   ultima: 'Última semana',
 };
-const SEMANA_OPTIONS = ['Todas as semanas', 'Semanas ímpares', 'Semanas pares', '1ª semana', '2ª semana', '3ª semana', 'Última semana'];
+const SEMANA_OPTIONS = ['Todas as semanas', 'Semanas ímpares', 'Semanas pares', '1ª semana', '2ª semana', '3ª semana', '4ª semana', 'Última semana'];
 const semanaDoPonto = (c: any) => SEMANA_LABELS[String(c?.semanaAtendimento || 'toda')] || 'Todas as semanas';
 
 // 📅 FILTRO POR PERÍODO (de/até). Não cabe num MultiSelect: as datas são contínuas, não uma
