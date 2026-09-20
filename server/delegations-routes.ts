@@ -417,21 +417,31 @@ export function registerDelegationRoutes(app: Express) {
       nome: c.fantasyName || c.name || c.id,
       cidade: c.city || "",
       bairro: c.neighborhood || "",
+      cidadeKey: norm(c.city),
       bairroKey: chaveBairro(c.city, c.neighborhood),
       segmento: c.segmentoPrincipal ?? "Sem segmento",
       valor: Number(c.lastSaleValue ?? 0),
       ativo: c.isActive !== false,
     })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
-    // agregados para os filtros (com contagem, para o admin saber o tamanho do recorte)
-    const porCidade: Record<string, { cidade: string; qtd: number; valor: number }> = {};
+    // agregados para os filtros (com contagem, para o admin saber o tamanho do recorte).
+    // Agrupa por chave NORMALIZADA: o cadastro tem "GOIANIA" e "Goiânia" para o mesmo
+    // lugar — listar as duas variantes faria o admin recortar metade da cidade sem saber.
+    // Entre as grafias vence a mais acentuada (carrega mais informação).
+    const acentos = (t: string) => (t.normalize("NFD").match(/[\u0300-\u036f]/g) || []).length;
+    const melhorGrafia = (a: string, b: string) => (acentos(b) > acentos(a) ? b : a);
+    const porCidade: Record<string, { key: string; cidade: string; qtd: number; valor: number }> = {};
     const porBairro: Record<string, { key: string; cidade: string; bairro: string; qtd: number; valor: number }> = {};
     for (const c of clientes) {
-      const ck = c.cidade || "(sem cidade)";
-      (porCidade[ck] ||= { cidade: ck, qtd: 0, valor: 0 });
+      const rotuloCidade = c.cidade || "(sem cidade)";
+      const ck = c.cidadeKey;
+      (porCidade[ck] ||= { key: ck, cidade: rotuloCidade, qtd: 0, valor: 0 });
+      porCidade[ck].cidade = melhorGrafia(porCidade[ck].cidade, rotuloCidade);
       porCidade[ck].qtd++; porCidade[ck].valor += c.valor;
       const bk = c.bairroKey;
-      (porBairro[bk] ||= { key: bk, cidade: ck, bairro: c.bairro || "(sem bairro)", qtd: 0, valor: 0 });
+      (porBairro[bk] ||= { key: bk, cidade: rotuloCidade, bairro: c.bairro || "(sem bairro)", qtd: 0, valor: 0 });
+      porBairro[bk].cidade = melhorGrafia(porBairro[bk].cidade, rotuloCidade);
+      porBairro[bk].bairro = melhorGrafia(porBairro[bk].bairro, c.bairro || "(sem bairro)");
       porBairro[bk].qtd++; porBairro[bk].valor += c.valor;
     }
     res.json({
