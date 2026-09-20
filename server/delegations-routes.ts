@@ -23,7 +23,7 @@ import { db } from "./db";
 import { and, eq, desc, lte, gte, inArray, sql } from "drizzle-orm";
 import {
   delegations, delegationTargets, delegationCustomers, userPermissions,
-  customers, insertDelegationSchema,
+  customers, insertDelegationSchema, normalizeWeekdayInput,
 } from "@shared/schema";
 import { authenticateAdmin, authenticateUser } from "./authMiddleware";
 import { logCustomerNote } from "./customerAudit";
@@ -216,13 +216,26 @@ function ratear(clientes: Cli[], targets: string[], criteria: string) {
 //  clientes -> apenas os customerIds listados
 //  cidades  -> apenas clientes cuja cidade está na lista
 //  bairros  -> apenas clientes cujo "Cidade|Bairro" está na lista
-export type Escopo = { tipo?: "todos" | "clientes" | "cidades" | "bairros"; valores?: string[] };
+//  dias     -> apenas clientes atendidos em algum dos dias de rota listados
+export type Escopo = { tipo?: "todos" | "clientes" | "cidades" | "bairros" | "dias"; valores?: string[] };
 
 // normaliza texto para comparar cidade/bairro (sem acento, sem caixa, sem espaço sobrando)
 const norm = (v: any): string =>
   String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
 // chave canônica de bairro (qualificado pela cidade — "Centro" existe em várias cidades)
 export const chaveBairro = (cidade: any, bairro: any): string => `${norm(cidade)}|${norm(bairro)}`;
+
+// ---- Dia de rota ------------------------------------------------------------
+// Bucket para quem não tem dia de rota cadastrado (precisa ser selecionável:
+// senão esses clientes ficariam invisíveis no recorte por dia).
+export const SEM_DIA = "__sem_dia__";
+export const ORDEM_DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
+// normalizeWeekdayInput() cobre os formatos legados ({Qua}, ["Seg"], "Seg/Qui",
+// "segunda e quarta") mas LANÇA em dado inválido — aqui um cadastro ruim não
+// pode derrubar a listagem da carteira inteira.
+export function diasDoCliente(c: any): string[] {
+  try { return normalizeWeekdayInput(c?.weekdays) as string[]; } catch { return []; }
+}
 
 // aplica o escopo sobre as linhas cruas de customers
 function filtrarPorEscopo(rows: any[], escopo?: Escopo): any[] {
@@ -240,6 +253,17 @@ function filtrarPorEscopo(rows: any[], escopo?: Escopo): any[] {
   if (tipo === "cidades") {
     const set = new Set(valores.map(norm));
     return rows.filter((c: any) => set.has(norm(c.city ?? c.cidade)));
+  }
+  if (tipo === "dias") {
+    // interseção: cliente atendido em Seg E Qua entra tanto no recorte "Seg"
+    // quanto no "Qua" (a rota daquele dia passa a ser do delegado).
+    const set = new Set(valores.map(String));
+    const querSemDia = set.has(SEM_DIA);
+    return rows.filter((c: any) => {
+      const dias = diasDoCliente(c);
+      if (!dias.length) return querSemDia;
+      return dias.some((d) => set.has(d));
+    });
   }
   if (tipo === "bairros") {
     // aceita tanto "Cidade|Bairro" quanto só o bairro (retrocompatível)
@@ -408,7 +432,7 @@ export function registerDelegationRoutes(app: Express) {
   }));
 
   // Carteira do titular: alimenta os seletores de escopo (clientes / cidades /
-  // bairros) da aba "Delegar Carteira". Só leitura, nunca persiste.
+  // bairros / dias de rota) da aba "Delegar Carteira". Só leitura, nunca persiste.
   app.get("/api/delegations/carteira/:sellerId", authenticateAdmin, safe(async (req, res) => {
     await ensureModuleTables();
     const rows = await carteiraRaw(req.params.sellerId);
@@ -417,6 +441,7 @@ export function registerDelegationRoutes(app: Express) {
       nome: c.fantasyName || c.name || c.id,
       cidade: c.city || "",
       bairro: c.neighborhood || "",
+      dias: diasDoCliente(c),
       cidadeKey: norm(c.city),
       bairroKey: chaveBairro(c.city, c.neighborhood),
       segmento: c.segmentoPrincipal ?? "Sem segmento",
@@ -444,9 +469,22 @@ export function registerDelegationRoutes(app: Express) {
       porBairro[bk].bairro = melhorGrafia(porBairro[bk].bairro, c.bairro || "(sem bairro)");
       porBairro[bk].qtd++; porBairro[bk].valor += c.valor;
     }
+
+    // agregado por dia de rota (um cliente de Seg+Qua conta nos dois)
+    const porDia: Record<string, { key: string; dia: string; qtd: number; valor: number }> = {};
+    for (const c of clientes) {
+      const ds = c.dias.length ? c.dias : [SEM_DIA];
+      for (const d of ds) {
+        (porDia[d] ||= { key: d, dia: d === SEM_DIA ? "(sem dia de rota)" : d, qtd: 0, valor: 0 });
+        porDia[d].qtd++; porDia[d].valor += c.valor;
+      }
+    }
+    const idxDia = (k: string) => (k === SEM_DIA ? 99 : ORDEM_DIAS.indexOf(k));
+
     res.json({
       total: clientes.length,
       clientes,
+      dias: Object.values(porDia).sort((a, b) => idxDia(a.key) - idxDia(b.key)),
       cidades: Object.values(porCidade).sort((a, b) => a.cidade.localeCompare(b.cidade, "pt-BR")),
       bairros: Object.values(porBairro).sort((a, b) =>
         a.cidade.localeCompare(b.cidade, "pt-BR") || a.bairro.localeCompare(b.bairro, "pt-BR")),
