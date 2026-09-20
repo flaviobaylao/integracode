@@ -53,7 +53,7 @@ type Resposta = {
   tipos: Tipo[];
 };
 type Evento = {
-  quando: string; especie: 'disparo' | 'cliente' | 'ia' | 'humano';
+  quando: string; especie: 'disparo' | 'cliente' | 'ia' | 'sistema' | 'humano';
   titulo: string | null; tipo: string | null; status: string | null;
   recebida: boolean | null; lida: boolean | null; custo: number; erro: string | null;
   modo: string | null; texto: string | null;
@@ -492,7 +492,7 @@ function Historico({ cliente, aoFechar }: { cliente: Cliente; aoFechar: () => vo
   });
   const cor: Record<string, string> = {
     disparo: 'border-l-teal-500', cliente: 'border-l-emerald-500',
-    ia: 'border-l-violet-500', humano: 'border-l-gray-400',
+    ia: 'border-l-violet-500', sistema: 'border-l-sky-400', humano: 'border-l-gray-400',
   };
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={aoFechar}>
@@ -517,7 +517,8 @@ function Historico({ cliente, aoFechar }: { cliente: Cliente; aoFechar: () => vo
                   <span className="font-medium">
                     {e.especie === 'disparo' ? `Central → ${e.titulo}` :
                      e.especie === 'cliente' ? 'Cliente escreveu' :
-                     e.especie === 'ia' ? `IA (${e.tipo}) respondeu` : 'Atendente respondeu'}
+                     e.especie === 'ia' ? `IA (${e.tipo}) respondeu` :
+                     e.especie === 'sistema' ? 'Aviso automático' : 'Atendente respondeu'}
                   </span>
                   <span className="text-gray-400">{fmtDataHora(e.quando)}</span>
                 </div>

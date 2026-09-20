@@ -400,7 +400,13 @@ export async function historicoDoCliente(customerId: string) {
       erro: r.error || null, modo: r.mode || null, texto: null,
     })),
     ...(m.rows || []).map((r: any) => ({
-      quando: r.quando, especie: r.sender_type === "customer" ? "cliente" : (String(r.sender_id || "").startsWith("agent:") ? "ia" : "humano"),
+      // Mesma classificação do painel de atendimento digital. Sem o ramo
+      // 'sistema', todo aviso automático (pedido criado, saiu para entrega)
+      // aparecia como se um atendente tivesse digitado.
+      quando: r.quando,
+      especie: r.sender_type === "customer" ? "cliente"
+        : String(r.sender_id || "").startsWith("agent:") ? "ia"
+        : String(r.sender_id || "") === "system" ? "sistema" : "humano",
       titulo: null, tipo: String(r.sender_id || "").startsWith("agent:") ? String(r.sender_id).slice(6) : null,
       status: null, recebida: null, lida: null, custo: 0, erro: null, modo: null,
       texto: String(r.content || "").slice(0, 400),
