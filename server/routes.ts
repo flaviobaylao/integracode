@@ -2006,38 +2006,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const m = new Map<string, string>();
         try {
           const r: any = await db.execute(sql`
-            SELECT customer_id, MAX(entregue) AS ultima, MAX(fonte) AS fonte FROM (
-              -- 1) A entrega REAL: parada da rota que o entregador deu como efetuada.
-              SELECT s.customer_id, COALESCE(s.completed_at, s.check_out_time, s.delivery_started_at) AS entregue, 'parada' AS fonte
-                FROM delivery_route_stops s
-               WHERE s.status = 'efetuada'
-                 AND COALESCE(s.completed_at, s.check_out_time, s.delivery_started_at) >= '2024-01-01'
-              UNION ALL
-              -- 2) Cronômetro do entregador, gravado no próprio cadastro.
-              SELECT c.id, c.entrega_ultima_em, 'cronometro'
-                FROM customers c
-               WHERE c.entrega_ultima_em IS NOT NULL AND c.entrega_ultima_em >= '2024-01-01'
-              UNION ALL
-              -- 3) e 4) Baixa registrada no pedido ou no cartão (fluxos antigos).
-              SELECT sc.customer_id, sc.delivery_completed_date, 'cartao'
+            SELECT customer_id, MAX(entregue) AS ultima FROM (
+              SELECT sc.customer_id, sc.delivery_completed_date AS entregue
                 FROM sales_cards sc
-               WHERE sc.delivery_completed_date IS NOT NULL AND sc.delivery_completed_date >= '2024-01-01'
+               WHERE sc.delivery_completed_date IS NOT NULL
+                 AND sc.delivery_completed_date >= '2024-01-01'
               UNION ALL
-              SELECT sc.customer_id, oh.delivery_completed_date, 'pedido'
+              SELECT sc.customer_id, oh.delivery_completed_date
                 FROM order_history oh
                 JOIN sales_cards sc ON sc.id = oh.sales_card_id
-               WHERE oh.delivery_completed_date IS NOT NULL AND oh.delivery_completed_date >= '2024-01-01'
+               WHERE oh.delivery_completed_date IS NOT NULL
+                 AND oh.delivery_completed_date >= '2024-01-01'
             ) t
-            WHERE customer_id IS NOT NULL AND entregue IS NOT NULL
+            WHERE customer_id IS NOT NULL
             GROUP BY customer_id`);
-          const porFonte: Record<string, number> = {};
           for (const x of ((r.rows || r) as any[])) {
             if (x.customer_id && x.ultima) m.set(String(x.customer_id), String(x.ultima));
-            porFonte[String(x.fonte)] = (porFonte[String(x.fonte)] || 0) + 1;
           }
-          // Diagnóstico: diz QUAL fluxo está de fato registrando entrega hoje. Sem isto, um
-          // resultado vazio não distingue "ninguém recebeu" de "estou olhando a tabela errada".
-          console.log(`🚚 [MAP-DATA] ultima entrega: ${m.size} clientes; por fonte vencedora:`, porFonte);
         } catch (e: any) { console.warn('[MAP-DATA] ultima entrega:', e?.message); }
         _mapaEntregaCache = { t: Date.now(), m };
         return m;
@@ -4244,7 +4229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const patch: any = {};
       if (fields?.sellerId) patch.sellerId = String(fields.sellerId);
       if (fields?.visitPeriodicity && ['semanal', 'quinzenal', 'mensal'].includes(String(fields.visitPeriodicity))) patch.visitPeriodicity = String(fields.visitPeriodicity);
-      if (fields?.semanaAtendimento && ['toda', 'impar', 'par', '1', '2', '3', 'ultima'].includes(String(fields.semanaAtendimento))) patch.semanaAtendimento = String(fields.semanaAtendimento);
+      if (fields?.semanaAtendimento && ['toda', 'impar', 'par', '1', '2', '3', '4', 'ultima'].includes(String(fields.semanaAtendimento))) patch.semanaAtendimento = String(fields.semanaAtendimento);
       if (Array.isArray(fields?.weekdays) && fields.weekdays.length > 0) patch.weekdays = JSON.stringify(fields.weekdays);
       if (fields?.serviceStartDate) { const d = new Date(fields.serviceStartDate); if (!isNaN(d.getTime())) patch.serviceStartDate = d; }
       if (typeof fields?.virtualService === 'boolean') patch.virtualService = fields.virtualService;

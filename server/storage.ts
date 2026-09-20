@@ -7000,6 +7000,68 @@ export class DatabaseStorage implements IStorage {
         }
         for (const [id, total] of sum3) avg3mMap.set(id, total / 3);
       } catch (e: any) { console.warn('média 3 meses (receivables) falhou:', e?.message); }
+
+      // ÚLTIMA COMPRA (recência) — mesma abrangência da positivação/Mês Atual.
+      // Antes vinha SÓ de billings por omieClientCode, então cliente sem código
+      // Omie ou faturado via pipeline/1.0 aparecia como "Nunca" mesmo tendo comprado
+      // (ex.: SALERNO — Mês Atual > 0 e Última Compra "Nunca"). Agora consideramos a
+      // data mais recente entre: billing_pipeline (venda 2.0), receivables (faturamento
+      // 1.0 + 2.0, por customerId e por documento) e billings (NF Omie, já carregado acima).
+      try {
+        const setMax = (id: string, d?: Date | null) => {
+          if (!id || !d) return;
+          const dt = d instanceof Date ? d : new Date(d as any);
+          if (isNaN(dt.getTime())) return;
+          const cur = lastActivityMap.get(id);
+          if (!cur || dt.getTime() > cur.getTime()) lastActivityMap.set(id, dt);
+        };
+
+        // A) billing_pipeline: última venda registrada no 2.0 (mesma fonte do Mês Atual).
+        const pipeLast = await db
+          .select({ customerId: billingPipeline.customerId, last: sql<any>`MAX(${billingPipeline.createdAt})` })
+          .from(billingPipeline)
+          .where(and(
+            inArray(billingPipeline.customerId, customerIds),
+            sql`${billingPipeline.saleValue}::numeric > 0`,
+          ))
+          .groupBy(billingPipeline.customerId);
+        for (const r of pipeLast) setMax(String(r.customerId), r.last);
+
+        // B) receivables por customerId (faturamento 1.0 + 2.0).
+        const recLastById = await db
+          .select({ customerId: receivables.customerId, last: sql<any>`MAX(${receivables.issueDate})` })
+          .from(receivables)
+          .where(and(
+            inArray(receivables.customerId, customerIds),
+            sql`${receivables.amount}::numeric > 0`,
+            sql`${receivables.status} <> 'cancelada'`,
+          ))
+          .groupBy(receivables.customerId);
+        for (const r of recLastById) setMax(String(r.customerId), r.last);
+
+        // C) receivables por DOCUMENTO (clientes 1.0 sem customerId vinculado).
+        const docToIdLC = new Map<string, string>();
+        for (const c of customersData) {
+          const d = String((c as any).cnpj || '').replace(/\D/g, '') || String((c as any).cpf || '').replace(/\D/g, '');
+          if (d.length >= 11 && !docToIdLC.has(d)) docToIdLC.set(d, c.id);
+        }
+        const docsLC = Array.from(docToIdLC.keys());
+        if (docsLC.length) {
+          const recLastByDoc = await db
+            .select({
+              doc: sql<string>`regexp_replace(${receivables.customerDocument}, '\\D', '', 'g')`,
+              last: sql<any>`MAX(${receivables.issueDate})`,
+            })
+            .from(receivables)
+            .where(and(
+              sql`regexp_replace(${receivables.customerDocument}, '\\D', '', 'g') IN (${sql.join(docsLC.map((d) => sql`${d}`), sql`, `)})`,
+              sql`${receivables.amount}::numeric > 0`,
+              sql`${receivables.status} <> 'cancelada'`,
+            ))
+            .groupBy(sql`regexp_replace(${receivables.customerDocument}, '\\D', '', 'g')`);
+          for (const r of recLastByDoc) { const id = docToIdLC.get(String(r.doc)); if (id) setMax(id, r.last); }
+        }
+      } catch (e: any) { console.warn('última compra (fontes combinadas) falhou:', e?.message); }
           }
         } catch (err) {
           console.warn('Erro ao buscar clientes, continuando sem eles:', err);
