@@ -48,6 +48,15 @@ function restanteStr(endsAt: string) {
   if (h > 0) return `faltam ${h}h ${mi}min`;
   return `faltam ${mi}min`;
 }
+// rótulo do recorte usado na delegação (carteira inteira ou por cliente/cidade/bairro)
+const ESCOPO_LABEL: Record<string,string> = { clientes: "clientes específicos", cidades: "cidade(s)", bairros: "bairro(s)" };
+function escopoLabel(d: any) {
+  const t = d?.scopeType || "todos";
+  if (t === "todos") return null;
+  const n = Array.isArray(d?.scopeValues) ? d.scopeValues.length : 0;
+  return <> · <span className="text-indigo-600">recorte por {ESCOPO_LABEL[t] || t}{n ? ` (${n})` : ""}</span></>;
+}
+
 function fmtDT(s: string){
   return new Date(s).toLocaleString("pt-BR",{ day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
 }
@@ -86,11 +95,63 @@ export default function AcessosEDelegacoes() {
   const [criteria, setCriteria] = useState<string>("segmento_faturamento");
   const [ini, setIni] = useState(""); const [fim, setFim] = useState("");
 
+  // ---- escopo da carteira: tudo, ou só clientes / cidades / bairros ----
+  const [escopoTipo, setEscopoTipo] = useState<"todos"|"clientes"|"cidades"|"bairros">("todos");
+  const [escopoValores, setEscopoValores] = useState<string[]>([]);
+  const [buscaEscopo, setBuscaEscopo] = useState("");
+
+  // carteira do titular (alimenta os seletores de escopo)
+  const { data: carteira } = useQuery<any>({
+    queryKey: ["/api/delegations/carteira", fromUserId],
+    enabled: !!fromUserId,
+    queryFn: () => apiRequest("GET", `/api/delegations/carteira/${fromUserId}`),
+  });
+
+  // trocar o titular invalida o recorte anterior (ids/cidades são de outra carteira)
+  useEffect(() => { setEscopoValores([]); setBuscaEscopo(""); }, [fromUserId]);
+  useEffect(() => { setEscopoValores([]); setBuscaEscopo(""); }, [escopoTipo]);
+
+  // opções do seletor conforme o tipo de escopo, já filtradas pela busca
+  const opcoesEscopo = useMemo(() => {
+    if (!carteira) return [] as { value: string; label: string; qtd: number }[];
+    const q = buscaEscopo.trim().toLowerCase();
+    const hit = (t: string) => !q || t.toLowerCase().includes(q);
+    if (escopoTipo === "clientes")
+      return (carteira.clientes || [])
+        .filter((c: any) => hit(`${c.nome} ${c.cidade} ${c.bairro}`))
+        .map((c: any) => ({ value: c.id, label: `${c.nome}${c.cidade ? ` · ${c.cidade}` : ""}${c.bairro ? ` / ${c.bairro}` : ""}`, qtd: 1 }));
+    if (escopoTipo === "cidades")
+      return (carteira.cidades || [])
+        .filter((c: any) => hit(c.cidade))
+        .map((c: any) => ({ value: c.cidade, label: c.cidade, qtd: c.qtd }));
+    if (escopoTipo === "bairros")
+      return (carteira.bairros || [])
+        .filter((b: any) => hit(`${b.bairro} ${b.cidade}`))
+        .map((b: any) => ({ value: b.key, label: `${b.bairro} · ${b.cidade}`, qtd: b.qtd }));
+    return [];
+  }, [carteira, escopoTipo, buscaEscopo]);
+
+  // quantos clientes o recorte atual alcança (feedback antes de confirmar)
+  const clientesNoEscopo = useMemo(() => {
+    if (!carteira) return 0;
+    if (escopoTipo === "todos") return carteira.total || 0;
+    if (!escopoValores.length) return 0;
+    if (escopoTipo === "clientes") return escopoValores.length;
+    const set = new Set(escopoValores);
+    const campo = escopoTipo === "cidades" ? "cidade" : "bairroKey";
+    return (carteira.clientes || []).filter((c: any) => set.has(c[campo])).length;
+  }, [carteira, escopoTipo, escopoValores]);
+
+  const escopoBody = () => ({ tipo: escopoTipo, valores: escopoTipo === "todos" ? [] : escopoValores });
+  const toggleEscopo = (v: string) =>
+    setEscopoValores(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
+
   const { data: preview = [] } = useQuery<any[]>({
-    queryKey: ["/api/delegations/preview", fromUserId, targets, criteria, modo],
-    enabled: !!fromUserId && targets.length > 0,
+    queryKey: ["/api/delegations/preview", fromUserId, targets, criteria, modo, escopoTipo, escopoValores],
+    enabled: !!fromUserId && targets.length > 0 && (escopoTipo === "todos" || escopoValores.length > 0),
     queryFn: () => apiRequest("POST", "/api/delegations/preview", {
       fromUserId, targets, criteria: modo === "transferencia" ? "nenhum" : criteria,
+      escopo: escopoBody(),
     }),
   });
 
@@ -118,12 +179,16 @@ export default function AcessosEDelegacoes() {
   const criarCarteira = () => {
     if (!fromUserId || !targets.length || !ini || !fim)
       return toast({ title: "Campos incompletos", variant: "destructive" });
+    if (escopoTipo !== "todos" && !escopoValores.length)
+      return toast({ title: "Escolha o recorte", description: "Selecione ao menos um item do escopo (cliente, cidade ou bairro).", variant: "destructive" });
     createMut.mutate({
       type: modo === "transferencia" ? "carteira_transferencia" : "carteira_rateio",
       fromUserId, targets, criteria: modo === "transferencia" ? "nenhum" : criteria,
       startsAt: new Date(ini), endsAt: new Date(fim), autoReturn: true,
+      escopo: escopoBody(),
     }, {
-      onSuccess: () => { setFromUserId(""); setTargets([]); setIni(""); setFim(""); }, // limpa o formulário
+      onSuccess: () => { setFromUserId(""); setTargets([]); setIni(""); setFim("");
+        setEscopoTipo("todos"); setEscopoValores([]); setBuscaEscopo(""); }, // limpa o formulário
     });
   };
 
@@ -379,6 +444,62 @@ export default function AcessosEDelegacoes() {
               </select>
             </label>
 
+            {/* ---- Escopo: carteira inteira ou recorte por cliente/cidade/bairro ---- */}
+            <div className="space-y-2">
+              <span className="block text-xs font-semibold text-gray-500 uppercase">O que delegar</span>
+              <div className="grid grid-cols-4 gap-1">
+                {([
+                  ["todos", "Carteira inteira"],
+                  ["clientes", "Clientes"],
+                  ["cidades", "Cidades"],
+                  ["bairros", "Bairros"],
+                ] as const).map(([k, label]) => (
+                  <Button key={k} size="sm" className="text-xs px-1"
+                    variant={escopoTipo === k ? "default" : "outline"}
+                    onClick={() => setEscopoTipo(k)}>{label}</Button>
+                ))}
+              </div>
+
+              {!fromUserId && escopoTipo !== "todos" && (
+                <p className="text-xs text-gray-400">Selecione a carteira de origem para listar {escopoTipo}.</p>
+              )}
+
+              {fromUserId && escopoTipo !== "todos" && (
+                <div className="border rounded-lg">
+                  <div className="flex items-center gap-2 p-2 border-b">
+                    <input
+                      className="flex-1 border rounded px-2 py-1 text-sm"
+                      placeholder={escopoTipo === "clientes" ? "Buscar cliente…" : escopoTipo === "cidades" ? "Buscar cidade…" : "Buscar bairro…"}
+                      value={buscaEscopo} onChange={e => setBuscaEscopo(e.target.value)} />
+                    <button type="button" className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
+                      onClick={() => setEscopoValores(opcoesEscopo.map((o: any) => o.value))}>Todos</button>
+                    <button type="button" className="text-xs text-gray-500 hover:underline whitespace-nowrap"
+                      onClick={() => setEscopoValores([])}>Limpar</button>
+                  </div>
+                  <div className="max-h-52 overflow-auto p-1">
+                    {opcoesEscopo.length === 0 && (
+                      <p className="text-xs text-gray-400 p-2">Nenhum resultado nesta carteira.</p>
+                    )}
+                    {opcoesEscopo.map((o: any) => (
+                      <label key={o.value} className="flex items-center gap-2 px-2 py-1 text-sm hover:bg-gray-50 rounded cursor-pointer">
+                        <input type="checkbox" checked={escopoValores.includes(o.value)} onChange={() => toggleEscopo(o.value)} />
+                        <span className="flex-1 truncate">{o.label}</span>
+                        {escopoTipo !== "clientes" && <span className="text-xs text-gray-400">{o.qtd}</span>}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {fromUserId && (
+                <p className="text-xs text-gray-500">
+                  {escopoTipo === "todos"
+                    ? <>Carteira inteira · <strong>{carteira?.total ?? 0}</strong> cliente{(carteira?.total ?? 0) !== 1 ? "s" : ""}</>
+                    : <>Recorte: <strong>{escopoValores.length}</strong> {escopoTipo === "clientes" ? "cliente(s)" : escopoTipo === "cidades" ? "cidade(s)" : "bairro(s)"} · alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}
+                </p>
+              )}
+            </div>
+
             <label className="block text-xs font-semibold text-gray-500 uppercase">
               {modo === "transferencia" ? "Delegar para (1)" : "Dividir entre (2 ou 3)"}
               <select multiple={modo==="rateio"} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
@@ -412,7 +533,13 @@ export default function AcessosEDelegacoes() {
 
           <Card className="p-5">
             <h3 className="font-bold mb-3">Pré-visualização do rateio</h3>
-            {preview.length === 0 && <p className="text-sm text-gray-400">Selecione origem e destinatários.</p>}
+            {preview.length === 0 && (
+              <p className="text-sm text-gray-400">
+                {fromUserId && escopoTipo !== "todos" && !escopoValores.length
+                  ? `Selecione ao menos um item em "${escopoTipo}" para ver a prévia.`
+                  : "Selecione origem e destinatários."}
+              </p>
+            )}
             {preview.map((r: any, i: number) => {
               const total = preview.reduce((s: number, x: any) => s + x.fat, 0) || 1;
               const u = users.find(x => x.id === r.toUserId);
@@ -503,7 +630,7 @@ export default function AcessosEDelegacoes() {
                         <span className="text-sm font-semibold">{TIPO_LABEL[d.type] || d.type}</span>
                       </div>
                       {isCarteira
-                        ? <div className="text-sm text-gray-600 mt-1">Titular: <strong>{nomeUsuario(d.fromUserId)}</strong> · {total} cliente{total !== 1 ? "s" : ""}</div>
+                        ? <div className="text-sm text-gray-600 mt-1">Titular: <strong>{nomeUsuario(d.fromUserId)}</strong> · {total} cliente{total !== 1 ? "s" : ""}{escopoLabel(d)}</div>
                         : <div className="text-sm text-gray-600 mt-1">Função: <strong>{ROLE_LABEL[d.originRole || ""] || d.originRole || "—"}</strong> · {(d.accesses || []).length} acesso(s)</div>}
                     </div>
                     <div className="text-right shrink-0">
