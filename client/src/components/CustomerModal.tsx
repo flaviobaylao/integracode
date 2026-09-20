@@ -19,6 +19,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
+import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock, XCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -1320,7 +1321,9 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                       <FormItem>
                         <FormLabel className="flex items-center space-x-1">
                           <Clock className="h-4 w-4" />
-                          <span>Semana do mês</span>
+                          <span>Semana do mês
+                            <span title={AJUDA_SEMANA_ATENDIMENTO} aria-label="O que cada opção faz" className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+                          </span>
                         </FormLabel>
                         <Select
                           value={field.value || 'toda'}
@@ -1339,6 +1342,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                             <SelectItem value="1">1ª do mês</SelectItem>
                             <SelectItem value="2">2ª do mês</SelectItem>
                             <SelectItem value="3">3ª do mês</SelectItem>
+                            <SelectItem value="4">4ª do mês</SelectItem>
                             <SelectItem value="ultima">Última do mês</SelectItem>
                           </SelectContent>
                         </Select>

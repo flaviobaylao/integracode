@@ -23,6 +23,7 @@ import WhatsAppButton from "./WhatsAppButton";
 import GeocodeAllButton from "./GeocodeAllButton";
 import CustomerHistoryBox from "./CustomerHistoryBox";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
+import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, X, Clock, AlertCircle, Calendar, Upload, History, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
@@ -93,7 +94,7 @@ export default function CustomerManagement() {
   const [bulkPeriodicity, setBulkPeriodicity] = useState<string>('');
   const [bulkSemana, setBulkSemana] = useState<string>('');
   const [bulkSituacao, setBulkSituacao] = useState<string>(''); // '' | 'ativo' | 'inativo'
-  const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["ultima","Última do mês"]];
+  const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["4","4ª do mês"],["ultima","Última do mês"]];
   const [bulkTipo, setBulkTipo] = useState<string>(''); // '' (não alterar) | 'cliente' | 'fornecedor'
   const [bulkSaving, setBulkSaving] = useState(false);
   const [showExcelImport, setShowExcelImport] = useState(false);
@@ -993,7 +994,9 @@ export default function CustomerManagement() {
             </div>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Semana do Mês</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Semana do Mês
+                <span title={AJUDA_SEMANA_ATENDIMENTO} aria-label="O que cada opção faz" className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+              </label>
               <Select value={bulkSemana} onValueChange={setBulkSemana}>
                 <SelectTrigger className="w-full h-9" data-testid="bulk-semana"><SelectValue placeholder="Não alterar" /></SelectTrigger>
                 <SelectContent>

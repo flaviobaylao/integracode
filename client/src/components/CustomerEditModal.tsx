@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Customer } from "@shared/schema";
+import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { Loader2, Plus } from "lucide-react";
 import { SeloRedeDoCliente } from "@/pages/RedeClientes";
 
@@ -116,7 +117,7 @@ export default function CustomerEditModal({
     weekdays: [] as string[],
     visitPeriodicity: "semanal" as "semanal" | "quinzenal" | "mensal" | "bimestral",
     // Em QUAL semana do mês o cliente é atendido. 'toda' = comportamento antigo.
-    semanaAtendimento: "toda" as "toda" | "impar" | "par" | "1" | "2" | "3" | "ultima",
+    semanaAtendimento: "toda" as "toda" | "impar" | "par" | "1" | "2" | "3" | "4" | "ultima",
     exclusiveVehicle: false,
     vehicleTypes: [] as string[],
     receivingWeekdays: [] as string[], // Dias em que cliente aceita receber (configurado manualmente)
@@ -850,7 +851,9 @@ export default function CustomerEditModal({
 
           {/* Semana de Atendimento */}
           <div>
-            <Label htmlFor="semanaAtendimento">Semana do mês</Label>
+            <Label htmlFor="semanaAtendimento">Semana do mês
+              <span title={AJUDA_SEMANA_ATENDIMENTO} aria-label="O que cada opção faz" className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+            </Label>
             {!canManagePeriodicity && formData.semanaAtendimento !== "toda" && (
               <p className="text-xs text-muted-foreground mb-2">Já definida. Apenas Cinthia e Flávio podem alterar a semana.</p>
             )}
@@ -869,6 +872,7 @@ export default function CustomerEditModal({
                 <SelectItem value="1">1ª do mês</SelectItem>
                 <SelectItem value="2">2ª do mês</SelectItem>
                 <SelectItem value="3">3ª do mês</SelectItem>
+                <SelectItem value="4">4ª do mês</SelectItem>
                 <SelectItem value="ultima">Última do mês</SelectItem>
               </SelectContent>
             </Select>
