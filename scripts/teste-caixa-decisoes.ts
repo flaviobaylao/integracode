@@ -929,6 +929,27 @@ async function main() {
   check(/sabe preencher/.test(String((envDemais as any).resultados?.[0]?.resultado || '')),
     'comunicação: template que pede mais variáveis do que o painel sabe é recusado, não sai com buraco');
 
+  // O historico tem que dizer QUEM falou. Sem o ramo 'sistema', todo aviso
+  // automatico aparecia como se um atendente tivesse digitado.
+  for (const ddl of [
+    `ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_id varchar`,
+    `ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_name varchar`,
+    `ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS status varchar`,
+  ]) { try { await raw(ddl); } catch {} }
+  const convH: any = ((await raw(
+    `INSERT INTO chat_conversations (customer_id, customer_name, customer_phone, status)
+     VALUES ('pc-rev','Mercadinho do Zé','5562988880001','new') RETURNING id`)) as any).rows[0];
+  await raw(`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content) VALUES
+      ('${convH.id}', 'cliente', 'customer', 'quanto custa?'),
+      ('${convH.id}', 'agent:vendas', 'system', 'Oi! O fardo sai por R$ 48.'),
+      ('${convH.id}', 'system', 'system', 'Novo pedido criado'),
+      ('${convH.id}', 'u-humano', 'agent', 'Ja separei aqui.')`);
+  const hist = await pcom.historicoDoCliente('pc-rev');
+  const especies = (hist.linha || []).map((e: any) => e.especie);
+  check(especies.includes('cliente') && especies.includes('ia')
+     && especies.includes('sistema') && especies.includes('humano'),
+    'comunicação: o histórico separa cliente, IA, aviso automático e atendente (' + especies.join(',') + ')');
+
   // Cliente INATIVO que ainda deve: some da lista de ativos, mas a divida nao
   // some. Se o painel so mostrasse o total da lista, o numero nao bateria com
   // Contas a Receber e quem olha concluiria que um dos dois esta errado.
