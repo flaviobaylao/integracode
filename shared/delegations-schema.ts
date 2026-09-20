@@ -63,6 +63,16 @@ export const delegations = pgTable("delegations", {
   scopeType: varchar("scope_type").notNull().default('todos'),
   scopeValues: jsonb("scope_values").$type<string[]>(),
 
+  // Escopo COMBINADO (substitui scopeType/scopeValues nas delegações novas; os
+  // dois campos acima continuam sendo gravados para leitura pelos deploys antigos).
+  // Regra: clientes + cidades + bairros SOMAM entre si (união); o resultado é
+  // cruzado (E) com os dias de rota. Dimensão vazia = não restringe.
+  //   { cidades:["goiania"], dias:["Qua"] } -> clientes de Goiânia atendidos na quarta
+  //   { dias:["Seg"] }                      -> carteira inteira, só a rota de segunda
+  scopeFilters: jsonb("scope_filters").$type<{
+    clientes?: string[]; cidades?: string[]; bairros?: string[]; dias?: string[];
+  }>(),
+
   // Acessos delegados (acesso_funcao): lista de ids/labels de acesso
   accesses: jsonb("accesses").$type<string[]>(),
 
