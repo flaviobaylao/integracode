@@ -1847,6 +1847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // tela refazia as duas consultas e a PRIMEIRA chamada chegava a 10-25s sob concorrencia.
   let _mapaFatCache: { t: number; m: Map<string, string> } | null = null;
   let _mapaVisitaCache: { t: number; m: Map<string, string> } | null = null;
+  let _mapaEntregaCache: { t: number; m: Map<string, string> } | null = null;
   const _MAPA_CACHE_MS = 120000;
 
   // 📆 REMARCAR a PRÓXIMA VISITA do cliente pelo card do mapa (somente ADMIN).
@@ -1996,6 +1997,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         _mapaFatCache = { t: Date.now(), m };
         return m;
       };
+      // 🚚 ÚLTIMA ENTREGA por cliente: data em que a entrega do último pedido foi CONCLUÍDA
+      // (baixa do entregador), não a prevista. A baixa pode estar em DOIS lugares — no pedido
+      // (order_history) ou no cartão (sales_cards, pedido único) —, por isso o UNION ALL: olhar
+      // só um dos dois deixaria cliente sem data sem motivo aparente.
+      const buildUltimaEntrega = async (): Promise<Map<string, string>> => {
+        if (_mapaEntregaCache && (Date.now() - _mapaEntregaCache.t) < _MAPA_CACHE_MS) return _mapaEntregaCache.m;
+        const m = new Map<string, string>();
+        try {
+          const r: any = await db.execute(sql`
+            SELECT customer_id, MAX(entregue) AS ultima FROM (
+              SELECT sc.customer_id, sc.delivery_completed_date AS entregue
+                FROM sales_cards sc
+               WHERE sc.delivery_completed_date IS NOT NULL
+                 AND sc.delivery_completed_date >= '2024-01-01'
+              UNION ALL
+              SELECT sc.customer_id, oh.delivery_completed_date
+                FROM order_history oh
+                JOIN sales_cards sc ON sc.id = oh.sales_card_id
+               WHERE oh.delivery_completed_date IS NOT NULL
+                 AND oh.delivery_completed_date >= '2024-01-01'
+            ) t
+            WHERE customer_id IS NOT NULL
+            GROUP BY customer_id`);
+          for (const x of ((r.rows || r) as any[])) {
+            if (x.customer_id && x.ultima) m.set(String(x.customer_id), String(x.ultima));
+          }
+        } catch (e: any) { console.warn('[MAP-DATA] ultima entrega:', e?.message); }
+        _mapaEntregaCache = { t: Date.now(), m };
+        return m;
+      };
       // 📆 PRÓXIMA VISITA por cliente: primeira data PENDENTE de hoje em diante na visit_agenda
       // (a mesma agenda que alimenta a Rota do Dia). Visita concluída/perdida não conta.
       const buildProximaVisita = async (): Promise<Map<string, string>> => {
@@ -2024,7 +2055,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return doc ? (mapa.get(doc) || null) : null;
       };
 
-      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>, proxVisita?: Map<string, string>) => {
+      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>, proxVisita?: Map<string, string>, ultEntrega?: Map<string, string>) => {
         const pw = parseWk(c.weekdays);
         const sid = c.seller_id ?? null;
         return {
@@ -2039,6 +2070,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // 📅 SEMANA DO MÊS em que o cliente é atendido (toda/impar/par/1/2/3/ultima) — vira filtro no mapa.
           semanaAtendimento: String(c.semana_atendimento || 'toda'),
           lastInvoiceDate: ultimoFat ? ultimoFatDoCliente(c, ultimoFat) : null,
+          // 🚚 Data em que a entrega do último pedido foi concluída (substituiu o faturamento no card).
+          lastDeliveryDate: ultEntrega ? (ultEntrega.get(String(c.id)) || null) : null,
           nextVisitDate: proxVisita ? (proxVisita.get(String(c.id)) || null) : null,
         };
       };
@@ -2046,8 +2079,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sellerMap = await buildSellerMap();
         const ultimoFat = await buildUltimoFaturamento();
         const proxVisita = await buildProximaVisita();
+        const ultEntrega = await buildUltimaEntrega();
         const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, cnpj, cpf, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service, semana_atendimento FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat, proxVisita));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat, proxVisita, ultEntrega));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
       }
@@ -2055,6 +2089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sellerMap = await buildSellerMap();
         const ultimoFatPerdidos = await buildUltimoFaturamento();
         const proxVisitaPerdidos = await buildProximaVisita();
+        const ultEntregaPerdidos = await buildUltimaEntrega();
         const r: any = await db.execute(sql`
           WITH rec AS (
             SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
@@ -2083,7 +2118,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
                   - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3
             ${andVend('c.seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos, proxVisitaPerdidos));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos, proxVisitaPerdidos, ultEntregaPerdidos));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
       }
@@ -2169,6 +2204,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const ultimoFatAtivos = await buildUltimoFaturamento();
       const proxVisitaAtivos = await buildProximaVisita();
+      const ultEntregaAtivos = await buildUltimaEntrega();
       // Buscar todos os sellers para mapear nomes
       const allSellers = await db.select().from(users);
       const sellerMap = new Map<string, string>();
@@ -2228,6 +2264,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // 📅 SEMANA DO MÊS em que o cliente é atendido (toda/impar/par/1/2/3/ultima) — vira filtro no mapa.
             semanaAtendimento: String((c as any).semanaAtendimento || 'toda'),
             lastInvoiceDate: ultimoFatAtivos.get(soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document)) || null,
+            // 🚚 Data em que a entrega do último pedido foi concluída (substituiu o faturamento no card).
+            lastDeliveryDate: ultEntregaAtivos.get(String(c.id)) || null,
             nextVisitDate: proxVisitaAtivos.get(String(c.id)) || null
           };
         });
