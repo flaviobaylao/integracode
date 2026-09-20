@@ -49,7 +49,9 @@ function restanteStr(endsAt: string) {
   return `faltam ${mi}min`;
 }
 // rótulo do recorte usado na delegação (carteira inteira ou por cliente/cidade/bairro)
-const ESCOPO_LABEL: Record<string,string> = { clientes: "clientes específicos", cidades: "cidade(s)", bairros: "bairro(s)" };
+const ESCOPO_LABEL: Record<string,string> = { clientes: "clientes específicos", cidades: "cidade(s)", bairros: "bairro(s)", dias: "dia(s) de rota" };
+// bucket dos clientes sem dia de rota cadastrado (espelha SEM_DIA do backend)
+const SEM_DIA = "__sem_dia__";
 function escopoLabel(d: any) {
   const t = d?.scopeType || "todos";
   if (t === "todos") return null;
@@ -96,7 +98,7 @@ export default function AcessosEDelegacoes() {
   const [ini, setIni] = useState(""); const [fim, setFim] = useState("");
 
   // ---- escopo da carteira: tudo, ou só clientes / cidades / bairros ----
-  const [escopoTipo, setEscopoTipo] = useState<"todos"|"clientes"|"cidades"|"bairros">("todos");
+  const [escopoTipo, setEscopoTipo] = useState<"todos"|"clientes"|"cidades"|"bairros"|"dias">("todos");
   const [escopoValores, setEscopoValores] = useState<string[]>([]);
   const [buscaEscopo, setBuscaEscopo] = useState("");
 
@@ -128,6 +130,8 @@ export default function AcessosEDelegacoes() {
       return (carteira.bairros || [])
         .filter((b: any) => hit(`${b.bairro} ${b.cidade}`))
         .map((b: any) => ({ value: b.key, label: `${b.bairro} · ${b.cidade}`, qtd: b.qtd }));
+    if (escopoTipo === "dias")
+      return (carteira.dias || []).map((d: any) => ({ value: d.key, label: d.dia, qtd: d.qtd }));
     return [];
   }, [carteira, escopoTipo, buscaEscopo]);
 
@@ -138,6 +142,13 @@ export default function AcessosEDelegacoes() {
     if (!escopoValores.length) return 0;
     if (escopoTipo === "clientes") return escopoValores.length;
     const set = new Set(escopoValores);
+    if (escopoTipo === "dias") {
+      // um cliente de Seg+Qua conta uma vez só, mesmo com os dois dias marcados
+      return (carteira.clientes || []).filter((c: any) => {
+        const ds: string[] = c.dias || [];
+        return ds.length ? ds.some((d) => set.has(d)) : set.has(SEM_DIA);
+      }).length;
+    }
     const campo = escopoTipo === "cidades" ? "cidadeKey" : "bairroKey";
     return (carteira.clientes || []).filter((c: any) => set.has(c[campo])).length;
   }, [carteira, escopoTipo, escopoValores]);
@@ -180,7 +191,7 @@ export default function AcessosEDelegacoes() {
     if (!fromUserId || !targets.length || !ini || !fim)
       return toast({ title: "Campos incompletos", variant: "destructive" });
     if (escopoTipo !== "todos" && !escopoValores.length)
-      return toast({ title: "Escolha o recorte", description: "Selecione ao menos um item do escopo (cliente, cidade ou bairro).", variant: "destructive" });
+      return toast({ title: "Escolha o recorte", description: "Selecione ao menos um item do escopo (cliente, cidade, bairro ou dia de rota).", variant: "destructive" });
     createMut.mutate({
       type: modo === "transferencia" ? "carteira_transferencia" : "carteira_rateio",
       fromUserId, targets, criteria: modo === "transferencia" ? "nenhum" : criteria,
@@ -447,12 +458,13 @@ export default function AcessosEDelegacoes() {
             {/* ---- Escopo: carteira inteira ou recorte por cliente/cidade/bairro ---- */}
             <div className="space-y-2">
               <span className="block text-xs font-semibold text-gray-500 uppercase">O que delegar</span>
-              <div className="grid grid-cols-4 gap-1">
+              <div className="grid grid-cols-5 gap-1">
                 {([
                   ["todos", "Carteira inteira"],
                   ["clientes", "Clientes"],
                   ["cidades", "Cidades"],
                   ["bairros", "Bairros"],
+                  ["dias", "Dia de rota"],
                 ] as const).map(([k, label]) => (
                   <Button key={k} size="sm" className="text-xs px-1"
                     variant={escopoTipo === k ? "default" : "outline"}
@@ -461,16 +473,18 @@ export default function AcessosEDelegacoes() {
               </div>
 
               {!fromUserId && escopoTipo !== "todos" && (
-                <p className="text-xs text-gray-400">Selecione a carteira de origem para listar {escopoTipo}.</p>
+                <p className="text-xs text-gray-400">Selecione a carteira de origem para listar {escopoTipo === "dias" ? "os dias de rota" : escopoTipo}.</p>
               )}
 
               {fromUserId && escopoTipo !== "todos" && (
                 <div className="border rounded-lg">
                   <div className="flex items-center gap-2 p-2 border-b">
-                    <input
-                      className="flex-1 border rounded px-2 py-1 text-sm"
-                      placeholder={escopoTipo === "clientes" ? "Buscar cliente…" : escopoTipo === "cidades" ? "Buscar cidade…" : "Buscar bairro…"}
-                      value={buscaEscopo} onChange={e => setBuscaEscopo(e.target.value)} />
+                    {escopoTipo === "dias"
+                      ? <span className="flex-1 text-xs text-gray-500">Dias em que a rota do titular será atendida pelo delegado (dentro do período abaixo).</span>
+                      : <input
+                          className="flex-1 border rounded px-2 py-1 text-sm"
+                          placeholder={escopoTipo === "clientes" ? "Buscar cliente…" : escopoTipo === "cidades" ? "Buscar cidade…" : "Buscar bairro…"}
+                          value={buscaEscopo} onChange={e => setBuscaEscopo(e.target.value)} />}
                     <button type="button" className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
                       onClick={() => setEscopoValores(opcoesEscopo.map((o: any) => o.value))}>Todos</button>
                     <button type="button" className="text-xs text-gray-500 hover:underline whitespace-nowrap"
@@ -495,7 +509,7 @@ export default function AcessosEDelegacoes() {
                 <p className="text-xs text-gray-500">
                   {escopoTipo === "todos"
                     ? <>Carteira inteira · <strong>{carteira?.total ?? 0}</strong> cliente{(carteira?.total ?? 0) !== 1 ? "s" : ""}</>
-                    : <>Recorte: <strong>{escopoValores.length}</strong> {escopoTipo === "clientes" ? "cliente(s)" : escopoTipo === "cidades" ? "cidade(s)" : "bairro(s)"} · alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}
+                    : <>Recorte: <strong>{escopoValores.length}</strong> {ESCOPO_LABEL[escopoTipo] || escopoTipo} · alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}
                 </p>
               )}
             </div>
@@ -536,7 +550,7 @@ export default function AcessosEDelegacoes() {
             {preview.length === 0 && (
               <p className="text-sm text-gray-400">
                 {fromUserId && escopoTipo !== "todos" && !escopoValores.length
-                  ? `Selecione ao menos um item em "${escopoTipo}" para ver a prévia.`
+                  ? `Selecione ao menos um item em "${escopoTipo === "dias" ? "dia de rota" : escopoTipo}" para ver a prévia.`
                   : "Selecione origem e destinatários."}
               </p>
             )}
