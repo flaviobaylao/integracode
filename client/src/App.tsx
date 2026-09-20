@@ -116,6 +116,7 @@ import RecuperacaoFaturamento from "@/pages/RecuperacaoFaturamento";
 import ConciliacaoBancaria from "@/pages/ConciliacaoBancaria";
 import AuditoriaCobrancas from "@/pages/AuditoriaCobrancas";
 import AutomacoesComunicacao from "@/pages/AutomacoesComunicacao";
+import PainelComunicacao from "@/pages/PainelComunicacao";
 import Cielo from "@/pages/Cielo";
 import IndustriaDados from "@/pages/IndustriaDados";
 import TodasAsContas from "@/pages/TodasAsContas";
@@ -330,6 +331,7 @@ function Router() {
           <Route path="/conciliacao-bancaria" component={ConciliacaoBancaria} />
           <Route path="/auditoria-cobrancas" component={AuditoriaCobrancas} />
           <Route path="/automacoes-comunicacao" component={AutomacoesComunicacao} />
+          <Route path="/painel-comunicacao" component={PainelComunicacao} />
           <Route path="/cielo" component={Cielo} />
           <Route path="/industria-dados" component={IndustriaDados} />
           <Route path="/todas-as-contas" component={TodasAsContas} />

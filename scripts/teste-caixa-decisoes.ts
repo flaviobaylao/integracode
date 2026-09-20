@@ -3,6 +3,7 @@
 // de compra, roda os sinais, materializa acoes como o Radar faria, decide por
 // WhatsApp, executa (regua com clientes fixos), mede e expira.
 // Rodar: DATABASE_URL=postgres://itest@localhost:5499/integra_test npx tsx scripts/teste-caixa-decisoes.ts
+import { readFileSync } from 'fs';
 import { db } from '../server/db';
 import { sql } from 'drizzle-orm';
 
@@ -769,6 +770,115 @@ async function main() {
   const pe = await panoramaEntrega(7);
   check(pe.entregues >= 1 && pe.pctEntrega !== null && pe.segundosAteEntrega !== null,
     'entrega: painel mostra quantas chegaram, a taxa e o tempo até a entrega (' + pe.pctEntrega + '%, ' + pe.segundosAteEntrega + 's)');
+
+  // ==========================================================================
+  // 13) PAINEL DE COMUNICACAO — a lista de onde saem os disparos manuais
+  // ==========================================================================
+  console.log('\n13) painel de comunicacao: lista de clientes ativos e envio por tipo');
+
+  // O harness nasceu com um `customers` mínimo; o painel lê mais colunas.
+  for (const ddl of [
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS contact varchar`,
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS fantasy_name varchar`,
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_name varchar`,
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_supplier boolean DEFAULT false`,
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_colaborador boolean DEFAULT false`,
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_consumer_client boolean DEFAULT false`,
+    `ALTER TABLE customers ADD COLUMN IF NOT EXISTS virtual_service boolean DEFAULT false`,
+    `ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS completed_date timestamptz`,
+    `ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS updated_at timestamptz`,
+    `ALTER TABLE sales_cards ADD COLUMN IF NOT EXISTS operation_type varchar DEFAULT 'venda'`,
+    `ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS customer_phone varchar`,
+    `CREATE TABLE IF NOT EXISTS chat_messages (id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+       conversation_id varchar, sender_id varchar, sender_type varchar, content text,
+       message_type varchar, metadata jsonb, created_at timestamp DEFAULT now())`,
+  ]) { try { await raw(ddl); } catch {} }
+
+  const pcom = await import('../server/painel-comunicacao');
+  await pcom.ensureComunicacaoSchema();
+
+  // Dois clientes de perfis opostos: um revendedor presencial com débito
+  // vencido e sem comprar há muito; um consumidor virtual que comprou ontem.
+  await raw(`INSERT INTO customers (id, name, phone, seller_id, is_active, contact, city, is_consumer_client, virtual_service)
+             VALUES ('pc-rev', 'Mercadinho do Zé', '5562988880001', 'v1', true, 'Zé', 'Goiânia', false, false),
+                    ('pc-con', 'Ana Paula',        '5562988880002', 'v1', true, 'Ana', 'Goiânia', true,  true)
+             ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO sales_cards (customer_id, status, sale_value, completed_date, operation_type)
+             VALUES ('pc-rev', 'completed', 420.00, now() - interval '90 days', 'venda'),
+                    ('pc-con', 'completed',  38.00, now() - interval '1 day',   'venda')`);
+  await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date)
+             VALUES ('pc-rev', 'Mercadinho do Zé', 300, 0, 'vencida', (now() - interval '40 days')::date, (now() - interval '70 days')::date),
+                    ('pc-rev', 'Mercadinho do Zé', 120, 0, 'vencida', (now() - interval '10 days')::date, (now() - interval '40 days')::date)`);
+
+  const lista = await pcom.listarClientes({});
+  const zé = lista.itens.find((i: any) => i.id === 'pc-rev');
+  const ana = lista.itens.find((i: any) => i.id === 'pc-con');
+  check(!!zé && !!ana, 'comunicação: os clientes ativos entram na lista');
+  check(zé?.tipo === 'revendedor' && zé?.atendimento === 'presencial'
+     && ana?.tipo === 'consumidor' && ana?.atendimento === 'virtual',
+    'comunicação: marca revenda/consumo e virtual/presencial pelo cadastro');
+  check(zé?.debitoTotal === 420 && zé?.debitoTitulos === 2 && (zé?.debitoDiasAtraso || 0) >= 40
+     && ana?.debitoTotal === 0,
+    'comunicação: débito vencido soma pela mesma régua da dívida viva (R$' + zé?.debitoTotal + ' em ' + zé?.debitoTitulos + ' títulos)');
+  check((zé?.diasSemCompra || 0) >= 89 && zé?.ultimaCompraValor === 420
+     && (ana?.diasSemCompra || 99) <= 2,
+    'comunicação: última compra traz data e valor (' + zé?.diasSemCompra + 'd / ' + ana?.diasSemCompra + 'd)');
+
+  // Os filtros são o que transforma a lista em lote: têm que recortar de verdade.
+  const soDebito = await pcom.listarClientes({ debito: 'com' });
+  const soConsumo = await pcom.listarClientes({ tipoCliente: 'consumidor' });
+  const parados = await pcom.listarClientes({ diasSemCompraMin: 30 });
+  check(soDebito.itens.every((i: any) => i.debitoTotal > 0) && soDebito.itens.some((i: any) => i.id === 'pc-rev'),
+    'comunicação: filtro de débito vencido só devolve quem deve');
+  check(soConsumo.itens.every((i: any) => i.tipo === 'consumidor') && !soConsumo.itens.some((i: any) => i.id === 'pc-rev'),
+    'comunicação: filtro por tipo de cliente separa revenda de consumo');
+  check(parados.itens.some((i: any) => i.id === 'pc-rev') && !parados.itens.some((i: any) => i.id === 'pc-con'),
+    'comunicação: filtro de tempo sem compra pega o parado e deixa o recente de fora');
+
+  // O template de cobrança nasce pendente de propósito: sem umbler_id nada sai.
+  const prontos = await pcom.prontidaoDosTipos();
+  const cob = prontos.find((t: any) => t.id === 'cobranca');
+  check(!!cob && cob.categoria === 'UTILITY' && !cob.aprovado && !!cob.pendencia,
+    'comunicação: cobrança nasce como UTILITY e pendente de aprovação (' + cob?.pendencia + ')');
+  check(/desconsiderar esta mensagem/i.test(pcom.CORPO_COBRANCA)
+     && !/^\{\{/.test(pcom.CORPO_COBRANCA) && !/\}\}$/.test(pcom.CORPO_COBRANCA),
+    'comunicação: o texto da cobrança pede para desconsiderar se já pagou, e não começa nem termina com variável');
+
+  // O envio: cobrança para quem não deve nada não pode sair de jeito nenhum.
+  await raw(`UPDATE whatsapp_templates SET umbler_id = 'tpl-cob' WHERE label = 'cobranca_titulos'`);
+  await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('oficial_cobranca','on','teste')
+             ON CONFLICT (key) DO UPDATE SET value='on'`);
+  await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('oficial_mode_cobranca','test','teste')
+             ON CONFLICT (key) DO UPDATE SET value='test'`);
+  const env = await pcom.enviarPorTipo('cobranca', ['pc-rev', 'pc-con'], 'teste');
+  const rZe = (env as any).resultados?.find((r: any) => r.id === 'pc-rev');
+  const rAna = (env as any).resultados?.find((r: any) => r.id === 'pc-con');
+  check(/sem débito/.test(String(rAna?.resultado)),
+    'comunicação: cobrança para quem não deve é recusada no envio, não só escondida na tela');
+  check(/^(enfileirado|desligado)/.test(String(rZe?.resultado)),
+    'comunicação: cobrança para quem deve passa pela fila do 1841 (' + rZe?.resultado + ')');
+
+  const linhaCob: any = ((await raw(
+    `SELECT params, use_case::text AS uc, campaign FROM official_dispatches
+      WHERE template_label = 'cobranca_titulos' ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
+  if (linhaCob) {
+    const p = linhaCob.params || [];
+    check(linhaCob.uc === 'cobranca' && String(p[1]) === '2 títulos' && String(p[3]).replace(/\./g, '') === '420,00',
+      'comunicação: a mensagem leva os títulos e o total do cliente (' + p[1] + ', R$ ' + p[3] + ')');
+    check(String(linhaCob.campaign || '').startsWith('painel:cobranca:'),
+      'comunicação: a campanha carimba tipo e dia, então o mesmo cliente não recebe duas vezes no dia');
+  } else {
+    check(false, 'comunicação: o disparo de cobrança foi registrado');
+  }
+
+  // Quem responde uma cobrança fala com o agente de cobrança, não com o de vendas.
+  await raw(`INSERT INTO agentes_config (id, nome, modelo, system_prompt) VALUES
+             ('cobranca','Cobranca','m','p'), ('vendas','Vendas','m','p') ON CONFLICT (id) DO NOTHING`);
+  const rt = await import('../server/agent-runtime');
+  check(typeof rt.maybeRunAgent === 'function', 'comunicação: o runtime dos agentes continua exportando maybeRunAgent');
+  const fonte = readFileSync(new URL('../server/agent-runtime.ts', import.meta.url), 'utf8');
+  check(/agentes_por_caso/.test(fonte) && /cobranca:\s*'cobranca'/.test(fonte),
+    'comunicação: o caso de uso do último disparo escolhe o agente (cobrança → agente de cobrança)');
 
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);

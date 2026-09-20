@@ -368,7 +368,7 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
     // pedido ja foi avisado. Num ensaio repetido essa e a resposta SAUDAVEL. O
     // que o passo precisa provar e que existe a linha de disparo e que ela nao
     // morreu no caminho — por isso o ensaio vai conferir a linha de qualquer jeito.
-    if (!agora.startsWith("enfileirado") && !/ja avisado/.test(agora) && agora !== "duplicado")
+    if (!agora.startsWith("enfileirado") && !/ja avisado/.test(agora) && !agora.startsWith("duplicado"))
       return { estado: "falhou", detalhe: `aviso de entrega: ${agora}` };
     const linha = await uma(sql`SELECT status::text AS status, error FROM official_dispatches
                                  WHERE campaign = ${`card:${String(parada.sales_card_id)}:entregue`}
@@ -376,7 +376,7 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
     if (!linha) return { estado: "falhou", detalhe: `${agora}, mas nenhum disparo de entrega ficou registrado` };
     if (linha.status === "falha")
       return { estado: "falhou", detalhe: `disparo registrado mas falhou: ${String(linha.error || "sem motivo").slice(0, 110)}` };
-    const nota = agora === "duplicado" ? "já avisado antes (guarda anti-duplicidade)" : agora;
+    const nota = agora.startsWith("duplicado") ? "já avisado antes (guarda anti-duplicidade)" : agora;
     return `agora: ${nota} — disparo está '${linha.status}'; em 2 dias: ${r.followUp}`;
   });
 
@@ -389,7 +389,7 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
                                   WHERE s.sales_card_id IS NOT NULL ORDER BY s.id DESC LIMIT 1`);
     if (!parada) return { estado: "pulado", detalhe: "nenhuma parada para ensaiar" };
     const r = String(await ec.avisarEntregaDevolvida(String(parada.id), `${marca} devolução simulada`));
-    if (!r.startsWith("enfileirado") && !/ja avisado/.test(r) && r !== "duplicado")
+    if (!r.startsWith("enfileirado") && !/ja avisado/.test(r) && !r.startsWith("duplicado"))
       return { estado: "falhou", detalhe: r };
     const linhaDev = await uma(sql`SELECT status::text AS status, error FROM official_dispatches
                                     WHERE campaign LIKE ${`card:${String(parada.sales_card_id)}:devolvida:%`}
@@ -502,6 +502,24 @@ export async function rodarEnsaio(opts: { enviar?: boolean; quem?: string; limpa
     const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
     const d = await pd.resumoDigital(hoje, hoje);
     return `${d.mensagens.recebidas} recebidas, ${d.mensagens.enviadas} enviadas, ${d.disparos.enviados} disparos, ${d.acoes.total} ação(ões)`;
+  });
+
+  // O painel de comunicação e a lista de onde saem os disparos manuais. Se ele
+  // devolve lista vazia ou um tipo sem template aprovado, ninguém consegue
+  // mandar nada — e isso aparece como "cliquei e não aconteceu", que é caro de
+  // diagnosticar depois. Aqui é barato.
+  await e.passo("Painéis", "Painel de comunicação lista e sabe o que pode enviar", async () => {
+    let pc: any;
+    try { pc = await import("./painel-comunicacao"); }
+    catch { return { estado: "pulado", detalhe: "painel de comunicação ainda não está neste deploy" }; }
+    const r = await pc.listarClientes({ limite: 5000 });
+    if (!r.itens.length) return { estado: "falhou", detalhe: "nenhum cliente ativo na lista — filtro de ativo quebrado?" };
+    const tipos = await pc.prontidaoDosTipos();
+    const prontos = tipos.filter((t: any) => !t.pendencia).map((t: any) => t.id);
+    const travados = tipos.filter((t: any) => t.pendencia).map((t: any) => `${t.id} (${t.pendencia})`);
+    const base = `${r.itens.length} cliente(s), ${r.resumo.comDebito} com débito; envio pronto: ${prontos.join(", ") || "nenhum"}`;
+    if (!prontos.length) return { estado: "falhou", detalhe: `${base} — nenhum tipo pode sair: ${travados.join("; ")}` };
+    return travados.length ? `${base}; aguardando: ${travados.join("; ")}` : base;
   });
 
   await e.passo("Painéis", e.enviar ? "Resumo diário vai para o aprovador" : "Resumo diário (texto montado, não enviado)", async () => {
