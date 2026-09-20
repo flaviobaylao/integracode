@@ -37,10 +37,12 @@
 //                  template (saiu / feita / devolvida / pos-entrega).
 //   * REGUA      = mkt_fila_toques do periodo, por status.
 //
-// FUSO: chat_messages.created_at e official_dispatches.created_at/sent_at sao
-// `timestamp` SEM fuso guardando UTC — precisam da conversao dupla
-// (AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'). Ja as tabelas mkt_* e
-// social_* usam timestamptz e levam so uma. Misturar as duas erra o dia inteiro.
+// FUSO: as duas convencoes convivem aqui. chat_messages.created_at e `timestamp`
+// SEM fuso guardando UTC (conversao dupla); mkt_* e social_* sao timestamptz
+// (conversao simples). official_dispatches ja foi descrito nesta linha como
+// naive, e NAO e — o que jogava todo disparo feito depois das 18h BRT para o dia
+// seguinte no painel. Por isso o dia agora vem de `diaBR`, que PERGUNTA o tipo
+// ao catalogo do Postgres em vez de confiar na memoria de quem escreveu.
 //
 // Nenhuma consulta e obrigatoria: cada bloco cai em zero se a tabela nao existir
 // naquele ambiente. Um painel que quebra inteiro porque uma tabela sumiu nao
@@ -50,6 +52,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
+import { diaBR } from "./fuso-coluna";
 
 const TZ = "America/Sao_Paulo";
 const PAPEIS = ["admin", "administrative"];
@@ -86,6 +89,10 @@ export async function resumoDigital(de: string, ate: string) {
   // Recorte de chat_messages e official_dispatches (naive UTC) pelo dia BR.
   const noPeriodoNaive = (col: string) => `${diaDeNaive(col)} BETWEEN ${ini} AND ${fim}`;
   const noPeriodoTz = (col: string) => `${diaDeTz(col)} BETWEEN ${ini} AND ${fim}`;
+  // official_dispatches: o tipo real da coluna decide a conversao.
+  const diaDisparoCriado = await diaBR("official_dispatches", "created_at", "created_at");
+  const diaDisparoEnvio = await diaBR("official_dispatches", "sent_at", "sent_at");
+  const noPeriodoDisparo = (expr: string) => `${expr} BETWEEN ${ini} AND ${fim}`;
 
   // Classificacao de quem enviou e por qual canal — usada em varias consultas.
   const QUEM = `CASE WHEN m.sender_type = 'customer' THEN 'cliente'
@@ -161,7 +168,7 @@ export async function resumoDigital(de: string, ate: string) {
               count(*) FILTER (WHERE status::text = 'fila')::int AS fila,
               round(COALESCE(sum(estimated_cost) FILTER (WHERE status::text IN ('enviada','entregue','lida','resposta')),0)::numeric, 2) AS custo
          FROM official_dispatches
-        WHERE ${noPeriodoNaive("created_at")}
+        WHERE ${noPeriodoDisparo(diaDisparoCriado)}
         GROUP BY 1, 2, 3 ORDER BY enviados DESC, template`),
 
     // 6. disparos por caso de uso
@@ -169,7 +176,7 @@ export async function resumoDigital(de: string, ate: string) {
               count(*) FILTER (WHERE status::text IN ('enviada','entregue','lida','resposta'))::int AS enviados,
               round(COALESCE(sum(estimated_cost) FILTER (WHERE status::text IN ('enviada','entregue','lida','resposta')),0)::numeric, 2) AS custo
          FROM official_dispatches
-        WHERE ${noPeriodoNaive("created_at")}
+        WHERE ${noPeriodoDisparo(diaDisparoCriado)}
         GROUP BY 1 ORDER BY enviados DESC`),
 
     // 7. custo e volume da IA
@@ -224,7 +231,7 @@ export async function resumoDigital(de: string, ate: string) {
               count(*) FILTER (WHERE status::text IN ('enviada','entregue','lida','resposta'))::int AS enviados,
               count(*) FILTER (WHERE status::text = 'fila')::int AS agendados
          FROM official_dispatches
-        WHERE ${noPeriodoNaive("created_at")}
+        WHERE ${noPeriodoDisparo(diaDisparoCriado)}
           AND (COALESCE(use_case::text,'') = 'entrega'
                OR template_label IN ('entrega_saiu','entrega_feita','entrega_devolvida',
                                      'pedido_saiu_entrega','pedido_entregue','entrega_nao_realizada')
@@ -246,9 +253,9 @@ export async function resumoDigital(de: string, ate: string) {
                WHERE ${noPeriodoNaive("m.created_at")}
                GROUP BY 1),
             dis AS (
-              SELECT ${diaDeNaive("sent_at")} AS dia, count(*)::int AS disparos
+              SELECT ${diaDisparoEnvio} AS dia, count(*)::int AS disparos
                 FROM official_dispatches
-               WHERE sent_at IS NOT NULL AND ${noPeriodoNaive("sent_at")}
+               WHERE sent_at IS NOT NULL AND ${noPeriodoDisparo(diaDisparoEnvio)}
                GROUP BY 1)
        SELECT to_char(d.dia,'YYYY-MM-DD') AS dia,
               COALESCE(msg.recebidas,0) AS recebidas,
