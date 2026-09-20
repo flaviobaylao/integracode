@@ -164,6 +164,9 @@ export default function AcessosEDelegacoes() {
   // (clientes ∪ cidades ∪ bairros) ∩ (dias)
   const clientesNoEscopo = useMemo(() => {
     if (!carteira) return 0;
+    // dimensão ligada e sem nada marcado = recorte incompleto: mostrar o total da
+    // carteira aqui daria a impressão de que tudo seria delegado.
+    if (dimsAtivas.some(d => !escopoSel[d].length)) return 0;
     const cli = new Set(sel("clientes")), cid = new Set(sel("cidades")), bai = new Set(sel("bairros"));
     const dias = new Set(sel("dias"));
     const temQuem = cli.size || cid.size || bai.size;
@@ -548,7 +551,9 @@ export default function AcessosEDelegacoes() {
                 <p className="text-xs text-gray-500">
                   {!dimsAtivas.length
                     ? <>Carteira inteira · <strong>{carteira?.total ?? 0}</strong> cliente{(carteira?.total ?? 0) !== 1 ? "s" : ""}</>
-                    : <>Recorte: {dimsAtivas.map(d => `${escopoSel[d].length} ${ESCOPO_LABEL[d]}`).join(" + ")} · alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}
+                    : <>Recorte: {dimsAtivas.map(d => `${escopoSel[d].length} ${ESCOPO_LABEL[d]}`).join(" + ")} · {dimVaziaAtiva
+                        ? <span className="text-amber-600">falta escolher {ESCOPO_LABEL[dimVaziaAtiva]}</span>
+                        : <>alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}</>}
                 </p>
               )}
             </div>
