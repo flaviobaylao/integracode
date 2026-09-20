@@ -26,7 +26,7 @@ import {
 
 type Cliente = {
   id: string; nome: string; contato: string | null; telefone: string | null; cidade: string | null;
-  tipo: 'consumidor' | 'revendedor'; atendimento: 'virtual' | 'presencial';
+  tipo: 'consumidor' | 'revendedor'; atendimento: 'virtual' | 'presencial'; ativo: boolean;
   vendedorId: string | null; vendedor: string | null;
   ultimaCompra: string | null; ultimaCompraValor: number | null; diasSemCompra: number | null;
   debitoTotal: number; debitoTitulos: number; debitoVencimento: string | null; debitoDiasAtraso: number;
@@ -44,6 +44,7 @@ type Resposta = {
   itens: Cliente[];
   resumo: {
     clientes: number; deUmTotalDe: number; comDebito: number; debitoTotal: number;
+    debitoVivoGeral: number; clientesComDebitoGeral: number; debitoForaDaLista: number;
     nuncaContatados: number; responderam: number; semRespostaNoUltimo: number;
     consumidores: number; revendedores: number;
   };
@@ -92,6 +93,7 @@ export default function PainelComunicacao() {
   const [diasMin, setDiasMin] = useState('');
   const [diasMax, setDiasMax] = useState('');
   const [busca, setBusca] = useState('');
+  const [incluirInativos, setIncluirInativos] = useState(false);
 
   // selecao[tipoId] = conjunto de clientes marcados naquela coluna
   const [selecao, setSelecao] = useState<Record<string, Set<string>>>({});
@@ -102,6 +104,7 @@ export default function PainelComunicacao() {
   const qs = new URLSearchParams({
     vendedor, tipoCliente, atendimento, debito, respondeu, contatada, cidade,
     diasSemCompraMin: diasMin, diasSemCompraMax: diasMax, busca,
+    incluirInativos: incluirInativos ? '1' : '',
   }).toString();
   const url = `/api/gestao/comunicacao?${qs}`;
   const { data, isLoading, isFetching, refetch, error } = useQuery<Resposta>({ queryKey: [url] });
@@ -190,7 +193,11 @@ export default function PainelComunicacao() {
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
             { t: 'Clientes na lista', v: String(data.resumo.clientes), s: `de ${data.resumo.deUmTotalDe} ativos`, i: <Users className="w-4 h-4" /> },
-            { t: 'Com débito vencido', v: String(data.resumo.comDebito), s: fmtBRL(data.resumo.debitoTotal), i: <CircleDollarSign className="w-4 h-4" /> },
+            { t: 'Débito vencido na lista', v: fmtBRL(data.resumo.debitoTotal),
+              s: data.resumo.debitoForaDaLista > 0.5
+                ? `${data.resumo.comDebito} clientes · ${fmtBRL(data.resumo.debitoForaDaLista)} fora desta lista`
+                : `${data.resumo.comDebito} clientes · lista completa`,
+              i: <CircleDollarSign className="w-4 h-4" /> },
             { t: 'Nunca contatados', v: String(data.resumo.nuncaContatados), s: 'sem nenhuma mensagem', i: <Clock className="w-4 h-4" /> },
             { t: 'Responderam', v: String(data.resumo.responderam), s: 'no último contato', i: <CheckCircle2 className="w-4 h-4" /> },
             { t: 'Sem resposta', v: String(data.resumo.semRespostaNoUltimo), s: 'receberam e não voltaram', i: <AlertTriangle className="w-4 h-4" /> },
@@ -245,6 +252,11 @@ export default function PainelComunicacao() {
           <option value="">Todas as cidades</option>
           {(data?.opcoes.cidades || []).map((c) => <option key={c.cidade} value={c.cidade}>{c.cidade} ({c.clientes})</option>)}
         </select>
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer" title="Cliente inativo que ainda deve some da lista de ativos, mas a dívida não some. Marcando, entram os inativos QUE DEVEM — e só eles.">
+          <input type="checkbox" checked={incluirInativos} onChange={(e) => setIncluirInativos(e.target.checked)}
+                 className="w-4 h-4 accent-teal-600" />
+          <span className="text-gray-600 dark:text-gray-300">Inativos que devem</span>
+        </label>
         <div className="flex items-center gap-1 text-sm">
           <span className="text-gray-500">Sem comprar há</span>
           <input value={diasMin} onChange={(e) => setDiasMin(e.target.value)} placeholder="min" className={`${campo} w-16`} />
@@ -346,6 +358,7 @@ export default function PainelComunicacao() {
                     <td className="p-2 whitespace-nowrap">
                       <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{c.tipo}</span>{' '}
                       <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{c.atendimento}</span>
+                      {!c.ativo && <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">inativo</span>}
                     </td>
                     <td className="p-2 text-xs">{c.vendedor || '—'}</td>
                     <td className="p-2 text-right whitespace-nowrap">

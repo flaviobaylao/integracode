@@ -136,6 +136,8 @@ export type FiltrosComunicacao = {
   debito?: "com" | "sem" | "";
   respondeu?: "sim" | "nao" | "";
   contatada?: "sim" | "nunca" | "";
+  /** inclui clientes inativos que ainda devem — eles somem da lista de ativos, mas a dívida não some */
+  incluirInativos?: boolean;
   cidade?: string;
   busca?: string;
   limite?: number;
@@ -151,6 +153,14 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
   // catálogo do Postgres.
   const diaCompra = sql.raw(await diaBR("sales_cards", "completed_date", "cp.quando"));
   const diaDisparo = sql.raw(await diaBR("official_dispatches", "created_at", "d.quando"));
+  // Cliente inativo que ainda deve some da lista de ativos, mas a dívida dele
+  // não some do mundo — e ele é justamente quem mais precisa ser cobrado. Com
+  // `incluirInativos`, entram os inativos QUE DEVEM, e só eles: trazer a base
+  // inativa inteira encheria a tela de quem não interessa.
+  const condAtivo = f.incluirInativos
+    ? `(c.is_active = true OR EXISTS (SELECT 1 FROM receivables rr
+         WHERE rr.customer_id = c.id AND ${whereDebitoVivoText("rr")}))`
+    : "c.is_active = true";
 
   const linhas: any = await db.execute(sql`
     WITH base AS (
@@ -162,9 +172,10 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
              c.seller_id,
              COALESCE(c.is_consumer_client, false) AS consumidor,
              COALESCE(c.virtual_service, false)    AS virtual,
+             COALESCE(c.is_active, false) AS ativo,
              ${FONE8("c.phone")} AS fone8
         FROM customers c
-       WHERE c.is_active = true
+       WHERE ${sql.raw(condAtivo)}
          AND COALESCE(c.is_lead, false)       = false
          AND COALESCE(c.is_supplier, false)   = false
          AND COALESCE(c.is_colaborador, false) = false
@@ -229,7 +240,7 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
        GROUP BY 1
     )
     SELECT b.id, b.nome, b.contato, b.phone AS telefone, b.cidade,
-           b.consumidor, b.virtual, b.seller_id,
+           b.consumidor, b.virtual, b.ativo, b.seller_id,
            NULLIF(trim(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS vendedor,
            ${diaCompra} AS ultima_compra,
            cp.valor AS ultima_compra_valor,
@@ -270,6 +281,7 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
     cidade: r.cidade || null,
     tipo: r.consumidor ? "consumidor" : "revendedor",
     atendimento: r.virtual ? "virtual" : "presencial",
+    ativo: r.ativo === true,
     vendedorId: r.seller_id || null,
     vendedor: r.vendedor || null,
     ultimaCompra: r.ultima_compra || null,
@@ -310,13 +322,28 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
     itens = itens.filter((i: any) => i.diasSemCompra != null && i.diasSemCompra <= Number(f.diasSemCompraMax));
 
   const soma = (fn: (i: any) => number) => itens.reduce((a: number, i: any) => a + fn(i), 0);
+
+  // O TOTAL da dívida viva no sistema, sem recorte de lista nem de filtro. Sem
+  // ele o painel mostra um número de débito que não bate com a Gestão de Débito
+  // nem com Contas a Receber, e quem olha conclui que um dos dois está errado —
+  // quando na verdade são recortes diferentes da mesma dívida.
+  const g: any = await db.execute(sql`
+    SELECT COALESCE(sum(r.amount - COALESCE(r.amount_paid, 0)), 0)::numeric AS total,
+           count(DISTINCT r.customer_id)::int AS clientes
+      FROM receivables r WHERE ${sql.raw(whereDebitoVivoText("r"))}`);
+  const geral = Number(g.rows?.[0]?.total || 0);
+  const debitoDaLista = Number(soma((i: any) => i.debitoTotal).toFixed(2));
+
   return {
     itens,
     resumo: {
+      debitoVivoGeral: Number(geral.toFixed(2)),
+      clientesComDebitoGeral: Number(g.rows?.[0]?.clientes || 0),
+      debitoForaDaLista: Number((geral - debitoDaLista).toFixed(2)),
       clientes: itens.length,
       deUmTotalDe: antes,
       comDebito: itens.filter((i: any) => i.debitoTotal > 0).length,
-      debitoTotal: Number(soma((i: any) => i.debitoTotal).toFixed(2)),
+      debitoTotal: debitoDaLista,
       nuncaContatados: itens.filter((i: any) => i.totalMensagens === 0).length,
       responderam: itens.filter((i: any) => i.respondeu).length,
       semRespostaNoUltimo: itens.filter((i: any) => i.ultimaInteracao && !i.respondeu).length,
@@ -541,6 +568,7 @@ export function registerPainelComunicacaoRoutes(app: Express) {
         debito: q.debito || "",
         respondeu: q.respondeu || "",
         contatada: q.contatada || "",
+        incluirInativos: String(q.incluirInativos || "") === "1",
         cidade: q.cidade || "",
         busca: q.busca || "",
         limite: q.limite ? Number(q.limite) : undefined,
