@@ -38,6 +38,7 @@ type Tipo = {
   exigeDebito?: boolean; diasSemCompraMinimo?: number;
   templateUsado: string; categoria: string; cadastrado: boolean; aprovado: boolean; ativo: boolean;
   casoLigado: boolean; modo: string; corpoSugerido: string | null;
+  corpoAtual: string | null; variaveis: number;
   custoUnitario: number; pendencia: string | null;
 };
 type Resposta = {
@@ -280,7 +281,7 @@ export default function PainelComunicacao() {
             const travado = !t.aprovado || !t.ativo;
             return (
               <button key={t.id} disabled={!n || travado || enviando === t.id} onClick={() => enviar(t)}
-                      title={t.pendencia || t.descricao}
+                      title={t.corpoAtual ? `${t.descricao}\n\nTexto que sai:\n${t.corpoAtual}` : (t.pendencia || t.descricao)}
                       className={`px-3 py-2 rounded-lg text-sm flex items-center gap-2 border transition
                         ${!n || travado ? 'opacity-50 cursor-not-allowed border-gray-200 dark:border-gray-700'
                                         : 'bg-teal-600 text-white border-teal-600 hover:bg-teal-700'}`}>
@@ -290,6 +291,24 @@ export default function PainelComunicacao() {
             );
           })}
         </div>
+        <details className="mt-2">
+          <summary className="text-xs text-gray-500 cursor-pointer hover:text-teal-600">
+            Ver o texto de cada mensagem
+          </summary>
+          <div className="mt-1.5 space-y-1.5">
+            {tipos.filter((t) => t.corpoAtual).map((t) => (
+              <div key={t.id} className="text-xs border rounded-lg p-2 dark:border-gray-800">
+                <div className="flex items-center justify-between gap-2">
+                  <b>{t.nome}</b>
+                  <span className="text-[11px] text-gray-400">
+                    <code>{t.templateUsado}</code> · {t.categoria} · {fmtBRL(t.custoUnitario)}/msg
+                  </span>
+                </div>
+                <div className="mt-1 text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{t.corpoAtual}</div>
+              </div>
+            ))}
+          </div>
+        </details>
         {tipos.some((t) => t.pendencia) && (
           <div className="mt-2 text-xs text-amber-700 dark:text-amber-300 space-y-0.5">
             {tipos.filter((t) => t.pendencia).map((t) => (

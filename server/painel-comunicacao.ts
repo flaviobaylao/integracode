@@ -413,10 +413,45 @@ export async function historicoDoCliente(customerId: string) {
 // -----------------------------------------------------------------------------
 // O ENVIO
 // -----------------------------------------------------------------------------
-/** Monta os parâmetros do template para um cliente, por tipo de mensagem. */
-async function paramsDoCliente(tipo: TipoMensagem, cli: any): Promise<string[] | { erro: string }> {
+/** Quantas variáveis {{n}} o corpo aprovado do template tem. */
+export function quantasVariaveis(corpo: string | null | undefined): number {
+  const m = String(corpo || "").match(/\{\{\s*(\d+)\s*\}\}/g) || [];
+  let maior = 0;
+  for (const v of m) { const n = parseInt(v.replace(/\D/g, ""), 10); if (n > maior) maior = n; }
+  return maior;
+}
+
+/**
+ * Monta os parâmetros do template para um cliente.
+ * ---------------------------------------------------------------------------
+ * A quantidade de variáveis vem do CORPO APROVADO, não de uma lista fixa aqui.
+ * É o que deixa trocar o texto do template no Umbler — de uma variável para
+ * duas, por exemplo — sem precisar de deploy: o código preenche até onde o
+ * texto pede. Se o texto pedir mais do que este painel sabe preencher, o envio
+ * para AQUELE cliente é recusado com o motivo, em vez de sair uma mensagem com
+ * buraco no meio.
+ *
+ * Ordem das variáveis, por família de mensagem:
+ *   recompra  → 1 nome, 2 o que ele mais compra, 3 dias desde a última compra
+ *   cobranca  → 1 contato, 2 quantidade de títulos, 3 vencimento mais antigo, 4 total
+ */
+async function paramsDoCliente(tipo: TipoMensagem, cli: any, vars = 1): Promise<string[] | { erro: string }> {
   const primeiro = String(cli.contato || cli.nome || "").trim().split(/\s+/)[0] || "tudo bem";
-  if (tipo.id !== "cobranca") return [primeiro];
+  if (tipo.id !== "cobranca") {
+    const p = [primeiro];
+    if (vars >= 2) {
+      const prod = String(cli.produto_principal || "").trim();
+      if (!prod) return { erro: "sem histórico de produto para personalizar a mensagem" };
+      p.push(prod);
+    }
+    if (vars >= 3) {
+      const dias = Number(cli.dias_sem_compra || 0);
+      if (!dias) return { erro: "sem data de última compra" };
+      p.push(String(dias));
+    }
+    if (vars > 3) return { erro: `o template pede ${vars} variáveis e o painel sabe preencher 3` };
+    return p;
+  }
 
   const r: any = await db.execute(sql`
     SELECT count(*)::int AS titulos,
@@ -446,10 +481,38 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
   const { rotuloEfetivo } = await import("./mkt-recompra");
   const efetivo = await rotuloEfetivo(tipo.templateLabel);
   const { enqueueOfficialDispatch } = await import("./official-dispatch");
+  const diaCompraEnvio = sql.raw(await diaBR("sales_cards", "completed_date",
+    "COALESCE(sc.completed_date, sc.updated_at, sc.created_at)"));
 
+  // O corpo APROVADO manda na quantidade de variáveis (ver paramsDoCliente).
+  const tpl: any = await db.execute(sql`SELECT corpo FROM whatsapp_templates WHERE label = ${efetivo.label} LIMIT 1`);
+  const vars = Math.max(1, quantasVariaveis(tpl.rows?.[0]?.corpo));
+
+  // Produto principal e dias sem comprar vêm junto: se o template pedir, já
+  // estão aqui; uma consulta por lote, não uma por cliente.
   const c: any = await db.execute(sql`
-    SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, NULLIF(c.contact,'') AS contato, c.phone
-      FROM customers c WHERE c.id IN (${sql.join(ids.map(i => sql`${i}`), sql`, `)})`);
+    SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, NULLIF(c.contact,'') AS contato, c.phone,
+           pp.produto AS produto_principal,
+           ((now() AT TIME ZONE 'America/Sao_Paulo')::date - uc.dia) AS dias_sem_compra
+      FROM customers c
+      LEFT JOIN LATERAL (
+        SELECT p->>'name' AS produto
+          FROM sales_cards sc,
+               LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(sc.products) = 'array' THEN sc.products ELSE '[]'::jsonb END) p
+         WHERE sc.customer_id = c.id AND COALESCE(sc.operation_type,'venda') = 'venda'
+           AND COALESCE(sc.status,'') NOT IN ('cancelled','telemarketing')
+           AND COALESCE(p->>'name','') <> ''
+         GROUP BY p->>'name'
+         ORDER BY count(*) DESC, max(sc.created_at) DESC
+         LIMIT 1) pp ON true
+      LEFT JOIN LATERAL (
+        SELECT ${diaCompraEnvio} AS dia
+          FROM sales_cards sc
+         WHERE sc.customer_id = c.id AND COALESCE(sc.operation_type,'venda') = 'venda'
+           AND COALESCE(sc.status,'') NOT IN ('cancelled','telemarketing')
+         ORDER BY COALESCE(sc.completed_date, sc.updated_at, sc.created_at) DESC
+         LIMIT 1) uc ON true
+     WHERE c.id IN (${sql.join(ids.map(i => sql`${i}`), sql`, `)})`);
 
   const dia = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
   const resultados: { id: string; nome: string; resultado: string }[] = [];
@@ -459,7 +522,7 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
       resultados.push({ id: String(cli.id), nome: String(cli.nome), resultado: "sem telefone" });
       continue;
     }
-    const p = await paramsDoCliente(tipo, cli);
+    const p = await paramsDoCliente(tipo, cli, vars);
     if ((p as any).erro) {
       resultados.push({ id: String(cli.id), nome: String(cli.nome), resultado: (p as any).erro });
       continue;
@@ -502,7 +565,7 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
 /** Diz se cada tipo está pronto para sair: template cadastrado, aprovado e ligado. */
 export async function prontidaoDosTipos() {
   const t: any = await db.execute(sql`
-    SELECT label, upper(COALESCE(categoria,'')) AS categoria, umbler_id, COALESCE(is_active, true) AS ativo
+    SELECT label, upper(COALESCE(categoria,'')) AS categoria, umbler_id, COALESCE(is_active, true) AS ativo, corpo
       FROM whatsapp_templates`);
   const porLabel = new Map<string, any>((t.rows || []).map((r: any) => [String(r.label), r]));
 
@@ -538,6 +601,10 @@ export async function prontidaoDosTipos() {
       // Quando o template não existe, o painel entrega o texto pronto: sem isso
       // a pendência vira "some coisa falta" e ninguém sabe o que digitar onde.
       corpoSugerido: !usado && tp.id === "cobranca" ? CORPO_COBRANCA : null,
+      // O texto que VAI SAIR. Sem isso, a única forma de descobrir que uma
+      // mensagem está fraca é depois que ela chegou no cliente.
+      corpoAtual: usado ? (usado.corpo || null) : null,
+      variaveis: usado ? quantasVariaveis(usado.corpo) : 0,
       pendencia: !usado ? `template "${tp.templateLabel}" não cadastrado — crie no Umbler como UTILITY e sincronize`
         : !usado.umbler_id ? "aguardando aprovação da Meta (sem umbler_id)"
         : usado.ativo === false ? "template desligado no cadastro"

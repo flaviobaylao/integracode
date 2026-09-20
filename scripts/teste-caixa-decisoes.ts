@@ -898,6 +898,37 @@ async function main() {
   check(/agentes_por_caso/.test(fonte) && /cobranca:\s*'cobranca'/.test(fonte),
     'comunicação: o caso de uso do último disparo escolhe o agente (cobrança → agente de cobrança)');
 
+  // A quantidade de variaveis vem do CORPO APROVADO. Trocar o texto do template
+  // no Umbler - de uma variavel para duas - nao pode exigir deploy, e um texto
+  // que pede mais do que o painel sabe preencher nao pode sair com buraco.
+  check(pcom.quantasVariaveis('Oi, {{1}}! tudo bem?') === 1
+     && pcom.quantasVariaveis('Oi, {{1}}! seu {{2}} de sempre?') === 2
+     && pcom.quantasVariaveis('sem variavel nenhuma') === 0,
+    'comunicação: conta as variáveis pelo corpo aprovado do template');
+
+  // O corpo lido e o do rotulo EFETIVO: se existe a variante UTILITY '<rotulo>_u'
+  // aprovada, e ela que sai — e e o corpo DELA que decide as variaveis.
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES
+               ('recompra_reativacao','tpl-reat','MARKETING','Oi, {{1}}! Seu {{2}} de sempre entra na próxima entrega?'),
+               ('recompra_reativacao_u','tpl-reat-u','UTILITY','Oi, {{1}}! Seu {{2}} de sempre entra na próxima entrega?')
+             ON CONFLICT (label) DO UPDATE SET umbler_id = EXCLUDED.umbler_id, corpo = EXCLUDED.corpo`);
+  await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('oficial_recompra','on','teste')
+             ON CONFLICT (key) DO UPDATE SET value='on'`);
+  await raw(`UPDATE sales_cards SET products = '[{"name":"Suco de Laranja 300ml"},{"name":"Suco de Uva 300ml"}]'::jsonb
+              WHERE customer_id IN ('pc-rev','pc-con')`);
+  const envReat = await pcom.enviarPorTipo('reativacao', ['pc-rev'], 'teste');
+  const linhaReat: any = ((await raw(
+    `SELECT params FROM official_dispatches WHERE template_label LIKE 'recompra_reativacao%'
+      ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
+  check(!!linhaReat && (linhaReat.params || []).length === 2 && /Suco/.test(String((linhaReat.params||[])[1])),
+    'comunicação: template de 2 variáveis recebe nome e o produto que o cliente mais compra (' + JSON.stringify(linhaReat?.params) + ')');
+
+  await raw(`UPDATE whatsapp_templates SET corpo = 'Oi, {{1}}! {{2}} {{3}} {{4}} {{5}}'
+              WHERE label LIKE 'recompra_reativacao%'`);
+  const envDemais = await pcom.enviarPorTipo('reativacao', ['pc-con'], 'teste');
+  check(/sabe preencher/.test(String((envDemais as any).resultados?.[0]?.resultado || '')),
+    'comunicação: template que pede mais variáveis do que o painel sabe é recusado, não sai com buraco');
+
   // Cliente INATIVO que ainda deve: some da lista de ativos, mas a divida nao
   // some. Se o painel so mostrasse o total da lista, o numero nao bateria com
   // Contas a Receber e quem olha concluiria que um dos dois esta errado.
