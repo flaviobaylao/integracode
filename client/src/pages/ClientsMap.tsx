@@ -130,6 +130,83 @@ const SEMANA_LABELS: Record<string, string> = {
 const SEMANA_OPTIONS = ['Todas as semanas', 'Semanas ímpares', 'Semanas pares', '1ª semana', '2ª semana', '3ª semana', 'Última semana'];
 const semanaDoPonto = (c: any) => SEMANA_LABELS[String(c?.semanaAtendimento || 'toda')] || 'Todas as semanas';
 
+// 📅 FILTRO POR PERÍODO (de/até). Não cabe num MultiSelect: as datas são contínuas, não uma
+// lista de opções. Mesmo visual dos outros filtros — botão que resume o que está valendo e um
+// popover com os dois campos —, para a barra continuar lendo como uma coisa só.
+type Periodo = { de: string; ate: string };
+const PERIODO_VAZIO: Periodo = { de: '', ate: '' };
+const periodoAtivo = (p: Periodo) => !!(p.de || p.ate);
+function resumoPeriodo(p: Periodo): string {
+  if (p.de && p.ate) return `${dataBR(p.de)} a ${dataBR(p.ate)}`;
+  if (p.de) return `a partir de ${dataBR(p.de)}`;
+  if (p.ate) return `até ${dataBR(p.ate)}`;
+  return 'Todos';
+}
+// Compara só a parte AAAA-MM-DD: a data vem do banco como '2026-09-21 00:00:00' e comparar
+// como texto nesse recorte é exato, sem o fuso do navegador puxar um dia para trás.
+function dentroDoPeriodo(valor: any, p: Periodo): boolean {
+  if (!periodoAtivo(p)) return true;
+  const d = dataISO(valor);
+  if (!d) return false; // sem data não entra num filtro de data — senão o período não filtra nada
+  if (p.de && d < p.de) return false;
+  if (p.ate && d > p.ate) return false;
+  return true;
+}
+function FiltroPeriodo(props: { label: string; valor: Periodo; onChange: (p: Periodo) => void; testId: string }) {
+  const { label, valor, onChange, testId } = props;
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="relative inline-block text-left align-middle" data-testid={testId}>
+      <button
+        type="button"
+        className="px-3 py-2 border rounded-md text-sm bg-white dark:bg-gray-800 dark:border-gray-700 min-w-[170px] text-left"
+        onClick={() => setAberto(!aberto)}
+      >
+        {label}: {resumoPeriodo(valor)}
+      </button>
+      {periodoAtivo(valor) && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onChange(PERIODO_VAZIO); }}
+          className="ml-1 text-gray-400 hover:text-red-500 align-middle text-base leading-none"
+          title="Limpar filtro"
+          aria-label="Limpar filtro"
+        >
+          ×
+        </button>
+      )}
+      {aberto && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setAberto(false)} />
+          <div className="absolute z-50 mt-1 w-56 rounded-md border bg-white dark:bg-gray-800 dark:border-gray-700 shadow-lg p-2 space-y-2">
+            <label className="block text-xs text-gray-600 dark:text-gray-300">
+              De
+              <input
+                type="date"
+                value={valor.de}
+                onChange={(e) => onChange({ ...valor, de: e.target.value })}
+                className="mt-0.5 w-full border rounded px-1 py-1 text-sm bg-white dark:bg-gray-800"
+              />
+            </label>
+            <label className="block text-xs text-gray-600 dark:text-gray-300">
+              Até
+              <input
+                type="date"
+                value={valor.ate}
+                onChange={(e) => onChange({ ...valor, ate: e.target.value })}
+                className="mt-0.5 w-full border rounded px-1 py-1 text-sm bg-white dark:bg-gray-800"
+              />
+            </label>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+              Deixe um dos dois em branco para filtrar só por um lado. Cliente sem essa data não entra no resultado.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Cor do pin por situação: inativado = cinza, perdido = cinza escuro, lead = marrom; ativo = cor do dia.
 const SITUACAO_COLORS: Record<string, string> = { inativado: '#9ca3af', perdido: '#4b5563', lead: '#7b4b2a' };
 function pinColorFor(c: any): string {
@@ -432,7 +509,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                   </select>
                 </p>
                 <p className="font-medium">
-                  🧾 Último faturamento: {dataBR(customer.lastInvoiceDate) || 'sem faturamento'}
+                  🚚 Última entrega: {dataBR(customer.lastDeliveryDate) || 'sem entrega registrada'}
                 </p>
                 <p className="font-medium flex items-center gap-2">
                   🖥️ Tipo:
@@ -456,7 +533,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 )}
                 {!ehLead && (
                   <p className="font-medium">
-                    🧾 Último faturamento: {dataBR(customer.lastInvoiceDate) || 'sem faturamento'}
+                    🚚 Última entrega: {dataBR(customer.lastDeliveryDate) || 'sem entrega registrada'}
                   </p>
                 )}
               </>
@@ -493,6 +570,9 @@ export default function ClientsMap() {
   const [bairros, setBairros] = useState<string[]>([]);
   const [atendimentos, setAtendimentos] = useState<string[]>([]);
   const [semanas, setSemanas] = useState<string[]>([]);
+  // 📅 Períodos (de/até): entrega do último pedido e próxima visita agendada.
+  const [periodoEntrega, setPeriodoEntrega] = useState<Periodo>(PERIODO_VAZIO);
+  const [periodoVisita, setPeriodoVisita] = useState<Periodo>(PERIODO_VAZIO);
   // ⚡ A busca só entra no filtro depois de 300ms parado. Sem isso cada TECLA re-renderizava os
   // 1000+ pins do mapa e a aba congelava por dezenas de segundos.
   const [buscaAplicada, setBuscaAplicada] = useState("");
@@ -637,6 +717,8 @@ export default function ClientsMap() {
       periodicidades.length === 0 || alvoPeriodicidade.includes(String(c?.visitPeriodicity || '').toLowerCase());
     const passaAtendimento = (c: any) => atendimentos.length === 0 || atendimentos.includes(atendimentoDoPonto(c));
     const passaSemana = (c: any) => semanas.length === 0 || semanas.includes(semanaDoPonto(c));
+    const passaEntrega = (c: any) => dentroDoPeriodo((c as any)?.lastDeliveryDate, periodoEntrega);
+    const passaVisita = (c: any) => dentroDoPeriodo((c as any)?.nextVisitDate, periodoVisita);
 
     // 🔎 FILTROS DINÂMICOS (facetados): as opções de cada filtro saem dos pontos que estão NA TELA,
     // já com os OUTROS filtros aplicados — nunca de uma lista fixa de cadastro. Assim vendedor que
@@ -650,7 +732,8 @@ export default function ClientsMap() {
           (exceto === 'dia' || passaDia(c)) &&
           (exceto === 'periodicidade' || passaPeriodicidade(c)) &&
           (exceto === 'atendimento' || passaAtendimento(c)) &&
-          (exceto === 'semana' || passaSemana(c))
+          (exceto === 'semana' || passaSemana(c)) &&
+          passaEntrega(c) && passaVisita(c)
       );
 
     // Tipo do vendedor (CLT, PJ, Telemarketing, Canal) só para ORDENAR a lista.
@@ -693,7 +776,7 @@ export default function ClientsMap() {
     const opcoesSemana = SEMANA_OPTIONS.filter((s) => pontosParaSemana.some((c) => semanaDoPonto(c) === s));
 
     // Legenda: distribuição por dia dos ATIVOS que sobraram dos OUTROS filtros (antes do filtro de dia).
-    const semFiltroDeDia = baseDoMapa.filter((c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c) && passaAtendimento(c) && passaSemana(c));
+    const semFiltroDeDia = baseDoMapa.filter((c) => passaVendedor(c) && passaBairro(c) && passaPeriodicidade(c) && passaAtendimento(c) && passaSemana(c) && passaEntrega(c) && passaVisita(c));
     const ativosParaLegenda = semFiltroDeDia.filter((c) => ((c as any).situacao || 'ativo') === 'ativo');
     const customersByDay = {
       Segunda: ativosParaLegenda.filter((c) => getWeekdayName(c.weekdays) === 'Segunda'),
@@ -707,7 +790,7 @@ export default function ClientsMap() {
       activeCustomersWithCoords: semFiltroDeDia.filter(passaDia),
       opcoesVendedor, opcoesBairro, opcoesDia, opcoesPeriodicidade, opcoesAtendimento, opcoesSemana, customersByDay,
     };
-  }, [customers, isVendedor, user, buscaAplicada, sellers, bairros, dias, periodicidades, atendimentos, semanas, usersForType]);
+  }, [customers, isVendedor, user, buscaAplicada, sellers, bairros, dias, periodicidades, atendimentos, semanas, periodoEntrega, periodoVisita, usersForType]);
 
   // Centro do mapa (São Paulo como padrão, ou centro dos clientes)
   const defaultCenter: [number, number] = [-23.55052, -46.633308];
@@ -1035,7 +1118,23 @@ export default function ClientsMap() {
                 testId="select-semana-map"
               />
             </div>
-            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 || bairros.length > 0 || atendimentos.length > 0 || semanas.length > 0 ||
+            <div className="pt-[21px]">
+              <FiltroPeriodo
+                label="Última entrega"
+                valor={periodoEntrega}
+                onChange={setPeriodoEntrega}
+                testId="filtro-periodo-entrega-map"
+              />
+            </div>
+            <div className="pt-[21px]">
+              <FiltroPeriodo
+                label="Próxima visita"
+                valor={periodoVisita}
+                onChange={setPeriodoVisita}
+                testId="filtro-periodo-visita-map"
+              />
+            </div>
+            {(searchTerm || dias.length > 0 || sellers.length > 0 || periodicidades.length > 0 || bairros.length > 0 || atendimentos.length > 0 || semanas.length > 0 || periodoAtivo(periodoEntrega) || periodoAtivo(periodoVisita) ||
               situacoes.length !== 1 || situacoes[0] !== "Ativos") && (
               <Button
                 variant="outline"
@@ -1048,6 +1147,8 @@ export default function ClientsMap() {
                   setBairros([]);
                   setAtendimentos([]);
                   setSemanas([]);
+                  setPeriodoEntrega(PERIODO_VAZIO);
+                  setPeriodoVisita(PERIODO_VAZIO);
                   setSituacoes(["Ativos"]);
                 }}
                 data-testid="button-clear-filters"
