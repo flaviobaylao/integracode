@@ -1243,15 +1243,35 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     if (!hist.length || hist[hist.length - 1].role !== 'user') hist.push({ role: 'user', content: opts.incomingText });
     let chosenId = (!isIG && routing === 'keyword') ? pickAgentByKeyword(opts.incomingText, defId) : defId;
     try { const chk: any = await db.execute(sql`SELECT id FROM agentes_config WHERE id = ${chosenId} AND ativo = true LIMIT 1`); if (!chk.rows?.[0]) chosenId = defId; } catch { chosenId = defId; }
-    // Resposta a um disparo de rota do dia -> agente "Rota do Dia"
+    // Quem responde a um disparo fala com o agente DAQUELE assunto.
+    // ------------------------------------------------------------------
+    // Antes isso valia so para a rota do dia. O problema aparece na cobranca:
+    // o cliente recebe "consta 1 titulo em aberto", responde "ja paguei" — e
+    // a palavra-chave nao casa com nada, entao caia no agente padrao, que nao
+    // enxerga titulo nenhum. Agora o caso de uso do ULTIMO disparo manda: cada
+    // agente responde pelo tipo de atendimento que e o dele.
+    // O mapa e editavel sem deploy em system_settings.agentes_por_caso.
     try {
-      const rd: any = await db.execute(sql`SELECT 1 FROM official_dispatches
-        WHERE customer_phone = ${phone} AND use_case = 'rota_do_dia'
-          AND created_at > now() - interval '24 hours' LIMIT 1`);
-      if (rd.rows?.[0]) {
+      const padrao: Record<string, string> = {
+        rota_do_dia: 'Rota_do_Dia', entrega: 'Rota_do_Dia', pipeline: 'Rota_do_Dia',
+        cobranca: 'cobranca',
+        recompra: 'vendas', retomada: 'vendas', repescagem: 'vendas', sdr: 'vendas',
+      };
+      let mapa = padrao;
+      try {
+        const cfg = await getSetting('agentes_por_caso', '');
+        if (cfg) mapa = { ...padrao, ...JSON.parse(cfg) };
+      } catch {}
+      const horas = Number(await getSetting('agentes_por_caso_horas', '48')) || 48;
+      const rd: any = await db.execute(sql`SELECT use_case::text AS uc FROM official_dispatches
+        WHERE customer_phone = ${phone}
+          AND created_at > now() - (${String(horas)} || ' hours')::interval
+        ORDER BY created_at DESC LIMIT 1`);
+      const alvo = mapa[String(rd.rows?.[0]?.uc || '')];
+      if (alvo) {
         const ra: any = await db.execute(sql`SELECT id FROM agentes_config
-          WHERE id = 'Rota_do_Dia' AND ativo = true LIMIT 1`);
-        if (ra.rows?.[0]) chosenId = 'Rota_do_Dia';
+          WHERE id = ${alvo} AND ativo = true LIMIT 1`);
+        if (ra.rows?.[0]) chosenId = alvo;
       }
     } catch {}
     const gen = await generateAgentReply(chosenId, hist, ctx);
