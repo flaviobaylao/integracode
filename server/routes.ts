@@ -7441,54 +7441,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ? JSON.parse(customer.weekdays) 
               : customer.weekdays;
             
-            // Buscar última venda COMPLETED do order_history para base de cálculo
-            let lastCompletedSaleDate: Date | undefined;
-            
-            if (data.status === 'completed') {
-              // Se esta visita foi completed, usar hoje
-              lastCompletedSaleDate = lastVisitDate;
-            } else {
-              // Buscar última venda completed no histórico (ignora no_sale/failed)
-              const { db } = await import('./db');
-              const { orderHistory } = await import('../shared/schema');
-              const { eq, desc, and } = await import('drizzle-orm');
-              
-              const lastCompletedOrder = await db
-                .select({ orderDate: orderHistory.orderDate })
-                .from(orderHistory)
-                .where(and(
-                  eq(orderHistory.salesCardId, id),
-                  eq(orderHistory.status, 'completed')
-                ))
-                .orderBy(desc(orderHistory.orderDate))
-                .limit(1);
-              
-              if (lastCompletedOrder.length > 0 && lastCompletedOrder[0].orderDate) {
-                lastCompletedSaleDate = lastCompletedOrder[0].orderDate;
-                console.log(`📅 Última venda completed encontrada: ${lastCompletedSaleDate.toLocaleDateString('pt-BR')}`);
-              } else {
-                // Nunca teve venda completed
-                lastCompletedSaleDate = undefined;
-                console.log(`📅 Nenhuma venda completed encontrada - cliente novo ou sem vendas`);
-              }
+            // 🗓️ AGENDA POR PERIODICIDADE — NUNCA POR FATURAMENTO.
+            // A próxima visita segue o CADASTRO (dia da semana + periodicidade + semana do mês +
+            // data de início do fornecimento), não a data da última venda. Regeneramos a
+            // visit_agenda pela regra de calendário (regenerateCustomerAgenda respeita a semana do
+            // mês e a data de início) e derivamos a próxima visita do card a partir dela — assim
+            // Rota do Dia, Agenda da Carteira e o card mostram sempre a mesma data.
+            try {
+              await regenerateCustomerAgenda(currentCard.customerId);
+            } catch (regenErr: any) {
+              console.error('⚠️ [AGENDA] Falha ao regenerar agenda por periodicidade:', regenErr?.message);
             }
-            
-            const scheduleResult = calculateNextVisitDate({
-              weekdays: parsedWeekdays,
-              periodicity: customer.visitPeriodicity,
-              lastCompletedDate: lastCompletedSaleDate,
-              referenceDate: dataCalendario(hojeBR())
-            });
-            
+
+            // Próxima visita do card = 1ª data PENDENTE de amanhã em diante na visit_agenda.
+            const amanhaBR = dataCalendario(hojeBR());
+            amanhaBR.setDate(amanhaBR.getDate() + 1);
+            let proxVisitaData: Date | null = null;
+            try {
+              const prox = await db
+                .select({ scheduledDate: visitAgenda.scheduledDate })
+                .from(visitAgenda)
+                .where(and(
+                  eq(visitAgenda.customerId, currentCard.customerId),
+                  eq(visitAgenda.visitStatus, 'pending'),
+                  gte(visitAgenda.scheduledDate, amanhaBR)
+                ))
+                .orderBy(visitAgenda.scheduledDate)
+                .limit(1);
+              if (prox.length > 0 && prox[0].scheduledDate) proxVisitaData = new Date(prox[0].scheduledDate);
+            } catch (proxErr: any) {
+              console.error('⚠️ [AGENDA] Falha ao buscar próxima visita da agenda:', proxErr?.message);
+            }
+
+            // Fallback (agenda sem futura): calcula pela regra de calendário, ancorada no início
+            // do fornecimento — sem usar a data da última venda.
+            if (!proxVisitaData) {
+              const scheduleResult = calculateNextVisitDate({
+                weekdays: parsedWeekdays,
+                periodicity: customer.visitPeriodicity,
+                referenceDate: amanhaBR,
+                serviceStartDate: customer.serviceStartDate ? new Date(customer.serviceStartDate) : undefined
+              });
+              proxVisitaData = scheduleResult.nextDate;
+            }
+
             // Atualizar permanent card
             salesCard = await storage.updateSalesCard(id, {
               ...data,
               lastVisitDate: lastVisitDate,  // Sempre atualiza (qualquer visita)
-              nextVisitDate: scheduleResult.nextDate,
+              nextVisitDate: proxVisitaData,
               status: 'pending' // Permanent card sempre volta para pending
             });
-            
-            console.log(`✅ Permanent card atualizado - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${scheduleResult.nextDate.toLocaleDateString('pt-BR')}`);
+
+            console.log(`✅ Permanent card atualizado (agenda por periodicidade) - Última visita: ${lastVisitDate.toLocaleDateString('pt-BR')}, Próxima: ${proxVisitaData?.toLocaleDateString('pt-BR')}`);
           } else {
             // Fallback se cliente não tiver configuração completa
             salesCard = await storage.updateSalesCard(id, data);

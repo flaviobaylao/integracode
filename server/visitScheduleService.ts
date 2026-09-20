@@ -1115,32 +1115,14 @@ export async function updateExistingSalesCardsFromCustomer(customerId: string): 
     if (customerWeekdays.length > 0 && customerData.visitPeriodicity) {
       console.log(`   📅 Recalculando nextVisitDate com weekdays: ${JSON.stringify(customerWeekdays)}, periodicidade: ${customerData.visitPeriodicity}`);
       
-      // Buscar última venda completed do order_history para base de cálculo
-      const lastCompletedOrder = await db
-        .select({ orderDate: orderHistory.orderDate })
-        .from(orderHistory)
-        .where(and(
-          eq(orderHistory.salesCardId, card.id),
-          eq(orderHistory.status, 'completed')
-        ))
-        .orderBy(desc(orderHistory.orderDate))
-        .limit(1);
-      
-      const lastCompletedDate = lastCompletedOrder.length > 0 && lastCompletedOrder[0].orderDate 
-        ? lastCompletedOrder[0].orderDate 
-        : undefined;
-      
-      if (lastCompletedDate) {
-        console.log(`   📅 Última venda completed: ${lastCompletedDate.toLocaleDateString('pt-BR')}`);
-      } else {
-        console.log(`   📅 Nenhuma venda completed encontrada - calculando como cliente novo`);
-      }
-      
-      // Calcular nova nextVisitDate
+      // 🗓️ AGENDA POR PERIODICIDADE — NUNCA POR FATURAMENTO.
+      // A próxima visita do card segue o CADASTRO (dia da semana + periodicidade + data de início
+      // do fornecimento), não a data da última venda. A visit_agenda (fonte da Rota do Dia) é
+      // regenerada pela regra de calendário logo após esta atualização (regenerateCustomerAgenda),
+      // que respeita também a semana do mês.
       const scheduleResult = calculateNextVisitDate({
         weekdays: customerWeekdays,
         periodicity: customerData.visitPeriodicity as 'semanal' | 'quinzenal' | 'mensal',
-        lastCompletedDate: lastCompletedDate,
         referenceDate: dataCalendario(hojeBR()),
         serviceStartDate: customerData.serviceStartDate ? new Date(customerData.serviceStartDate) : undefined
       });
