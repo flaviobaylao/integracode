@@ -100,6 +100,7 @@ const DDL: string[] = [
   // Escopo da carteira (subconjunto): adicionadas via ALTER para tabelas de deploys antigos.
   `ALTER TABLE delegations ADD COLUMN IF NOT EXISTS scope_type varchar NOT NULL DEFAULT 'todos';`,
   `ALTER TABLE delegations ADD COLUMN IF NOT EXISTS scope_values jsonb;`,
+  `ALTER TABLE delegations ADD COLUMN IF NOT EXISTS scope_filters jsonb;`,
   `CREATE INDEX IF NOT EXISTS idx_deleg_customer ON delegation_customers (customer_id);`,
   `CREATE INDEX IF NOT EXISTS idx_deleg_to       ON delegation_customers (to_user_id);`,
   `CREATE TABLE IF NOT EXISTS user_permissions (
@@ -217,7 +218,43 @@ function ratear(clientes: Cli[], targets: string[], criteria: string) {
 //  cidades  -> apenas clientes cuja cidade está na lista
 //  bairros  -> apenas clientes cujo "Cidade|Bairro" está na lista
 //  dias     -> apenas clientes atendidos em algum dos dias de rota listados
-export type Escopo = { tipo?: "todos" | "clientes" | "cidades" | "bairros" | "dias"; valores?: string[] };
+export type Escopo = {
+  // formato legado (uma dimensão só) — ainda aceito para não quebrar chamadas antigas
+  tipo?: "todos" | "clientes" | "cidades" | "bairros" | "dias";
+  valores?: string[];
+  // formato atual: dimensões combináveis
+  filtros?: EscopoFiltros;
+};
+
+// Escopo combinado. Regra em uma linha:
+//   (clientes ∪ cidades ∪ bairros)  ∩  (dias)
+// Ou seja: clientes, cidades e bairros SOMAM entre si — "Goiânia inteira MAIS o
+// bairro Centro de Aparecida" — e o dia de rota CRUZA com esse conjunto, porque o
+// que o admin quer é "a rota de quarta dessa região". Dimensão vazia não restringe.
+export type EscopoFiltros = { clientes?: string[]; cidades?: string[]; bairros?: string[]; dias?: string[] };
+
+const lista = (v: any): string[] => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
+export function temFiltros(f?: EscopoFiltros): boolean {
+  return !!f && (lista(f.clientes).length + lista(f.cidades).length + lista(f.bairros).length + lista(f.dias).length) > 0;
+}
+
+// Resumo gravado em scope_type/scope_values: mantém as delegações legíveis por
+// telas e código que ainda só conhecem o formato de uma dimensão.
+const DIMS = ["clientes", "cidades", "bairros", "dias"] as const;
+export function resumoTipo(e?: Escopo): string {
+  if (temFiltros(e?.filtros)) {
+    const usadas = DIMS.filter((d) => lista((e!.filtros as any)[d]).length);
+    return usadas.length === 1 ? usadas[0] : "combinado";
+  }
+  return e?.tipo ?? "todos";
+}
+export function resumoValores(e?: Escopo): string[] | null {
+  if (temFiltros(e?.filtros)) {
+    const todos = DIMS.flatMap((d) => lista((e!.filtros as any)[d]).map((v) => (d === "dias" ? v : `${d}:${v}`)));
+    return todos.length ? todos : null;
+  }
+  return lista(e?.valores).length ? lista(e?.valores) : null;
+}
 
 // normaliza texto para comparar cidade/bairro (sem acento, sem caixa, sem espaço sobrando)
 const norm = (v: any): string =>
@@ -237,8 +274,41 @@ export function diasDoCliente(c: any): string[] {
   try { return normalizeWeekdayInput(c?.weekdays) as string[]; } catch { return []; }
 }
 
+// chave de bairro tolerante: aceita "Cidade|Bairro" ou só o bairro (retrocompatível)
+const chaveBairroTolerante = (v: any) =>
+  String(v).includes("|") ? chaveBairro(String(v).split("|")[0], String(v).split("|")[1]) : norm(v);
+
+// aplica o escopo COMBINADO: (clientes ∪ cidades ∪ bairros) ∩ (dias)
+function filtrarPorFiltros(rows: any[], f: EscopoFiltros): any[] {
+  const cli = new Set(lista(f.clientes));
+  const cid = new Set(lista(f.cidades).map(norm));
+  const bai = new Set(lista(f.bairros).map(chaveBairroTolerante));
+  const dias = new Set(lista(f.dias));
+  const temQuem = cli.size || cid.size || bai.size;
+
+  return rows.filter((c: any) => {
+    // dimensão "quem": união. Vazia = não restringe (carteira inteira).
+    if (temQuem) {
+      const bk = chaveBairro(c.city, c.neighborhood);
+      const dentro = cli.has(String(c.id)) || cid.has(norm(c.city)) || bai.has(bk) || bai.has(norm(c.neighborhood));
+      if (!dentro) return false;
+    }
+    // dimensão "quando": cruza com a de cima. Vazia = todos os dias.
+    if (dias.size) {
+      const ds = diasDoCliente(c);
+      if (!ds.length) return dias.has(SEM_DIA);
+      if (!ds.some((d) => dias.has(d))) return false;
+    }
+    return true;
+  });
+}
+
 // aplica o escopo sobre as linhas cruas de customers
 function filtrarPorEscopo(rows: any[], escopo?: Escopo): any[] {
+  if (temFiltros(escopo?.filtros)) return filtrarPorFiltros(rows, escopo!.filtros!);
+  // fail-safe: filtros declarados mas todos vazios NÃO podem virar "carteira
+  // inteira" — se veio o objeto, o admin quis recortar algo.
+  if (escopo?.filtros) return [];
   const tipo = escopo?.tipo ?? "todos";
   const valores = Array.isArray(escopo?.valores) ? escopo!.valores! : [];
   if (tipo === "todos") return rows;
@@ -266,8 +336,7 @@ function filtrarPorEscopo(rows: any[], escopo?: Escopo): any[] {
     });
   }
   if (tipo === "bairros") {
-    // aceita tanto "Cidade|Bairro" quanto só o bairro (retrocompatível)
-    const set = new Set(valores.map((v) => (String(v).includes("|") ? chaveBairro(String(v).split("|")[0], String(v).split("|")[1]) : norm(v))));
+    const set = new Set(valores.map(chaveBairroTolerante));
     return rows.filter((c: any) => set.has(chaveBairro(c.city, c.neighborhood)) || set.has(norm(c.neighborhood)));
   }
   return rows;
@@ -525,8 +594,11 @@ export function registerDelegationRoutes(app: Express) {
       reason: b.reason ?? null,
       createdBy,
       // escopo da carteira (todos / clientes / cidades / bairros)
-      scopeType: b.escopo?.tipo ?? "todos",
-      scopeValues: Array.isArray(b.escopo?.valores) && b.escopo.valores.length ? b.escopo.valores : null,
+      // scopeType/scopeValues continuam gravados (resumo legível + leitura por
+      // código antigo); scopeFilters é a verdade do recorte combinado.
+      scopeType: resumoTipo(b.escopo),
+      scopeValues: resumoValores(b.escopo),
+      scopeFilters: temFiltros(b.escopo?.filtros) ? b.escopo!.filtros! : null,
     } as any).returning();
 
     if (b.type === "acesso_funcao") {
