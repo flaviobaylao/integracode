@@ -898,6 +898,25 @@ async function main() {
   check(/agentes_por_caso/.test(fonte) && /cobranca:\s*'cobranca'/.test(fonte),
     'comunicação: o caso de uso do último disparo escolhe o agente (cobrança → agente de cobrança)');
 
+  // Cliente INATIVO que ainda deve: some da lista de ativos, mas a divida nao
+  // some. Se o painel so mostrasse o total da lista, o numero nao bateria com
+  // Contas a Receber e quem olha concluiria que um dos dois esta errado.
+  await raw(`INSERT INTO customers (id, name, phone, seller_id, is_active) VALUES
+             ('pc-morto', 'Bar que Fechou', '5562988880003', 'v1', false) ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date)
+             VALUES ('pc-morto', 'Bar que Fechou', 250, 0, 'vencida', (now() - interval '60 days')::date, (now() - interval '90 days')::date)`);
+  const semInativos = await pcom.listarClientes({});
+  const comInativos = await pcom.listarClientes({ incluirInativos: true });
+  check(semInativos.resumo.debitoForaDaLista >= 250
+     && semInativos.resumo.debitoVivoGeral > semInativos.resumo.debitoTotal,
+    'comunicação: o painel diz quanto de dívida está FORA da lista (R$ ' + semInativos.resumo.debitoForaDaLista + ')');
+  check(!semInativos.itens.some((i: any) => i.id === 'pc-morto')
+     && comInativos.itens.some((i: any) => i.id === 'pc-morto' && i.ativo === false && i.debitoTotal === 250),
+    'comunicação: "inativos que devem" traz o devedor inativo, marcado como inativo');
+  const semDevedorInativo = comInativos.itens.filter((i: any) => !i.ativo && i.debitoTotal <= 0);
+  check(semDevedorInativo.length === 0,
+    'comunicação: inativo SEM dívida continua fora — a opção não despeja a base inativa na tela');
+
   // O dia BR de uma coluna depende do TIPO dela, e confiar na memoria sobre isso
   // ja jogou todo disparo feito depois das 18h BRT para o dia seguinte no painel.
   const { diaBR, colunaTemFuso } = await import('../server/fuso-coluna');
