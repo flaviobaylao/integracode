@@ -123,7 +123,7 @@ export default function AcessosEDelegacoes() {
     if (escopoTipo === "cidades")
       return (carteira.cidades || [])
         .filter((c: any) => hit(c.cidade))
-        .map((c: any) => ({ value: c.cidade, label: c.cidade, qtd: c.qtd }));
+        .map((c: any) => ({ value: c.key, label: c.cidade, qtd: c.qtd }));
     if (escopoTipo === "bairros")
       return (carteira.bairros || [])
         .filter((b: any) => hit(`${b.bairro} ${b.cidade}`))
@@ -138,7 +138,7 @@ export default function AcessosEDelegacoes() {
     if (!escopoValores.length) return 0;
     if (escopoTipo === "clientes") return escopoValores.length;
     const set = new Set(escopoValores);
-    const campo = escopoTipo === "cidades" ? "cidade" : "bairroKey";
+    const campo = escopoTipo === "cidades" ? "cidadeKey" : "bairroKey";
     return (carteira.clientes || []).filter((c: any) => set.has(c[campo])).length;
   }, [carteira, escopoTipo, escopoValores]);
 
