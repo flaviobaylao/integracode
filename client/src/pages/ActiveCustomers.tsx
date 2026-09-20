@@ -32,6 +32,7 @@ import GeocodeAllButton from "@/components/GeocodeAllButton";
 import CustomerHistoryBox from "@/components/CustomerHistoryBox";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
+import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { 
   Upload, 
@@ -252,7 +253,7 @@ export default function ActiveCustomers() {
   const [bulkStartDate, setBulkStartDate] = useState("");
   const [bulkSemana, setBulkSemana] = useState("");
   const [bulkGeocode, setBulkGeocode] = useState(false);
-  const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["ultima","Última do mês"]];
+  const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["4","4ª do mês"],["ultima","Última do mês"]];
   const { toast } = useToast();
 
   const updatePhoneMutation = useMutation({
@@ -1700,7 +1701,9 @@ export default function ActiveCustomers() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium mb-1">Semana do Mês</label>
+                  <label className="block text-xs font-medium mb-1">Semana do Mês
+                    <span title={AJUDA_SEMANA_ATENDIMENTO} aria-label="O que cada opção faz" className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+                  </label>
                   <select value={bulkSemana} onChange={(e) => setBulkSemana(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-semana">
                     <option value="">— não alterar —</option>
                     {SEMANA_OPCOES.map(([v, l]) => (<option key={v} value={v}>{l}</option>))}

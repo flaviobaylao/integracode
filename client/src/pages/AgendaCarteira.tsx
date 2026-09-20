@@ -15,6 +15,7 @@
 // -----------------------------------------------------------------------------
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
+import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,10 +58,10 @@ const DIAS = [
 const COD_LONGO: Record<string, string> = { Seg: "Segunda", Ter: "Terça", Qua: "Quarta", Qui: "Quinta", Sex: "Sexta", Sab: "Sábado", Dom: "Domingo" };
 const PERIODICIDADES = ["semanal", "quinzenal", "mensal"];
 // Segundo eixo da rota: em QUAL semana do mês o cliente é atendido.
-const SEMANAS = ["toda", "impar", "par", "1", "2", "3", "ultima"] as const;
+const SEMANAS = ["toda", "impar", "par", "1", "2", "3", "4", "ultima"] as const;
 const ROTULO_SEMANA: Record<string, string> = {
   toda: "Toda semana", impar: "1ª e 3ª do mês", par: "2ª e 4ª do mês",
-  "1": "1ª do mês", "2": "2ª do mês", "3": "3ª do mês", ultima: "Última do mês",
+  "1": "1ª do mês", "2": "2ª do mês", "3": "3ª do mês", "4": "4ª do mês", ultima: "Última do mês",
 };
 const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 /**
@@ -1078,7 +1079,9 @@ function EditorCliente(props: {
               </Select>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Semana do mês</label>
+              <label className="text-xs text-muted-foreground block mb-1">Semana do mês
+                <span title={AJUDA_SEMANA_ATENDIMENTO} aria-label="O que cada opção faz" className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+              </label>
               <Select value={semana} onValueChange={setSemana} disabled={travado}>
                 <SelectTrigger className="h-8 text-sm" data-testid={`sel-semana-${item.id}`}><SelectValue /></SelectTrigger>
                 <SelectContent>
