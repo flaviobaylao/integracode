@@ -97,6 +97,9 @@ const DDL: string[] = [
      customer_id   varchar NOT NULL,
      to_user_id    varchar NOT NULL
    );`,
+  // Escopo da carteira (subconjunto): adicionadas via ALTER para tabelas de deploys antigos.
+  `ALTER TABLE delegations ADD COLUMN IF NOT EXISTS scope_type varchar NOT NULL DEFAULT 'todos';`,
+  `ALTER TABLE delegations ADD COLUMN IF NOT EXISTS scope_values jsonb;`,
   `CREATE INDEX IF NOT EXISTS idx_deleg_customer ON delegation_customers (customer_id);`,
   `CREATE INDEX IF NOT EXISTS idx_deleg_to       ON delegation_customers (to_user_id);`,
   `CREATE TABLE IF NOT EXISTS user_permissions (
@@ -208,9 +211,53 @@ function ratear(clientes: Cli[], targets: string[], criteria: string) {
   return recs;
 }
 
-// carteira de um vendedor como lista de Cli (tolerante a colunas ausentes)
-async function carteiraDe(sellerId: string): Promise<Cli[]> {
-  const rows = await db.select().from(customers).where(eq(customers.sellerId, sellerId));
+// ---- Escopo da carteira: delegar tudo, ou só um subconjunto -----------------
+//  todos    -> carteira inteira (comportamento histórico)
+//  clientes -> apenas os customerIds listados
+//  cidades  -> apenas clientes cuja cidade está na lista
+//  bairros  -> apenas clientes cujo "Cidade|Bairro" está na lista
+export type Escopo = { tipo?: "todos" | "clientes" | "cidades" | "bairros"; valores?: string[] };
+
+// normaliza texto para comparar cidade/bairro (sem acento, sem caixa, sem espaço sobrando)
+const norm = (v: any): string =>
+  String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+// chave canônica de bairro (qualificado pela cidade — "Centro" existe em várias cidades)
+export const chaveBairro = (cidade: any, bairro: any): string => `${norm(cidade)}|${norm(bairro)}`;
+
+// aplica o escopo sobre as linhas cruas de customers
+function filtrarPorEscopo(rows: any[], escopo?: Escopo): any[] {
+  const tipo = escopo?.tipo ?? "todos";
+  const valores = Array.isArray(escopo?.valores) ? escopo!.valores! : [];
+  if (tipo === "todos") return rows;
+  // fail-safe: recorte declarado mas sem itens NÃO pode virar "carteira inteira"
+  // (delegar tudo por engano é o pior erro possível aqui) — devolve vazio e a
+  // criação é recusada com 400 pela rota.
+  if (!valores.length) return [];
+  if (tipo === "clientes") {
+    const set = new Set(valores.map(String));
+    return rows.filter((c: any) => set.has(String(c.id)));
+  }
+  if (tipo === "cidades") {
+    const set = new Set(valores.map(norm));
+    return rows.filter((c: any) => set.has(norm(c.city ?? c.cidade)));
+  }
+  if (tipo === "bairros") {
+    // aceita tanto "Cidade|Bairro" quanto só o bairro (retrocompatível)
+    const set = new Set(valores.map((v) => (String(v).includes("|") ? chaveBairro(String(v).split("|")[0], String(v).split("|")[1]) : norm(v))));
+    return rows.filter((c: any) => set.has(chaveBairro(c.city, c.neighborhood)) || set.has(norm(c.neighborhood)));
+  }
+  return rows;
+}
+
+// linhas cruas da carteira de um vendedor (sem escopo)
+async function carteiraRaw(sellerId: string): Promise<any[]> {
+  return await db.select().from(customers).where(eq(customers.sellerId, sellerId));
+}
+
+// carteira de um vendedor como lista de Cli (tolerante a colunas ausentes),
+// já recortada pelo escopo (clientes / cidades / bairros) quando informado.
+async function carteiraDe(sellerId: string, escopo?: Escopo): Promise<Cli[]> {
+  const rows = filtrarPorEscopo(await carteiraRaw(sellerId), escopo);
   return rows.map((c: any) => ({
     id: c.id,
     // segmento vem do CNAE (segmento_principal); faturamento usa o último valor de
@@ -360,11 +407,47 @@ export function registerDelegationRoutes(app: Express) {
     res.json(rows.map((r) => ({ ...r, targets: byDeleg[r.id] || [] })));
   }));
 
+  // Carteira do titular: alimenta os seletores de escopo (clientes / cidades /
+  // bairros) da aba "Delegar Carteira". Só leitura, nunca persiste.
+  app.get("/api/delegations/carteira/:sellerId", authenticateAdmin, safe(async (req, res) => {
+    await ensureModuleTables();
+    const rows = await carteiraRaw(req.params.sellerId);
+    const clientes = rows.map((c: any) => ({
+      id: c.id,
+      nome: c.fantasyName || c.name || c.id,
+      cidade: c.city || "",
+      bairro: c.neighborhood || "",
+      bairroKey: chaveBairro(c.city, c.neighborhood),
+      segmento: c.segmentoPrincipal ?? "Sem segmento",
+      valor: Number(c.lastSaleValue ?? 0),
+      ativo: c.isActive !== false,
+    })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+    // agregados para os filtros (com contagem, para o admin saber o tamanho do recorte)
+    const porCidade: Record<string, { cidade: string; qtd: number; valor: number }> = {};
+    const porBairro: Record<string, { key: string; cidade: string; bairro: string; qtd: number; valor: number }> = {};
+    for (const c of clientes) {
+      const ck = c.cidade || "(sem cidade)";
+      (porCidade[ck] ||= { cidade: ck, qtd: 0, valor: 0 });
+      porCidade[ck].qtd++; porCidade[ck].valor += c.valor;
+      const bk = c.bairroKey;
+      (porBairro[bk] ||= { key: bk, cidade: ck, bairro: c.bairro || "(sem bairro)", qtd: 0, valor: 0 });
+      porBairro[bk].qtd++; porBairro[bk].valor += c.valor;
+    }
+    res.json({
+      total: clientes.length,
+      clientes,
+      cidades: Object.values(porCidade).sort((a, b) => a.cidade.localeCompare(b.cidade, "pt-BR")),
+      bairros: Object.values(porBairro).sort((a, b) =>
+        a.cidade.localeCompare(b.cidade, "pt-BR") || a.bairro.localeCompare(b.bairro, "pt-BR")),
+    });
+  }));
+
   // Pré-visualização do rateio (não persiste)
   app.post("/api/delegations/preview", authenticateAdmin, safe(async (req, res) => {
-    const { fromUserId, targets, criteria } = req.body as { fromUserId: string; targets: string[]; criteria: string };
+    const { fromUserId, targets, criteria, escopo } = req.body as { fromUserId: string; targets: string[]; criteria: string; escopo?: Escopo };
     if (!fromUserId || !Array.isArray(targets)) return res.json([]);
-    const clientes = await carteiraDe(fromUserId);
+    const clientes = await carteiraDe(fromUserId, escopo);
     res.json(ratear(clientes, targets, criteria));
   }));
 
@@ -393,12 +476,20 @@ export function registerDelegationRoutes(app: Express) {
       autoReturn: b.autoReturn ?? true,
       reason: b.reason ?? null,
       createdBy,
+      // escopo da carteira (todos / clientes / cidades / bairros)
+      scopeType: b.escopo?.tipo ?? "todos",
+      scopeValues: Array.isArray(b.escopo?.valores) && b.escopo.valores.length ? b.escopo.valores : null,
     } as any).returning();
 
     if (b.type === "acesso_funcao") {
       if (targets[0]) await db.insert(delegationTargets).values({ delegationId: deleg.id, toUserId: targets[0] });
     } else {
-      const clientes = await carteiraDe(b.fromUserId);
+      const clientes = await carteiraDe(b.fromUserId, b.escopo);
+      if (!clientes.length) {
+        // recorte vazio: nada a delegar — desfaz para não deixar delegação órfã
+        await db.delete(delegations).where(eq(delegations.id, deleg.id));
+        return res.status(400).json({ error: "O escopo selecionado não contém nenhum cliente da carteira de origem." });
+      }
       const recs = ratear(clientes, targets, b.criteria ?? "nenhum");
       for (const r of recs) {
         await db.insert(delegationTargets).values({
