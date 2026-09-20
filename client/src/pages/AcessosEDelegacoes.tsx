@@ -52,7 +52,21 @@ function restanteStr(endsAt: string) {
 const ESCOPO_LABEL: Record<string,string> = { clientes: "clientes específicos", cidades: "cidade(s)", bairros: "bairro(s)", dias: "dia(s) de rota" };
 // bucket dos clientes sem dia de rota cadastrado (espelha SEM_DIA do backend)
 const SEM_DIA = "__sem_dia__";
+// dimensões combináveis do recorte
+type Dim = "clientes" | "cidades" | "bairros" | "dias";
+type Opc = { value: string; label: string; qtd: number };
+const DIMS: Dim[] = ["clientes", "cidades", "bairros", "dias"];
+const DIM_BOTAO: Record<Dim, string> = { clientes: "Clientes", cidades: "Cidades", bairros: "Bairros", dias: "Dia de rota" };
+const DIM_BUSCA: Record<Dim, string> = { clientes: "Buscar cliente…", cidades: "Buscar cidade…", bairros: "Buscar bairro…", dias: "" };
 function escopoLabel(d: any) {
+  const f = d?.scopeFilters;
+  if (f) {
+    const partes = (["clientes","cidades","bairros","dias"] as const)
+      .filter(k => Array.isArray(f[k]) && f[k].length)
+      .map(k => `${f[k].length} ${ESCOPO_LABEL[k]}`);
+    if (!partes.length) return null;
+    return <> · <span className="text-indigo-600">recorte: {partes.join(" + ")}</span></>;
+  }
   const t = d?.scopeType || "todos";
   if (t === "todos") return null;
   const n = Array.isArray(d?.scopeValues) ? d.scopeValues.length : 0;
@@ -97,10 +111,12 @@ export default function AcessosEDelegacoes() {
   const [criteria, setCriteria] = useState<string>("segmento_faturamento");
   const [ini, setIni] = useState(""); const [fim, setFim] = useState("");
 
-  // ---- escopo da carteira: tudo, ou só clientes / cidades / bairros ----
-  const [escopoTipo, setEscopoTipo] = useState<"todos"|"clientes"|"cidades"|"bairros"|"dias">("todos");
-  const [escopoValores, setEscopoValores] = useState<string[]>([]);
-  const [buscaEscopo, setBuscaEscopo] = useState("");
+  // ---- escopo da carteira: dimensões COMBINÁVEIS ----
+  // Regra: clientes + cidades + bairros SOMAM entre si; o dia de rota CRUZA com
+  // esse conjunto. Nenhuma dimensão ativa = carteira inteira.
+  const [dimsAtivas, setDimsAtivas] = useState<Dim[]>([]);
+  const [escopoSel, setEscopoSel] = useState<Record<Dim, string[]>>({ clientes: [], cidades: [], bairros: [], dias: [] });
+  const [buscaEscopo, setBuscaEscopo] = useState<Record<Dim, string>>({ clientes: "", cidades: "", bairros: "", dias: "" });
 
   // carteira do titular (alimenta os seletores de escopo)
   const { data: carteira } = useQuery<any>({
@@ -110,56 +126,69 @@ export default function AcessosEDelegacoes() {
   });
 
   // trocar o titular invalida o recorte anterior (ids/cidades são de outra carteira)
-  useEffect(() => { setEscopoValores([]); setBuscaEscopo(""); }, [fromUserId]);
-  useEffect(() => { setEscopoValores([]); setBuscaEscopo(""); }, [escopoTipo]);
+  useEffect(() => {
+    setDimsAtivas([]);
+    setEscopoSel({ clientes: [], cidades: [], bairros: [], dias: [] });
+    setBuscaEscopo({ clientes: "", cidades: "", bairros: "", dias: "" });
+  }, [fromUserId]);
 
-  // opções do seletor conforme o tipo de escopo, já filtradas pela busca
-  const opcoesEscopo = useMemo(() => {
-    if (!carteira) return [] as { value: string; label: string; qtd: number }[];
-    const q = buscaEscopo.trim().toLowerCase();
+  // opções de cada dimensão, já filtradas pela busca daquela dimensão
+  const opcoesDim = (dim: Dim): Opc[] => {
+    if (!carteira) return [];
+    const q = (buscaEscopo[dim] || "").trim().toLowerCase();
     const hit = (t: string) => !q || t.toLowerCase().includes(q);
-    if (escopoTipo === "clientes")
+    if (dim === "clientes")
       return (carteira.clientes || [])
         .filter((c: any) => hit(`${c.nome} ${c.cidade} ${c.bairro}`))
         .map((c: any) => ({ value: c.id, label: `${c.nome}${c.cidade ? ` · ${c.cidade}` : ""}${c.bairro ? ` / ${c.bairro}` : ""}`, qtd: 1 }));
-    if (escopoTipo === "cidades")
-      return (carteira.cidades || [])
-        .filter((c: any) => hit(c.cidade))
+    if (dim === "cidades")
+      return (carteira.cidades || []).filter((c: any) => hit(c.cidade))
         .map((c: any) => ({ value: c.key, label: c.cidade, qtd: c.qtd }));
-    if (escopoTipo === "bairros")
-      return (carteira.bairros || [])
-        .filter((b: any) => hit(`${b.bairro} ${b.cidade}`))
+    if (dim === "bairros")
+      return (carteira.bairros || []).filter((b: any) => hit(`${b.bairro} ${b.cidade}`))
         .map((b: any) => ({ value: b.key, label: `${b.bairro} · ${b.cidade}`, qtd: b.qtd }));
-    if (escopoTipo === "dias")
-      return (carteira.dias || []).map((d: any) => ({ value: d.key, label: d.dia, qtd: d.qtd }));
-    return [];
-  }, [carteira, escopoTipo, buscaEscopo]);
+    return (carteira.dias || []).map((d: any) => ({ value: d.key, label: d.dia, qtd: d.qtd }));
+  };
 
-  // quantos clientes o recorte atual alcança (feedback antes de confirmar)
+  // só conta o que está numa dimensão ATIVA (desligar a dimensão não deve deixar
+  // resíduo marcado influenciando o recorte)
+  const sel = (dim: Dim): string[] => (dimsAtivas.includes(dim) ? escopoSel[dim] : []);
+  const filtrosAtivos = () => {
+    const f: Record<string, string[]> = {};
+    for (const d of DIMS) if (sel(d).length) f[d] = sel(d);
+    return f;
+  };
+  const dimVaziaAtiva = dimsAtivas.find(d => !escopoSel[d].length);
+
+  // quantos clientes o recorte atual alcança — MESMA regra do backend:
+  // (clientes ∪ cidades ∪ bairros) ∩ (dias)
   const clientesNoEscopo = useMemo(() => {
     if (!carteira) return 0;
-    if (escopoTipo === "todos") return carteira.total || 0;
-    if (!escopoValores.length) return 0;
-    if (escopoTipo === "clientes") return escopoValores.length;
-    const set = new Set(escopoValores);
-    if (escopoTipo === "dias") {
-      // um cliente de Seg+Qua conta uma vez só, mesmo com os dois dias marcados
-      return (carteira.clientes || []).filter((c: any) => {
+    const cli = new Set(sel("clientes")), cid = new Set(sel("cidades")), bai = new Set(sel("bairros"));
+    const dias = new Set(sel("dias"));
+    const temQuem = cli.size || cid.size || bai.size;
+    if (!temQuem && !dias.size) return carteira.total || 0;
+    return (carteira.clientes || []).filter((c: any) => {
+      if (temQuem && !(cli.has(c.id) || cid.has(c.cidadeKey) || bai.has(c.bairroKey))) return false;
+      if (dias.size) {
         const ds: string[] = c.dias || [];
-        return ds.length ? ds.some((d) => set.has(d)) : set.has(SEM_DIA);
-      }).length;
-    }
-    const campo = escopoTipo === "cidades" ? "cidadeKey" : "bairroKey";
-    return (carteira.clientes || []).filter((c: any) => set.has(c[campo])).length;
-  }, [carteira, escopoTipo, escopoValores]);
+        return ds.length ? ds.some((d) => dias.has(d)) : dias.has(SEM_DIA);
+      }
+      return true;
+    }).length;
+  }, [carteira, dimsAtivas, escopoSel]);
 
-  const escopoBody = () => ({ tipo: escopoTipo, valores: escopoTipo === "todos" ? [] : escopoValores });
-  const toggleEscopo = (v: string) =>
-    setEscopoValores(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
+  // sem nenhuma dimensão ativa não mandamos "filtros": o backend trata objeto
+  // presente e vazio como recorte inválido (não como carteira inteira).
+  const escopoBody = () => (dimsAtivas.length ? { filtros: filtrosAtivos() } : {});
+  const toggleEscopo = (dim: Dim, v: string) =>
+    setEscopoSel(prev => ({ ...prev, [dim]: prev[dim].includes(v) ? prev[dim].filter(x => x !== v) : [...prev[dim], v] }));
+  const toggleDim = (dim: Dim) =>
+    setDimsAtivas(prev => prev.includes(dim) ? prev.filter(d => d !== dim) : [...prev, dim]);
 
   const { data: preview = [] } = useQuery<any[]>({
-    queryKey: ["/api/delegations/preview", fromUserId, targets, criteria, modo, escopoTipo, escopoValores],
-    enabled: !!fromUserId && targets.length > 0 && (escopoTipo === "todos" || escopoValores.length > 0),
+    queryKey: ["/api/delegations/preview", fromUserId, targets, criteria, modo, dimsAtivas, escopoSel],
+    enabled: !!fromUserId && targets.length > 0 && !dimVaziaAtiva,
     queryFn: () => apiRequest("POST", "/api/delegations/preview", {
       fromUserId, targets, criteria: modo === "transferencia" ? "nenhum" : criteria,
       escopo: escopoBody(),
@@ -190,8 +219,8 @@ export default function AcessosEDelegacoes() {
   const criarCarteira = () => {
     if (!fromUserId || !targets.length || !ini || !fim)
       return toast({ title: "Campos incompletos", variant: "destructive" });
-    if (escopoTipo !== "todos" && !escopoValores.length)
-      return toast({ title: "Escolha o recorte", description: "Selecione ao menos um item do escopo (cliente, cidade, bairro ou dia de rota).", variant: "destructive" });
+    if (dimVaziaAtiva)
+      return toast({ title: "Recorte incompleto", description: `Selecione ao menos um item em "${ESCOPO_LABEL[dimVaziaAtiva]}" ou desligue essa dimensão.`, variant: "destructive" });
     createMut.mutate({
       type: modo === "transferencia" ? "carteira_transferencia" : "carteira_rateio",
       fromUserId, targets, criteria: modo === "transferencia" ? "nenhum" : criteria,
@@ -455,61 +484,71 @@ export default function AcessosEDelegacoes() {
               </select>
             </label>
 
-            {/* ---- Escopo: carteira inteira ou recorte por cliente/cidade/bairro ---- */}
+            {/* ---- Escopo: dimensões combináveis (clientes/cidades/bairros somam; dia cruza) ---- */}
             <div className="space-y-2">
               <span className="block text-xs font-semibold text-gray-500 uppercase">O que delegar</span>
               <div className="grid grid-cols-5 gap-1">
-                {([
-                  ["todos", "Carteira inteira"],
-                  ["clientes", "Clientes"],
-                  ["cidades", "Cidades"],
-                  ["bairros", "Bairros"],
-                  ["dias", "Dia de rota"],
-                ] as const).map(([k, label]) => (
-                  <Button key={k} size="sm" className="text-xs px-1"
-                    variant={escopoTipo === k ? "default" : "outline"}
-                    onClick={() => setEscopoTipo(k)}>{label}</Button>
+                <Button size="sm" className="text-xs px-1"
+                  variant={dimsAtivas.length ? "outline" : "default"}
+                  onClick={() => { setDimsAtivas([]); setEscopoSel({ clientes: [], cidades: [], bairros: [], dias: [] }); }}>
+                  Carteira inteira
+                </Button>
+                {DIMS.map((d) => (
+                  <Button key={d} size="sm" className="text-xs px-1"
+                    variant={dimsAtivas.includes(d) ? "default" : "outline"}
+                    onClick={() => toggleDim(d)}>{DIM_BOTAO[d]}</Button>
                 ))}
               </div>
 
-              {!fromUserId && escopoTipo !== "todos" && (
-                <p className="text-xs text-gray-400">Selecione a carteira de origem para listar {escopoTipo === "dias" ? "os dias de rota" : escopoTipo}.</p>
+              {dimsAtivas.length > 1 && (
+                <p className="text-xs text-gray-500">
+                  Clientes, cidades e bairros <strong>somam</strong> entre si; o dia de rota <strong>cruza</strong> com essa seleção.
+                </p>
               )}
 
-              {fromUserId && escopoTipo !== "todos" && (
-                <div className="border rounded-lg">
-                  <div className="flex items-center gap-2 p-2 border-b">
-                    {escopoTipo === "dias"
-                      ? <span className="flex-1 text-xs text-gray-500">Dias em que a rota do titular será atendida pelo delegado (dentro do período abaixo).</span>
-                      : <input
-                          className="flex-1 border rounded px-2 py-1 text-sm"
-                          placeholder={escopoTipo === "clientes" ? "Buscar cliente…" : escopoTipo === "cidades" ? "Buscar cidade…" : "Buscar bairro…"}
-                          value={buscaEscopo} onChange={e => setBuscaEscopo(e.target.value)} />}
-                    <button type="button" className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
-                      onClick={() => setEscopoValores(opcoesEscopo.map((o: any) => o.value))}>Todos</button>
-                    <button type="button" className="text-xs text-gray-500 hover:underline whitespace-nowrap"
-                      onClick={() => setEscopoValores([])}>Limpar</button>
-                  </div>
-                  <div className="max-h-52 overflow-auto p-1">
-                    {opcoesEscopo.length === 0 && (
-                      <p className="text-xs text-gray-400 p-2">Nenhum resultado nesta carteira.</p>
-                    )}
-                    {opcoesEscopo.map((o: any) => (
-                      <label key={o.value} className="flex items-center gap-2 px-2 py-1 text-sm hover:bg-gray-50 rounded cursor-pointer">
-                        <input type="checkbox" checked={escopoValores.includes(o.value)} onChange={() => toggleEscopo(o.value)} />
-                        <span className="flex-1 truncate">{o.label}</span>
-                        {escopoTipo !== "clientes" && <span className="text-xs text-gray-400">{o.qtd}</span>}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+              {!fromUserId && dimsAtivas.length > 0 && (
+                <p className="text-xs text-gray-400">Selecione a carteira de origem para listar as opções.</p>
               )}
+
+              {fromUserId && dimsAtivas.map((dim) => {
+                const opcoes = opcoesDim(dim);
+                return (
+                  <div key={dim} className="border rounded-lg">
+                    <div className="flex items-center gap-2 p-2 border-b">
+                      <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">{DIM_BOTAO[dim]}</span>
+                      {dim === "dias"
+                        ? <span className="flex-1 text-xs text-gray-500">Dias em que a rota do titular será atendida pelo delegado (dentro do período abaixo).</span>
+                        : <input
+                            className="flex-1 border rounded px-2 py-1 text-sm"
+                            placeholder={DIM_BUSCA[dim]}
+                            value={buscaEscopo[dim]}
+                            onChange={e => setBuscaEscopo(prev => ({ ...prev, [dim]: e.target.value }))} />}
+                      <button type="button" className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
+                        onClick={() => setEscopoSel(prev => ({ ...prev, [dim]: opcoes.map(o => o.value) }))}>Todos</button>
+                      <button type="button" className="text-xs text-gray-500 hover:underline whitespace-nowrap"
+                        onClick={() => setEscopoSel(prev => ({ ...prev, [dim]: [] }))}>Limpar</button>
+                    </div>
+                    <div className="max-h-52 overflow-auto p-1">
+                      {opcoes.length === 0 && (
+                        <p className="text-xs text-gray-400 p-2">Nenhum resultado nesta carteira.</p>
+                      )}
+                      {opcoes.map((o) => (
+                        <label key={o.value} className="flex items-center gap-2 px-2 py-1 text-sm hover:bg-gray-50 rounded cursor-pointer">
+                          <input type="checkbox" checked={escopoSel[dim].includes(o.value)} onChange={() => toggleEscopo(dim, o.value)} />
+                          <span className="flex-1 truncate">{o.label}</span>
+                          {dim !== "clientes" && <span className="text-xs text-gray-400">{o.qtd}</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
 
               {fromUserId && (
                 <p className="text-xs text-gray-500">
-                  {escopoTipo === "todos"
+                  {!dimsAtivas.length
                     ? <>Carteira inteira · <strong>{carteira?.total ?? 0}</strong> cliente{(carteira?.total ?? 0) !== 1 ? "s" : ""}</>
-                    : <>Recorte: <strong>{escopoValores.length}</strong> {ESCOPO_LABEL[escopoTipo] || escopoTipo} · alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}
+                    : <>Recorte: {dimsAtivas.map(d => `${escopoSel[d].length} ${ESCOPO_LABEL[d]}`).join(" + ")} · alcança <strong>{clientesNoEscopo}</strong> de {carteira?.total ?? 0} cliente(s)</>}
                 </p>
               )}
             </div>
@@ -549,8 +588,8 @@ export default function AcessosEDelegacoes() {
             <h3 className="font-bold mb-3">Pré-visualização do rateio</h3>
             {preview.length === 0 && (
               <p className="text-sm text-gray-400">
-                {fromUserId && escopoTipo !== "todos" && !escopoValores.length
-                  ? `Selecione ao menos um item em "${escopoTipo === "dias" ? "dia de rota" : escopoTipo}" para ver a prévia.`
+                {fromUserId && dimVaziaAtiva
+                  ? `Selecione ao menos um item em "${ESCOPO_LABEL[dimVaziaAtiva]}" para ver a prévia.`
                   : "Selecione origem e destinatários."}
               </p>
             )}
