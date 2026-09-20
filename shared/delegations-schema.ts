@@ -55,6 +55,14 @@ export const delegations = pgTable("delegations", {
   // Rateio
   criteria: delegationCriteriaEnum("criteria").notNull().default('nenhum'),
 
+  // Escopo da carteira delegada (subconjunto da carteira do titular).
+  // 'todos'    -> carteira inteira (comportamento histórico; default)
+  // 'clientes' -> scopeValues = lista de customerIds escolhidos a dedo
+  // 'cidades'  -> scopeValues = lista de cidades (customers.city)
+  // 'bairros'  -> scopeValues = lista de "Cidade|Bairro" (bairro qualificado pela cidade)
+  scopeType: varchar("scope_type").notNull().default('todos'),
+  scopeValues: jsonb("scope_values").$type<string[]>(),
+
   // Acessos delegados (acesso_funcao): lista de ids/labels de acesso
   accesses: jsonb("accesses").$type<string[]>(),
 
