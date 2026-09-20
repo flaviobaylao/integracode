@@ -669,7 +669,9 @@ async function main() {
   const tplSaiu = dig2.disparos.porTemplate.find(t => t.template === 'pedido_saiu_entrega');
   check(dig2.disparos.enviados === 1 && dig2.disparos.fila === 2 && tplSaiu?.enviados === 1
     && dig2.entregas.saiu === 1 && dig2.entregas.agendados >= 2 && dig2.disparos.custo === 0.04,
-    'digital: disparo enviado entra no total e no bloco de entrega; o que está na fila não conta como enviado');
+    'digital: disparo enviado entra no total e no bloco de entrega; o que está na fila não conta como enviado'
+    + ' (enviados=' + dig2.disparos.enviados + ' fila=' + dig2.disparos.fila + ' tplSaiu=' + tplSaiu?.enviados
+    + ' saiu=' + dig2.entregas.saiu + ' agendados=' + dig2.entregas.agendados + ' custo=' + dig2.disparos.custo + ')');
 
   const hojeSerie = dig.serie.find(s => s.dia === hojeBRt);
   check(dig.serie.length === 1 && hojeSerie?.recebidas === 3 && hojeSerie?.enviadas === 4,
@@ -820,9 +822,10 @@ async function main() {
   check(zé?.debitoTotal === 420 && zé?.debitoTitulos === 2 && (zé?.debitoDiasAtraso || 0) >= 40
      && ana?.debitoTotal === 0,
     'comunicação: débito vencido soma pela mesma régua da dívida viva (R$' + zé?.debitoTotal + ' em ' + zé?.debitoTitulos + ' títulos)');
-  check((zé?.diasSemCompra || 0) >= 89 && zé?.ultimaCompraValor === 420
-     && (ana?.diasSemCompra || 99) <= 2,
-    'comunicação: última compra traz data e valor (' + zé?.diasSemCompra + 'd / ' + ana?.diasSemCompra + 'd)');
+  check((zé?.diasSemCompra ?? 0) >= 89 && zé?.ultimaCompraValor === 420
+     && (ana?.diasSemCompra ?? 99) <= 2,
+    'comunicação: última compra traz data e valor (' + zé?.diasSemCompra + 'd R$' + zé?.ultimaCompraValor
+    + ' / ' + ana?.diasSemCompra + 'd R$' + ana?.ultimaCompraValor + ')');
 
   // Os filtros são o que transforma a lista em lote: têm que recortar de verdade.
   const soDebito = await pcom.listarClientes({ debito: 'com' });
@@ -879,6 +882,24 @@ async function main() {
   const fonte = readFileSync(new URL('../server/agent-runtime.ts', import.meta.url), 'utf8');
   check(/agentes_por_caso/.test(fonte) && /cobranca:\s*'cobranca'/.test(fonte),
     'comunicação: o caso de uso do último disparo escolhe o agente (cobrança → agente de cobrança)');
+
+  // O dia BR de uma coluna depende do TIPO dela, e confiar na memoria sobre isso
+  // ja jogou todo disparo feito depois das 18h BRT para o dia seguinte no painel.
+  const { diaBR, colunaTemFuso } = await import('../server/fuso-coluna');
+  const tzDisparo = await colunaTemFuso('official_dispatches', 'created_at');
+  const tzChat = await colunaTemFuso('chat_messages', 'created_at');
+  const exprDisparo = await diaBR('official_dispatches', 'created_at');
+  const exprChat = await diaBR('chat_messages', 'created_at');
+  check(tzDisparo === true && !/AT TIME ZONE 'UTC'/.test(exprDisparo),
+    'fuso: coluna timestamptz leva conversao simples (official_dispatches.created_at)');
+  check(tzChat === false && /AT TIME ZONE 'UTC'/.test(exprChat),
+    'fuso: coluna timestamp naive leva conversao dupla (chat_messages.created_at)');
+  const cmp: any = ((await raw(
+    `SELECT ${exprDisparo} AS certo,
+            ((created_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS errado
+       FROM official_dispatches ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
+  check(!!cmp && String(cmp.certo) === new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()),
+    'fuso: o dia do disparo bate com hoje no Brasil mesmo depois das 18h (certo=' + cmp?.certo + ' / dupla=' + cmp?.errado + ')');
 
   console.log('\n' + ok + ' ok, ' + falhas + ' falha(s)');
   process.exit(falhas ? 1 : 0);

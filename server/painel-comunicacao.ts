@@ -29,6 +29,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { whereDebitoVivoText } from "./divida-viva";
+import { diaBR } from "./fuso-coluna";
 
 const PAPEIS = ["admin", "coordinator", "administrative"];
 
@@ -97,7 +98,11 @@ export const CORPO_COBRANCA =
 
 /** Cria a linha do template de cobrança no cadastro, sem umbler_id — ele entra
  *  quando a Meta aprovar. Sem umbler_id o disparo não sai, que é o certo. */
-export async function ensureComunicacaoSchema() {
+let _pronto = false;
+/** Idempotente e barato depois da primeira vez; pode ser chamada em toda leitura. */
+export async function ensureComunicacaoSchema(forcar = false) {
+  if (_pronto && !forcar) return;
+  _pronto = true;
   // `use_case` é um ENUM do Postgres. Um valor que não está no tipo não é um
   // aviso: o INSERT do disparo estoura, e o envio inteiro morre. 'cobranca'
   // nunca tinha sido usado por nenhum disparo, então nunca entrou no tipo —
@@ -111,14 +116,22 @@ export async function ensureComunicacaoSchema() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_disp_cliente_criado
       ON official_dispatches (customer_id, created_at DESC)`);
   } catch {}
+  // O INSERT direto aqui falhava em silêncio em produção: a tabela nasceu antes
+  // deste cadastro e tem colunas legadas NOT NULL sem default (meta_template_id)
+  // que nenhum fluxo novo consegue preencher. `salvarTemplate` já derruba esses
+  // NOT NULL antes de gravar — é por ele que o cadastro tem que passar.
   try {
     const j: any = await db.execute(sql`SELECT 1 FROM whatsapp_templates WHERE label = 'cobranca_titulos' LIMIT 1`);
     if (!j.rows?.length) {
-      await db.execute(sql`INSERT INTO whatsapp_templates (label, categoria, corpo, observacao)
-        VALUES ('cobranca_titulos', 'UTILITY', ${CORPO_COBRANCA},
-                'Cadastrar no Umbler como UTILITY. Sem umbler_id o disparo nao sai.')`);
+      const { salvarTemplate } = await import("./official-templates");
+      await salvarTemplate({
+        label: "cobranca_titulos", categoria: "UTILITY", corpo: CORPO_COBRANCA,
+        observacao: "Cadastrar no Umbler como UTILITY. Sem umbler_id o disparo nao sai.",
+      });
     }
-  } catch {}
+  } catch (e: any) {
+    console.error("[PAINEL-COMUNICACAO] cadastro do template de cobranca:", e?.message || e);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -142,6 +155,12 @@ const FONE8 = (col: string) => sql.raw(`right(regexp_replace(COALESCE(${col},'')
 
 export async function listarClientes(f: FiltrosComunicacao = {}) {
   const limite = Math.min(Math.max(Number(f.limite) || 3000, 1), 8000);
+  // Metade das tabelas deste projeto guarda `timestamp` naive em UTC e a outra
+  // metade timestamptz. Confiar na memória sobre qual é qual já jogou disparo
+  // da noite para o dia seguinte no painel de atendimento — aqui o tipo vem do
+  // catálogo do Postgres.
+  const diaCompra = sql.raw(await diaBR("sales_cards", "completed_date", "cp.quando"));
+  const diaDisparo = sql.raw(await diaBR("official_dispatches", "created_at", "d.quando"));
 
   const linhas: any = await db.execute(sql`
     WITH base AS (
@@ -222,16 +241,15 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
     SELECT b.id, b.nome, b.contato, b.phone AS telefone, b.cidade,
            b.consumidor, b.virtual, b.seller_id,
            NULLIF(trim(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS vendedor,
-           (cp.quando AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS ultima_compra,
+           ${diaCompra} AS ultima_compra,
            cp.valor AS ultima_compra_valor,
            CASE WHEN cp.quando IS NULL THEN NULL
-                ELSE ((now() AT TIME ZONE 'America/Sao_Paulo')::date
-                      - (cp.quando AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) END AS dias_sem_compra,
+                ELSE ((now() AT TIME ZONE 'America/Sao_Paulo')::date - ${diaCompra}) END AS dias_sem_compra,
            COALESCE(db.total, 0)      AS debito_total,
            COALESCE(db.titulos, 0)    AS debito_titulos,
            db.vencimento_antigo::date AS debito_vencimento,
            COALESCE(db.dias_atraso, 0) AS debito_dias_atraso,
-           (d.quando AT TIME ZONE 'America/Sao_Paulo')::date AS ultima_interacao,
+           ${diaDisparo} AS ultima_interacao,
            d.template_label AS ultimo_template,
            d.use_case       AS ultimo_tipo,
            d.status         AS ultimo_status,
@@ -514,10 +532,12 @@ export async function prontidaoDosTipos() {
 // ROTAS
 // -----------------------------------------------------------------------------
 export function registerPainelComunicacaoRoutes(app: Express) {
-  ensureComunicacaoSchema().catch(() => {});
 
   app.get("/api/gestao/comunicacao", authenticateUser, requireRole(PAPEIS), async (req: any, res: any) => {
     try {
+      // DDL no boot já derrubou healthcheck do Railway neste projeto, então o
+      // acerto de schema é preguiçoso: roda na primeira leitura do painel.
+      await ensureComunicacaoSchema().catch(() => {});
       const q = req.query || {};
       const r = await listarClientes({
         vendedor: q.vendedor || "",
