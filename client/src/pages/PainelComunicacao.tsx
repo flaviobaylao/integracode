@@ -37,7 +37,7 @@ type Tipo = {
   id: string; nome: string; descricao: string; templateLabel: string; useCase: string;
   exigeDebito?: boolean; diasSemCompraMinimo?: number;
   templateUsado: string; categoria: string; cadastrado: boolean; aprovado: boolean; ativo: boolean;
-  casoLigado: boolean; modo: string;
+  casoLigado: boolean; modo: string; corpoSugerido: string | null;
   custoUnitario: number; pendencia: string | null;
 };
 type Resposta = {
@@ -281,8 +281,20 @@ export default function PainelComunicacao() {
         {tipos.some((t) => t.pendencia) && (
           <div className="mt-2 text-xs text-amber-700 dark:text-amber-300 space-y-0.5">
             {tipos.filter((t) => t.pendencia).map((t) => (
-              <div key={t.id} className="flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" /> <b>{t.nome}</b>: {t.pendencia} — template <code>{t.templateUsado}</code>
+              <div key={t.id} className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> <b>{t.nome}</b>: {t.pendencia}
+                </div>
+                {t.corpoSugerido && (
+                  <div className="ml-5 p-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <div className="text-[11px] text-gray-500 mb-1">
+                      Texto para cadastrar no Umbler (rótulo <code>{t.templateLabel}</code>, categoria UTILITY):
+                    </div>
+                    <div className="text-xs font-mono whitespace-pre-wrap">{t.corpoSugerido}</div>
+                    <button onClick={() => navigator.clipboard?.writeText(t.corpoSugerido || '')}
+                            className="mt-1 text-[11px] text-teal-600 hover:underline">copiar texto</button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

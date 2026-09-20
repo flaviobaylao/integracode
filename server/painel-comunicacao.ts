@@ -116,22 +116,12 @@ export async function ensureComunicacaoSchema(forcar = false) {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_disp_cliente_criado
       ON official_dispatches (customer_id, created_at DESC)`);
   } catch {}
-  // O INSERT direto aqui falhava em silêncio em produção: a tabela nasceu antes
-  // deste cadastro e tem colunas legadas NOT NULL sem default (meta_template_id)
-  // que nenhum fluxo novo consegue preencher. `salvarTemplate` já derruba esses
-  // NOT NULL antes de gravar — é por ele que o cadastro tem que passar.
-  try {
-    const j: any = await db.execute(sql`SELECT 1 FROM whatsapp_templates WHERE label = 'cobranca_titulos' LIMIT 1`);
-    if (!j.rows?.length) {
-      const { salvarTemplate } = await import("./official-templates");
-      await salvarTemplate({
-        label: "cobranca_titulos", categoria: "UTILITY", corpo: CORPO_COBRANCA,
-        observacao: "Cadastrar no Umbler como UTILITY. Sem umbler_id o disparo nao sai.",
-      });
-    }
-  } catch (e: any) {
-    console.error("[PAINEL-COMUNICACAO] cadastro do template de cobranca:", e?.message || e);
-  }
+  // NÃO tenta pré-cadastrar o template de cobrança. `whatsapp_templates.umbler_id`
+  // é NOT NULL em produção, e de propósito: é ele que o disparo usa para achar o
+  // template aprovado na Meta. Uma linha sem umbler_id não é "pendente", é uma
+  // linha que nunca funcionaria — e as duas tentativas de criá-la aqui (INSERT
+  // direto e salvarTemplate) falharam pelo mesmo motivo. O template nasce do
+  // lado do Umbler; aqui o painel só sabe DIZER que ele falta e qual é o texto.
 }
 
 // -----------------------------------------------------------------------------
@@ -518,7 +508,10 @@ export async function prontidaoDosTipos() {
       ativo: !usado ? false : usado.ativo !== false,
       casoLigado, modo,
       custoUnitario: (usado && String(usado.categoria) === "UTILITY") ? 0.04 : 0.34,
-      pendencia: !usado ? "template não cadastrado"
+      // Quando o template não existe, o painel entrega o texto pronto: sem isso
+      // a pendência vira "some coisa falta" e ninguém sabe o que digitar onde.
+      corpoSugerido: !usado && tp.id === "cobranca" ? CORPO_COBRANCA : null,
+      pendencia: !usado ? `template "${tp.templateLabel}" não cadastrado — crie no Umbler como UTILITY e sincronize`
         : !usado.umbler_id ? "aguardando aprovação da Meta (sem umbler_id)"
         : usado.ativo === false ? "template desligado no cadastro"
         : !casoLigado ? `caso de uso "${tp.useCase}" desligado na fila do 1841 (oficial_${tp.useCase})`

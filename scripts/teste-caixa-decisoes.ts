@@ -839,16 +839,31 @@ async function main() {
     'comunicação: filtro de tempo sem compra pega o parado e deixa o recente de fora');
 
   // O template de cobrança nasce pendente de propósito: sem umbler_id nada sai.
+  // Sem o template cadastrado, a pendencia tem que DIZER o que fazer e entregar
+  // o texto pronto. Um painel que so diz "falta alguma coisa" nao resolve nada.
   const prontos = await pcom.prontidaoDosTipos();
   const cob = prontos.find((t: any) => t.id === 'cobranca');
-  check(!!cob && cob.categoria === 'UTILITY' && !cob.aprovado && !!cob.pendencia,
-    'comunicação: cobrança nasce como UTILITY e pendente de aprovação (' + cob?.pendencia + ')');
+  check(!!cob && !cob.cadastrado && !cob.aprovado
+     && /cobranca_titulos/.test(String(cob.pendencia)) && /Umbler/i.test(String(cob.pendencia)),
+    'comunicação: sem template, a pendência diz o rótulo e onde cadastrar (' + cob?.pendencia + ')');
+  check(/desconsiderar esta mensagem/i.test(String(cob?.corpoSugerido)),
+    'comunicação: a pendência entrega o texto pronto para cadastrar no Umbler');
   check(/desconsiderar esta mensagem/i.test(pcom.CORPO_COBRANCA)
      && !/^\{\{/.test(pcom.CORPO_COBRANCA) && !/\}\}$/.test(pcom.CORPO_COBRANCA),
     'comunicação: o texto da cobrança pede para desconsiderar se já pagou, e não começa nem termina com variável');
 
+  // whatsapp_templates.umbler_id e NOT NULL em producao: linha sem ele nao e
+  // "pendente", e linha que nunca funcionaria. O template nasce no Umbler.
+  try { await raw(`ALTER TABLE whatsapp_templates ALTER COLUMN umbler_id SET NOT NULL`); } catch {}
+  let recusou = false;
+  try { await raw(`INSERT INTO whatsapp_templates (label, categoria) VALUES ('cobranca_placeholder','UTILITY')`); }
+  catch { recusou = true; }
+  check(recusou, 'comunicação: o banco recusa template sem umbler_id — não dá para fingir cadastro');
+
   // O envio: cobrança para quem não deve nada não pode sair de jeito nenhum.
-  await raw(`UPDATE whatsapp_templates SET umbler_id = 'tpl-cob' WHERE label = 'cobranca_titulos'`);
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo)
+             VALUES ('cobranca_titulos','tpl-cob','UTILITY', ` + JSON.stringify(pcom.CORPO_COBRANCA).replace(/'/g, "''").replace(/^"|"$/g, "'") + `)
+             ON CONFLICT (label) DO UPDATE SET umbler_id = 'tpl-cob'`);
   await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('oficial_cobranca','on','teste')
              ON CONFLICT (key) DO UPDATE SET value='on'`);
   await raw(`INSERT INTO system_settings (key, value, updated_by) VALUES ('oficial_mode_cobranca','test','teste')
