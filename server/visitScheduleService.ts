@@ -331,6 +331,43 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     periodicity = 'semanal'; // regra dos leads
   }
 
+  // 🏙️ BRASÍLIA (DF): a âncora do agendamento é a ÚLTIMA ENTREGA (swimlane "Entregue" do
+  // Pipeline de Faturamento), NÃO o calendário. Ex.: cliente quinzenal na seg que só recebeu
+  // o produto 10 dias depois → o próximo ciclo parte da data de entrega (+ periodicidade),
+  // caindo no dia de rota mais próximo (pode dar 14 ou 16 dias). Sem entrega registrada,
+  // cai nas regras normais (calendário / semana do mês) abaixo.
+  const __chave = (v: any) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const isBrasilia = __chave(c.city) === 'BRASILIA' || __chave(c.state) === 'DF';
+  if (isBrasilia) {
+    try {
+      const er: any = await db.execute(sql`
+        SELECT MAX(h->>'changedAt') AS ultima
+          FROM billing_pipeline bp,
+               jsonb_array_elements(COALESCE(bp.stage_history, '[]'::jsonb)) h
+         WHERE bp.customer_id = ${customerId}
+           AND h->>'stage' = 'entregue'`);
+      const ultimaStr = ((er.rows || er) as any[])[0]?.ultima || null;
+      const entrega = ultimaStr ? new Date(String(ultimaStr).slice(0, 10) + 'T00:00:00') : null;
+      if (entrega && !isNaN(entrega.getTime())) {
+        const bsbDatas: Date[] = [];
+        let cursor = entrega;
+        // Encadeia a partir da entrega até juntar 4 visitas futuras. O dia de rota mais próximo
+        // ao fim da periodicidade sai do próprio calculateNextVisitDate (findNearestWeekday).
+        for (let i = 0; i < 200 && bsbDatas.length < 4; i++) {
+          const nx = calculateNextVisitDate({ weekdays: targetWeekdays, periodicity, lastCompletedDate: cursor, serviceStartDate: serviceStart }).nextDate;
+          if (nx <= cursor) break; // trava anti-loop
+          cursor = nx;
+          if (nx >= today) bsbDatas.push(nx);
+        }
+        if (bsbDatas.length) {
+          console.log(`🏙️ [agenda][BSB] ${c.fantasyName || c.name}: âncora=entrega ${String(ultimaStr).slice(0,10)} → ${bsbDatas.map(d=>d.toISOString().slice(0,10)).join(', ')}`);
+          return await __gravarAgendaDatas(c, periodicity, bsbDatas);
+        }
+      }
+    } catch (e: any) { console.warn('[agenda][BSB] última entrega (pipeline) falhou:', e?.message); }
+    // sem entrega registrada → segue as regras normais abaixo.
+  }
+
   // 📅 SEMANA DE ATENDIMENTO: cliente com semana fixa ("última terça") tem as
   // datas vindas do CALENDÁRIO, não do encadeamento por intervalo —
   // calculateNextVisitDate não tem como respeitar "qual semana do mês".
