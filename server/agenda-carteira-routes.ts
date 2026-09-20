@@ -646,16 +646,24 @@ export async function montarJanela(
   const itens: any[] = [];
   for (const r of clientes) {
     const dias = diasDoCadastro(r.weekdays);
+    // 🔗 ANCORA DA PROJECAO = ultima data em que o cliente REALMENTE esteve na agenda
+    // (visit_agenda), caindo de volta na ultima visita concluida. calculateNextVisitDate,
+    // para quinzenal/mensal SEM visita concluida, so pega o proximo dia da semana — NAO ancora
+    // a FASE do ciclo no inicio de fornecimento. Assim a projecao do quadro (rodada agora) caia
+    // numa semana e a agenda da Rota do Dia (gerada em outro momento) noutra, e os numeros nao
+    // batiam. Ancorar na ultima data agendada mantem o quadro na MESMA cadencia da rota. (set/2026)
+    const _agPassada = passadoPorCliente.get(String(r.id)) || [];
+    const _ancoraAgenda = _agPassada.length ? _agPassada.slice().sort()[_agPassada.length - 1] : null;
     // Futuro: projetado do cadastro. Passado: o que esteve marcado de fato.
     const futuro = projetarDatas({
       dias,
       periodicidade: String(r.periodicidade || "semanal"),
-      ancora: r.ultima_visita || null,
+      ancora: _ancoraAgenda || r.ultima_visita || null,
       inicioFornecimento: r.inicio_fornecimento || null,
       semana: r.semana_atendimento || "toda",
       ini: amanha, fim,
     });
-    const anteriores = (passadoPorCliente.get(String(r.id)) || []).filter((d) => {
+    const anteriores = _agPassada.filter((d) => {
       const w = dataLocal(d).getDay();
       return w >= 1 && w <= 5;
     });
