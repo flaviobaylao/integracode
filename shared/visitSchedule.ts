@@ -337,9 +337,9 @@ export function getNextVisitWithOverride(
 // entender por que. Para a quarta semana existe um valor so: 'ultima'.
 // ============================================================================
 
-export type SemanaAtendimento = "toda" | "1" | "2" | "3" | "ultima" | "impar" | "par";
+export type SemanaAtendimento = "toda" | "1" | "2" | "3" | "4" | "ultima" | "impar" | "par";
 
-export const SEMANAS_ATENDIMENTO: SemanaAtendimento[] = ["toda", "impar", "par", "1", "2", "3", "ultima"];
+export const SEMANAS_ATENDIMENTO: SemanaAtendimento[] = ["toda", "impar", "par", "1", "2", "3", "4", "ultima"];
 
 export const ROTULO_SEMANA: Record<SemanaAtendimento, string> = {
   toda: "Toda semana",
@@ -348,13 +348,31 @@ export const ROTULO_SEMANA: Record<SemanaAtendimento, string> = {
   "1": "1ª do mês",
   "2": "2ª do mês",
   "3": "3ª do mês",
+  "4": "4ª do mês",
   ultima: "Última do mês",
 };
+
+/**
+ * Texto de ajuda (tooltip do "i") explicando cada opção de Semana do mês.
+ * Centralizado para os módulos mostrarem exatamente a mesma explicação.
+ */
+export const AJUDA_SEMANA_ATENDIMENTO = [
+  "Em qual semana do mês o cliente é visitado (além do dia da rota e da periodicidade).",
+  "A semana é contada pela segunda-feira: a semana pertence ao mês da segunda-feira dela.",
+  "",
+  "• Toda semana: em todas as semanas (só o dia da rota + periodicidade).",
+  "• 1ª e 3ª do mês: visita na 1ª e na 3ª semana.",
+  "• 2ª e 4ª do mês: visita na 2ª e na 4ª semana.",
+  "• 1ª do mês: só na 1ª semana.",
+  "• 2ª do mês: só na 2ª semana.",
+  "• 3ª do mês: só na 3ª semana.",
+  "• 4ª do mês: só na 4ª semana (em meses com 5 semanas é diferente da última).",
+  "• Última do mês: sempre na última semana (4ª ou 5ª, conforme o mês).",
+].join("\n");
 
 /** Normaliza o que veio do banco. Qualquer coisa fora da lista vira 'toda'. */
 export function normalizarSemana(v: any): SemanaAtendimento {
   const s = String(v ?? "").trim().toLowerCase();
-  if (s === "4") return "ultima";           // '4' sempre foi a ultima, na pratica
   return (SEMANAS_ATENDIMENTO as string[]).includes(s) ? (s as SemanaAtendimento) : "toda";
 }
 
@@ -366,6 +384,7 @@ export function ocorrenciasDaSemana(semana: SemanaAtendimento): (number | "ultim
     case "1": return [1];
     case "2": return [2];
     case "3": return [3];
+    case "4": return [4];
     case "ultima": return ["ultima"];
     default: return [];
   }

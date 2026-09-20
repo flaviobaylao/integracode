@@ -238,7 +238,7 @@ export const customers = pgTable("customers", {
   weekdays: varchar("weekdays").notNull(), // JSON array with 1-2 weekdays: ["segunda"] or ["segunda","quarta"]
   visitPeriodicity: visitPeriodicityEnum("visit_periodicity").notNull().default('semanal'),
   // SEMANA DE ATENDIMENTO (segundo eixo da rota): 'toda' | 'impar' | 'par' |
-  // '1' | '2' | '3' | 'ultima'. Sem isto o dia da semana repete o cliente em
+  // '1' | '2' | '3' | '4' | 'ultima'. Sem isto o dia da semana repete o cliente em
   // todas as semanas e nao da para dizer "Caldas Novas na ultima terca".
   // varchar (nao enum) de proposito: o build de producao nao roda db:push.
   semanaAtendimento: varchar("semana_atendimento").notNull().default('toda'),
@@ -1334,7 +1334,7 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   serviceStartDate: z.union([z.string(), z.date()]).transform(val => typeof val === 'string' ? new Date(val) : val).optional().nullable(),
   // Semana de atendimento: o CustomerModal valida por este schema, entao um
   // valor livre passaria direto para o banco sem este enum.
-  semanaAtendimento: z.enum(["toda", "impar", "par", "1", "2", "3", "ultima"]).optional().default("toda"),
+  semanaAtendimento: z.enum(["toda", "impar", "par", "1", "2", "3", "4", "ultima"]).optional().default("toda"),
   // Validação de weekdays: deve ser JSON array com 0-2 dias (opcional)
   weekdays: z.string().optional().default('[]').refine(
     (val) => {
