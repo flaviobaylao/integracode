@@ -2036,6 +2036,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visitPeriodicity: c.visit_periodicity ?? null, bairroPadrao: normBairro(c.neighborhood),
           // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
           virtualService: c.virtual_service === true,
+          // 📅 SEMANA DO MÊS em que o cliente é atendido (toda/impar/par/1/2/3/ultima) — vira filtro no mapa.
+          semanaAtendimento: String(c.semana_atendimento || 'toda'),
           lastInvoiceDate: ultimoFat ? ultimoFatDoCliente(c, ultimoFat) : null,
           nextVisitDate: proxVisita ? (proxVisita.get(String(c.id)) || null) : null,
         };
@@ -2044,7 +2046,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sellerMap = await buildSellerMap();
         const ultimoFat = await buildUltimoFaturamento();
         const proxVisita = await buildProximaVisita();
-        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, cnpj, cpf, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
+        const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, cnpj, cpf, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service, semana_atendimento FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
         const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat, proxVisita));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
@@ -2070,7 +2072,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             WHERE doc IS NOT NULL AND length(doc) >= 11
             GROUP BY doc
           )
-          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.cnpj, c.cpf, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id, c.virtual_service
+          SELECT c.id, c.name, c.fantasy_name, c.phone, c.address, c.neighborhood, c.document, c.cnpj, c.cpf, c.latitude, c.longitude, c.weekdays, c.visit_periodicity, c.seller_id, c.virtual_service, c.semana_atendimento
           FROM customers c
           JOIN buys b ON b.doc = NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'')
           WHERE c.is_active IS TRUE AND (c.is_supplier IS NOT TRUE)
@@ -2223,6 +2225,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             visitPeriodicity: c.visitPeriodicity ?? null,
             // Atendimento VIRTUAL: o mapa desenha uma aura vermelha em volta do pin.
             virtualService: c.virtualService === true,
+            // 📅 SEMANA DO MÊS em que o cliente é atendido (toda/impar/par/1/2/3/ultima) — vira filtro no mapa.
+            semanaAtendimento: String((c as any).semanaAtendimento || 'toda'),
             lastInvoiceDate: ultimoFatAtivos.get(soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document)) || null,
             nextVisitDate: proxVisitaAtivos.get(String(c.id)) || null
           };
