@@ -1136,3 +1136,23 @@ cron.schedule('0 7 * * 1', async () => {
     console.error('[CLIENTES-SEMANAL] falhou:', e?.message || e);
   }
 }, { timezone: 'America/Sao_Paulo' });
+
+
+// ---------------------------------------------------------------------------
+// TEMPLATES DO WHATSAPP — o cadastro local segue o Umbler, de hora em hora.
+// ---------------------------------------------------------------------------
+// Template aprovado (ou editado) no Umbler so chegava ao Integra quando alguem
+// clicava em importar. Enquanto nao clicava, a coluna do painel ficava travada
+// dizendo "nao cadastrado", ou pior: o corpo local ficava no texto antigo e o
+// disparo saia com numero errado de variaveis, que a Meta recusa.
+cron.schedule('23 * * * *', async () => {
+  try {
+    const { importarDoUmbler } = await import('./official-templates');
+    const r: any = await importarDoUmbler();
+    if (r?.erro) { console.error('[TEMPLATES-SYNC] falhou:', r.erro); return; }
+    const novos = (r?.criados || []).length, mexidos = (r?.atualizados || []).length;
+    if (novos || mexidos) console.log(`[TEMPLATES-SYNC] ${novos} novo(s), ${mexidos} atualizado(s)`);
+  } catch (e: any) {
+    console.error('[TEMPLATES-SYNC] falhou:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });

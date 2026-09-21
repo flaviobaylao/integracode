@@ -808,9 +808,13 @@ async function main() {
   await raw(`INSERT INTO sales_cards (customer_id, status, sale_value, completed_date, operation_type)
              VALUES ('pc-rev', 'completed', 420.00, now() - interval '90 days', 'venda'),
                     ('pc-con', 'completed',  38.00, now() - interval '1 day',   'venda')`);
+  // O vencimento e ancorado no DIA BRASILEIRO, que e o mesmo relogio que o
+  // calculo de atraso usa. Ancorar em now() (UTC) faz o teste virar 39 ou 40
+  // dias conforme a hora da rodada — ja aconteceu, depois das 21h UTC.
+  const diaBRT = `(now() AT TIME ZONE 'America/Sao_Paulo')::date`;
   await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date)
-             VALUES ('pc-rev', 'Mercadinho do Zé', 300, 0, 'vencida', (now() - interval '40 days')::date, (now() - interval '70 days')::date),
-                    ('pc-rev', 'Mercadinho do Zé', 120, 0, 'vencida', (now() - interval '10 days')::date, (now() - interval '40 days')::date)`);
+             VALUES ('pc-rev', 'Mercadinho do Zé', 300, 0, 'vencida', ${diaBRT} - 40, ${diaBRT} - 70),
+                    ('pc-rev', 'Mercadinho do Zé', 120, 0, 'vencida', ${diaBRT} - 10, ${diaBRT} - 40)`);
 
   const lista = await pcom.listarClientes({});
   const zé = lista.itens.find((i: any) => i.id === 'pc-rev');
@@ -819,9 +823,10 @@ async function main() {
   check(zé?.tipo === 'revendedor' && zé?.atendimento === 'presencial'
      && ana?.tipo === 'consumidor' && ana?.atendimento === 'virtual',
     'comunicação: marca revenda/consumo e virtual/presencial pelo cadastro');
-  check(zé?.debitoTotal === 420 && zé?.debitoTitulos === 2 && (zé?.debitoDiasAtraso || 0) >= 40
+  check(zé?.debitoTotal === 420 && zé?.debitoTitulos === 2 && zé?.debitoDiasAtraso === 40
      && ana?.debitoTotal === 0,
-    'comunicação: débito vencido soma pela mesma régua da dívida viva (R$' + zé?.debitoTotal + ' em ' + zé?.debitoTitulos + ' títulos)');
+    'comunicação: débito vencido soma pela mesma régua da dívida viva (R$' + zé?.debitoTotal + ' em ' + zé?.debitoTitulos
+    + ' títulos, atraso ' + zé?.debitoDiasAtraso + 'd; ana=' + JSON.stringify(ana?.debitoTotal) + ')');
   check((zé?.diasSemCompra ?? 0) >= 89 && zé?.ultimaCompraValor === 420
      && (ana?.diasSemCompra ?? 99) <= 2,
     'comunicação: última compra traz data e valor (' + zé?.diasSemCompra + 'd R$' + zé?.ultimaCompraValor
@@ -956,7 +961,9 @@ async function main() {
   await raw(`INSERT INTO customers (id, name, phone, seller_id, is_active) VALUES
              ('pc-morto', 'Bar que Fechou', '5562988880003', 'v1', false) ON CONFLICT (id) DO NOTHING`);
   await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date)
-             VALUES ('pc-morto', 'Bar que Fechou', 250, 0, 'vencida', (now() - interval '60 days')::date, (now() - interval '90 days')::date)`);
+             VALUES ('pc-morto', 'Bar que Fechou', 250, 0, 'vencida',
+                     (now() AT TIME ZONE 'America/Sao_Paulo')::date - 60,
+                     (now() AT TIME ZONE 'America/Sao_Paulo')::date - 90)`);
   const semInativos = await pcom.listarClientes({});
   const comInativos = await pcom.listarClientes({ incluirInativos: true });
   check(semInativos.resumo.debitoForaDaLista >= 250
@@ -968,6 +975,18 @@ async function main() {
   const semDevedorInativo = comInativos.itens.filter((i: any) => !i.ativo && i.debitoTotal <= 0);
   check(semDevedorInativo.length === 0,
     'comunicação: inativo SEM dívida continua fora — a opção não despeja a base inativa na tela');
+
+  // O cadastro local de templates tem que seguir o Umbler sozinho: se o corpo
+  // aprovado muda la e aqui nao, o disparo sai com numero errado de variaveis.
+  const tpl = await import('../server/official-templates');
+  const fonteSched = readFileSync(new URL('../server/scheduler.ts', import.meta.url), 'utf8');
+  check(typeof (tpl as any).importarDoUmbler === 'function',
+    'templates: a importacao do Umbler e exportada, nao presa numa rota');
+  check(/importarDoUmbler/.test(fonteSched) && /cron\.schedule\('23 \* \* \* \*'/.test(fonteSched),
+    'templates: a sincronizacao roda sozinha de hora em hora, nao so quando alguem clica');
+  const fonteTpl = readFileSync(new URL('../server/official-templates.ts', import.meta.url), 'utf8');
+  check(/APPROVED/.test(fonteTpl),
+    'templates: so importa o que esta APROVADO — edicao em revisao nao vira corpo local');
 
   // O dia BR de uma coluna depende do TIPO dela, e confiar na memoria sobre isso
   // ja jogou todo disparo feito depois das 18h BRT para o dia seguinte no painel.
