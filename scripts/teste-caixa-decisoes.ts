@@ -533,6 +533,23 @@ async function main() {
   await raw(`INSERT INTO delivery_route_stops (id, route_id, sales_card_id, customer_id, stop_order, status) VALUES
       ('stE1','rotE1','scE1','cliE1',1,'pendente'), ('stE2','rotE1','scE2','cliE2',2,'pendente') ON CONFLICT (id) DO NOTHING`);
 
+  // O botão "Iniciar Rota" é o GATILHO deste aviso. Ele estava escondido para
+  // toda rota visível ao entregador (a condição incluía 'rota_enviada', que é
+  // justamente o estado em que a rota chega no app dele), então avisarRotaIniciada
+  // nunca era chamada em produção e nenhum cliente recebia "saiu para entrega".
+  {
+    const re = await import('../shared/rotaEntrega');
+    check(re.podeIniciarRota([{ status: 'rota_enviada' }]) === true,
+      'entrega: rota entregue ao motorista mostra o botão de iniciar');
+    check(re.podeIniciarRota([{ status: 'em_andamento' }]) === false
+       && re.podeIniciarRota([{ status: 'concluida' }]) === false,
+      'entrega: rota já em curso não mostra o botão de novo');
+    check(re.podeIniciarRota([]) === false && re.podeIniciarRota([{ status: 'rota salva' }]) === false,
+      'entrega: sem rota entregue ao motorista, não há o que iniciar');
+    check(re.podeIniciarRota([{ status: 'em_andamento' }, { status: 'rota_enviada' }]) === false,
+      'entrega: com uma rota já em curso, a segunda não reabre o botão');
+  }
+
   const ini = await ec.avisarRotaIniciada('rotE1');
   const dSaiu: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:saiu%'`)) as any).rows[0];
   // Sem contato cadastrado, o aviso chama o cliente pelo nome do estabelecimento
