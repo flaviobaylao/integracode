@@ -184,12 +184,37 @@ export async function reverseTransferStockExact(
   const card = (q.rows || [])[0];
   if (!card) return { handled: false, undone, warnings };
 
+  // A baixa pode ter sido gravada com source_id do CARD (deductStockForBilling, no
+  // faturamento) ou da NF (consumeStock, na rota /emit). Procurar so pelo card
+  // fazia a funcao achar zero movimentos numa NF emitida pela segunda via.
+  const origens = sql`(${String(card.id)}, ${String(invoice.id)})`;
+
   const movs: any = await db.execute(sql`
     SELECT * FROM inventory_movements
-    WHERE source_type = 'invoice' AND source_id = ${String(card.id)}
+    WHERE source_type = 'invoice' AND source_id IN ${origens}
       AND movement_type IN ('consume', 'replenish')
       AND COALESCE(notes, '') NOT LIKE ${'%' + TRF_EST_MARK + '%'}
     ORDER BY created_at ASC`);
+
+  // Nenhum movimento PENDENTE. Duas situacoes muito diferentes:
+  //  - ja estornado antes (existe movimento marcado): nada a fazer, e handled.
+  //  - nunca houve baixa ligada a este card/NF: NAO e handled — devolver false
+  //    para o chamador cair no estorno generico. Antes retornava handled=true e
+  //    o generico era pulado: a NF ficava cancelada/devolvida e o estoque nao
+  //    voltava para lugar nenhum, em silencio.
+  if (!(movs.rows || []).length) {
+    const ja: any = await db.execute(sql`
+      SELECT 1 FROM inventory_movements
+      WHERE source_type = 'invoice' AND source_id IN ${origens}
+        AND COALESCE(notes, '') LIKE ${'%' + TRF_EST_MARK + '%'} LIMIT 1`);
+    if ((ja.rows || []).length) {
+      warnings.push('transferencia ja estornada anteriormente — nada a fazer');
+      return { handled: true, undone, warnings, pipelineItemId: String(card.id) };
+    }
+    warnings.push('nenhuma baixa de estoque encontrada para esta transferencia — estorno generico assume');
+    console.warn(`⚠️ [TRANSFER] sem movimentos de baixa para o card ${card.order_number || card.id} / NF ${invoice.invoiceNumber || invoice.id}`);
+    return { handled: false, undone, warnings, pipelineItemId: String(card.id) };
+  }
 
   const rotulo = `${invoice.invoiceNumber ? 'NF-e ' + invoice.invoiceNumber : 'NF-e'} (${card.order_number || card.id})`;
 
@@ -228,7 +253,13 @@ export async function reverseTransferStockExact(
     undone.push(`${isConsume ? 'origem' : 'destino'} ${lot.lot_number}: ${isConsume ? '+' : '-'}${qty}`);
   }
 
-  if (!(movs.rows || []).length) warnings.push('nenhum movimento de estoque pendente de estorno para esta transferencia (ja estornada?)');
+  // Transferencia sem entrada espelho no destino: a mercadoria saiu da origem e
+  // nunca foi creditada na filial (foi o caso do faturamento em LOTE, que nao
+  // chamava o espelho). Nao ha o que retirar do destino, mas isso precisa
+  // aparecer — o operador tem de conferir o estoque da filial na mao.
+  if (!undone.some((u) => u.startsWith('destino'))) {
+    warnings.push('nao havia entrada espelho no destino para retirar — conferir o estoque da filial de destino');
+  }
   console.log(`🔁 [TRANSFER] estorno exato ${rotulo}: ${undone.join(', ') || 'nada'}${warnings.length ? ' | avisos: ' + warnings.join('; ') : ''}`);
   return { handled: true, undone, warnings, pipelineItemId: String(card.id) };
 }
