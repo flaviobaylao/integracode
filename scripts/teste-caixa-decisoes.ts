@@ -547,12 +547,21 @@ async function main() {
 
   // Entrega efetuada: aviso agora + follow-up agendado para dois dias depois, às 10h BRT.
   await raw(`UPDATE delivery_route_stops SET status='efetuada' WHERE id='stE1'`);
-  const efe = await ec.avisarEntregaEfetuada('stE1', new Date('2026-09-19T14:00:00Z'));
+  // A data da entrega é ANCORADA NO FUTURO (amanhã, 14h UTC) em vez de fixa no
+  // calendário: com uma data fixa, o follow-up de 2 dias depois vira passado
+  // quando o relógio alcança o valor cravado, e o teste passa a falhar sozinho
+  // — foi o que aconteceu em 21/set/2026, às 13h UTC, com a data '2026-09-19'.
+  const baseEnt = new Date(Date.now() + 24 * 3600 * 1000);
+  baseEnt.setUTCHours(14, 0, 0, 0);
+  const posEsperado = new Date(baseEnt);
+  posEsperado.setUTCDate(posEsperado.getUTCDate() + 2);
+  posEsperado.setUTCHours(13, 0, 0, 0); // 10h de Brasília (o Brasil não tem mais horário de verão)
+  const efe = await ec.avisarEntregaEfetuada('stE1', baseEnt);
   const dEnt: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign='card:scE1:entregue'`)) as any).rows[0];
   const dPos: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign='card:scE1:pos2d'`)) as any).rows[0];
   const quando = dPos && new Date(dPos.scheduled_at).toISOString();
   check(efe.agora.startsWith('enfileirado') && dEnt.template_label === 'pedido_entregue'
-    && dPos && dPos.status === 'fila' && quando === '2026-09-21T13:00:00.000Z',
+    && dPos && dPos.status === 'fila' && quando === posEsperado.toISOString(),
     'entrega: efetuada avisa na hora e agenda o "deu tudo certo?" para 2 dias depois, 10h de Brasília (' + quando + ')');
 
   // A fila só pega o que já venceu: o follow-up não pode sair antes da hora.
@@ -856,6 +865,35 @@ async function main() {
     });
     check(r === 'fornecedor',
       'comunicação: a fila do 1841 recusa disparo para fornecedor (' + r + ')');
+
+    // REGRESSÃO DE PRODUÇÃO (21/set/2026): a primeira versão da trava casava
+    // pelos 8 últimos dígitos do telefone mesmo tendo o customer_id. A Puro
+    // Serviços está cadastrada como fornecedor COM O TELEFONE DO FLAVIO, e isso
+    // barrou mensagem para ele e para a Puro Indústria — clientes de verdade.
+    // Telefone é de PESSOA, não de cadastro: não identifica destinatário.
+    await raw(`UPDATE customers SET phone = '5562988880004' WHERE id = 'pc-con'`);
+    const rCli = await od.enqueueOfficialDispatch({
+      customerId: 'pc-con', customerPhone: '5562988880004',
+      templateLabel: 'cobranca_titulos', params: ['x'], useCase: 'cobranca',
+    });
+    check(rCli !== 'fornecedor',
+      'comunicação: cliente que divide o telefone com um fornecedor NÃO é barrado (' + rCli + ')');
+
+    // Sem customer_id só resta o telefone — e aí a recusa exige que TODOS os
+    // cadastros com aquele número sejam fornecedores.
+    const rSoFone = await od.enqueueOfficialDispatch({
+      customerPhone: '5562988880004',
+      templateLabel: 'cobranca_titulos', params: ['x'], useCase: 'cobranca',
+    });
+    check(rSoFone !== 'fornecedor',
+      'comunicação: sem id, telefone dividido entre cliente e fornecedor não barra (' + rSoFone + ')');
+    await raw(`UPDATE customers SET phone = '5562988880002' WHERE id = 'pc-con'`);
+    const rSoForn = await od.enqueueOfficialDispatch({
+      customerPhone: '5562988880004',
+      templateLabel: 'cobranca_titulos', params: ['x'], useCase: 'cobranca',
+    });
+    check(rSoForn === 'fornecedor',
+      'comunicação: sem id, telefone que só existe em fornecedor continua barrado (' + rSoForn + ')');
   }
   check(zé?.tipo === 'revendedor' && zé?.atendimento === 'presencial'
      && ana?.tipo === 'consumidor' && ana?.atendimento === 'virtual',
