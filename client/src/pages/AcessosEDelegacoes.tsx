@@ -230,8 +230,15 @@ export default function AcessosEDelegacoes() {
       startsAt: new Date(ini), endsAt: new Date(fim), autoReturn: true,
       escopo: escopoBody(),
     }, {
-      onSuccess: () => { setFromUserId(""); setTargets([]); setIni(""); setFim("");
-        setEscopoTipo("todos"); setEscopoValores([]); setBuscaEscopo(""); }, // limpa o formulário
+      // limpa o formulário. Cuidado: um erro aqui dentro faz o TanStack Query cair
+      // no onError da mutation e mostrar "não foi possível criar" para uma delegação
+      // que JÁ foi criada — foi exatamente o que aconteceu ao trocar o estado do escopo.
+      onSuccess: () => {
+        setFromUserId(""); setTargets([]); setIni(""); setFim("");
+        setDimsAtivas([]);
+        setEscopoSel({ clientes: [], cidades: [], bairros: [], dias: [] });
+        setBuscaEscopo({ clientes: "", cidades: "", bairros: "", dias: "" });
+      },
     });
   };
 
