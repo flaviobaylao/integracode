@@ -22,7 +22,7 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import CustomerEditModal from '@/components/CustomerEditModal';
 import {
   Loader2, RefreshCw, Search, Send, AlertTriangle, CheckCircle2, MessageSquare,
-  Clock, X, Users, CircleDollarSign, Pencil,
+  Clock, X, Users, CircleDollarSign, Pencil, ArrowUpDown,
 } from 'lucide-react';
 
 // -----------------------------------------------------------------------------
@@ -138,7 +138,53 @@ export default function PainelComunicacao() {
   const url = `/api/gestao/comunicacao?${qs}`;
   const { data, isLoading, isFetching, refetch, error } = useQuery<Resposta>({ queryKey: [url] });
 
-  const itens = data?.itens || [];
+  const crus = data?.itens || [];
+
+  // ORDENAÇÃO — no cliente, de propósito: a consulta já trouxe a lista inteira
+  // (são milhares de linhas, não milhões) e ordenar aqui deixa a troca de coluna
+  // instantânea, sem ir ao servidor a cada clique.
+  // Quem nunca comprou (ou nunca foi contatado) vai SEMPRE para o fim, nos dois
+  // sentidos: null não é "muito antigo" nem "muito recente" — é ausência, e se
+  // ele subisse ao topo em "mais antigas" empurraria para baixo justamente quem
+  // precisa de mensagem.
+  const [ordem, setOrdem] = useState<{ col: string; desc: boolean }>({ col: 'nome', desc: false });
+  const itens = useMemo(() => {
+    const valor = (c: Cliente): any => {
+      switch (ordem.col) {
+        case 'ultimaCompra':   return c.ultimaCompra ? Date.parse(c.ultimaCompra) : null;
+        case 'debito':         return c.debitoTotal > 0 ? c.debitoTotal : null;
+        case 'ultimaInteracao':return c.ultimaInteracao ? Date.parse(c.ultimaInteracao) : null;
+        default:               return c.nome.toLowerCase();
+      }
+    };
+    const arr = [...crus];
+    arr.sort((a, b) => {
+      const x = valor(a), y = valor(b);
+      if (x == null && y == null) return a.nome.localeCompare(b.nome);
+      if (x == null) return 1;   // sem dado sempre no fim
+      if (y == null) return -1;
+      const d = typeof x === 'string' ? String(x).localeCompare(String(y)) : (x as number) - (y as number);
+      return ordem.desc ? -d : d;
+    });
+    return arr;
+  }, [crus, ordem]);
+
+  /** Cabeçalho que ordena. Primeiro clique numa coluna de data/valor vem do
+   *  maior para o menor, que é como se olha "quem comprou por último". */
+  function Ordenavel({ col, children, padrao = 'desc' }: { col: string; children: any; padrao?: 'asc' | 'desc' }) {
+    const ativa = ordem.col === col;
+    return (
+      <button
+        onClick={() => setOrdem((o) => o.col === col ? { col, desc: !o.desc } : { col, desc: padrao === 'desc' })}
+        className={`inline-flex items-center gap-1 hover:text-teal-600 ${ativa ? 'text-teal-600' : ''}`}
+        title="Ordenar por esta coluna"
+      >
+        {children}
+        <ArrowUpDown className={`w-3 h-3 ${ativa ? '' : 'opacity-30'}`} />
+        {ativa && <span className="text-[10px] font-normal">{ordem.desc ? 'maior→menor' : 'menor→maior'}</span>}
+      </button>
+    );
+  }
   const tipos = data?.tipos || [];
 
   const marcados = useMemo(() => {
@@ -389,13 +435,13 @@ export default function PainelComunicacao() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
               <tr className="text-left">
-                <th className="p-2 font-semibold">Cliente</th>
+                <th className="p-2 font-semibold"><Ordenavel col="nome" padrao="asc">Cliente</Ordenavel></th>
                 <th className="p-2 font-semibold">Contato</th>
                 <th className="p-2 font-semibold">Perfil</th>
                 <th className="p-2 font-semibold">Vendedor</th>
-                <th className="p-2 font-semibold text-right">Última compra</th>
-                <th className="p-2 font-semibold text-right">Débito vencido</th>
-                <th className="p-2 font-semibold">Último contato</th>
+                <th className="p-2 font-semibold text-right"><Ordenavel col="ultimaCompra">Última compra</Ordenavel></th>
+                <th className="p-2 font-semibold text-right"><Ordenavel col="debito">Débito vencido</Ordenavel></th>
+                <th className="p-2 font-semibold"><Ordenavel col="ultimaInteracao">Último contato</Ordenavel></th>
                 {tipos.map((t) => (
                   <th key={t.id} className="p-2 font-semibold text-center whitespace-nowrap" title={t.descricao}>
                     <div>{t.nome}</div>
