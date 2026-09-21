@@ -31,7 +31,10 @@ const safe = (fn: (req: Request, res: Response) => Promise<any>) =>
   };
 
 // Tipos válidos de alteração e status.
-const VALID_TYPES = new Set(["periodicidade", "dia_rota", "area_vendas", "inicio_atendimento", "inativar", "dia_sobrecarregado", "outro"]);
+// 🐛 21/set/2026: "presencial_virtual" existe no formulário do vendedor (ChangeRequestControl)
+// desde jul/2026, mas nunca esteve nesta lista — o tipo era descartado no filtro abaixo e a
+// solicitação SÓ de modalidade caía em "Selecione ao menos um tipo de alteração.".
+const VALID_TYPES = new Set(["periodicidade", "dia_rota", "area_vendas", "presencial_virtual", "inicio_atendimento", "inativar", "dia_sobrecarregado", "outro"]);
 // 'agenda_dia' nao e' um cadastro: e' uma CELULA do quadro da Agenda da Carteira
 // (vendedor|canal|dia da semana) que passou do teto de clientes por dia.
 const VALID_ENTITY = new Set(["customer", "lead", "repescagem", "agenda_dia"]);
@@ -347,6 +350,11 @@ export function registerChangeRequestsRoutes(app: Express) {
       if (!["interno", "externo"].includes(String(inD.areaVendas)))
         return res.status(400).json({ error: "Área de vendas inválida." });
       details.areaVendas = String(inD.areaVendas);
+    }
+    if (types.includes("presencial_virtual") && inD.modalidade) {
+      if (!["presencial", "virtual"].includes(String(inD.modalidade)))
+        return res.status(400).json({ error: "Modalidade inválida." });
+      details.modalidade = String(inD.modalidade);
     }
     if (types.includes("inicio_atendimento") && inD.inicioAtendimento) {
       details.inicioAtendimento = String(inD.inicioAtendimento);
