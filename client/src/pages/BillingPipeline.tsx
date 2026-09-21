@@ -608,8 +608,15 @@ export default function BillingPipeline() {
   });
   const addNoteMutation = useMutation({
     mutationFn: async ({ id, text }: { id: string; text: string }) => await apiRequest('POST', `/api/billing-pipeline/${id}/note`, { text }),
-    onSuccess: () => {
+    onSuccess: (resp: any) => {
       refetchCardNotes();
+      // A observação é gravada no campo notes do item/sales_card (a mesma caixa OBSERVAÇÕES). O card
+      // não recarregava sozinho, então a nota "sumia" até reabrir. Agora atualizamos o card na hora
+      // (acrescentando a entrada) e invalidamos as listas para persistir a exibição ao reabrir.
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      const entry = resp && resp.entry ? String(resp.entry) : '';
+      if (entry) setDetailItem((prev) => prev ? ({ ...prev, notes: (prev.notes ? String(prev.notes) + '\n' : '') + entry } as any) : prev);
       toast({ title: 'Observação adicionada', description: 'Registrada no card com data, hora e seu nome.' });
     },
     onError: (e: any) => toast({ title: 'Erro ao adicionar observação', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
