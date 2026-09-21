@@ -24,6 +24,21 @@ console.log('Inicializando agendador de tarefas...');
 // A tabela da tela e' recalculada a cada abertura, entao ela ja nasce atual.
 // O que PRECISA de horario marcado e' o aviso: sem isto, so' nasce aviso para
 // quem alguem abriu, e a carteira que ninguem olha nunca aparece na Inbox.
+// ── PREVISÃO DE PAGAMENTO: aviso ao vendedor no dia prometido, 07h ─────────
+// O admin registra no card do Inbox a data em que o cliente prometeu pagar. Na data, o card
+// vira pendência na Rota do Dia do vendedor (trava o Fechar Rota) e, se ele for externo,
+// recebe também um WhatsApp no celular. Idempotente: cada previsão só avisa uma vez.
+cron.schedule('0 7 * * *', async () => {
+  console.log('💰 [SCHEDULER] Previsões de pagamento que vencem hoje (07:00)...');
+  try {
+    const { avisarPrevisoesPagamento } = await import('./change-requests-routes');
+    const r = await avisarPrevisoesPagamento();
+    console.log(`✅ [SCHEDULER] Previsão de pagamento: ${r.avisados} aviso(s), ${r.whatsapp} por WhatsApp.`);
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Aviso de previsão de pagamento falhou:', error?.message);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 cron.schedule('0 7 * * *', async () => {
   console.log('📅 [SCHEDULER] Varredura de dias sobrecarregados (07:00)...');
   try {
