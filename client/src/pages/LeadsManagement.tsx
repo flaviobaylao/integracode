@@ -595,7 +595,7 @@ export default function LeadsManagement() {
       "Observação": lead.observation || "",
       "Atribuído a": lead.assignedTo || "",
       "Criado por": lead.createdByName || "",
-      "Próximo Contato": lead.nextContactDate ? formatInTimeZone(new Date(String(lead.nextContactDate)), "America/Sao_Paulo", "dd/MM/yyyy", { locale: ptBR }) : "",
+      "Próximo Contato": lead.nextContactDate ? formatInTimeZone(new Date(String(lead.nextContactDate)), "UTC", "dd/MM/yyyy", { locale: ptBR }) : "",
       "Criado em": lead.createdAt ? formatInTimeZone(new Date(String(lead.createdAt)), "America/Sao_Paulo", "dd/MM/yyyy HH:mm", { locale: ptBR }) : "",
     }));
     exportPadraoExcel(data, `leads_${hojeBR()}`, { aba: "Leads" });
@@ -1130,20 +1130,20 @@ export default function LeadsManagement() {
                             </div>
                             {(lead as any).nextContactDate && (
                               <span className="text-[11px] text-muted-foreground capitalize">
-                                {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
+                                {formatInTimeZone(new Date((lead as any).nextContactDate), 'UTC', 'EEE', { locale: ptBR }).replace('.', '')}
                               </span>
                             )}
                           </div>
                         ) : (lead as any).nextContactDate ? (
                           <div className="flex flex-col gap-0.5">
                             <span className={`font-medium flex items-center gap-1 ${descartado ? 'text-gray-400' : (diaCalendario((lead as any).nextContactDate) < hojeBR() ? 'text-red-600' : 'text-green-600')}`}>
-                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'dd/MM/yyyy', { locale: ptBR })}
+                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'UTC', 'dd/MM/yyyy', { locale: ptBR })}
                               {(lead as any).nextContactLocked && (
                                 <span title="Data travada manualmente — imune à reprogramação automática por coordenada neste ciclo (abre sozinho na próxima rodada)." className="text-amber-600 dark:text-amber-400">🔒</span>
                               )}
                             </span>
                             <span className="text-[11px] text-muted-foreground capitalize">
-                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'America/Sao_Paulo', 'EEE', { locale: ptBR }).replace('.', '')}
+                              {formatInTimeZone(new Date((lead as any).nextContactDate), 'UTC', 'EEE', { locale: ptBR }).replace('.', '')}
                             </span>
                           </div>
                         ) : '—'}
