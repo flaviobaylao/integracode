@@ -976,6 +976,34 @@ async function main() {
   check(semDevedorInativo.length === 0,
     'comunicação: inativo SEM dívida continua fora — a opção não despeja a base inativa na tela');
 
+  // A Meta nao deixa editar texto de template aprovado: cria-se outro. Enquanto
+  // o novo esta em revisao, quem sai tem que ser o ANTIGO - senao o disparo
+  // falha e a tela diz que esta tudo certo.
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES
+               ('recompra_mix','tpl-mix','MARKETING','Oi, {{1}}! mesmos sabores de sempre?')
+             ON CONFLICT (label) DO UPDATE SET umbler_id='tpl-mix', corpo=EXCLUDED.corpo`);
+  const tipoMix = pcom.tipoPorId('mix')!;
+  const soAntigo = await pcom.escolherTemplate(tipoMix);
+  check(soAntigo?.label === 'recompra_mix',
+    'template: com a versão nova ainda em revisão, sai a que está no ar (' + soAntigo?.label + ')');
+
+  // Em producao a versao em revisao simplesmente NAO existe no cadastro local:
+  // importarDoUmbler so traz APPROVED. Quando a Meta aprova, a linha aparece.
+  await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES
+               ('recompra_mix_v2','tpl-mix-v2','MARKETING','Oi, {{1}}! seu {{2}} de sempre e mais dois?')
+             ON CONFLICT (label) DO UPDATE SET umbler_id='tpl-mix-v2'`);
+  const jaNovo = await pcom.escolherTemplate(tipoMix);
+  check(jaNovo?.label === 'recompra_mix_v2',
+    'template: aprovada a nova, a troca acontece sozinha, sem deploy (' + jaNovo?.label + ')');
+
+  // E desligar a nova no cadastro devolve o comando para a antiga, sem deploy.
+  await raw(`ALTER TABLE whatsapp_templates ADD COLUMN IF NOT EXISTS is_active boolean DEFAULT true`).catch(() => {});
+  await raw(`UPDATE whatsapp_templates SET is_active = false WHERE label = 'recompra_mix_v2'`);
+  const voltouAntigo = await pcom.escolherTemplate(tipoMix);
+  check(voltouAntigo?.label === 'recompra_mix',
+    'template: desligar a nova devolve o comando para a antiga (' + voltouAntigo?.label + ')');
+  await raw(`UPDATE whatsapp_templates SET is_active = true WHERE label = 'recompra_mix_v2'`);
+
   // O cadastro local de templates tem que seguir o Umbler sozinho: se o corpo
   // aprovado muda la e aqui nao, o disparo sai com numero errado de variaveis.
   const tpl = await import('../server/official-templates');
