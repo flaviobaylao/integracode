@@ -77,6 +77,9 @@ type DetalheNota = {
   situacao: string | null;
   cancelada?: boolean;
   parcelas: DetalheParcela[];
+  implantadoPor?: string | null;
+  implantadoPorTipo?: "pessoa" | "rotina" | null;
+  vendedor?: string | null;
   pagamentos: Array<{ data: string | null; valor: number; formaPagamento?: string | null; conta?: string | null; referencia?: string | null; titulo?: string | null }>;
   produtos?: Array<{ nome: string; quantidade: number; unidade?: string | null; unitPrice?: number; totalPrice?: number }>;
 };
@@ -883,6 +886,19 @@ function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void })
                 <DetInfo label="Saldo" value={<span className={dNota.saldo > 0.009 ? "text-amber-700 dark:text-amber-300" : ""}>{fmtBRL(dNota.saldo)}</span>} />
                 <DetInfo label="Parcelas" value={dNota.parcelasQtd} />
                 <DetInfo label="Origem" value={dNota.origem || "—"} />
+                <DetInfo
+                  label="Implantado por"
+                  value={
+                    dNota.implantadoPor ? (
+                      <span className={dNota.implantadoPorTipo === "rotina" ? "text-gray-500 dark:text-gray-400 italic" : ""}>
+                        {dNota.implantadoPor}
+                      </span>
+                    ) : (
+                      "—"
+                    )
+                  }
+                />
+                <DetInfo label="Vendedor" value={dNota.vendedor || "—"} />
               </div>
 
               <div>
