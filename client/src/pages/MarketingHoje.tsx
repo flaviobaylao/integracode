@@ -91,6 +91,11 @@ export default function MarketingHoje() {
         </div>
         <span className="ml-auto flex gap-2">
           <Button size="sm" variant="outline" onClick={() => q.refetch()}>Atualizar</Button>
+          <Link href="/painel-comunicacao">
+            <Button size="sm" variant="outline" title="Painel de Comunicação — a lista de clientes e o que dá para mandar">
+              <i className="fas fa-address-book mr-2" />Comunicação
+            </Button>
+          </Link>
           <Link href="/marketing"><Button size="sm" variant="outline">Central completa</Button></Link>
         </span>
       </div>

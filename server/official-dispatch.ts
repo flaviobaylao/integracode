@@ -128,6 +128,23 @@ export async function enqueueOfficialDispatch(item: {
   customerId?: string; customerPhone: string; templateLabel: string; params: string[];
   useCase: string; campaign?: string; postbackTexts?: {index:number;text:string}[]; category?: string;
 }): Promise<string> {
+  // FORNECEDOR nunca recebe mensagem da Central (decisão do Flavio, 21/set/2026).
+  // O cadastro dele existe para COMPRA e DEVOLUÇÃO; não participa de venda, rota
+  // nem comunicação. A trava mora aqui, no funil por onde passa TODO disparo
+  // oficial, e ANTES de qualquer liga/desliga: não é uma linha desligada, é uma
+  // pessoa que não pode ser falada — e o motivo tem que aparecer assim no recibo.
+  // Casa por id e, na falta dele, pelos 8 últimos dígitos do telefone: o disparo
+  // nem sempre carrega customer_id.
+  try {
+    const fone8 = String(item.customerPhone || '').replace(/\D/g, '').slice(-8);
+    const forn: any = await db.execute(sql`
+      SELECT 1 FROM customers c
+       WHERE COALESCE(c.is_supplier, false) = true
+         AND (c.id = ${item.customerId || null}
+              OR (${fone8} <> '' AND right(regexp_replace(COALESCE(c.phone,''), '\\D', '', 'g'), 8) = ${fone8}))
+       LIMIT 1`);
+    if (forn.rows?.length) return 'fornecedor';
+  } catch { /* sem conseguir checar, segue o fluxo normal */ }
   const m = await modeFor(item.useCase);
   if (m === 'off') return 'desligado';
   if (!(await useCaseEnabled(item.useCase))) return 'desligado';

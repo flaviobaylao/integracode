@@ -187,7 +187,9 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
   // metade timestamptz. Confiar na memória sobre qual é qual já jogou disparo
   // da noite para o dia seguinte no painel de atendimento — aqui o tipo vem do
   // catálogo do Postgres.
-  const diaCompra = sql.raw(await diaBR("sales_cards", "completed_date", "cp.quando"));
+  // `cp.quando` já sai da CTE `compra` como DATE de calendário (issue_date::date),
+  // então não passa por diaBR: aplicar fuso num date volta um dia.
+  const diaCompra = sql.raw("cp.quando");
   const diaDisparo = sql.raw(await diaBR("official_dispatches", "created_at", "d.quando"));
   // Cliente inativo que ainda deve some da lista de ativos, mas a dívida dele
   // não some do mundo — e ele é justamente quem mais precisa ser cobrado. Com
@@ -208,26 +210,49 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
              c.seller_id,
              COALESCE(c.is_consumer_client, false) AS consumidor,
              COALESCE(c.virtual_service, false)    AS virtual,
+             COALESCE(c.is_colaborador, false)     AS colaborador,
              COALESCE(c.is_active, false) AS ativo,
              ${FONE8("c.phone")} AS fone8
         FROM customers c
        WHERE ${sql.raw(condAtivo)}
+         -- Quem NÃO entra: LEAD (ainda não é cliente) e FORNECEDOR (cadastro de
+         -- compra/devolução, nunca de venda — regra do item 5, 21/set/2026).
+         -- COLABORADOR entra: ele compra como qualquer outro, e ficar de fora em
+         -- silêncio foi o que sumiu com FLAVIO EVANGELISTA da lista. Ele vem
+         -- marcado no perfil, para quem olha saber por que está ali.
          AND COALESCE(c.is_lead, false)       = false
          AND COALESCE(c.is_supplier, false)   = false
-         AND COALESCE(c.is_colaborador, false) = false
     ),
-    -- Última compra: mesma regra do contexto do cliente, para os dois painéis
-    -- nunca divergirem sobre o que conta como compra.
+    -- ÚLTIMA COMPRA = ÚLTIMA NOTA FISCAL DE VENDA, a mesma fonte do Extrato do
+    -- Cliente (customer-statement-routes.ts), e não o card de venda.
+    -- ---------------------------------------------------------------------
+    -- Antes isto saía de sales_cards, e errava feio: card com status 'blocked'
+    -- (bloqueado por débito) não tem completed_date, então o COALESCE caía no
+    -- updated_at — qualquer rotina que tocasse no card "rejuvenescia" a compra.
+    -- Medido em 21/set/2026 contra o Extrato: 272 CONVENIÊNCIA aparecia com
+    -- compra em 17/09 quando a última NF é de 22/07/2025 (426 dias). Com o
+    -- painel mandando "faz X dias que você não compra", o erro vira mensagem
+    -- errada no cliente.
+    -- issue_date é data de calendário guardada à meia-noite UTC (mesma natureza
+    -- de due_date): lê-se ::date, SEM conversão de fuso — a conversão jogaria
+    -- tudo um dia para trás.
     compra AS (
-      SELECT DISTINCT ON (sc.customer_id)
-             sc.customer_id AS cid,
-             COALESCE(sc.completed_date, sc.updated_at, sc.created_at) AS quando,
-             sc.sale_value AS valor
-        FROM sales_cards sc
-       WHERE COALESCE(sc.operation_type, 'venda') = 'venda'
-         AND COALESCE(sc.status, '') NOT IN ('cancelled', 'telemarketing')
-         AND (sc.completed_date IS NOT NULL OR COALESCE(sc.status, '') IN ('blocked', 'completed', 'invoiced'))
-       ORDER BY sc.customer_id, COALESCE(sc.completed_date, sc.updated_at, sc.created_at) DESC
+      SELECT cid, quando, valor FROM (
+        SELECT r.customer_id AS cid,
+               (r.issue_date)::date AS quando,
+               sum(r.amount)::numeric AS valor,
+               row_number() OVER (PARTITION BY r.customer_id ORDER BY (r.issue_date)::date DESC) AS rn
+          FROM receivables r
+         WHERE r.deleted_at IS NULL
+           AND r.customer_id IS NOT NULL
+           AND r.issue_date IS NOT NULL
+           -- Transferência entre estabelecimentos e faturamento de outra praça
+           -- ([GYN]/[BSB]/[IND]/[SERV]) não é venda PARA ESTE cliente — mesma
+           -- régua do Extrato (NAO_E_VENDA_RE em divida-viva.ts).
+           AND (COALESCE(r.description,'') || ' ' || COALESCE(r.category,''))
+                 !~* '(TRANSFER|\\[GYN\\]|\\[BSB\\]|\\[IND\\]|\\[SERV\\])'
+         GROUP BY r.customer_id, (r.issue_date)::date
+      ) x WHERE rn = 1
     ),
     -- Débito vencido pela regra única da dívida viva (divida-viva.ts). Não
     -- reescrever essa regra aqui é o que impede o painel de cobrar o que a
@@ -276,7 +301,7 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
        GROUP BY 1
     )
     SELECT b.id, b.nome, b.contato, b.phone AS telefone, b.cidade,
-           b.consumidor, b.virtual, b.ativo, b.seller_id,
+           b.consumidor, b.virtual, b.colaborador, b.ativo, b.seller_id,
            NULLIF(trim(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS vendedor,
            ${diaCompra} AS ultima_compra,
            cp.valor AS ultima_compra_valor,
@@ -317,6 +342,7 @@ export async function listarClientes(f: FiltrosComunicacao = {}) {
     cidade: r.cidade || null,
     tipo: r.consumidor ? "consumidor" : "revendedor",
     atendimento: r.virtual ? "virtual" : "presencial",
+    colaborador: r.colaborador === true,
     ativo: r.ativo === true,
     vendedorId: r.seller_id || null,
     vendedor: r.vendedor || null,

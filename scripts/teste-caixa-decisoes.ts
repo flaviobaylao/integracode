@@ -15,7 +15,7 @@ async function raw(q: string) { return db.execute(sql.raw(q)); }
 async function schemaBase() {
   await raw(`CREATE TABLE IF NOT EXISTS system_settings (key varchar PRIMARY KEY, value text, updated_by varchar, updated_at timestamptz DEFAULT now())`);
   await raw(`CREATE TABLE IF NOT EXISTS users (id varchar PRIMARY KEY, first_name varchar, last_name varchar, phone varchar, role varchar, is_active boolean DEFAULT true, updated_at timestamptz, omie_vendor_codes jsonb)`);
-  await raw(`CREATE TABLE IF NOT EXISTS customers (id varchar PRIMARY KEY, name varchar, phone varchar, seller_id varchar, cnpj varchar, cpf varchar, document varchar, is_active boolean DEFAULT true, is_lead boolean DEFAULT false, city varchar)`);
+  await raw(`CREATE TABLE IF NOT EXISTS customers (id varchar PRIMARY KEY, name varchar, phone varchar, seller_id varchar, cnpj varchar, cpf varchar, document varchar, is_active boolean DEFAULT true, is_lead boolean DEFAULT false, is_supplier boolean DEFAULT false, city varchar)`);
   await raw(`CREATE TABLE IF NOT EXISTS billing_pipeline (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, created_at timestamptz DEFAULT now(), stage varchar)`);
   await raw(`CREATE TABLE IF NOT EXISTS billings (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_document varchar, invoice_date date)`);
   await raw(`CREATE TABLE IF NOT EXISTS sales_cards (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, seller_id varchar, status varchar DEFAULT 'completed', sale_value numeric(10,2), products jsonb DEFAULT '[]'::jsonb, created_at timestamptz DEFAULT now(), campaign_id varchar, utm jsonb, attribution_kind varchar)`);
@@ -801,25 +801,51 @@ async function main() {
 
   // Dois clientes de perfis opostos: um revendedor presencial com débito
   // vencido e sem comprar há muito; um consumidor virtual que comprou ontem.
-  await raw(`INSERT INTO customers (id, name, phone, seller_id, is_active, contact, city, is_consumer_client, virtual_service)
-             VALUES ('pc-rev', 'Mercadinho do Zé', '5562988880001', 'v1', true, 'Zé', 'Goiânia', false, false),
-                    ('pc-con', 'Ana Paula',        '5562988880002', 'v1', true, 'Ana', 'Goiânia', true,  true)
+  await raw(`INSERT INTO customers (id, name, phone, seller_id, is_active, contact, city, is_consumer_client, virtual_service, is_colaborador, is_supplier)
+             VALUES ('pc-rev',   'Mercadinho do Zé', '5562988880001', 'v1', true, 'Zé',   'Goiânia', false, false, false, false),
+                    ('pc-con',   'Ana Paula',        '5562988880002', 'v1', true, 'Ana',  'Goiânia', true,  true,  false, false),
+                    ('pc-colab', 'Vendedor Que Compra', '5562988880003', 'v1', true, 'Léo', 'Goiânia', true, true, true, false),
+                    ('pc-forn',  'Distribuidora Insumos', '5562988880004', 'v1', true, 'Sr. Fornecedor', 'Goiânia', false, false, false, true)
              ON CONFLICT (id) DO NOTHING`);
-  await raw(`INSERT INTO sales_cards (customer_id, status, sale_value, completed_date, operation_type)
-             VALUES ('pc-rev', 'completed', 420.00, now() - interval '90 days', 'venda'),
-                    ('pc-con', 'completed',  38.00, now() - interval '1 day',   'venda')`);
   // O vencimento e ancorado no DIA BRASILEIRO, que e o mesmo relogio que o
   // calculo de atraso usa. Ancorar em now() (UTC) faz o teste virar 39 ou 40
   // dias conforme a hora da rodada — ja aconteceu, depois das 21h UTC.
   const diaBRT = `(now() AT TIME ZONE 'America/Sao_Paulo')::date`;
-  await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date)
-             VALUES ('pc-rev', 'Mercadinho do Zé', 300, 0, 'vencida', ${diaBRT} - 40, ${diaBRT} - 70),
-                    ('pc-rev', 'Mercadinho do Zé', 120, 0, 'vencida', ${diaBRT} - 10, ${diaBRT} - 40)`);
+  // ÚLTIMA COMPRA sai da NOTA (receivables.issue_date), igual ao Extrato do Cliente.
+  // A nota de Ana vence no futuro: ela COMPROU ontem e NÃO deve nada.
+  await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date, description)
+             VALUES ('pc-rev', 'Mercadinho do Zé', 300, 0, 'vencida',  ${diaBRT} - 40, ${diaBRT} - 70, 'Venda'),
+                    ('pc-rev', 'Mercadinho do Zé', 120, 0, 'vencida',  ${diaBRT} - 10, ${diaBRT} - 40, 'Venda'),
+                    ('pc-con', 'Ana Paula',         38, 0, 'a_vencer', ${diaBRT} + 20, ${diaBRT} -  1, 'Venda'),
+                    ('pc-con', 'Ana Paula',         99, 0, 'a_vencer', ${diaBRT} + 20, ${diaBRT},      '[GYN] Revenda de Mercadoria')`);
+  // Card BLOQUEADO mexido agora: é exatamente o que fazia o painel dizer que um
+  // cliente parado há 426 dias "comprou hoje" — o card sem completed_date caía
+  // no updated_at. Não é compra, e a lista tem que ignorá-lo.
+  await raw(`INSERT INTO sales_cards (customer_id, status, sale_value, completed_date, updated_at, operation_type)
+             VALUES ('pc-rev', 'blocked', 9999.00, NULL, now(), 'venda'),
+                    ('pc-con', 'completed', 38.00, now() - interval '1 day', now(), 'venda')`);
 
   const lista = await pcom.listarClientes({});
   const zé = lista.itens.find((i: any) => i.id === 'pc-rev');
   const ana = lista.itens.find((i: any) => i.id === 'pc-con');
   check(!!zé && !!ana, 'comunicação: os clientes ativos entram na lista');
+  // Regressão do 21/set/2026: FLAVIO EVANGELISTA sumiu do painel sem aviso
+  // porque é colaborador. Colaborador compra; fornecedor, não.
+  check(!!lista.itens.find((i: any) => i.id === 'pc-colab')?.colaborador,
+    'comunicação: colaborador que compra aparece na lista, marcado como colaborador');
+  check(!lista.itens.some((i: any) => i.id === 'pc-forn'),
+    'comunicação: fornecedor não aparece na lista de comunicação');
+  // A trava do fornecedor mora no funil de TODO disparo oficial, não em cada
+  // régua: rotina nova nasce respeitando a regra sem precisar lembrar dela.
+  {
+    const od = await import('../server/official-dispatch');
+    const r = await od.enqueueOfficialDispatch({
+      customerId: 'pc-forn', customerPhone: '5562988880004',
+      templateLabel: 'cobranca_titulos', params: ['x'], useCase: 'cobranca',
+    });
+    check(r === 'fornecedor',
+      'comunicação: a fila do 1841 recusa disparo para fornecedor (' + r + ')');
+  }
   check(zé?.tipo === 'revendedor' && zé?.atendimento === 'presencial'
      && ana?.tipo === 'consumidor' && ana?.atendimento === 'virtual',
     'comunicação: marca revenda/consumo e virtual/presencial pelo cadastro');
@@ -827,10 +853,14 @@ async function main() {
      && ana?.debitoTotal === 0,
     'comunicação: débito vencido soma pela mesma régua da dívida viva (R$' + zé?.debitoTotal + ' em ' + zé?.debitoTitulos
     + ' títulos, atraso ' + zé?.debitoDiasAtraso + 'd; ana=' + JSON.stringify(ana?.debitoTotal) + ')');
-  check((zé?.diasSemCompra ?? 0) >= 89 && zé?.ultimaCompraValor === 420
-     && (ana?.diasSemCompra ?? 99) <= 2,
-    'comunicação: última compra traz data e valor (' + zé?.diasSemCompra + 'd R$' + zé?.ultimaCompraValor
+  check(zé?.diasSemCompra === 40 && zé?.ultimaCompraValor === 120 && ana?.diasSemCompra === 1,
+    'comunicação: última compra é a última NOTA, com data e valor (' + zé?.diasSemCompra + 'd R$' + zé?.ultimaCompraValor
     + ' / ' + ana?.diasSemCompra + 'd R$' + ana?.ultimaCompraValor + ')');
+  check(zé?.diasSemCompra === 40,
+    'comunicação: card bloqueado mexido hoje NÃO rejuvenesce a última compra (' + zé?.diasSemCompra + 'd)');
+  check(ana?.diasSemCompra === 1 && ana?.ultimaCompraValor === 38,
+    'comunicação: nota de outra praça ([GYN]) não conta como compra deste cliente ('
+    + ana?.diasSemCompra + 'd R$' + ana?.ultimaCompraValor + ')');
 
   // Os filtros são o que transforma a lista em lote: têm que recortar de verdade.
   const soDebito = await pcom.listarClientes({ debito: 'com' });
