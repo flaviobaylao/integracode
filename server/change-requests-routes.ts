@@ -316,6 +316,69 @@ export async function listarPendenciasInbox(sellerId: string, date: string): Pro
   return { pendentes, respondidasHoje };
 }
 
+// 💰 PREVISÃO DE PAGAMENTO — cron diário (07:00 BRT, chamado pelo scheduler).
+// Reports cuja `details.previsaoPagamento` chegou (hoje ou atrasada) e que ainda não foram
+// avisados: lança uma réplica automática do sistema (kind='reply') — o card entra no box
+// "Pendências do Inbox" da Rota do Dia do vendedor e trava o Fechar Rota até ele responder —
+// e, para vendedor EXTERNO (role vendedor / seller_type vendedor_*), manda WhatsApp no celular.
+// Telemarketing fica só com a bandeira no sistema. Idempotente: grava `previsaoAvisadaEm`.
+export async function avisarPrevisoesPagamento(): Promise<{ avisados: number; whatsapp: number }> {
+  let avisados = 0, whatsapp = 0;
+  try {
+    await ensureTables();
+    const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    const rows = rowsOf(await db.execute(sql`
+      SELECT * FROM change_requests
+      WHERE (details->>'previsaoPagamento') IS NOT NULL
+        AND (details->>'previsaoPagamento') <= ${hoje}
+        AND (details->>'previsaoAvisadaEm') IS NULL
+      ORDER BY created_at DESC LIMIT 200`));
+    for (const r of rows) {
+      try {
+        const d: any = r.details || {};
+        const prev = String(d.previsaoPagamento || "");
+        const dataBR = prev.split("-").reverse().join("/");
+        const cliente = r.entity_name || r.entity_id;
+        const texto = `💰 Hoje é a data que ${cliente} prometeu pagar (${dataBR}). Faça a cobrança e responda aqui o que o cliente disse.`;
+        const msg = {
+          id: newMsgId(), role: "admin", by: null, byName: "Integra (automático)",
+          text: texto, at: new Date().toISOString(), kind: "reply", previsaoPagamento: prev,
+        };
+        d.previsaoAvisadaEm = new Date().toISOString();
+        await db.execute(sql`
+          UPDATE change_requests
+          SET details = ${JSON.stringify(d)}::jsonb,
+              messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb,
+              status = CASE WHEN kind = 'report' THEN 'pending' ELSE status END
+          WHERE id = ${r.id}`);
+        avisados++;
+
+        // Vendedor externo → WhatsApp no celular dele. Telemarketing → só a bandeira.
+        const sid = r.seller_id || r.requested_by;
+        if (!sid) continue;
+        const ur = rowsOf(await db.execute(sql`SELECT phone, role, seller_type FROM users WHERE id = ${sid} LIMIT 1`));
+        const usr = ur[0];
+        if (!usr) continue;
+        const externo = String(usr.role || "") === "vendedor" && String(usr.seller_type || "") !== "telemarketing";
+        const fone = String(usr.phone || "").replace(/\D/g, "");
+        if (!externo || !fone) continue;
+        const { enviarInterno } = await import("./envio-texto");
+        const linhas = [
+          `💰 *Cobrança de hoje — ${cliente}*`,
+          `O cliente prometeu pagar em *${dataBR}*.`,
+          d.texto ? `_Seu registro: ${String(d.texto).trim()}_` : "",
+          "Faça a cobrança e responda a pendência na sua Rota do Dia.",
+        ].filter(Boolean);
+        const env = await enviarInterno(fone, linhas.join("\n"));
+        if (env?.success) whatsapp++;
+        else console.warn("[PREVISAO-PGTO] WhatsApp falhou:", env?.error);
+      } catch (e: any) { console.warn("[PREVISAO-PGTO] item falhou:", e?.message); }
+    }
+    if (avisados) console.log(`[PREVISAO-PGTO] ${avisados} aviso(s), ${whatsapp} por WhatsApp.`);
+  } catch (e: any) { console.error("[PREVISAO-PGTO] cron falhou:", e?.message); }
+  return { avisados, whatsapp };
+}
+
 export function registerChangeRequestsRoutes(app: Express) {
   void ensureTables();
 
@@ -625,6 +688,39 @@ export function registerChangeRequestsRoutes(app: Express) {
   //   - respondidasHoje: respondidas pelo vendedor em `date` (linha verde no box)
   //   Só comunicação: não cria parada, não conta como cliente e não trava o Fechar Rota.
   // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/previsao-pagamento — admin registra (ou limpa) a data em que
+  //   o cliente prometeu pagar. Na data, o cron das 07:00 lança uma réplica automática no card:
+  //   ela vira pendência na Rota do Dia do vendedor (bandeira + trava do Fechar Rota) e, para
+  //   vendedor externo, sai também um WhatsApp para o celular dele.
+  //   body: { data: "YYYY-MM-DD" | null }
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/previsao-pagamento", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const raw = String((req.body || {}).data || "").trim();
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+    if (raw && !data) return res.status(400).json({ error: "Data inválida." });
+    const cur = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE id = ${id} LIMIT 1`));
+    if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+
+    const d: any = cur[0].details || {};
+    if (data) { d.previsaoPagamento = data; delete d.previsaoAvisadaEm; }
+    else { delete d.previsaoPagamento; delete d.previsaoAvisadaEm; }
+    const texto = data
+      ? `Previsão de pagamento registrada para ${data.split("-").reverse().join("/")}. O vendedor será avisado no dia.`
+      : "Previsão de pagamento removida.";
+    const msg = mkMsg("admin", u, texto, "previsao_pagamento", { previsao: data || null });
+    const updated = rowsOf(await db.execute(sql`
+      UPDATE change_requests
+      SET details = ${JSON.stringify(d)}::jsonb,
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+      WHERE id = ${id}
+      RETURNING *`));
+    res.json(mapRow(updated[0]));
+  }));
+
   // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/remover-pendencia — admin exclui o card de pendência da
   //   Rota do Dia do vendedor (só a pendência: report, conversa e histórico ficam).
