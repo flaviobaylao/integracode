@@ -480,6 +480,80 @@ export function registerCustomerStatementRoutes(app: Express): void {
           }
         }
       } catch (_e) {}
+      // ── QUEM IMPLANTOU O PEDIDO que gerou a NF (21/set/2026) ────────────────
+      // O implantador mora em `billing_pipeline.created_by`, quase sempre no formato
+      // "auto (<quem>)". O miolo pode ser: e-mail de uma PESSOA, ou o nome de uma
+      // ROTINA ("system", "system-liberacao-manual", "hotsite", "balcao (maquininha)",
+      // "reconcile-nf"...). Medido em produção: dos 5.973 pedidos com NF, só 1.146
+      // têm pessoa identificável — nos demais o pedido nasceu de rotina.
+      // Por isso a tela mostra DUAS informações: quem implantou (pessoa ou rotina) e
+      // o VENDEDOR da carteira, que o pipeline tem em praticamente todos. Assim nunca
+      // se atribui a uma pessoa um pedido que a rotina criou sozinha.
+      const bpAutorMap = new Map<string, { criadoPor: string | null; sellerId: string | null; sellerNome: string | null }>();
+      const scSellerMap = new Map<string, string | null>();
+      const userPorEmail = new Map<string, string>();
+      const userPorId = new Map<string, string>();
+      try {
+        const u: any = await db.execute(sql`
+          SELECT id, LOWER(email) AS email,
+                 NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')), '') AS nome
+          FROM users`);
+        for (const row of (u.rows || u) as any[]) {
+          const nome = row.nome || row.email || null;
+          if (row.email && nome) userPorEmail.set(String(row.email), String(nome));
+          if (row.id && nome) userPorId.set(String(row.id), String(nome));
+        }
+      } catch (_e) {}
+      try {
+        for (let i = 0; i < bpIds.length; i += 500) {
+          const lote = bpIds.slice(i, i + 500);
+          const r: any = await db.execute(sql`SELECT id, created_by, seller_id, seller_name FROM billing_pipeline WHERE id IN (${idsIn(lote)})`);
+          for (const row of (r.rows || r) as any[]) {
+            bpAutorMap.set(String(row.id), { criadoPor: row.created_by || null, sellerId: row.seller_id || null, sellerNome: row.seller_name || null });
+          }
+        }
+      } catch (_e) {}
+      try {
+        for (let i = 0; i < scIds.length; i += 500) {
+          const lote = scIds.slice(i, i + 500);
+          const r: any = await db.execute(sql`SELECT id, seller_id FROM sales_cards WHERE id IN (${idsIn(lote)})`);
+          for (const row of (r.rows || r) as any[]) scSellerMap.set(String(row.id), row.seller_id || null);
+        }
+      } catch (_e) {}
+
+      /** Rótulo amigável para quando o pedido não foi implantado por uma pessoa. */
+      const ROTULO_ROTINA: Array<[RegExp, string]> = [
+        [/^balcao/i, "Balcão (maquininha)"],
+        [/hotsite/i, "Hotsite"],
+        [/^reconcile/i, "Reconciliação automática"],
+        [/^recuperacao/i, "Recuperação de Faturamento"],
+        [/liberacao-manual/i, "Liberação manual de bloqueio"],
+        [/debito-regularizado/i, "Liberação por débito regularizado"],
+        [/^system|^auto$/i, "Automático (sistema)"],
+      ];
+      const implantadorDaNota = (n: NotaAgg): { nome: string | null; tipo: "pessoa" | "rotina" | null } => {
+        const bp = n.bpId ? bpAutorMap.get(String(n.bpId)) : null;
+        const cru = String(bp?.criadoPor || "").trim();
+        if (!cru) return { nome: null, tipo: null };
+        const m = cru.match(/^auto\s*\((.*)\)$/i);
+        const quem = (m ? m[1] : cru).trim();
+        const chave = quem.toLowerCase();
+        const porEmail = userPorEmail.get(chave);
+        if (porEmail) return { nome: porEmail, tipo: "pessoa" };
+        // E-mail que não está (mais) no cadastro: mostra o e-mail, é melhor que nada.
+        if (/@/.test(quem)) return { nome: quem, tipo: "pessoa" };
+        for (const [rx, rotulo] of ROTULO_ROTINA) if (rx.test(chave)) return { nome: rotulo, tipo: "rotina" };
+        return { nome: quem, tipo: "rotina" };
+      };
+      const vendedorDaNota = (n: NotaAgg): string | null => {
+        const bp = n.bpId ? bpAutorMap.get(String(n.bpId)) : null;
+        if (bp?.sellerId && userPorId.get(String(bp.sellerId))) return userPorId.get(String(bp.sellerId)) || null;
+        if (bp?.sellerNome) return String(bp.sellerNome);
+        const scSeller = n.scId ? scSellerMap.get(String(n.scId)) : null;
+        if (scSeller && userPorId.get(String(scSeller))) return userPorId.get(String(scSeller)) || null;
+        return null;
+      };
+
       const produtosDaNota = (n: NotaAgg): any[] => {
         const bp = n.bpId ? bpProdMap.get(String(n.bpId)) : null;
         if (bp && bp.length) return bp.map((p: any) => ({ nome: p.name || "—", quantidade: num(p.quantity), unidade: null, unitPrice: num(p.unitPrice), totalPrice: num(p.totalPrice) }));
@@ -595,6 +669,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
             parcelas: detParcelas,
             pagamentos: detPagsNota,
             produtos: produtosDaNota(n),
+            implantadoPor: implantadorDaNota(n).nome,
+            implantadoPorTipo: implantadorDaNota(n).tipo,
+            vendedor: vendedorDaNota(n),
           },
         });
 
