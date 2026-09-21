@@ -175,6 +175,12 @@ export default function PainelAtendimento() {
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Atalho para a lista de clientes e o envio por tipo de mensagem. */}
+          <a href="/painel-comunicacao" title="Painel de Comunicação"
+             className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800"
+             data-testid="link-painel-comunicacao">
+            <i className="fas fa-address-book" /> Comunicação
+          </a>
           <input
             type="date" value={dia} max={hojeLocal}
             onChange={(e) => e.target.value && setDia(e.target.value)}

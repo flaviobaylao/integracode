@@ -232,6 +232,10 @@ SELECT c.id, c.name, c.phone, c.seller_id,
   LEFT JOIN mix    m  ON m.cid  = c.id
  WHERE c.is_active = true
    AND COALESCE(c.is_lead, false) = false
+   -- FORNECEDOR não é cliente: o cadastro existe para compra e devolução, e ele
+   -- não pode entrar em NENHUMA rotina de venda (regra do Flavio, 21/set/2026).
+   -- A trava final está em enqueueOfficialDispatch; aqui ele nem é cogitado.
+   AND COALESCE(c.is_supplier, false) = false
    AND length(regexp_replace(COALESCE(c.phone,''),'[^0-9]','','g')) >= 10
 `;
 

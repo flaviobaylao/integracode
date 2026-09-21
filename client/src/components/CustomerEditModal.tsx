@@ -962,8 +962,10 @@ export default function CustomerEditModal({
                   Fornecedor
                 </label>
                 <p className="text-xs text-amber-700">
-                  Cadastro de FORNECEDOR, não de cliente. Ao marcar, ele sai do Mapa de Clientes,
-                  das rotas e da agenda de visitas.
+                  Cadastro de FORNECEDOR, não de cliente: existe apenas para COMPRA e DEVOLUÇÃO
+                  de produtos. Ao marcar, ele sai do Mapa de Clientes, das rotas, da agenda de
+                  visitas, das réguas de recompra e do Painel de Comunicação — e nenhuma
+                  mensagem da Central é enviada para ele.
                 </p>
               </div>
             </div>

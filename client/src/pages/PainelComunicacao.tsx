@@ -19,14 +19,39 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
+import CustomerEditModal from '@/components/CustomerEditModal';
 import {
   Loader2, RefreshCw, Search, Send, AlertTriangle, CheckCircle2, MessageSquare,
-  Clock, X, Users, CircleDollarSign,
+  Clock, X, Users, CircleDollarSign, Pencil,
 } from 'lucide-react';
+
+// -----------------------------------------------------------------------------
+// CORES DO PERFIL
+// -----------------------------------------------------------------------------
+// Cada eixo tem sua própria família de cor, e a MESMA família em toda a tela:
+//   quem compra ....... verde (consumidor)  / âmbar (revendedor)
+//   como é atendido ... azul  (virtual)     / violeta (presencial)
+//   ressalvas ......... vermelho (inativo)  / cinza-escuro (colaborador)
+// São as mesmas cores do cadastro do cliente (verde = consumidor, azul =
+// virtual), para não existirem dois vocabulários de cor no sistema.
+const COR_PERFIL: Record<string, string> = {
+  consumidor:  'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
+  revendedor:  'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+  virtual:     'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+  presencial:  'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300',
+  inativo:     'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  colaborador: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200',
+};
+const Selo = ({ k, children }: { k: string; children?: any }) => (
+  <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${COR_PERFIL[k] || 'bg-gray-100 dark:bg-gray-800'}`}>
+    {children || k}
+  </span>
+);
 
 type Cliente = {
   id: string; nome: string; contato: string | null; telefone: string | null; cidade: string | null;
   tipo: 'consumidor' | 'revendedor'; atendimento: 'virtual' | 'presencial'; ativo: boolean;
+  colaborador?: boolean;
   vendedorId: string | null; vendedor: string | null;
   ultimaCompra: string | null; ultimaCompraValor: number | null; diasSemCompra: number | null;
   debitoTotal: number; debitoTitulos: number; debitoVencimento: string | null; debitoDiasAtraso: number;
@@ -101,6 +126,9 @@ export default function PainelComunicacao() {
   const [enviando, setEnviando] = useState('');
   const [recibo, setRecibo] = useState<any>(null);
   const [detalhe, setDetalhe] = useState<Cliente | null>(null);
+  // Cadastro do cliente aberto a partir da linha (item 5, 21/set/2026).
+  const [cadastro, setCadastro] = useState<any>(null);
+  const [abrindoCadastro, setAbrindoCadastro] = useState('');
 
   const qs = new URLSearchParams({
     vendedor, tipoCliente, atendimento, debito, respondeu, contatada, cidade,
@@ -123,6 +151,20 @@ export default function PainelComunicacao() {
     () => tipos.reduce((a, t) => a + (marcados.porTipo[t.id] || 0) * (t.custoUnitario || 0), 0),
     [tipos, marcados],
   );
+
+  /** Busca o cadastro completo e abre o modal de Clientes para editar. */
+  async function abrirCadastro(id: string) {
+    setAbrindoCadastro(id);
+    try {
+      const r = await fetch(`/api/customers/${id}`, { credentials: 'include' });
+      if (!r.ok) throw new Error('não consegui carregar o cadastro deste cliente');
+      setCadastro(await r.json());
+    } catch (e: any) {
+      alert(String(e?.message || e));
+    } finally {
+      setAbrindoCadastro('');
+    }
+  }
 
   function alternar(tipoId: string, clienteId: string) {
     setSelecao((s) => {
@@ -370,19 +412,30 @@ export default function PainelComunicacao() {
                 return (
                   <tr key={c.id} className="border-t dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
                     <td className="p-2">
-                      <button onClick={() => setDetalhe(c)} className="font-medium text-left hover:text-teal-600 hover:underline">
-                        {c.nome}
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setDetalhe(c)} className="font-medium text-left hover:text-teal-600 hover:underline">
+                          {c.nome}
+                        </button>
+                        {/* Editar o cadastro SEM sair do painel: abre o mesmo modal
+                            de Clientes, com a mesma validação e a mesma auditoria. */}
+                        <button onClick={() => abrirCadastro(c.id)} title="Editar cadastro do cliente"
+                                className="text-gray-400 hover:text-teal-600 shrink-0">
+                          {abrindoCadastro === c.id
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Pencil className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                       <div className="text-[11px] text-gray-400">{c.cidade || '—'}</div>
                     </td>
                     <td className="p-2">
                       <div>{c.contato || <span className="text-gray-400">sem contato</span>}</div>
                       <div className="text-[11px] text-gray-400">{c.telefone || 'sem telefone'}</div>
                     </td>
-                    <td className="p-2 whitespace-nowrap">
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{c.tipo}</span>{' '}
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{c.atendimento}</span>
-                      {!c.ativo && <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">inativo</span>}
+                    <td className="p-2 whitespace-nowrap space-x-1">
+                      <Selo k={c.tipo} />
+                      <Selo k={c.atendimento} />
+                      {c.colaborador && <Selo k="colaborador" />}
+                      {!c.ativo && <Selo k="inativo" />}
                     </td>
                     <td className="p-2 text-xs">{c.vendedor || '—'}</td>
                     <td className="p-2 text-right whitespace-nowrap">
@@ -433,6 +486,13 @@ export default function PainelComunicacao() {
 
       {recibo && <Recibo recibo={recibo} aoFechar={() => setRecibo(null)} />}
       {detalhe && <Historico cliente={detalhe} aoFechar={() => setDetalhe(null)} />}
+      {cadastro && (
+        <CustomerEditModal
+          isOpen={true}
+          customer={cadastro}
+          onClose={() => { setCadastro(null); refetch(); }}
+        />
+      )}
     </div>
   );
 }
