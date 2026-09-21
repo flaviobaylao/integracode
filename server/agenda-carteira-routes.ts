@@ -609,6 +609,7 @@ export async function montarJanela(
       SELECT v.customer_id, v.scheduled_date::date::text AS d
       FROM visit_agenda v
       WHERE v.scheduled_date::date BETWEEN '${ini}'::date AND '${hoje}'::date
+        AND COALESCE(v.visit_status,'') <> 'cancelled'
       LIMIT 400000`))).rows as any[];
     for (const p of passado) {
       const k = String(p.customer_id || "");
@@ -655,14 +656,17 @@ export async function montarJanela(
     const _agPassada = passadoPorCliente.get(String(r.id)) || [];
     const _ancoraAgenda = _agPassada.length ? _agPassada.slice().sort()[_agPassada.length - 1] : null;
     // Futuro: projetado do cadastro. Passado: o que esteve marcado de fato.
-    const futuro = projetarDatas({
+    // 🚫 Cliente INATIVO nao e' projetado para o FUTURO (nao ha mais atendimento a agendar).
+    // Mantem so' o passado real (anteriores) — preserva a fidelidade historica do quadro sem
+    // inflar as semanas de hoje/futuro com fantasmas. (set/2026)
+    const futuro = (r.is_active !== false) ? projetarDatas({
       dias,
       periodicidade: String(r.periodicidade || "semanal"),
       ancora: _ancoraAgenda || r.ultima_visita || null,
       inicioFornecimento: r.inicio_fornecimento || null,
       semana: r.semana_atendimento || "toda",
       ini: amanha, fim,
-    });
+    }) : [];
     const anteriores = _agPassada.filter((d) => {
       const w = dataLocal(d).getDay();
       return w >= 1 && w <= 5;
