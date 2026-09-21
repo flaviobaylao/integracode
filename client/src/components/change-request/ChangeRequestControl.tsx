@@ -55,6 +55,14 @@ export interface ChangeRequestState {
   resolvedAt?: string;
 }
 
+// A API devolve o erro como `400: {"error":"..."}` — o vendedor não precisa ver o JSON cru.
+function msgErro(e: any): string {
+  const raw = String(e?.message || "");
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (m) { try { const j = JSON.parse(m[0]); if (j?.error) return String(j.error); } catch {} }
+  return raw.replace(/^\d{3}:\s*/, "") || "Tente novamente.";
+}
+
 const TYPE_DEFS: { key: string; label: string }[] = [
   { key: "periodicidade", label: "Periodicidade" },
   { key: "dia_rota", label: "Dia de Rota" },
@@ -192,7 +200,7 @@ export function ReportReplyControl({ reportState, className }: { reportState?: R
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/report-states"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
     },
-    onError: (e: any) => toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Não foi possível enviar", description: msgErro(e), variant: "destructive" }),
   });
   if (!reportState || !reportState.hasAdminReply) return null;
   const stop = (e: any) => e.stopPropagation();
@@ -372,7 +380,7 @@ export function ChangeRequestControl(props: ControlProps) {
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
     },
     onError: (e: any) => {
-      toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" });
+      toast({ title: "Não foi possível enviar", description: msgErro(e), variant: "destructive" });
     },
   });
 
@@ -726,7 +734,7 @@ function PendenciaCard({ r, date, canRemove }: { r: any; date: string; canRemove
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/pending-replies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
     },
-    onError: (e: any) => toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "Não foi possível enviar", description: msgErro(e), variant: "destructive" }),
   });
   const quando = (s?: string) => (s ? fmtWhen(s) : "");
   return (
