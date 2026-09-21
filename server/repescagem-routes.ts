@@ -2062,7 +2062,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
         FROM repescagem_assignments ra
         JOIN customers c ON c.id = ra.customer_id
         WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
-          AND (ra.assigned_user_id = ${sellerId} OR c.seller_id = ${sellerId})`);
+          AND (ra.assigned_user_id = ${sellerId} OR c.seller_id = ${sellerId})
+        ORDER BY ra.last_red_date DESC NULLS LAST, ra.assigned_at DESC NULLS LAST`);
       const seenRowIds = new Set<string>();
       const rows = ((rowsRes.rows || []) as any[])
         .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; })
