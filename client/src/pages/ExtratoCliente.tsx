@@ -174,8 +174,6 @@ const KPI_INFO = {
     "Total faturado menos total pago: o que o cliente ainda deve hoje. Abaixo, a quantidade de notas com saldo em aberto.",
   vencido:
     "Parte do saldo devedor cujo vencimento já passou. Nota que vence hoje NÃO conta como vencida — só a partir do dia seguinte.",
-  aVencer:
-    "Parte do saldo devedor com vencimento de hoje em diante. Vencido + A vencer compõem o saldo devedor.",
   ticket:
     "Total faturado dividido pela quantidade de notas. Abaixo, a média de dias entre o vencimento e o pagamento efetivo (só de baixas com data real).",
   relacionamento:
@@ -537,7 +535,7 @@ export default function ExtratoCliente() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
                 <Kpi label="Total faturado" value={fmtBRL(r?.totalFaturado)} sub={`${r?.qtdNotas || 0} notas`} testId="kpi-faturado" info={KPI_INFO.faturado} />
                 <Kpi label="Total pago" value={fmtBRL(r?.totalPago)} sub={`${r?.qtdPagamentos || 0} pagamentos`} tone="bg-emerald-50 dark:bg-emerald-900/20" testId="kpi-pago" info={KPI_INFO.pago} />
                 <Kpi
@@ -549,7 +547,6 @@ export default function ExtratoCliente() {
                   info={KPI_INFO.saldo}
                 />
                 <Kpi label="Vencido" value={fmtBRL(r?.totalVencido)} tone={(r?.totalVencido || 0) > 0.009 ? "bg-red-50 dark:bg-red-900/20" : ""} testId="kpi-vencido" info={KPI_INFO.vencido} />
-                <Kpi label="A vencer" value={fmtBRL(r?.totalAVencer)} testId="kpi-a-vencer" info={KPI_INFO.aVencer} />
                 <Kpi label="Ticket médio" value={fmtBRL(r?.ticketMedio)} sub={r?.atrasoMedioDias != null ? `atraso médio: ${r.atrasoMedioDias}d` : undefined} testId="kpi-ticket" info={KPI_INFO.ticket} />
                 <Kpi
                   label="Relacionamento"
@@ -590,14 +587,10 @@ export default function ExtratoCliente() {
 
           {/* Extrato */}
           <Card>
-            <CardHeader className="pb-2 flex-row items-center justify-between">
+            <CardHeader className="pb-2">
               <CardTitle className="text-base">
                 Movimentação ({linhas.length} de {extrato.totalLinhas} lançamentos)
               </CardTitle>
-              <div className="text-sm text-gray-600 dark:text-gray-300">
-                Débitos {fmtBRL(totaisVisiveis.deb)} · Créditos {fmtBRL(totaisVisiveis.cre)} ·{" "}
-                <strong>Saldo {fmtBRL(totaisVisiveis.saldo)}</strong>
-              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-auto max-h-[70vh]">
