@@ -2292,7 +2292,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
         const _newNotes = (item.notes ? String(item.notes) + '\n' : '') + _entry;
         const updated = await storage.updateBillingPipelineItem(req.params.id, { notes: _newNotes } as any);
-        return res.json({ ok: true, notes: _newNotes, item: updated });
+        return res.json({ ok: true, notes: _newNotes, entry: _entry, item: updated });
       }
 
       // 2) Pedido bloqueado (blocked_orders): a observação do card vem do sales_card.
@@ -2308,7 +2308,7 @@ export function registerBillingPipelineRoutes(app: Express) {
         const _newNotes = (_cur ? _cur + '\n' : '') + _entry;
         try { await storage.updateSalesCard(_order.salesCardId, { notes: _newNotes } as any); }
         catch (e: any) { return res.status(500).json({ message: 'Falha ao gravar observação' }); }
-        return res.json({ ok: true, notes: _newNotes });
+        return res.json({ ok: true, notes: _newNotes, entry: _entry });
       }
 
       return res.status(404).json({ message: 'Pedido não encontrado' });
