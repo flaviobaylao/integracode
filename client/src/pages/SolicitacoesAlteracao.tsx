@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -220,6 +220,21 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
     },
     onError: (e: any) => toast({ title: "Erro no envio por WhatsApp", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  // 💰 Previsão de pagamento: a data em que o cliente prometeu pagar. Ao chegar o dia, o sistema
+  // lança uma pendência na Rota do Dia do vendedor (trava o Fechar Rota) e, se ele for externo,
+  // manda um WhatsApp no celular dele para fazer a cobrança.
+  const [previsao, setPrevisao] = useState<string>(String((r?.details || {}).previsaoPagamento || ""));
+  const previsaoMut = useMutation({
+    mutationFn: async (data: string | null) => apiRequest("POST", `/api/change-requests/${r.id}/previsao-pagamento`, { data }),
+    onSuccess: (_d, data) => {
+      toast({
+        title: data ? "Previsão registrada" : "Previsão removida",
+        description: data ? "No dia, o vendedor recebe o aviso para cobrar (WhatsApp se for externo)." : "O vendedor não será avisado.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao salvar previsão", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   const busy = resolveMut.isPending || inativarMut.isPending || inativarReportMut.isPending || quarentenaMut.isPending || whatsappMut.isPending;
   // 🗂️ Report do vendedor (não-venda, justificativa, atendimento virtual, desfecho de lead):
   // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
@@ -292,6 +307,37 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
           <MessageThread messages={r.messages} />
         </div>
       )}
+
+      {/* 💰 Previsão de pagamento do cliente (dispara a cobrança no dia) */}
+      <div className="flex flex-wrap items-end gap-2 rounded-md border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-900 p-2.5">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300 mb-1 flex items-center gap-1">
+            <CalendarClock className="h-3.5 w-3.5" /> Previsão de pagamento
+          </div>
+          <input
+            type="date"
+            value={previsao}
+            onChange={(e) => setPrevisao(e.target.value)}
+            className="border rounded-md px-2 py-1 text-sm bg-white dark:bg-transparent"
+            data-testid={`cr-previsao-date-${r.id}`}
+          />
+        </div>
+        <Button size="sm" className="bg-amber-600 hover:bg-amber-700" disabled={!previsao || previsaoMut.isPending || previsao === (rd?.previsaoPagamento || "")}
+          onClick={() => previsaoMut.mutate(previsao)} data-testid={`cr-previsao-save-${r.id}`}>
+          {previsaoMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Agendar cobrança"}
+        </Button>
+        {rd?.previsaoPagamento && (
+          <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={previsaoMut.isPending}
+            onClick={() => { setPrevisao(""); previsaoMut.mutate(null); }}>Remover</Button>
+        )}
+        <div className="text-[11px] text-muted-foreground basis-full">
+          {rd?.previsaoAvisadaEm
+            ? <span className="text-emerald-700 dark:text-emerald-400">✓ Vendedor avisado em {fmtDate(rd.previsaoAvisadaEm)} — a pendência está na Rota do Dia dele.</span>
+            : rd?.previsaoPagamento
+              ? <>Agendado: no dia <b>{fmtDiaBR(rd.previsaoPagamento)}</b>, às 7h, o vendedor recebe a pendência na Rota do Dia (e WhatsApp, se for externo).</>
+              : <>Preencha a data que o cliente prometeu pagar: no dia, o vendedor é avisado para cobrar.</>}
+        </div>
+      </div>
 
       <div className="space-y-1">
         <Textarea placeholder={isReport ? "Escreva uma réplica ao vendedor (ou observação ao marcar como lido)…" : "Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado"} value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
@@ -395,6 +441,12 @@ function ResolvedCard({ r }: { r: any }) {
           </div>
           {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
           {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
+          {rd?.previsaoPagamento && (
+            <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
+              <CalendarClock className="h-3 w-3" /> Previsão de pagamento: <b>{fmtDiaBR(rd.previsaoPagamento)}</b>
+              {rd.previsaoAvisadaEm ? " · vendedor avisado" : ""}
+            </div>
+          )}
         </div>
         {m && <Badge variant="outline" className={m.cls}>{m.label}</Badge>}
       </div>
