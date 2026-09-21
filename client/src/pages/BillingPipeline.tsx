@@ -432,6 +432,22 @@ export default function BillingPipeline() {
   }, [customersList]);
   const resolveCustomer = (i: any) => customerById.get(i?.customerId) || customerByDoc.get(onlyDigits(i?.customerDocument));
 
+  // VENDEDOR do card = DONO DA CARTEIRA do cliente (do cadastro). É separado de "Pedido feito por"
+  // (quem implantou = sellerName do item). Resolve o nome do vendedor da carteira a partir do
+  // sellerId do cadastro do cliente (usa vendedores ativos e, se não achar, a lista geral de usuários).
+  const resolveCarteiraSeller = (i: any): string => {
+    const c = resolveCustomer(i);
+    const embutido = ((c as any)?.seller ? `${(c as any).seller.firstName || ''} ${(c as any).seller.lastName || ''}`.trim() : '') || (c as any)?.sellerName;
+    if (embutido && String(embutido).trim()) return String(embutido).trim();
+    const sid = (c as any)?.sellerId;
+    if (!sid) return '';
+    const s = (sellersList as any[]).find((x: any) => String(x?.id) === String(sid));
+    if (s?.name && String(s.name).trim()) return String(s.name).trim();
+    const u = (usersList as any[]).find((x: any) => String(x?.id) === String(sid));
+    if (u) return (`${u.firstName || ''} ${u.lastName || ''}`.trim()) || u.name || u.email || '';
+    return '';
+  };
+
   // ── PADRONIZAÇÃO DE CIDADE ──────────────────────────────────────────────────
   // O cadastro tem a mesma cidade grafada de formas diferentes ("BRASILIA" vs
   // "Brasília", "APARECIDA DE GOIANIA" vs "Aparecida de Goiânia"). Colapsamos por
@@ -1749,6 +1765,12 @@ export default function BillingPipeline() {
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Vendedor</label>
+                    {/* VENDEDOR = DONO DA CARTEIRA do cliente (do cadastro). Sempre visível, não editável aqui. */}
+                    <p className="text-sm">{resolveCarteiraSeller(detailItem) || '-'}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Pedido feito por</label>
+                    {/* PEDIDO FEITO POR = quem IMPLANTOU o pedido (vendedor/telemarketing do item). Editável por gestores. */}
                     {editMode && canEditSeller ? (
                       <select value={editData?.sellerId ?? ''} onChange={(e) => { const u = (sellersList as any[]).find((x) => x.id === e.target.value); setEditData((d: any) => ({ ...d, sellerId: e.target.value, sellerName: u ? u.name : d.sellerName })); }} className="w-full border rounded px-2 py-1 text-sm">
                         <option value="">{editData?.sellerName || '-'}</option>
