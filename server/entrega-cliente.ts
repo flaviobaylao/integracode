@@ -133,13 +133,17 @@ async function avisadoRecentemente(campaigns: string[], horas = 12): Promise<boo
   } catch { return false; }
 }
 
+import { saudacaoDoCliente } from './saudacao';
+
 const limpo = (s: any) => String(s ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 300);
-const primeiroNome = (r: any) => limpo(String(r.fantasy_name || r.name || 'Cliente').split(' ')[0] || 'Cliente').slice(0, 60);
+// Sem nome de contato, chama pelo NOME FANTASIA inteiro — regra única em
+// saudacao.ts. A primeira palavra transformava "2 IRMAOS SUPERMERCADO" em "2".
+const primeiroNome = (r: any) => limpo(saudacaoDoCliente(r, 'Cliente')).slice(0, 60);
 const numeroDe = (r: any) => limpo(r.order_number || ('INT-' + String(r.sales_card_id || '').substring(0, 8)));
 
 type Parada = {
   stop_id: string; sales_card_id: string | null; status: string; order_number: string | null;
-  cid: string | null; name: string | null; fantasy_name: string | null; phone: string | null;
+  cid: string | null; name: string | null; fantasy_name: string | null; contact?: string | null; phone: string | null;
   operation_type: string | null; motivo: string | null;
 };
 
@@ -149,7 +153,7 @@ async function paradas(where: { routeId?: string; stopId?: string }): Promise<Pa
   const r: any = await db.execute(sql`
     SELECT s.id AS stop_id, s.sales_card_id, s.status::text AS status,
            COALESCE(s.order_number, bp.order_number) AS order_number,
-           c.id AS cid, c.name, c.fantasy_name, c.phone,
+           c.id AS cid, c.name, c.fantasy_name, c.contact, c.phone,
            COALESCE(sc.operation_type::text, bp.operation_type, 'venda') AS operation_type,
            sc.delivery_failure_reason::text AS motivo
     FROM delivery_route_stops s

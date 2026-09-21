@@ -15,7 +15,7 @@ async function raw(q: string) { return db.execute(sql.raw(q)); }
 async function schemaBase() {
   await raw(`CREATE TABLE IF NOT EXISTS system_settings (key varchar PRIMARY KEY, value text, updated_by varchar, updated_at timestamptz DEFAULT now())`);
   await raw(`CREATE TABLE IF NOT EXISTS users (id varchar PRIMARY KEY, first_name varchar, last_name varchar, phone varchar, role varchar, is_active boolean DEFAULT true, updated_at timestamptz, omie_vendor_codes jsonb)`);
-  await raw(`CREATE TABLE IF NOT EXISTS customers (id varchar PRIMARY KEY, name varchar, phone varchar, seller_id varchar, cnpj varchar, cpf varchar, document varchar, is_active boolean DEFAULT true, is_lead boolean DEFAULT false, is_supplier boolean DEFAULT false, city varchar)`);
+  await raw(`CREATE TABLE IF NOT EXISTS customers (id varchar PRIMARY KEY, name varchar, phone varchar, seller_id varchar, cnpj varchar, cpf varchar, document varchar, is_active boolean DEFAULT true, is_lead boolean DEFAULT false, is_supplier boolean DEFAULT false, contact varchar, fantasy_name varchar, company_name varchar, city varchar)`);
   await raw(`CREATE TABLE IF NOT EXISTS billing_pipeline (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, created_at timestamptz DEFAULT now(), stage varchar)`);
   await raw(`CREATE TABLE IF NOT EXISTS billings (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_document varchar, invoice_date date)`);
   await raw(`CREATE TABLE IF NOT EXISTS sales_cards (id varchar PRIMARY KEY DEFAULT gen_random_uuid(), customer_id varchar, seller_id varchar, status varchar DEFAULT 'completed', sale_value numeric(10,2), products jsonb DEFAULT '[]'::jsonb, created_at timestamptz DEFAULT now(), campaign_id varchar, utm jsonb, attribution_kind varchar)`);
@@ -535,9 +535,12 @@ async function main() {
 
   const ini = await ec.avisarRotaIniciada('rotE1');
   const dSaiu: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:saiu%'`)) as any).rows[0];
-  check(ini.enviados === 1 && dSaiu && dSaiu.template_label === 'pedido_saiu_entrega' && dSaiu.params[0] === 'Padaria' && dSaiu.params[1] === '98765'
+  // Sem contato cadastrado, o aviso chama o cliente pelo nome do estabelecimento
+  // INTEIRO (saudacao.ts): "Padaria do Ze", nunca só "Padaria".
+  check(ini.enviados === 1 && dSaiu && dSaiu.template_label === 'pedido_saiu_entrega' && dSaiu.params[0] === 'Padaria do Ze' && dSaiu.params[1] === '98765'
     && dSaiu.use_case === 'entrega' && ini.detalhes.some((d: string) => /sem telefone/.test(d)),
-    'entrega: iniciar rota avisa cada cliente (nome curto + nº do pedido) e pula quem não tem telefone');
+    'entrega: iniciar rota avisa cada cliente (nome do estabelecimento + nº do pedido) e pula quem não tem telefone ('
+    + JSON.stringify(dSaiu?.params) + ')');
 
   const iniDeNovo = await ec.avisarRotaIniciada('rotE1');
   check(iniDeNovo.enviados === 0, 'entrega: iniciar a rota duas vezes não duplica o aviso');
@@ -615,7 +618,15 @@ async function main() {
              ('cvI','cliE1','ig:17841400000','instagram', NULL)
       ON CONFLICT (id) DO NOTHING`);
   // Cliente escreve 3x; a IA responde 2x (uma 4 min depois), o humano 1x, o sistema 1x.
-  const T = (min: number) => `(now() AT TIME ZONE 'UTC') - interval '${min} minutes'`;
+  // As mensagens são ancoradas numa HORA FIXA do dia brasileiro, não em now():
+  // rodando a suíte logo depois da meia-noite de Brasília, "agora − 60 min" cai
+  // no dia ANTERIOR e o painel — que fecha por dia BRT — devolvia zero. O defeito
+  // era do teste, não da tela, e aparecia só de madrugada. Mesma lição do
+  // fixture de débito, que já tinha sido ancorado assim.
+  // chat_messages.created_at é timestamp SEM fuso guardando UTC: por isso o
+  // valor é convertido para UTC antes de ser gravado.
+  const BASE_CHAT = `((('${hojeBRt} 10:00')::timestamp AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'UTC')`;
+  const T = (min: number) => `${BASE_CHAT} - interval '${min} minutes'`;
   await raw(`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, created_at) VALUES
       ('cvW','cli','customer','oi',              ${T(60)}),
       ('cvW','agent:sdr','system','ola!',        ${T(56)}),
@@ -957,6 +968,49 @@ async function main() {
       ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
   check(!!linhaReat && (linhaReat.params || []).length === 2 && /Suco/.test(String((linhaReat.params||[])[1])),
     'comunicação: template de 2 variáveis recebe nome e o produto que o cliente mais compra (' + JSON.stringify(linhaReat?.params) + ')');
+
+  // ── COMO A MENSAGEM CHAMA O CLIENTE (saudacao.ts) ────────────────────────
+  // Sem contato cadastrado, vale o NOME FANTASIA — inteiro. A primeira palavra
+  // transformava "2 IRMAOS SUPERMERCADO" em "2" e o CNPJ colado na frente em
+  // "23.063.609".
+  {
+    const sd = await import('../server/saudacao');
+    check(sd.saudacaoDoCliente({ contato: 'João Silva', fantasia: '2 IRMAOS SUPERMERCADO' }) === 'João',
+      'saudação: com contato cadastrado, usa o primeiro nome da pessoa');
+    check(sd.saudacaoDoCliente({ contato: '', fantasia: '2 IRMAOS SUPERMERCADO' }) === '2 Irmaos Supermercado',
+      'saudação: sem contato, usa o nome fantasia INTEIRO, não a primeira palavra ('
+      + sd.saudacaoDoCliente({ contato: '', fantasia: '2 IRMAOS SUPERMERCADO' }) + ')');
+    check(sd.saudacaoDoCliente({ fantasia: '23.063.609 JORDANA INACIO DE ALMEIDA' }) === 'Jordana Inacio de Almeida',
+      'saudação: documento colado na frente do nome não vai para a mensagem ('
+      + sd.saudacaoDoCliente({ fantasia: '23.063.609 JORDANA INACIO DE ALMEIDA' }) + ')');
+    check(sd.saudacaoDoCliente({ fantasia: 'BODEGA RESTAURANTE LTDA' }) === 'Bodega Restaurante',
+      'saudação: sufixo societário sai do fim (' + sd.saudacaoDoCliente({ fantasia: 'BODEGA RESTAURANTE LTDA' }) + ')');
+    check(sd.saudacaoDoCliente({ fantasia: '', razao: '', nome: '' }) === 'tudo bem',
+      'saudação: sem nada que sirva, a mensagem ainda fecha ("Oi, tudo bem!")');
+    check(sd.saudacaoDoCliente({ fantasia: 'Padaria do Léo' }) === 'Padaria do Léo',
+      'saudação: nome já digitado em caixa mista não é remexido');
+  }
+
+  // O cliente pc-sem-contato existe só para provar a regra ponta a ponta: sem
+  // contato, o que sai na variável {{1}} é o fantasia.
+  await raw(`INSERT INTO customers (id, name, fantasy_name, contact, phone, seller_id, is_active, city, is_consumer_client)
+             VALUES ('pc-semcontato', 'MERCEARIA SAO JUDAS LTDA', 'MERCEARIA SAO JUDAS LTDA', NULL,
+                     '5562988880005', 'v1', true, 'Goiânia', false)
+             ON CONFLICT (id) DO NOTHING`);
+  await raw(`INSERT INTO receivables (customer_id, customer_name, amount, amount_paid, status, due_date, issue_date, description)
+             VALUES ('pc-semcontato', 'MERCEARIA SAO JUDAS', 200, 200, 'recebida', ${diaBRT} - 5, ${diaBRT} - 60, 'Venda')`);
+  await raw(`INSERT INTO sales_cards (customer_id, status, sale_value, completed_date, operation_type, products)
+             VALUES ('pc-semcontato', 'completed', 200.00, now() - interval '60 days', 'venda',
+                     '[{"name":"Suco de Uva 300ml"}]'::jsonb)`);
+  await raw(`UPDATE whatsapp_templates SET corpo = 'Oi, {{1}}! Seu {{2}} de sempre entra na próxima entrega?'
+              WHERE label LIKE 'recompra_reativacao%'`);
+  await pcom.enviarPorTipo('reativacao', ['pc-semcontato'], 'teste');
+  const linhaSem: any = ((await raw(
+    `SELECT params FROM official_dispatches WHERE template_label LIKE 'recompra_reativacao%'
+      ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
+  check(String((linhaSem?.params || [])[0]) === 'Mercearia Sao Judas',
+    'comunicação: cliente sem contato é chamado pelo nome fantasia no disparo ('
+    + JSON.stringify(linhaSem?.params) + ')');
 
   await raw(`UPDATE whatsapp_templates SET corpo = 'Oi, {{1}}! {{2}} {{3}} {{4}} {{5}}'
               WHERE label LIKE 'recompra_reativacao%'`);

@@ -29,6 +29,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { whereDebitoVivoText } from "./divida-viva";
+import { saudacaoDoCliente } from "./saudacao";
 import { diaBR } from "./fuso-coluna";
 
 const PAPEIS = ["admin", "coordinator", "administrative"];
@@ -504,7 +505,10 @@ export function quantasVariaveis(corpo: string | null | undefined): number {
  *   cobranca  → 1 contato, 2 quantidade de títulos, 3 vencimento mais antigo, 4 total
  */
 async function paramsDoCliente(tipo: TipoMensagem, cli: any, vars = 1): Promise<string[] | { erro: string }> {
-  const primeiro = String(cli.contato || cli.nome || "").trim().split(/\s+/)[0] || "tudo bem";
+  // Sem nome de contato, a mensagem chama o cliente pelo NOME FANTASIA — inteiro,
+  // não a primeira palavra ("2 IRMAOS SUPERMERCADO" não pode virar "2").
+  // Regra única em server/saudacao.ts, compartilhada com a régua e o pós-entrega.
+  const primeiro = saudacaoDoCliente(cli);
   if (tipo.id !== "cobranca") {
     const p = [primeiro];
     if (vars >= 2) {
@@ -549,8 +553,6 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
   const efetivo = await escolherTemplate(tipo);
   if (!efetivo) return { erro: `nenhum template aprovado para "${tipo.nome}"` };
   const { enqueueOfficialDispatch } = await import("./official-dispatch");
-  const diaCompraEnvio = sql.raw(await diaBR("sales_cards", "completed_date",
-    "COALESCE(sc.completed_date, sc.updated_at, sc.created_at)"));
 
   // O corpo APROVADO manda na quantidade de variáveis (ver paramsDoCliente).
   const tpl: any = await db.execute(sql`SELECT corpo FROM whatsapp_templates WHERE label = ${efetivo.label} LIMIT 1`);
@@ -559,7 +561,12 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
   // Produto principal e dias sem comprar vêm junto: se o template pedir, já
   // estão aqui; uma consulta por lote, não uma por cliente.
   const c: any = await db.execute(sql`
-    SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, NULLIF(c.contact,'') AS contato, c.phone,
+    SELECT c.id,
+           NULLIF(c.fantasy_name,'')  AS fantasia,
+           NULLIF(c.company_name,'')  AS razao,
+           c.name                     AS nome,
+           NULLIF(c.contact,'')       AS contato,
+           c.phone,
            pp.produto AS produto_principal,
            ((now() AT TIME ZONE 'America/Sao_Paulo')::date - uc.dia) AS dias_sem_compra
       FROM customers c
@@ -573,12 +580,16 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
          GROUP BY p->>'name'
          ORDER BY count(*) DESC, max(sc.created_at) DESC
          LIMIT 1) pp ON true
+      -- Dias sem comprar: a MESMA fonte da coluna do painel — a última NOTA
+      -- (receivables.issue_date), não o card. Enquanto isto lia sales_cards, a
+      -- tela mostrava 426 dias e a mensagem saía dizendo "faz 3 dias".
       LEFT JOIN LATERAL (
-        SELECT ${diaCompraEnvio} AS dia
-          FROM sales_cards sc
-         WHERE sc.customer_id = c.id AND COALESCE(sc.operation_type,'venda') = 'venda'
-           AND COALESCE(sc.status,'') NOT IN ('cancelled','telemarketing')
-         ORDER BY COALESCE(sc.completed_date, sc.updated_at, sc.created_at) DESC
+        SELECT (r.issue_date)::date AS dia
+          FROM receivables r
+         WHERE r.customer_id = c.id AND r.deleted_at IS NULL AND r.issue_date IS NOT NULL
+           AND (COALESCE(r.description,'') || ' ' || COALESCE(r.category,''))
+                 !~* '(TRANSFER|\\[GYN\\]|\\[BSB\\]|\\[IND\\]|\\[SERV\\])'
+         ORDER BY (r.issue_date)::date DESC
          LIMIT 1) uc ON true
      WHERE c.id IN (${sql.join(ids.map(i => sql`${i}`), sql`, `)})`);
 
