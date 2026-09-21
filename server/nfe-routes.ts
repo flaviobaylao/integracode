@@ -17,6 +17,160 @@ import path from "path";
 
 const CERT_ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.SESSION_SECRET || 'cert-key-fallback').digest();
 
+// ============================================================================
+// CFOP / NATUREZA DA NF-e DE DEVOLUCAO (Flavio, 20/set/2026)
+//
+// A devolucao nascia SEMPRE como 1.202 "DEVOLUCAO DE VENDA", hardcoded. Numa
+// TRANSFERENCIA entre filiais (5409/6409, 5152/6152) isso e errado: a devolucao
+// de transferencia tem CFOP proprio (1409/2409, 1152/2152) e, com 1202, entra na
+// apuracao como devolucao de venda — bagunca o livro fiscal das duas pontas.
+// A devolucao espelha o CFOP da original: 5->1, 6->2, 7->3, mesmo sufixo, com a
+// excecao das vendas (101/102/... viram 201/202), que e a regra do CFOP.
+// ============================================================================
+const SUFIXO_DEVOLUCAO_VENDA: Record<string, string> = {
+  '101': '201', '102': '202', '103': '201', '104': '202',
+  '105': '201', '106': '202', '109': '202',
+  '111': '201', '113': '202', '116': '201', '118': '202',
+  '119': '202', '120': '201', '122': '201', '123': '202',
+};
+
+export function cfopDevolucao(cfopOriginal: string | null | undefined): { cfop: string; cfopItem: string; natureza: string } {
+  const limpo = String(cfopOriginal || '').replace(/\D/g, '');
+  // Sem CFOP legivel na original: mantem o comportamento historico.
+  if (limpo.length !== 4) return { cfop: '1.202', cfopItem: '1202', natureza: 'DEVOLUCAO DE VENDA' };
+
+  const sufixo = limpo.slice(1);
+  const entradaPorPrefixo: Record<string, string> = { '5': '1', '6': '2', '7': '3' };
+  const novoPrefixo = entradaPorPrefixo[limpo[0]];
+  // CFOP que ja e de entrada (1/2/3) nao se "devolve" por este caminho.
+  if (!novoPrefixo) return { cfop: '1.202', cfopItem: '1202', natureza: 'DEVOLUCAO DE VENDA' };
+
+  const cfopItem = `${novoPrefixo}${SUFIXO_DEVOLUCAO_VENDA[sufixo] || sufixo}`;
+  const ehTransferencia = ['408', '409', '151', '152'].includes(sufixo);
+  const natureza = ehTransferencia
+    ? 'DEVOLUCAO DE TRANSFERENCIA'
+    : SUFIXO_DEVOLUCAO_VENDA[sufixo]
+      ? 'DEVOLUCAO DE VENDA'
+      : 'DEVOLUCAO';
+
+  return { cfop: `${cfopItem[0]}.${cfopItem.slice(1)}`, cfopItem, natureza };
+}
+
+// Uma NF de ENTRADA (devolucao, finNFe='4') NUNCA deu baixa em estoque — ela
+// nasce justamente para estornar outra nota. Cancelar/devolver uma dessas NAO
+// pode disparar estorno de estoque: o generico devolveria a quantidade "no
+// primeiro lote em uso" e a mercadoria passaria a ser contada duas vezes.
+export function nfMovimentouEstoque(invoice: any): boolean {
+  if (!invoice) return false;
+  if (String((invoice as any).finNFe || (invoice as any).fin_nfe || '1') === '4') return false;
+  const tipo = String((invoice as any).operationType || (invoice as any).operation_type || 'saida').toLowerCase();
+  return tipo !== 'entrada';
+}
+
+// ============================================================================
+// ESTORNO DE ESTOQUE DE UMA NF (cancelamento / devolucao) — CAMINHO UNICO
+//
+// Antes cada rota repetia o bloco e engolia a falha num console.warn: a NF ficava
+// 'cancelled'/'returned', o financeiro era baixado e o estoque simplesmente nao
+// se mexia, sem erro na tela e sem registro no historico da nota. Aqui o
+// resultado e SEMPRE devolvido ao chamador, que grava um evento fiscal e avisa
+// na resposta. Ordem: estorno exato da transferencia (lote certo na origem +
+// retirada do espelho no destino) e, so se ele nao cuidou, o estorno generico.
+// ============================================================================
+export interface EstornoEstoqueResultado {
+  executado: boolean;
+  metodo: 'transferencia-exata' | 'generico' | 'nenhum';
+  skipped?: 'nf-de-entrada';
+  undone: string[];
+  warnings: string[];
+  errors: string[];
+}
+
+export async function estornarEstoqueDaNf(
+  invoice: any,
+  items: any[],
+  by: string | null,
+  userId: string | null,
+  contexto: string,
+): Promise<EstornoEstoqueResultado> {
+  const out: EstornoEstoqueResultado = { executado: false, metodo: 'nenhum', undone: [], warnings: [], errors: [] };
+
+  if (!nfMovimentouEstoque(invoice)) {
+    out.skipped = 'nf-de-entrada';
+    out.warnings.push('NF de entrada/devolucao nao deu baixa em estoque — nada a estornar (estorno automatico ignorado de proposito).');
+    console.log(`📦 [ESTORNO ${contexto}] NF ${invoice?.invoiceNumber || invoice?.id} e de entrada (finNFe=4) — sem estorno de estoque.`);
+    return out;
+  }
+
+  let transferReversal: any = null;
+  try {
+    const { reverseTransferStockExact } = await import('./lot-lock.js');
+    transferReversal = await reverseTransferStockExact(invoice, by);
+  } catch (trfErr: any) {
+    out.errors.push(`estorno exato da transferencia falhou: ${trfErr?.message || trfErr}`);
+    console.error(`❌ [ESTORNO ${contexto}] estorno exato da transferencia:`, trfErr?.message || trfErr);
+  }
+
+  if (transferReversal?.handled) {
+    out.executado = true;
+    out.metodo = 'transferencia-exata';
+    out.undone = transferReversal.undone || [];
+    out.warnings.push(...(transferReversal.warnings || []));
+    return out;
+  }
+
+  try {
+    const { reverseStockConsumption } = await import('./inventory-routes.js');
+    for (const item of items || []) {
+      if (!item?.productId) continue;
+      const product = await storage.getProduct(item.productId);
+      const instanceId = (invoice as any)?.omieInstanceId || product?.omieInstanceId || 'default';
+      const r: any = await reverseStockConsumption(
+        item.productId,
+        instanceId,
+        parseFloat(item.quantity),
+        'invoice',
+        String(invoice?.id),
+        userId,
+      );
+      // reverseStockConsumption devolve {success:false} quando nao acha lote em uso.
+      // Ate aqui esse retorno era descartado e o estoque nao voltava em silencio.
+      if (r && r.success === false) {
+        out.warnings.push(`${item.productName || item.productId}: ${r.message || 'estorno nao aplicado'} (${item.quantity} un)`);
+      } else {
+        out.undone.push(`${item.productName || item.productId}: +${item.quantity}`);
+      }
+    }
+    out.executado = true;
+    out.metodo = 'generico';
+  } catch (stockErr: any) {
+    out.errors.push(`estorno generico falhou: ${stockErr?.message || stockErr}`);
+    console.error(`❌ [ESTORNO ${contexto}] estorno generico:`, stockErr?.message || stockErr);
+  }
+
+  return out;
+}
+
+// Registra no historico da NF o que o estorno fez — inclusive quando nao fez nada.
+export async function registrarEventoEstorno(invoiceId: string, r: EstornoEstoqueResultado, by: string | null) {
+  const houveProblema = r.errors.length > 0 || r.warnings.length > 0;
+  try {
+    await storage.createFiscalInvoiceEvent({
+      invoiceId,
+      eventType: 'estorno_estoque',
+      status: r.errors.length ? 'error' : houveProblema ? 'warning' : 'success',
+      description:
+        `Estorno de estoque (${r.metodo}${r.skipped ? ', ignorado: ' + r.skipped : ''}): ` +
+        `${r.undone.length ? r.undone.join('; ') : 'nenhum movimento'}` +
+        `${r.warnings.length ? ' | AVISOS: ' + r.warnings.join('; ') : ''}` +
+        `${r.errors.length ? ' | ERROS: ' + r.errors.join('; ') : ''}`,
+      createdBy: by,
+    } as any);
+  } catch (e: any) {
+    console.warn('[ESTORNO] nao foi possivel gravar o evento de estorno:', e?.message);
+  }
+}
+
 export interface CompanyData {
   name: string;
   cnpj: string;
@@ -862,40 +1016,18 @@ export function registerNfeRoutes(app: Express) {
         const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
 
-        // TRANSFERENCIA ENTRE FILIAIS (Flavio 05/set): estorno EXATO — o lote que
-        // saiu na NF recebe a quantidade de volta na origem e a entrada espelho e
-        // retirada do destino. Isso e o que libera a trava do lote e da OP. O
-        // estorno generico abaixo devolveria "no primeiro lote em uso" e deixaria
-        // a mercadoria contada duas vezes (origem + filial).
-        let transferReversal: any = null;
-        try {
-          const { reverseTransferStockExact } = await import('./lot-lock.js');
-          transferReversal = await reverseTransferStockExact(invoice, req.currentUser?.email || req.user?.email || null);
-        } catch (trfErr: any) {
-          console.warn('⚠️ Erro no estorno exato da transferencia (cancelamento):', trfErr.message);
-        }
-
-        // Reverse stock consumption for cancelled invoice
-        if (!transferReversal?.handled) try {
-          const { reverseStockConsumption } = await import('./inventory-routes.js');
-          const userId = req.user?.id || req.userId || null;
-          for (const item of items) {
-            if (item.productId) {
-              const product = await storage.getProduct(item.productId);
-              const instanceId = product?.omieInstanceId || 'default';
-              await reverseStockConsumption(
-                item.productId,
-                instanceId,
-                parseFloat(item.quantity),
-                'invoice',
-                req.params.id,
-                userId,
-              );
-            }
-          }
-        } catch (stockErr: any) {
-          console.warn('⚠️ Erro ao reverter estoque após cancelamento NF-e:', stockErr.message);
-        }
+        // Estorno de estoque: transferencia entre filiais pelo caminho exato (lote
+        // que saiu na NF volta na origem + retirada do espelho no destino) e, se
+        // nao for transferencia, o generico. NF de entrada/devolucao nao estorna.
+        const estorno = await estornarEstoqueDaNf(
+          invoice,
+          items,
+          req.currentUser?.email || req.user?.email || null,
+          req.user?.id || req.userId || null,
+          'CANCEL',
+        );
+        await registrarEventoEstorno(req.params.id, estorno, req.currentUser?.email || req.user?.email || null);
+        const transferReversal = { handled: estorno.metodo === 'transferencia-exata', ...estorno };
 
         // Cancel associated receivables
         // FASE 2 - Titulo com pagamento recebido NAO e cancelado automaticamente:
@@ -940,7 +1072,18 @@ export function registerNfeRoutes(app: Express) {
           }
         } catch (lixErr: any) { console.warn('[NF-e CANCEL] Falha ao mover card para a Lixeira:', lixErr?.message); }
 
-        res.json({ ...result, invoice: { ...updatedInvoice, events }, receivablesCancelled: true, receivablesComPagamento, transferReversal });
+        res.json({
+          ...result,
+          invoice: { ...updatedInvoice, events },
+          receivablesCancelled: true,
+          receivablesComPagamento,
+          transferReversal,
+          estornoEstoque: estorno,
+          // A tela mostra este aviso: estoque que nao voltou nao pode passar batido.
+          estoqueAviso: (estorno.errors.length || estorno.warnings.length)
+            ? `Estorno de estoque com pendencia: ${[...estorno.errors, ...estorno.warnings].join('; ')}`
+            : null,
+        });
       } else {
         res.status(400).json(result);
       }
@@ -978,6 +1121,9 @@ export function registerNfeRoutes(app: Express) {
 
       const originalItems = await storage.getFiscalInvoiceItems(req.params.id);
       const user = req.currentUser || req.user;
+      // CFOP/natureza espelhados na nota original (transferencia devolve 1409/2409,
+      // venda devolve 1202/2202) — antes era 1.202 fixo para tudo.
+      const dev = cfopDevolucao(originalInvoice.cfop);
 
       const returnInvoice = await storage.createFiscalInvoiceAtomic({
         series: originalInvoice.series || '1',
@@ -1002,8 +1148,8 @@ export function registerNfeRoutes(app: Express) {
         customerCity: originalInvoice.customerCity,
         customerUf: originalInvoice.customerUf,
         customerPhone: originalInvoice.customerPhone,
-        natureOfOperation: 'DEVOLUÇAO DE VENDA',
-        cfop: '1.202',
+        natureOfOperation: dev.natureza,
+        cfop: dev.cfop,
         totalProducts: originalInvoice.totalProducts,
         totalDiscount: originalInvoice.totalDiscount || '0',
         totalFreight: originalInvoice.totalFreight || '0',
@@ -1034,7 +1180,7 @@ export function registerNfeRoutes(app: Express) {
           productName: item.productName,
           ncm: item.ncm,
           cest: item.cest,
-          cfop: '1202',
+          cfop: dev.cfopItem,
           unit: item.unit,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
@@ -1121,37 +1267,35 @@ export function registerNfeRoutes(app: Express) {
         console.warn('⚠️ Erro ao cancelar contas a receber após devolução NF-e:', recErr.message);
       }
 
-      // TRANSFERENCIA ENTRE FILIAIS (Flavio 05/set): estorno EXATO (origem +, destino -),
-      // ver comentario no cancelamento. Libera a trava do lote e da OP.
-      let transferReversal: any = null;
-      try {
-        const { reverseTransferStockExact } = await import('./lot-lock.js');
-        transferReversal = await reverseTransferStockExact(originalInvoice, user?.email || null);
-      } catch (trfErr: any) {
-        console.warn('⚠️ Erro no estorno exato da transferencia (devolucao):', trfErr.message);
-      }
+      // Estorno de estoque — mesmo caminho unico do cancelamento (ver a funcao).
+      const estorno = await estornarEstoqueDaNf(
+        originalInvoice,
+        originalItems,
+        user?.email || null,
+        req.user?.id || req.userId || null,
+        'RETURN',
+      );
+      await registrarEventoEstorno(req.params.id, estorno, user?.email || null);
+      const transferReversal = { handled: estorno.metodo === 'transferencia-exata', ...estorno };
 
-      // Reverse stock consumption for returned invoice
-      if (!transferReversal?.handled) try {
-        const { reverseStockConsumption } = await import('./inventory-routes.js');
-        const userId = req.user?.id || req.userId || null;
-        for (const item of originalItems) {
-          if (item.productId) {
-            const product = await storage.getProduct(item.productId);
-            const instanceId = product?.omieInstanceId || 'default';
-            await reverseStockConsumption(
-              item.productId,
-              instanceId,
-              parseFloat(item.quantity),
-              'invoice',
-              req.params.id,
-              userId,
-            );
-          }
+      // Pedido de TRANSFERENCIA devolvido nao pode continuar em "faturado": a nota
+      // nao vale mais, a mercadoria voltou para a origem e o card seguiria contando
+      // como transferencia faturada nos relatorios. Vai para a LIXEIRA (restauravel).
+      //
+      // DE PROPOSITO so para transferencia: numa VENDA devolvida a entrega de fato
+      // aconteceu, e tirar o card de 'entregue' apagaria historico de rota e de
+      // comissao. Venda devolvida fica onde esta — quem conta a devolucao e o
+      // status da NF, nao a etapa do card.
+      try {
+        const scId = (originalInvoice as any)?.salesCardId || null;
+        if (scId) {
+          const r: any = await db.execute(sql`
+            UPDATE billing_pipeline SET stage='lixeira', updated_at=now()
+            WHERE sales_card_id = ${String(scId)} AND stage <> 'lixeira' AND operation_type = 'transferencia'`);
+          const n = (r?.rowCount ?? 0) as number;
+          if (n) console.log(`🗑️ [NF-e RETURN] ${n} card(s) de transferencia para a Lixeira (NF ${(originalInvoice as any)?.invoiceNumber || req.params.id})`);
         }
-      } catch (stockErr: any) {
-        console.warn('⚠️ Erro ao reverter estoque após devolução NF-e:', stockErr.message);
-      }
+      } catch (lixErr: any) { console.warn('[NF-e RETURN] Falha ao mover card para a Lixeira:', lixErr?.message); }
 
       // Update original invoice to mark it as returned (only after SEFAZ success)
       await storage.updateFiscalInvoice(req.params.id, {
@@ -1177,6 +1321,10 @@ export function registerNfeRoutes(app: Express) {
         receivablesCancelled: true,
         receivablesComPagamento,
         transferReversal,
+        estornoEstoque: estorno,
+        estoqueAviso: (estorno.errors.length || estorno.warnings.length)
+          ? `Estorno de estoque com pendencia: ${[...estorno.errors, ...estorno.warnings].join('; ')}`
+          : null,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, errorMessage: error.message });
@@ -1234,6 +1382,7 @@ export function registerNfeRoutes(app: Express) {
 
       // 2) Cria a devolucao REAL (numero atomico por CNPJ+serie) e copia os itens da original
       const originalItems = await storage.getFiscalInvoiceItems(original.id);
+      const dev = cfopDevolucao(original.cfop);
       const returnInvoice = await storage.createFiscalInvoiceAtomic({
         series: original.series || '1',
         operationType: 'entrada',
@@ -1257,8 +1406,8 @@ export function registerNfeRoutes(app: Express) {
         customerCity: original.customerCity,
         customerUf: original.customerUf,
         customerPhone: original.customerPhone,
-        natureOfOperation: 'DEVOLUCAO DE VENDA',
-        cfop: '1.202',
+        natureOfOperation: dev.natureza,
+        cfop: dev.cfop,
         totalProducts: original.totalProducts,
         totalDiscount: original.totalDiscount || '0',
         totalFreight: original.totalFreight || '0',
@@ -1289,7 +1438,7 @@ export function registerNfeRoutes(app: Express) {
           productName: item.productName,
           ncm: item.ncm,
           cest: item.cest,
-          cfop: '1202',
+          cfop: dev.cfopItem,
           unit: item.unit,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
