@@ -2455,6 +2455,18 @@ export function registerBillingPipelineRoutes(app: Express) {
               console.error(`❌ [BATCH] Erro baixa estoque para ${id}:`, stockError.message);
             }
 
+            // ENTRADA ESPELHO NA FILIAL DE DESTINO — faltava AQUI (Flavio 20/set).
+            // O faturamento individual (rota acima) chamava o espelho; o faturamento
+            // EM LOTE nao. Resultado: transferencia faturada pela selecao multipla
+            // baixava o estoque da IND e nunca creditava a filial — a mercadoria
+            // sumia do sistema no meio do caminho. A funcao e no-op para pedido que
+            // nao e de transferencia, entao chamar aqui e seguro para todo item.
+            try {
+              await mirrorTransferToDestination(item, user);
+            } catch (mirrorError: any) {
+              console.error(`❌ [BATCH] Erro na entrada espelho da transferencia para ${id}:`, mirrorError.message);
+            }
+
             try {
               invoiceDraft = await createInvoiceFromPipelineItem(item, user, lotMap, { skipEmit: true });
               if (invoiceDraft) {
@@ -3512,6 +3524,11 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
     let lotMap: Record<string, string[]> = {};
     try { lotMap = await deductStockForBilling(item, { email: quem }); }
     catch (e: any) { console.warn('[BALCAO] baixa de estoque falhou (segue):', e?.message); }
+
+    // No-op para venda de balcao (so age em operationType='transferencia'), mas fica
+    // aqui para a regra valer sem excecao: toda baixa de estoque tem o seu espelho.
+    try { await mirrorTransferToDestination(item, { email: quem }); }
+    catch (e: any) { console.warn('[BALCAO] entrada espelho falhou (segue):', e?.message); }
 
     let invoiceDraft: any = null;
     try {
