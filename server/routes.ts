@@ -7910,14 +7910,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Criar novo sales card com campos obrigatórios
         // NOTA: source='rota_do_dia' permite criar card mesmo fora dos weekdays configurados
         // (cliente pode ter sido adicionado manualmente à rota)
+        // Dia da rota = dia da semana da PRÓPRIA data do card (antes vinha 'Seg' fixo).
+        const _ABBR = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+        const _routeDay = _ABBR[targetDate.getUTCDay()] || 'Seg';
         const newCard = await storage.createSalesCard({
           customerId,
           sellerId,
           scheduledDate: targetDate,
           status: 'open',
           source: 'rota_do_dia',
-          routeDay: 'Seg', // Default
-          recurrenceType: 'semanal',
+          routeDay: _routeDay,
+          // Herda a periodicidade REAL do cliente. Antes vinha 'semanal' fixo, o que criava
+          // cards com cadência errada — ex.: cliente quinzenal gerava um card 'semanal' duplicado
+          // ao fazer check-in pela Rota do Dia. (set/2026)
+          recurrenceType: (customer.visitPeriodicity || 'semanal'),
           exclusiveVehicle: false,
           vehicleTypes: [],
         });
