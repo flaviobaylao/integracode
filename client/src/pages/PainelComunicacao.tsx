@@ -38,7 +38,7 @@ type Tipo = {
   exigeDebito?: boolean; diasSemCompraMinimo?: number;
   templateUsado: string; categoria: string; cadastrado: boolean; aprovado: boolean; ativo: boolean;
   casoLigado: boolean; modo: string; corpoSugerido: string | null;
-  corpoAtual: string | null; variaveis: number;
+  corpoAtual: string | null; variaveis: number; esperandoAprovacao: string | null;
   custoUnitario: number; pendencia: string | null;
 };
 type Resposta = {
@@ -305,6 +305,11 @@ export default function PainelComunicacao() {
                   </span>
                 </div>
                 <div className="mt-1 text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{t.corpoAtual}</div>
+                {t.esperandoAprovacao && (
+                  <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                    Versão nova (<code>{t.esperandoAprovacao}</code>) em revisão na Meta — assume sozinha quando aprovar.
+                  </div>
+                )}
               </div>
             ))}
           </div>

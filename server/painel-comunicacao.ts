@@ -43,7 +43,9 @@ export type TipoMensagem = {
   id: string;
   nome: string;
   descricao: string;
-  templateLabel: string;
+  /** rótulo do template. Uma LISTA quando existe versão nova esperando a Meta:
+   *  a primeira aprovada é a que sai, e a última é o que está no ar hoje. */
+  templateLabel: string | string[];
   useCase: string;
   /** só faz sentido para quem tem débito vencido */
   exigeDebito?: boolean;
@@ -53,16 +55,19 @@ export type TipoMensagem = {
 
 export const TIPOS: TipoMensagem[] = [
   {
-    id: "reativacao", nome: "Reativação", templateLabel: "recompra_reativacao", useCase: "recompra",
+    id: "reativacao", nome: "Reativação", useCase: "recompra",
+    templateLabel: ["recompra_reativacao_v2", "recompra_reativacao"],
     descricao: "Cliente que parou de comprar. Pergunta se quer repor os itens de sempre.",
     diasSemCompraMinimo: 30,
   },
   {
-    id: "reposicao", nome: "Reposição", templateLabel: "recompra_reposicao", useCase: "recompra",
+    id: "reposicao", nome: "Reposição", useCase: "recompra",
+    templateLabel: ["recompra_reposicao_v2", "recompra_reposicao"],
     descricao: "Pelo ciclo dele, o estoque está acabando agora.",
   },
   {
-    id: "mix", nome: "Ampliar mix", templateLabel: "recompra_mix", useCase: "recompra",
+    id: "mix", nome: "Ampliar mix", useCase: "recompra",
+    templateLabel: ["recompra_mix_v2", "recompra_mix"],
     descricao: "Compra sempre, mas só 1 ou 2 sabores.",
   },
   {
@@ -77,6 +82,37 @@ export const TIPOS: TipoMensagem[] = [
 ];
 
 export const tipoPorId = (id: string) => TIPOS.find(t => t.id === id) || null;
+
+/** Os rótulos de um tipo, do mais novo para o que está no ar hoje. */
+export const rotulosDoTipo = (t: TipoMensagem): string[] =>
+  Array.isArray(t.templateLabel) ? t.templateLabel : [t.templateLabel];
+
+/**
+ * Qual template sai de fato.
+ * ---------------------------------------------------------------------------
+ * A Meta nao deixa editar o texto de um template aprovado: para mudar a
+ * mensagem, cria-se outro. Enquanto o novo esta em revisao, quem esta no ar e
+ * o antigo — e e ELE que tem que sair, senao o disparo falha. Por isso o tipo
+ * carrega a lista na ordem "mais novo primeiro" e aqui se pega o PRIMEIRO
+ * APROVADO. No dia em que a Meta aprova o novo, a troca acontece sozinha, sem
+ * deploy: o sincronismo de hora em hora traz o corpo, e este escolhe.
+ *
+ * Dentro de cada rotulo ainda vale a regra do '_u': a variante UTILITY assume
+ * quando existir, porque custa 0,04 em vez de 0,34.
+ */
+export async function escolherTemplate(tipo: TipoMensagem): Promise<{ label: string; categoria: string } | null> {
+  const { rotuloEfetivo } = await import("./mkt-recompra");
+  const t: any = await db.execute(sql`
+    SELECT label, umbler_id, COALESCE(is_active, true) AS ativo FROM whatsapp_templates`);
+  const vivo = new Map<string, any>((t.rows || [])
+    .filter((r: any) => r.umbler_id && r.ativo !== false)
+    .map((r: any) => [String(r.label), r]));
+  for (const base of rotulosDoTipo(tipo)) {
+    const u = base + "_u";
+    if (vivo.has(base) || vivo.has(u)) return await rotuloEfetivo(base);
+  }
+  return null;
+}
 
 // -----------------------------------------------------------------------------
 // O template de cobrança
@@ -484,8 +520,8 @@ export async function enviarPorTipo(tipoId: string, clienteIds: string[], quem: 
   const ids = Array.from(new Set((clienteIds || []).map(String).filter(Boolean)));
   if (!ids.length) return { erro: "nenhum cliente selecionado" };
 
-  const { rotuloEfetivo } = await import("./mkt-recompra");
-  const efetivo = await rotuloEfetivo(tipo.templateLabel);
+  const efetivo = await escolherTemplate(tipo);
+  if (!efetivo) return { erro: `nenhum template aprovado para "${tipo.nome}"` };
   const { enqueueOfficialDispatch } = await import("./official-dispatch");
   const diaCompraEnvio = sql.raw(await diaBR("sales_cards", "completed_date",
     "COALESCE(sc.completed_date, sc.updated_at, sc.created_at)"));
@@ -590,14 +626,26 @@ export async function prontidaoDosTipos() {
   }
 
   return TIPOS.map(tp => {
-    const base = porLabel.get(tp.templateLabel);
-    const u = porLabel.get(tp.templateLabel + "_u");
-    const usado = u && String(u.categoria) === "UTILITY" && u.umbler_id ? u : base;
+    // Mesma escolha do envio: o primeiro rótulo APROVADO da lista, e dentro
+    // dele a variante '_u' quando ela existe. Sem isso a tela mostraria o
+    // texto novo enquanto o disparo ainda manda o antigo.
+    const rotulos = rotulosDoTipo(tp);
+    let usado: any = null;
+    for (const base of rotulos) {
+      const b = porLabel.get(base), u = porLabel.get(base + "_u");
+      const vivo = (x: any) => x && x.umbler_id && x.ativo !== false;
+      const escolhido = (vivo(u) && String(u.categoria) === "UTILITY") ? u : (vivo(b) ? b : (vivo(u) ? u : null));
+      if (escolhido) { usado = escolhido; break; }
+    }
+    if (!usado) usado = porLabel.get(rotulos[rotulos.length - 1]) || null;
+    const esperando = rotulos.length > 1 && usado && String(usado.label).replace(/_u$/, "") !== rotulos[0]
+      ? rotulos[0] : null;
     const casoLigado = ligado.get("oficial_" + tp.useCase) === "on";
     const modo = modos.get(tp.useCase) || "?";
     return {
       ...tp,
-      templateUsado: usado ? String(usado.label) : tp.templateLabel,
+      templateUsado: usado ? String(usado.label) : rotulos[rotulos.length - 1],
+      esperandoAprovacao: esperando,
       categoria: usado ? String(usado.categoria || "?") : "?",
       cadastrado: !!usado,
       aprovado: !!(usado && usado.umbler_id),
@@ -611,7 +659,7 @@ export async function prontidaoDosTipos() {
       // mensagem está fraca é depois que ela chegou no cliente.
       corpoAtual: usado ? (usado.corpo || null) : null,
       variaveis: usado ? quantasVariaveis(usado.corpo) : 0,
-      pendencia: !usado ? `template "${tp.templateLabel}" não cadastrado — crie no Umbler como UTILITY e sincronize`
+      pendencia: !usado ? `template "${rotulos[rotulos.length - 1]}" não cadastrado — crie no Umbler como UTILITY e sincronize`
         : !usado.umbler_id ? "aguardando aprovação da Meta (sem umbler_id)"
         : usado.ativo === false ? "template desligado no cadastro"
         : !casoLigado ? `caso de uso "${tp.useCase}" desligado na fila do 1841 (oficial_${tp.useCase})`
