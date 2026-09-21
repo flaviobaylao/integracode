@@ -140,8 +140,19 @@ export async function templatesDoUmbler(): Promise<{ itens: any[]; bruto?: any; 
   } catch (e: any) { return { itens: [], erro: e?.message || String(e) }; }
 }
 
-// Traz do Umbler para a tabela local tudo que estiver aprovado.
-async function importarDoUmbler(): Promise<any> {
+/**
+ * Traz do Umbler para a tabela local tudo que estiver APROVADO.
+ * ---------------------------------------------------------------------------
+ * O corpo aprovado e quem manda: e dele que o painel tira quantas variaveis
+ * preencher. Se o texto muda no Umbler e o cadastro local fica no antigo, o
+ * disparo sai com numero errado de variaveis e a Meta recusa — com a tela
+ * dizendo que esta tudo certo. Por isso isto roda sozinho de hora em hora
+ * (scheduler.ts), e nao so quando alguem lembra de clicar.
+ *
+ * So importa APPROVED: uma edicao em revisao nao pode virar corpo local
+ * enquanto a versao no ar ainda e a antiga.
+ */
+export async function importarDoUmbler(): Promise<any> {
   const { itens, erro } = await templatesDoUmbler();
   if (erro) return { erro };
   const resumo: any = { criados: [], atualizados: [], ignorados: [] };
