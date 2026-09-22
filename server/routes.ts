@@ -17205,6 +17205,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } catch (_me) { /* mantem */ }
           }
 
+          // 🟢 LEADS ATENDIDOS HOJE: um lead que já recebeu check-in nesta rota (atendido, convertido/
+          // cadastrado, ou desfecho dentro do raio) NÃO pode sumir da Rota do Dia — deve continuar
+          // visível e VERDE como "atendido", mesmo que seu status/próximo contato tenham mudado
+          // (deixando de ser "retorno da data"). O check-in é a MESMA régua que pinta o card de verde
+          // no app (checkpoints check_in), então preservamos esses leads em (A) e (B).
+          const _attendedLeadIds = new Set<string>();
+          try {
+            const _cpsAtt = await storage.getRouteCheckpoints(route.id);
+            for (const _cp of (_cpsAtt || [])) {
+              if ((_cp as any).checkpointType === 'check_in' && (_cp as any).customerId) _attendedLeadIds.add(String((_cp as any).customerId));
+            }
+          } catch (_ce) { /* sem checkpoints: mantém o comportamento anterior */ }
+
           let changed = false;
           // (A) SEMPRE remove leads que NÃO são retorno da DATA EXATA — fora da data (atrasados
           // com next_contact_date < data OU adiados com > data), convertidos/descartados, virados
@@ -17214,7 +17227,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           for (const s of curOrder) {
             if (!String(s).startsWith('lead:')) { _kept.push(s); continue; }
             const id = String(s).slice(5);
-            if (_candidateIds.has(id)) { _kept.push(s); }
+            if (_candidateIds.has(id) || _attendedLeadIds.has(id)) { _kept.push(s); }
             else { delete curStops[s]; changed = true; }
           }
           // (B) Regra de CIDADE (só quando dá para determinar as cidades da rota): remove candidatos de
@@ -17227,7 +17240,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (!String(s).startsWith('lead:')) { _kept2.push(s); continue; }
               const id = String(s).slice(5);
               const cd = _candById[id];
-              if (cd && _withinRange(cd.lat, cd.lng)) { _kept2.push(s); }
+              if ((cd && _withinRange(cd.lat, cd.lng)) || _attendedLeadIds.has(id)) { _kept2.push(s); }
               else { delete curStops[s]; changed = true; }
             }
             for (const cand of _candidates) {
