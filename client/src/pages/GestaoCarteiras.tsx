@@ -108,7 +108,10 @@ const rumoDaTendencia = (t: { porMes: number; pctPorMes: number | null }) => {
   if (pct !== null && Math.abs(pct) < 0.5) return "praticamente estável";
   const sobe = t.porMes >= 0;
   const passo = `${BRL0(Math.abs(t.porMes))} por mês`;
-  const emPct = pct === null ? "" : ` (${sobe ? "+" : "−"}${Math.abs(pct).toFixed(1)}% ao mês sobre a média do período)`;
+  // Vírgula decimal: toFixed escreve "1.5" e o resto da tela fala pt-BR.
+  const emPct = pct === null
+    ? ""
+    : ` (${sobe ? "+" : "−"}${Math.abs(pct).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% ao mês sobre a média do período)`;
   return `${sobe ? "subindo" : "caindo"} ${passo}${emPct}`;
 };
 
