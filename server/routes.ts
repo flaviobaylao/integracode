@@ -21471,8 +21471,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let customerRecurrenceType: string;
       let customerSellerId: string; // ✅ Vendedor do cliente (existente ou novo)
       
-      const customersData = await storage.getCustomers();
-      
+      // ⚠️ INCLUIR INATIVOS (22/set/2026) — getCustomers() sem opcao devolve SO os ativos.
+      // Quando um cliente INATIVO (ex.: importado do Omie) comprava na loja, a busca por
+      // documento nao o encontrava, o codigo caia no ramo "cliente novo" e o INSERT batia
+      // no indice unico do CPF/CNPJ (customers_cnpj_unique) => 500 "Erro ao criar pedido".
+      // No PIX/cartao isso e dinheiro cobrado SEM pedido criado (caso real: R$ 269,10 em
+      // 22/set, CNPJ 46.775.489/0001-74). A busca por documento precisa enxergar todos.
+      const customersData = await storage.getCustomers(undefined, { incluirInativos: true });
+
       // Normalizar CPF para comparação
       const cpfLimpo = validatedData.customer.cpfCnpj ? validatedData.customer.cpfCnpj.replace(/\D/g, '') : null;
       
@@ -21505,9 +21511,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerSellerId = existingCustomer.sellerId; // ✅ Manter vendedor existente
         
         console.log(`✅ Cliente existente - mantendo configurações: vendedor=${customerSellerId}, rota=${customerRouteDay}, periodicidade=${customerRecurrenceType}`);
-        
+        if ((existingCustomer as any).isActive === false) {
+          console.log(`♻️ Cliente estava INATIVO e acabou de comprar — reativando: ${existingCustomer.name} (${customerId})`);
+        }
+
         // Atualizar todas as informações do cliente
+        // isActive: quem acabou de fazer um pedido e cliente ativo. Sem isto o cadastro
+        // reaberto pela compra continuaria invisivel nas telas que filtram por ativo.
         await storage.updateCustomer(customerId, {
+          isActive: true,
           name: validatedData.customer.name,
           email: validatedData.customer.email,
           phone: validatedData.customer.phone,
