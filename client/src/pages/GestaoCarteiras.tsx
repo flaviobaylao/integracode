@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 import { escalaEixo, picoDaSerie } from "@/lib/escalaEixo";
+import { tendenciaDaSerie } from "@/lib/tendencia";
 import AgendaCarteira from "@/pages/AgendaCarteira";
 import RedeClientes from "@/pages/RedeClientes";
 
@@ -87,6 +88,36 @@ type Cliente = {
 
 /** dd/mm/aaaa a partir de "aaaa-mm-dd"; traço quando vazio. */
 const dBR = (v?: string | null) => (v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—");
+
+/**
+ * REATIVADO SEM REGISTRO — cadastro ATIVO hoje cujo ÚLTIMO evento de status é uma
+ * inativação. Alguém devolveu o cliente para ativo por um caminho que não passou
+ * pela trilha do cadastro. Acontecia antes do gatilho de banco de 06/09/2026, que
+ * passou a registrar qualquer mudança de `is_active`, inclusive por SQL direto —
+ * a causa conhecida é o sync antigo do Omie, anterior ao desvínculo.
+ * Sem isolar esses casos eles ficam contando como ativos na carteira, na agenda e
+ * nas rotas, e a linha "inativado dd/mm/aa" num cliente Ativo parece erro do filtro.
+ */
+/**
+ * A inclinação da tendência em uma frase: para que serve a reta é responder
+ * "está subindo ou caindo, e quanto por mês?". Abaixo de 0,5% ao mês a reta é
+ * ruído — dizer "subindo R$ 12 por mês" seria precisão falsa.
+ */
+const rumoDaTendencia = (t: { porMes: number; pctPorMes: number | null }) => {
+  const pct = t.pctPorMes;
+  if (pct !== null && Math.abs(pct) < 0.5) return "praticamente estável";
+  const sobe = t.porMes >= 0;
+  const passo = `${BRL0(Math.abs(t.porMes))} por mês`;
+  const emPct = pct === null ? "" : ` (${sobe ? "+" : "−"}${Math.abs(pct).toFixed(1)}% ao mês sobre a média do período)`;
+  return `${sobe ? "subindo" : "caindo"} ${passo}${emPct}`;
+};
+
+const reativadoSemRegistro = (c: Cliente) => {
+  if (!c.cadastrado || !c.ativo) return false;
+  const ev = c.eventos || [];
+  const ultimo = ev[ev.length - 1];
+  return !!ultimo && ultimo.tipo === "inativado";
+};
 
 /** As 8 classes na ordem da tela. Mesma lista do servidor (CLASSES_ORDEM). */
 const CLASSES_ORDEM = ["A+", "A-", "B+", "B-", "C+", "C-", "D+", "D-"];
@@ -313,7 +344,7 @@ export default function GestaoCarteiras() {
   // Status do CADASTRO (o mesmo que a coluna "Status atual" mostra) — não
   // confundir com a situação da carteira, onde "perdido" é cadastro ativo que
   // parou de comprar.
-  const [statusSel, setStatusSel] = useState<"todos" | "ativo" | "inativo" | "sem-cadastro">("todos");
+  const [statusSel, setStatusSel] = useState<"todos" | "ativo" | "inativo" | "sem-cadastro" | "reativado-sem-registro">("todos");
   const [aplicando, setAplicando] = useState(false);
 
   const d = data || {};
@@ -561,6 +592,23 @@ export default function GestaoCarteiras() {
   // cima sai cortada.
   const mostraLinhaNf = !filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0;
 
+  // ── LINHA DE TENDÊNCIA ──────────────────────────────────────────────────────
+  // Reta de mínimos quadrados sobre a linha azul (títulos emitidos). O mês em
+  // curso fica FORA da conta — está pela metade e puxaria a reta para baixo,
+  // inventando uma queda — mas a reta é DESENHADA em cima dele também, projetada,
+  // para o gráfico não terminar com um pedaço vazio. Regra e testes em
+  // @/lib/tendencia.
+  const ultimoMesEmCurso = String((serie || [])[(serie || []).length - 1]?.mes || "") === mesHoje;
+  const tendencia = useMemo(
+    () => tendenciaDaSerie((serie || []).map((p: any) => Number(p?.valor) || 0), { ignorarUltimo: ultimoMesEmCurso }),
+    [serie, ultimoMesEmCurso],
+  );
+  /** A série com a coluna da reta — é o que vai para o gráfico. */
+  const serieDesenhada = useMemo(
+    () => (serie || []).map((p: any, i: number) => ({ ...p, tendencia: tendencia ? tendencia.pontos[i] : null })),
+    [serie, tendencia],
+  );
+
   // Teto do eixo tirado do próprio desenho: número redondo logo acima do maior
   // mês do recorte. Recorte pequeno (um cliente, uma rede) ganha uma escala do
   // tamanho dele em vez de ficar achatado no pé de um eixo de centenas de
@@ -568,12 +616,15 @@ export default function GestaoCarteiras() {
   // comparar um mês com o outro.
   const escala = useMemo(() => {
     const valores: Array<number | null | undefined> = [];
-    for (const p of (serie || []) as any[]) {
+    for (const p of (serieDesenhada || []) as any[]) {
       valores.push(Number(p?.valor));
       if (mostraLinhaNf) valores.push(Number(p?.valorNf));
+      // A reta entra no cálculo: num período de alta forte ela pode terminar
+      // acima do maior mês, e aí sairia cortada no topo.
+      valores.push(Number(p?.tendencia));
     }
     return escalaEixo(picoDaSerie(valores), { passoMinimo: PASSO_MINIMO_EIXO });
-  }, [serie, mostraLinhaNf]);
+  }, [serieDesenhada, mostraLinhaNf]);
 
   /** Em uma frase: sobre quantos clientes é a escala que está no eixo. */
   const recorteDaSerie = useMemo(() => {
@@ -709,7 +760,9 @@ export default function GestaoCarteiras() {
     const arr = clientes.filter((c) => {
       if (classeSel !== "todas" && letraDe(c) !== classeSel) return false;
       if (sinalSel !== "todos" && sinalDe(c) !== sinalSel) return false;
-      if (statusSel !== "todos") {
+      if (statusSel === "reativado-sem-registro") {
+        if (!reativadoSemRegistro(c)) return false;
+      } else if (statusSel !== "todos") {
         const st = !c.cadastrado ? "sem-cadastro" : c.ativo ? "ativo" : "inativo";
         if (st !== statusSel) return false;
       }
@@ -1627,7 +1680,7 @@ export default function GestaoCarteiras() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={serie} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
+                <LineChart data={serieDesenhada} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#ececea" vertical={false} />
                   <XAxis dataKey="mes" tickFormatter={labelMes} tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={{ stroke: "#ececea" }} />
                   {/* Dominio e marcas vem do proprio recorte (ver @/lib/escalaEixo):
@@ -1650,8 +1703,27 @@ export default function GestaoCarteiras() {
                   {mostraLinhaNf ? (
                     <Line type="linear" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
                   ) : null}
+                  {/* Tendência: reta de referência, não é uma terceira medição —
+                      por isso cinza (a cor neutra do texto), sem marcador em cada
+                      mês e sem destaque no hover. Ela acompanha a linha azul; quem
+                      lê não pode confundi-la com mais um faturamento. */}
+                  {tendencia ? (
+                    <Line type="linear" dataKey="tendencia" name={`Tendência (${tendencia.meses} ${tendencia.meses === 1 ? "mês" : "meses"})`}
+                      stroke={CINZA} strokeWidth={2} strokeDasharray="2 4" dot={false} activeDot={false} isAnimationActive={false} />
+                  ) : null}
                 </LineChart>
               </ResponsiveContainer>
+              {tendencia ? (
+                <p className="text-xs text-muted-foreground mt-2" data-testid="nota-tendencia-serie">
+                  <b>Tendência</b> (linha cinza tracejada): no conjunto do período o faturamento está{" "}
+                  {rumoDaTendencia(tendencia)} — reta de mínimos quadrados sobre {NUM(tendencia.meses)}{" "}
+                  {tendencia.meses === 1 ? "mês" : "meses"}.
+                  {tendencia.projetouUltimo
+                    ? ` O mês em curso (${labelMes(String(serie[serie.length - 1]?.mes || ""))}) fica fora da conta — está pela metade e puxaria a reta para baixo; sobre ele a reta é só projetada.`
+                    : ""}
+                  {" "}Ela mostra o rumo do período inteiro, não o que vai acontecer no mês que vem.
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground mt-2" data-testid="nota-escala-serie">
                 Escala de 0 a {BRL0(escala.max)}, de {BRL0(escala.passo)} em {BRL0(escala.passo)} — ajustada ao que
                 está selecionado ({recorteDaSerie}). Dentro do mesmo recorte a escala não se mexe, então dá para
@@ -1766,6 +1838,10 @@ export default function GestaoCarteiras() {
                     { k: "ativo", t: `Ativos (${NUM(clientes.filter((c) => c.cadastrado && c.ativo).length)})` },
                     { k: "inativo", t: `Inativos (${NUM(clientes.filter((c) => c.cadastrado && !c.ativo).length)})` },
                     { k: "sem-cadastro", t: `Sem cadastro (${NUM(clientes.filter((c) => !c.cadastrado).length)})` },
+                    // Chip de conferência: cadastro ATIVO hoje cujo último registro de
+                    // status é uma inativação. Isola de uma vez os que voltaram a ativo
+                    // sem passar pela trilha, para conferir e reinativar em massa.
+                    { k: "reativado-sem-registro", t: `Reativado s/ registro (${NUM(clientes.filter(reativadoSemRegistro).length)})` },
                   ] as const).map((o) => (
                     <button
                       key={o.k}
@@ -1904,6 +1980,8 @@ export default function GestaoCarteiras() {
                   {listaVisivel.map((c, i) => {
                     const letra = letraDe(c);
                     const positivo = sinalDe(c) === "+";
+                    // Últimas idas e vindas do cadastro (a coluna mostra no máximo 3).
+                    const eventosVisiveis = (c.eventos || []).slice(-3);
                     return (
                       <TableRow key={c.chave} data-testid={`row-cliente-${i}`}>
                         {ehAdmin && (
@@ -1950,16 +2028,35 @@ export default function GestaoCarteiras() {
                               (c.primeiraVenda ? ` · 1ª compra: ${dataBR(c.primeiraVenda)}` : "")
                             }>{dataBR(c.conquista)}</span>
                           ) : <span className="text-muted-foreground">—</span>}
-                          {(c.eventos || []).slice(-3).map((e, k) => (
-                            <span
-                              key={k}
-                              className="block text-[11px] leading-tight"
-                              style={{ color: e.tipo === "inativado" ? COR_CONQUISTA.saida : COR_CONQUISTA.entrada }}
-                              title={e.tipo === "inativado" ? "Cliente inativado nesta data" : "Cliente reativado nesta data"}
-                            >
-                              {e.tipo === "inativado" ? "inativado " : "reativado "}{dataBR(e.data)}
-                            </span>
-                          ))}
+                          {eventosVisiveis.map((e, k) => {
+                            // REATIVAÇÃO SEM REGISTRO: o último evento do cadastro é uma
+                            // inativação, mas o cadastro está ATIVO hoje. Alguém devolveu o
+                            // cliente para ativo por um caminho que não passou pela trilha —
+                            // acontecia antes do gatilho de banco de 06/09/2026, que passou a
+                            // registrar qualquer mudança de is_active, inclusive por SQL direto.
+                            // Sem esta marca a linha parece contradição (aparece "inativado" num
+                            // cliente que o filtro mostra como Ativo) e o erro parece ser do filtro.
+                            const semRegistro = k === eventosVisiveis.length - 1 && reativadoSemRegistro(c);
+                            return (
+                              <span
+                                key={k}
+                                className="block text-[11px] leading-tight"
+                                style={{ color: e.tipo === "inativado" ? COR_CONQUISTA.saida : COR_CONQUISTA.entrada }}
+                                title={e.tipo === "inativado"
+                                  ? (semRegistro
+                                    ? "Cliente inativado nesta data e ATIVO hoje, sem registro da reativação na trilha do cadastro. A trilha só registra mudanças feitas fora do app desde 06/09/2026."
+                                    : "Cliente inativado nesta data")
+                                  : "Cliente reativado nesta data"}
+                              >
+                                {e.tipo === "inativado" ? "inativado " : "reativado "}{dataBR(e.data)}
+                                {semRegistro ? (
+                                  <span className="text-muted-foreground" data-testid={`aviso-reativacao-sem-registro-${i}`}>
+                                    {" "}· reativado sem registro
+                                  </span>
+                                ) : null}
+                              </span>
+                            );
+                          })}
                         </TableCell>
                         {/* Status ATUAL do cadastro — não confundir com a situação
                             da carteira (perdido é cadastro ativo que parou de comprar). */}
