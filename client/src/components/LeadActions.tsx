@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useMutation } from "@/lib/queryClient";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle, XCircle, Clock, FileText, Phone } from "lucide-react";
+import { CheckCircle, XCircle, Clock, FileText, Phone, MapPin, Camera } from "lucide-react";
 
 // Ações de um LEAD que está na Rota do Dia (paradas de lead da rota sequencial).
 // Reaproveita os mesmos endpoints do painel "Retornos de Lead":
@@ -55,6 +55,18 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   const [atendGravando, setAtendGravando] = useState(false);
   const atendRecRef = useRef<any>(null);
   const atendSpeechSupported = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+  // 📍📷 O Registro de Atendimento agora EXIGE localização (GPS) + foto do local — sem os dois
+  // não é possível salvar. Vai pelo MESMO endpoint do check-in (foto obrigatória no servidor,
+  // grava/trava a coordenada, entra no histórico do lead e conta como atendido/verde na rota).
+  const [atendCoords, setAtendCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [atendPhoto, setAtendPhoto] = useState<File | null>(null);
+  const [atendPhotoUrl, setAtendPhotoUrl] = useState<string | null>(null);
+  const capturarLocalizacaoAtend = () => {
+    if (!navigator.geolocation) { toast({ variant: "destructive", title: "Erro", description: "Seu dispositivo não suporta geolocalização" }); return; }
+    const onOk = (pos: GeolocationPosition) => { setAtendCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); toast({ title: "Localização capturada", description: `Lat: ${pos.coords.latitude.toFixed(6)}, Lng: ${pos.coords.longitude.toFixed(6)}` }); };
+    const onErr = (err: any) => { const code = err?.code; const description = code === 1 ? 'Permissão de localização negada. Ative o GPS e permita o acesso à localização deste site.' : code === 3 ? 'Tempo esgotado ao obter a localização. Verifique se o GPS está ligado e tente novamente.' : 'Localização indisponível. Verifique se o GPS está ligado (de preferência próximo a uma janela).'; toast({ variant: "destructive", title: "Erro", description }); };
+    navigator.geolocation.getCurrentPosition(onOk, () => navigator.geolocation.getCurrentPosition(onOk, onErr, { enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 }), { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+  };
 
   const invalidate = () => {
     if (sellerId && date) {
@@ -173,8 +185,17 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   };
   const atendStop = () => { try { atendRecRef.current && atendRecRef.current.stop(); } catch (_e) {} setAtendGravando(false); };
   const salvarAtendMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/leads/${leadId}/visits`, { observation: atendTexto.trim() }),
-    onSuccess: () => { toast({ title: "Atendimento registrado", description: "Salvo no histórico do lead." }); atendStop(); setAtendOpen(false); setAtendTexto(""); invalidate(); },
+    mutationFn: async () => {
+      if (!atendCoords) throw new Error("Capture a localização (GPS) do local antes de salvar.");
+      if (!atendPhoto) throw new Error("Anexe a foto do local antes de salvar.");
+      const fd = new FormData();
+      fd.append("latitude", String(atendCoords.lat));
+      fd.append("longitude", String(atendCoords.lng));
+      fd.append("photo", atendPhoto);
+      if (atendTexto.trim()) fd.append("notes", atendTexto.trim());
+      return apiRequestMultipart("POST", `/api/leads/${leadId}/check-in`, fd);
+    },
+    onSuccess: () => { toast({ title: "Atendimento registrado", description: "Localização e foto salvas no histórico do lead." }); atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); invalidate(); },
     onError: (e: any) => toast({ title: "Erro ao registrar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
   const atendDesfecho = (tipo: 'conv' | 'nao' | 'pro') => {
@@ -192,7 +213,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
           size="sm"
           variant="outline"
           className="border-blue-400 text-blue-700 dark:text-blue-400 h-8"
-          onClick={(e) => { e.stopPropagation(); setAtendTexto(""); setAtendGravando(false); setAtendOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); setAtendTexto(""); setAtendGravando(false); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendOpen(true); }}
           title="Registro de Atendimento"
           data-testid={`button-lead-atendimento-${leadId}`}
         >
@@ -379,9 +400,36 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
               <Textarea id={`atend-${leadId}`} rows={6} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder="Digite o registro do atendimento ou use o botão Gravar áudio para ditar..." data-testid={`textarea-lead-atend-${leadId}`} />
               {atendGravando && <p className="text-[11px] text-red-600 mt-1 animate-pulse">● Gravando… fale e o texto aparece automaticamente.</p>}
             </div>
+            {/* 📍 Localização (obrigatória) */}
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium flex items-center gap-1"><MapPin className="w-4 h-4" /> Localização (obrigatória)</span>
+                <Button type="button" size="sm" variant="outline" onClick={capturarLocalizacaoAtend} data-testid={`button-lead-atend-location-${leadId}`}>Capturar localização</Button>
+              </div>
+              {atendCoords ? (
+                <p className="text-xs text-green-700 dark:text-green-400">✓ Lat: {atendCoords.lat.toFixed(6)} · Lng: {atendCoords.lng.toFixed(6)}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Toque em “Capturar localização” para registrar o ponto do atendimento.</p>
+              )}
+            </div>
+            {/* 📷 Foto (obrigatória) */}
+            <div className="rounded-md border p-3 space-y-2">
+              <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto do local (obrigatória)</span>
+              {atendPhotoUrl ? (
+                <div className="space-y-2">
+                  <img src={atendPhotoUrl} alt="Foto do atendimento" className="w-full max-h-48 object-contain rounded border" />
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setAtendPhoto(null); setAtendPhotoUrl(null); }} data-testid={`button-lead-atend-photo-remove-${leadId}`}>Trocar foto</Button>
+                </div>
+              ) : (
+                <Input type="file" accept="image/*" capture="environment" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; setAtendPhoto(f); const rd = new FileReader(); rd.onload = (ev) => setAtendPhotoUrl(ev.target?.result as string); rd.readAsDataURL(f); }} data-testid={`input-lead-atend-photo-${leadId}`} />
+              )}
+            </div>
+            {(!atendCoords || !atendPhoto) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">Para salvar o registro é obrigatório capturar a localização e anexar a foto do local.</p>
+            )}
             <div className="flex justify-end">
-              <Button onClick={() => { if (!atendTexto.trim()) { toast({ title: "Nada para salvar", description: "Escreva ou dite o atendimento.", variant: "destructive" }); return; } salvarAtendMut.mutate(); }} disabled={salvarAtendMut.isPending} data-testid={`button-lead-atend-save-${leadId}`}>
-                Salvar registro
+              <Button onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendCoords || !atendPhoto} data-testid={`button-lead-atend-save-${leadId}`}>
+                {salvarAtendMut.isPending ? "Salvando…" : "Salvar registro"}
               </Button>
             </div>
             <div className="border-t pt-3">
