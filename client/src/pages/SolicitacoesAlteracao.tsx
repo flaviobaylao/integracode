@@ -223,6 +223,37 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
   // 💰 Previsão de pagamento: a data em que o cliente prometeu pagar. Ao chegar o dia, o sistema
   // lança uma pendência na Rota do Dia do vendedor (trava o Fechar Rota) e, se ele for externo,
   // manda um WhatsApp no celular dele para fazer a cobrança.
+  // 🤖 Card aberto pelo SISTEMA (cadastro incompleto etc.): não tem vendedor. A Réplica abre um
+  // box com a lista de vendedores + a escolha de rezonear ou manter o cadastro como está; ao
+  // enviar, a mensagem cai na Rota do Dia do vendedor escolhido como uma réplica normal.
+  const doSistema = !r.sellerId && /sistema/i.test(String(r.requestedByName || r.sellerName || ""));
+  const [destOpen, setDestOpen] = useState(false);
+  const [destSeller, setDestSeller] = useState("");
+  const [destRezonear, setDestRezonear] = useState<"manter" | "rezonear">("manter");
+  const { data: vendedores = [] } = useQuery<any[]>({
+    queryKey: ["/api/sellers/active"],
+    enabled: doSistema && destOpen,
+    staleTime: 300_000,
+  });
+  const atribuirMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/atribuir-vendedor`, {
+      sellerId: destSeller,
+      sellerName: (vendedores.find((v: any) => String(v.id) === destSeller) || {}).name,
+      texto: note.trim(),
+      rezonear: destRezonear === "rezonear",
+    }),
+    onSuccess: (d: any) => {
+      toast({
+        title: "Enviado ao vendedor",
+        description: `A pendência está na Rota do Dia de ${d?.sellerName || "quem você escolheu"}${d?.rezoneado ? " · cliente rezoneado" : ""}.`,
+      });
+      setDestOpen(false); setDestSeller(""); setDestRezonear("manter"); setNote("");
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível enviar", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   // Mesmo padrão da Quarentena: o botão só ABRE o box; ao confirmar, grava a previsão e fecha o
   // report (status "lido") — o card vai para Resolvidas. O aviso ao vendedor no dia continua
   // valendo: o cron das 07:00 reabre o card quando dispara a cobrança.
@@ -352,8 +383,17 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
         <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => resolveMut.mutate("efetuadas")}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Efetuadas</>}
         </Button>
-        <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" disabled={busy || replyMut.isPending || !note.trim()} onClick={() => replyMut.mutate()}>
+        <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+          disabled={busy || replyMut.isPending || (!doSistema && !note.trim())}
+          title={doSistema ? "Escolher o vendedor que receberá esta pendência na Rota do Dia" : undefined}
+          onClick={() => { if (doSistema) setDestOpen((o) => !o); else replyMut.mutate(); }}>
           {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Réplica</>}
+        </Button>
+        <Button size="sm" variant="outline" className="border-green-500 text-green-700 hover:bg-green-50" disabled={busy}
+          title="Envia o recorte desta solicitação para DÉBITOS - Inbox de Informações (+55 62 9451-1997)"
+          data-testid={`cr-whatsapp-sol-${r.id}`}
+          onClick={() => whatsappMut.mutate()}>
+          {whatsappMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><MessageCircle className="h-4 w-4 mr-1" /> Envio Whatsapp</>}
         </Button>
         <Button size="sm" variant="destructive" disabled={busy} onClick={() => resolveMut.mutate("rejeitadas")}>
           <XCircle className="h-4 w-4 mr-1" /> Rejeitar
@@ -373,6 +413,49 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
         )}
         </>)}
       </div>
+
+      {doSistema && destOpen && (
+        <div className="rounded-md bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900 p-2.5 space-y-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800 dark:text-indigo-300">
+            Enviar para a Rota do Dia de qual vendedor?
+          </div>
+          <select
+            value={destSeller}
+            onChange={(e) => setDestSeller(e.target.value)}
+            className="w-full sm:w-72 border rounded-md px-2 py-1.5 text-sm bg-white dark:bg-transparent"
+            data-testid={`cr-dest-seller-${r.id}`}
+          >
+            <option value="">Escolha o vendedor…</option>
+            {vendedores.map((v: any) => (
+              <option key={v.id} value={v.id}>{v.name}{v.role === "telemarketing" ? " (telemarketing)" : ""}</option>
+            ))}
+          </select>
+          {r.entityType === "customer" && (
+            <div className="space-y-1">
+              <div className="text-[11px] font-semibold text-muted-foreground">O cadastro deve ser rezoneado para esse vendedor?</div>
+              <div className="flex flex-wrap gap-3 text-sm">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name={`rez-${r.id}`} checked={destRezonear === "manter"} onChange={() => setDestRezonear("manter")} className="accent-indigo-600" />
+                  Manter como está
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name={`rez-${r.id}`} checked={destRezonear === "rezonear"} onChange={() => setDestRezonear("rezonear")} className="accent-indigo-600" data-testid={`cr-dest-rezonear-${r.id}`} />
+                  Rezonear (troca o vendedor do cadastro)
+                </label>
+              </div>
+            </div>
+          )}
+          <div className="text-[11px] text-muted-foreground">A mensagem enviada é a que está escrita na caixa de texto acima.</div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700"
+              disabled={!destSeller || !note.trim() || atribuirMut.isPending}
+              onClick={() => atribuirMut.mutate()} data-testid={`cr-dest-enviar-${r.id}`}>
+              {atribuirMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Enviar ao vendedor</>}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => { setDestOpen(false); setDestSeller(""); setDestRezonear("manter"); }}>Cancelar</Button>
+          </div>
+        </div>
+      )}
 
       {isReport && previsaoOpen && r.entityType === "customer" && (
         <div className="flex flex-wrap items-end gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 p-2.5">
