@@ -130,7 +130,14 @@ const INVALID_NCM_REMAP: Record<string, string> = {
 export function normalizeNcm(raw: string | null | undefined): string {
   const d = onlyDigits(raw || '');
   if (!d) return '';
-  const v = d.padStart(8, '0').slice(0, 8);
+  // NCM incompleto completa a DIREITA. O codigo e hierarquico
+  // (capitulo 2 + posicao 2 + subposicao 2 + item 1 + subitem 1), entao "3923.90"
+  // e a subposicao 3923.90.00 = 39239000. Completar a ESQUERDA (o que se fazia
+  // antes) gerava 00392390 — NCM que nao existe, e a SEFAZ devolvia
+  // "Rejeicao: Informado NCM inexistente" (caso real: bombonas, set/2026).
+  // Excecao: 7 digitos quase sempre e um NCM de capitulo 01-09 digitado sem o
+  // zero da frente (ex.: "901.11.10" -> 09011110), ai o zero vai a esquerda.
+  const v = (d.length === 7 ? d.padStart(8, '0') : d.padEnd(8, '0')).slice(0, 8);
   return INVALID_NCM_REMAP[v] || v;
 }
 
