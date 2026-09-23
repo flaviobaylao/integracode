@@ -174,6 +174,26 @@ export function calculateNextVisitDate(input: ScheduleInput): ScheduleResult {
 
   // Se não há última visita, encontrar o próximo dia válido da semana
   if (!effectiveLast) {
+    // 🔗 FASE QUINZENAL ANCORADA NO INÍCIO DE FORNECIMENTO: para periodicidade com intervalo
+    // maior que uma semana (quinzenal), a próxima ocorrência cai EM FASE com a data de início
+    // (início, início+14, início+28…), e NÃO no "próximo dia da semana a partir de hoje". Sem
+    // isso, clientes virtuais (que nunca têm check-in/visita concluída) eram reprogramados na
+    // semana de paridade errada — ex.: comprou 02/09 e 16/09 mas caía em 23/09 em vez de 30/09.
+    // (set/2026)
+    if (startAnchor && intervalDays > 7 && startAnchor.getTime() <= baseDate.getTime()) {
+      let occ = findNextWeekday(new Date(startAnchor), targetWeekdays);
+      occ.setHours(0, 0, 0, 0);
+      let guard = 0;
+      while (occ.getTime() < baseDate.getTime() && guard < 400) {
+        const step = new Date(occ);
+        step.setDate(step.getDate() + intervalDays);
+        occ = findNearestWeekday(step, targetWeekdays);
+        occ.setHours(0, 0, 0, 0);
+        guard++;
+      }
+      occ.setHours(8, 0, 0, 0);
+      return { nextDate: occ, interval: intervalDays, reason: 'periodicity_applied' };
+    }
     const nextDate = findNextWeekday(baseDate, targetWeekdays);
     return {
       nextDate,
