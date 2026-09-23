@@ -689,6 +689,74 @@ export function registerChangeRequestsRoutes(app: Express) {
   //   Só comunicação: não cria parada, não conta como cliente e não trava o Fechar Rota.
   // --------------------------------------------------------------------------
   // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/atribuir-vendedor — 23/set/2026.
+  //   Cards abertos pelo SISTEMA (cadastro incompleto etc.) não têm vendedor: o admin escolhe
+  //   para quem mandar. A réplica cai na Rota do Dia desse vendedor como qualquer outra e,
+  //   opcionalmente, o cliente é REZONEADO para ele (troca o vendedor do cadastro).
+  //   body: { sellerId, sellerName?, texto, rezonear?: boolean }
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/atribuir-vendedor", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const b = req.body || {};
+    const sellerId = String(b.sellerId || "").trim();
+    const texto = String(b.texto || "").trim();
+    const rezonear = b.rezonear === true;
+    if (!sellerId) return res.status(400).json({ error: "Escolha o vendedor." });
+    if (!texto) return res.status(400).json({ error: "Escreva a mensagem ao vendedor." });
+
+    const cur = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE id = ${id} LIMIT 1`));
+    if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
+    const row = cur[0];
+
+    // Nome do vendedor: o que veio do cliente ou o do cadastro.
+    let sellerName = b.sellerName ? String(b.sellerName).slice(0, 200) : "";
+    try {
+      if (!sellerName) {
+        const ur = rowsOf(await db.execute(sql`SELECT first_name, last_name, email FROM users WHERE id = ${sellerId} LIMIT 1`));
+        const usr = ur[0];
+        if (usr) sellerName = ((`${usr.first_name || ""} ${usr.last_name || ""}`).trim() || String(usr.email || "").split("@")[0]) || "";
+      }
+    } catch {}
+
+    // 🔁 Rezoneamento opcional: troca o vendedor do cadastro (mesmo caminho da migração de
+    // carteira da repescagem — regenera agenda e deixa trilha na auditoria do cliente).
+    let rezoneado = false;
+    if (rezonear && row.entity_type === "customer") {
+      const cid = row.customer_id || row.entity_id;
+      try {
+        const { storage } = await import("./storage");
+        const before: any = await storage.getCustomer(cid);
+        if (before && before.sellerId !== sellerId) {
+          await storage.updateCustomer(cid, { sellerId });
+          rezoneado = true;
+          try {
+            const { logCustomerChanges } = await import("./customerAudit");
+            await logCustomerChanges({
+              customerId: cid, before, changes: { sellerId },
+              actor: { id: u?.id, name: userName(u) }, source: "inbox-replica-sistema",
+            });
+          } catch {}
+        }
+      } catch (e: any) { console.warn("[INBOX-ATRIBUIR] rezoneamento falhou:", e?.message); }
+    }
+
+    const msg = mkMsg("admin", u, texto, "reply", { paraVendedor: sellerId, rezoneado });
+    const nota = rezoneado
+      ? mkMsg("admin", u, `Cliente rezoneado para ${sellerName || "o vendedor escolhido"}.`, "rezoneamento", { sellerId })
+      : null;
+    const novas = nota ? [nota, msg] : [msg];
+    const updated = rowsOf(await db.execute(sql`
+      UPDATE change_requests
+      SET seller_id = ${sellerId}, seller_name = ${sellerName || null}, status = 'pending',
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify(novas)}::jsonb
+      WHERE id = ${id}
+      RETURNING *`));
+    res.json({ ok: true, rezoneado, sellerId, sellerName, request: mapRow(updated[0]) });
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/previsao-pagamento — admin registra (ou limpa) a data em que
   //   o cliente prometeu pagar. Na data, o cron das 07:00 lança uma réplica automática no card:
   //   ela vira pendência na Rota do Dia do vendedor (bandeira + trava do Fechar Rota) e, para
@@ -813,7 +881,6 @@ export function registerChangeRequestsRoutes(app: Express) {
     const cur = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE id = ${id} LIMIT 1`));
     if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
     const row = cur[0];
-    if ((row.kind || "solicitacao") !== "report") return res.status(400).json({ error: "O envio por WhatsApp é só para cards de report." });
 
     // Destino configurável (Administração > system_settings). Sem a chave, vai para o 62 9451-1997.
     let destino = "5562994511997";
@@ -834,12 +901,18 @@ export function registerChangeRequestsRoutes(app: Express) {
       const c = rowsOf(await db.execute(sql`SELECT city, neighborhood FROM ${tbl} WHERE id = ${cid} LIMIT 1`));
       local = [c[0]?.neighborhood, c[0]?.city].filter(Boolean).join(" · ");
     } catch {}
+    const ehReport = (row.kind || "solicitacao") === "report";
+    const resumo = ehReport ? "" : summarizeRequest(Array.isArray(row.types) ? row.types : [], d);
     const linhas: string[] = [];
-    linhas.push(`📋 *Report do Inbox — ${d.reportLabel || "Registro"}*`);
+    linhas.push(ehReport
+      ? `📋 *Report do Inbox — ${d.reportLabel || "Registro"}*`
+      : `📋 *Solicitação do Inbox*`);
     linhas.push(`*Cliente:* ${row.entity_name || row.entity_id}${local ? " (" + local + ")" : ""}`);
     if (d.motivo) linhas.push(`*Motivo:* ${d.motivo}`);
+    if (resumo) linhas.push(`*Pedido:* ${resumo}`);
     if (d.texto) linhas.push(`*Observação do vendedor:*\n${String(d.texto).trim()}`);
-    linhas.push(`*Vendedor:* ${row.seller_name || row.requested_by_name || "—"} · ${quando}`);
+    else if (d.outro && !resumo.includes(String(d.outro))) linhas.push(`*Observação:*\n${String(d.outro).trim()}`);
+    linhas.push(`*Origem:* ${row.seller_name || row.requested_by_name || "—"} · ${quando}`);
     if (extra) linhas.push(`*Obs. do admin:* ${extra}`);
     linhas.push(`_Integra 2.0 — enviado por ${userName(u)}_`);
     const texto = linhas.join("\n");
