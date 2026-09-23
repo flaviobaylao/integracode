@@ -3877,67 +3877,6 @@ export function registerChatRoutes(app: Express): void {
       return res.status(500).json({ found: false, error: error?.message || "erro" });
     }
   });
-  // DIAGNÓSTICO (temporário): sonda os endpoints do Umbler Talk para descobrir como listar
-  // o histórico de um contato (contato -> chats -> mensagens). Só admin. Não altera nada.
-  app.get("/api/chat/_umbler-probe", authenticateUser, requireRole(["admin"]), async (req: any, res: any) => {
-    try {
-      if (!process.env.UMBLER_TALK_TOKEN) return res.json({ error: "UMBLER_TALK_TOKEN ausente" });
-      const cfg = await resolveUmblerTalkConfig();
-      if ("error" in cfg) return res.json({ error: cfg.error });
-      const orgId = cfg.orgId;
-      let digits = String((req.query && req.query.phone) || "").replace(/\D/g, "");
-      if (digits && !digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) digits = "55" + digits;
-      const plus = "+" + digits;
-      const probe = async (label: string, path: string) => {
-        try {
-          const r = await umblerTalkFetch(path);
-          const t = await r.text();
-          return { label, path, status: r.status, body: t.slice(0, 1800) };
-        } catch (e: any) { return { label, path, error: String((e && e.message) || e) }; }
-      };
-      if (req.query && req.query.path) {
-        const pth = String(req.query.path);
-        const pick = String((req.query.pick) || "").replace(/\D/g, "");
-        const r0 = await umblerTalkFetch(pth);
-        const bodyTxt = await r0.text();
-        if (pick) {
-          try {
-            const parsed = JSON.parse(bodyTxt);
-            const items = (parsed && parsed.items) || [];
-            const match = items.filter((it: any) => {
-              const ph = String((it && it.contact && it.contact.phoneNumber) || "").replace(/\D/g, "");
-              return ph && (ph.includes(pick) || pick.includes(ph));
-            }).slice(0, 3).map((it: any) => ({
-              id: it.id,
-              itemKeys: Object.keys(it || {}),
-              channelPhone: it.channel && it.channel.phoneNumber,
-              contactPhone: it.contact && it.contact.phoneNumber,
-              lastMessageKeys: it.lastMessage ? Object.keys(it.lastMessage) : null,
-              messagesLen: Array.isArray(it.messages) ? it.message.length : null,
-            }));
-            return res.json({ orgId, status: r0.status, itemCount: items.length, match });
-          } catch (e: any) {
-            return res.json({ orgId, status: r0.status, parseError: String((e && e.message) || e), bodyLen: bodyTxt.length });
-          }
-        }
-        return res.json({ orgId, status: r0.status, body: bodyTxt.slice(0, 1800) });
-      }
-      const contactRes = await probe("contact_by_phone", "/v1/contacts/phone/?organizationId=" + encodeURIComponent(orgId) + "&phoneNumber=" + encodeURIComponent(plus));
-      let contactId = "";
-      try { const j = JSON.parse(contactRes.body || "{}"); contactId = j.id || j.contactId || (j.contact && j.contact.id) || (j.Contact && (j.Contact.Id || j.Contact.id)) || ""; } catch {}
-      const out: any[] = [contactRes];
-      const candidates: [string, string][] = [
-        ["chats_by_contact", "/v1/chats/?organizationId=" + encodeURIComponent(orgId) + (contactId ? "&contactId=" + encodeURIComponent(contactId) : "")],
-        ["chats_by_phone", "/v1/chats/?organizationId=" + encodeURIComponent(orgId) + "&phone=" + encodeURIComponent(plus)],
-        ["messages_by_phone", "/v1/messages/?organizationId=" + encodeURIComponent(orgId) + "&phone=" + encodeURIComponent(plus)],
-        ["messages_by_contact", "/v1/messages/?organizationId=" + encodeURIComponent(orgId) + (contactId ? "&contactId=" + encodeURIComponent(contactId) : "")],
-      ];
-      for (const [lab, p] of candidates) out.push(await probe(lab, p));
-      return res.json({ orgId, digits, contactId, probes: out });
-    } catch (e: any) {
-      return res.status(500).json({ error: String((e && e.message) || e) });
-    }
-  });
   app.get("/api/chat/conversations/:conversationId/messages", authenticateUser, async (req, res) => {
     try {
       const { conversationId } = req.params;
