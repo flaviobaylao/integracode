@@ -3895,7 +3895,10 @@ export function registerChatRoutes(app: Express): void {
           return { label, path, status: r.status, body: t.slice(0, 1800) };
         } catch (e: any) { return { label, path, error: String((e && e.message) || e) }; }
       };
-      const contactRes = await probe("contact_by_phone", "/v1/contacts/phone/?organizationId=" + encodeURIComponent(orgId) + "&phone=" + encodeURIComponent(plus));
+      if (req.query && req.query.path) {
+        return res.json({ orgId, raw: await probe("raw", String(req.query.path)) });
+      }
+      const contactRes = await probe("contact_by_phone", "/v1/contacts/phone/?organizationId=" + encodeURIComponent(orgId) + "&phoneNumber=" + encodeURIComponent(plus));
       let contactId = "";
       try { const j = JSON.parse(contactRes.body || "{}"); contactId = j.id || j.contactId || (j.contact && j.contact.id) || (j.Contact && (j.Contact.Id || j.Contact.id)) || ""; } catch {}
       const out: any[] = [contactRes];
