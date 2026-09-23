@@ -297,6 +297,66 @@ export const TIPOS_FATURAMENTO: { value: TipoFaturamento; label: string }[] = [
 
 const TIPO_LABEL: Record<string, string> = Object.fromEntries(TIPOS_FATURAMENTO.map(t => [t.value, t.label]));
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MOTIVO (Flavio, 23/set/2026) — so para DEVOLUCAO, AMOSTRA, BONIFICACAO e TROCA,
+// e so com texto ESCRITO POR GENTE. Venda nao tem motivo: a coluna fica vazia.
+//
+// Onde o texto mora, conferido na base de producao (104 notas desses 4 tipos):
+//   • devolucao -> fiscal_invoices.notes nasce como "NF-e de DEVOLUCAO referente a
+//     NF-e no X (chave: Y). Motivo: <justificativa digitada>". So o que vem depois
+//     de "Motivo:" e do usuario.
+//   • amostra / bonificacao / troca -> notes da nota e sempre "Pedido pipeline
+//     interno - INT-xxxx" (puro sistema). O texto de verdade esta na observacao do
+//     PEDIDO (billing_pipeline.notes), que o backend devolve em `orderNotes`.
+// Com essa ordem, 99 das 104 notas exibem motivo; as 5 restantes nao tem texto
+// nenhum em lugar nenhum — e correto ficarem em branco.
+//
+// As observacoes acrescentadas pela tela do pipeline vem carimbadas
+// "[dd/mm/aaaa hh:mm — Fulano] texto": o carimbo sai e o texto fica.
+// ─────────────────────────────────────────────────────────────────────────────
+const TIPOS_COM_MOTIVO = new Set<TipoFaturamento>(['devolucao', 'amostra', 'bonificacao', 'troca']);
+
+/** Linhas que o proprio sistema escreve — nunca sao "motivo". */
+const TEXTO_DO_SISTEMA: RegExp[] = [
+  /^pedido pipeline interno\b/i,
+  /^nf rejeitada na sefaz\b/i,
+  /^baixa autom[áa]tica\b/i,
+  /^baixa automatica\b/i,
+  /^cancelada automaticamente\b/i,
+  /^aten[çc][ãa]o: nf-e\b/i,
+  /^entrada por transferencia\b/i,
+  /^recebido por transferencia\b/i,
+  /^registro fantasma\b/i,
+  /^duplicado de\b/i,
+  /^nf-e de devolu[çc][ãa]o referente\b/i,
+  /^liberado para faturamento\b/i,
+  /^email do destinat[áa]rio\b/i,
+  /^inf\. contribuinte\b/i,
+  /^redu[çc][ãa]o de base de c[áa]lculo\b/i,
+];
+
+/** Tira os carimbos e descarta as linhas escritas pelo sistema. */
+function apenasTextoDeUsuario(txt: any): string {
+  return String(txt || '')
+    .split(/\r?\n/)
+    .map(l => l.replace(/^\s*\[\d{2}\/\d{2}\/\d{4}[^\]]*\]\s*/, '').trim())
+    .filter(l => l && !TEXTO_DO_SISTEMA.some(re => re.test(l)))
+    .join(' · ')
+    .trim();
+}
+
+export function motivoFaturamento(inv: any): string {
+  if (!TIPOS_COM_MOTIVO.has(tipoFaturamento(inv))) return '';
+  const m = /motivo:\s*([\s\S]+)$/i.exec(String(inv?.notes || ''));
+  if (m && m[1].trim()) return m[1].trim();
+  const doPedido = apenasTextoDeUsuario(inv?.orderNotes);
+  if (doPedido) return doPedido;
+  return apenasTextoDeUsuario(inv?.notes);
+}
+
+const SEM_VENDEDOR = '__sem__';
+const nomeVendedor = (inv: any) => String(inv?.sellerName || '').trim();
+
 export default function FiscalInvoices() {
   const [activeTab, setActiveTab] = useState('invoices');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -305,6 +365,10 @@ export default function FiscalInvoices() {
   // Tipo de faturamento (multipla escolha). Vazio = todos os tipos.
   const [tipoFilter, setTipoFilter] = useState<string[]>([]);
   const toggleTipo = (v: string) => setTipoFilter(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
+  // Vendedor (multipla escolha). Vazio = todos. O vendedor e quem implantou o
+  // pedido — o backend resolve e devolve em inv.sellerName.
+  const [vendedorFilter, setVendedorFilter] = useState<string[]>([]);
+  const toggleVendedor = (v: string) => setVendedorFilter(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
   const [nfSearch, setNfSearch] = useState('');
   // Busca no SERVIDOR (tabela inteira, não só as 1000 recentes) com debounce.
   const [nfSearchServer, setNfSearchServer] = useState('');
@@ -443,6 +507,7 @@ export default function FiscalInvoices() {
     (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch))
     && (issuerFilter === 'all' || onlyDigits(inv.issuerCnpj) === issuerFilter)
     && (tipoFilter.length === 0 || tipoFilter.includes(tipoFaturamento(inv)))
+    && (vendedorFilter.length === 0 || vendedorFilter.includes(nomeVendedor(inv) || SEM_VENDEDOR))
     // Mesma data da Regra Oficial do servidor: emissao -> autorizacao -> criacao. Usar so
     // emissionDate aqui derrubaria notas que o servidor ja tinha incluido pelo COALESCE.
     && dateInRange(inv.emissionDate || inv.authorizationDate || inv.createdAt, dtStart, dtEnd));
@@ -485,7 +550,20 @@ export default function FiscalInvoices() {
     return { total: invoicesFiltered.length, authorized, draft, valorAutorizado };
   })();
   const filtroAtivo = statusFilter !== 'all' || envFilter !== 'all' || issuerFilter !== 'all'
-    || tipoFilter.length > 0 || !!nfSearch.trim() || !!dtStart || !!dtEnd;
+    || tipoFilter.length > 0 || vendedorFilter.length > 0 || !!nfSearch.trim() || !!dtStart || !!dtEnd;
+  // Opcoes do filtro de vendedor: os nomes que existem na lista carregada, em ordem.
+  // "(sem vendedor)" cobre a nota cujo pedido nao tem vendedor resolvido.
+  const vendedorOptions = useMemo(() => {
+    const nomes = new Set<string>();
+    let temVazio = false;
+    for (const inv of (invoices || []) as any[]) {
+      const n = nomeVendedor(inv);
+      if (n) nomes.add(n); else temVazio = true;
+    }
+    const lista = Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return temVazio ? [...lista, SEM_VENDEDOR] : lista;
+  }, [invoices]);
+  const rotuloVendedor = (v: string) => (v === SEM_VENDEDOR ? '(sem vendedor)' : v);
   // A listagem vem limitada pelo servidor (1000 notas; 500 quando ha busca textual). Se voltou
   // exatamente o teto, a tela esta olhando uma AMOSTRA das mais recentes — os cards precisam
   // dizer isso, senao o numero e lido como se fosse o total da base.
@@ -498,6 +576,8 @@ export default function FiscalInvoices() {
       case 'issuer': return issuerShort(inv.issuerCnpj);
       case 'customer': return inv.customerName || '';
       case 'cfop': return inv.cfop || '';
+      case 'seller': return nomeVendedor(inv);
+      case 'motivo': return motivoFaturamento(inv);
       case 'value': return Number(inv.totalInvoice || 0);
       case 'status': return inv.status || '';
       case 'env': return inv.environment || '';
@@ -981,13 +1061,55 @@ export default function FiscalInvoices() {
               </Popover>
             </div>
             <div>
+              <Label className="text-xs">Vendedor</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-[200px] justify-between font-normal" data-testid="filter-vendedor">
+                    <span className="truncate">
+                      {vendedorFilter.length === 0
+                        ? 'Todos os vendedores'
+                        : vendedorFilter.length <= 2
+                          ? vendedorFilter.map(rotuloVendedor).join(', ')
+                          : `${vendedorFilter.length} vendedores`}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[260px] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar vendedor..." />
+                    <CommandList>
+                      <CommandEmpty>Nenhum vendedor encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {vendedorOptions.map(v => (
+                          <CommandItem
+                            key={v}
+                            value={rotuloVendedor(v)}
+                            onSelect={() => toggleVendedor(v)}
+                            data-testid={`vendedor-${v}`}
+                            className="cursor-pointer"
+                          >
+                            <Check className={`mr-2 h-4 w-4 ${vendedorFilter.includes(v) ? 'opacity-100' : 'opacity-0'}`} />
+                            {rotuloVendedor(v)}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                  <div className="flex justify-end border-t p-2">
+                    <Button variant="ghost" size="sm" onClick={() => setVendedorFilter([])}>Limpar</Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div>
               <Label className="text-xs">Cliente / Nº</Label>
               <Input placeholder="Buscar cliente ou numero..." value={nfSearch} onChange={(e) => setNfSearch(e.target.value)} className="w-[220px]" data-testid="search-nf" />
             </div>
             <div><Label className="text-xs">Periodo (emissao)</Label><div><DateRangeFilter start={dtStart} end={dtEnd} onChange={(s, e) => { setDtStart(s); setDtEnd(e); }} testId="daterange-nf" /></div></div>
             
-            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, CFOP: inv.cfop, Tipo: (TIPO_LABEL[tipoFaturamento(inv)] || ''), Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
-            <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); setIssuerFilter('all'); setNfSearch(''); setTipoFilter([]); setDtStart(''); setDtEnd(''); }}>
+            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, Vendedor: nomeVendedor(inv), CFOP: inv.cfop, Tipo: (TIPO_LABEL[tipoFaturamento(inv)] || ''), Motivo: motivoFaturamento(inv), Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
+            <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); setIssuerFilter('all'); setNfSearch(''); setTipoFilter([]); setVendedorFilter([]); setDtStart(''); setDtEnd(''); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
             </Button>
           </div>
@@ -997,6 +1119,7 @@ export default function FiscalInvoices() {
             <strong className="text-foreground">{invoicesFiltered.length}</strong> nota(s) no filtro
             {' · '}total <strong className="text-foreground">{formatCurrency(totalFiltrado)}</strong>
             {tipoFilter.length > 0 && <> · tipo: {tipoFilter.map(t => TIPO_LABEL[t] || t).join(', ')}</>}
+            {vendedorFilter.length > 0 && <> · vendedor: {vendedorFilter.map(rotuloVendedor).join(', ')}</>}
             {dupInfo.excedentes > 0 && (
               <>
                 {' · '}
@@ -1028,12 +1151,14 @@ export default function FiscalInvoices() {
                       <SortableTh label="Número" colKey="number" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Emitente" colKey="issuer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Cliente" colKey="customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <SortableTh label="Vendedor" colKey="seller" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="CFOP" colKey="cfop" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Valor Total" colKey="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Ambiente" colKey="env" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Data" colKey="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <TableHead>Ações</TableHead>
+                      <SortableTh label="Motivo" colKey="motivo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1057,6 +1182,9 @@ export default function FiscalInvoices() {
                             <p className="font-medium text-sm">{inv.customerName}</p>
                             <p className="text-xs text-muted-foreground">{inv.customerCnpjCpf}</p>
                           </div>
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {nomeVendedor(inv) || <span className="text-muted-foreground">-</span>}
                         </TableCell>
                         <TableCell>{inv.cfop || '-'}</TableCell>
                         <TableCell className="font-medium">{formatCurrency(inv.totalInvoice || '0')}</TableCell>
@@ -1111,6 +1239,11 @@ export default function FiscalInvoices() {
                               </Button>
                             )}
                           </div>
+                        </TableCell>
+                        {/* MOTIVO — so sai em devolucao, amostra, bonificacao e troca, e so
+                            com texto escrito por gente (ver motivoFaturamento). */}
+                        <TableCell className="max-w-[320px] text-sm" title={motivoFaturamento(inv) || undefined}>
+                          <span className="line-clamp-2 whitespace-pre-wrap break-words">{motivoFaturamento(inv)}</span>
                         </TableCell>
                       </TableRow>
                     ))}
