@@ -131,6 +131,21 @@ function getPhoneVariants(normalizedPhone: string): string[] {
   return variants;
 }
 
+// Resolve a conversa do cliente TOLERANDO o formato do telefone (com/sem o 9, com/sem 55).
+// Evita criar uma 2ª conversa quando já existe uma sob outro formato do MESMO número —
+// causa raiz das conversas duplicadas por cliente. (set/2026)
+async function findConversationByPhoneVariants(phone: string) {
+  const raw = String(phone || '');
+  if (!raw) return undefined;
+  const list = getPhoneVariants(normalizePhoneNumber(raw));
+  if (!list.includes(raw)) list.push(raw);
+  for (const v of list) {
+    const c = await storage.getChatConversationByPhone(v);
+    if (c) return c;
+  }
+  return undefined;
+}
+
 // 🔧 FUNÇÃO PARA PROCESSAR MENSAGEM RECEBIDA (WEBHOOK OU POLLING)
 export async function processIncomingMessage(data: any, originalPhone: string): Promise<boolean> {
   try {
@@ -170,7 +185,7 @@ export async function processIncomingMessage(data: any, originalPhone: string): 
     const identifiedName = phonebookContact?.name || data.pushName || `Cliente ${normalizedPhone}`;
 
     // 1. Garante que o cliente e conversa existam
-    let conversation = await storage.getChatConversationByPhone(normalizedPhone);
+    let conversation = await findConversationByPhoneVariants(normalizedPhone);
     let customer = await storage.getChatCustomerByPhone(normalizedPhone);
 
     if (!customer) {
@@ -2046,7 +2061,7 @@ export function registerChatRoutes(app: Express): void {
 
       // 1. Garantir Cliente e Conversa
       debugInfo.steps.push('6-get-customer-conversation');
-      let conversation = await storage.getChatConversationByPhone(normalizedPhone);
+      let conversation = await findConversationByPhoneVariants(normalizedPhone);
       let customer = await storage.getChatCustomerByPhone(normalizedPhone);
       debugInfo.existingCustomer = !!customer;
       debugInfo.existingConversation = !!conversation;
@@ -3875,6 +3890,63 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[CONVERSA-CENTRAL] erro:", error?.message || error);
       return res.status(500).json({ found: false, error: error?.message || "erro" });
+    }
+  });
+  // UNIFICAÇÃO de conversas duplicadas do MESMO cliente (uma linha por formato de telefone,
+  // com/sem o 9). Junta tudo na conversa mais recente: reaponta TODAS as tabelas que referenciam
+  // conversation_id e remove a conversa-casca vazia. { } (dryRun) só conta; { "apply": true } aplica.
+  app.post("/api/admin/chat/unify-duplicates", authenticateUser, requireRole(["admin"]), async (req: any, res: any) => {
+    try {
+      const apply = req.body?.apply === true;
+      const rows: any = await db.execute(sql`SELECT id, customer_phone, last_message_time FROM chat_conversations WHERE customer_phone IS NOT NULL AND customer_phone <> ''`);
+      const norm = (p: string) => {
+        let d = String(p || "").replace(/\D/g, "");
+        if (d.startsWith("55")) d = d.slice(2);
+        if (d.length === 11 && d[2] === "9") d = d.slice(0, 2) + d.slice(3);
+        return d;
+      };
+      const groups = new Map<string, any[]>();
+      for (const r of (rows.rows || [])) {
+        const k = norm(r.customer_phone);
+        if (!k || k.length < 8) continue;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k)!.push(r);
+      }
+      const plan: any[] = [];
+      for (const [k, v] of groups) {
+        if (v.length < 2) continue;
+        v.sort((a: any, b: any) => new Date(b.last_message_time || 0).getTime() - new Date(a.last_message_time || 0).getTime());
+        plan.push({ core: k, canonicalId: String(v[0].id), dupIds: v.slice(1).map((d: any) => String(d.id)) });
+      }
+      const idOk = (s: string) => /^[A-Za-z0-9_-]+$/.test(s);
+      if (!apply) {
+        let totalDups = 0, totalMsgs = 0;
+        for (const g of plan) {
+          totalDups += g.dupIds.length;
+          if (g.dupIds.length) {
+            const c: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM chat_messages WHERE conversation_id IN (${sql.join(g.dupIds.map((x: string) => sql`${x}`), sql`, `)})`);
+            totalMsgs += (c.rows?.[0]?.n) || 0;
+          }
+        }
+        return res.json({ ok: true, dryRun: true, gruposDuplicados: plan.length, conversasARemover: totalDups, mensagensAMover: totalMsgs, amostra: plan.slice(0, 8) });
+      }
+      const tables = ["chat_messages", "chat_assignment_history", "chat_orders", "chat_deliveries", "whatsapp_conversation_analysis", "chat_ai_logs", "virtual_attendance_stats"];
+      let removed = 0;
+      for (const g of plan) {
+        if (!idOk(g.canonicalId)) continue;
+        for (const dupId of g.dupIds) {
+          if (!idOk(dupId)) continue;
+          for (const t of tables) {
+            try { await db.execute(sql.raw(`UPDATE ${t} SET conversation_id = '${g.canonicalId}' WHERE conversation_id = '${dupId}'`)); } catch (e: any) { /* tabela ausente/coluna: ignora */ }
+          }
+          await db.execute(sql`DELETE FROM chat_conversations WHERE id = ${dupId}`);
+          removed++;
+        }
+        try { await db.execute(sql`UPDATE chat_conversations c SET last_message_time = COALESCE((SELECT MAX(created_at) FROM chat_messages WHERE conversation_id = ${g.canonicalId}), c.last_message_time) WHERE c.id = ${g.canonicalId}`); } catch {}
+      }
+      return res.json({ ok: true, dryRun: false, gruposDuplicados: plan.length, conversasRemovidas: removed });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: String((e && e.message) || e) });
     }
   });
   app.get("/api/chat/conversations/:conversationId/messages", authenticateUser, async (req, res) => {
