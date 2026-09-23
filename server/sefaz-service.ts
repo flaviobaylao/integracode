@@ -1573,7 +1573,7 @@ function buildDocumento(
     const entFone = onlyDigits(invoice.deliveryPhone || '').slice(0, 14);
     entrega = {
       ...(entDoc.length === 14 ? { CNPJ: entDoc } : entDoc.length === 11 ? { CPF: entDoc } : {}),
-      ...(invoice.deliveryName ? { xNome_Opc: sanitizeStr(invoice.deliveryName, 60) } : {}),
+      ...(invoice.deliveryName ? { xNome: sanitizeStr(invoice.deliveryName, 60) } : {}),
       xLgr: (!entLgr || entLgr.length < 2) ? 'N/I' : entLgr.replace(/\s+$/, ''),
       nro: /^0+$/.test(entNroBruto) ? 'S/N' : (entNroBruto || 'S/N'),
       ...(entCompl ? { xCpl: entCompl } : {}),
@@ -1581,11 +1581,11 @@ function buildDocumento(
       cMun: ensureCityCodeMatchesUf(invoice.deliveryCityCode, entUf, entCidade),
       xMun: sanitizeStr(entCidade || UF_CAPITAL_NAME[entUf] || 'Goiania', 60),
       UF: entUf,
-      ...(entCep.length === 8 && !/^0+$/.test(entCep) ? { CEP_Opc: entCep } : {}),
-      cPais_Opc: '1058',
-      xPais_Opc: 'BRASIL',
-      ...(entFone.length >= 6 && !/^0+$/.test(entFone) ? { fone_Opc: entFone } : {}),
-      ...(invoice.deliveryIe ? { IE_Opc: onlyDigits(invoice.deliveryIe) } : {}),
+      ...(entCep.length === 8 && !/^0+$/.test(entCep) ? { CEP: entCep } : {}),
+      cPais: '1058',
+      xPais: 'BRASIL',
+      ...(entFone.length >= 6 && !/^0+$/.test(entFone) ? { fone: entFone } : {}),
+      ...(invoice.deliveryIe ? { IE: onlyDigits(invoice.deliveryIe) } : {}),
     };
     console.log(`📍 [NFE-XML] Local de entrega: ${invoice.deliveryName || entDoc} — ${entrega.xMun}/${entUf}`);
   }
