@@ -49,12 +49,22 @@ export function traduzirEstado(estado: string): "enviada" | "entregue" | "lida" 
   return null; // sending, processing, queued: ainda a caminho, nao mexe
 }
 
-/** Aplica um estado novo, sem nunca andar para tras. Devolve o status final. */
-async function avancar(id: string, atual: string, novo: string): Promise<string> {
+/**
+ * Aplica um estado novo, sem nunca andar para tras. Devolve o status final.
+ *
+ * `cru` e o texto que o Umbler mandou (ex.: "Failed", "Rejected"). Quando o
+ * disparo VIRA FALHA, ele e gravado em `error` — e essa e a unica pista que
+ * sobra. Sem isto (achado em 23/set/2026) o painel mostrava "134 falhas hoje"
+ * com motivo em branco: a mensagem saiu, o Umbler aceitou, a Meta recusou
+ * depois, e ninguem tinha como saber por que. Motivo em branco e o mesmo que
+ * nao ter registro.
+ */
+async function avancar(id: string, atual: string, novo: string, cru?: string): Promise<string> {
   if (atual === "falha" || atual === "resposta") return atual;
   if (novo !== "falha" && (RANK[novo] ?? 0) <= (RANK[atual] ?? 0)) return atual;
   const col = novo === "entregue" ? sql`, delivered_at = COALESCE(delivered_at, now())`
             : novo === "lida" ? sql`, read_at = COALESCE(read_at, now()), delivered_at = COALESCE(delivered_at, now())`
+            : novo === "falha" ? sql`, error = COALESCE(NULLIF(error, ''), ${'recusada pelo WhatsApp: ' + String(cru || 'sem detalhe do Umbler')})`
             : sql``;
   await db.execute(sql`UPDATE official_dispatches SET status = ${novo}::dispatch_status, updated_at = now() ${col} WHERE id = ${id}`);
   return novo;
@@ -89,7 +99,7 @@ export async function aplicarEstadoDoWebhook(lastMessage: any): Promise<{ id: st
     const r: any = await db.execute(sql`SELECT id, status::text AS status FROM official_dispatches WHERE umbler_message_id = ${msgId} LIMIT 1`);
     const d = r.rows?.[0];
     if (!d) return null; // mensagem de conversa comum, nao um disparo
-    const final = await avancar(String(d.id), String(d.status), novo);
+    const final = await avancar(String(d.id), String(d.status), novo, estado);
     if (final === d.status) return null;
     console.log(`[ENTREGA-1841] ${msgId}: ${d.status} → ${final} (${estado})`);
     return { id: String(d.id), de: String(d.status), para: final };
@@ -133,7 +143,7 @@ export async function conferirEntregas(limite = 40): Promise<{ conferidos: numbe
     out.conferidos++;
     const novo = estado ? traduzirEstado(estado) : null;
     if (!novo) continue;
-    const final = await avancar(String(d.id), String(d.status), novo);
+    const final = await avancar(String(d.id), String(d.status), novo, estado || undefined);
     if (final !== d.status) { out.mudaram++; out.porStatus[final] = (out.porStatus[final] || 0) + 1; }
   }
   if (out.conferidos) console.log(`[ENTREGA-1841] conferidos ${out.conferidos}, mudaram ${out.mudaram}`, out.porStatus);

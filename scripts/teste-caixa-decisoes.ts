@@ -990,6 +990,35 @@ async function main() {
     check(false, 'comunicação: o disparo de cobrança foi registrado');
   }
 
+  // ── FALHA SEM MOTIVO (achado em 23/set/2026) ────────────────────────────
+  // O disparo sai, o Umbler aceita, a Meta recusa depois e o webhook marca
+  // 'falha' — sem escrever POR QUÊ. O painel mostrava 134 falhas no dia com o
+  // motivo em branco. Motivo em branco é o mesmo que não ter registro.
+  {
+    const oe = await import('../server/official-entrega');
+    await raw(`INSERT INTO official_dispatches (customer_phone, template_label, category, use_case, params, status, mode, umbler_message_id, sent_at)
+               VALUES ('5562988887777','cobranca_titulos','UTILITY','cobranca'::dispatch_use_case,'[]'::jsonb,
+                       'enviada'::dispatch_status,'on','msg-falha-1', now())`);
+    await oe.aplicarEstadoDoWebhook({ Id: 'msg-falha-1', MessageState: 'Failed' });
+    const l: any = ((await raw(`SELECT status::text AS st, error FROM official_dispatches WHERE umbler_message_id='msg-falha-1'`)) as any).rows[0];
+    check(l?.st === 'falha' && /Failed/i.test(String(l?.error || '')),
+      'entrega: disparo recusado pelo WhatsApp guarda o motivo, não falha em branco (' + l?.error + ')');
+  }
+
+  // O auditor tem que GRITAR quando o canal está ligado e não entrega nada —
+  // canal ligado entregando zero é pior que canal desligado: o desligado não engana.
+  {
+    for (let i = 0; i < 12; i++) {
+      await raw(`INSERT INTO official_dispatches (customer_phone, template_label, category, use_case, params, status, mode)
+                 VALUES ('556298888${String(1000 + i)}','cobranca_titulos','UTILITY','cobranca'::dispatch_use_case,'[]'::jsonb,
+                         'falha'::dispatch_status,'on')`);
+    }
+    const checagens = await (await import('../server/mkt-auditor')).checar();
+    const it = checagens.find((x: any) => x.id === 'entrega_1841');
+    check(!!it && it.gravidade === 'alerta' && /não entrega/.test(String(it.detalhe)),
+      'auditor: canal ligado que não entrega vira alerta (' + String(it?.detalhe || 'sem item').slice(0, 80) + ')');
+  }
+
   // Quem responde uma cobrança fala com o agente de cobrança, não com o de vendas.
   await raw(`INSERT INTO agentes_config (id, nome, modelo, system_prompt) VALUES
              ('cobranca','Cobranca','m','p'), ('vendas','Vendas','m','p') ON CONFLICT (id) DO NOTHING`);

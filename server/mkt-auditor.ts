@@ -80,6 +80,33 @@ export async function checar(): Promise<Checagem[]> {
   } catch {}
   const aprov = await (await import('./mkt-acoes')).aprovadores();
   add('aprovadores', 'caixa', aprov.length ? 'ok' : 'alerta', 'Aprovadores no WhatsApp', aprov.length ? aprov.length + ' número(s)' : 'nenhum: resumo e decisões por WhatsApp não funcionam (telefone_gestor_relatorios / mkt_aprovadores)', aprov.length);
+  // ENTREGA DO 1841 — a conta que ninguem estava fazendo.
+  // Em 23/set/2026 o painel tinha 134 disparos do dia e ZERO entregues: a
+  // mensagem saía, o Umbler aceitava e a Meta recusava depois. Ninguém foi
+  // avisado porque nenhuma verificação olhava para o RESULTADO do envio — só
+  // para "o canal está ligado?". Canal ligado entregando nada é pior do que
+  // canal desligado: o desligado pelo menos não engana.
+  try {
+    const e: any = (await rows(`
+      SELECT count(*)::int AS total,
+             count(*) FILTER (WHERE status::text IN ('enviada','entregue','lida','resposta'))::int AS ok,
+             count(*) FILTER (WHERE status::text = 'falha')::int AS falhas
+        FROM official_dispatches
+       WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date
+             = (now() AT TIME ZONE 'America/Sao_Paulo')::date`))[0] || {};
+    const total = Number(e.total || 0), okN = Number(e.ok || 0), falhas = Number(e.falhas || 0);
+    const pctFalha = total ? Math.round((falhas / total) * 100) : 0;
+    // Só fala com volume: 1 falha em 2 disparos não é sintoma, é acaso.
+    if (total >= 10) {
+      add('entrega_1841', 'regua',
+        pctFalha >= 50 ? 'alerta' : pctFalha >= 20 ? 'atencao' : 'ok',
+        'Mensagens do 1841 chegando hoje',
+        pctFalha >= 50
+          ? falhas + ' de ' + total + ' falharam (' + pctFalha + '%) e só ' + okN + ' saíram — o canal está ligado e não entrega. Cheque créditos/saldo no Umbler e a saúde do número na Meta.'
+          : falhas + ' falha(s) em ' + total + ' disparo(s) (' + pctFalha + '%)',
+        { total, ok: okN, falhas, pctFalha });
+    }
+  } catch {}
   const disp = await getSetting('oficial_dispatch_mode', 'off'), rec = await getSetting('oficial_recompra', 'off');
   add('canal_oficial', 'regua', disp !== 'off' && rec !== 'off' ? 'ok' : 'alerta', 'Canal oficial 1841 para a régua', disp !== 'off' && rec !== 'off' ? 'disparo ' + disp + ', recompra ' + rec : 'oficial_dispatch_mode=' + disp + ', oficial_recompra=' + rec + ': régua aprovada não sai', { disp, rec });
   try {
