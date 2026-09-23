@@ -1575,19 +1575,32 @@ export function registerBillingPipelineRoutes(app: Express) {
     try {
       const salesCardId = String(req.body?.salesCardId || '');
       if (!salesCardId) return res.status(400).json({ ok: false, error: 'salesCardId obrigatorio' });
-      const existing = await storage.getBillingPipelineItems();
-      if (existing.find((i: any) => i.salesCardId === salesCardId)) return res.json({ ok: true, created: false, reason: 'ja_no_pipeline' });
       const bq: any = await db.execute(sql`SELECT total_amount, products, operation_type, payment_method FROM blocked_orders WHERE sales_card_id = ${salesCardId} ORDER BY created_at DESC LIMIT 1`);
       const b = (bq?.rows ?? bq ?? [])[0];
       if (!b) return res.status(404).json({ ok: false, error: 'sem registro de bloqueio para este card' });
       const val = parseFloat(String(b.total_amount ?? '0')) || 0;
       if (val <= 0) return res.status(422).json({ ok: false, error: 'snapshot do bloqueio sem valor (nada a restaurar)' });
+      const _op = String(b.operation_type || 'venda');
+      const existing = await storage.getBillingPipelineItems();
+      // Ja no funil? So conta como duplicata um item DO MESMO pedido: mesmo card + mesma operacao +
+      // mesmo valor. Um item de OUTRA operacao (ex.: uma venda) no MESMO card de rota REUTILIZADO
+      // NAO impede restaurar a troca (senao a troca fica presa fora do funil para sempre).
+      if (existing.find((i: any) => i.salesCardId === salesCardId && String(i.stage) !== 'lixeira'
+            && String((i as any).operationType || '') === _op
+            && (parseFloat(String((i as any).saleValue || '0')) || 0) === val)) {
+        return res.json({ ok: true, created: false, reason: 'ja_no_pipeline' });
+      }
       const card: any = await storage.getSalesCard(salesCardId);
       if (!card) return res.status(404).json({ ok: false, error: 'sales card nao encontrado' });
-      const cardProds = (Array.isArray(card.products) && card.products.length) ? card.products : (b.products || null);
-      const synthetic: any = { ...card, saleValue: String(val), products: cardProds, operationType: card.operationType || b.operation_type || 'venda', paymentMethod: card.paymentMethod || b.payment_method || null };
+      // SNAPSHOT do bloqueio e' a FONTE DA VERDADE (o card pode ter sido reutilizado por outro pedido,
+      // ex.: uma venda — usar o card faria a troca "virar" a venda). Produtos/operacao/valor vem do snapshot.
+      let _snapProds: any = b.products; try { if (typeof _snapProds === 'string') _snapProds = JSON.parse(_snapProds); } catch { /* noop */ }
+      const cardProds = (Array.isArray(_snapProds) && _snapProds.length) ? _snapProds : ((Array.isArray(card.products) && card.products.length) ? card.products : (b.products || null));
+      const synthetic: any = { ...card, saleValue: String(val), products: cardProds, operationType: b.operation_type || card.operationType || 'venda', paymentMethod: b.payment_method || card.paymentMethod || null };
       // Recuperacao: o admin que roda a restauracao NAO e o implantador do pedido.
-      const item: any = await autoSendToBillingPipeline(synthetic, 'system (restore-from-blocked)', { skipDebtCheck: true });
+      // finalizarPedidoParaPipeline (card-filho por pedido): se o card ja tem item vivo (ex.: a venda),
+      // a troca restaurada vira um CARD-FILHO com item proprio, sem colidir no mesmo salesCardId.
+      const item: any = (await finalizarPedidoParaPipeline(synthetic, 'system (restore-from-blocked)', { skipDebtCheck: true })).item;
       if (!item) return res.status(422).json({ ok: false, error: 'autoSend nao criou item (verifique regras/valor)' });
       res.json({ ok: true, created: true, orderNumber: item.orderNumber, saleValue: item.saleValue, cliente: String(item.customerName || '').slice(0, 30) });
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
