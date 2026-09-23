@@ -226,9 +226,12 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
   // 🤖 Card aberto pelo SISTEMA (cadastro incompleto etc.): não tem vendedor. A Réplica abre um
   // box com a lista de vendedores + a escolha de rezonear ou manter o cadastro como está; ao
   // enviar, a mensagem cai na Rota do Dia do vendedor escolhido como uma réplica normal.
-  const doSistema = !r.sellerId && /sistema/i.test(String(r.requestedByName || r.sellerName || ""));
+  // 23/set: a maioria dos cards do Sistema JÁ vem com um vendedor (o do cadastro) — exigir
+  // sellerId vazio deixava o botão sem abrir o seletor, parecendo travado. Basta a origem ser
+  // o Sistema; o vendedor atual, quando existe, vem pré-selecionado no box.
+  const doSistema = /sistema/i.test(String(r.requestedByName || r.sellerName || ""));
   const [destOpen, setDestOpen] = useState(false);
-  const [destSeller, setDestSeller] = useState("");
+  const [destSeller, setDestSeller] = useState(String(r.sellerId || ""));
   const [destRezonear, setDestRezonear] = useState<"manter" | "rezonear">("manter");
   const { data: vendedores = [] } = useQuery<any[]>({
     queryKey: ["/api/sellers/active"],
@@ -247,7 +250,7 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
         title: "Enviado ao vendedor",
         description: `A pendência está na Rota do Dia de ${d?.sellerName || "quem você escolheu"}${d?.rezoneado ? " · cliente rezoneado" : ""}.`,
       });
-      setDestOpen(false); setDestSeller(""); setDestRezonear("manter"); setNote("");
+      setDestOpen(false); setDestRezonear("manter"); setNote("");
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
@@ -426,6 +429,9 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
             data-testid={`cr-dest-seller-${r.id}`}
           >
             <option value="">Escolha o vendedor…</option>
+            {r.sellerId && !vendedores.some((v: any) => String(v.id) === String(r.sellerId)) && (
+              <option value={String(r.sellerId)}>{r.sellerName || "Vendedor atual do cadastro"} (atual)</option>
+            )}
             {vendedores.map((v: any) => (
               <option key={v.id} value={v.id}>{v.name}{v.role === "telemarketing" ? " (telemarketing)" : ""}</option>
             ))}
@@ -445,14 +451,18 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
               </div>
             </div>
           )}
-          <div className="text-[11px] text-muted-foreground">A mensagem enviada é a que está escrita na caixa de texto acima.</div>
+          <div className="text-[11px] text-muted-foreground">
+            A mensagem enviada é a que está escrita na caixa de texto acima.
+            {!note.trim() && <span className="text-rose-600 dark:text-rose-400"> Escreva a mensagem para habilitar o envio.</span>}
+            {r.sellerName && <> Vendedor atual do cadastro: <b>{r.sellerName}</b>.</>}
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700"
               disabled={!destSeller || !note.trim() || atribuirMut.isPending}
               onClick={() => atribuirMut.mutate()} data-testid={`cr-dest-enviar-${r.id}`}>
               {atribuirMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Enviar ao vendedor</>}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => { setDestOpen(false); setDestSeller(""); setDestRezonear("manter"); }}>Cancelar</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setDestOpen(false); setDestSeller(String(r.sellerId || "")); setDestRezonear("manter"); }}>Cancelar</Button>
           </div>
         </div>
       )}
