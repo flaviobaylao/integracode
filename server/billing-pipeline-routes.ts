@@ -879,6 +879,10 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
     return { scanned: 0, routed: 0, toBlocked: 0, failed: 0, apply, details: [{ error: e?.message || String(e) }] };
   }
   const scanned = ids.length;
+  // Snapshot dos itens VIVOS do pipeline p/ trava anti-duplicata CRUZADA (mesmo pedido, outro cliente).
+  const _liveItems = (await storage.getBillingPipelineItems()).filter((i: any) => String(i.stage) !== 'lixeira');
+  const _normProds = (p: any): string => { let a: any = p; try { if (typeof a === 'string') a = JSON.parse(a); } catch { /* noop */ } if (!Array.isArray(a)) return ''; return a.map((x: any) => `${String(x?.name || x?.descricao || x?.product || '').trim().toUpperCase()}x${Number(x?.quantity ?? x?.qtd ?? x?.qty ?? 0)}`).sort().join('|'); };
+  let skippedDup = 0;
   for (const id of ids) {
     try {
       const card: any = await storage.getSalesCard(id);
@@ -890,6 +894,29 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
       if (card.status === 'pending') {
         await db.execute(sql`UPDATE sales_cards SET status = 'completed', completed_date = ${completedDate}, updated_at = now() WHERE id = ${id} AND status = 'pending'`);
       }
+      // TRAVA ANTI-DUPLICATA CRUZADA (23/set/2026): o MESMO pedido salvo por engano no card de
+      // OUTRO cliente (rascunho no cliente errado) nao pode virar pedido fantasma. Se ja existe
+      // item VIVO no pipeline do MESMO vendedor, MESMO valor e MESMOS produtos, porem de OUTRO
+      // cliente, numa janela de 90 min, este orfao e' descartado (card -> 'no_sale') e nao roteado.
+      // Os dedups existentes (NF, sales_card_id, cliente+valor) nao cobrem "mesmo pedido, outro cliente".
+      try {
+        const _ref = new Date(completedDate as any).getTime();
+        const _cardProds = _normProds(card.products);
+        const _cardVal = Math.round(Number(card.saleValue || 0));
+        const _dup = _cardProds ? _liveItems.find((i: any) =>
+          String(i.customerId || '') !== String(card.customerId || '') &&
+          String(i.sellerId || '') === String(card.sellerId || '') &&
+          Math.round(Number(i.saleValue || 0)) === _cardVal &&
+          _normProds(i.products) === _cardProds &&
+          i.createdAt && Math.abs(new Date(i.createdAt).getTime() - _ref) <= 90 * 60000) : null;
+        if (_dup) {
+          await db.execute(sql`UPDATE sales_cards SET status = 'no_sale', updated_at = now() WHERE id = ${id} AND status <> 'no_sale'`);
+          try { await logOrderAudit(id, 'skipped_cross_customer_duplicate'); } catch { /* auditoria best-effort */ }
+          skippedDup++; details.push({ id, val: card.saleValue, result: 'skipped_cross_dup', of: (_dup as any).id });
+          console.warn(`⛔ [SWEEP-ORPHANS] Orfao descartado como duplicata cruzada: card ${id} (R$ ${card.saleValue}) == item vivo ${(_dup as any).id} de outro cliente.`);
+          continue;
+        }
+      } catch (_e: any) { /* trava best-effort: se falhar, segue o fluxo normal do sweep */ }
       // NÃO impersonar o dono da carteira (ver reconcile acima): a tag 'sweep-orphans' deixa o
       // autoSend usar o IMPLANTADOR do order_history em vez do dono da carteira do card.
       const item = await autoSendToBillingPipeline({ ...card, status: 'completed', completedDate } as any, 'sweep-orphans', { skipHistoryGuard: opts?.skipHistoryGuard === true });
@@ -899,7 +926,7 @@ export async function sweepUnbilledOrdersToPipeline(opts?: { days?: number; pend
       failed++; details.push({ id, result: 'error', error: e?.message || String(e) });
     }
   }
-  console.log(`[SWEEP-ORPHANS] scanned=${scanned} routed=${routed} toBlocked=${toBlocked} failed=${failed} apply=${apply}`);
+  console.log(`[SWEEP-ORPHANS] scanned=${scanned} routed=${routed} toBlocked=${toBlocked} skippedDup=${skippedDup} failed=${failed} apply=${apply}`);
   return { scanned, routed, toBlocked, failed, apply, details };
 }
 
