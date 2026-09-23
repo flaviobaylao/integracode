@@ -2304,6 +2304,28 @@ export function registerBillingPipelineRoutes(app: Express) {
   // - Pedido bloqueado (blocked_orders): grava em sales_cards.notes (fonte das observações do
   //   card bloqueado). Managers (admin/coord/adm) em qualquer das 4 etapas; vendedor só no
   //   próprio pedido (Agendado/Pedido).
+  // GET .../card-notes (faltava no servidor -> lista "Registros internos" vazia, obs parecia "nao gravada").
+  app.get('/api/billing-pipeline/:id/card-notes', authenticateUser, async (req: any, res) => {
+    try {
+      let raw = '';
+      const item = await storage.getBillingPipelineItem(req.params.id);
+      if (item) {
+        raw = String((item as any).notes || '');
+      } else {
+        const _bo = await db.select().from(blockedOrders).where(eq(blockedOrders.id, req.params.id)).limit(1);
+        if (_bo.length) {
+          const _sc: any = await storage.getSalesCard((_bo[0] as any).salesCardId);
+          raw = String(_sc?.notes || '');
+        }
+      }
+      const entradas = raw.split('\n').map((s) => s.trim())
+        .filter((l) => /^\[\d{2}\/\d{2}\/\d{4}\b/.test(l));
+      return res.json(entradas);
+    } catch (e: any) {
+      return res.json([]);
+    }
+  });
+
   app.post('/api/billing-pipeline/:id/note', authenticateUser, async (req: any, res) => {
     try {
       const _u = req.currentUser || req.user;
