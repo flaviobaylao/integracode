@@ -350,6 +350,77 @@ const cancelInvoiceSchema = z.object({
   justification: z.string().min(15, "Justificativa deve ter pelo menos 15 caracteres"),
 });
 
+// ============================================================================
+// VENDEDOR E OBSERVACAO DO PEDIDO NA LISTAGEM DE NF-e (Flavio, 23/set/2026)
+//
+// A tela Faturamento NF-e precisa filtrar por vendedor e mostrar o MOTIVO de
+// devolucao / amostra / bonificacao / troca. Nenhum dos dois esta em
+// fiscal_invoices: os dois vivem no pedido (billing_pipeline).
+//
+// CHAVE DE LIGACAO: sales_card_id, NAO o numero da NF. Cada CNPJ emitente tem
+// numeracao SEFAZ propria, entao o mesmo numero existe em filiais diferentes —
+// casar por numero troca o vendedor em ~17% das notas (conferido em producao,
+// 162 de 971). O sales_card_id e chave direta da nota para o pedido que a gerou
+// e cobriu 100% das notas na conferencia. O numero fica so como fallback para
+// nota sem card.
+//
+// O nome sai de users (first_name + last_name), como na Regra Oficial de
+// Faturamento; billing_pipeline.seller_name e o fallback desnormalizado.
+// ============================================================================
+type PedidoDaNf = { sellerId: string; sellerName: string; orderNotes: string };
+
+async function comVendedorEObservacao<T extends Record<string, any>>(invoices: T[]): Promise<T[]> {
+  if (!invoices?.length) return invoices;
+  try {
+    const r: any = await db.execute(sql`
+      SELECT bp.sales_card_id AS card_id,
+             NULLIF(regexp_replace(COALESCE(bp.invoice_number,''),'[^0-9]','','g'),'') AS num,
+             COALESCE(NULLIF(bp.seller_id,''), '') AS seller_id,
+             COALESCE(
+               NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''),
+               NULLIF(TRIM(COALESCE(bp.seller_name,'')), '')
+             ) AS seller_name,
+             COALESCE(bp.notes, '') AS order_notes
+      FROM billing_pipeline bp
+      LEFT JOIN LATERAL (
+        SELECT u2.first_name, u2.last_name FROM users u2
+        WHERE u2.id = NULLIF(bp.seller_id,'')
+           OR u2.omie_vendor_code = NULLIF(bp.seller_id,'')
+           OR u2.omie_vendor_code = REPLACE(COALESCE(bp.seller_id,''), 'omie-vendor-', '')
+        LIMIT 1
+      ) u ON true
+      WHERE bp.stage <> 'lixeira'
+      ORDER BY bp.created_at DESC NULLS LAST
+    `);
+    const linhas: any[] = (r?.rows || r || []) as any[];
+    // Vem ordenado do mais recente para o mais antigo -> a PRIMEIRA ocorrencia
+    // de cada chave e a que vale; as seguintes sao versoes velhas do pedido.
+    const porCard = new Map<string, PedidoDaNf>();
+    const porNumero = new Map<string, PedidoDaNf>();
+    for (const l of linhas) {
+      const dado: PedidoDaNf = {
+        sellerId: String(l.seller_id || ''),
+        sellerName: String(l.seller_name || ''),
+        orderNotes: String(l.order_notes || ''),
+      };
+      const card = l.card_id ? String(l.card_id) : '';
+      if (card && !porCard.has(card)) porCard.set(card, dado);
+      const num = l.num ? String(l.num) : '';
+      if (num && !porNumero.has(num)) porNumero.set(num, dado);
+    }
+    return invoices.map((inv) => {
+      const p = porCard.get(String(inv.salesCardId || ''))
+        || porNumero.get(String(inv.invoiceNumber ?? ''));
+      return p ? { ...inv, sellerId: p.sellerId, sellerName: p.sellerName, orderNotes: p.orderNotes } : inv;
+    });
+  } catch (e: any) {
+    // Enriquecimento e acessorio: se falhar, a listagem continua saindo sem
+    // vendedor/observacao em vez de derrubar a tela inteira.
+    console.error('[NFE] vendedor/observacao da listagem falhou:', e?.message);
+    return invoices;
+  }
+}
+
 export function registerNfeRoutes(app: Express) {
   // Inutilização de numeração NF-e/NFC-e (levantamento de lacunas + NFeInutilizacao4)
   registerInutilizacaoRoutes(app);
@@ -691,7 +762,7 @@ export function registerNfeRoutes(app: Express) {
         startDate: startDate as string,
         endDate: endDate as string,
       });
-      res.json(invoices);
+      res.json(await comVendedorEObservacao(invoices));
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao buscar notas fiscais', error: error.message });
     }
