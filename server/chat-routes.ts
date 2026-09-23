@@ -3896,7 +3896,31 @@ export function registerChatRoutes(app: Express): void {
         } catch (e: any) { return { label, path, error: String((e && e.message) || e) }; }
       };
       if (req.query && req.query.path) {
-        return res.json({ orgId, raw: await probe("raw", String(req.query.path)) });
+        const pth = String(req.query.path);
+        const pick = String((req.query.pick) || "").replace(/\D/g, "");
+        const r0 = await umblerTalkFetch(pth);
+        const bodyTxt = await r0.text();
+        if (pick) {
+          try {
+            const parsed = JSON.parse(bodyTxt);
+            const items = (parsed && parsed.items) || [];
+            const match = items.filter((it: any) => {
+              const ph = String((it && it.contact && it.contact.phoneNumber) || "").replace(/\D/g, "");
+              return ph && (ph.includes(pick) || pick.includes(ph));
+            }).slice(0, 3).map((it: any) => ({
+              id: it.id,
+              itemKeys: Object.keys(it || {}),
+              channelPhone: it.channel && it.channel.phoneNumber,
+              contactPhone: it.contact && it.contact.phoneNumber,
+              lastMessageKeys: it.lastMessage ? Object.keys(it.lastMessage) : null,
+              messagesLen: Array.isArray(it.messages) ? it.message.length : null,
+            }));
+            return res.json({ orgId, status: r0.status, itemCount: items.length, match });
+          } catch (e: any) {
+            return res.json({ orgId, status: r0.status, parseError: String((e && e.message) || e), bodyLen: bodyTxt.length });
+          }
+        }
+        return res.json({ orgId, status: r0.status, body: bodyTxt.slice(0, 1800) });
       }
       const contactRes = await probe("contact_by_phone", "/v1/contacts/phone/?organizationId=" + encodeURIComponent(orgId) + "&phoneNumber=" + encodeURIComponent(plus));
       let contactId = "";
