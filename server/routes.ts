@@ -9304,7 +9304,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (sellerIds.length === 0) return { message: 'Nenhum vendedor telemarketing', custProcessed: 0 };
 
     const custRes = await db.execute(sql`
-      SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address
+      SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address, service_start_date
       FROM customers
       WHERE seller_id = ANY(string_to_array(${sellerIds.join(',')}, ','))
         AND is_active = true
@@ -9331,7 +9331,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let dates: Date[] = [];
       try {
-        const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today }).nextDate;
+        const _ssd = c.service_start_date ? new Date(c.service_start_date) : undefined;
+        const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today, serviceStartDate: _ssd }).nextDate;
         dates.push(first);
         let last = first;
         for (let i = 0; i < 3; i++) { const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last }).nextDate; dates.push(nx); last = nx; }
