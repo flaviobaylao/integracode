@@ -10822,15 +10822,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // bloqueio. Montamos um card sintetico com esse snapshot para o pedido SEMPRE entrar.
           const snapVal = parseFloat(String((order as any).totalAmount ?? '0')) || 0;
           const cardVal = parseFloat(String((salesCard as any).saleValue ?? '0')) || 0;
+          // IDENTIDADE DO PEDIDO BLOQUEADO = SNAPSHOT imutavel (blocked_orders), NUNCA o card vivo.
+          // (23/set/2026) Sintoma: troca do RECANTO VERDE sumiu ao implantar uma venda. Causa: o card
+          // de rota foi REUTILIZADO pela venda; no momento da liberacao o card ja refletia a VENDA
+          // (operationType/produtos/valor). Ao preferir o card, a troca liberada "virava" a venda,
+          // colidia no mesmo salesCardId (skipped_duplicate) e sumia — e o bloqueio era marcado
+          // 'released' sem a troca ter entrado. O snapshot e a fonte da verdade (o PATCH o mantem em dia).
+          const _snapProds = Array.isArray((order as any).products) ? (order as any).products : [];
+          const _cardProds = Array.isArray((salesCard as any).products) ? (salesCard as any).products : [];
           const cardForPipeline: any = {
             ...salesCard,
             // PRESERVA o vendedor ORIGINAL do pedido (snapshot gravado no bloqueio). O desbloqueio NUNCA
             // muda o vendedor: nao usa quem liberou, mantem o mesmo vendedor de quando o pedido foi criado.
             sellerId: (order as any).sellerId || (salesCard as any).sellerId || null,
-            saleValue: cardVal > 0 ? salesCard.saleValue : (snapVal > 0 ? String(snapVal) : salesCard.saleValue),
-            products: (Array.isArray((salesCard as any).products) && (salesCard as any).products.length) ? (salesCard as any).products : ((order as any).products || (salesCard as any).products),
-            operationType: (salesCard as any).operationType || (order as any).operationType || 'venda',
-            paymentMethod: (salesCard as any).paymentMethod || (order as any).paymentMethod || null,
+            operationType: (order as any).operationType || (salesCard as any).operationType || 'venda',
+            saleValue: snapVal > 0 ? String(snapVal) : (cardVal > 0 ? String(cardVal) : salesCard.saleValue),
+            products: _snapProds.length ? _snapProds : (_cardProds.length ? _cardProds : (salesCard as any).products),
+            paymentMethod: (order as any).paymentMethod || (salesCard as any).paymentMethod || null,
           };
           let pipelineItem: any = null;
           try { pipelineItem = (await finalizarPedidoParaPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true })).item; } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
