@@ -3837,22 +3837,41 @@ export function registerChatRoutes(app: Express): void {
       }
       const normalized = normalizePhoneNumber(String(rawPhone));
       const variants = getPhoneVariants(normalized);
-      let conversation: any = null;
+      // 🔗 VÁRIOS CANAIS/FORMATOS: o MESMO cliente pode ter MAIS DE UMA conversa na Central —
+      // uma por número de canal (1841 oficial, 7169 Umbler Talk, 2630) e por formato do telefone
+      // (com/sem o 9). Antes pegávamos só a PRIMEIRA conversa e parávamos (break), então a captura
+      // trazia só um canal (tipicamente o 1841). Agora juntamos as mensagens de TODAS as conversas
+      // do cliente e o dia é escolhido pela conversa MAIS RECENTE — se a última do dia foi no 7169,
+      // ela entra. (set/2026)
+      const convs: any[] = [];
+      const seenConv = new Set<string>();
       for (const v of variants) {
-        conversation = await storage.getChatConversationByPhone(v);
-        if (conversation) break;
+        const c = await storage.getChatConversationByPhone(v);
+        if (c && !seenConv.has(c.id)) { seenConv.add(c.id); convs.push(c); }
       }
-      if (!conversation) {
+      if (!convs.length) {
         return res.json({ found: false, reason: "Sem conversa vinculada na Central de Atendimento" });
       }
-      const allMsgs = (await storage.getChatMessages(conversation.id)) || [];
+      let allMsgs: any[] = [];
+      for (const conv of convs) {
+        const ms = (await storage.getChatMessages(conv.id)) || [];
+        for (const m of ms) allMsgs.push(m);
+      }
+      // Dedupe por externalId (a mesma mensagem não se repete entre conversas) e ordena por horário.
+      const seenExt = new Set<string>();
+      allMsgs = allMsgs.filter((m: any) => {
+        const k = m.externalId ? String(m.externalId) : "";
+        if (k) { if (seenExt.has(k)) return false; seenExt.add(k); }
+        return true;
+      }).sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
       const dayOf = (d: any) => { try { return new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; } };
       const reqDate = String((req.query && req.query.date) || "").slice(0, 10);
       const days = Array.from(new Set(allMsgs.map((m: any) => dayOf(m.createdAt)).filter(Boolean))).sort();
       const targetDay = (reqDate && days.includes(reqDate)) ? reqDate : (days.length ? days[days.length - 1] : "");
       const dayMsgs = targetDay ? allMsgs.filter((m: any) => dayOf(m.createdAt) === targetDay) : [];
       const messages = dayMsgs.map((m: any) => ({ senderType: m.senderType, content: m.content, createdAt: m.createdAt }));
-      return res.json({ found: true, conversationId: conversation.id, customerName: conversation.customerName, phone: normalized, date: targetDay, totalConversation: allMsgs.length, messages });
+      const primary = convs.find((c: any) => String(c.customerName || "").trim()) || convs[0];
+      return res.json({ found: true, conversationId: primary.id, customerName: primary.customerName, phone: normalized, date: targetDay, totalConversation: allMsgs.length, messages });
     } catch (error: any) {
       console.error("[CONVERSA-CENTRAL] erro:", error?.message || error);
       return res.status(500).json({ found: false, error: error?.message || "erro" });
