@@ -421,6 +421,116 @@ async function comVendedorEObservacao<T extends Record<string, any>>(invoices: T
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COBRANCA DA NF-e — anexa a cada nota o resumo dos TITULOS (Contas a Receber)
+// gerados por ela (receivables.fiscal_invoice_id). Traz tipo de cobranca, status
+// de pagamento (recebida / parcial / a vencer / vencida), vencimento, e — quando
+// ha baixa — data, conta e responsavel da ultima baixa. Acessorio: se falhar, a
+// listagem sai sem o bloco `cobranca` em vez de derrubar a tela.
+// ─────────────────────────────────────────────────────────────────────────────
+async function comCobranca<T extends Record<string, any>>(invoices: T[]): Promise<T[]> {
+  if (!invoices?.length) return invoices;
+  const ids = invoices.map((i) => String(i.id)).filter(Boolean);
+  if (!ids.length) return invoices;
+  try {
+    // Literal ARRAY[...]::varchar[] (mesmo idioma do arraySql em contabilidade-insumos):
+    // evita ambiguidade de bind de array em `= ANY(...)`.
+    const idsArr = sql.raw(`ARRAY[${ids.map((i) => `'${i.replace(/'/g, "''")}'`).join(",")}]::varchar[]`);
+
+    // Agregado por NF: valores, contagem por status e vencimentos dos titulos.
+    const aggRes: any = await db.execute(sql`
+      SELECT r.fiscal_invoice_id AS fid,
+             COUNT(*)::int AS titulos,
+             COALESCE(SUM(r.amount::numeric), 0) AS valor_titulos,
+             COALESCE(SUM(COALESCE(r.amount_paid, '0')::numeric), 0) AS valor_recebido,
+             COALESCE(SUM(CASE WHEN r.status <> 'recebida' AND r.due_date <  now()
+                               THEN GREATEST(r.amount::numeric - COALESCE(r.amount_paid,'0')::numeric, 0) ELSE 0 END), 0) AS vencido_aberto,
+             COALESCE(SUM(CASE WHEN r.status <> 'recebida' AND r.due_date >= now()
+                               THEN GREATEST(r.amount::numeric - COALESCE(r.amount_paid,'0')::numeric, 0) ELSE 0 END), 0) AS a_vencer_aberto,
+             COUNT(*) FILTER (WHERE r.status = 'recebida')::int AS n_recebida,
+             BOOL_OR(r.status <> 'recebida' AND r.due_date < now()) AS tem_vencido,
+             MIN(r.due_date) AS primeiro_venc,
+             MAX(r.due_date) AS ultimo_venc,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT NULLIF(r.payment_method::text, '')), NULL) AS metodos
+      FROM receivables r
+      WHERE r.fiscal_invoice_id = ANY(${idsArr}) AND r.deleted_at IS NULL AND r.status <> 'cancelada'
+      GROUP BY r.fiscal_invoice_id
+    `);
+
+    // Ultima baixa por NF: data, conta e responsavel (created_by = email do usuario).
+    const payRes: any = await db.execute(sql`
+      SELECT DISTINCT ON (r.fiscal_invoice_id)
+             r.fiscal_invoice_id AS fid, rp.paid_at, rp.created_by, fa.name AS conta_nome
+      FROM receivable_payments rp
+      JOIN receivables r ON r.id = rp.receivable_id
+      LEFT JOIN financial_accounts fa ON fa.id = rp.financial_account_id
+      WHERE r.fiscal_invoice_id = ANY(${idsArr}) AND rp.deleted_at IS NULL AND r.deleted_at IS NULL
+      ORDER BY r.fiscal_invoice_id, rp.paid_at DESC NULLS LAST, rp.created_at DESC
+    `);
+
+    // Mapa email -> nome para resolver o responsavel pela baixa.
+    const userMap: Record<string, string> = {};
+    try {
+      const us = await storage.getUsers();
+      for (const u of us as any[]) {
+        const nm = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email;
+        if (u.email) userMap[String(u.email).toLowerCase()] = nm;
+      }
+    } catch {}
+    const uname = (e: any) => { if (!e) return null; const k = String(e).toLowerCase().trim(); return userMap[k] || e; };
+
+    const aggMap = new Map<string, any>();
+    for (const r of (aggRes?.rows || aggRes || [])) aggMap.set(String(r.fid), r);
+    const payMap = new Map<string, any>();
+    for (const r of (payRes?.rows || payRes || [])) payMap.set(String(r.fid), r);
+
+    return invoices.map((inv) => {
+      const a = aggMap.get(String(inv.id));
+      if (!a) return { ...inv, cobranca: null };
+      const titulos = Number(a.titulos || 0);
+      const valorTitulos = Number(a.valor_titulos || 0);
+      const valorRecebido = Number(a.valor_recebido || 0);
+      const nRecebida = Number(a.n_recebida || 0);
+      const temVencido = a.tem_vencido === true || a.tem_vencido === 't';
+      // Status agregado da NF (Parcial incluido a pedido):
+      //   recebida = todos os titulos quitados (ou recebido >= faturado)
+      //   parcial  = recebeu algo, mas ainda falta
+      //   vencida  = nada recebido e ha titulo vencido
+      //   a_vencer = nada recebido e nada vencido
+      let status = 'a_vencer';
+      if (valorTitulos > 0 && valorRecebido >= valorTitulos - 0.005) status = 'recebida';
+      else if (titulos > 0 && nRecebida === titulos) status = 'recebida';
+      else if (valorRecebido > 0.005) status = 'parcial';
+      else if (temVencido) status = 'vencida';
+      else status = 'a_vencer';
+      const metodos: string[] = Array.isArray(a.metodos) ? a.metodos.filter(Boolean) : [];
+      const p = payMap.get(String(inv.id));
+      const comBaixa = status === 'recebida' || status === 'parcial';
+      return {
+        ...inv,
+        cobranca: {
+          titulos,
+          valorTitulos,
+          valorRecebido,
+          vencidoAberto: Number(a.vencido_aberto || 0),
+          aVencerAberto: Number(a.a_vencer_aberto || 0),
+          status,
+          tipoCobranca: metodos.length === 0 ? null : (metodos.length === 1 ? metodos[0] : 'varios'),
+          metodos,
+          primeiroVencimento: a.primeiro_venc || null,
+          ultimoVencimento: a.ultimo_venc || null,
+          dataPagamento: comBaixa ? (p?.paid_at || null) : null,
+          conta: comBaixa ? (p?.conta_nome || null) : null,
+          responsavelBaixa: comBaixa ? uname(p?.created_by) : null,
+        },
+      };
+    });
+  } catch (e: any) {
+    console.error('[NFE] cobranca da listagem falhou:', e?.message);
+    return invoices.map((inv) => ({ ...inv, cobranca: null }));
+  }
+}
+
 export function registerNfeRoutes(app: Express) {
   // Inutilização de numeração NF-e/NFC-e (levantamento de lacunas + NFeInutilizacao4)
   registerInutilizacaoRoutes(app);
@@ -762,7 +872,7 @@ export function registerNfeRoutes(app: Express) {
         startDate: startDate as string,
         endDate: endDate as string,
       });
-      res.json(await comVendedorEObservacao(invoices));
+      res.json(await comCobranca(await comVendedorEObservacao(invoices)));
     } catch (error: any) {
       res.status(500).json({ message: 'Erro ao buscar notas fiscais', error: error.message });
     }
