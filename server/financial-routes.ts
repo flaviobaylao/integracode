@@ -2978,6 +2978,13 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       if (jurosR < 0) return res.status(400).json({ message: 'Juros não podem ser negativos.' });
       if (amtBaixaR < 0) return res.status(400).json({ message: 'Valor não pode ser negativo.' });
       if (!(amtBaixaR + descontoR + acrescimoR > 0)) return res.status(400).json({ message: 'Informe um valor recebido, um desconto ou um acréscimo (multa/juros).' });
+      // ETAPA 1 — CONTA OBRIGATORIA NO RECEBIMENTO. Quando entra dinheiro (principal
+      // ou multa/juros), a conta de recebimento e obrigatoria: e o que responde "em
+      // que conta o dinheiro caiu" e o que permite conciliar depois. Baixa so de
+      // desconto (amount 0 + desconto) NAO entra dinheiro, entao segue dispensada.
+      if ((amtBaixaR + acrescimoR) > 0.005 && !b.financialAccountId) {
+        return res.status(400).json({ message: 'Selecione a conta financeira onde o dinheiro entrou — obrigatória no recebimento.' });
+      }
       if (String((exists as any).status) === 'cancelada') return res.status(409).json({ message: 'Título cancelado não aceita baixa.' });
       const jaPagoR = parseFloat((exists as any).amountPaid || '0');
       const totalR = parseFloat((exists as any).amount || '0');
