@@ -19,7 +19,7 @@ import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
   FileText, Plus, Send, XCircle, Trash2, Eye, RefreshCw,
   CheckCircle2, Clock, AlertTriangle, ShieldCheck, Award,
-  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer, RotateCcw, Download
+  Loader2, ChevronLeft, ChevronsUpDown, Check, Printer, RotateCcw, Download, Calendar
 } from 'lucide-react';
 import { generateDanfePdf } from '@/lib/danfe-generator';
 
@@ -144,6 +144,25 @@ interface FiscalInvoice {
   updatedAt: string;
   items?: FiscalInvoiceItem[];
   events?: FiscalInvoiceEvent[];
+  // Resumo dos titulos (Contas a Receber) gerados por esta NF-e — anexado pelo servidor.
+  cobranca?: CobrancaNf | null;
+}
+
+// Resumo de cobranca/recebimento de uma NF-e (agregado dos titulos).
+interface CobrancaNf {
+  titulos: number;
+  valorTitulos: number;
+  valorRecebido: number;
+  vencidoAberto: number;
+  aVencerAberto: number;
+  status: 'recebida' | 'parcial' | 'a_vencer' | 'vencida';
+  tipoCobranca: string | null;
+  metodos: string[];
+  primeiroVencimento: string | null;
+  ultimoVencimento: string | null;
+  dataPagamento: string | null;
+  conta: string | null;
+  responsavelBaixa: string | null;
 }
 
 interface FiscalInvoiceItem {
@@ -241,6 +260,34 @@ function formatCurrency(value: string | number) {
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (isNaN(num)) return 'R$ 0,00';
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COBRANCA — rotulos e badge do status de pagamento dos titulos da NF-e.
+// ─────────────────────────────────────────────────────────────────────────────
+const TIPO_COBRANCA_LABEL: Record<string, string> = {
+  dinheiro: 'Dinheiro', boleto: 'Boleto', cartao: 'Cartão',
+  cartao_credito: 'Cartão crédito', cartao_debito: 'Cartão débito',
+  pix: 'PIX', transferencia: 'Transferência', cheque: 'Cheque',
+  outros: 'Outros', varios: 'Vários',
+};
+function tipoCobrancaLabel(v: string | null | undefined): string {
+  if (!v) return '-';
+  return TIPO_COBRANCA_LABEL[v] || v;
+}
+
+const PAG_STATUS_CFG: Record<string, { label: string; className: string }> = {
+  recebida: { label: 'Recebida', className: 'border-green-300 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+  parcial:  { label: 'Parcial',  className: 'border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+  vencida:  { label: 'Vencida',  className: 'border-red-300 bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  a_vencer: { label: 'A vencer', className: 'border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+};
+function pagStatusBadge(cobranca: CobrancaNf | null | undefined) {
+  if (!cobranca || !cobranca.titulos) {
+    return <span className="text-xs text-muted-foreground">Sem título</span>;
+  }
+  const cfg = PAG_STATUS_CFG[cobranca.status] || { label: cobranca.status, className: '' };
+  return <Badge variant="outline" className={cfg.className}>{cfg.label}</Badge>;
 }
 
 function formatDate(dateString: string) {
@@ -360,6 +407,8 @@ const nomeVendedor = (inv: any) => String(inv?.sellerName || '').trim();
 export default function FiscalInvoices() {
   const [activeTab, setActiveTab] = useState('invoices');
   const [statusFilter, setStatusFilter] = useState('all');
+  // Filtro por status de pagamento do titulo (derivado de cobranca; aplicado no cliente).
+  const [payFilter, setPayFilter] = useState('all');
   const [envFilter, setEnvFilter] = useState('all');
   const [issuerFilter, setIssuerFilter] = useState('all'); // CNPJ (só dígitos) do emitente/filial, ou 'all'
   // Tipo de faturamento (multipla escolha). Vazio = todos os tipos.
@@ -503,14 +552,32 @@ export default function FiscalInvoices() {
     if (!dig) return '-';
     return issuerOptions.get(dig) || (dig.length >= 12 ? `${dig.slice(8, 12)}-${dig.slice(12, 14)}` : dig);
   };
+  // Chave do status de pagamento de uma NF (para filtro e contagem).
+  const payKey = (inv: any): string => (inv?.cobranca?.titulos ? inv.cobranca.status : 'sem_titulo');
   const invoicesFiltered = (invoices || []).filter((inv: any) =>
     (!nfSearch || String(inv.customerName || '').toLowerCase().includes(nfSearch.toLowerCase()) || String(inv.invoiceNumber || '').includes(nfSearch))
     && (issuerFilter === 'all' || onlyDigits(inv.issuerCnpj) === issuerFilter)
     && (tipoFilter.length === 0 || tipoFilter.includes(tipoFaturamento(inv)))
     && (vendedorFilter.length === 0 || vendedorFilter.includes(nomeVendedor(inv) || SEM_VENDEDOR))
+    && (payFilter === 'all' || payKey(inv) === payFilter)
     // Mesma data da Regra Oficial do servidor: emissao -> autorizacao -> criacao. Usar so
     // emissionDate aqui derrubaria notas que o servidor ja tinha incluido pelo COALESCE.
     && dateInRange(inv.emissionDate || inv.authorizationDate || inv.createdAt, dtStart, dtEnd));
+  // TOTAIS DE COBRANCA (mesma lista filtrada): faturado, recebido, vencido e a vencer.
+  // Faturado = soma dos titulos; Recebido = soma do que ja foi baixado; Vencido/A vencer =
+  // saldo em aberto conforme o vencimento. Faturado ~= Recebido + Vencido + A vencer.
+  const cobrancaTotais = useMemo(() => {
+    let faturado = 0, recebido = 0, vencido = 0, aVencer = 0, semTitulo = 0;
+    for (const inv of invoicesFiltered as any[]) {
+      const c = inv.cobranca;
+      if (!c || !c.titulos) { semTitulo++; continue; }
+      faturado += Number(c.valorTitulos || 0);
+      recebido += Number(c.valorRecebido || 0);
+      vencido += Number(c.vencidoAberto || 0);
+      aVencer += Number(c.aVencerAberto || 0);
+    }
+    return { faturado, recebido, vencido, aVencer, semTitulo };
+  }, [invoicesFiltered]);
   const totalFiltrado = useMemo(
     () => invoicesFiltered.reduce((acc: number, inv: any) => acc + Number(inv.totalInvoice || 0), 0),
     [invoicesFiltered]);
@@ -550,7 +617,7 @@ export default function FiscalInvoices() {
     return { total: invoicesFiltered.length, authorized, draft, valorAutorizado };
   })();
   const filtroAtivo = statusFilter !== 'all' || envFilter !== 'all' || issuerFilter !== 'all'
-    || tipoFilter.length > 0 || vendedorFilter.length > 0 || !!nfSearch.trim() || !!dtStart || !!dtEnd;
+    || tipoFilter.length > 0 || vendedorFilter.length > 0 || payFilter !== 'all' || !!nfSearch.trim() || !!dtStart || !!dtEnd;
   // Opcoes do filtro de vendedor: os nomes que existem na lista carregada, em ordem.
   // "(sem vendedor)" cobre a nota cujo pedido nao tem vendedor resolvido.
   const vendedorOptions = useMemo(() => {
@@ -959,6 +1026,53 @@ export default function FiscalInvoices() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Cobranca — totais dos TITULOS (Contas a Receber) das notas no filtro:
+          Faturado ~= Recebido + Vencido + A vencer. */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4" data-testid="cards-cobranca">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Faturado (títulos)</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="card-faturado">{loadingInvoices ? '...' : formatCurrency(cobrancaTotais.faturado)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {cobrancaTotais.semTitulo > 0 ? <>{nf(cobrancaTotais.semTitulo)} nota(s) sem título</> : <>total dos títulos no filtro</>}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Recebido</CardTitle>
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600" data-testid="card-recebido">{loadingInvoices ? '...' : formatCurrency(cobrancaTotais.recebido)}</div>
+            <p className="text-xs text-muted-foreground mt-1">baixado nos títulos</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Vencido</CardTitle>
+            <Clock className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600" data-testid="card-vencido">{loadingInvoices ? '...' : formatCurrency(cobrancaTotais.vencido)}</div>
+            <p className="text-xs text-muted-foreground mt-1">saldo em aberto vencido</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">A vencer</CardTitle>
+            <Calendar className="h-4 w-4 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600" data-testid="card-a-vencer">{loadingInvoices ? '...' : formatCurrency(cobrancaTotais.aVencer)}</div>
+            <p className="text-xs text-muted-foreground mt-1">saldo em aberto a vencer</p>
+          </CardContent>
+        </Card>
+      </div>
       {filtroAtivo && (
         <p className="text-xs text-muted-foreground -mt-2" data-testid="cards-nf-aviso">
           Os cards acima estao considerando os filtros selecionados na aba "Notas Fiscais".
@@ -990,6 +1104,22 @@ export default function FiscalInvoices() {
                   <SelectItem value="returned">Devolvida</SelectItem>
                   <SelectItem value="rejected">Rejeitada</SelectItem>
                   <SelectItem value="processing">Processando</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Pagamento</Label>
+              <Select value={payFilter} onValueChange={setPayFilter}>
+                <SelectTrigger className="w-[160px]" data-testid="filter-pagamento">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="recebida">Recebida</SelectItem>
+                  <SelectItem value="parcial">Parcial</SelectItem>
+                  <SelectItem value="a_vencer">A vencer</SelectItem>
+                  <SelectItem value="vencida">Vencida</SelectItem>
+                  <SelectItem value="sem_titulo">Sem título</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1108,7 +1238,7 @@ export default function FiscalInvoices() {
             </div>
             <div><Label className="text-xs">Periodo (emissao)</Label><div><DateRangeFilter start={dtStart} end={dtEnd} onChange={(s, e) => { setDtStart(s); setDtEnd(e); }} testId="daterange-nf" /></div></div>
             
-            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, Vendedor: nomeVendedor(inv), CFOP: inv.cfop, Tipo: (TIPO_LABEL[tipoFaturamento(inv)] || ''), Motivo: motivoFaturamento(inv), Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "" })), "notas-fiscais")} />
+            <ExportExcelButton testId="export-nf" onClick={() => exportToExcel(invoicesView.map((inv: any) => ({ Numero: inv.invoiceNumber, Emitente: issuerShort(inv.issuerCnpj), Cliente: inv.customerName, Documento: inv.customerCnpjCpf, Vendedor: nomeVendedor(inv), CFOP: inv.cfop, Tipo: (TIPO_LABEL[tipoFaturamento(inv)] || ''), Motivo: motivoFaturamento(inv), Valor: Number(inv.totalInvoice || 0), Status: inv.status, Ambiente: inv.environment, Data: inv.emissionDate ? new Date(inv.emissionDate).toLocaleDateString("pt-BR") : "", Cobranca: tipoCobrancaLabel(inv.cobranca?.tipoCobranca), Pagamento: (inv.cobranca?.titulos ? (PAG_STATUS_CFG[inv.cobranca.status]?.label || inv.cobranca.status) : 'Sem título'), Vencimento: inv.cobranca?.primeiroVencimento ? new Date(inv.cobranca.primeiroVencimento).toLocaleDateString("pt-BR") : "", "Pago em": inv.cobranca?.dataPagamento ? new Date(inv.cobranca.dataPagamento).toLocaleDateString("pt-BR") : "", Conta: inv.cobranca?.conta || "", "Baixa por": inv.cobranca?.responsavelBaixa || "", Recebido: Number(inv.cobranca?.valorRecebido || 0), "Em aberto": Number((inv.cobranca?.valorTitulos || 0) - (inv.cobranca?.valorRecebido || 0)) })), "notas-fiscais")} />
             <Button variant="outline" size="sm" onClick={() => { setStatusFilter('all'); setEnvFilter('all'); setIssuerFilter('all'); setNfSearch(''); setTipoFilter([]); setVendedorFilter([]); setDtStart(''); setDtEnd(''); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Limpar
             </Button>
@@ -1157,6 +1287,12 @@ export default function FiscalInvoices() {
                       <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Ambiente" colKey="env" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                       <SortableTh label="Data" colKey="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                      <TableHead>Cobrança</TableHead>
+                      <TableHead>Pagamento</TableHead>
+                      <TableHead>Vencimento</TableHead>
+                      <TableHead>Pago em</TableHead>
+                      <TableHead>Conta</TableHead>
+                      <TableHead>Baixa por</TableHead>
                       <TableHead>Ações</TableHead>
                       <SortableTh label="Motivo" colKey="motivo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
                     </TableRow>
@@ -1195,6 +1331,27 @@ export default function FiscalInvoices() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm">{formatDate(inv.createdAt)}</TableCell>
+                        {/* Cobranca — tipo, status, vencimento, baixa (data/conta/responsavel) dos titulos */}
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {inv.cobranca?.titulos
+                            ? <>{tipoCobrancaLabel(inv.cobranca.tipoCobranca)}{inv.cobranca.titulos > 1 && <span className="ml-1 text-xs text-muted-foreground">({inv.cobranca.titulos}x)</span>}</>
+                            : <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell>{pagStatusBadge(inv.cobranca)}</TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {inv.cobranca?.primeiroVencimento
+                            ? <>{formatDate(inv.cobranca.primeiroVencimento)}{inv.cobranca.ultimoVencimento && inv.cobranca.ultimoVencimento !== inv.cobranca.primeiroVencimento && <span className="text-muted-foreground"> … {formatDate(inv.cobranca.ultimoVencimento)}</span>}</>
+                            : <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {inv.cobranca?.dataPagamento ? formatDate(inv.cobranca.dataPagamento) : <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {inv.cobranca?.conta || <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {inv.cobranca?.responsavelBaixa || <span className="text-muted-foreground">-</span>}
+                        </TableCell>
                         <TableCell>
                           <div className="flex gap-1" onClick={e => e.stopPropagation()}>
                             <Button variant="ghost" size="icon" title="Ver detalhes" onClick={() => openDetail(inv.id)}>
