@@ -427,26 +427,25 @@ export function registerRedesClientes(app: Express) {
       const chaves = Array.from(new Set(membros.map((m) => String(m.chave || "")).filter(Boolean)));
       const listaChaves = chaves.length ? chaves.map((k) => `'${esc(k)}'`).join(",") : `''`;
 
-      // ── TÍTULO EM DOBRO NÃO É FATURAMENTO ────────────────────────────────────
-      // Em set/2026 apareceram notas com DOIS (e até três) títulos idênticos: a
-      // mesma NF-e, o mesmo vencimento e o mesmo valor, gravados em horas
-      // diferentes por reprocessamento do faturamento. A NF-e diz o total dela
-      // (ex.: NF 104143 = R$ 3.816,30) e ainda assim havia dois títulos de
-      // R$ 3.816,30 — a tela mostrava R$ 7.632,60 e o cliente aparecia faturando
-      // o dobro.
+      // ── UMA NOTA NÃO FATURA MAIS DO QUE ELA VALE ─────────────────────────────
+      // De jul a set/2026 o faturamento gerou títulos REPETIDOS: a mesma NF-e
+      // lançada duas (e até três) vezes no Contas a Receber, por reprocessamento.
+      // Exemplos reais: a NF 104143 vale R$ 3.816,30 e tinha dois títulos de
+      // R$ 3.816,30 (mesmo vencimento); a NF 104154 vale R$ 2.191,20 e tinha dois
+      // de R$ 2.191,20 com vencimentos DIFERENTES — esse segundo caso passa por
+      // qualquer regra que só olhe "título igual a título".
       //
-      // A soma passa por um DISTINCT ON que conta UMA VEZ cada
-      // (nota, vencimento, valor) do mesmo cliente. Repare no que ele NÃO mexe:
-      //  • parcelamento de verdade continua somando — duas parcelas da mesma
-      //    nota têm VENCIMENTOS diferentes, então são duas linhas distintas;
-      //  • título sem NF-e nunca é agrupado (a chave leva o id dele), porque aí
-      //    não há como distinguir cópia de lançamento legítimo.
-      // E a cópia não é varrida para debaixo do tapete: `dupMes` conta quantos
-      // títulos ficaram de fora no mês exibido, e a tela avisa.
-      const CHAVE_COPIA = `COALESCE(fiscal_invoice_id::text, 'sem-nf|' || id::text),
-                           due_date,
-                           COALESCE(NULLIF(amount::text,'')::numeric,0),
-                           ${CHAVE_TITULO}`;
+      // A régua que resolve os dois é a própria nota: o faturamento de uma NF-e
+      // é, no máximo, o `total_invoice` dela. Então a soma dos títulos de cada
+      // nota é limitada ao valor da nota.
+      //  • parcelamento de verdade não muda nada — as parcelas somam exatamente o
+      //    total da nota (conferido: as notas /3 da Casa Rocca);
+      //  • título sem NF-e entra como está — não há nota para servir de teto;
+      //  • nota sem total gravado (0/nulo) também entra como está, para não
+      //    zerar faturamento por falta de dado.
+      // O excedente não é varrido para debaixo do tapete: `dupMes` diz quanto
+      // ficou de fora no mês exibido e a tela avisa, porque o título repetido
+      // continua vivo no financeiro — e pode virar boleto em dobro para o cliente.
       const ONDE_VENDA = `
         WHERE deleted_at IS NULL
           AND ${NAO_CANCELADO}
@@ -454,17 +453,38 @@ export function registerRedesClientes(app: Express) {
           AND issue_date >= '${esc(anoAnt)}-01-01'
           ${FILTRO_VENDA}
           AND ${CHAVE_TITULO} IN (${listaChaves})`;
-
-      // Faturamento do mes vigente e do ano, e o debito de hoje — por chave.
-      const fat = (await db.execute(sql.raw(`
-        WITH unicos AS (
-          SELECT DISTINCT ON (${CHAVE_COPIA})
-                 ${CHAVE_TITULO} AS chave,
+      /** Títulos do recorte, já com a chave do cliente e o valor numérico. */
+      const CTE_TITULOS = `
+        tit AS (
+          SELECT ${CHAVE_TITULO} AS chave,
+                 fiscal_invoice_id,
                  issue_date,
                  COALESCE(NULLIF(amount::text,'')::numeric,0) AS valor
           FROM receivables
           ${ONDE_VENDA}
-          ORDER BY ${CHAVE_COPIA}, created_at, id
+        ),
+        por_nota AS (
+          SELECT t.chave,
+                 t.fiscal_invoice_id,
+                 MIN(t.issue_date)                                             AS issue_date,
+                 COUNT(*)::int                                                 AS titulos,
+                 SUM(t.valor)                                                  AS soma,
+                 COALESCE(MAX(COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0)),0) AS total_nf
+          FROM tit t
+          LEFT JOIN fiscal_invoices fi ON fi.id = t.fiscal_invoice_id
+          WHERE t.fiscal_invoice_id IS NOT NULL
+          GROUP BY t.chave, t.fiscal_invoice_id
+        )`;
+
+      // Faturamento do mes vigente e do ano, e o debito de hoje — por chave.
+      const fat = (await db.execute(sql.raw(`
+        WITH ${CTE_TITULOS},
+        base AS (
+          SELECT chave, issue_date, valor FROM tit WHERE fiscal_invoice_id IS NULL
+          UNION ALL
+          SELECT chave, issue_date,
+                 CASE WHEN total_nf > 0 AND soma > total_nf THEN total_nf ELSE soma END
+          FROM por_nota
         )
         SELECT chave,
                COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mes)}'),0)::float       AS fat_mes,
@@ -472,28 +492,28 @@ export function registerRedesClientes(app: Express) {
                COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnoAnt)}'),0)::float AS fat_mes_ano_ant,
                COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(ano)}'),0)::float          AS fat_ano,
                COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(anoAnt)}'),0)::float       AS fat_ano_ant
-        FROM unicos
+        FROM base
         GROUP BY 1`))).rows as any[];
 
-      // Quantos títulos em dobro ficaram de fora no MÊS EXIBIDO, por cliente — e
-      // quanto somavam. É o que a tela avisa, em vez de calar.
+      // O que ficou de fora no MÊS EXIBIDO, por cliente: quantas notas passaram do
+      // próprio valor, quantos títulos sobrando e quanto isso soma.
       const dupRows = (await db.execute(sql.raw(`
-        SELECT chave, SUM(copias - 1)::int AS titulos, SUM((copias - 1) * valor)::float AS valor
-        FROM (
-          SELECT ${CHAVE_TITULO} AS chave,
-                 COUNT(*)::int AS copias,
-                 MAX(COALESCE(NULLIF(amount::text,'')::numeric,0)) AS valor
-          FROM receivables
-          ${ONDE_VENDA}
-            AND fiscal_invoice_id IS NOT NULL
-            AND to_char(issue_date,'YYYY-MM') = '${esc(mes)}'
-          GROUP BY ${CHAVE_TITULO}, fiscal_invoice_id, due_date, COALESCE(NULLIF(amount::text,'')::numeric,0)
-          HAVING COUNT(*) > 1
-        ) x
+        WITH ${CTE_TITULOS}
+        SELECT chave,
+               COUNT(*)::int              AS notas,
+               SUM(titulos - 1)::int      AS titulos,
+               SUM(soma - total_nf)::float AS valor
+        FROM por_nota
+        WHERE total_nf > 0 AND soma > total_nf + 0.005
+          AND to_char(issue_date,'YYYY-MM') = '${esc(mes)}'
         GROUP BY 1`))).rows as any[];
-      const mDup = new Map<string, { titulos: number; valor: number }>();
+      const mDup = new Map<string, { notas: number; titulos: number; valor: number }>();
       for (const d of dupRows) {
-        mDup.set(String(d.chave), { titulos: Number(d.titulos) || 0, valor: Number(d.valor) || 0 });
+        mDup.set(String(d.chave), {
+          notas: Number(d.notas) || 0,
+          titulos: Number(d.titulos) || 0,
+          valor: Number(d.valor) || 0,
+        });
       }
 
       const deb = (await db.execute(sql.raw(`
@@ -551,7 +571,7 @@ export function registerRedesClientes(app: Express) {
           papel: String(m.papel || "nenhum"),
           // Títulos em dobro deixados de fora do mês exibido (ver o DISTINCT ON
           // acima). Zero na esmagadora maioria dos clientes.
-          dupMes: mDup.get(k) || { titulos: 0, valor: 0 },
+          dupMes: mDup.get(k) || { notas: 0, titulos: 0, valor: 0 },
         };
         const arr = porRede.get(String(m.rede_id));
         if (arr) arr.push(cli); else porRede.set(String(m.rede_id), [cli]);
@@ -595,6 +615,7 @@ export function registerRedesClientes(app: Express) {
             fatAnoAnt: soma((c) => c.fatAnoAnt),
             debito: soma((c) => c.debito),
             dupMes: {
+              notas: soma((c) => c.dupMes?.notas || 0),
               titulos: soma((c) => c.dupMes?.titulos || 0),
               valor: soma((c) => c.dupMes?.valor || 0),
             },
