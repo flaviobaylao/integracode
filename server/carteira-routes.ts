@@ -23,7 +23,8 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { nfVendaWhere, nfVendaFrom, nfData, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
+import { nfVendaWhere } from "./faturamento-oficial";
+import { cteFaturamento, descricaoFonte, MES_NFE_INTEGRA } from "./faturamento-carteira";
 import { authenticateUser } from "./authMiddleware";
 import { registerAgendaCarteira } from "./agenda-carteira-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
@@ -373,54 +374,15 @@ export function registerCarteira(app: Express) {
             AND NOT ${C_NF_INVALIDA}
             AND NOT ${C_LIXEIRA}`;
 
-      // CTE comum: titulos validos do periodo, ja com a chave do cliente.
-      // UMA NOTA NAO FATURA MAIS DO QUE ELA VALE. De jul a set/2026 o card que
-      // voltava para "Faturado" refazia o faturamento e gravava um SEGUNDO titulo
-      // da mesma NF-e (52 titulos, R$ 25.299,00). Somar titulo a titulo dobrava o
-      // faturamento desses clientes. A regua e a propria nota: a soma dos titulos
-      // de cada NF-e fica limitada ao `total_invoice` dela — a MESMA regra ja
-      // aplicada na aba Rede de Cliente (server/rede-clientes-routes.ts), para as
-      // duas abas nunca contarem diferente.
-      //  • parcelamento de verdade nao muda (as parcelas somam o total da nota);
-      //  • titulo sem NF-e entra como esta (nao ha nota para servir de teto);
-      //  • nota sem total gravado idem, para nao zerar faturamento por falta de dado.
-      // `n` carrega a contagem de titulos, que continua sendo a de verdade.
+      // CTE comum: o FATURAMENTO do periodo, ja com a chave do cliente.
+      // A regua mora em server/faturamento-carteira.ts e vale para as DUAS abas:
+      // NF-e autorizada do INTEGRA de abr/2026 em diante (faturamento real),
+      // titulo emitido antes disso (a NF-e do INTEGRA ainda nao existia).
+      // `n` conta documentos: notas no periodo novo, titulos no antigo.
       const CTE_REC = `
-        WITH ${CTE_CARTEIRA}r_tit AS (
-          SELECT
-            NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
-            NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),'')                        AS nome,
-            to_char(issue_date,'YYYY-MM')                                             AS mes,
-            COALESCE(NULLIF(amount::text,'')::numeric,0)                              AS v,
-            fiscal_invoice_id
-          FROM receivables
-          WHERE issue_date >= '${iniDate}'
-            AND issue_date <  '${fimDateExcl}'
-            AND deleted_at IS NULL
-            AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
-            AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
-            ${FILTRO_VENDA}
-        ),
-        r_nota AS (
-          SELECT t.doc, t.nome, t.mes, t.fiscal_invoice_id,
-                 SUM(t.v)                                                                  AS soma,
-                 COUNT(*)::int                                                              AS n,
-                 COALESCE(MAX(COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0)),0)    AS total_nf
-          FROM r_tit t
-          LEFT JOIN fiscal_invoices fi ON fi.id = t.fiscal_invoice_id
-          WHERE t.fiscal_invoice_id IS NOT NULL
-          GROUP BY t.doc, t.nome, t.mes, t.fiscal_invoice_id
-        ),
-        r AS (
-          SELECT doc, nome, mes, v, 1 AS n FROM r_tit WHERE fiscal_invoice_id IS NULL
-          UNION ALL
-          SELECT doc, nome, mes,
-                 CASE WHEN total_nf > 0 AND soma > total_nf THEN total_nf ELSE soma END AS v,
-                 n
-          FROM r_nota
-        ),
+        WITH ${CTE_CARTEIRA}${cteFaturamento(iniDate, fimDateExcl, FILTRO_VENDA)},
         rk AS (
-          SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v, n FROM r${FILTRO_CARTEIRA}
+          SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v, n FROM fat${FILTRO_CARTEIRA}
         )`;
 
       // 1) Serie mensal (base = titulos emitidos)
@@ -458,35 +420,32 @@ export function registerCarteira(app: Express) {
           COALESCE(SUM(${VAL}) FILTER (WHERE ${NAO_CANCELADO} AND ${C_LIXEIRA}),0)::float       AS v_lixeira
         ${JANELA_FORA}`);
 
-      // 2) Serie mensal comparativa — NF-e de VENDA.
-      //    Ate 30/06/2026 vale o calculo legado; de 01/07/2026 em diante, a Regra
-      //    Oficial (server/faturamento-oficial.ts). Mesmo criterio do dashboard.
-      const VF = nfVendaWhere("fi");
-      const VFROM = nfVendaFrom("fi");
-      const VDATA = nfData("fi");
-      const LEGADO = `status='authorized' AND COALESCE(operation_type,'saida') <> 'entrada' AND COALESCE(fin_nfe,'1') <> '4' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%DEVOL%' AND UPPER(COALESCE(nature_of_operation,'')) LIKE '%VENDA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TROCA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%TRANSFER%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%REMESSA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%BONIFICA%' AND UPPER(COALESCE(nature_of_operation,'')) NOT LIKE '%AMOSTRA%' AND (import_origin IS NULL OR TRIM(import_origin) = '')`;
-      // A linha de NF-e e um comparativo da empresa inteira; num recorte de uma
-      // carteira so ela confundiria (notas de outros vendedores). Fica de fora.
-      let serieNf: any[] = [];
+      // 2) LINHA COMPARATIVA — agora ao contrario: a linha principal e' a NF-e
+      // (faturamento real) e o comparativo sao os TITULOS emitidos (cobranca).
+      // A diferenca entre as duas e' informacao de verdade: titulo cancelado por
+      // razao de cobranca ("boleto emitido via omie"), venda faturada por fora,
+      // titulo repetido. So faz sentido de abr/2026 em diante, onde as
+      // duas reguas existem ao mesmo tempo.
+      let serieTit: any[] = [];
       try {
-        if (restrito) throw new Error("escopo restrito: sem linha de NF-e");
-        serieNf = await q(`
-          SELECT m, COALESCE(SUM(v),0)::float AS valor FROM (
-            SELECT to_char(date_trunc('month', COALESCE(emission_date,authorization_date,created_at)),'YYYY-MM') AS m,
-                   total_invoice AS v
-            FROM fiscal_invoices
-            WHERE ${LEGADO}
-              AND COALESCE(emission_date,authorization_date,created_at)::date >= '${iniDate}'::date
-              AND COALESCE(emission_date,authorization_date,created_at)::date <  LEAST('${fimDateExcl}'::date, '${VIGENCIA_REGRA_OFICIAL}'::date)
-            UNION ALL
-            SELECT to_char(date_trunc('month', ${VDATA}),'YYYY-MM') AS m, fi.total_invoice AS v
-            FROM ${VFROM}
-            WHERE ${VF}
-              AND ${VDATA}::date >= GREATEST('${iniDate}'::date, '${VIGENCIA_REGRA_OFICIAL}'::date)
-              AND ${VDATA}::date <  '${fimDateExcl}'::date
-          ) s GROUP BY m ORDER BY m`);
+        serieTit = await q(`
+          WITH ${CTE_CARTEIRA}t AS (
+            SELECT
+              NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
+              to_char(issue_date,'YYYY-MM')                                             AS mes,
+              COALESCE(NULLIF(amount::text,'')::numeric,0)                              AS v
+            FROM receivables
+            WHERE issue_date >= GREATEST('${iniDate}'::date, '${MES_NFE_INTEGRA}-01'::date)
+              AND issue_date <  '${fimDateExcl}'
+              AND deleted_at IS NULL
+              AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+              AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
+              ${FILTRO_VENDA}
+          )
+          SELECT mes AS m, COALESCE(SUM(v),0)::float AS valor FROM t${FILTRO_CARTEIRA}
+          GROUP BY mes ORDER BY mes`);
       } catch (e: any) {
-        console.warn("[gestao-carteiras] serie NF-e indisponivel:", e?.message || e);
+        console.warn("[gestao-carteiras] serie de titulos indisponivel:", e?.message || e);
       }
 
       // 2b) DEBITO DA CARTEIRA — estoque de hoje, nao do periodo. Mesma regra da
@@ -1014,7 +973,7 @@ export function registerCarteira(app: Express) {
 
       // Serie final: um ponto por mes do periodo (mes sem titulo entra zerado).
       const recPorMes = new Map(serieRec.map((r: any) => [String(r.mes), r]));
-      const nfPorMes = new Map(serieNf.map((r: any) => [String(r.m), Number(r.valor) || 0]));
+      const titPorMes = new Map(serieTit.map((r: any) => [String(r.m), Number(r.valor) || 0]));
       const serie = meses.map((m) => {
         const r: any = recPorMes.get(m) || {};
         return {
@@ -1022,13 +981,14 @@ export function registerCarteira(app: Express) {
           valor: Number(r.valor) || 0,
           titulos: Number(r.titulos) || 0,
           clientes: Number(r.clientes) || 0,
-          valorNf: nfPorMes.has(m) ? (nfPorMes.get(m) as number) : null,
+          // Comparativo (só onde as duas réguas convivem): o que a COBRANÇA viu.
+          valorTitulos: m >= MES_NFE_INTEGRA && titPorMes.has(m) ? (titPorMes.get(m) as number) : null,
         };
       });
 
       const ultimo = serie[serie.length - 1];
       const penultimo = serie.length > 1 ? serie[serie.length - 2] : null;
-      const mesesComNf = serie.filter((s) => s.valorNf !== null && (s.valorNf as number) > 0).length;
+      const mesesComTitulos = serie.filter((s) => s.valorTitulos !== null && (s.valorTitulos as number) > 0).length;
 
       const kpis = {
         faturamento: totalGeral,
@@ -1061,9 +1021,10 @@ export function registerCarteira(app: Express) {
           cancelados: { titulos: Number(foraRows?.[0]?.n_cancelado) || 0, valor: Number(foraRows?.[0]?.v_cancelado) || 0 },
         },
         fonte: {
-          base: "receivables (títulos emitidos, exclui cancelados)",
-          comparativo: "NF-e de venda autorizada (regra oficial a partir de " + VIGENCIA_REGRA_OFICIAL + ")",
-          mesesComNf,
+          base: descricaoFonte(),
+          comparativo: "títulos emitidos no Contas a Receber (cobrança)",
+          mesNfe: MES_NFE_INTEGRA,
+          mesesComTitulos,
           mediaPonderada: "peso linear por recência: o mês mais antigo pesa 1 e o mais recente pesa " + meses.length,
         },
         kpis,

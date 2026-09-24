@@ -20,6 +20,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { nfVendaWhere } from "./faturamento-oficial";
+import { cteFaturamento, descricaoFonte } from "./faturamento-carteira";
 import { authenticateUser } from "./authMiddleware";
 import { normalizeUf, ufFromCep } from "./cep-uf";
 
@@ -30,6 +31,14 @@ function mesCorrente(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit" })
     .format(new Date())
     .slice(0, 7);
+}
+
+/** Primeiro dia do mes SEGUINTE a `mes` ('YYYY-MM') — fim exclusivo do periodo. */
+function proximoMes1(mes: string): string {
+  let [y, m] = mes.split("-").map(Number);
+  m++;
+  if (m > 12) { m = 1; y++; }
+  return `${y}-${String(m).padStart(2, "0")}-01`;
 }
 
 /** 'YYYY-MM' do mes anterior a `mes`. */
@@ -427,94 +436,27 @@ export function registerRedesClientes(app: Express) {
       const chaves = Array.from(new Set(membros.map((m) => String(m.chave || "")).filter(Boolean)));
       const listaChaves = chaves.length ? chaves.map((k) => `'${esc(k)}'`).join(",") : `''`;
 
-      // ── UMA NOTA NÃO FATURA MAIS DO QUE ELA VALE ─────────────────────────────
-      // De jul a set/2026 o faturamento gerou títulos REPETIDOS: a mesma NF-e
-      // lançada duas (e até três) vezes no Contas a Receber, por reprocessamento.
-      // Exemplos reais: a NF 104143 vale R$ 3.816,30 e tinha dois títulos de
-      // R$ 3.816,30 (mesmo vencimento); a NF 104154 vale R$ 2.191,20 e tinha dois
-      // de R$ 2.191,20 com vencimentos DIFERENTES — esse segundo caso passa por
-      // qualquer regra que só olhe "título igual a título".
-      //
-      // A régua que resolve os dois é a própria nota: o faturamento de uma NF-e
-      // é, no máximo, o `total_invoice` dela. Então a soma dos títulos de cada
-      // nota é limitada ao valor da nota.
-      //  • parcelamento de verdade não muda nada — as parcelas somam exatamente o
-      //    total da nota (conferido: as notas /3 da Casa Rocca);
-      //  • título sem NF-e entra como está — não há nota para servir de teto;
-      //  • nota sem total gravado (0/nulo) também entra como está, para não
-      //    zerar faturamento por falta de dado.
-      // O excedente não é varrido para debaixo do tapete: `dupMes` diz quanto
-      // ficou de fora no mês exibido e a tela avisa, porque o título repetido
-      // continua vivo no financeiro — e pode virar boleto em dobro para o cliente.
-      const ONDE_VENDA = `
-        WHERE deleted_at IS NULL
-          AND ${NAO_CANCELADO}
-          AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
-          AND issue_date >= '${esc(anoAnt)}-01-01'
-          ${FILTRO_VENDA}
-          AND ${CHAVE_TITULO} IN (${listaChaves})`;
-      /** Títulos do recorte, já com a chave do cliente e o valor numérico. */
-      const CTE_TITULOS = `
-        tit AS (
-          SELECT ${CHAVE_TITULO} AS chave,
-                 fiscal_invoice_id,
-                 issue_date,
-                 COALESCE(NULLIF(amount::text,'')::numeric,0) AS valor
-          FROM receivables
-          ${ONDE_VENDA}
-        ),
-        por_nota AS (
-          SELECT t.chave,
-                 t.fiscal_invoice_id,
-                 MIN(t.issue_date)                                             AS issue_date,
-                 COUNT(*)::int                                                 AS titulos,
-                 SUM(t.valor)                                                  AS soma,
-                 COALESCE(MAX(COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0)),0) AS total_nf
-          FROM tit t
-          LEFT JOIN fiscal_invoices fi ON fi.id = t.fiscal_invoice_id
-          WHERE t.fiscal_invoice_id IS NOT NULL
-          GROUP BY t.chave, t.fiscal_invoice_id
-        )`;
-
-      // Faturamento do mes vigente e do ano, e o debito de hoje — por chave.
+      // ── FATURAMENTO = NF-e AUTORIZADA (a mesma régua da aba Carteira) ───────
+      // Nota é VENDA, título é COBRANÇA. Enquanto isto media por título, cancelar
+      // o título por razão de cobrança ("boleto emitido via omie") apagava o
+      // faturamento do cliente — foi assim que esta rede amanheceu zerada em
+      // set/26. A régua mora em server/faturamento-carteira.ts: NF-e do INTEGRA de
+      // abr/2026 em diante, título emitido antes disso (não havia NF-e no INTEGRA).
+      // De quebra, título repetido deixa de inflar: a nota entra UMA vez, pelo
+      // valor dela, não importa quantos títulos tenha gerado.
+      const FILTRO_TITULOS_REDE = `${FILTRO_VENDA}`;
+      const CHAVE_FAT = `COALESCE(doc, 'N|' || COALESCE(nome,'?'))`;
       const fat = (await db.execute(sql.raw(`
-        WITH ${CTE_TITULOS},
-        base AS (
-          SELECT chave, issue_date, valor FROM tit WHERE fiscal_invoice_id IS NULL
-          UNION ALL
-          SELECT chave, issue_date,
-                 CASE WHEN total_nf > 0 AND soma > total_nf THEN total_nf ELSE soma END
-          FROM por_nota
-        )
-        SELECT chave,
-               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mes)}'),0)::float       AS fat_mes,
-               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnt)}'),0)::float    AS fat_mes_ant,
-               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnoAnt)}'),0)::float AS fat_mes_ano_ant,
-               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(ano)}'),0)::float          AS fat_ano,
-               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(anoAnt)}'),0)::float       AS fat_ano_ant
-        FROM base
+        WITH ${cteFaturamento(`${esc(anoAnt)}-01-01`, proximoMes1(mes), FILTRO_TITULOS_REDE)}
+        SELECT ${CHAVE_FAT} AS chave,
+               COALESCE(SUM(v) FILTER (WHERE mes = '${esc(mes)}'),0)::float       AS fat_mes,
+               COALESCE(SUM(v) FILTER (WHERE mes = '${esc(mesAnt)}'),0)::float    AS fat_mes_ant,
+               COALESCE(SUM(v) FILTER (WHERE mes = '${esc(mesAnoAnt)}'),0)::float AS fat_mes_ano_ant,
+               COALESCE(SUM(v) FILTER (WHERE left(mes,4) = '${esc(ano)}'),0)::float    AS fat_ano,
+               COALESCE(SUM(v) FILTER (WHERE left(mes,4) = '${esc(anoAnt)}'),0)::float AS fat_ano_ant
+        FROM fat
+        WHERE ${CHAVE_FAT} IN (${listaChaves})
         GROUP BY 1`))).rows as any[];
-
-      // O que ficou de fora no MÊS EXIBIDO, por cliente: quantas notas passaram do
-      // próprio valor, quantos títulos sobrando e quanto isso soma.
-      const dupRows = (await db.execute(sql.raw(`
-        WITH ${CTE_TITULOS}
-        SELECT chave,
-               COUNT(*)::int              AS notas,
-               SUM(titulos - 1)::int      AS titulos,
-               SUM(soma - total_nf)::float AS valor
-        FROM por_nota
-        WHERE total_nf > 0 AND soma > total_nf + 0.005
-          AND to_char(issue_date,'YYYY-MM') = '${esc(mes)}'
-        GROUP BY 1`))).rows as any[];
-      const mDup = new Map<string, { notas: number; titulos: number; valor: number }>();
-      for (const d of dupRows) {
-        mDup.set(String(d.chave), {
-          notas: Number(d.notas) || 0,
-          titulos: Number(d.titulos) || 0,
-          valor: Number(d.valor) || 0,
-        });
-      }
 
       const deb = (await db.execute(sql.raw(`
         SELECT ${CHAVE_TITULO} AS chave,
@@ -569,9 +511,6 @@ export function registerRedesClientes(app: Express) {
           fatAnoAnt: Number(f.fat_ano_ant || 0),
           debito: Number(mDeb.get(k) || 0),
           papel: String(m.papel || "nenhum"),
-          // Títulos em dobro deixados de fora do mês exibido (ver o DISTINCT ON
-          // acima). Zero na esmagadora maioria dos clientes.
-          dupMes: mDup.get(k) || { notas: 0, titulos: 0, valor: 0 },
         };
         const arr = porRede.get(String(m.rede_id));
         if (arr) arr.push(cli); else porRede.set(String(m.rede_id), [cli]);
@@ -614,11 +553,6 @@ export function registerRedesClientes(app: Express) {
             fatAno: soma((c) => c.fatAno),
             fatAnoAnt: soma((c) => c.fatAnoAnt),
             debito: soma((c) => c.debito),
-            dupMes: {
-              notas: soma((c) => c.dupMes?.notas || 0),
-              titulos: soma((c) => c.dupMes?.titulos || 0),
-              valor: soma((c) => c.dupMes?.valor || 0),
-            },
           },
         };
       });
@@ -632,6 +566,7 @@ export function registerRedesClientes(app: Express) {
         mes, mesAnt, mesAnoAnt, ano, anoAnt, redes: filtradas,
         podeEditar: podeEditar(e.papel),
         escopo: { restrito: e.restrito, papel: e.papel, vendedor: e.nome },
+        fonte: { base: descricaoFonte() },
       });
     } catch (err: any) {
       console.error("[redes GET]", err);
