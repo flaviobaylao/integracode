@@ -1848,6 +1848,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   let _mapaFatCache: { t: number; m: Map<string, string> } | null = null;
   let _mapaVisitaCache: { t: number; m: Map<string, string> } | null = null;
   let _mapaEntregaCache: { t: number; m: Map<string, string> } | null = null;
+  let _mapaRedeCache: { t: number; m: Map<string, string> } | null = null;
   const _MAPA_CACHE_MS = 120000;
 
   // 📆 REMARCAR a PRÓXIMA VISITA do cliente pelo card do mapa (somente ADMIN).
@@ -2001,6 +2002,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // (baixa do entregador), não a prevista. A baixa pode estar em DOIS lugares — no pedido
       // (order_history) ou no cartão (sales_cards, pedido único) —, por isso o UNION ALL: olhar
       // só um dos dois deixaria cliente sem data sem motivo aparente.
+      // 🏢 REDE DE CLIENTES por cliente (aba Rede de Cliente): filiais do mesmo dono, sócios
+      // em comum ou CNPJs de mesma raiz. Um cliente pertence a UMA rede (índice único em
+      // cliente_rede_membros), então o mapa é 1:1. Serve para a BUSCA do mapa achar a rede
+      // inteira digitando o nome dela.
+      const buildRedes = async (): Promise<Map<string, string>> => {
+        if (_mapaRedeCache && (Date.now() - _mapaRedeCache.t) < _MAPA_CACHE_MS) return _mapaRedeCache.m;
+        const m = new Map<string, string>();
+        try {
+          const r: any = await db.execute(sql`
+            SELECT m.customer_id, r.nome
+              FROM cliente_rede_membros m
+              JOIN cliente_redes r ON r.id = m.rede_id`);
+          for (const x of ((r.rows || r) as any[])) {
+            if (x.customer_id && x.nome) m.set(String(x.customer_id), String(x.nome));
+          }
+        } catch (e: any) {
+          // A tabela só existe depois que a aba Rede de Cliente roda o ensureRedes(). Sem ela,
+          // o mapa continua normal — só sem o nome da rede.
+          console.warn('[MAP-DATA] redes:', e?.message);
+        }
+        _mapaRedeCache = { t: Date.now(), m };
+        return m;
+      };
       const buildUltimaEntrega = async (): Promise<Map<string, string>> => {
         if (_mapaEntregaCache && (Date.now() - _mapaEntregaCache.t) < _MAPA_CACHE_MS) return _mapaEntregaCache.m;
         const m = new Map<string, string>();
@@ -2070,7 +2094,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return doc ? (mapa.get(doc) || null) : null;
       };
 
-      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>, proxVisita?: Map<string, string>, ultEntrega?: Map<string, string>) => {
+      const rawToMapRow = (c: any, sit: string, sellerMap: Map<string, string>, ultimoFat?: Map<string, string>, proxVisita?: Map<string, string>, ultEntrega?: Map<string, string>, redes?: Map<string, string>) => {
         const pw = parseWk(c.weekdays);
         const sid = c.seller_id ?? null;
         return {
@@ -2087,6 +2111,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lastInvoiceDate: ultimoFat ? ultimoFatDoCliente(c, ultimoFat) : null,
           // 🚚 Data em que a entrega do último pedido foi concluída (substituiu o faturamento no card).
           lastDeliveryDate: ultEntrega ? (ultEntrega.get(String(c.id)) || null) : null,
+          // 🏢 Nome da REDE a que o cliente pertence — a busca do mapa casa com ele também.
+          redeNome: redes ? (redes.get(String(c.id)) || null) : null,
           nextVisitDate: proxVisita ? (proxVisita.get(String(c.id)) || null) : null,
         };
       };
@@ -2095,8 +2121,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const ultimoFat = await buildUltimoFaturamento();
         const proxVisita = await buildProximaVisita();
         const ultEntrega = await buildUltimaEntrega();
+        const redes = await buildRedes();
         const r: any = await db.execute(sql`SELECT id, name, fantasy_name, phone, address, neighborhood, document, cnpj, cpf, latitude, longitude, weekdays, visit_periodicity, seller_id, virtual_service, semana_atendimento FROM customers WHERE is_active = false AND (is_supplier IS NOT TRUE) AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float <> 0 AND longitude::float <> 0 ${andVend('seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat, proxVisita, ultEntrega));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'inativado', sellerMap, ultimoFat, proxVisita, ultEntrega, redes));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes INATIVADOS mapeados`);
         return res.json(rows);
       }
@@ -2105,6 +2132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const ultimoFatPerdidos = await buildUltimoFaturamento();
         const proxVisitaPerdidos = await buildProximaVisita();
         const ultEntregaPerdidos = await buildUltimaEntrega();
+        const redesPerdidos = await buildRedes();
         const r: any = await db.execute(sql`
           WITH rec AS (
             SELECT NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
@@ -2133,7 +2161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             AND ( (EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))*12 + EXTRACT(MONTH FROM (now() AT TIME ZONE 'America/Sao_Paulo')))
                   - (split_part(b.ultimo_mes,'-',1)::int*12 + split_part(b.ultimo_mes,'-',2)::int) ) >= 3
             ${andVend('c.seller_id')}`);
-        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos, proxVisitaPerdidos, ultEntregaPerdidos));
+        const rows = ((r.rows || r) as any[]).map((c) => rawToMapRow(c, 'perdido', sellerMap, ultimoFatPerdidos, proxVisitaPerdidos, ultEntregaPerdidos, redesPerdidos));
         console.log(`📍 [MAP-DATA] ${rows.length} clientes PERDIDOS mapeados`);
         return res.json(rows);
       }
@@ -2220,6 +2248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ultimoFatAtivos = await buildUltimoFaturamento();
       const proxVisitaAtivos = await buildProximaVisita();
       const ultEntregaAtivos = await buildUltimaEntrega();
+      const redesAtivos = await buildRedes();
       // Buscar todos os sellers para mapear nomes
       const allSellers = await db.select().from(users);
       const sellerMap = new Map<string, string>();
@@ -2281,6 +2310,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             lastInvoiceDate: ultimoFatAtivos.get(soDigitos(c.cnpj) || soDigitos(c.cpf) || soDigitos(c.document)) || null,
             // 🚚 Data em que a entrega do último pedido foi concluída (substituiu o faturamento no card).
             lastDeliveryDate: ultEntregaAtivos.get(String(c.id)) || null,
+            // 🏢 Nome da REDE a que o cliente pertence — a busca do mapa casa com ele também.
+            redeNome: redesAtivos.get(String(c.id)) || null,
             nextVisitDate: proxVisitaAtivos.get(String(c.id)) || null
           };
         });
