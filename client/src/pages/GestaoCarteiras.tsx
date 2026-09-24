@@ -568,7 +568,7 @@ export default function GestaoCarteiras() {
     // Um cliente só: a série é o histórico dele, mês a mês.
     if (clienteDaSerie) {
       const pm: any = (clienteDaSerie as any).porMes || {};
-      return meses.map((m) => ({ mes: m, valor: Number(pm[m]) || 0, titulos: 0, clientes: 0, valorNf: null }));
+      return meses.map((m) => ({ mes: m, valor: Number(pm[m]) || 0, titulos: 0, clientes: 0, valorTitulos: null }));
     }
     // Rede: a série é a SOMA das filiais, mês a mês. Filial que não aparece no
     // recorte (outro vendedor, outro tipo) simplesmente não soma — o gráfico
@@ -580,23 +580,28 @@ export default function GestaoCarteiras() {
         if (!doGrupo.has(c.chave)) continue;
         for (const [m, v] of Object.entries(c.porMes || {})) soma.set(m, (soma.get(m) || 0) + (Number(v) || 0));
       }
-      return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
+      return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorTitulos: null }));
     }
     if (!filtrarVend) return base;
     const soma = new Map<string, number>();
     for (const c of clientes as any[]) {
       for (const [m, v] of Object.entries(c.porMes || {})) soma.set(m, (soma.get(m) || 0) + (Number(v) || 0));
     }
-    return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorNf: null }));
+    return meses.map((m) => ({ mes: m, valor: soma.get(m) || 0, titulos: 0, clientes: 0, valorTitulos: null }));
   }, [d, clientes, meses, filtrarVend, clienteDaSerie, redeDaSerie]);
 
   // A linha laranja (NF-e) só existe na carteira inteira e sem recorte — quando
   // ela aparece, o pico do eixo tem que considerar as DUAS linhas, senão a de
   // cima sai cortada.
-  const mostraLinhaNf = !filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0;
+  // A linha principal é o FATURAMENTO (NF-e autorizada do INTEGRA a partir de
+  // abr/2026; antes disso, títulos, que era a única base existente). A linha
+  // laranja é o comparativo: o que a COBRANÇA viu (títulos emitidos). A diferença
+  // entre as duas é informação — título cancelado por razão de cobrança, venda
+  // faturada por fora, título repetido.
+  const mostraLinhaNf = !filtrarVend && !alvoSerie && (d?.fonte?.mesesComTitulos || 0) > 0;
 
   // ── LINHA DE TENDÊNCIA (PONDERADA) ──────────────────────────────────────────
-  // Reta de mínimos quadrados PONDERADOS sobre a linha azul (títulos emitidos),
+  // Reta de mínimos quadrados PONDERADOS sobre a linha azul (faturamento),
   // com peso por recência: o mês mais antigo do período pesa 1 e o mais recente
   // pesa N — a MESMA régua da "média ponderada/mês" da tabela de clientes. Sem
   // peso, um pico velho segura a reta para cima muito depois de ter acabado, e o
@@ -625,7 +630,7 @@ export default function GestaoCarteiras() {
     const valores: Array<number | null | undefined> = [];
     for (const p of (serieDesenhada || []) as any[]) {
       valores.push(Number(p?.valor));
-      if (mostraLinhaNf) valores.push(Number(p?.valorNf));
+      if (mostraLinhaNf) valores.push(Number(p?.valorTitulos));
       // A reta entra no cálculo: num período de alta forte ela pode terminar
       // acima do maior mês, e aí sairia cortada no topo.
       valores.push(Number(p?.tendencia));
@@ -1583,8 +1588,8 @@ export default function GestaoCarteiras() {
                     {rotuloAlvoSerie ? <span className="text-base font-normal text-muted-foreground"> · {rotuloAlvoSerie}</span> : null}
                   </CardTitle>
                   <CardDescription>
-                    Base: títulos de venda emitidos em Contas a Receber
-                    {!filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0 ? " · linha laranja tracejada = NF-e de venda autorizada (regra oficial)" : ""}
+                    Base: {d?.fonte?.base || "NF-e de venda autorizada emitida pelo INTEGRA"}
+                    {!filtrarVend && !alvoSerie && (d?.fonte?.mesesComTitulos || 0) > 0 ? " · linha laranja tracejada = títulos emitidos no Contas a Receber (cobrança), para comparar" : ""}
                     {fim === mesHoje ? " · o último mês ainda está em curso" : ""}
                   </CardDescription>
                   {/* Filtro do gráfico: um CLIENTE ou uma REDE inteira. As redes
@@ -1706,9 +1711,9 @@ export default function GestaoCarteiras() {
                     tick={{ fontSize: 12, fill: "#898781" }} tickLine={false} axisLine={false} width={52} />
                   <Tooltip formatter={(v: any, n: any) => [BRL(v), n]} labelFormatter={(l: any) => labelMes(String(l))} />
                   <Legend />
-                  <Line type="linear" dataKey="valor" name="Faturamento (títulos emitidos)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                  <Line type="linear" dataKey="valor" name="Faturamento (NF-e autorizada)" stroke={SERIE_TITULOS} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 6 }} />
                   {mostraLinhaNf ? (
-                    <Line type="linear" dataKey="valorNf" name="NF-e de venda autorizada" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
+                    <Line type="linear" dataKey="valorTitulos" name="Títulos emitidos (cobrança)" stroke={SERIE_NF} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3 }} connectNulls={false} />
                   ) : null}
                   {/* Tendência: reta de referência, não é uma terceira medição —
                       por isso cinza (a cor neutra do texto), sem marcador em cada

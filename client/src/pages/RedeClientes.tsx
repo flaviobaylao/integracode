@@ -33,8 +33,6 @@ type ClienteRede = {
   /** 'destinatario' | 'entrega' | 'nenhum' — papel do integrante na NF-e. */
   papel?: string;
   fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
-  /** Notas cujo título repetido ficou FORA da soma do mês exibido. */
-  dupMes?: { notas: number; titulos: number; valor: number };
 };
 /** Endereço de entrega SEM CNPJ pendurado na rede — não é cliente, não tem carteira. */
 type PontoEntrega = {
@@ -51,7 +49,6 @@ type Rede = {
   totais: {
     clientes: number; ativos: number; inativos: number;
     fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
-    dupMes?: { notas: number; titulos: number; valor: number };
   };
 };
 type Candidato = {
@@ -250,6 +247,15 @@ export default function RedeClientes() {
           <div className="text-sm text-muted-foreground">
             Faturamento do mês <span className="font-medium text-foreground">{labelMes(mes)}</span> e do ano{" "}
             <span className="font-medium text-foreground">{ano}</span>
+            {/* De onde vem o número. A régua mudou em 24/09/2026: nota é VENDA,
+                título é COBRANÇA — cancelar o título por razão de cobrança não
+                pode mais apagar o faturamento do cliente. Como a NF-e do INTEGRA
+                só existe de abr/2026, os meses anteriores seguem por título. */}
+            {data?.fonte?.base ? (
+              <span className="block text-[11px] leading-tight" data-testid="texto-fonte-faturamento">
+                Base: {data.fonte.base}
+              </span>
+            ) : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Button variant="outline" onClick={exportar} data-testid="button-export-redes">
@@ -369,12 +375,6 @@ export default function RedeClientes() {
                             {pct(variacao(r.totais.fatMes, r.totais.fatMesAnoAnt))} vs {labelMes(mesAnoAnt)}
                           </span>
                         </p>
-                        {r.totais.dupMes?.titulos ? (
-                          <p className="text-[11px] leading-tight text-amber-700"
-                            title="A mesma NF-e gerou mais de um título no Contas a Receber. O faturamento aqui é o valor da nota; o excedente ficou de fora e o título repetido precisa ser cancelado no financeiro.">
-                            {r.totais.dupMes.titulos} título(s) repetido(s) fora da conta ({BRL0(r.totais.dupMes.valor)})
-                          </p>
-                        ) : null}
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">Faturamento {ano}</p>
@@ -480,20 +480,6 @@ export default function RedeClientes() {
                                 <span className={`block text-[11px] ${corVar(variacao(c.fatMes, c.fatMesAnt))}`}>
                                   {pct(variacao(c.fatMes, c.fatMesAnt))} vs mês ant.
                                 </span>
-                                {/* A soma de uma nota não passa do valor dela. O que
-                                    sobrou (título repetido) fica de fora da conta — mas
-                                    não some da vista: o aviso diz quanto, porque o
-                                    título repetido continua vivo no Contas a Receber e
-                                    pode virar boleto em dobro. */}
-                                {c.dupMes?.titulos ? (
-                                  <span
-                                    className="block text-[11px] text-amber-700"
-                                    title={`${c.dupMes.notas} nota(s) com título repetido: os títulos somam ${BRL(c.dupMes.valor)} a mais do que o valor da própria NF-e. Aqui vale o valor da nota — o título repetido continua no Contas a Receber e precisa ser cancelado.`}
-                                    data-testid={`aviso-titulo-dobrado-${c.id}`}
-                                  >
-                                    {c.dupMes.titulos === 1 ? "1 título repetido" : `${c.dupMes.titulos} títulos repetidos`} fora da conta ({BRL(c.dupMes.valor)})
-                                  </span>
-                                ) : null}
                               </TableCell>
                               <TableCell className="text-right whitespace-nowrap font-medium">
                                 {BRL(c.fatAno)}
