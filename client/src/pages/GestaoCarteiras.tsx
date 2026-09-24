@@ -595,12 +595,16 @@ export default function GestaoCarteiras() {
   // cima sai cortada.
   const mostraLinhaNf = !filtrarVend && !alvoSerie && (d?.fonte?.mesesComNf || 0) > 0;
 
-  // ── LINHA DE TENDÊNCIA ──────────────────────────────────────────────────────
-  // Reta de mínimos quadrados sobre a linha azul (títulos emitidos). O mês em
-  // curso fica FORA da conta — está pela metade e puxaria a reta para baixo,
-  // inventando uma queda — mas a reta é DESENHADA em cima dele também, projetada,
-  // para o gráfico não terminar com um pedaço vazio. Regra e testes em
-  // @/lib/tendencia.
+  // ── LINHA DE TENDÊNCIA (PONDERADA) ──────────────────────────────────────────
+  // Reta de mínimos quadrados PONDERADOS sobre a linha azul (títulos emitidos),
+  // com peso por recência: o mês mais antigo do período pesa 1 e o mais recente
+  // pesa N — a MESMA régua da "média ponderada/mês" da tabela de clientes. Sem
+  // peso, um pico velho segura a reta para cima muito depois de ter acabado, e o
+  // gráfico contradiz a coluna de média ponderada logo abaixo dele.
+  // O mês em curso fica FORA da conta — está pela metade e puxaria a reta para
+  // baixo (com peso máximo, por ser o mais recente) — mas a reta é DESENHADA em
+  // cima dele também, projetada, para o gráfico não terminar com um pedaço vazio.
+  // Regra e testes em @/lib/tendencia.
   const ultimoMesEmCurso = String((serie || [])[(serie || []).length - 1]?.mes || "") === mesHoje;
   const tendencia = useMemo(
     () => tendenciaDaSerie((serie || []).map((p: any) => Number(p?.valor) || 0), { ignorarUltimo: ultimoMesEmCurso }),
@@ -1711,20 +1715,22 @@ export default function GestaoCarteiras() {
                       mês e sem destaque no hover. Ela acompanha a linha azul; quem
                       lê não pode confundi-la com mais um faturamento. */}
                   {tendencia ? (
-                    <Line type="linear" dataKey="tendencia" name={`Tendência (${tendencia.meses} ${tendencia.meses === 1 ? "mês" : "meses"})`}
+                    <Line type="linear" dataKey="tendencia" name={`Tendência ponderada (${tendencia.meses} ${tendencia.meses === 1 ? "mês" : "meses"})`}
                       stroke={CINZA} strokeWidth={2} strokeDasharray="2 4" dot={false} activeDot={false} isAnimationActive={false} />
                   ) : null}
                 </LineChart>
               </ResponsiveContainer>
               {tendencia ? (
                 <p className="text-xs text-muted-foreground mt-2" data-testid="nota-tendencia-serie">
-                  <b>Tendência</b> (linha cinza tracejada): no conjunto do período o faturamento está{" "}
+                  <b>Tendência ponderada</b> (linha cinza tracejada): o faturamento está{" "}
                   {rumoDaTendencia(tendencia)} — reta de mínimos quadrados sobre {NUM(tendencia.meses)}{" "}
-                  {tendencia.meses === 1 ? "mês" : "meses"}.
+                  {tendencia.meses === 1 ? "mês" : "meses"}, com <b>peso por recência</b>: o mês mais antigo pesa 1
+                  e o mais recente pesa {NUM(tendencia.pesoMaior)}, a mesma régua da média ponderada da tabela
+                  abaixo. Sem peso, um pico velho segura a reta para cima muito depois de ter acabado.
                   {tendencia.projetouUltimo
-                    ? ` O mês em curso (${labelMes(String(serie[serie.length - 1]?.mes || ""))}) fica fora da conta — está pela metade e puxaria a reta para baixo; sobre ele a reta é só projetada.`
+                    ? ` O mês em curso (${labelMes(String(serie[serie.length - 1]?.mes || ""))}) fica fora da conta — está pela metade e, sendo o de maior peso, puxaria a reta para baixo; sobre ele a reta é só projetada.`
                     : ""}
-                  {" "}Ela mostra o rumo do período inteiro, não o que vai acontecer no mês que vem.
+                  {" "}Ela mostra o rumo do período, não o que vai acontecer no mês que vem.
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground mt-2" data-testid="nota-escala-serie">
