@@ -9069,8 +9069,62 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
+  // ==========================================================================
+  // TRAVA DE CATEGORIA OBRIGATÓRIA (regra Honest, 23/set/2026)
+  // --------------------------------------------------------------------------
+  // Nenhuma conta a RECEBER ou a PAGAR é gravada sem chart_account_id (categoria
+  // DRE). A trava fica AQUI, no núcleo, e não em cada endpoint — assim TODA
+  // origem (formulário manual, pipeline de faturamento, conciliação bancária,
+  // boleto BB, Cielo EDI, etc.) fica coberta por um ponto só.
+  // Resolução, em ordem: (1) categoria explícita no payload; (2) por contexto
+  // (recebível → conta-filha de receita_bruta = "Receita de Vendas de Produtos";
+  // pagável → categoria PREDOMINANTE já usada por ESTE fornecedor); (3) categoria
+  // -padrão configurável em system_settings; se nada resolver E o modo for
+  // 'bloquear', lança erro. Modo padrão = 'padrao' (nunca quebra um fluxo).
+  private async _settingValue(key: string): Promise<string | null> {
+    try {
+      const r: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`);
+      const v = (r?.rows ?? r ?? [])[0]?.value;
+      return v ? String(v) : null;
+    } catch { return null; }
+  }
+  private async _resolveReceivableCategory(data: any): Promise<string | null> {
+    if (data?.chartAccountId) return data.chartAccountId;
+    try {
+      const r: any = await db.execute(sql`SELECT id FROM chart_of_accounts WHERE dre_group = 'receita_bruta' AND code LIKE '%.%' AND is_active = true ORDER BY code LIMIT 1`);
+      const id = (r?.rows ?? r ?? [])[0]?.id;
+      if (id) return String(id);
+    } catch {}
+    return await this._settingValue('dre_categoria_padrao_receber');
+  }
+  private async _resolvePayableCategory(data: any): Promise<string | null> {
+    if (data?.chartAccountId) return data.chartAccountId;
+    try {
+      const doc = data?.supplierDocument ? String(data.supplierDocument).replace(/\D/g, '') : '';
+      const nm = String(data?.supplierName || '').trim().toUpperCase();
+      const r: any = await db.execute(sql`
+        SELECT chart_account_id AS id, count(*) AS n FROM payables
+        WHERE chart_account_id IS NOT NULL AND deleted_at IS NULL
+          AND ( (${doc} <> '' AND regexp_replace(COALESCE(supplier_document, ''), '[^0-9]', '', 'g') = ${doc})
+                OR (${doc} = '' AND upper(trim(supplier_name)) = ${nm}) )
+        GROUP BY chart_account_id ORDER BY n DESC LIMIT 1`);
+      const id = (r?.rows ?? r ?? [])[0]?.id;
+      if (id) return String(id);
+    } catch {}
+    return await this._settingValue('dre_categoria_padrao_pagar');
+  }
+  private async _assertCategoria(kind: 'receivable' | 'payable', caid: string | null): Promise<void> {
+    if (caid) return;
+    const modo = (await this._settingValue('categoria_obrigatoria_modo')) || 'padrao';
+    const setKey = kind === 'receivable' ? 'dre_categoria_padrao_receber' : 'dre_categoria_padrao_pagar';
+    throw new Error(`CATEGORIA_OBRIGATORIA: conta a ${kind === 'receivable' ? 'receber' : 'pagar'} sem categoria DRE. `
+      + `Selecione a categoria (plano de contas) ou configure a categoria-padrão em system_settings.${setKey}. (modo=${modo})`);
+  }
+
   async createReceivable(data: InsertReceivable): Promise<Receivable> {
-    const [item] = await db.insert(receivables).values(data).returning();
+    const caid = await this._resolveReceivableCategory(data as any);
+    await this._assertCategoria('receivable', caid);
+    const [item] = await db.insert(receivables).values({ ...(data as any), chartAccountId: caid }).returning();
     return item;
   }
 
@@ -9186,7 +9240,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPayable(data: InsertPayable): Promise<Payable> {
-    const [item] = await db.insert(payables).values(data).returning();
+    const caid = await this._resolvePayableCategory(data as any);
+    await this._assertCategoria('payable', caid);
+    const [item] = await db.insert(payables).values({ ...(data as any), chartAccountId: caid }).returning();
     return item;
   }
 

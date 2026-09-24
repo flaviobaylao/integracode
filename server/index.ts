@@ -422,6 +422,48 @@ run();
       try { await db.execute(sql.raw(_stmt)); }
       catch (e: any) { console.warn('[CRIT-MIGRATION] falha (ignorada):', _stmt, e?.message); }
     }
+    // ==========================================================================
+    // TRAVA DE CATEGORIA OBRIGATÓRIA — contas a pagar/receber (23/set/2026)
+    // --------------------------------------------------------------------------
+    // (a) SEED da conta "A Classificar" (bucket de revisão p/ pagáveis que caem no
+    //     padrão) e das chaves de configuração da trava — só se ainda não existirem.
+    // (b) NOT NULL AUTO-GUARDADO: só aplica SET NOT NULL quando NÃO houver mais
+    //     nenhum título (de qualquer status) sem chart_account_id. Enquanto sobrar
+    //     algum, o bloco apenas registra e segue — nunca derruba o boot. Assim que
+    //     a última conta for categorizada, o próximo boot ativa a trava sozinho.
+    try {
+      // (a) categoria "A Classificar" (despesa) para o fallback dos pagáveis
+      await db.execute(sql.raw(
+        "INSERT INTO chart_of_accounts (code, name, type, dre_group, is_active) " +
+        "SELECT 'A.CLASS', 'A Classificar (revisar)', 'despesa', 'despesas_gerais', true " +
+        "WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts WHERE code = 'A.CLASS')"));
+      // (a) categoria-padrão RECEBER = conta-filha de receita_bruta (1.1); PAGAR = A Classificar.
+      await db.execute(sql.raw(
+        "INSERT INTO system_settings (key, value, updated_by) " +
+        "SELECT 'dre_categoria_padrao_receber', (SELECT id FROM chart_of_accounts WHERE dre_group='receita_bruta' AND code LIKE '%.%' AND is_active=true ORDER BY code LIMIT 1), 'trava-categoria' " +
+        "WHERE EXISTS (SELECT 1 FROM chart_of_accounts WHERE dre_group='receita_bruta' AND code LIKE '%.%') " +
+        "ON CONFLICT (key) DO NOTHING"));
+      await db.execute(sql.raw(
+        "INSERT INTO system_settings (key, value, updated_by) " +
+        "SELECT 'dre_categoria_padrao_pagar', (SELECT id FROM chart_of_accounts WHERE code='A.CLASS' LIMIT 1), 'trava-categoria' " +
+        "ON CONFLICT (key) DO NOTHING"));
+      await db.execute(sql.raw(
+        "INSERT INTO system_settings (key, value, updated_by) VALUES ('categoria_obrigatoria_modo', 'padrao', 'trava-categoria') ON CONFLICT (key) DO NOTHING"));
+      // (b) NOT NULL só quando a coluna já não tem NENHUM nulo (inclui cancelados/excluídos).
+      await db.execute(sql.raw(
+        "DO $$ BEGIN " +
+        "  IF (SELECT count(*) FROM receivables WHERE chart_account_id IS NULL) = 0 THEN " +
+        "    BEGIN ALTER TABLE receivables ALTER COLUMN chart_account_id SET NOT NULL; " +
+        "    RAISE NOTICE '[TRAVA-CATEGORIA] receivables.chart_account_id agora NOT NULL'; " +
+        "    EXCEPTION WHEN others THEN NULL; END; " +
+        "  ELSE RAISE NOTICE '[TRAVA-CATEGORIA] receivables ainda tem titulos sem categoria — NOT NULL adiado'; END IF; " +
+        "  IF (SELECT count(*) FROM payables WHERE chart_account_id IS NULL) = 0 THEN " +
+        "    BEGIN ALTER TABLE payables ALTER COLUMN chart_account_id SET NOT NULL; " +
+        "    RAISE NOTICE '[TRAVA-CATEGORIA] payables.chart_account_id agora NOT NULL'; " +
+        "    EXCEPTION WHEN others THEN NULL; END; " +
+        "  ELSE RAISE NOTICE '[TRAVA-CATEGORIA] payables ainda tem titulos sem categoria — NOT NULL adiado'; END IF; " +
+        "END $$;"));
+    } catch (e: any) { console.warn('[TRAVA-CATEGORIA] seed/notnull (ignorado):', e?.message); }
     // PREENCHIMENTO INICIAL da logística (set/2026) — medições da fábrica para as
     // duas embalagens. Só entra onde o peso ainda está VAZIO: o que o usuário
     // editar na tela de Produtos nunca é sobrescrito por este bloco.
