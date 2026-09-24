@@ -72,7 +72,7 @@ export default function VirtualServiceLogModal({
   const [images, setImages] = useState<string[]>([]);
   const effectiveDefaultType: ServiceType = entityType === 'lead'
     ? 'prospecao'
-    : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'nao_venda');
+    : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'registro');
   const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [nextContactDate, setNextContactDate] = useState<string>("");
@@ -85,7 +85,7 @@ export default function VirtualServiceLogModal({
     if (open) {
       const newDefault: ServiceType = entityType === 'lead'
         ? 'prospecao'
-        : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'nao_venda');
+        : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'registro');
       setServiceType(newDefault);
     }
   }, [open, defaultServiceType, entityType]);
