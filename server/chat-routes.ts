@@ -4050,17 +4050,28 @@ export function registerChatRoutes(app: Express): void {
           if (Array.isArray(msgs)) { out.msgCount = msgs.length; out.msgSample = msgs.slice(0, 5).map(msamp); }
         }
       } catch (e: any) { out.detailErr = String(e?.message || e).slice(0, 150); }
-      try {
-        const now = new Date().toISOString();
-        const r2 = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=Before&Take=100');
-        out.relStatus = r2.status;
-        const b2: any = await r2.json().catch(() => null);
-        if (b2) {
-          const arr = Array.isArray(b2) ? b2 : (b2.items || b2.Items || b2.messages || b2.Messages);
-          out.relKeys = Array.isArray(b2) ? ['<array>'] : Object.keys(b2);
-          if (Array.isArray(arr)) { out.relCount = arr.length; out.relSample = arr.slice(0, 5).map(msamp); }
-        }
-      } catch (e: any) { out.relErr = String(e?.message || e).slice(0, 150); }
+      const now = new Date().toISOString();
+      const variants = [
+        'relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=Before&Take=100',
+        'relative-messages?organizationId=' + _org + '&fromEventUTC=' + encodeURIComponent(now) + '&direction=Before&take=100',
+        'relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=After&Take=100',
+        'relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now.slice(0, 19) + 'Z') + '&Direction=Before&Take=100',
+        'relative-messages?organizationId=' + _org + '&Take=100',
+        'messages?organizationId=' + _org + '&Take=100',
+      ];
+      out.rel = [];
+      for (const v of variants) {
+        try {
+          const r2 = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/' + v);
+          const b2: any = await r2.json().catch(() => null);
+          const arr = Array.isArray(b2) ? b2 : (b2 && (b2.items || b2.Items || b2.messages || b2.Messages));
+          const rec: any = { q: v.split('?')[1].slice(0, 60), status: r2.status };
+          if (Array.isArray(arr)) { rec.count = arr.length; rec.sample = arr.slice(0, 4).map(msamp); }
+          else if (b2 && b2.errors) { rec.errors = b2.errors; rec.title = b2.title; }
+          else if (b2) { rec.keys = Object.keys(b2); }
+          out.rel.push(rec);
+        } catch (e: any) { out.rel.push({ q: v.slice(0, 40), err: String(e?.message || e).slice(0, 100) }); }
+      }
       return res.json(out);
     } catch (e: any) {
       return res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
