@@ -469,10 +469,18 @@ export default function RotaDoDia() {
       } catch {}
     }
     const digits = String(phone || '').replace(/\D/g, '');
-    window.open(digits ? `/telemarketing/atendimento?phone=${digits}` : `/telemarketing/atendimento`, 'honest-central-atendimento');
+    // Abre DIRETO no Umbler (contato do cliente), não mais na Central interna. Leva o número
+    // para a busca do Umbler e também copia para a área de transferência — assim, se o Umbler
+    // não cair direto no contato pelo parâmetro, é só colar na busca. (set/2026)
+    const withCountry = (digits && !digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) ? ('55' + digits) : digits;
+    try { if (withCountry && (navigator as any).clipboard) await (navigator as any).clipboard.writeText(withCountry); } catch {}
+    const umblerUrl = withCountry ? `https://app-utalk.umbler.com/?search=${encodeURIComponent(withCountry)}` : 'https://app-utalk.umbler.com/';
+    window.open(umblerUrl, 'umbler-central-atendimento');
     if (customerId) markEmAndamento(customerId);
     if (!digits) {
-      toast({ title: 'Cliente sem telefone cadastrado', description: 'Abri a Central de Atendimento; localize o cliente pela busca.' });
+      toast({ title: 'Cliente sem telefone cadastrado', description: 'Abri o Umbler; localize o cliente pela busca.' });
+    } else {
+      toast({ title: 'Umbler aberto', description: 'Número copiado — se não abrir direto no contato, cole na busca do Umbler.' });
     }
   };
   // Finaliza o "em andamento" quando o cliente foi atendido ou tem pedido do dia.
