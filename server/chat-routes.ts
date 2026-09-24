@@ -4029,11 +4029,13 @@ export function registerChatRoutes(app: Express): void {
     try {
       const chatId = String(req.query.chatId || "");
       if (!chatId) return res.status(400).json({ error: "?chatId=" });
-      const out: any = {};
+      const _cfg = await resolveUmblerTalkConfig();
+      const _org = ('error' in _cfg) ? '' : encodeURIComponent(_cfg.orgId);
+      const out: any = { orgResolved: !('error' in _cfg) };
       const sbomOf = (m: any) => { const s = m.sentByOrganizationMember || m.SentByOrganizationMember; return (s && typeof s === 'object') ? (s.id || s.Id) : s; };
       const msamp = (m: any) => ({ keys: Object.keys(m).slice(0, 35), source: m.source || m.Source, fromContact: (m.fromContact !== undefined ? m.fromContact : m.FromContact), content: String(m.content || m.Content || '').slice(0, 25), sbom: sbomOf(m), templateId: !!(m.templateId || m.TemplateId), when: m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.messageDate || m.MessageDate });
       try {
-        const r = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/');
+        const r = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/?organizationId=' + _org);
         out.detailStatus = r.status;
         const b: any = await r.json().catch(() => null);
         if (b && typeof b === 'object') {
@@ -4050,7 +4052,7 @@ export function registerChatRoutes(app: Express): void {
       } catch (e: any) { out.detailErr = String(e?.message || e).slice(0, 150); }
       try {
         const now = new Date().toISOString();
-        const r2 = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?FromEventUTC=' + encodeURIComponent(now) + '&Direction=Before&Take=100');
+        const r2 = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=Before&Take=100');
         out.relStatus = r2.status;
         const b2: any = await r2.json().catch(() => null);
         if (b2) {
