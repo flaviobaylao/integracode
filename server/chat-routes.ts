@@ -682,12 +682,12 @@ async function getUmblerApiMemberId(): Promise<string | null> {
 }
 
 // Busca a conversa do cliente DIRETO no Umbler Talk (nao no banco local), juntando TODOS os
-// canais do cliente (1841, 7169, 2630). Traz APENAS conversas do atendente com o cliente:
-// mensagens do cliente e mensagens de atendentes HUMANOS. Descarta "disparo de robo"
-// (templates, avisos automaticos, IA/telemarketing) — tudo que sai pelo membro-integracao
-// ou marcado como template/bulk/bot/agendado. Ancora na ultima acao. Como a API expoe so as
-// mensagens-marco do chat (1a do cliente, 1a resposta do atendente e a ultima), sao essas.
-async function buscarConversaUmbler(rawPhone: string): Promise<{
+// canais do cliente (1841, 7169, 2630) e trazendo TODA a conversa DO DIA (nao so a ultima frase).
+// Traz APENAS conversas do atendente com o cliente: mensagens do cliente e de atendentes HUMANOS.
+// Descarta "disparo de robo" (templates, avisos automaticos, IA/telemarketing) — tudo que sai pelo
+// membro-integracao ou marcado como template/bulk/bot/agendado. Se no dia so houve robo (ou nada),
+// retorna found=false com a razao. Historico via /v1/chats/{id}/relative-messages (Direction=0).
+async function buscarConversaUmbler(rawPhone: string, dateStr?: string): Promise<{
   found: boolean; reason?: string; customerName?: string; phone?: string;
   date?: string; chatId?: string; totalChats?: number;
   messages?: Array<{ senderType: string; content: string; createdAt: string }>;
@@ -699,25 +699,26 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
   const targetCore = _phoneCore(rawPhone);
   if (!targetCore || targetCore.length < 8) return { found: false, reason: 'Telefone invalido' };
   const apiMemberId = await getUmblerApiMemberId();
+  const org = encodeURIComponent(cfg.orgId);
 
-  // A paginacao (&page=) da API nao avança de forma confiavel — as paginas repetem os mesmos
-  // ~250 chats mais recentes. Entao varremos ate detectar que a lista nao avançou e usamos o
-  // conjunto (deduplicado por id) que conseguimos — cobre as conversas recentes.
+  // Dia-alvo (America/Sao_Paulo). Sem data valida, usa HOJE.
+  const dayOf = (d: any) => { try { return new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return ''; } };
+  const reqDay = String(dateStr || '').slice(0, 10);
+  const targetDay = /^\d{4}-\d{2}-\d{2}$/.test(reqDay) ? reqDay : dayOf(new Date());
+  const isToday = targetDay === dayOf(new Date());
+
+  // Chats do cliente (deduplicados por id), varrendo a lista (paginacao da API nao avança).
   const byId = new Map<string, any>();
-  const MAX_PAGES = 25;
-  let pagesScanned = 0, totalScanned = 0, firstIdSeen = '';
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const url = '/v1/chats/?organizationId=' + encodeURIComponent(cfg.orgId) + '&page=' + page;
+  let firstIdSeen = '';
+  for (let page = 1; page <= 25; page++) {
     let resp: any;
-    try { resp = await umblerTalkFetch(url); } catch { break; }
+    try { resp = await umblerTalkFetch('/v1/chats/?organizationId=' + org + '&page=' + page); } catch { break; }
     if (!resp.ok) break;
     let body: any; try { body = await resp.json(); } catch { break; }
     const items = Array.isArray(body) ? body : ((body && (body.items || body.Items)) || []);
-    pagesScanned++;
     if (!items.length) break;
-    totalScanned += items.length;
     const pageFirstId = String((items[0] && (items[0].id || items[0].Id)) || '');
-    if (page > 1 && pageFirstId && pageFirstId === firstIdSeen) break; // lista nao avançou
+    if (page > 1 && pageFirstId && pageFirstId === firstIdSeen) break;
     if (page === 1) firstIdSeen = pageFirstId;
     for (const chat of items) {
       const contact = chat.Contact || chat.contact || {};
@@ -729,12 +730,7 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
     }
   }
   const distinct = Array.from(byId.values());
-  const _dt = (x: any) => {
-    const v = x && (x.eventAtUTC || x.EventAtUTC || x.lastMessageAtUTC || x.LastMessageAtUTC || x.createdAtUTC || x.CreatedAtUTC);
-    const t = v ? new Date(v).getTime() : 0;
-    return isNaN(t) ? 0 : t;
-  };
-  distinct.sort((a, b) => _dt(a) - _dt(b)); // mais antigo primeiro (asc) — a ultima acao fica por ultimo
+  const _chDt = (c: any) => { const v = c.eventAtUTC || c.EventAtUTC || c.createdAtUTC || c.CreatedAtUTC; const t = v ? new Date(v).getTime() : 0; return isNaN(t) ? 0 : t; };
 
   const _isRobot = (m: any, sbom: any) => {
     const isTemplate = !!(m.templateId || m.TemplateId);
@@ -744,8 +740,10 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
     const isApiMember = !!(apiMemberId && sbom && String(sbom) === String(apiMemberId));
     return isTemplate || isBulk || isBot || isSched || isApiMember;
   };
-  const _map = (m: any, chatMs: number, ord: number) => {
+  const _mapDay = (m: any) => {
     if (!m || typeof m !== 'object') return null;
+    const when = m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.messageDate || m.MessageDate || null;
+    if (!when || dayOf(when) !== targetDay) return null; // fora do dia-alvo
     const content = m.content || m.Content || m.text || m.Text || '';
     if (!content) return null;
     const source = String(m.Source || m.source || '').toLowerCase();
@@ -754,56 +752,48 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
     const sbomRaw = (m.SentByOrganizationMember !== undefined ? m.SentByOrganizationMember : m.sentByOrganizationMember);
     const sbom = (sbomRaw && typeof sbomRaw === 'object') ? (sbomRaw.id || sbomRaw.Id) : sbomRaw;
     let senderType: string;
-    if (isClient) {
-      senderType = 'customer';
-    } else {
-      // Mensagem de saida (membro). So entra se for atendente HUMANO — descarta robo/sistema.
-      if (!sbom || _isRobot(m, sbom)) return null;
-      senderType = 'agent';
-    }
-    const dt = m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.SentAt || m.sentAt || null;
-    let iso: string;
-    try { iso = new Date(dt || (chatMs || Date.now())).toISOString(); } catch { iso = new Date().toISOString(); }
-    return { senderType, content: String(content), createdAt: iso, _k: (chatMs || 0) * 10 + ord };
+    if (isClient) { senderType = 'customer'; }
+    else { if (!sbom || _isRobot(m, sbom)) return null; senderType = 'agent'; } // membro: so atendente humano
+    let iso: string; try { iso = new Date(when).toISOString(); } catch { return null; }
+    return { senderType, content: String(content), createdAt: iso, _t: new Date(when).getTime() };
   };
 
-  let collected: Array<{ senderType: string; content: string; createdAt: string; _k: number }> = [];
+  const nowIso = new Date().toISOString();
+  let collected: Array<{ senderType: string; content: string; createdAt: string; _t: number }> = [];
+  const usedChannels: string[] = [];
+  let fetchedChats = 0;
   for (const chat of distinct) {
-    const chatMs = _dt(chat);
-    const markers = [
-      chat.firstContactMessage || chat.FirstContactMessage,
-      chat.firstMemberReplyMessage || chat.FirstMemberReplyMessage,
-      chat.lastMessage || chat.LastMessage,
-    ];
-    for (let ord = 0; ord < markers.length; ord++) {
-      const mapped = _map(markers[ord], chatMs, ord);
-      if (mapped) collected.push(mapped);
-    }
+    // So busca historico de chats com atividade no dia-alvo ou depois (senao nao ha msg no dia).
+    if (dayOf(_chDt(chat) || 0) < targetDay) continue;
+    const id = String((chat.id || chat.Id) || '');
+    if (!id) continue;
+    let msgs: any[] = [];
+    try {
+      const r = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(id) + '/relative-messages?organizationId=' + org + '&FromEventUTC=' + encodeURIComponent(nowIso) + '&Direction=0&Take=200');
+      if (r.ok) { const b: any = await r.json(); msgs = Array.isArray(b) ? b : ((b && (b.items || b.Items || b.messages || b.Messages)) || []); }
+    } catch { /* ignora chat que falhou */ }
+    fetchedChats++;
+    const ch = chat.channel || chat.Channel || {};
+    const chName = ch.name || ch.Name || ch.phoneNumber || ch.PhoneNumber || '?';
+    for (const m of msgs) { const mm = _mapDay(m); if (mm) { collected.push(mm); if (!usedChannels.includes(chName)) usedChannels.push(chName); } }
   }
-  collected.sort((a, b) => a._k - b._k);
+  collected.sort((a, b) => a._t - b._t);
   const seen = new Set<string>();
   const messages = collected.filter((m) => {
-    const k = m.senderType + '|' + m.content;
+    const k = m.senderType + '|' + m.content + '|' + m.createdAt.slice(0, 16);
     if (seen.has(k)) return false; seen.add(k); return true;
   }).map(({ senderType, content, createdAt }) => ({ senderType, content, createdAt }));
 
-  const lastChat = distinct.length ? distinct[distinct.length - 1] : null;
+  const lastChat = distinct.length ? distinct.slice().sort((a, b) => _chDt(a) - _chDt(b))[distinct.length - 1] : null;
   const contact = (lastChat && (lastChat.Contact || lastChat.contact)) || {};
   const customerName = contact.Name || contact.name || contact.DisplayName || contact.displayName || '';
-  const anchorDate = lastChat ? (lastChat.eventAtUTC || lastChat.EventAtUTC || null) : null;
-  let day = '';
-  try { day = new Date(anchorDate || (messages.length ? messages[messages.length - 1].createdAt : Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { day = ''; }
-
-  const _diag = {
-    pagesScanned, totalScanned, apiMemberId, distinctChats: distinct.length,
-    channels: distinct.map((c: any) => { const ch = c.channel || c.Channel || {}; return ch.name || ch.Name || ch.phoneNumber || ch.PhoneNumber || '?'; }),
-    kept: messages.length, collectedBeforeFilter: collected.length,
-  };
-  if (!distinct.length) return { found: false, reason: 'Sem conversa no Umbler para este numero', _diag };
+  const _diag = { apiMemberId, distinctChats: distinct.length, fetchedChats, targetDay, usedChannels, kept: messages.length, collected: collected.length };
+  const diaTxt = isToday ? 'hoje' : ('no dia ' + targetDay.split('-').reverse().join('/'));
+  if (!distinct.length) return { found: false, reason: 'Cliente sem conversa no Umbler', date: targetDay, _diag };
   return {
     found: messages.length > 0,
-    reason: messages.length ? undefined : 'Conversa encontrada no Umbler, mas sem mensagens de atendente/cliente (apenas disparos de robo)',
-    customerName, phone: '55' + targetCore, date: day,
+    reason: messages.length ? undefined : ('Não houve conversa ' + diaTxt + ' com o cliente (somente disparos de robô ou sem mensagens).'),
+    customerName, phone: '55' + targetCore, date: targetDay,
     chatId: String((lastChat && (lastChat.id || lastChat.Id)) || ''), totalChats: distinct.length, messages, _diag,
   };
 }
@@ -4006,7 +3996,7 @@ export function registerChatRoutes(app: Express): void {
       // cliente OU pelo atendente, respondidas ou não, e ancora SEMPRE na última ação
       // ocorrida na conversa. A API do Umbler expõe só as mensagens-marco do chat
       // (1ª do cliente, 1ª resposta do atendente e a última), então é isso que devolvemos. (set/2026)
-      const r = await buscarConversaUmbler(String(rawPhone));
+      const r = await buscarConversaUmbler(String(rawPhone), String((req.query && req.query.date) || ""));
       const nomeCadastro = String((customer as any)?.name || (customer as any)?.tradeName || "").trim();
       return res.json({
         found: r.found,
@@ -4022,57 +4012,6 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[CONVERSA-CENTRAL] erro:", error?.message || error);
       return res.status(500).json({ found: false, error: error?.message || "erro" });
-    }
-  });
-  // PROBE (read-only, temporario): descobre o formato do historico de mensagens de um chat.
-  app.get("/api/chat/umbler-talk/probe", async (req: any, res: any) => {
-    try {
-      let chatId = String(req.query.chatId || "");
-      const _cfg = await resolveUmblerTalkConfig();
-      if ('error' in _cfg) return res.status(400).json({ error: _cfg.error });
-      const _org = encodeURIComponent(_cfg.orgId);
-      const out: any = { orgResolved: true };
-      const sbomOf = (m: any) => { const s = m.sentByOrganizationMember || m.SentByOrganizationMember; return (s && typeof s === 'object') ? (s.id || s.Id) : s; };
-      const msamp = (m: any) => ({ keys: Object.keys(m).slice(0, 30), source: m.source || m.Source, fromContact: (m.fromContact !== undefined ? m.fromContact : m.FromContact), content: String(m.content || m.Content || '').slice(0, 22), sbom: sbomOf(m), templateId: !!(m.templateId || m.TemplateId), when: m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.messageDate || m.MessageDate });
-      // AUTO: escolhe um chat "movimentado" (tem 1a msg do cliente E ultima) p/ testar historico real.
-      if (!chatId || req.query.auto) {
-        try {
-          const rl = await umblerTalkFetch('/v1/chats/?organizationId=' + _org + '&page=1');
-          const bl: any = await rl.json().catch(() => null);
-          const items = Array.isArray(bl) ? bl : ((bl && (bl.items || bl.Items)) || []);
-          const pick = items.find((c: any) => (c.firstContactMessage || c.FirstContactMessage) && (c.lastMessage || c.LastMessage) && /7169|2630/.test(String((c.channel || c.Channel || {}).name || (c.channel || c.Channel || {}).Name || '')))
-            || items.find((c: any) => (c.firstContactMessage || c.FirstContactMessage) && (c.lastMessage || c.LastMessage));
-          if (pick) { chatId = String(pick.id || pick.Id); out.autoPickedChannel = String((pick.channel || pick.Channel || {}).name || (pick.channel || pick.Channel || {}).Name || ''); }
-        } catch (e: any) { out.autoErr = String(e?.message || e).slice(0, 100); }
-      }
-      out.chatId = chatId;
-      if (!chatId) return res.json({ ...out, error: 'sem chatId' });
-      const now = new Date().toISOString();
-      const dirs = ['0', '1', '2', 'Previous', 'Next', 'Backward', 'Forward', 'Past', 'Future', 'Older', 'Newer', 'Ascending', 'Descending', 'Asc', 'Desc'];
-      out.rel = [];
-      for (const d of dirs) {
-        try {
-          const u = '/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=' + d + '&Take=50';
-          const r2 = await umblerTalkFetch(u);
-          const b2: any = await r2.json().catch(() => null);
-          const arr = Array.isArray(b2) ? b2 : (b2 && (b2.items || b2.Items || b2.messages || b2.Messages));
-          const rec: any = { dir: d, status: r2.status };
-          if (Array.isArray(arr)) { rec.count = arr.length; if (arr.length) rec.first = msamp(arr[0]); }
-          else if (b2 && b2.errors) { rec.errFields = Object.keys(b2.errors); }
-          else if (b2 && typeof b2 === 'object') { rec.keys = Object.keys(b2); for (const k of Object.keys(b2)) { if (Array.isArray(b2[k])) rec['arr_' + k] = b2[k].length; } }
-          out.rel.push(rec);
-        } catch (e: any) { out.rel.push({ dir: d, err: String(e?.message || e).slice(0, 80) }); }
-      }
-      // sem Direction: dump completo do corpo
-      try {
-        const rN = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?organizationId=' + _org + '&Take=50');
-        const bN: any = await rN.json().catch(() => null);
-        out.noDir = { status: rN.status, keys: (bN && typeof bN === 'object') ? Object.keys(bN) : null, arrays: {} };
-        if (bN && typeof bN === 'object') { for (const k of Object.keys(bN)) { if (Array.isArray(bN[k])) { out.noDir.arrays[k] = bN[k].length; if (bN[k].length) out.noDir['sample_' + k] = bN[k].slice(0, 3).map(msamp); } } }
-      } catch (e: any) { out.noDirErr = String(e?.message || e).slice(0, 100); }
-      return res.json(out);
-    } catch (e: any) {
-      return res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
     }
   });
   // UNIFICAÇÃO de conversas duplicadas do MESMO cliente (uma linha por formato de telefone,
