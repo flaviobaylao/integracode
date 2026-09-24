@@ -711,7 +711,39 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
     if (totalPages && page >= Number(totalPages)) break;
     if (matched.length && page >= 6) break; // ja varremos as conversas mais recentes
   }
-  const _diag = { pagesScanned, totalScanned, matchedCount: matched.length, sampleChatKeys, sampleContactKeys, sampleMsgKeys };
+  const _mfields = (m: any) => {
+    if (!m || typeof m !== 'object') return null;
+    return {
+      keys: Object.keys(m).slice(0, 40),
+      source: m.Source || m.source || null,
+      messageType: m.MessageType || m.messageType || null,
+      sentByOrgMember: (m.SentByOrganizationMember !== undefined ? m.SentByOrganizationMember : m.sentByOrganizationMember) ?? null,
+      botId: m.BotId || m.botId || null,
+      sentByBot: (m.SentByBot !== undefined ? m.SentByBot : m.sentByBot) ?? null,
+      isPrivate: (m.IsPrivate !== undefined ? m.IsPrivate : m.isPrivate) ?? null,
+      memberId: (m.OrganizationMember && (m.OrganizationMember.Id || m.OrganizationMember.id)) || m.OrganizationMemberId || m.organizationMemberId || null,
+      templateId: m.TemplateId || m.templateId || m.HsmId || m.hsmId || null,
+      contentPreview: String(m.Content || m.content || '').slice(0, 40),
+    };
+  };
+  const _chansDetail = matched.slice(0, 10).map((c: any) => {
+    const ch = c.Channel || c.channel || {};
+    const lom = c.lastOrganizationMember || c.LastOrganizationMember;
+    return {
+      chatId: c.Id || c.id,
+      channelPhone: ch.PhoneNumber || ch.phoneNumber || ch.Phone || null,
+      channelName: ch.Name || ch.name || ch.Description || null,
+      channelKeys: Object.keys(ch).slice(0, 20),
+      eventAtUTC: c.eventAtUTC || c.EventAtUTC || null,
+      open: (c.open !== undefined ? c.open : c.Open) ?? null,
+      botsField: (c.bots || c.Bots) ? (Array.isArray(c.bots || c.Bots) ? (c.bots || c.Bots).length : true) : null,
+      lastOrgMember: lom ? (lom.Name || lom.name || lom.Id || lom.id || true) : null,
+      firstContact: _mfields(c.FirstContactMessage || c.firstContactMessage),
+      firstMemberReply: _mfields(c.FirstMemberReplyMessage || c.firstMemberReplyMessage),
+      last: _mfields(c.LastMessage || c.lastMessage),
+    };
+  });
+  const _diag = { pagesScanned, totalScanned, matchedCount: matched.length, sampleChatKeys, sampleContactKeys, sampleMsgKeys, chansDetail: _chansDetail };
   if (!matched.length) return { found: false, reason: 'Sem conversa no Umbler para este numero', _diag };
 
   const _dt = (x: any) => {
