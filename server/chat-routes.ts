@@ -4024,6 +4024,46 @@ export function registerChatRoutes(app: Express): void {
       return res.status(500).json({ found: false, error: error?.message || "erro" });
     }
   });
+  // PROBE (read-only, temporario): descobre o formato do historico de mensagens de um chat.
+  app.get("/api/chat/umbler-talk/probe", async (req: any, res: any) => {
+    try {
+      const chatId = String(req.query.chatId || "");
+      if (!chatId) return res.status(400).json({ error: "?chatId=" });
+      const out: any = {};
+      const sbomOf = (m: any) => { const s = m.sentByOrganizationMember || m.SentByOrganizationMember; return (s && typeof s === 'object') ? (s.id || s.Id) : s; };
+      const msamp = (m: any) => ({ keys: Object.keys(m).slice(0, 35), source: m.source || m.Source, fromContact: (m.fromContact !== undefined ? m.fromContact : m.FromContact), content: String(m.content || m.Content || '').slice(0, 25), sbom: sbomOf(m), templateId: !!(m.templateId || m.TemplateId), when: m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.messageDate || m.MessageDate });
+      try {
+        const r = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/');
+        out.detailStatus = r.status;
+        const b: any = await r.json().catch(() => null);
+        if (b && typeof b === 'object') {
+          out.detailKeys = Object.keys(b);
+          const arrays: any = {};
+          for (const k of Object.keys(b)) {
+            if (Array.isArray(b[k])) arrays[k] = b[k].length;
+            else if (b[k] && typeof b[k] === 'object') { for (const k2 of Object.keys(b[k])) { if (Array.isArray(b[k][k2])) arrays[k + '.' + k2] = b[k][k2].length; } }
+          }
+          out.arrays = arrays;
+          const msgs = b.messages || b.Messages || b.latestMessages || b.LatestMessages || (b.chat && (b.chat.messages || b.chat.Messages)) || null;
+          if (Array.isArray(msgs)) { out.msgCount = msgs.length; out.msgSample = msgs.slice(0, 5).map(msamp); }
+        }
+      } catch (e: any) { out.detailErr = String(e?.message || e).slice(0, 150); }
+      try {
+        const now = new Date().toISOString();
+        const r2 = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?FromEventUTC=' + encodeURIComponent(now) + '&Direction=Before&Take=100');
+        out.relStatus = r2.status;
+        const b2: any = await r2.json().catch(() => null);
+        if (b2) {
+          const arr = Array.isArray(b2) ? b2 : (b2.items || b2.Items || b2.messages || b2.Messages);
+          out.relKeys = Array.isArray(b2) ? ['<array>'] : Object.keys(b2);
+          if (Array.isArray(arr)) { out.relCount = arr.length; out.relSample = arr.slice(0, 5).map(msamp); }
+        }
+      } catch (e: any) { out.relErr = String(e?.message || e).slice(0, 150); }
+      return res.json(out);
+    } catch (e: any) {
+      return res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
+    }
+  });
   // UNIFICAÇÃO de conversas duplicadas do MESMO cliente (uma linha por formato de telefone,
   // com/sem o 9). Junta tudo na conversa mais recente: reaponta TODAS as tabelas que referenciam
   // conversation_id e remove a conversa-casca vazia. { } (dryRun) só conta; { "apply": true } aplica.
