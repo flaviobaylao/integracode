@@ -383,6 +383,10 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
               <MapPin className="h-3 w-3" />
               {customer.address}
             </p>
+            {/* Rede de clientes: explica por que este pin apareceu numa busca pelo nome da rede. */}
+            {(customer as any).redeNome && (
+              <p className="font-medium">🏢 Rede: {(customer as any).redeNome}</p>
+            )}
             {ehLead && podeEditar ? (
               <>
                 <p className="font-medium flex items-center gap-2 flex-wrap">
@@ -699,13 +703,15 @@ export default function ClientsMap() {
       baseDoMapa = baseDoMapa.filter((c) => c.sellerId === user.id);
     }
 
-    // Aplicar filtro de busca por nome/telefone
+    // Busca por nome, telefone ou REDE DE CLIENTES: digitar o nome da rede traz todos os
+    // integrantes dela de uma vez (filiais do mesmo dono, sócios em comum, CNPJs de mesma raiz).
     if (buscaAplicada.trim()) {
       const alvo = buscaAplicada.toLowerCase();
       const soDigitos = buscaAplicada.replace(/\D/g, '');
       baseDoMapa = baseDoMapa.filter(
         (c) =>
           (c.fantasyName || c.name || '').toLowerCase().includes(alvo) ||
+          String((c as any).redeNome || '').toLowerCase().includes(alvo) ||
           (soDigitos.length > 0 && (c.phone || '').includes(soDigitos))
       );
     }
@@ -1033,7 +1039,7 @@ export default function ClientsMap() {
               <label className="text-sm font-medium mb-2 block">Buscar Cliente</label>
               <div className="relative">
                 <Input
-                  placeholder="Nome ou telefone..."
+                  placeholder="Nome, telefone ou rede de clientes..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   data-testid="input-search-customers"
