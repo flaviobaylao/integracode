@@ -664,11 +664,29 @@ function _phoneCore(p: string): string {
   return d;
 }
 
-// Busca a conversa do cliente DIRETO no Umbler Talk (nao no banco local).
-// Cobre conversas iniciadas pelo cliente OU pelo atendente, respondidas ou nao, e ancora
-// SEMPRE na ultima acao ocorrida na conversa (mensagem mais recente). Como a API do Umbler
-// expoe apenas as mensagens-marco do chat (primeira do cliente, primeira resposta do
-// atendente e a ultima), retornamos essas — nao o thread completo.
+// Id do membro-integracao (nosso token) no Umbler: TODOS os disparos automaticos do
+// sistema (templates do 1841, avisos de entrega, IA/telemarketing) saem por ESTE membro.
+// Atendentes humanos tem ids proprios. Usamos isso p/ separar "disparo de robo" de atendente.
+let _umblerApiMemberId: string | null = null;
+let _umblerApiMemberIdAt = 0;
+async function getUmblerApiMemberId(): Promise<string | null> {
+  if (_umblerApiMemberId && (Date.now() - _umblerApiMemberIdAt) < 3600000) return _umblerApiMemberId;
+  try {
+    const r = await umblerTalkFetch('/v1/members/me/');
+    if (!r.ok) return _umblerApiMemberId;
+    const me: any = await r.json();
+    const id = me && (me.id || me.Id || me.memberId || me.MemberId);
+    if (id) { _umblerApiMemberId = String(id); _umblerApiMemberIdAt = Date.now(); }
+    return _umblerApiMemberId;
+  } catch { return _umblerApiMemberId; }
+}
+
+// Busca a conversa do cliente DIRETO no Umbler Talk (nao no banco local), juntando TODOS os
+// canais do cliente (1841, 7169, 2630). Traz APENAS conversas do atendente com o cliente:
+// mensagens do cliente e mensagens de atendentes HUMANOS. Descarta "disparo de robo"
+// (templates, avisos automaticos, IA/telemarketing) — tudo que sai pelo membro-integracao
+// ou marcado como template/bulk/bot/agendado. Ancora na ultima acao. Como a API expoe so as
+// mensagens-marco do chat (1a do cliente, 1a resposta do atendente e a ultima), sao essas.
 async function buscarConversaUmbler(rawPhone: string): Promise<{
   found: boolean; reason?: string; customerName?: string; phone?: string;
   date?: string; chatId?: string; totalChats?: number;
@@ -680,11 +698,14 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
   if ('error' in cfg) return { found: false, reason: 'Umbler config: ' + cfg.error };
   const targetCore = _phoneCore(rawPhone);
   if (!targetCore || targetCore.length < 8) return { found: false, reason: 'Telefone invalido' };
+  const apiMemberId = await getUmblerApiMemberId();
 
-  const matched: any[] = [];
+  // A paginacao (&page=) da API nao avança de forma confiavel — as paginas repetem os mesmos
+  // ~250 chats mais recentes. Entao varremos ate detectar que a lista nao avançou e usamos o
+  // conjunto (deduplicado por id) que conseguimos — cobre as conversas recentes.
+  const byId = new Map<string, any>();
   const MAX_PAGES = 25;
-  let pagesScanned = 0, totalScanned = 0;
-  let sampleChatKeys: string[] = [], sampleContactKeys: string[] = [], sampleMsgKeys: string[] = [];
+  let pagesScanned = 0, totalScanned = 0, firstIdSeen = '';
   for (let page = 1; page <= MAX_PAGES; page++) {
     const url = '/v1/chats/?organizationId=' + encodeURIComponent(cfg.orgId) + '&page=' + page;
     let resp: any;
@@ -695,99 +716,95 @@ async function buscarConversaUmbler(rawPhone: string): Promise<{
     pagesScanned++;
     if (!items.length) break;
     totalScanned += items.length;
-    if (!sampleChatKeys.length && items[0]) {
-      sampleChatKeys = Object.keys(items[0]);
-      const c0 = items[0].Contact || items[0].contact || {};
-      sampleContactKeys = Object.keys(c0);
-      const m0 = items[0].LastMessage || items[0].lastMessage || {};
-      sampleMsgKeys = Object.keys(m0);
-    }
+    const pageFirstId = String((items[0] && (items[0].id || items[0].Id)) || '');
+    if (page > 1 && pageFirstId && pageFirstId === firstIdSeen) break; // lista nao avançou
+    if (page === 1) firstIdSeen = pageFirstId;
     for (const chat of items) {
       const contact = chat.Contact || chat.contact || {};
       const cph = contact.PhoneNumber || contact.phoneNumber || contact.Phone || '';
-      if (_phoneCore(cph) === targetCore) matched.push(chat);
+      if (_phoneCore(cph) === targetCore) {
+        const id = String((chat.id || chat.Id) || '');
+        if (id && !byId.has(id)) byId.set(id, chat);
+      }
     }
-    const totalPages = body && (body.totalPages || body.TotalPages);
-    if (totalPages && page >= Number(totalPages)) break;
-    if (matched.length && page >= 6) break; // ja varremos as conversas mais recentes
   }
-  const _mfields = (m: any) => {
-    if (!m || typeof m !== 'object') return null;
-    return {
-      keys: Object.keys(m).slice(0, 40),
-      source: m.Source || m.source || null,
-      messageType: m.MessageType || m.messageType || null,
-      sentByOrgMember: (m.SentByOrganizationMember !== undefined ? m.SentByOrganizationMember : m.sentByOrganizationMember) ?? null,
-      botId: m.BotId || m.botId || null,
-      sentByBot: (m.SentByBot !== undefined ? m.SentByBot : m.sentByBot) ?? null,
-      isPrivate: (m.IsPrivate !== undefined ? m.IsPrivate : m.isPrivate) ?? null,
-      memberId: (m.OrganizationMember && (m.OrganizationMember.Id || m.OrganizationMember.id)) || m.OrganizationMemberId || m.organizationMemberId || null,
-      templateId: m.TemplateId || m.templateId || m.HsmId || m.hsmId || null,
-      contentPreview: String(m.Content || m.content || '').slice(0, 40),
-    };
-  };
-  const _chansDetail = matched.slice(0, 10).map((c: any) => {
-    const ch = c.Channel || c.channel || {};
-    const lom = c.lastOrganizationMember || c.LastOrganizationMember;
-    return {
-      chatId: c.Id || c.id,
-      channelPhone: ch.PhoneNumber || ch.phoneNumber || ch.Phone || null,
-      channelName: ch.Name || ch.name || ch.Description || null,
-      channelKeys: Object.keys(ch).slice(0, 20),
-      eventAtUTC: c.eventAtUTC || c.EventAtUTC || null,
-      open: (c.open !== undefined ? c.open : c.Open) ?? null,
-      botsField: (c.bots || c.Bots) ? (Array.isArray(c.bots || c.Bots) ? (c.bots || c.Bots).length : true) : null,
-      lastOrgMember: lom ? (lom.Name || lom.name || lom.Id || lom.id || true) : null,
-      firstContact: _mfields(c.FirstContactMessage || c.firstContactMessage),
-      firstMemberReply: _mfields(c.FirstMemberReplyMessage || c.firstMemberReplyMessage),
-      last: _mfields(c.LastMessage || c.lastMessage),
-    };
-  });
-  const _diag = { pagesScanned, totalScanned, matchedCount: matched.length, sampleChatKeys, sampleContactKeys, sampleMsgKeys, chansDetail: _chansDetail };
-  if (!matched.length) return { found: false, reason: 'Sem conversa no Umbler para este numero', _diag };
-
+  const distinct = Array.from(byId.values());
   const _dt = (x: any) => {
     const v = x && (x.eventAtUTC || x.EventAtUTC || x.lastMessageAtUTC || x.LastMessageAtUTC || x.createdAtUTC || x.CreatedAtUTC);
     const t = v ? new Date(v).getTime() : 0;
     return isNaN(t) ? 0 : t;
   };
-  matched.sort((a, b) => _dt(b) - _dt(a));
-  const chat = matched[0];
-  const contact = chat.Contact || chat.contact || {};
-  const customerName = contact.Name || contact.name || contact.DisplayName || contact.displayName || '';
-  const chatDate = chat.eventAtUTC || chat.EventAtUTC || chat.createdAtUTC || chat.CreatedAtUTC || null;
+  distinct.sort((a, b) => _dt(a) - _dt(b)); // mais antigo primeiro (asc) — a ultima acao fica por ultimo
 
-  const mapMsg = (m: any) => {
+  const _isRobot = (m: any, sbom: any) => {
+    const isTemplate = !!(m.templateId || m.TemplateId);
+    const isBulk = !!(m.bulkSendSession || m.BulkSendSession);
+    const isBot = !!(m.botInstance || m.BotInstance);
+    const isSched = !!(m.scheduledMessage || m.ScheduledMessage);
+    const isApiMember = !!(apiMemberId && sbom && String(sbom) === String(apiMemberId));
+    return isTemplate || isBulk || isBot || isSched || isApiMember;
+  };
+  const _map = (m: any, chatMs: number, ord: number) => {
     if (!m || typeof m !== 'object') return null;
-    const content = m.Content || m.content || m.Text || m.text || m.Message || m.message || '';
+    const content = m.content || m.Content || m.text || m.Text || '';
     if (!content) return null;
-    const src = String(m.Source || m.source || '').toLowerCase();
-    const isAgent = src === 'member' || m.SentByOrganizationMember === true || m.sentByOrganizationMember === true;
-    const dt = m.EventAtUTC || m.eventAtUTC || m.CreatedAtUTC || m.createdAtUTC || m.SentAt || m.sentAt || chatDate || new Date().toISOString();
-    let iso: string; try { iso = new Date(dt).toISOString(); } catch { iso = new Date().toISOString(); }
-    return { senderType: isAgent ? 'agent' : 'customer', content: String(content), createdAt: iso };
+    const source = String(m.Source || m.source || '').toLowerCase();
+    const fromContact = (m.FromContact !== undefined ? m.FromContact : m.fromContact) === true;
+    const isClient = fromContact || source === 'contact';
+    const sbomRaw = (m.SentByOrganizationMember !== undefined ? m.SentByOrganizationMember : m.sentByOrganizationMember);
+    const sbom = (sbomRaw && typeof sbomRaw === 'object') ? (sbomRaw.id || sbomRaw.Id) : sbomRaw;
+    let senderType: string;
+    if (isClient) {
+      senderType = 'customer';
+    } else {
+      // Mensagem de saida (membro). So entra se for atendente HUMANO — descarta robo/sistema.
+      if (!sbom || _isRobot(m, sbom)) return null;
+      senderType = 'agent';
+    }
+    const dt = m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.SentAt || m.sentAt || null;
+    let iso: string;
+    try { iso = new Date(dt || (chatMs || Date.now())).toISOString(); } catch { iso = new Date().toISOString(); }
+    return { senderType, content: String(content), createdAt: iso, _k: (chatMs || 0) * 10 + ord };
   };
 
-  const raw = [
-    chat.FirstContactMessage || chat.firstContactMessage,
-    chat.FirstMemberReplyMessage || chat.firstMemberReplyMessage,
-    chat.LastMessage || chat.lastMessage,
-  ].map(mapMsg).filter(Boolean) as Array<{ senderType: string; content: string; createdAt: string }>;
-
+  let collected: Array<{ senderType: string; content: string; createdAt: string; _k: number }> = [];
+  for (const chat of distinct) {
+    const chatMs = _dt(chat);
+    const markers = [
+      chat.firstContactMessage || chat.FirstContactMessage,
+      chat.firstMemberReplyMessage || chat.FirstMemberReplyMessage,
+      chat.lastMessage || chat.LastMessage,
+    ];
+    for (let ord = 0; ord < markers.length; ord++) {
+      const mapped = _map(markers[ord], chatMs, ord);
+      if (mapped) collected.push(mapped);
+    }
+  }
+  collected.sort((a, b) => a._k - b._k);
   const seen = new Set<string>();
-  const messages = raw.filter((m) => {
-    const k = m.createdAt + '|' + m.content;
+  const messages = collected.filter((m) => {
+    const k = m.senderType + '|' + m.content;
     if (seen.has(k)) return false; seen.add(k); return true;
-  }).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }).map(({ senderType, content, createdAt }) => ({ senderType, content, createdAt }));
 
+  const lastChat = distinct.length ? distinct[distinct.length - 1] : null;
+  const contact = (lastChat && (lastChat.Contact || lastChat.contact)) || {};
+  const customerName = contact.Name || contact.name || contact.DisplayName || contact.displayName || '';
+  const anchorDate = lastChat ? (lastChat.eventAtUTC || lastChat.EventAtUTC || null) : null;
   let day = '';
-  try { day = new Date(chatDate || (messages.length ? messages[messages.length - 1].createdAt : Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { day = ''; }
+  try { day = new Date(anchorDate || (messages.length ? messages[messages.length - 1].createdAt : Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { day = ''; }
 
+  const _diag = {
+    pagesScanned, totalScanned, apiMemberId, distinctChats: distinct.length,
+    channels: distinct.map((c: any) => { const ch = c.channel || c.Channel || {}; return ch.name || ch.Name || ch.phoneNumber || ch.PhoneNumber || '?'; }),
+    kept: messages.length, collectedBeforeFilter: collected.length,
+  };
+  if (!distinct.length) return { found: false, reason: 'Sem conversa no Umbler para este numero', _diag };
   return {
     found: messages.length > 0,
-    reason: messages.length ? undefined : 'Conversa encontrada no Umbler, mas sem mensagens legiveis',
+    reason: messages.length ? undefined : 'Conversa encontrada no Umbler, mas sem mensagens de atendente/cliente (apenas disparos de robo)',
     customerName, phone: '55' + targetCore, date: day,
-    chatId: String(chat.Id || chat.id || ''), totalChats: matched.length, messages, _diag,
+    chatId: String((lastChat && (lastChat.id || lastChat.Id)) || ''), totalChats: distinct.length, messages, _diag,
   };
 }
 
