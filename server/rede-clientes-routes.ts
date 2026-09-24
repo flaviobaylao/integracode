@@ -427,27 +427,74 @@ export function registerRedesClientes(app: Express) {
       const chaves = Array.from(new Set(membros.map((m) => String(m.chave || "")).filter(Boolean)));
       const listaChaves = chaves.length ? chaves.map((k) => `'${esc(k)}'`).join(",") : `''`;
 
-      // Faturamento do mes vigente e do ano, e o debito de hoje — por chave.
-      const fat = (await db.execute(sql.raw(`
-        SELECT ${CHAVE_TITULO} AS chave,
-               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mes)}'),0)::float       AS fat_mes,
-               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnt)}'),0)::float    AS fat_mes_ant,
-               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnoAnt)}'),0)::float AS fat_mes_ano_ant,
-               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(ano)}'),0)::float          AS fat_ano,
-               COALESCE(SUM(COALESCE(NULLIF(amount::text,'')::numeric,0))
-                        FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(anoAnt)}'),0)::float       AS fat_ano_ant
-        FROM receivables
+      // ── TÍTULO EM DOBRO NÃO É FATURAMENTO ────────────────────────────────────
+      // Em set/2026 apareceram notas com DOIS (e até três) títulos idênticos: a
+      // mesma NF-e, o mesmo vencimento e o mesmo valor, gravados em horas
+      // diferentes por reprocessamento do faturamento. A NF-e diz o total dela
+      // (ex.: NF 104143 = R$ 3.816,30) e ainda assim havia dois títulos de
+      // R$ 3.816,30 — a tela mostrava R$ 7.632,60 e o cliente aparecia faturando
+      // o dobro.
+      //
+      // A soma passa por um DISTINCT ON que conta UMA VEZ cada
+      // (nota, vencimento, valor) do mesmo cliente. Repare no que ele NÃO mexe:
+      //  • parcelamento de verdade continua somando — duas parcelas da mesma
+      //    nota têm VENCIMENTOS diferentes, então são duas linhas distintas;
+      //  • título sem NF-e nunca é agrupado (a chave leva o id dele), porque aí
+      //    não há como distinguir cópia de lançamento legítimo.
+      // E a cópia não é varrida para debaixo do tapete: `dupMes` conta quantos
+      // títulos ficaram de fora no mês exibido, e a tela avisa.
+      const CHAVE_COPIA = `COALESCE(fiscal_invoice_id::text, 'sem-nf|' || id::text),
+                           due_date,
+                           COALESCE(NULLIF(amount::text,'')::numeric,0),
+                           ${CHAVE_TITULO}`;
+      const ONDE_VENDA = `
         WHERE deleted_at IS NULL
           AND ${NAO_CANCELADO}
           AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
           AND issue_date >= '${esc(anoAnt)}-01-01'
           ${FILTRO_VENDA}
-          AND ${CHAVE_TITULO} IN (${listaChaves})
+          AND ${CHAVE_TITULO} IN (${listaChaves})`;
+
+      // Faturamento do mes vigente e do ano, e o debito de hoje — por chave.
+      const fat = (await db.execute(sql.raw(`
+        WITH unicos AS (
+          SELECT DISTINCT ON (${CHAVE_COPIA})
+                 ${CHAVE_TITULO} AS chave,
+                 issue_date,
+                 COALESCE(NULLIF(amount::text,'')::numeric,0) AS valor
+          FROM receivables
+          ${ONDE_VENDA}
+          ORDER BY ${CHAVE_COPIA}, created_at, id
+        )
+        SELECT chave,
+               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mes)}'),0)::float       AS fat_mes,
+               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnt)}'),0)::float    AS fat_mes_ant,
+               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY-MM') = '${esc(mesAnoAnt)}'),0)::float AS fat_mes_ano_ant,
+               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(ano)}'),0)::float          AS fat_ano,
+               COALESCE(SUM(valor) FILTER (WHERE to_char(issue_date,'YYYY') = '${esc(anoAnt)}'),0)::float       AS fat_ano_ant
+        FROM unicos
         GROUP BY 1`))).rows as any[];
+
+      // Quantos títulos em dobro ficaram de fora no MÊS EXIBIDO, por cliente — e
+      // quanto somavam. É o que a tela avisa, em vez de calar.
+      const dupRows = (await db.execute(sql.raw(`
+        SELECT chave, SUM(copias - 1)::int AS titulos, SUM((copias - 1) * valor)::float AS valor
+        FROM (
+          SELECT ${CHAVE_TITULO} AS chave,
+                 COUNT(*)::int AS copias,
+                 MAX(COALESCE(NULLIF(amount::text,'')::numeric,0)) AS valor
+          FROM receivables
+          ${ONDE_VENDA}
+            AND fiscal_invoice_id IS NOT NULL
+            AND to_char(issue_date,'YYYY-MM') = '${esc(mes)}'
+          GROUP BY ${CHAVE_TITULO}, fiscal_invoice_id, due_date, COALESCE(NULLIF(amount::text,'')::numeric,0)
+          HAVING COUNT(*) > 1
+        ) x
+        GROUP BY 1`))).rows as any[];
+      const mDup = new Map<string, { titulos: number; valor: number }>();
+      for (const d of dupRows) {
+        mDup.set(String(d.chave), { titulos: Number(d.titulos) || 0, valor: Number(d.valor) || 0 });
+      }
 
       const deb = (await db.execute(sql.raw(`
         SELECT ${CHAVE_TITULO} AS chave,
@@ -502,6 +549,9 @@ export function registerRedesClientes(app: Express) {
           fatAnoAnt: Number(f.fat_ano_ant || 0),
           debito: Number(mDeb.get(k) || 0),
           papel: String(m.papel || "nenhum"),
+          // Títulos em dobro deixados de fora do mês exibido (ver o DISTINCT ON
+          // acima). Zero na esmagadora maioria dos clientes.
+          dupMes: mDup.get(k) || { titulos: 0, valor: 0 },
         };
         const arr = porRede.get(String(m.rede_id));
         if (arr) arr.push(cli); else porRede.set(String(m.rede_id), [cli]);
@@ -544,6 +594,10 @@ export function registerRedesClientes(app: Express) {
             fatAno: soma((c) => c.fatAno),
             fatAnoAnt: soma((c) => c.fatAnoAnt),
             debito: soma((c) => c.debito),
+            dupMes: {
+              titulos: soma((c) => c.dupMes?.titulos || 0),
+              valor: soma((c) => c.dupMes?.valor || 0),
+            },
           },
         };
       });
