@@ -4027,51 +4027,49 @@ export function registerChatRoutes(app: Express): void {
   // PROBE (read-only, temporario): descobre o formato do historico de mensagens de um chat.
   app.get("/api/chat/umbler-talk/probe", async (req: any, res: any) => {
     try {
-      const chatId = String(req.query.chatId || "");
-      if (!chatId) return res.status(400).json({ error: "?chatId=" });
+      let chatId = String(req.query.chatId || "");
       const _cfg = await resolveUmblerTalkConfig();
-      const _org = ('error' in _cfg) ? '' : encodeURIComponent(_cfg.orgId);
-      const out: any = { orgResolved: !('error' in _cfg) };
+      if ('error' in _cfg) return res.status(400).json({ error: _cfg.error });
+      const _org = encodeURIComponent(_cfg.orgId);
+      const out: any = { orgResolved: true };
       const sbomOf = (m: any) => { const s = m.sentByOrganizationMember || m.SentByOrganizationMember; return (s && typeof s === 'object') ? (s.id || s.Id) : s; };
-      const msamp = (m: any) => ({ keys: Object.keys(m).slice(0, 35), source: m.source || m.Source, fromContact: (m.fromContact !== undefined ? m.fromContact : m.FromContact), content: String(m.content || m.Content || '').slice(0, 25), sbom: sbomOf(m), templateId: !!(m.templateId || m.TemplateId), when: m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.messageDate || m.MessageDate });
-      try {
-        const r = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/?organizationId=' + _org);
-        out.detailStatus = r.status;
-        const b: any = await r.json().catch(() => null);
-        if (b && typeof b === 'object') {
-          out.detailKeys = Object.keys(b);
-          const arrays: any = {};
-          for (const k of Object.keys(b)) {
-            if (Array.isArray(b[k])) arrays[k] = b[k].length;
-            else if (b[k] && typeof b[k] === 'object') { for (const k2 of Object.keys(b[k])) { if (Array.isArray(b[k][k2])) arrays[k + '.' + k2] = b[k][k2].length; } }
-          }
-          out.arrays = arrays;
-          const msgs = b.messages || b.Messages || b.latestMessages || b.LatestMessages || (b.chat && (b.chat.messages || b.chat.Messages)) || null;
-          if (Array.isArray(msgs)) { out.msgCount = msgs.length; out.msgSample = msgs.slice(0, 5).map(msamp); }
-        }
-      } catch (e: any) { out.detailErr = String(e?.message || e).slice(0, 150); }
-      const now = new Date().toISOString();
-      const variants = [
-        'relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=Before&Take=100',
-        'relative-messages?organizationId=' + _org + '&fromEventUTC=' + encodeURIComponent(now) + '&direction=Before&take=100',
-        'relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=After&Take=100',
-        'relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now.slice(0, 19) + 'Z') + '&Direction=Before&Take=100',
-        'relative-messages?organizationId=' + _org + '&Take=100',
-        'messages?organizationId=' + _org + '&Take=100',
-      ];
-      out.rel = [];
-      for (const v of variants) {
+      const msamp = (m: any) => ({ keys: Object.keys(m).slice(0, 30), source: m.source || m.Source, fromContact: (m.fromContact !== undefined ? m.fromContact : m.FromContact), content: String(m.content || m.Content || '').slice(0, 22), sbom: sbomOf(m), templateId: !!(m.templateId || m.TemplateId), when: m.eventAtUTC || m.EventAtUTC || m.createdAtUTC || m.CreatedAtUTC || m.messageDate || m.MessageDate });
+      // AUTO: escolhe um chat "movimentado" (tem 1a msg do cliente E ultima) p/ testar historico real.
+      if (!chatId || req.query.auto) {
         try {
-          const r2 = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/' + v);
+          const rl = await umblerTalkFetch('/v1/chats/?organizationId=' + _org + '&page=1');
+          const bl: any = await rl.json().catch(() => null);
+          const items = Array.isArray(bl) ? bl : ((bl && (bl.items || bl.Items)) || []);
+          const pick = items.find((c: any) => (c.firstContactMessage || c.FirstContactMessage) && (c.lastMessage || c.LastMessage) && /7169|2630/.test(String((c.channel || c.Channel || {}).name || (c.channel || c.Channel || {}).Name || '')))
+            || items.find((c: any) => (c.firstContactMessage || c.FirstContactMessage) && (c.lastMessage || c.LastMessage));
+          if (pick) { chatId = String(pick.id || pick.Id); out.autoPickedChannel = String((pick.channel || pick.Channel || {}).name || (pick.channel || pick.Channel || {}).Name || ''); }
+        } catch (e: any) { out.autoErr = String(e?.message || e).slice(0, 100); }
+      }
+      out.chatId = chatId;
+      if (!chatId) return res.json({ ...out, error: 'sem chatId' });
+      const now = new Date().toISOString();
+      const dirs = ['0', '1', '2', 'Previous', 'Next', 'Backward', 'Forward', 'Past', 'Future', 'Older', 'Newer', 'Ascending', 'Descending', 'Asc', 'Desc'];
+      out.rel = [];
+      for (const d of dirs) {
+        try {
+          const u = '/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?organizationId=' + _org + '&FromEventUTC=' + encodeURIComponent(now) + '&Direction=' + d + '&Take=50';
+          const r2 = await umblerTalkFetch(u);
           const b2: any = await r2.json().catch(() => null);
           const arr = Array.isArray(b2) ? b2 : (b2 && (b2.items || b2.Items || b2.messages || b2.Messages));
-          const rec: any = { q: v.split('?')[1].slice(0, 60), status: r2.status };
-          if (Array.isArray(arr)) { rec.count = arr.length; rec.sample = arr.slice(0, 4).map(msamp); }
-          else if (b2 && b2.errors) { rec.errors = b2.errors; rec.title = b2.title; }
-          else if (b2) { rec.keys = Object.keys(b2); }
+          const rec: any = { dir: d, status: r2.status };
+          if (Array.isArray(arr)) { rec.count = arr.length; if (arr.length) rec.first = msamp(arr[0]); }
+          else if (b2 && b2.errors) { rec.errFields = Object.keys(b2.errors); }
+          else if (b2 && typeof b2 === 'object') { rec.keys = Object.keys(b2); for (const k of Object.keys(b2)) { if (Array.isArray(b2[k])) rec['arr_' + k] = b2[k].length; } }
           out.rel.push(rec);
-        } catch (e: any) { out.rel.push({ q: v.slice(0, 40), err: String(e?.message || e).slice(0, 100) }); }
+        } catch (e: any) { out.rel.push({ dir: d, err: String(e?.message || e).slice(0, 80) }); }
       }
+      // sem Direction: dump completo do corpo
+      try {
+        const rN = await umblerTalkFetch('/v1/chats/' + encodeURIComponent(chatId) + '/relative-messages?organizationId=' + _org + '&Take=50');
+        const bN: any = await rN.json().catch(() => null);
+        out.noDir = { status: rN.status, keys: (bN && typeof bN === 'object') ? Object.keys(bN) : null, arrays: {} };
+        if (bN && typeof bN === 'object') { for (const k of Object.keys(bN)) { if (Array.isArray(bN[k])) { out.noDir.arrays[k] = bN[k].length; if (bN[k].length) out.noDir['sample_' + k] = bN[k].slice(0, 3).map(msamp); } } }
+      } catch (e: any) { out.noDirErr = String(e?.message || e).slice(0, 100); }
       return res.json(out);
     } catch (e: any) {
       return res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
