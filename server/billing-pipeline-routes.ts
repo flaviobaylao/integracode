@@ -2964,6 +2964,24 @@ export async function deductStockForBilling(item: any, user: any): Promise<Recor
     return lotMap;
   }
 
+  // ── 🔁 UMA BAIXA POR PEDIDO (mesma trava do título) ─────────────────────────
+  // O card que volta para "Faturado" refazia TODO o faturamento, e a baixa de
+  // estoque não tinha trava nenhuma: cada volta consumia o lote outra vez, e a
+  // mercadoria sumia do estoque sem ter saído do galpão. Se já existe consumo
+  // registrado para ESTE pedido, a baixa não se repete.
+  try {
+    const jaBaixou: any = await db.execute(sql`
+      SELECT 1 FROM inventory_movements
+       WHERE source_type = 'invoice' AND source_id = ${item.id} AND movement_type = 'consume'
+       LIMIT 1`);
+    if (((jaBaixou?.rows ?? jaBaixou ?? []) as any[]).length) {
+      console.warn(`[STOCK-DEDUP] pedido ${item.orderNumber || item.salesCardId || item.id} ja teve baixa de estoque — baixa duplicada evitada.`);
+      return lotMap;
+    }
+  } catch (e: any) {
+    console.warn('[STOCK-DEDUP] falha ao checar baixa anterior (segue):', e?.message || e);
+  }
+
   for (const product of products as any[]) {
     if (!product.id) continue;
 
@@ -3992,6 +4010,42 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   }
   const totalValue = item.saleValue ? parseFloat(item.saleValue) : 0;
   if (totalValue <= 0) return null;
+
+  // ── 🔁 UM PEDIDO, UM TÍTULO (trava de reprocessamento) ──────────────────────
+  // Mover o card entre as raias NÃO pode gerar título novo. A trava de etapa
+  // (`UPDATE ... WHERE stage <> 'faturado'`) só protege contra dois faturamentos
+  // SIMULTÂNEOS; quando o card sai de "Faturado" e volta — reimprimir, trocar de
+  // rota, corrigir algo — ela deixa passar e o faturamento rodava inteiro de novo.
+  // A NF-e não duplicava (createInvoiceFromPipelineItem tem dedup por
+  // sales_card_id), mas o TÍTULO sim: foi assim que nasceram os 52 títulos
+  // repetidos de jul a set/2026 (R$ 25.299,00), cada um com boleto próprio.
+  //
+  // Aqui a dedup é a mesma da NF-e: já existe título VIVO deste pedido (pelo card
+  // do pipeline, pelo pedido de venda ou pela própria nota) → não cria outro.
+  // Título CANCELADO não conta: refaturar de propósito depois de cancelar o
+  // título continua funcionando, e um faturamento que falhou (sem título nenhum)
+  // roda normalmente na retentativa.
+  try {
+    const jaTem: any = await db.execute(sql`
+      SELECT id, title_number, created_at FROM receivables
+       WHERE deleted_at IS NULL
+         AND COALESCE(status::text,'') NOT IN ('cancelada','cancelado','cancelled','canceled')
+         AND (
+           billing_pipeline_id = ${item.id}
+           ${item.salesCardId ? sql`OR sales_card_id = ${item.salesCardId}` : sql``}
+           ${fiscalInvoiceId ? sql`OR fiscal_invoice_id = ${fiscalInvoiceId}` : sql``}
+         )
+       ORDER BY created_at LIMIT 1`);
+    const achado = ((jaTem?.rows ?? jaTem ?? []) as any[])[0];
+    if (achado) {
+      console.warn(`[TITULO-DEDUP] pedido ${item.orderNumber || item.salesCardId || item.id} ja tem titulo vivo `
+        + `(${achado.title_number || achado.id}, de ${achado.created_at}) — titulo duplicado evitado.`);
+      return null;
+    }
+  } catch (e: any) {
+    // Na duvida NAO bloqueia: faltar titulo e pior do que checar de novo.
+    console.warn('[TITULO-DEDUP] falha ao checar titulo existente (segue):', e?.message || e);
+  }
 
   // issue_date / due_date / paid_at sao DATA DE CALENDARIO: gravam meia-noite UTC do dia
   // corrente NO BRASIL. Antes vinha de nowBrazil(), que carregava junto a hora de parede

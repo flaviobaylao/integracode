@@ -374,13 +374,25 @@ export function registerCarteira(app: Express) {
             AND NOT ${C_LIXEIRA}`;
 
       // CTE comum: titulos validos do periodo, ja com a chave do cliente.
+      // UMA NOTA NAO FATURA MAIS DO QUE ELA VALE. De jul a set/2026 o card que
+      // voltava para "Faturado" refazia o faturamento e gravava um SEGUNDO titulo
+      // da mesma NF-e (52 titulos, R$ 25.299,00). Somar titulo a titulo dobrava o
+      // faturamento desses clientes. A regua e a propria nota: a soma dos titulos
+      // de cada NF-e fica limitada ao `total_invoice` dela — a MESMA regra ja
+      // aplicada na aba Rede de Cliente (server/rede-clientes-routes.ts), para as
+      // duas abas nunca contarem diferente.
+      //  • parcelamento de verdade nao muda (as parcelas somam o total da nota);
+      //  • titulo sem NF-e entra como esta (nao ha nota para servir de teto);
+      //  • nota sem total gravado idem, para nao zerar faturamento por falta de dado.
+      // `n` carrega a contagem de titulos, que continua sendo a de verdade.
       const CTE_REC = `
-        WITH ${CTE_CARTEIRA}r AS (
+        WITH ${CTE_CARTEIRA}r_tit AS (
           SELECT
             NULLIF(regexp_replace(COALESCE(customer_document,''),'[^0-9]','','g'),'') AS doc,
             NULLIF(UPPER(TRIM(COALESCE(customer_name,''))),'')                        AS nome,
             to_char(issue_date,'YYYY-MM')                                             AS mes,
-            COALESCE(NULLIF(amount::text,'')::numeric,0)                              AS v
+            COALESCE(NULLIF(amount::text,'')::numeric,0)                              AS v,
+            fiscal_invoice_id
           FROM receivables
           WHERE issue_date >= '${iniDate}'
             AND issue_date <  '${fimDateExcl}'
@@ -389,15 +401,33 @@ export function registerCarteira(app: Express) {
             AND COALESCE(NULLIF(amount::text,'')::numeric,0) > 0
             ${FILTRO_VENDA}
         ),
+        r_nota AS (
+          SELECT t.doc, t.nome, t.mes, t.fiscal_invoice_id,
+                 SUM(t.v)                                                                  AS soma,
+                 COUNT(*)::int                                                              AS n,
+                 COALESCE(MAX(COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0)),0)    AS total_nf
+          FROM r_tit t
+          LEFT JOIN fiscal_invoices fi ON fi.id = t.fiscal_invoice_id
+          WHERE t.fiscal_invoice_id IS NOT NULL
+          GROUP BY t.doc, t.nome, t.mes, t.fiscal_invoice_id
+        ),
+        r AS (
+          SELECT doc, nome, mes, v, 1 AS n FROM r_tit WHERE fiscal_invoice_id IS NULL
+          UNION ALL
+          SELECT doc, nome, mes,
+                 CASE WHEN total_nf > 0 AND soma > total_nf THEN total_nf ELSE soma END AS v,
+                 n
+          FROM r_nota
+        ),
         rk AS (
-          SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v FROM r${FILTRO_CARTEIRA}
+          SELECT COALESCE(doc, 'N|' || COALESCE(nome,'?')) AS chave, doc, nome, mes, v, n FROM r${FILTRO_CARTEIRA}
         )`;
 
       // 1) Serie mensal (base = titulos emitidos)
       const serieRec = await q(`${CTE_REC}
         SELECT mes,
                COALESCE(SUM(v),0)::float   AS valor,
-               COUNT(*)::int               AS titulos,
+               COALESCE(SUM(n),0)::int     AS titulos,
                COUNT(DISTINCT chave)::int  AS clientes
         FROM rk GROUP BY mes ORDER BY mes`);
 
@@ -736,7 +766,7 @@ export function registerCarteira(app: Express) {
       //    segmento, ativo) — cliente sem cadastro fica com o nome do titulo.
       const clientesRaw = await q(`${CTE_REC},
         per_mes AS (
-          SELECT chave, mes, SUM(v) AS vm, COUNT(*) AS n, MAX(doc) AS doc, MAX(nome) AS nome
+          SELECT chave, mes, SUM(v) AS vm, SUM(n) AS n, MAX(doc) AS doc, MAX(nome) AS nome
           FROM rk GROUP BY chave, mes
         ),
         agg AS (
