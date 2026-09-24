@@ -430,7 +430,7 @@ export default function VirtualServiceLogModal({
                         ) : (
                           <FileText className="h-4 w-4" />
                         )}
-                        Puxar conversa da Central
+                        Puxar Conversa do Umbler
                       </Button>
                       {/* 📋 Solicitar Alteração — abre a solicitação formal p/ este cliente. */}
                       <ChangeRequestControl
