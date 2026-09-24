@@ -37,7 +37,7 @@ const MENU_CARD: Record<string, string> = {
   "fin-blocked": "Pedidos Bloqueados", "fin-chart": "Plano de Contas / DRE", "fin-dre": "Plano de Contas / DRE",
   "fin-accounts": "Contas Financeiras", "fin-xml": "XMLs / SPED Fiscal", "fin-sped": "XMLs / SPED Fiscal",
   "fluxo-caixa": "Fluxo de Caixa", "conciliacao-bancaria": "Conciliação Bancária",
-  "conferencia-pagamentos": "Conferência de Pagamentos", "auditoria-cobrancas": "Auditoria de Cobranças",
+  "conferencia-pagamentos": "Conferência de Pagamentos", "conferencia-recebimentos": "Conferência de Recebimentos", "auditoria-cobrancas": "Auditoria de Cobranças",
   "radar-compras": "Radar de Compras", cielo: "Cielo (PIX/Cartão)", "pix-charges": "Cielo (PIX/Cartão)",
   whatsapp: "WhatsApp", "telefones-clientes": "Telefones de Clientes", "central-atendimento": "Central de Atendimento",
   telemarketing: "Central de Telemarketing", "telemarketing-analysis": "Dashboard de Conversas",
@@ -391,6 +391,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'recuperacao-faturamento', label: 'Recuperação de Faturamento', icon: 'fas fa-rotate-left', available: canAccessReports, badge: null },
         { id: 'conciliacao-bancaria', label: 'Conciliação Bancária', icon: 'fas fa-money-check', available: canAccessReports, badge: null },
         { id: 'conferencia-pagamentos', label: 'Conferência de Pagamentos', icon: 'fas fa-clipboard-check', available: canAccessReports, badge: null },
+        { id: 'conferencia-recebimentos', label: 'Conferência de Recebimentos', icon: 'fas fa-hand-holding-usd', available: canAccessReports, badge: null },
         { id: 'auditoria-cobrancas', label: 'Auditoria de Cobranças', icon: 'fas fa-user-shield', available: canAccessReports, badge: null },
         { id: 'auditoria-financeira', label: 'Auditoria Financeira', icon: 'fas fa-shield-halved', available: canAccessReports, badge: null },
         { id: 'lixeira-financeira', label: 'Lixeira Financeira', icon: 'fas fa-trash-arrow-up', available: canAccessReports, badge: null },
@@ -645,7 +646,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
+    const routePages = ['extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');
