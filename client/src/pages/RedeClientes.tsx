@@ -33,6 +33,8 @@ type ClienteRede = {
   /** 'destinatario' | 'entrega' | 'nenhum' — papel do integrante na NF-e. */
   papel?: string;
   fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
+  /** Títulos repetidos da mesma NF-e que ficaram FORA da soma do mês exibido. */
+  dupMes?: { titulos: number; valor: number };
 };
 /** Endereço de entrega SEM CNPJ pendurado na rede — não é cliente, não tem carteira. */
 type PontoEntrega = {
@@ -49,6 +51,7 @@ type Rede = {
   totais: {
     clientes: number; ativos: number; inativos: number;
     fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
+    dupMes?: { titulos: number; valor: number };
   };
 };
 type Candidato = {
@@ -366,6 +369,12 @@ export default function RedeClientes() {
                             {pct(variacao(r.totais.fatMes, r.totais.fatMesAnoAnt))} vs {labelMes(mesAnoAnt)}
                           </span>
                         </p>
+                        {r.totais.dupMes?.titulos ? (
+                          <p className="text-[11px] leading-tight text-amber-700"
+                            title="Mesma NF-e, mesmo vencimento e mesmo valor gravados mais de uma vez no Contas a Receber. Aqui contam uma vez só; o título repetido precisa ser cancelado no financeiro.">
+                            {r.totais.dupMes.titulos} título(s) repetido(s) fora da conta ({BRL0(r.totais.dupMes.valor)})
+                          </p>
+                        ) : null}
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground">Faturamento {ano}</p>
@@ -471,6 +480,19 @@ export default function RedeClientes() {
                                 <span className={`block text-[11px] ${corVar(variacao(c.fatMes, c.fatMesAnt))}`}>
                                   {pct(variacao(c.fatMes, c.fatMesAnt))} vs mês ant.
                                 </span>
+                                {/* Título em dobro (mesma NF-e, mesmo vencimento, mesmo
+                                    valor) não entra na soma — mas também não some da
+                                    vista: o aviso diz quanto ficou de fora, para alguém
+                                    ir cancelar o título repetido no financeiro. */}
+                                {c.dupMes?.titulos ? (
+                                  <span
+                                    className="block text-[11px] text-amber-700"
+                                    title={`${c.dupMes.titulos} título(s) repetido(s) da mesma NF-e, mesmo vencimento e mesmo valor, somando ${BRL(c.dupMes.valor)}. Contados uma vez só aqui — o repetido continua no Contas a Receber e precisa ser cancelado.`}
+                                    data-testid={`aviso-titulo-dobrado-${c.id}`}
+                                  >
+                                    {c.dupMes.titulos === 1 ? "1 título repetido" : `${c.dupMes.titulos} títulos repetidos`} fora da conta
+                                  </span>
+                                ) : null}
                               </TableCell>
                               <TableCell className="text-right whitespace-nowrap font-medium">
                                 {BRL(c.fatAno)}
