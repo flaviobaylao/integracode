@@ -656,6 +656,109 @@ async function resolveUmblerTalkConfig(): Promise<{ orgId: string; fromPhone: st
   }
 }
 
+// Nucleo do telefone p/ casar numeros com/sem o 9 e com/sem o 55 (retorna DDD + 8 digitos).
+function _phoneCore(p: string): string {
+  let d = String(p || '').replace(/\D/g, '');
+  if (d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11 && d[2] === '9') d = d.slice(0, 2) + d.slice(3);
+  return d;
+}
+
+// Busca a conversa do cliente DIRETO no Umbler Talk (nao no banco local).
+// Cobre conversas iniciadas pelo cliente OU pelo atendente, respondidas ou nao, e ancora
+// SEMPRE na ultima acao ocorrida na conversa (mensagem mais recente). Como a API do Umbler
+// expoe apenas as mensagens-marco do chat (primeira do cliente, primeira resposta do
+// atendente e a ultima), retornamos essas — nao o thread completo.
+async function buscarConversaUmbler(rawPhone: string): Promise<{
+  found: boolean; reason?: string; customerName?: string; phone?: string;
+  date?: string; chatId?: string; totalChats?: number;
+  messages?: Array<{ senderType: string; content: string; createdAt: string }>;
+  _diag?: any;
+}> {
+  if (!process.env.UMBLER_TALK_TOKEN) return { found: false, reason: 'UMBLER_TALK_TOKEN ausente' };
+  const cfg = await resolveUmblerTalkConfig();
+  if ('error' in cfg) return { found: false, reason: 'Umbler config: ' + cfg.error };
+  const targetCore = _phoneCore(rawPhone);
+  if (!targetCore || targetCore.length < 8) return { found: false, reason: 'Telefone invalido' };
+
+  const matched: any[] = [];
+  const MAX_PAGES = 25;
+  let pagesScanned = 0, totalScanned = 0;
+  let sampleChatKeys: string[] = [], sampleContactKeys: string[] = [], sampleMsgKeys: string[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const url = '/v1/chats/?organizationId=' + encodeURIComponent(cfg.orgId) + '&page=' + page;
+    let resp: any;
+    try { resp = await umblerTalkFetch(url); } catch { break; }
+    if (!resp.ok) break;
+    let body: any; try { body = await resp.json(); } catch { break; }
+    const items = Array.isArray(body) ? body : ((body && (body.items || body.Items)) || []);
+    pagesScanned++;
+    if (!items.length) break;
+    totalScanned += items.length;
+    if (!sampleChatKeys.length && items[0]) {
+      sampleChatKeys = Object.keys(items[0]);
+      const c0 = items[0].Contact || items[0].contact || {};
+      sampleContactKeys = Object.keys(c0);
+      const m0 = items[0].LastMessage || items[0].lastMessage || {};
+      sampleMsgKeys = Object.keys(m0);
+    }
+    for (const chat of items) {
+      const contact = chat.Contact || chat.contact || {};
+      const cph = contact.PhoneNumber || contact.phoneNumber || contact.Phone || '';
+      if (_phoneCore(cph) === targetCore) matched.push(chat);
+    }
+    const totalPages = body && (body.totalPages || body.TotalPages);
+    if (totalPages && page >= Number(totalPages)) break;
+    if (matched.length && page >= 6) break; // ja varremos as conversas mais recentes
+  }
+  const _diag = { pagesScanned, totalScanned, matchedCount: matched.length, sampleChatKeys, sampleContactKeys, sampleMsgKeys };
+  if (!matched.length) return { found: false, reason: 'Sem conversa no Umbler para este numero', _diag };
+
+  const _dt = (x: any) => {
+    const v = x && (x.eventAtUTC || x.EventAtUTC || x.lastMessageAtUTC || x.LastMessageAtUTC || x.createdAtUTC || x.CreatedAtUTC);
+    const t = v ? new Date(v).getTime() : 0;
+    return isNaN(t) ? 0 : t;
+  };
+  matched.sort((a, b) => _dt(b) - _dt(a));
+  const chat = matched[0];
+  const contact = chat.Contact || chat.contact || {};
+  const customerName = contact.Name || contact.name || contact.DisplayName || contact.displayName || '';
+  const chatDate = chat.eventAtUTC || chat.EventAtUTC || chat.createdAtUTC || chat.CreatedAtUTC || null;
+
+  const mapMsg = (m: any) => {
+    if (!m || typeof m !== 'object') return null;
+    const content = m.Content || m.content || m.Text || m.text || m.Message || m.message || '';
+    if (!content) return null;
+    const src = String(m.Source || m.source || '').toLowerCase();
+    const isAgent = src === 'member' || m.SentByOrganizationMember === true || m.sentByOrganizationMember === true;
+    const dt = m.EventAtUTC || m.eventAtUTC || m.CreatedAtUTC || m.createdAtUTC || m.SentAt || m.sentAt || chatDate || new Date().toISOString();
+    let iso: string; try { iso = new Date(dt).toISOString(); } catch { iso = new Date().toISOString(); }
+    return { senderType: isAgent ? 'agent' : 'customer', content: String(content), createdAt: iso };
+  };
+
+  const raw = [
+    chat.FirstContactMessage || chat.firstContactMessage,
+    chat.FirstMemberReplyMessage || chat.firstMemberReplyMessage,
+    chat.LastMessage || chat.lastMessage,
+  ].map(mapMsg).filter(Boolean) as Array<{ senderType: string; content: string; createdAt: string }>;
+
+  const seen = new Set<string>();
+  const messages = raw.filter((m) => {
+    const k = m.createdAt + '|' + m.content;
+    if (seen.has(k)) return false; seen.add(k); return true;
+  }).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  let day = '';
+  try { day = new Date(chatDate || (messages.length ? messages[messages.length - 1].createdAt : Date.now())).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { day = ''; }
+
+  return {
+    found: messages.length > 0,
+    reason: messages.length ? undefined : 'Conversa encontrada no Umbler, mas sem mensagens legiveis',
+    customerName, phone: '55' + targetCore, date: day,
+    chatId: String(chat.Id || chat.id || ''), totalChats: matched.length, messages, _diag,
+  };
+}
+
 // Numero de saida usado quando a conversa nao tem canal proprio (ex.: conversa aberta
 // pelo atendente). Configuravel em system_settings 'canal_saida_padrao' — hoje o 7169,
 // enquanto o 2630 estiver bloqueado. Sem a chave, cai no padrao do Umbler.
@@ -3850,46 +3953,43 @@ export function registerChatRoutes(app: Express): void {
       if (!rawPhone) {
         return res.json({ found: false, reason: "Cliente sem telefone cadastrado" });
       }
-      const normalized = normalizePhoneNumber(String(rawPhone));
-      const variants = getPhoneVariants(normalized);
-      // 🔗 VÁRIOS CANAIS/FORMATOS: o MESMO cliente pode ter MAIS DE UMA conversa na Central —
-      // uma por número de canal (1841 oficial, 7169 Umbler Talk, 2630) e por formato do telefone
-      // (com/sem o 9). Antes pegávamos só a PRIMEIRA conversa e parávamos (break), então a captura
-      // trazia só um canal (tipicamente o 1841). Agora juntamos as mensagens de TODAS as conversas
-      // do cliente e o dia é escolhido pela conversa MAIS RECENTE — se a última do dia foi no 7169,
-      // ela entra. (set/2026)
-      const convs: any[] = [];
-      const seenConv = new Set<string>();
-      for (const v of variants) {
-        const c = await storage.getChatConversationByPhone(v);
-        if (c && !seenConv.has(c.id)) { seenConv.add(c.id); convs.push(c); }
-      }
-      if (!convs.length) {
-        return res.json({ found: false, reason: "Sem conversa vinculada na Central de Atendimento" });
-      }
-      let allMsgs: any[] = [];
-      for (const conv of convs) {
-        const ms = (await storage.getChatMessages(conv.id)) || [];
-        for (const m of ms) allMsgs.push(m);
-      }
-      // Dedupe por externalId (a mesma mensagem não se repete entre conversas) e ordena por horário.
-      const seenExt = new Set<string>();
-      allMsgs = allMsgs.filter((m: any) => {
-        const k = m.externalId ? String(m.externalId) : "";
-        if (k) { if (seenExt.has(k)) return false; seenExt.add(k); }
-        return true;
-      }).sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      const dayOf = (d: any) => { try { return new Date(d).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; } };
-      const reqDate = String((req.query && req.query.date) || "").slice(0, 10);
-      const days = Array.from(new Set(allMsgs.map((m: any) => dayOf(m.createdAt)).filter(Boolean))).sort();
-      const targetDay = (reqDate && days.includes(reqDate)) ? reqDate : (days.length ? days[days.length - 1] : "");
-      const dayMsgs = targetDay ? allMsgs.filter((m: any) => dayOf(m.createdAt) === targetDay) : [];
-      const messages = dayMsgs.map((m: any) => ({ senderType: m.senderType, content: m.content, createdAt: m.createdAt }));
-      const primary = convs.find((c: any) => String(c.customerName || "").trim()) || convs[0];
-      return res.json({ found: true, conversationId: primary.id, customerName: primary.customerName, phone: normalized, date: targetDay, totalConversation: allMsgs.length, messages });
+      // 🔎 BUSCA SOMENTE NO UMBLER (não no banco local). Cobre conversas iniciadas pelo
+      // cliente OU pelo atendente, respondidas ou não, e ancora SEMPRE na última ação
+      // ocorrida na conversa. A API do Umbler expõe só as mensagens-marco do chat
+      // (1ª do cliente, 1ª resposta do atendente e a última), então é isso que devolvemos. (set/2026)
+      const r = await buscarConversaUmbler(String(rawPhone));
+      const nomeCadastro = String((customer as any)?.name || (customer as any)?.tradeName || "").trim();
+      return res.json({
+        found: r.found,
+        reason: r.reason,
+        conversationId: r.chatId || null,
+        customerName: r.customerName || nomeCadastro,
+        phone: r.phone || "",
+        date: r.date || "",
+        totalConversation: (r.messages || []).length,
+        totalChats: r.totalChats || 0,
+        messages: r.messages || [],
+      });
     } catch (error: any) {
       console.error("[CONVERSA-CENTRAL] erro:", error?.message || error);
       return res.status(500).json({ found: false, error: error?.message || "erro" });
+    }
+  });
+  // DIAGNÓSTICO (read-only): busca a conversa no Umbler por telefone e devolve o resultado
+  // + estrutura (chaves) para verificar o formato real da API. ?phone=5562... ou ?customerId=...
+  app.get("/api/chat/umbler-talk/find", async (req: any, res: any) => {
+    try {
+      let phone = String(req.query.phone || "");
+      if (!phone && req.query.customerId) {
+        const c = await storage.getCustomer(String(req.query.customerId));
+        phone = (c as any)?.phone || "";
+      }
+      if (!phone) return res.status(400).json({ error: "informe ?phone=... ou ?customerId=..." });
+      const r = await buscarConversaUmbler(phone);
+      const msgs = (r.messages || []).map((m: any) => ({ senderType: m.senderType, len: String(m.content || "").length, createdAt: m.createdAt }));
+      return res.json({ found: r.found, reason: r.reason, customerName: r.customerName, phone: r.phone, date: r.date, chatId: r.chatId, totalChats: r.totalChats, messagesShape: msgs, diag: r._diag });
+    } catch (e: any) {
+      return res.status(500).json({ error: String(e?.message || e).slice(0, 300) });
     }
   });
   // UNIFICAÇÃO de conversas duplicadas do MESMO cliente (uma linha por formato de telefone,
