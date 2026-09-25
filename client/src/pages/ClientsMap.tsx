@@ -404,13 +404,9 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
               </>
             )}
             {ehPonto ? (
-              <>
-                <p className="font-medium">📅 Dia de rota: <span style={{ color }}>{dayName}</span></p>
-                <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
-                {customer.visitPeriodicity && (
-                  <p className="font-medium">🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}</p>
-                )}
-              </>
+              // Só o dia: vendedor, periodicidade e última entrega já saem nos blocos de leitura
+              // logo abaixo — repetir aqui duplicava as três linhas no card do local.
+              <p className="font-medium">📅 Dia de rota: <span style={{ color }}>{dayName}</span></p>
             ) : ehLead && podeEditar ? (
               <>
                 <p className="font-medium flex items-center gap-2 flex-wrap">
