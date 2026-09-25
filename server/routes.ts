@@ -19699,6 +19699,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // === AJUSTE MANUAL do KM RODADO (total_actual_distance) de UMA rota. Admin only.
+  // Usado quando a regra automatica (1o check-in -> ... -> casa) nao cobre o percurso real,
+  // ex.: visita a UM lead em que o trajeto e casa->lead->casa (a regra do dia nao conta a
+  // ida ao 1o ponto). body: { km:number, mode?:'set'|'add' } (default add).
+  app.post('/api/admin/daily-routes/:routeId/set-actual-distance', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { routeId } = req.params;
+      const km = Number(req.body?.km);
+      const mode = (String(req.body?.mode || 'add').toLowerCase() === 'set') ? 'set' : 'add';
+      if (!isFinite(km) || km < 0 || km > 100000) return res.status(400).json({ message: 'km invalido' });
+      const route = await storage.getDailyRoute(routeId);
+      if (!route) return res.status(404).json({ message: 'Rota nao encontrada' });
+      const atual = Number((route as any).totalActualDistance || 0);
+      const novo = mode === 'set' ? km : Math.round((atual + km) * 100) / 100;
+      await storage.updateDailyRoute(routeId, { totalActualDistance: String(novo) } as any);
+      console.log(`[KM-AJUSTE] rota ${routeId}: ${atual} -> ${novo} km (mode=${mode}, +${km}) por ${req.currentUser?.email}`);
+      res.json({ ok: true, routeId, antes: atual, depois: novo, mode });
+    } catch (error: any) {
+      console.error('Erro no ajuste manual de KM:', error);
+      res.status(500).json({ message: 'Erro ao ajustar KM', error: error?.message });
+    }
+  });
+
   // Buscar pedidos do dia e débitos para clientes de uma rota
   app.get('/api/daily-routes/:routeId/customer-info', authenticateUser, async (req: any, res) => {
     try {
