@@ -352,6 +352,8 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
   const color = pinColorFor(customer);
   const dayName = getWeekdayName(customer.weekdays);
   const ehLead = customer.situacao === 'lead';
+  // 📦 Local de entrega: pin que herda o cliente dono, mas NÃO é cadastro — nada nele se edita.
+  const ehPonto = (customer as any).ehPontoEntrega === true;
   // Nome e vendedor sao os dois dados que identificam o ponto — nunca podem sair vazios
   // da caixa de descricao (lead sem vendedor aparece como "Sem vendedor", nao some).
   const nomePonto = customer.fantasyName || customer.name || (ehLead ? 'Lead sem nome' : 'Cliente sem nome');
@@ -387,7 +389,29 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
             {(customer as any).redeNome && (
               <p className="font-medium">🏢 Rede: {(customer as any).redeNome}</p>
             )}
-            {ehLead && podeEditar ? (
+            {/* Local de entrega: diz de quem ele é e avisa que o cadastro se edita no cliente dono. */}
+            {ehPonto && (
+              <>
+                <p className="font-medium text-amber-700 dark:text-amber-400">
+                  📦 Local de entrega de {(customer as any).pontoDe || 'cliente'}
+                </p>
+                {(customer as any).pontoContato && (
+                  <p>🧑 Contato no local: {(customer as any).pontoContato}</p>
+                )}
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Endereço de entrega, não é um cadastro: dia de rota, vendedor e periodicidade são os do cliente dono e se alteram no pin dele.
+                </p>
+              </>
+            )}
+            {ehPonto ? (
+              <>
+                <p className="font-medium">📅 Dia de rota: <span style={{ color }}>{dayName}</span></p>
+                <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
+                {customer.visitPeriodicity && (
+                  <p className="font-medium">🔁 Periodicidade: {String(customer.visitPeriodicity).charAt(0).toUpperCase() + String(customer.visitPeriodicity).slice(1)}</p>
+                )}
+              </>
+            ) : ehLead && podeEditar ? (
               <>
                 <p className="font-medium flex items-center gap-2 flex-wrap">
                   📅 Dia de rota:
@@ -545,7 +569,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
             )}
           </div>
           {/* Lead nao e cliente: o modal de edicao de cliente nao serve para ele. */}
-          {podeEditar && !ehLead && (
+          {podeEditar && !ehLead && !ehPonto && (
             <Button
               size="sm"
               className="w-full"
@@ -712,6 +736,7 @@ export default function ClientsMap() {
         (c) =>
           (c.fantasyName || c.name || '').toLowerCase().includes(alvo) ||
           String((c as any).redeNome || '').toLowerCase().includes(alvo) ||
+          String((c as any).pontoDe || '').toLowerCase().includes(alvo) ||
           (soDigitos.length > 0 && (c.phone || '').includes(soDigitos))
       );
     }
