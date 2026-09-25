@@ -685,13 +685,22 @@ export default function SolicitacoesAlteracao() {
   const allSelected = pendingF.length > 0 && selectedIds.length === pendingF.length;
   const toggleSelect = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleSelectAll = () => setSelected(() => (allSelected ? new Set<string>() : new Set(pendingF.map((r) => r.id))));
+  // Aba controlada: o painel congelado precisa saber qual aba está aberta para mostrar (ou não)
+  // a barra de seleção em lote, que agora vive fora do TabsContent.
+  const [tab, setTab] = useState("pendentes");
   const limparCaixa = () => {
     if (selectedIds.length === 0) return;
     if (window.confirm(`Limpar ${selectedIds.length} solicitação(ões) da caixa de pendentes? Elas vão para Resolvidas (marcadas como lidas).`)) bulkClear.mutate(selectedIds);
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+    // 🧊 25/set/2026 — Painel CONGELADO na rolagem: título + contador, busca, filtro de
+    // vendedor, abas e a barra de seleção em lote ficam fixos no topo (sticky) enquanto só a
+    // lista de cards rola. Para isso a barra "Selecionar tudo / Limpar caixa" saiu de dentro do
+    // TabsContent e subiu para o painel — por isso a aba virou estado controlado (`tab`).
+    <div className="px-4 md:px-6 pb-6 max-w-3xl mx-auto">
+    <Tabs value={tab} onValueChange={setTab}>
+      <div className="sticky top-0 z-30 -mx-4 md:-mx-6 px-4 md:px-6 pt-4 md:pt-6 pb-3 space-y-3 bg-background/95 supports-[backdrop-filter]:backdrop-blur border-b shadow-sm">
       <div className="flex items-center gap-2">
         <Inbox className="h-6 w-6 text-indigo-600" />
         <h1 className="text-xl font-bold">Solicitações de Alteração</h1>
@@ -723,30 +732,31 @@ export default function SolicitacoesAlteracao() {
         )}
       </div>
 
-      <Tabs defaultValue="pendentes">
         <TabsList>
           <TabsTrigger value="pendentes">Pendentes {totalPend > 0 ? `(${totalPend})` : ""}</TabsTrigger>
           <TabsTrigger value="resolvidas">Resolvidas</TabsTrigger>
         </TabsList>
+
+        {tab === "pendentes" && pendingF.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1" onClick={toggleSelectAll} data-testid="cr-selecionar-tudo">
+              {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+              {allSelected ? "Desmarcar tudo" : "Selecionar tudo"}
+            </Button>
+            <span className="text-xs text-muted-foreground">{selectedIds.length} selecionada(s)</span>
+            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 ml-auto gap-1" disabled={selectedIds.length === 0 || bulkClear.isPending} onClick={limparCaixa} data-testid="cr-limpar-caixa">
+              {bulkClear.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Limpar caixa de pendentes{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+            </Button>
+          </div>
+        )}
+      </div>
 
         <TabsContent value="pendentes" className="space-y-3 mt-3">
           {sugestoesF.length > 0 && (
             <div className="space-y-2">
               <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Migração de carteira (repescagem)</div>
               {sugestoesF.map((s) => <CarteiraSugestaoCard key={s.id} s={s} />)}
-            </div>
-          )}
-          {pendingF.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 pb-2 border-b">
-              <Button variant="outline" size="sm" className="gap-1" onClick={toggleSelectAll} data-testid="cr-selecionar-tudo">
-                {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
-                {allSelected ? "Desmarcar tudo" : "Selecionar tudo"}
-              </Button>
-              <span className="text-xs text-muted-foreground">{selectedIds.length} selecionada(s)</span>
-              <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 ml-auto gap-1" disabled={selectedIds.length === 0 || bulkClear.isPending} onClick={limparCaixa} data-testid="cr-limpar-caixa">
-                {bulkClear.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                Limpar caixa de pendentes{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
-              </Button>
             </div>
           )}
           {loadingP ? (
@@ -767,7 +777,7 @@ export default function SolicitacoesAlteracao() {
             resolvedF.map((r) => <ResolvedCard key={r.id} r={r} />)
           )}
         </TabsContent>
-      </Tabs>
+    </Tabs>
     </div>
   );
 }
