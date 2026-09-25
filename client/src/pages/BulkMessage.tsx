@@ -11,18 +11,21 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
-import { 
-  Loader2, Upload, Send, Download, Users, Phone, CheckCircle, 
-  AlertCircle, FileSpreadsheet, Clock, X, Info, Pause, Play, Square
+import {
+  Loader2, Upload, Send, Download, Users, Phone, CheckCircle,
+  AlertCircle, FileSpreadsheet, Clock, X, Info, Pause, Play, Square,
+  Image as ImageIcon, UserCheck
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import BulkCustomerPicker, { type PickedContact } from "@/components/BulkCustomerPicker";
 
 interface Contact {
   phone: string;
   name: string;
   valid: boolean;
+  customerId?: string;
 }
 
 interface ParseResult {
@@ -50,11 +53,19 @@ export default function BulkMessage() {
   const queryClient = useQueryClient();
 
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactSource, setContactSource] = useState<"base" | "planilha">("base");
   const [message, setMessage] = useState("");
   const [delaySeconds, setDelaySeconds] = useState(3);
   const [parseStats, setParseStats] = useState<{ totalRows: number; validContacts: number } | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ totalContacts: number; estimatedTimeMinutes: number } | null>(null);
+
+  // Imagem opcional a enviar junto (URL pública gerada pelo servidor + preview local)
+  const [imageUrl, setImageUrl] = useState<string>("");
+  const [imagePreview, setImagePreview] = useState<string>("");
+  const [imageName, setImageName] = useState<string>("");
+  const [imageUploading, setImageUploading] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Polling do status do disparo
   const { data: jobStatus, refetch: refetchStatus } = useQuery<JobStatus>({
@@ -114,7 +125,7 @@ export default function BulkMessage() {
   });
 
   const sendMutation = useMutation({
-    mutationFn: async (data: { contacts: Contact[]; message: string; delaySeconds: number }) => {
+    mutationFn: async (data: { contacts: Contact[]; message: string; delaySeconds: number; imageUrl?: string }) => {
       return await apiRequest("POST", "/api/chat/bulk-message/send", data);
     },
     onSuccess: (data: any) => {
@@ -184,6 +195,55 @@ export default function BulkMessage() {
     }
   };
 
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Arquivo inválido", description: "Selecione uma imagem (JPG, PNG, WEBP...).", variant: "destructive" });
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast({ title: "Imagem muito grande", description: "O limite é 15 MB.", variant: "destructive" });
+      return;
+    }
+    // Preview local imediato
+    const reader = new FileReader();
+    reader.onload = () => setImagePreview(String(reader.result || ""));
+    reader.readAsDataURL(file);
+
+    setImageUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/chat/bulk-message/upload-image", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao enviar imagem");
+      }
+      const data = await response.json();
+      setImageUrl(data.url);
+      setImageName(file.name);
+      toast({ title: "Imagem anexada!", description: "Será enviada junto com a mensagem." });
+    } catch (error: any) {
+      setImagePreview("");
+      toast({ title: "Erro ao anexar imagem", description: error.message, variant: "destructive" });
+    } finally {
+      setImageUploading(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setImageUrl("");
+    setImagePreview("");
+    setImageName("");
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  };
+
   const handleRemoveContact = (phone: string) => {
     setContacts(contacts.filter(c => c.phone !== phone));
   };
@@ -193,12 +253,16 @@ export default function BulkMessage() {
       toast({ title: "Nenhum contato selecionado", variant: "destructive" });
       return;
     }
-    if (!message.trim()) {
-      toast({ title: "Digite uma mensagem", variant: "destructive" });
+    if (!message.trim() && !imageUrl) {
+      toast({ title: "Digite uma mensagem ou anexe uma imagem", variant: "destructive" });
       return;
     }
-    
-    sendMutation.mutate({ contacts, message, delaySeconds });
+    if (imageUploading) {
+      toast({ title: "Aguarde o envio da imagem terminar", variant: "destructive" });
+      return;
+    }
+
+    sendMutation.mutate({ contacts, message, delaySeconds, imageUrl: imageUrl || undefined });
   };
 
   const handleDownloadTemplate = () => {
@@ -225,7 +289,7 @@ export default function BulkMessage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold mb-2 flex items-center gap-3" data-testid="page-title">
@@ -233,28 +297,51 @@ export default function BulkMessage() {
             Disparo em Massa
           </h1>
           <p className="text-muted-foreground">
-            Envie mensagens WhatsApp para múltiplos contatos a partir de planilha Excel
+            Envie mensagens (texto e/ou imagem) no WhatsApp para clientes filtrados da base ou a partir de planilha Excel
           </p>
         </div>
         <BackToDashboardButton />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileSpreadsheet className="h-5 w-5" />
-                1. Carregar Planilha
-              </CardTitle>
-              <CardDescription>
-                Faça upload de uma planilha Excel (.xlsx) com os números de telefone
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            1. Escolher Contatos
+          </CardTitle>
+          <CardDescription>
+            Selecione da base de Clientes Ativos (somente telefones confirmados pelo cliente) ou carregue uma planilha Excel
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="inline-flex rounded-lg border p-1 bg-muted/40">
+            <button
+              type="button"
+              onClick={() => setContactSource("base")}
+              className={`px-3 py-1.5 text-sm rounded-md flex items-center gap-2 ${contactSource === "base" ? "bg-white dark:bg-gray-800 shadow font-medium" : "text-muted-foreground"}`}
+              data-testid="source-base"
+            >
+              <UserCheck className="h-4 w-4" /> Base de Clientes
+            </button>
+            <button
+              type="button"
+              onClick={() => setContactSource("planilha")}
+              className={`px-3 py-1.5 text-sm rounded-md flex items-center gap-2 ${contactSource === "planilha" ? "bg-white dark:bg-gray-800 shadow font-medium" : "text-muted-foreground"}`}
+              data-testid="source-planilha"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> Planilha Excel
+            </button>
+          </div>
+
+          {contactSource === "base" && (
+            <BulkCustomerPicker value={contacts} onChange={setContacts} />
+          )}
+
+          {contactSource === "planilha" && (
+            <div className="space-y-4">
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={handleDownloadTemplate}
                   data-testid="button-download-template"
                 >
@@ -303,9 +390,13 @@ export default function BulkMessage() {
                   </AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -313,13 +404,17 @@ export default function BulkMessage() {
                 2. Contatos ({contacts.length})
               </CardTitle>
               <CardDescription>
-                Lista de contatos que receberão a mensagem
+                {contactSource === "base"
+                  ? "Clientes selecionados que receberão a mensagem"
+                  : "Lista de contatos que receberão a mensagem"}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {contacts.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  Nenhum contato carregado. Faça upload de uma planilha acima.
+                  {contactSource === "base"
+                    ? "Nenhum cliente selecionado. Use os filtros acima e marque os clientes."
+                    : "Nenhum contato carregado. Faça upload de uma planilha acima."}
                 </div>
               ) : (
                 <ScrollArea className="h-[300px]">
@@ -364,22 +459,75 @@ export default function BulkMessage() {
                 3. Compor Mensagem
               </CardTitle>
               <CardDescription>
-                Digite a mensagem que será enviada para todos os contatos
+                Digite a mensagem e/ou anexe uma imagem que será enviada para todos os contatos
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Mensagem</Label>
+                <Label>{imageUrl ? "Mensagem / Legenda da imagem" : "Mensagem"}</Label>
                 <Textarea
                   placeholder="Olá {{nome}}! Temos uma oferta especial para você..."
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  rows={8}
+                  rows={imageUrl ? 5 : 8}
                   className="resize-none"
                   data-testid="textarea-message"
                 />
                 <p className="text-sm text-muted-foreground">
                   Use <Badge variant="secondary">{"{{nome}}"}</Badge> para personalizar com o nome do contato
+                  {imageUrl ? " — o texto vai como legenda da imagem." : "."}
+                </p>
+              </div>
+
+              {/* Anexo de imagem */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" />
+                  Imagem (opcional)
+                </Label>
+                <input
+                  type="file"
+                  ref={imageInputRef}
+                  onChange={handleImageChange}
+                  accept="image/*"
+                  className="hidden"
+                  data-testid="image-input"
+                />
+                {imagePreview ? (
+                  <div className="flex items-start gap-3 rounded-lg border p-3">
+                    <img src={imagePreview} alt="Prévia" className="h-20 w-20 rounded-md object-cover border" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{imageName || "imagem"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {imageUploading ? "Enviando imagem..." : "Imagem pronta para envio"}
+                      </p>
+                      <div className="flex gap-2 mt-2">
+                        <Button variant="outline" size="sm" onClick={() => imageInputRef.current?.click()} disabled={imageUploading}>
+                          Trocar
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={handleRemoveImage} disabled={imageUploading}>
+                          <X className="h-4 w-4 mr-1" /> Remover
+                        </Button>
+                      </div>
+                    </div>
+                    {imageUploading && <Loader2 className="h-5 w-5 animate-spin text-green-600" />}
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={imageUploading}
+                    data-testid="button-attach-image"
+                  >
+                    {imageUploading ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Enviando...</>
+                    ) : (
+                      <><ImageIcon className="h-4 w-4 mr-2" /> Anexar imagem</>
+                    )}
+                  </Button>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  JPG, PNG ou WEBP (até 15 MB). A imagem é enviada como foto do WhatsApp com o texto acima como legenda.
                 </p>
               </div>
 
@@ -402,12 +550,12 @@ export default function BulkMessage() {
                 </p>
               </div>
 
-              {contacts.length > 0 && message.trim() && (
+              {contacts.length > 0 && (message.trim() || imageUrl) && (
                 <Alert>
                   <Info className="h-4 w-4" />
                   <AlertDescription>
                     Tempo estimado: <strong>{Math.ceil((contacts.length * delaySeconds) / 60)} minutos</strong>{" "}
-                    para {contacts.length} contatos
+                    para {contacts.length} contatos{imageUrl ? " (com imagem)" : ""}
                   </AlertDescription>
                 </Alert>
               )}
@@ -495,7 +643,7 @@ export default function BulkMessage() {
                     className="w-full"
                     size="lg"
                     onClick={handleSend}
-                    disabled={contacts.length === 0 || !message.trim() || sendMutation.isPending}
+                    disabled={contacts.length === 0 || (!message.trim() && !imageUrl) || imageUploading || sendMutation.isPending}
                     data-testid="button-send"
                   >
                     {sendMutation.isPending ? (
