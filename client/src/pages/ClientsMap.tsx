@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw, Copy, Check } from "lucide-react";
+import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw, Copy, Check, Search } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -704,6 +704,18 @@ export default function ClientsMap() {
     enabled: !!canAccess,
   });
 
+  // 🔎 SUGESTÕES DA BUSCA (mesmo padrão da Evolução do faturamento, em Gestão de Carteiras):
+  // as REDES primeiro, prefixadas "Rede: ", depois os nomes dos pontos. Sai do conjunto INTEIRO,
+  // não do filtrado — senão a lista encolheria a cada tecla e a sugestão sumiria enquanto digita.
+  const sugestoesBusca = useMemo(() => {
+    const arr: any[] = Array.isArray(customers) ? customers : [];
+    const ordena = (a: string, b: string) => a.localeCompare(b, 'pt-BR');
+    const redes = Array.from(new Set(arr.map((c) => c?.redeNome).filter(Boolean) as string[])).sort(ordena);
+    const nomes = Array.from(new Set(arr.map((c) => c?.fantasyName || c?.name).filter(Boolean) as string[])).sort(ordena);
+    // Teto no número de nomes: o <datalist> é nativo, mas milhares de <option> pesam na abertura.
+    return [...redes.map((r) => `Rede: ${r}`), ...nomes.slice(0, 1500)];
+  }, [customers]);
+
   // ⚡ TODO o pipeline de filtro/faceta num useMemo só: sem isso ele rodava (e reconstruía os
   // 1000+ marcadores) a cada mudança de estado da tela — inclusive ao copiar um nome.
   const {
@@ -726,8 +738,16 @@ export default function ClientsMap() {
     // Busca por nome, telefone ou REDE DE CLIENTES: digitar o nome da rede traz todos os
     // integrantes dela de uma vez (filiais do mesmo dono, sócios em comum, CNPJs de mesma raiz).
     if (buscaAplicada.trim()) {
-      const alvo = buscaAplicada.toLowerCase();
-      const soDigitos = buscaAplicada.replace(/\D/g, '');
+      const bruto = buscaAplicada.trim();
+      // Escolher "Rede: X" na lista de sugestões filtra SÓ por rede — sem isso o texto com o
+      // prefixo não casaria com nome nenhum e a tela ficaria vazia.
+      const mRede = bruto.match(/^rede:\s*(.+)$/i);
+      if (mRede) {
+        const nomeRede = mRede[1].toLowerCase();
+        baseDoMapa = baseDoMapa.filter((c) => String((c as any).redeNome || '').toLowerCase().includes(nomeRede));
+      } else {
+      const alvo = bruto.toLowerCase();
+      const soDigitos = bruto.replace(/\D/g, '');
       baseDoMapa = baseDoMapa.filter(
         (c) =>
           (c.fantasyName || c.name || '').toLowerCase().includes(alvo) ||
@@ -735,6 +755,7 @@ export default function ClientsMap() {
           String((c as any).pontoDe || '').toLowerCase().includes(alvo) ||
           (soDigitos.length > 0 && (c.phone || '').includes(soDigitos))
       );
+      }
     }
 
     const passaVendedor = (c: any) => sellers.length === 0 || sellers.includes(c?.sellerName || SEM_VENDEDOR);
@@ -1059,13 +1080,18 @@ export default function ClientsMap() {
             <div className="flex-1 min-w-[200px]">
               <label className="text-sm font-medium mb-2 block">Buscar Cliente</label>
               <div className="relative">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <Input
-                  placeholder="Nome, telefone ou rede de clientes..."
+                  list="alvos-do-mapa"
+                  placeholder="Ver um cliente ou uma rede — digite o nome"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   data-testid="input-search-customers"
-                  className={searchTerm ? 'pr-8' : undefined}
+                  className={searchTerm ? 'pl-8 pr-8' : 'pl-8'}
                 />
+                <datalist id="alvos-do-mapa">
+                  {sugestoesBusca.map((v) => <option key={v} value={v} />)}
+                </datalist>
                 {!!searchTerm && (
                   <button
                     type="button"
