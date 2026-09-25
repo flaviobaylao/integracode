@@ -2936,13 +2936,13 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Já existe um disparo em andamento. Encerre-o antes de iniciar outro." });
       }
 
-      // Get Evolution API config
-      const config = evolutionAPIService.getConfig();
-      if (!config || !config.instanceName) {
-        return res.status(400).json({ error: "WhatsApp não está configurado. Configure a Evolution API primeiro." });
+      // Canal de envio: Umbler Talk (mesmo canal do resto do Integra — confirmação
+      // de telefone, ANA, Inbox). Não usa Evolution API.
+      if (!process.env.UMBLER_TALK_TOKEN) {
+        return res.status(400).json({ error: "WhatsApp (Umbler Talk) não está configurado. Verifique o token do Umbler Talk." });
       }
 
-      console.log(`📤 [BULK] Iniciando disparo em massa para ${contacts.length} contatos`);
+      console.log(`📤 [BULK] Iniciando disparo em massa para ${contacts.length} contatos (via Umbler Talk)`);
 
       // Criar job de controle
       const job = {
@@ -2993,18 +2993,8 @@ export function registerChatRoutes(app: Express): void {
             const personalizedMessage = textoMsg.replace(/\{\{nome\}\}/gi, contact.name || 'Cliente');
 
             const result = temImagem
-              ? await evolutionAPIService.sendMediaMessage(
-                  config.instanceName,
-                  contact.phone,
-                  imageUrl,
-                  personalizedMessage || undefined,
-                  'image'
-                )
-              : await evolutionAPIService.sendTextMessage(
-                  config.instanceName,
-                  contact.phone,
-                  personalizedMessage
-                );
+              ? await sendUmblerTalkMedia(contact.phone, imageUrl, personalizedMessage || undefined)
+              : await sendUmblerTalkText(contact.phone, personalizedMessage);
 
             const jobRef = bulkMessageJobs.get(userId);
             if (jobRef) {
