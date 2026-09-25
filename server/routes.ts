@@ -19306,9 +19306,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalVisits: newOrder.length
       });
       
-      // Atribuir lead ao vendedor da rota
+      // Atribuir lead ao vendedor da rota E AGENDA o lead para a DATA da rota, senao ele
+      // some logo na primeira reabertura: a reconciliacao do GET so MANTEM leads com
+      // status='scheduled', next_contact_date = data da rota e route_type <> 'prospeccao'.
+      // (Bug: "lead nao aparece na Rota do Dia depois de adicionar Visita".)
+      const _lrd = new Date(route.routeDate);
+      const _leadDay = `${_lrd.getUTCFullYear()}-${String(_lrd.getUTCMonth() + 1).padStart(2, '0')}-${String(_lrd.getUTCDate()).padStart(2, '0')}`;
       await storage.updateLead(leadId, {
-        assignedTo: route.sellerId
+        assignedTo: route.sellerId,
+        status: 'scheduled',
+        routeType: 'dia',
+        nextContactDate: new Date(`${_leadDay}T12:00:00.000Z`),
       });
       
       // Criar sales_card para o lead (necessário para check-in/check-out)
