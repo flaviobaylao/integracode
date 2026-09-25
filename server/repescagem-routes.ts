@@ -212,6 +212,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     serviceStartDate: customers.serviceStartDate,
     omieClientCode: customers.omieClientCode,
     isActive: customers.isActive,
+    isSupplier: customers.isSupplier,
     situacao: customers.situacao,
   }).from(customers).where(inArray(customers.id, customerIds));
 
@@ -500,6 +501,9 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     if (REPESCAGEM_EXCLUDED_SELLER_IDS.has(c.sellerId || '')) continue;
     // Clientes vinculados a uma REDE de clientes NAO caem em repescagem.
     if (redeMemberIds.has(c.id)) continue;
+    // FORNECEDORES (is_supplier) sao cadastro, nao cliente — NUNCA entram na Rota do Dia,
+    // nem pela repescagem. (A rota regular ja os exclui via getCustomersForDate.)
+    if ((c as any).isSupplier === true) continue;
     // Elegiveis: carteira de VENDEDOR EXTERNO ('vendedor') OU TELEMARKETING ('telemarketing').
     // (A pedido: as carteiras da Leticia/Robson tambem entram; seus clientes ficam com eles.)
     // Carteiras de canal/sistema e sem dono continuam de fora.
@@ -2075,6 +2079,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         FROM repescagem_assignments ra
         JOIN customers c ON c.id = ra.customer_id
         WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
+          AND (c.is_supplier IS NOT TRUE)
           AND (ra.assigned_user_id = ${sellerId} OR c.seller_id = ${sellerId})
         ORDER BY ra.last_red_date DESC NULLS LAST, ra.assigned_at DESC NULLS LAST`);
       const seenRowIds = new Set<string>();
