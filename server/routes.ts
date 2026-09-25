@@ -1849,6 +1849,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   let _mapaVisitaCache: { t: number; m: Map<string, string> } | null = null;
   let _mapaEntregaCache: { t: number; m: Map<string, string> } | null = null;
   let _mapaRedeCache: { t: number; m: Map<string, string> } | null = null;
+  let _mapaPontosCache: { t: number; v: any[] } | null = null;
   const _MAPA_CACHE_MS = 120000;
 
   // 📆 REMARCAR a PRÓXIMA VISITA do cliente pelo card do mapa (somente ADMIN).
@@ -2025,6 +2026,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         _mapaRedeCache = { t: Date.now(), m };
         return m;
       };
+      // 📦 LOCAIS DE ENTREGA (cliente_rede_pontos): endereço com coordenada onde a entrega
+      // acontece — loja em shopping, quiosque, obra, cozinha. NÃO é cliente: não tem cadastro,
+      // carteira nem faturamento próprio; fica pendurado na REDE. No mapa ele vira um pin que
+      // HERDA o cliente dono (cor do dia, vendedor, situação), como se fosse uma filial dele.
+      // DONO = o integrante marcado como 'destinatario' da rede; sem destinatário, o mais antigo.
+      const buildPontosEntrega = async (): Promise<any[]> => {
+        if (_mapaPontosCache && (Date.now() - _mapaPontosCache.t) < _MAPA_CACHE_MS) return _mapaPontosCache.v;
+        let v: any[] = [];
+        try {
+          const r: any = await db.execute(sql`
+            WITH dono AS (
+              SELECT DISTINCT ON (rede_id) rede_id, customer_id
+                FROM cliente_rede_membros
+               ORDER BY rede_id, (papel = 'destinatario') DESC, created_at
+            )
+            SELECT p.id, p.nome, p.endereco, p.numero, p.complemento, p.bairro, p.cidade, p.uf,
+                   p.latitude, p.longitude, p.telefone, p.contato,
+                   r.nome AS rede_nome, d.customer_id AS dono_id
+              FROM cliente_rede_pontos p
+              JOIN cliente_redes r ON r.id = p.rede_id
+              LEFT JOIN dono d ON d.rede_id = p.rede_id
+             WHERE COALESCE(p.ativo, true) = true
+               AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+               AND p.latitude::float <> 0 AND p.longitude::float <> 0`);
+          v = ((r.rows || r) as any[]);
+        } catch (e: any) { console.warn('[MAP-DATA] pontos de entrega:', e?.message); }
+        _mapaPontosCache = { t: Date.now(), v };
+        return v;
+      };
+      // Monta a linha do mapa de um ponto a partir do cliente DONO já montado: herda tudo
+      // (cor, dia, vendedor, situação, rede) e troca só identidade e posição.
+      const linhaDoPonto = (p: any, dono: any) => ({
+        ...dono,
+        id: `ponto-${p.id}`,
+        customerId: String(dono.customerId ?? dono.id),
+        name: String(p.nome || 'Local de entrega'),
+        fantasyName: String(p.nome || 'Local de entrega'),
+        address: [p.endereco, p.numero, p.complemento, p.bairro, p.cidade, p.uf].filter(Boolean).join(', '),
+        neighborhood: p.bairro || dono.neighborhood || '',
+        phone: p.telefone || dono.phone || '',
+        latitude: parseFloat(String(p.latitude)),
+        longitude: parseFloat(String(p.longitude)),
+        redeNome: p.rede_nome || dono.redeNome || null,
+        // Marcas do ponto: o card mostra que é local de entrega e de quem, e não oferece edição.
+        ehPontoEntrega: true,
+        pontoDe: String(dono.fantasyName || dono.name || ''),
+        pontoContato: p.contato || null,
+      });
       const buildUltimaEntrega = async (): Promise<Map<string, string>> => {
         if (_mapaEntregaCache && (Date.now() - _mapaEntregaCache.t) < _MAPA_CACHE_MS) return _mapaEntregaCache.m;
         const m = new Map<string, string>();
@@ -2316,6 +2365,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         });
       
+      // 📦 Os LOCAIS DE ENTREGA entram como pins extras, cada um colado no seu cliente dono.
+      // Dono fora desta lista (sem coordenada, de outra carteira, inativo) => o ponto não aparece:
+      // sem o dono não dá para herdar cor, dia nem vendedor, e um pin solto confundiria.
+      try {
+        const pontos = await buildPontosEntrega();
+        if (pontos.length) {
+          const porCliente = new Map(mapData.map((x: any) => [String(x.id), x]));
+          let n = 0;
+          for (const p of pontos) {
+            const dono = porCliente.get(String(p.dono_id));
+            if (!dono) continue;
+            mapData.push(linhaDoPonto(p, dono) as any);
+            n++;
+          }
+          if (n) console.log(`📦 [MAP-DATA] ${n} locais de entrega adicionados (de ${pontos.length} cadastrados)`);
+        }
+      } catch (e: any) { console.warn('[MAP-DATA] locais de entrega:', e?.message); }
+
       console.log(`📍 [MAP-DATA] ${mapData.length} clientes mapeados com coordenadas`);
       res.json(mapData);
     } catch (error) {
