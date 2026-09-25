@@ -869,9 +869,9 @@ export function registerChangeRequestsRoutes(app: Express) {
   // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/whatsapp — "Envio Whatsapp" do card de REPORT do Inbox.
   //   Monta um recorte do report (cliente, tipo, motivo, observação do vendedor, quem e quando)
-  //   e envia pelo WhatsApp da Honest (enviarInterno: cadeia 2630 → 7169 → 1841) para o número
-  //   de "DÉBITOS - Inbox de Informações": system_settings 'inbox_whatsapp_destino'
-  //   (padrão 5562994511997). O envio fica registrado na conversa do card (kind 'whatsapp'),
+  //   e envia pelo WhatsApp da Honest (enviarInterno: cadeia 2630 → 7169 → 1841) SOMENTE para o
+  //   número de "DÉBITOS - Inbox de Informações": (62) 99451-1997 — fixo no código.
+  //   O envio fica registrado na conversa do card (kind 'whatsapp'),
   //   sem mudar o status do report.
   // --------------------------------------------------------------------------
   app.post("/api/change-requests/:id/whatsapp", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
@@ -882,13 +882,11 @@ export function registerChangeRequestsRoutes(app: Express) {
     if (cur.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
     const row = cur[0];
 
-    // Destino configurável (Administração > system_settings). Sem a chave, vai para o 62 9451-1997.
-    let destino = "5562994511997";
-    try {
-      const s = rowsOf(await db.execute(sql`SELECT value FROM system_settings WHERE key = 'inbox_whatsapp_destino' LIMIT 1`));
-      const v = String(s[0]?.value ?? "").replace(/^"|"$/g, "").replace(/\D/g, "");
-      if (v) destino = v;
-    } catch {}
+    // 25/set/2026: destino FIXO no código — o recorte vai SOMENTE para o WhatsApp
+    // (62) 99451-1997 ("DÉBITOS - Inbox de Informações"). A chave system_settings
+    // 'inbox_whatsapp_destino' deixou de ser lida de propósito, para não haver risco de o
+    // envio cair em outro número por configuração.
+    const destino = "5562994511997";
 
     const d: any = row.details || {};
     const extra = String((req.body || {}).extra || "").trim().slice(0, 1000);
