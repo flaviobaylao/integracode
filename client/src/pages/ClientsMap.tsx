@@ -505,7 +505,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
             ) : (
               !!customer.phone && <p>📞 {customer.phone}</p>
             )}
-            {podeEditar && vendedores.length > 0 ? (
+            {podeEditar && !ehPonto && vendedores.length > 0 ? (
               <p className="font-medium flex items-center gap-2">
                 👤 Vendedor:
                 <select
