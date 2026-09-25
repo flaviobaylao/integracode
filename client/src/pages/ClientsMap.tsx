@@ -466,7 +466,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 📅 {ehLead ? 'Próximo contato' : 'Dia de Visita'}: <span style={{ color }}>{dayName}</span>
               </p>
             )}
-            {!ehLead && (podeEditar ? (
+            {!ehLead && !ehPonto && (podeEditar ? (
               <p className="font-medium flex items-center gap-2">
                 📆 Próxima visita:
                 <input
@@ -487,7 +487,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
                 📆 Próxima visita: {dataBR(customer.nextVisitDate) || 'sem visita agendada'}
               </p>
             ))}
-            {!ehLead && podeEditar ? (
+            {!ehLead && !ehPonto && podeEditar ? (
               <p className="flex items-center gap-2">
                 📞
                 <input
@@ -522,7 +522,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
             ) : (
               <p className="font-medium">👤 Vendedor: {vendedorPonto}</p>
             )}
-            {!ehLead && podeEditar ? (
+            {!ehLead && !ehPonto && podeEditar ? (
               <>
                 <p className="font-medium flex items-center gap-2">
                   🔁 Periodicidade:
