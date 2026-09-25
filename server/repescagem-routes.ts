@@ -382,19 +382,32 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   }
   const billingOrders = await db.select({
     omieCustomerCode: billings.omieCustomerCode,
-    dateStr: sql<string>`DATE(COALESCE(${billings.orderDate}, ${billings.invoiceDate}))::text`,
+    orderStr: sql<string>`DATE(${billings.orderDate})::text`,
+    invoiceStr: sql<string>`DATE(${billings.invoiceDate})::text`,
   }).from(billings).where(
     and(
       eq(billings.isCancelled, false),
       sql`COALESCE(CAST(${billings.totalValue} AS NUMERIC), 0) > 0`,
-      sql`DATE(COALESCE(${billings.orderDate}, ${billings.invoiceDate})) >= ${startDate}`,
-      sql`DATE(COALESCE(${billings.orderDate}, ${billings.invoiceDate})) <= ${endDate}`,
+      // Conta a venda pela data do PEDIDO **ou** pela data da NOTA (faturamento): basta uma das
+      // duas cair na janela. Antes usava so COALESCE(pedido, nota), entao um faturamento do mes
+      // vindo de um pedido de mes anterior nao contava e o cliente mensal caia na repescagem.
+      sql`(
+        (${billings.orderDate} IS NOT NULL AND DATE(${billings.orderDate}) >= ${startDate} AND DATE(${billings.orderDate}) <= ${endDate})
+        OR (${billings.invoiceDate} IS NOT NULL AND DATE(${billings.invoiceDate}) >= ${startDate} AND DATE(${billings.invoiceDate}) <= ${endDate})
+      )`,
     )
   );
+  // Datas que contam como venda deste faturamento: pedido E nota (sem duplicar se forem iguais).
+  const billingDatesOf = (b: { orderStr?: string | null; invoiceStr?: string | null }): string[] => {
+    const out: string[] = [];
+    if (b.orderStr) out.push(b.orderStr);
+    if (b.invoiceStr && b.invoiceStr !== b.orderStr) out.push(b.invoiceStr);
+    return out;
+  };
   for (const b of billingOrders) {
     const cid = omieCodeToCustomerId.get(b.omieCustomerCode || '');
-    if (!cid || !b.dateStr) continue;
-    orderSet.add(`${cid}_${b.dateStr}`);
+    if (!cid) continue;
+    for (const ds of billingDatesOf(b)) orderSet.add(`${cid}_${ds}`);
   }
 
   const pipelineOrders = await db.select({
@@ -438,7 +451,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     if (!cid || !ds) return;
     let set = saleDatesByCustomer.get(cid); if (!set) { set = new Set(); saleDatesByCustomer.set(cid, set); } set.add(ds);
   };
-  for (const b of billingOrders) addSale(omieCodeToCustomerId.get(b.omieCustomerCode || ''), b.dateStr);
+  for (const b of billingOrders) { const cid = omieCodeToCustomerId.get(b.omieCustomerCode || ''); for (const ds of billingDatesOf(b)) addSale(cid, ds); }
   for (const [cid, set] of vendaOrderDatesByCustomer) for (const ds of set) addSale(cid, ds);
 
   const todayStr = brTodayStr();
