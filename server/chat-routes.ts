@@ -2909,21 +2909,25 @@ export function registerChatRoutes(app: Express): void {
   // Send bulk messages
   app.post("/api/chat/bulk-message/send", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), async (req, res) => {
     try {
-      const { contacts, message, delaySeconds = 3 } = req.body;
+      const { contacts, message, delaySeconds = 3, imageUrl } = req.body;
       const userId = (req as any).currentUser?.id || 'default';
+      const temImagem = typeof imageUrl === 'string' && imageUrl.trim().length > 0;
+      const textoMsg = typeof message === 'string' ? message : '';
 
-      console.log(`[BULK] Starting message blast...`, { 
+      console.log(`[BULK] Starting message blast...`, {
         contactsCount: contacts?.length,
-        messagePreview: message?.substring(0, 30),
-        delaySeconds 
+        messagePreview: textoMsg.substring(0, 30),
+        temImagem,
+        delaySeconds
       });
 
       if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
         return res.status(400).json({ error: "Lista de contatos é obrigatória" });
       }
 
-      if (!message || typeof message !== 'string' || message.trim().length === 0) {
-        return res.status(400).json({ error: "Mensagem é obrigatória" });
+      // Precisa de texto OU imagem (a legenda pode ser vazia quando há imagem).
+      if (!temImagem && textoMsg.trim().length === 0) {
+        return res.status(400).json({ error: "Informe uma mensagem ou anexe uma imagem" });
       }
 
       // Verificar se já há um disparo ativo
@@ -2984,15 +2988,23 @@ export function registerChatRoutes(app: Express): void {
           }
           
           const contact = contacts[i];
-          
+
           try {
-            const personalizedMessage = message.replace(/\{\{nome\}\}/gi, contact.name || 'Cliente');
-            
-            const result = await evolutionAPIService.sendTextMessage(
-              config.instanceName,
-              contact.phone,
-              personalizedMessage
-            );
+            const personalizedMessage = textoMsg.replace(/\{\{nome\}\}/gi, contact.name || 'Cliente');
+
+            const result = temImagem
+              ? await evolutionAPIService.sendMediaMessage(
+                  config.instanceName,
+                  contact.phone,
+                  imageUrl,
+                  personalizedMessage || undefined,
+                  'image'
+                )
+              : await evolutionAPIService.sendTextMessage(
+                  config.instanceName,
+                  contact.phone,
+                  personalizedMessage
+                );
 
             const jobRef = bulkMessageJobs.get(userId);
             if (jobRef) {
@@ -3030,6 +3042,35 @@ export function registerChatRoutes(app: Express): void {
     } catch (error: any) {
       console.error("[BULK] Send error:", error);
       res.status(500).json({ error: `Erro ao enviar mensagens: ${error.message}` });
+    }
+  });
+
+  // Upload de imagem para o disparo em massa. Guarda em chat_media (servido em
+  // /api/chat-media/:id, publico) e devolve a URL ABSOLUTA para a Evolution baixar.
+  app.post("/api/chat/bulk-message/upload-image", authenticateUser, requireRole(["admin", "coordinator", "telemarketing"]), upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file || !req.file.buffer || req.file.buffer.length === 0) {
+        return res.status(400).json({ error: "Nenhuma imagem enviada" });
+      }
+      const mimetype = req.file.mimetype || "image/jpeg";
+      if (!mimetype.startsWith("image/")) {
+        return res.status(400).json({ error: "Arquivo não é uma imagem" });
+      }
+      if (req.file.buffer.length > 15 * 1024 * 1024) {
+        return res.status(400).json({ error: "Imagem muito grande (máx. 15 MB)" });
+      }
+      const relUrl = await uploadChatMediaToStorage(req.file.buffer, mimetype, req.file.originalname || "imagem");
+      if (!relUrl) {
+        return res.status(500).json({ error: "Falha ao guardar a imagem" });
+      }
+      const prodDomain = (process.env.BASE_URL || process.env.APP_URL || "https://integracode-production.up.railway.app")
+        .replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      const absUrl = `https://${prodDomain}${relUrl}`;
+      console.log(`🖼️ [BULK] Imagem anexada: ${absUrl} (${Math.round(req.file.buffer.length / 1024)}KB)`);
+      res.json({ success: true, url: absUrl, mimetype, fileName: req.file.originalname || "imagem" });
+    } catch (error: any) {
+      console.error("[BULK] Upload image error:", error);
+      res.status(500).json({ error: `Erro ao anexar imagem: ${error.message}` });
     }
   });
 
