@@ -594,8 +594,8 @@ async function main() {
   const dDev: any = ((await raw(`SELECT * FROM official_dispatches WHERE campaign LIKE 'card:scE1:devolvida%'`)) as any).rows[0];
   const posDepois: any = ((await raw(`SELECT status, error FROM official_dispatches WHERE campaign='card:scE1:pos2d'`)) as any).rows[0];
   check(dev.startsWith('enfileirado') && dDev.template_label === 'entrega_nao_realizada' && dDev.params.length === 3 && dDev.params[2] === 'ninguem no local'
-    && posDepois.status === 'falha' && /devolvido/.test(String(posDepois.error)),
-    'entrega: devolução avisa com o motivo e cancela o follow-up daquele pedido');
+    && posDepois.status === 'cancelada' && /devolvido/.test(String(posDepois.error)),
+    'entrega: devolução avisa com o motivo e cancela o follow-up daquele pedido (' + posDepois?.status + ')');
 
   // Template novo (tom leve) assume assim que a Meta aprova, sem mexer em código.
   await raw(`INSERT INTO whatsapp_templates (label, umbler_id, categoria, corpo) VALUES ('entrega_saiu','u9','UTILITY','Oi, {{1}}! Seu pedido {{2}} saiu para entrega.') ON CONFLICT (label) DO UPDATE SET umbler_id='u9'`);
@@ -1003,6 +1003,24 @@ async function main() {
     const l: any = ((await raw(`SELECT status::text AS st, error FROM official_dispatches WHERE umbler_message_id='msg-falha-1'`)) as any).rows[0];
     check(l?.st === 'falha' && /Failed/i.test(String(l?.error || '')),
       'entrega: disparo recusado pelo WhatsApp guarda o motivo, não falha em branco (' + l?.error + ')');
+  }
+
+  // Cancelar não é falhar. O follow-up de 2 dias que perde a validade (pedido
+  // devolvido antes da data) ia para 'falha' e entrava na conta de "não chegou".
+  // Com o auditor alertando por taxa de falha, isso vira alarme falso.
+  {
+    const ec2 = await import('../server/entrega-cliente');
+    await ec2.ensureEntregaClienteSchema();
+    await raw(`INSERT INTO official_dispatches (customer_phone, template_label, category, use_case, params, status, mode, campaign, scheduled_at)
+               VALUES ('5562911119001','pos_entrega_2d_u','UTILITY','entrega'::dispatch_use_case,'[]'::jsonb,
+                       'fila'::dispatch_status,'on','card:scE1:pos2d', now() + interval '2 days')`);
+    await raw(`UPDATE delivery_route_stops SET status='devolvida' WHERE id='stE1'`);
+    await ec2.avisarEntregaDevolvida('stE1', 'cliente fechado');
+    const l: any = ((await raw(
+      `SELECT status::text AS st, error FROM official_dispatches
+        WHERE campaign='card:scE1:pos2d' ORDER BY created_at DESC LIMIT 1`)) as any).rows[0];
+    check(l?.st === 'cancelada' && /cancelado/.test(String(l?.error || '')),
+      'entrega: follow-up cancelado por devolução fica "cancelada", não "falha" (' + l?.st + ')');
   }
 
   // O auditor tem que GRITAR quando o canal está ligado e não entrega nada —

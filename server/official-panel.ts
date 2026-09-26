@@ -80,6 +80,22 @@ export function registerOfficialPanel(app: any) {
       CASE WHEN sent_at IS NULL THEN NULL
            ELSE round(EXTRACT(EPOCH FROM (sent_at - created_at)))::int END AS espera_s
       FROM official_dispatches ORDER BY created_at DESC LIMIT 20`)).rows || [];
+    // POR QUE FALHOU — a pergunta que o painel nao respondia.
+    // Em 23/set/2026 ele mostrava "134 falhas hoje" e paravam ali: nao dava para
+    // saber se era numero sem WhatsApp (cadastro), template recusado pela Meta
+    // (qualidade/pausa) ou fila. Agrupado por template + motivo, a resposta
+    // aparece na primeira olhada — e a diferenca entre um template que falha e
+    // outro que passa e justamente o que aponta o culpado.
+    const motivos: any = (await db.execute(sql`
+      SELECT template_label,
+             COALESCE(NULLIF(error, ''), '(sem motivo registrado)') AS motivo,
+             count(*)::int AS n,
+             max(created_at) AS ultima
+        FROM official_dispatches
+       WHERE status::text = 'falha'
+         AND created_at > now() - interval '7 days'
+       GROUP BY 1, 2
+       ORDER BY n DESC LIMIT 25`)).rows || [];
     const custo: any = (await db.execute(sql`SELECT coalesce(sum(estimated_cost),0)::float c FROM official_dispatches
       WHERE status IN ('enviada','entregue','lida','resposta')
         AND (created_at::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)).rows?.[0]?.c || 0;
@@ -100,7 +116,7 @@ export function registerOfficialPanel(app: any) {
       const { dailyCap, ratePerMin } = await import('./official-dispatch');
       limites = { tetoDia: await dailyCap(), porMinuto: await ratePerMin() };
     } catch {}
-    res.json({ mode, useCases, useCaseModes, fila, porTemplate, ultimos, custoHoje: custo, diag, limites });
+    res.json({ mode, useCases, useCaseModes, fila, porTemplate, ultimos, motivos, custoHoje: custo, diag, limites });
   });
 
   // Alterar um ajuste
