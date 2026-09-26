@@ -60,6 +60,7 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/fluxo-caixa": "Financeiro",
   "/conciliacao-bancaria": "Financeiro",
   "/conferencia-pagamentos": "Financeiro",
+  "/conferencia-recebimentos": "Financeiro",
   "/auditoria-cobrancas": "Financeiro",
   "/radar-compras": "Financeiro",
   "/pix-charges": "Financeiro",

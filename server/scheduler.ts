@@ -101,6 +101,32 @@ cron.schedule('30 18 * * 1-5', async () => {
   await runRotaNaoVisitadosCron();
 }, { timezone: 'America/Sao_Paulo' });
 
+// ETAPA 4 — RECLASSIFICAR VENCIDOS: a_vencer -> vencida quando o vencimento já passou
+// (dia-calendário BRT), para recebíveis e pagáveis. Sem isto o status fica defasado e o
+// título some da régua de cobrança. Diário 00:10, de hora em hora (rede de segurança) e
+// às 08:20 (logo antes do alerta de débitos das 08:30). Não mexe em recebida/paga/cancelada.
+async function _reclassificarVencidos(origem: string) {
+  try {
+    const HOJE = sql`(now() AT TIME ZONE 'America/Sao_Paulo')::date`;
+    const r: any = await db.execute(sql`
+      UPDATE receivables SET status = 'vencida', updated_at = now(), updated_by = 'cron-vencidos'
+      WHERE deleted_at IS NULL AND status = 'a_vencer' AND due_date IS NOT NULL AND due_date::date < ${HOJE}
+      RETURNING id`);
+    const p: any = await db.execute(sql`
+      UPDATE payables SET status = 'vencida', updated_at = now(), updated_by = 'cron-vencidos'
+      WHERE deleted_at IS NULL AND status = 'a_vencer' AND due_date IS NOT NULL AND due_date::date < ${HOJE}
+      RETURNING id`);
+    const nr = (r.rows || []).length, np = (p.rows || []).length;
+    if (nr + np > 0) console.log(`⏰ [RECLASSIFICAR-VENCIDOS/${origem}] ${nr} receber + ${np} pagar -> vencida.`);
+  } catch (e: any) {
+    console.error('[RECLASSIFICAR-VENCIDOS] falha no cron:', e?.message || e);
+  }
+}
+cron.schedule('10 0 * * *', () => { void _reclassificarVencidos('diario'); }, { timezone: 'America/Sao_Paulo' });
+cron.schedule('20 8 * * *', () => { void _reclassificarVencidos('pre-alerta'); }, { timezone: 'America/Sao_Paulo' });
+cron.schedule('40 * * * *', () => { void _reclassificarVencidos('horario'); }, { timezone: 'America/Sao_Paulo' });
+void _reclassificarVencidos('boot');
+
 // Alerta diário 08:30 (BRT), SOMENTE DIAS ÚTEIS: débitos vencidos por carteira (WhatsApp).
 // Vendedores recebem só a própria carteira; coordenadores/admins recebem a lista consolidada.
 // O guard de dia útil (Seg-Sex + feriados nacionais) fica dentro de runDebitosVencidosAlertaCron.

@@ -1262,23 +1262,34 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Conta Financeira</Label>
-              <Select value={paymentForm.financialAccountId || 'none'} onValueChange={v => setPaymentForm({ ...paymentForm, financialAccountId: v === 'none' ? '' : v })}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Selecione</SelectItem>
-                  {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            {(() => {
+              // ETAPA 1 — conta de recebimento obrigatoria quando entra dinheiro
+              // (principal + multa + juros). Baixa so de desconto fica dispensada.
+              const entraDinheiro = ((parseFloat(paymentForm.amount || '0') || 0)
+                + (parseFloat(paymentForm.fine || '0') || 0)
+                + (parseFloat(paymentForm.interest || '0') || 0)) > 0.005;
+              const faltaConta = entraDinheiro && !paymentForm.financialAccountId;
+              return (
+                <div>
+                  <Label>Conta Financeira{entraDinheiro ? ' *' : ''}</Label>
+                  <Select value={paymentForm.financialAccountId || 'none'} onValueChange={v => setPaymentForm({ ...paymentForm, financialAccountId: v === 'none' ? '' : v })}>
+                    <SelectTrigger className={faltaConta ? 'border-red-400' : ''}><SelectValue placeholder="Selecione" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Selecione</SelectItem>
+                      {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {faltaConta && <p className="text-xs text-red-600 mt-1">Escolha a conta onde o dinheiro entrou — obrigatória no recebimento.</p>}
+                </div>
+              );
+            })()}
             <div><Label>Data do Pagamento</Label><Input type="date" value={paymentForm.paymentDate} onChange={e => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })} /></div>
             <div><Label>Referência</Label><Input value={paymentForm.reference} onChange={e => setPaymentForm({ ...paymentForm, reference: e.target.value })} /></div>
             <div><Label>Observações</Label><Textarea value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPayment(false)}>Cancelar</Button>
-            <Button onClick={() => paymentMutation.mutate(paymentForm)} disabled={paymentMutation.isPending}>
+            <Button onClick={() => paymentMutation.mutate(paymentForm)} disabled={paymentMutation.isPending || (((parseFloat(paymentForm.amount || '0') || 0) + (parseFloat(paymentForm.fine || '0') || 0) + (parseFloat(paymentForm.interest || '0') || 0) > 0.005) && !paymentForm.financialAccountId)}>
               {paymentMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Registrar
             </Button>
           </DialogFooter>
@@ -2108,23 +2119,34 @@ function PayablesTab() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Conta Financeira</Label>
-              <Select value={paymentForm.financialAccountId || 'none'} onValueChange={v => setPaymentForm({ ...paymentForm, financialAccountId: v === 'none' ? '' : v })}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Selecione</SelectItem>
-                  {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            {(() => {
+              // ETAPA 1 — conta de recebimento obrigatoria quando entra dinheiro
+              // (principal + multa + juros). Baixa so de desconto fica dispensada.
+              const entraDinheiro = ((parseFloat(paymentForm.amount || '0') || 0)
+                + (parseFloat(paymentForm.fine || '0') || 0)
+                + (parseFloat(paymentForm.interest || '0') || 0)) > 0.005;
+              const faltaConta = entraDinheiro && !paymentForm.financialAccountId;
+              return (
+                <div>
+                  <Label>Conta Financeira{entraDinheiro ? ' *' : ''}</Label>
+                  <Select value={paymentForm.financialAccountId || 'none'} onValueChange={v => setPaymentForm({ ...paymentForm, financialAccountId: v === 'none' ? '' : v })}>
+                    <SelectTrigger className={faltaConta ? 'border-red-400' : ''}><SelectValue placeholder="Selecione" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Selecione</SelectItem>
+                      {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {faltaConta && <p className="text-xs text-red-600 mt-1">Escolha a conta onde o dinheiro entrou — obrigatória no recebimento.</p>}
+                </div>
+              );
+            })()}
             <div><Label>Data do Pagamento</Label><Input type="date" value={paymentForm.paymentDate} onChange={e => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })} /></div>
             <div><Label>Referência</Label><Input value={paymentForm.reference} onChange={e => setPaymentForm({ ...paymentForm, reference: e.target.value })} /></div>
             <div><Label>Observações</Label><Textarea value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPayment(false)}>Cancelar</Button>
-            <Button onClick={() => paymentMutation.mutate(paymentForm)} disabled={paymentMutation.isPending}>
+            <Button onClick={() => paymentMutation.mutate(paymentForm)} disabled={paymentMutation.isPending || (((parseFloat(paymentForm.amount || '0') || 0) + (parseFloat(paymentForm.fine || '0') || 0) + (parseFloat(paymentForm.interest || '0') || 0) > 0.005) && !paymentForm.financialAccountId)}>
               {paymentMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Registrar
             </Button>
           </DialogFooter>

@@ -9121,10 +9121,35 @@ export class DatabaseStorage implements IStorage {
       + `Selecione a categoria (plano de contas) ou configure a categoria-padrão em system_settings.${setKey}. (modo=${modo})`);
   }
 
+  // ETAPA 3 — PREVISAO DE LIQUIDACAO. Quando o dinheiro deve cair, por forma de
+  // pagamento: boleto = vencimento; PIX/dinheiro/transferencia = a vista (emissao);
+  // cartao = D+30 (contrato Cielo: credito a vista D+30; debito D+1 nao e separavel
+  // pela forma, entao usamos o teto D+30). Sem forma conhecida: cai no vencimento.
+  private _expectedSettlement(method: any, issueDate: any, dueDate: any): Date | null {
+    const d = (x: any) => { if (!x) return null; const v = x instanceof Date ? x : new Date(x); return isNaN(v.getTime()) ? null : v; };
+    const issue = d(issueDate), due = d(dueDate);
+    const m = String(method || '').toLowerCase();
+    if (m.includes('boleto')) return due || issue;
+    if (m.includes('pix') || m.includes('dinheiro') || m.includes('transfer') || m.includes('vista') || m.includes('especie')) return issue || due;
+    if (m.includes('cart') || m.includes('card')) {
+      const base = issue || due; if (!base) return null;
+      const s = new Date(base.getTime()); s.setUTCDate(s.getUTCDate() + 30); return s;
+    }
+    return due || issue;
+  }
+
   async createReceivable(data: InsertReceivable): Promise<Receivable> {
     const caid = await this._resolveReceivableCategory(data as any);
     await this._assertCategoria('receivable', caid);
     const [item] = await db.insert(receivables).values({ ...(data as any), chartAccountId: caid }).returning();
+    // Carimba a previsao de liquidacao (coluna gerida por SQL cru; fora do schema
+    // drizzle). So preenche se ainda nao veio no payload e se der para calcular.
+    try {
+      if (item && !(item as any).expectedSettlementDate && !(data as any).expectedSettlementDate) {
+        const esd = this._expectedSettlement((data as any).paymentMethod ?? (item as any).paymentMethod, (item as any).issueDate, (item as any).dueDate);
+        if (esd) await db.execute(sql`UPDATE receivables SET expected_settlement_date = ${esd.toISOString()} WHERE id = ${(item as any).id} AND expected_settlement_date IS NULL`);
+      }
+    } catch (e: any) { console.warn('[RECEIVABLE] expected_settlement_date falhou:', e?.message || e); }
     return item;
   }
 
