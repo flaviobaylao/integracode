@@ -2734,7 +2734,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Documento vazio/em branco -> NULL (evita colisao na unique constraint
           // customers_cpf_unique/cnpj quando o cliente nao tem CPF/CNPJ).
           const digits = String(value ?? '').replace(/\D/g, '');
-          cleanedData[key] = digits.length ? value : null;
+          // 🛡️ NÃO regrava CPF/CNPJ/documento se NÃO mudou. O modal reenvia o objeto
+          // inteiro do cliente; regravar o mesmo documento faz o Postgres rechecar a
+          // unique (customers_cpf_unique / cnpj) e estourar 500 quando existe um
+          // cadastro DUPLICADO/oculto (inativo/excluído) com o mesmo documento —
+          // era a causa do "Falha ao atualizar cliente" ao salvar/editar periodicidade.
+          // Só entra no update quando o documento realmente muda.
+          const __atualDigits = String((__atualGuard as any)?.[key] ?? '').replace(/\D/g, '');
+          if (digits !== __atualDigits) {
+            cleanedData[key] = digits.length ? value : null;
+          }
         } else if (key === 'serviceStartDate') {
           // Coluna timestamp: o drizzle espera Date. Converte a string 'YYYY-MM-DD' (ou vazio -> null).
           const d = value ? new Date(value) : null;
