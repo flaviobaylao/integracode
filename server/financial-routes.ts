@@ -9,6 +9,7 @@ import { cancelarBoleto } from './bb-boleto-service';
 import { lancarNaConta, estornarLancamento, previaEstornoLancamento } from './account-ledger';
 import { removerCobrancaPix } from './bb-pix-service';
 import { logFinancialAudit, actorOf } from './financial-audit';
+import { nfVendaWhere, nfData } from './faturamento-oficial';
 import { webhookTokenGuard } from './webhook-security';
 import { db, pool } from './db';
 import { sql } from 'drizzle-orm';
@@ -3742,103 +3743,267 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
       res.status(500).json({ message: error.message });
     }
   });
-
-  // ============================================================================
-  // FASE 3.3 - FLUXO DE CAIXA (regime de caixa, por conta bancaria)
-  // ============================================================================
-
-  // Realizado = pagamentos efetivos (data em que o dinheiro entrou/saiu), excluindo
-  // titulos cancelados/apagados. Previsto = titulos abertos pelo mes de vencimento
-  // (valor restante). Tudo quebrado por conta bancaria ('sem_conta' quando nao ha).
+  // FASE 3.3 / FASE 5 - FLUXO DE CAIXA no formato e classificacoes da DRE, em regime
+  // de CAIXA e paginado por mes x conta bancaria.
+  //   - Meses PASSADOS  = realizado (data de pagamento; principal na categoria do titulo,
+  //     multa+juros nas contas financeiras da DRE, igual a DRE).
+  //   - Mes CORRENTE     = realizado do mes + previsto ainda em aberto (inclui atrasados).
+  //   - Meses FUTUROS    = previsto pelos titulos ja lancados (saldo em aberto por vencimento).
+  //   Cancelados/apagados nao entram. Estrutura de linhas/subtotais identica a /dre.
   app.get('/api/financial/cashflow', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
     try {
-      const year = parseInt(String(req.query.year || '')) || new Date().getFullYear();
+      await ensureContasFinanceirasDre();
+      const now = new Date();
+      const year = parseInt(String(req.query.year || '')) || now.getFullYear();
       const startDate = new Date(Date.UTC(year, 0, 1));
       const endDate = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
+      const curMonth = year < now.getFullYear() ? 12 : (year > now.getFullYear() ? -1 : now.getMonth());
+      const cut = curMonth < 0 ? 0 : (curMonth > 11 ? 11 : curMonth);
+
+      const chartAccounts = await storage.getChartOfAccounts();
+      const incFmap = await incDreMap();
+      const inDre = (a: any) => incFmap.get(String(a.id)) !== false;
+      const contasFin = await ensureContasFinanceirasDre();
 
       const accQ: any = await db.execute(sql`SELECT id, name, type, balance FROM financial_accounts WHERE is_active = true ORDER BY name`);
-      const accounts = (((accQ as any).rows || []) as any[]).map((a: any) => ({ id: a.id, name: a.name, type: a.type, balance: Number(a.balance || 0) }));
+      const accounts = (((accQ as any).rows || []) as any[]).map((a: any) => ({ id: String(a.id), name: a.name, type: a.type, balance: Number(a.balance || 0) }));
+      const accKeys = [...accounts.map(a => a.id), 'sem_conta'];
 
-      const bucketize = (rows: any[]) => {
-        const out: Record<string, number[]> = { total: new Array(12).fill(0) };
-        for (const r of rows) {
-          const mi = Number(r.m) - 1;
-          if (mi < 0 || mi > 11) continue;
-          const key = r.acc || 'sem_conta';
-          if (!out[key]) out[key] = new Array(12).fill(0);
-          const v = Number(r.v || 0);
-          out[key][mi] += v;
-          out.total[mi] += v;
+      const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+      const dreGroups = ['receita_bruta', 'devolucoes', 'impostos_vendas', 'cpv', 'despesas_comerciais', 'despesas_administrativas', 'despesas_gerais', 'outras_receitas_despesas', 'depreciacao', 'receitas_financeiras', 'despesas_financeiras', 'irpj_csll'];
+
+      // acc -> caid -> monthly[12]
+      const mk = () => new Map<string, Map<string, number[]>>();
+      const add = (m: Map<string, Map<string, number[]>>, acc: string, caid: string, mi: number, v: number) => {
+        if (mi < 0 || mi > 11 || !caid || !v) return;
+        if (!m.has(acc)) m.set(acc, new Map());
+        const g = m.get(acc)!;
+        if (!g.has(caid)) g.set(caid, new Array(12).fill(0));
+        g.get(caid)![mi] += v;
+      };
+      const realEnt = mk(), realSai = mk(), prevEnt = mk(), prevSai = mk();
+      const finRec = new Map<string, number[]>(), finDesp = new Map<string, number[]>();
+      const addFin = (m: Map<string, number[]>, acc: string, mi: number, v: number) => {
+        if (mi < 0 || mi > 11 || !v) return;
+        if (!m.has(acc)) m.set(acc, new Array(12).fill(0));
+        m.get(acc)![mi] += v;
+      };
+
+      // REALIZADO (por data de pagamento)
+      const rEnt: any = await db.execute(sql`
+        SELECT extract(month FROM p.paid_at)::int AS m, COALESCE(p.financial_account_id, t.financial_account_id) AS acc,
+               t.chart_account_id AS caid, COALESCE(sum(p.amount::numeric),0) AS v,
+               COALESCE(sum(COALESCE(p.fine,0)::numeric + COALESCE(p.interest,0)::numeric),0) AS fj
+        FROM receivable_payments p JOIN receivables t ON t.id = p.receivable_id
+        WHERE p.deleted_at IS NULL AND t.deleted_at IS NULL AND t.status <> 'cancelada'
+          AND p.paid_at >= ${startDate} AND p.paid_at <= ${endDate}
+        GROUP BY 1,2,3`);
+      for (const r of (rEnt.rows || [])) { const acc = r.acc ? String(r.acc) : 'sem_conta'; add(realEnt, acc, String(r.caid), Number(r.m)-1, Number(r.v||0)); addFin(finRec, acc, Number(r.m)-1, Number(r.fj||0)); }
+      const rSai: any = await db.execute(sql`
+        SELECT extract(month FROM p.paid_at)::int AS m, COALESCE(p.financial_account_id, t.financial_account_id) AS acc,
+               t.chart_account_id AS caid, COALESCE(sum(p.amount::numeric),0) AS v,
+               COALESCE(sum(COALESCE(p.fine,0)::numeric + COALESCE(p.interest,0)::numeric),0) AS fj
+        FROM payable_payments p JOIN payables t ON t.id = p.payable_id
+        WHERE p.deleted_at IS NULL AND t.deleted_at IS NULL AND t.status <> 'cancelada'
+          AND p.paid_at >= ${startDate} AND p.paid_at <= ${endDate}
+        GROUP BY 1,2,3`);
+      for (const r of (rSai.rows || [])) { const acc = r.acc ? String(r.acc) : 'sem_conta'; add(realSai, acc, String(r.caid), Number(r.m)-1, Number(r.v||0)); addFin(finDesp, acc, Number(r.m)-1, Number(r.fj||0)); }
+
+      // PREVISTO (titulos abertos por vencimento; atrasados vao para o mes de corte)
+      const prevMonthIdx = (due: Date) => {
+        const dy = due.getUTCFullYear(); let mi = due.getUTCMonth();
+        if (dy < year) return (year <= now.getFullYear()) ? cut : 0;
+        if (dy > year) return 11;
+        if (curMonth >= 0 && curMonth <= 11 && mi < curMonth) mi = curMonth;
+        return mi;
+      };
+      const openRec: any = await db.execute(sql`
+        SELECT t.due_date AS due, t.financial_account_id AS acc, t.chart_account_id AS caid,
+               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric,0)),0) AS v
+        FROM receivables t WHERE t.status IN ('a_vencer','vencida') AND t.deleted_at IS NULL
+        GROUP BY t.due_date, t.financial_account_id, t.chart_account_id`);
+      for (const r of (openRec.rows || [])) { const acc = r.acc ? String(r.acc) : 'sem_conta'; add(prevEnt, acc, String(r.caid), prevMonthIdx(new Date(r.due)), Number(r.v||0)); }
+      const openPay: any = await db.execute(sql`
+        SELECT t.due_date AS due, t.financial_account_id AS acc, t.chart_account_id AS caid,
+               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric,0)),0) AS v
+        FROM payables t WHERE t.status IN ('a_vencer','vencida') AND t.deleted_at IS NULL
+        GROUP BY t.due_date, t.financial_account_id, t.chart_account_id`);
+      for (const r of (openPay.rows || [])) { const acc = r.acc ? String(r.acc) : 'sem_conta'; add(prevSai, acc, String(r.caid), prevMonthIdx(new Date(r.due)), Number(r.v||0)); }
+
+      const pickMonthly = (real?: number[], prev?: number[]) => {
+        const out = new Array(12).fill(0);
+        for (let i=0;i<12;i++){
+          if (i < curMonth || i === curMonth) out[i] += (real ? real[i] : 0);
+          if (i > curMonth || i === curMonth) out[i] += (prev ? prev[i] : 0);
         }
         return out;
       };
-      const scalarize = (rows: any[]) => {
-        const out: Record<string, number> = { total: 0 };
-        for (const r of rows) {
-          const key = r.acc || 'sem_conta';
-          const v = Number(r.v || 0);
-          out[key] = (out[key] || 0) + v;
-          out.total += v;
-        }
-        return out;
+      const catMerge = (real?: Map<string, number[]>, prev?: Map<string, number[]>) => {
+        const cat = new Map<string, number[]>();
+        const keys = new Set<string>();
+        if (real) for (const k of real.keys()) keys.add(k);
+        if (prev) for (const k of prev.keys()) keys.add(k);
+        for (const k of keys) cat.set(k, pickMonthly(real ? real.get(k) : undefined, prev ? prev.get(k) : undefined));
+        return cat;
       };
 
-      const realEntQ: any = await db.execute(sql`
-        SELECT extract(month FROM p.paid_at)::int AS m,
-               COALESCE(p.financial_account_id, t.financial_account_id) AS acc,
-               COALESCE(sum(p.amount::numeric), 0) AS v
-        FROM receivable_payments p
-        JOIN receivables t ON t.id = p.receivable_id
-        WHERE t.status <> 'cancelada' AND t.deleted_at IS NULL
-          AND p.paid_at >= ${startDate} AND p.paid_at <= ${endDate}
-        GROUP BY 1, 2`);
-      const realSaiQ: any = await db.execute(sql`
-        SELECT extract(month FROM p.paid_at)::int AS m,
-               COALESCE(p.financial_account_id, t.financial_account_id) AS acc,
-               COALESCE(sum(p.amount::numeric), 0) AS v
-        FROM payable_payments p
-        JOIN payables t ON t.id = p.payable_id
-        WHERE t.status <> 'cancelada' AND t.deleted_at IS NULL
-          AND p.paid_at >= ${startDate} AND p.paid_at <= ${endDate}
-        GROUP BY 1, 2`);
-      const prevEntQ: any = await db.execute(sql`
-        SELECT extract(month FROM t.due_date)::int AS m,
-               t.financial_account_id AS acc,
-               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
-        FROM receivables t
-        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
-          AND t.due_date >= ${startDate} AND t.due_date <= ${endDate}
-        GROUP BY 1, 2`);
-      const prevSaiQ: any = await db.execute(sql`
-        SELECT extract(month FROM t.due_date)::int AS m,
-               t.financial_account_id AS acc,
-               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
-        FROM payables t
-        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
-          AND t.due_date >= ${startDate} AND t.due_date <= ${endDate}
-        GROUP BY 1, 2`);
-      const atrEntQ: any = await db.execute(sql`
-        SELECT t.financial_account_id AS acc,
-               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
-        FROM receivables t
-        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
-          AND t.due_date < ${startDate}
-        GROUP BY 1`);
-      const atrSaiQ: any = await db.execute(sql`
-        SELECT t.financial_account_id AS acc,
-               COALESCE(sum(t.amount::numeric - COALESCE(t.amount_paid::numeric, 0)), 0) AS v
-        FROM payables t
-        WHERE t.status IN ('a_vencer', 'vencida') AND t.deleted_at IS NULL
-          AND t.due_date < ${startDate}
-        GROUP BY 1`);
+      const assemble = (catEnt: Map<string, number[]>, catSai: Map<string, number[]>, finR: number[], finD: number[]) => {
+        const all = new Map<string, number[]>();
+        for (const [k,v] of catEnt) all.set(k, (all.get(k)||new Array(12).fill(0)).map((x,i)=>x+v[i]));
+        for (const [k,v] of catSai) all.set(k, (all.get(k)||new Array(12).fill(0)).map((x,i)=>x+v[i]));
+        const lines: any[] = [];
+        for (const group of dreGroups) {
+          const gA = chartAccounts.filter((a: any) => a.dreGroup === group && inDre(a) && String(a.code).includes('.')).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)));
+          for (const acc of gA) {
+            let monthly = (all.get(String(acc.id)) || new Array(12).fill(0)).slice();
+            if (contasFin.rec && String(acc.id) === String(contasFin.rec)) monthly = monthly.map((v,i)=> v + (finR[i]||0));
+            if (contasFin.desp && String(acc.id) === String(contasFin.desp)) monthly = monthly.map((v,i)=> v + (finD[i]||0));
+            if (monthly.every(v => v === 0)) continue;
+            lines.push({ code: acc.code, name: acc.name, dreGroup: group, type: acc.type, isHeader: false, monthly, total: monthly.reduce((s,v)=>s+v,0), accountId: String(acc.id) });
+          }
+        }
+        // Movimentacoes fora da DRE mas que SAO caixa (amortizacao de emprestimos, aportes/mutuo de socios, etc.)
+        const acctById = new Map(chartAccounts.map((a:any)=>[String(a.id), a]));
+        const usados = new Set(lines.map((l:any)=>String(l.accountId)));
+        const naoOpEnt = new Array(12).fill(0), naoOpSai = new Array(12).fill(0);
+        for (const [caid, mv] of all) {
+          if (usados.has(String(caid))) continue;
+          if ((mv as number[]).every((v:number)=>v===0)) continue;
+          const acc: any = acctById.get(String(caid));
+          const isEnt = acc && acc.type === 'receita';
+          if (isEnt) { for (let i=0;i<12;i++) naoOpEnt[i]+=mv[i]; } else { for (let i=0;i<12;i++) naoOpSai[i]+=mv[i]; }
+          lines.push({ code: acc?.code || '?', name: (acc?.name || 'Sem categoria') + ' (fora da DRE)', dreGroup: 'nao_operacional', type: isEnt?'receita':'despesa', isHeader:false, monthly: mv, total: (mv as number[]).reduce((s:number,v:number)=>s+v,0), accountId: String(caid) });
+        }
+        const sg = (g: string) => { const m = new Array(12).fill(0); for (const l of lines) if (l.dreGroup === g) for (let i=0;i<12;i++) m[i]+=l.monthly[i]; return m; };
+        const receitaBruta=sg('receita_bruta'), devolucoes=sg('devolucoes'), impostos=sg('impostos_vendas');
+        const cpvTotal=sg('cpv'), despCom=sg('despesas_comerciais'), despAdm=sg('despesas_administrativas');
+        const despGer=sg('despesas_gerais'), outrasRD=sg('outras_receitas_despesas'), depreciacao=sg('depreciacao');
+        const recFin=sg('receitas_financeiras'), despFin=sg('despesas_financeiras'), irpj=sg('irpj_csll');
+        const receitaLiquida=receitaBruta.map((v,i)=> v-devolucoes[i]-impostos[i]);
+        const lucroBruto=receitaLiquida.map((v,i)=> v-cpvTotal[i]);
+        const ebitda=lucroBruto.map((v,i)=> v-despCom[i]-despAdm[i]-despGer[i]-outrasRD[i]);
+        const ebit=ebitda.map((v,i)=> v-depreciacao[i]);
+        const resultadoFinanceiro=recFin.map((v,i)=> v-despFin[i]);
+        const resultadoAntesIR=ebit.map((v,i)=> v-despFin[i]+recFin[i]);
+        const lucroLiquido=resultadoAntesIR.map((v,i)=> v-irpj[i]);
+        const sumMap=(m:Map<string,number[]>)=>{const o=new Array(12).fill(0);for(const v of m.values())for(let i=0;i<12;i++)o[i]+=v[i];return o;};
+        const entTot=sumMap(catEnt).map((v,i)=>v+(finR[i]||0));
+        const saiTot=sumMap(catSai).map((v,i)=>v+(finD[i]||0));
+        const fluxoLiquido=entTot.map((v,i)=>v-saiTot[i]);
+        const S=(a: number[])=>a.reduce((s,v)=>s+v,0);
+        return { lines, computed: {
+          naoOperacionalEntradas:{monthly:naoOpEnt,total:S(naoOpEnt)}, naoOperacionalSaidas:{monthly:naoOpSai,total:S(naoOpSai)},
+          entradasTotais:{monthly:entTot,total:S(entTot)}, saidasTotais:{monthly:saiTot,total:S(saiTot)}, fluxoCaixaLiquido:{monthly:fluxoLiquido,total:S(fluxoLiquido)},
+          receitaBruta:{monthly:receitaBruta,total:S(receitaBruta)}, devolucoes:{monthly:devolucoes,total:S(devolucoes)}, impostos:{monthly:impostos,total:S(impostos)},
+          receitaLiquida:{monthly:receitaLiquida,total:S(receitaLiquida)}, cpvTotal:{monthly:cpvTotal,total:S(cpvTotal)}, lucroBruto:{monthly:lucroBruto,total:S(lucroBruto)},
+          despesasComerciais:{monthly:despCom,total:S(despCom)}, despesasAdministrativas:{monthly:despAdm,total:S(despAdm)}, despesasGerais:{monthly:despGer,total:S(despGer)},
+          outrasReceitasDespesas:{monthly:outrasRD,total:S(outrasRD)}, depreciacao:{monthly:depreciacao,total:S(depreciacao)}, ebitda:{monthly:ebitda,total:S(ebitda)}, ebit:{monthly:ebit,total:S(ebit)},
+          receitasFinanceiras:{monthly:recFin,total:S(recFin)}, despesasFinanceiras:{monthly:despFin,total:S(despFin)}, resultadoFinanceiro:{monthly:resultadoFinanceiro,total:S(resultadoFinanceiro)},
+          resultadoAntesIR:{monthly:resultadoAntesIR,total:S(resultadoAntesIR)}, irpjCsll:{monthly:irpj,total:S(irpj)}, lucroLiquido:{monthly:lucroLiquido,total:S(lucroLiquido)},
+        } };
+      };
 
-      res.json({
-        year,
-        accounts,
-        realizado: { entradas: bucketize((realEntQ as any).rows || []), saidas: bucketize((realSaiQ as any).rows || []) },
-        previsto: { entradas: bucketize((prevEntQ as any).rows || []), saidas: bucketize((prevSaiQ as any).rows || []) },
-        atrasados: { entradas: scalarize((atrEntQ as any).rows || []), saidas: scalarize((atrSaiQ as any).rows || []) },
-      });
+      const byAccount: Record<string, any> = {};
+      const totEnt = new Map<string, number[]>(), totSai = new Map<string, number[]>();
+      const tFinR = new Array(12).fill(0), tFinD = new Array(12).fill(0);
+      for (const key of accKeys) {
+        const catEnt = catMerge(realEnt.get(key), prevEnt.get(key));
+        const catSai = catMerge(realSai.get(key), prevSai.get(key));
+        const fR = finRec.get(key) || new Array(12).fill(0);
+        const fD = finDesp.get(key) || new Array(12).fill(0);
+        byAccount[key] = assemble(catEnt, catSai, fR, fD);
+        for (const [k,v] of catEnt) totEnt.set(k,(totEnt.get(k)||new Array(12).fill(0)).map((x,i)=>x+v[i]));
+        for (const [k,v] of catSai) totSai.set(k,(totSai.get(k)||new Array(12).fill(0)).map((x,i)=>x+v[i]));
+        for (let i=0;i<12;i++){ tFinR[i]+=fR[i]; tFinD[i]+=fD[i]; }
+      }
+      byAccount['total'] = assemble(totEnt, totSai, tFinR, tFinD);
+
+      const mode = months.map((_, i) => i < curMonth ? 'realizado' : (i === curMonth ? 'misto' : 'previsto'));
+      res.json({ year, months, curMonth, mode, accounts, byAccount });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+
+  // FASE 5 - DRILL-DOWN: lançamentos de uma conta/linha (DRE e Fluxo de Caixa).
+  // Ao clicar numa linha, lista todos os títulos daquela conta com emissão, vencimento,
+  // valor, datas de pagamento/recebimento, conta bancária e usuários (quem lançou/baixou).
+  //   query: accountId=<uuid> OU group=<dre_group> OU special=faturamento|devolucoes ; year=YYYY
+  app.get('/api/financial/account-entries', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
+    try {
+      const year = parseInt(String(req.query.year || '')) || new Date().getFullYear();
+      const start = `${year}-01-01`; const end = `${year}-12-31 23:59:59`;
+      const accountId = (req.query.accountId as string) || '';
+      const group = (req.query.group as string) || '';
+      const special = (req.query.special as string) || '';
+      const uname = (e: any) => e ? String(e) : '';
+
+      // FATURAMENTO (receita bruta): lista NF-e de venda
+      if (special === 'faturamento' || group === 'receita_bruta') {
+        const q: any = await db.execute(sql.raw(`
+          WITH nf AS (
+            SELECT DISTINCT ON (COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text,'id:'||id::text)) *
+            FROM fiscal_invoices WHERE ${nfVendaWhere('fiscal_invoices')}
+            ORDER BY COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text,'id:'||id::text), created_at DESC
+          )
+          SELECT invoice_number AS titulo, customer_name AS contraparte, ${nfData('nf')} AS emissao,
+                 total_invoice::numeric AS valor, status
+          FROM nf WHERE ${nfData('nf')} >= '${start}' AND ${nfData('nf')} <= '${end}'
+          ORDER BY ${nfData('nf')} DESC LIMIT 3000`));
+        const rows = ((q as any).rows || []).map((r: any) => ({
+          tipo: 'faturamento', titulo: r.titulo, contraparte: r.contraparte, emissao: r.emissao,
+          vencimento: null, valor: Number(r.valor || 0), valorPago: null, status: r.status,
+          contaTitulo: null, lancadoPor: null, pagamentos: [],
+        }));
+        return res.json({ fonte: 'faturamento', total: rows.reduce((s: number, x: any) => s + x.valor, 0), rows });
+      }
+      // DEVOLUÇÕES: NF-e de devolução
+      if (special === 'devolucoes' || group === 'devolucoes') {
+        const q: any = await db.execute(sql.raw(`
+          SELECT invoice_number AS titulo, customer_name AS contraparte, COALESCE(emission_date,created_at) AS emissao, total_invoice::numeric AS valor, status
+          FROM fiscal_invoices
+          WHERE upper(coalesce(nature_of_operation,'')) LIKE '%DEVOLU%' AND status NOT IN ('draft','cancelled','cancelada','rejected','rejeitada')
+            AND COALESCE(emission_date,created_at) >= '${start}' AND COALESCE(emission_date,created_at) <= '${end}'
+          ORDER BY COALESCE(emission_date,created_at) DESC LIMIT 3000`));
+        const rows = ((q as any).rows || []).map((r: any) => ({ tipo: 'devolucao', titulo: r.titulo, contraparte: r.contraparte, emissao: r.emissao, vencimento: null, valor: Number(r.valor || 0), valorPago: null, status: r.status, contaTitulo: null, lancadoPor: null, pagamentos: [] }));
+        return res.json({ fonte: 'devolucoes', total: rows.reduce((s: number, x: any) => s + x.valor, 0), rows });
+      }
+
+      // Contas do plano: por accountId ou por grupo
+      const chart = await storage.getChartOfAccounts();
+      let alvo = chart.filter((a: any) => accountId ? String(a.id) === accountId : (group ? String(a.dreGroup) === group : false));
+      if (alvo.length === 0) return res.json({ fonte: 'conta', total: 0, rows: [] });
+      const ids = alvo.map((a: any) => `'${String(a.id)}'`).join(',');
+      const isReceita = alvo.every((a: any) => a.type === 'receita');
+      const tabela = isReceita ? 'receivables' : 'payables';
+      const pgtab = isReceita ? 'receivable_payments' : 'payable_payments';
+      const fk = isReceita ? 'receivable_id' : 'payable_id';
+      const contraCol = isReceita ? 'customer_name' : 'supplier_name';
+      const q: any = await db.execute(sql.raw(`
+        SELECT t.id, t.title_number AS titulo, t.${contraCol} AS contraparte, t.issue_date AS emissao,
+               t.due_date AS vencimento, t.amount::numeric AS valor, COALESCE(t.amount_paid::numeric,0) AS valor_pago,
+               t.status, t.created_by AS lancado_por, fa.name AS conta_titulo,
+               COALESCE((
+                 SELECT json_agg(json_build_object(
+                    'data', p.paid_at, 'valor', p.amount::numeric,
+                    'conta', pfa.name, 'baixadoPor', p.created_by
+                 ) ORDER BY p.paid_at)
+                 FROM ${pgtab} p LEFT JOIN financial_accounts pfa ON pfa.id = p.financial_account_id
+                 WHERE p.${fk} = t.id AND p.deleted_at IS NULL
+               ), '[]'::json) AS pagamentos
+        FROM ${tabela} t
+        LEFT JOIN financial_accounts fa ON fa.id = t.financial_account_id
+        WHERE t.chart_account_id IN (${ids}) AND t.deleted_at IS NULL AND t.status <> 'cancelada'
+          AND t.issue_date >= '${start}' AND t.issue_date <= '${end}'
+        ORDER BY t.issue_date DESC LIMIT 5000`));
+      const rows = ((q as any).rows || []).map((r: any) => ({
+        tipo: isReceita ? 'receber' : 'pagar', id: r.id, titulo: r.titulo, contraparte: r.contraparte,
+        emissao: r.emissao, vencimento: r.vencimento, valor: Number(r.valor || 0), valorPago: Number(r.valor_pago || 0),
+        status: r.status, contaTitulo: r.conta_titulo, lancadoPor: uname(r.lancado_por),
+        pagamentos: (r.pagamentos || []).map((p: any) => ({ data: p.data, valor: Number(p.valor || 0), conta: p.conta, baixadoPor: uname(p.baixadoPor) })),
+      }));
+      return res.json({ fonte: 'conta', tipo: isReceita ? 'receber' : 'pagar', total: rows.reduce((s: number, x: any) => s + x.valor, 0), rows });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -4066,7 +4231,28 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
 
       const lines: any[] = [];
 
+      // RECEITA BRUTA = FATURAMENTO (NF-e de venda autorizada), regra oficial de
+      // faturamento-oficial.ts (exclui devolucao/troca/amostra/bonificacao/transferencia/
+      // remessa). Substitui a soma de recebiveis: a DRE e por competencia = faturamento.
+      const fatMonthly = new Array(12).fill(0);
+      try {
+        const instRawCond = instanceId ? `AND fiscal_invoices.omie_instance_id = '${String(instanceId).replace(/'/g, "")}'` : '';
+        const fq: any = await db.execute(sql.raw(`
+          WITH nf AS (
+            SELECT DISTINCT ON (COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text, 'id:' || id::text)) *
+            FROM fiscal_invoices
+            WHERE ${nfVendaWhere('fiscal_invoices')} ${instRawCond}
+            ORDER BY COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text, 'id:' || id::text), created_at DESC
+          )
+          SELECT extract(month FROM ${nfData('nf')})::int AS m, COALESCE(sum(total_invoice::numeric), 0) AS v
+          FROM nf
+          WHERE ${nfData('nf')} >= '${year}-01-01' AND ${nfData('nf')} <= '${year}-12-31 23:59:59'
+          GROUP BY 1`));
+        for (const r of ((fq as any).rows || [])) { const mi = Number(r.m) - 1; if (mi >= 0 && mi < 12) fatMonthly[mi] = Number(r.v || 0); }
+      } catch (e: any) { console.warn('[DRE] faturamento oficial falhou:', String(e?.message || e).slice(0, 160)); }
+
       for (const group of dreGroups) {
+        if (group === 'receita_bruta') continue; // receita entra pelo faturamento (linha unica abaixo)
         const groupAccounts = chartAccounts.filter(a => a.dreGroup === group && inDre(a)).sort((a, b) => a.code.localeCompare(b.code));
         if (groupAccounts.length === 0) continue;
 
@@ -4092,6 +4278,22 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
             accountId: acc.id,
           });
         }
+      }
+
+      // RECEITA BRUTA (faturamento): uma linha unica no grupo receita_bruta.
+      {
+        const recAcc = chartAccounts.find(a => a.dreGroup === 'receita_bruta' && a.code.includes('.') && inDre(a));
+        lines.push({
+          code: recAcc?.code || '1.1',
+          name: 'Receita de Vendas (faturamento NF-e)',
+          dreGroup: 'receita_bruta',
+          type: 'receita',
+          isHeader: false,
+          monthly: fatMonthly,
+          total: fatMonthly.reduce((s: number, v: number) => s + v, 0),
+          accountId: recAcc?.id || null,
+          fonte: 'faturamento',
+        });
       }
 
       // FASE 3.1 - Devolucoes no DRE: alimentadas pelas NF-es de devolucao emitidas
