@@ -526,8 +526,15 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
   app.get('/api/lio-app/catalogo', autenticarDispositivo, async (_req: any, res) => {
     try {
       await ensurePdvSchema();
+      // Mesma regra de visibilidade do resto do sistema: produto de uso
+      // interno (bombonas de reciclagem etc.) e produto ainda nao liberado
+      // para venda nao entram na grade do balcao.
       const r: any = await db.execute(sql`SELECT id, omie_code, name, retail_price, wholesale_price, image_url, ncm
-        FROM products WHERE is_active = true ORDER BY name ASC`);
+        FROM products
+        WHERE is_active = true
+          AND COALESCE(internal_only, false) = false
+          AND COALESCE(available_for_sale, true) = true
+        ORDER BY name ASC`);
       const linhas = (r.rows || r) as any[];
 
       const produtos = linhas.map((p) => {
@@ -669,8 +676,14 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
       // lista de parametros — passaria o array inteiro como UM parametro e a
       // consulta nunca casaria.
       const listaIds = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+      // Mesmo filtro do catalogo: um app antigo (ou um id digitado) nao pode
+      // vender produto de uso interno nem indisponivel pelo balcao.
       const r: any = await db.execute(sql`SELECT id, omie_code, name, retail_price, wholesale_price
-        FROM products WHERE is_active = true AND id IN (${listaIds})`);
+        FROM products
+        WHERE is_active = true
+          AND COALESCE(internal_only, false) = false
+          AND COALESCE(available_for_sale, true) = true
+          AND id IN (${listaIds})`);
       const achados = new Map(((r.rows || r) as any[]).map((p) => [String(p.id), p]));
 
       const itens: any[] = [];
@@ -678,7 +691,7 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
 
       for (const [id, quantidade] of quantidades) {
         const p = achados.get(id);
-        if (!p) return res.status(400).json({ message: `Produto ${id} nao encontrado ou inativo.` });
+        if (!p) return res.status(400).json({ message: `Produto ${id} nao encontrado, inativo ou indisponivel para venda no balcao.` });
 
         const unit = tabela === 'atacado'
           ? reaisParaCentavos(p.wholesale_price)
