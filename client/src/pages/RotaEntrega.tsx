@@ -15,6 +15,7 @@ import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { podeIniciarRota, ROTA_ESPERANDO_INICIO } from "@shared/rotaEntrega";
 
 interface DeliveryStop {
   id: string;
@@ -471,8 +472,12 @@ export default function RotaEntrega() {
   const completedDeliveries = allDeliveries.filter(d => d.status === 'efetuada').length;
   const returnedDeliveries = allDeliveries.filter(d => d.status === 'devolvida').length;
   const pendingDeliveries = allDeliveries.filter(d => d.status === 'pendente').length;
-  const hasStartedRoute = routes.some(r => r.status === 'em_andamento' || r.status === 'rota_enviada');
-  const firstRoute = routes[0];
+  // O botão de iniciar rota é o gatilho do aviso "seu pedido saiu para entrega"
+  // ao cliente. A regra de quando ele aparece está em shared/rotaEntrega.ts,
+  // com o porquê: a condição antiga escondia o botão justamente no estado em
+  // que a rota chega ao entregador ('rota_enviada'), então ele nunca aparecia.
+  const mostrarIniciarRota = podeIniciarRota(routes);
+  const firstRoute = routes.find(r => r.status === ROTA_ESPERANDO_INICIO) || routes[0];
 
   if (!user) {
     return (
@@ -575,7 +580,7 @@ export default function RotaEntrega() {
       )}
 
       {/* Start Route Button */}
-      {firstRoute && !hasStartedRoute && (
+      {firstRoute && mostrarIniciarRota && (
         <Button
           className="w-full mb-4 bg-green-600 hover:bg-green-700 h-14 text-lg"
           onClick={() => startRouteMutation.mutate(firstRoute.id)}

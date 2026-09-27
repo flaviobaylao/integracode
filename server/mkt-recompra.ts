@@ -22,6 +22,7 @@
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { whereDebitoVivoText } from './divida-viva';
+import { saudacaoDoCliente } from './saudacao';
 
 // ---------------------------------------------------------------------------
 // As réguas. Cada uma é um momento, não uma "campanha".
@@ -205,7 +206,7 @@ mix AS (
    WHERE sc.customer_id IS NOT NULL AND sc.created_at >= now() - interval '90 days'
    GROUP BY sc.customer_id
 )
-SELECT c.id, c.name, c.phone, c.seller_id,
+SELECT c.id, c.name, c.contact, c.fantasy_name, c.company_name, c.phone, c.seller_id,
        r.ultima_compra, r.primeira_compra, r.compras,
        ci.intervalos, ROUND(ci.ciclo_mediano)::int AS ciclo_dias,
        COALESCE(t.ticket_medio, 0)                 AS ticket_medio,
@@ -241,6 +242,8 @@ SELECT c.id, c.name, c.phone, c.seller_id,
 
 export type Retrato = {
   id: string; name: string; phone: string; seller_id: string | null;
+  /** Para a saudação da mensagem: sem contato, chama pelo fantasia (saudacao.ts). */
+  contact?: string | null; fantasy_name?: string | null; company_name?: string | null;
   ultima_compra: string | null; primeira_compra: string | null; compras: number;
   intervalos: number | null; ciclo_dias: number | null; ticket_medio: string;
   skus: number; dias_desde_compra: number | null;
@@ -466,7 +469,7 @@ export async function montarLote(opts: { regua?: string; limite?: number; criado
       VALUES
         (${loteId}, ${rid}, ${c.id}, ${c.name}, ${String(c.phone || '').replace(/\D/g, '')}, ${c.seller_id || null},
          ${c.ciclo_dias}, ${c.dias_desde_compra}, ${ticket}, ${c.skus}, ${c.ultima_compra},
-         ${efetivo.label}, ${JSON.stringify([String(c.name || '').split(' ')[0] || 'tudo bem'])}::jsonb,
+         ${efetivo.label}, ${JSON.stringify([saudacaoDoCliente(c)])}::jsonb,
          ${bloqueio ? 0 : custoUnit}, ${receitaEsperada.toFixed(2)},
          ${bloqueio ? 'bloqueado' : 'previsto'}, ${bloqueio}, ${opts.acaoId || null}, ${sugestoes.get(String(c.id)) || null})`);
 

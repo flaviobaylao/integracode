@@ -133,17 +133,33 @@ export async function enqueueOfficialDispatch(item: {
   // nem comunicação. A trava mora aqui, no funil por onde passa TODO disparo
   // oficial, e ANTES de qualquer liga/desliga: não é uma linha desligada, é uma
   // pessoa que não pode ser falada — e o motivo tem que aparecer assim no recibo.
-  // Casa por id e, na falta dele, pelos 8 últimos dígitos do telefone: o disparo
-  // nem sempre carrega customer_id.
+  //
+  // QUEM É O DESTINATÁRIO vem do customer_id quando ele existe — e SÓ dele.
+  // A primeira versão disto também casava pelos 8 últimos dígitos do telefone
+  // mesmo tendo o id, e barrou mensagem legítima em produção no mesmo dia
+  // (21/set): a Puro Serviços está cadastrada como fornecedor COM O TELEFONE DO
+  // FLAVIO, então todo cliente que divide aquele número — inclusive ele próprio e
+  // a Puro Indústria — virava "fornecedor". Telefone é de PESSOA, não de cadastro:
+  // um número aparece em vários cadastros e não identifica nenhum deles.
+  //
+  // Sem customer_id (disparo que só carrega telefone), o telefone é o que há —
+  // mas aí a recusa exige que TODOS os cadastros com aquele número sejam
+  // fornecedores. Se um só for cliente, a mensagem é dele e passa.
   try {
     const fone8 = String(item.customerPhone || '').replace(/\D/g, '').slice(-8);
-    const forn: any = await db.execute(sql`
-      SELECT 1 FROM customers c
-       WHERE COALESCE(c.is_supplier, false) = true
-         AND (c.id = ${item.customerId || null}
-              OR (${fone8} <> '' AND right(regexp_replace(COALESCE(c.phone,''), '\\D', '', 'g'), 8) = ${fone8}))
-       LIMIT 1`);
-    if (forn.rows?.length) return 'fornecedor';
+    if (item.customerId) {
+      const r: any = await db.execute(sql`
+        SELECT COALESCE(is_supplier, false) AS forn FROM customers WHERE id = ${item.customerId} LIMIT 1`);
+      if (r.rows?.[0]?.forn === true) return 'fornecedor';
+    } else if (fone8) {
+      const r: any = await db.execute(sql`
+        SELECT count(*)::int AS n,
+               count(*) FILTER (WHERE COALESCE(c.is_supplier, false) = true)::int AS fornecedores
+          FROM customers c
+         WHERE right(regexp_replace(COALESCE(c.phone,''), '\\D', '', 'g'), 8) = ${fone8}`);
+      const n = Number(r.rows?.[0]?.n || 0);
+      if (n > 0 && n === Number(r.rows?.[0]?.fornecedores || 0)) return 'fornecedor';
+    }
   } catch { /* sem conseguir checar, segue o fluxo normal */ }
   const m = await modeFor(item.useCase);
   if (m === 'off') return 'desligado';

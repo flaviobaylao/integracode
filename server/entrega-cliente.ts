@@ -60,6 +60,14 @@ export async function ensureEntregaClienteSchema(): Promise<void> {
   try {
     await db.execute(sql`ALTER TYPE dispatch_use_case ADD VALUE IF NOT EXISTS 'entrega'`);
   } catch (e: any) { if (!/already exists/i.test(String(e?.message || ''))) console.warn('[ENTREGA-CLIENTE] enum:', e?.message); }
+  // CANCELADA ≠ FALHA. O follow-up de 2 dias que não vale mais (pedido devolvido
+  // antes da data) era marcado 'falha' — o único estado terminal que existia. Só
+  // que aí ele entra na conta de "mensagens que não chegaram", e é o contrário:
+  // ela não chegou porque NÓS cancelamos, de propósito. Com o auditor passando a
+  // alertar por taxa de falha, essa mentira vira alarme falso.
+  try {
+    await db.execute(sql`ALTER TYPE dispatch_status ADD VALUE IF NOT EXISTS 'cancelada'`);
+  } catch (e: any) { if (!/already exists/i.test(String(e?.message || ''))) console.warn('[ENTREGA-CLIENTE] enum status:', e?.message); }
   try {
     await db.execute(sql`ALTER TABLE official_dispatches ADD COLUMN IF NOT EXISTS scheduled_at timestamptz`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS official_dispatches_agendado_idx ON official_dispatches (scheduled_at) WHERE status = 'fila'`);
@@ -133,13 +141,17 @@ async function avisadoRecentemente(campaigns: string[], horas = 12): Promise<boo
   } catch { return false; }
 }
 
+import { saudacaoDoCliente } from './saudacao';
+
 const limpo = (s: any) => String(s ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 300);
-const primeiroNome = (r: any) => limpo(String(r.fantasy_name || r.name || 'Cliente').split(' ')[0] || 'Cliente').slice(0, 60);
+// Sem nome de contato, chama pelo NOME FANTASIA inteiro — regra única em
+// saudacao.ts. A primeira palavra transformava "2 IRMAOS SUPERMERCADO" em "2".
+const primeiroNome = (r: any) => limpo(saudacaoDoCliente(r, 'Cliente')).slice(0, 60);
 const numeroDe = (r: any) => limpo(r.order_number || ('INT-' + String(r.sales_card_id || '').substring(0, 8)));
 
 type Parada = {
   stop_id: string; sales_card_id: string | null; status: string; order_number: string | null;
-  cid: string | null; name: string | null; fantasy_name: string | null; phone: string | null;
+  cid: string | null; name: string | null; fantasy_name: string | null; contact?: string | null; phone: string | null;
   operation_type: string | null; motivo: string | null;
 };
 
@@ -149,7 +161,7 @@ async function paradas(where: { routeId?: string; stopId?: string }): Promise<Pa
   const r: any = await db.execute(sql`
     SELECT s.id AS stop_id, s.sales_card_id, s.status::text AS status,
            COALESCE(s.order_number, bp.order_number) AS order_number,
-           c.id AS cid, c.name, c.fantasy_name, c.phone,
+           c.id AS cid, c.name, c.fantasy_name, c.contact, c.phone,
            COALESCE(sc.operation_type::text, bp.operation_type, 'venda') AS operation_type,
            sc.delivery_failure_reason::text AS motivo
     FROM delivery_route_stops s
@@ -251,8 +263,9 @@ export async function avisarEntregaDevolvida(stopId: string, motivo?: string): P
   try {
     const r = await enfileirar(p, 'devolvida', 'card:' + p.sales_card_id + ':devolvida:' + dia, { motivo: motivo ? limpo(motivo).slice(0, 80) : undefined });
     // Se um follow-up de 2 dias estava agendado de uma entrega anterior deste pedido, não vale mais.
-    // 'falha' é o estado terminal que o enum já tem — o texto do erro diz o porquê.
-    await db.execute(sql`UPDATE official_dispatches SET status = 'falha'::dispatch_status, error = 'cancelado: pedido devolvido antes do follow-up', updated_at = now()
+    // Vai para 'cancelada', não 'falha': quem cancelou fomos nós, e falha é o que
+    // a gente precisa investigar.
+    await db.execute(sql`UPDATE official_dispatches SET status = 'cancelada'::dispatch_status, error = 'cancelado: pedido devolvido antes do follow-up', updated_at = now()
       WHERE campaign = ${'card:' + p.sales_card_id + ':pos2d'} AND status = 'fila'`).catch(() => {});
     console.log(`[ENTREGA-CLIENTE] devolucao ${numeroDe(p)}: ${r}`);
     return r;
