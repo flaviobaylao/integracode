@@ -1,6 +1,7 @@
 import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelButton } from "@/lib/tableTools";
 import { hojeBR } from '@shared/tempo';
 import { useState, useEffect, useRef } from 'react';
+import AccountEntriesModal from '@/components/AccountEntriesModal';
 import { generateMultiCobrancaPdf, type CobrancaData } from '@/lib/cobranca-generator';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearch } from 'wouter';
@@ -3404,7 +3405,7 @@ function DRETab() {
 
   type RowStyle = 'normal' | 'deduction' | 'header' | 'total' | 'highlight' | 'indicator' | 'separator';
 
-  const renderRow = (label: string, monthly: number[], total: number, avPct: number, style: RowStyle = 'normal') => {
+  const renderRow = (label: string, monthly: number[], total: number, avPct: number, style: RowStyle = 'normal', dr: any = null) => {
     const baseClass = {
       normal: 'text-xs',
       deduction: 'text-xs',
@@ -3435,9 +3436,10 @@ function DRETab() {
       return '';
     };
 
+    const clk = !!dr;
     return (
-      <tr key={label} className={baseClass}>
-        <td className="sticky left-0 bg-background px-2 py-1 whitespace-nowrap border-r min-w-[250px] max-w-[300px] truncate z-10">
+      <tr key={label} className={`${baseClass} ${clk ? 'cursor-pointer hover:bg-accent/40' : ''}`} onClick={clk ? () => setDrill({ ...dr, label, year }) : undefined}>
+        <td className={`sticky left-0 bg-background px-2 py-1 whitespace-nowrap border-r min-w-[250px] max-w-[300px] truncate z-10 ${clk ? 'underline decoration-dotted' : ''}`}>
           {style === 'deduction' ? `(-) ${label}` : label}
         </td>
         {monthly.map((v, i) => (
@@ -3508,39 +3510,39 @@ function DRETab() {
                 </tr>
               </thead>
               <tbody>
-                {renderRow('Receita Bruta de Vendas', c.receitaBruta.monthly, c.receitaBruta.total, computeAV(c.receitaBruta.total, rl), 'total')}
-                {renderRow('Devoluções/Descontos', c.devolucoes.monthly, c.devolucoes.total, computeAV(c.devolucoes.total, rl), 'deduction')}
-                {renderRow('Impostos sobre Vendas (ICMS, PIS/COFINS, ISS)', c.impostos.monthly, c.impostos.total, computeAV(c.impostos.total, rl), 'deduction')}
+                {renderRow('Receita Bruta de Vendas', c.receitaBruta.monthly, c.receitaBruta.total, computeAV(c.receitaBruta.total, rl), 'total', { special: 'faturamento' })}
+                {renderRow('Devoluções/Descontos', c.devolucoes.monthly, c.devolucoes.total, computeAV(c.devolucoes.total, rl), 'deduction', { special: 'devolucoes' })}
+                {renderRow('Impostos sobre Vendas (ICMS, PIS/COFINS, ISS)', c.impostos.monthly, c.impostos.total, computeAV(c.impostos.total, rl), 'deduction', { group: 'impostos_vendas' })}
                 {renderRow('Receita Líquida', c.receitaLiquida.monthly, c.receitaLiquida.total, 100, 'highlight')}
 
                 {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
 
                 {renderRow('(-) CPV', [], 0, 0, 'header')}
                 {getGroupLines('cpv').map((l: any) =>
-                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction', { accountId: l.accountId })
                 )}
-                {renderRow('CPV Total', c.cpvTotal.monthly, c.cpvTotal.total, computeAV(c.cpvTotal.total, rl), 'total')}
+                {renderRow('CPV Total', c.cpvTotal.monthly, c.cpvTotal.total, computeAV(c.cpvTotal.total, rl), 'total', { group: 'cpv' })}
                 {renderRow('Lucro Bruto', c.lucroBruto.monthly, c.lucroBruto.total, computeAV(c.lucroBruto.total, rl), 'highlight')}
 
                 {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
 
                 {renderRow('(-) Despesas Comerciais', [], 0, 0, 'header')}
                 {getGroupLines('despesas_comerciais').map((l: any) =>
-                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction', { accountId: l.accountId })
                 )}
-                {renderRow('Despesas Comerciais Total', c.despesasComerciais.monthly, c.despesasComerciais.total, computeAV(c.despesasComerciais.total, rl), 'total')}
+                {renderRow('Despesas Comerciais Total', c.despesasComerciais.monthly, c.despesasComerciais.total, computeAV(c.despesasComerciais.total, rl), 'total', { group: 'despesas_comerciais' })}
 
                 {renderRow('(-) Despesas Administrativas', [], 0, 0, 'header')}
                 {getGroupLines('despesas_administrativas').map((l: any) =>
-                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction', { accountId: l.accountId })
                 )}
-                {renderRow('Despesas Administrativas Total', c.despesasAdministrativas.monthly, c.despesasAdministrativas.total, computeAV(c.despesasAdministrativas.total, rl), 'total')}
+                {renderRow('Despesas Administrativas Total', c.despesasAdministrativas.monthly, c.despesasAdministrativas.total, computeAV(c.despesasAdministrativas.total, rl), 'total', { group: 'despesas_administrativas' })}
 
                 {renderRow('(-) Despesas Gerais', [], 0, 0, 'header')}
                 {getGroupLines('despesas_gerais').map((l: any) =>
-                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction')
+                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction', { accountId: l.accountId })
                 )}
-                {renderRow('Despesas Gerais Total', c.despesasGerais.monthly, c.despesasGerais.total, computeAV(c.despesasGerais.total, rl), 'total')}
+                {renderRow('Despesas Gerais Total', c.despesasGerais.monthly, c.despesasGerais.total, computeAV(c.despesasGerais.total, rl), 'total', { group: 'despesas_gerais' })}
 
                 {renderRow('(-) Outras Receitas/Despesas Operacionais', c.outrasReceitasDespesas.monthly, c.outrasReceitasDespesas.total, computeAV(c.outrasReceitasDespesas.total, rl), 'deduction')}
                 {renderRow('Despesas Operacionais Total', c.despesasOperacionaisTotal.monthly, c.despesasOperacionaisTotal.total, computeAV(c.despesasOperacionaisTotal.total, rl), 'total')}
@@ -3551,14 +3553,14 @@ function DRETab() {
                 {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
 
                 {renderRow('(+/-) Resultado Financeiro', [], 0, 0, 'header')}
-                {renderRow('(+) Receitas Financeiras', c.receitasFinanceiras.monthly, c.receitasFinanceiras.total, computeAV(c.receitasFinanceiras.total, rl), 'normal')}
-                {renderRow('(-) Despesas Financeiras (juros, tarifas)', c.despesasFinanceiras.monthly, c.despesasFinanceiras.total, computeAV(c.despesasFinanceiras.total, rl), 'deduction')}
+                {renderRow('(+) Receitas Financeiras', c.receitasFinanceiras.monthly, c.receitasFinanceiras.total, computeAV(c.receitasFinanceiras.total, rl), 'normal', { group: 'receitas_financeiras' })}
+                {renderRow('(-) Despesas Financeiras (juros, tarifas)', c.despesasFinanceiras.monthly, c.despesasFinanceiras.total, computeAV(c.despesasFinanceiras.total, rl), 'deduction', { group: 'despesas_financeiras' })}
                 {renderRow('Resultado Financeiro Total', c.resultadoFinanceiro.monthly, c.resultadoFinanceiro.total, computeAV(c.resultadoFinanceiro.total, rl), 'total')}
 
                 {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
 
                 {renderRow('Resultado Antes do IR/CSLL', c.resultadoAntesIR.monthly, c.resultadoAntesIR.total, computeAV(c.resultadoAntesIR.total, rl), 'total')}
-                {renderRow('(-) IRPJ/CSLL', c.irpjCsll.monthly, c.irpjCsll.total, computeAV(c.irpjCsll.total, rl), 'deduction')}
+                {renderRow('(-) IRPJ/CSLL', c.irpjCsll.monthly, c.irpjCsll.total, computeAV(c.irpjCsll.total, rl), 'deduction', { group: 'irpj_csll' })}
                 {renderRow('Lucro/Prejuízo Líquido', c.lucroLiquido.monthly, c.lucroLiquido.total, computeAV(c.lucroLiquido.total, rl), 'highlight')}
 
                 {(c.unclassifiedReceivables.total > 0 || c.unclassifiedPayables.total > 0) && (
@@ -3583,6 +3585,7 @@ function DRETab() {
       })() : (
         <div className="text-center text-muted-foreground py-8">Nenhum dado disponível para o período</div>
       )}
+      {drill && <AccountEntriesModal drill={drill} onClose={() => setDrill(null)} />}
     </div>
   );
 }
