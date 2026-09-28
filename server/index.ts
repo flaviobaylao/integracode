@@ -921,6 +921,20 @@ run();
     } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e).slice(0, 300) }); }
   });
 
+  app.get('/api/admin/bought-debug', authenticateUser, requireRole(['admin']), async (req: Request, res: Response) => {
+    try {
+      const dateStr = String(req.query.date || '2026-09-29').replace(/[^0-9-]/g, '');
+      const id = String(req.query.id || '');
+      const per = String(req.query.per || 'mensal');
+      const omie = String(req.query.omie || '');
+      const mod = await import('./storage');
+      let out: any = {}; let err: any = null;
+      try { const s = await mod.customersBoughtInCycle([{ id, periodicity: per, omieClientCode: omie || null }], dateStr); (out as any).bought = Array.from(s); }
+      catch (e: any) { err = String((e && e.stack) || (e && e.message) || e); }
+      res.json({ dateStr, id, per, omie, err, out });
+    } catch (e: any) { res.status(500).json({ error: String((e && e.message) || e) }); }
+  });
+
   // VIGIA (03/jul/2026): validacao de rota (planejado x rota gravada) — alimenta /validacao-rotas.
   // Planejado = storage.getCustomersForDate (mesma fonte que gera a rota, Opcao A).
   // Rota gravada = daily_routes.visit_stops (entityType customer). Read-only.
