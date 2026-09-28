@@ -613,7 +613,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       // Registro de "Envio Whatsapp" (kind='whatsapp') é só trilha do admin — não conta como
       // réplica ao vendedor nem entra na conversa que ele vê no card.
       const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
-      const hasAdminReply = msgs.some((m: any) => m && m.role === "admin");
+      const hasAdminReply = msgs.some((m: any) => m && m.role === "admin" && m.kind === "reply");
       if (!hasAdminReply) continue; // só interessa ao vendedor quando o admin respondeu
       { let lr = -1; msgs.forEach((m: any, i: number) => { if (m.role === "admin" && m.kind === "reply") lr = i; }); if (lr >= 0 && pendenciaRemovida(msgs, lr)) continue; }
       const last = msgs[msgs.length - 1] || {};
