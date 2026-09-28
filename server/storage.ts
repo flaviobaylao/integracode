@@ -637,6 +637,96 @@ export interface IStorage {
   createSpedExport(data: InsertSpedExport): Promise<SpedExport>;
 }
 
+// === "JA COMPROU NO CICLO" ============================================
+// Um cliente que ja teve VENDA real dentro da janela do
+// ciclo vigente (ate o dia ANTERIOR a data da rota) NAO deve cair na Rota do Dia.
+// Regra pedida (set/2026): vale p/ TODAS as periodicidades; conta so pedido de
+// VENDA real (billing_pipeline operation_type='venda' com valor > 0) e faturamento/
+// NF (billings nao cancelada, valor > 0). Troca/Amostra/Transferencia NAO contam.
+// Janela por periodicidade (mesma logica de ciclo da repescagem): mensal = mes
+// calendario; quinzenal = quinzena (seg->sex da 2a semana); semanal = semana seg-sex.
+// Venda NA PROPRIA data da rota (pedido do dia) NAO tira o cliente — senao ele
+// sumiria da rota no meio do atendimento.
+export function cycleWindowFor(routeDateStr: string, periodicity: string): { start: string; end: string } {
+  const p = String(periodicity || 'semanal').toLowerCase();
+  const mkUTC = (s: string) => new Date(s + 'T12:00:00Z');
+  const isoD = (dt: Date) => dt.toISOString().slice(0, 10);
+  const dt = mkUTC(routeDateStr);
+  if (p.indexOf('mens') >= 0 || p.indexOf('bime') >= 0) {
+    const start = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0));
+    return { start: isoD(start), end: isoD(end) };
+  }
+  const dow = dt.getUTCDay();
+  const monShift = (dow === 0 ? -6 : 1 - dow);
+  const mon = new Date(dt); mon.setUTCDate(dt.getUTCDate() + monShift);
+  let endOffset = 4; // sexta da mesma semana
+  if (p.indexOf('quinz') >= 0) endOffset = 11; // sexta da 2a semana (quinzena)
+  const end = new Date(mon); end.setUTCDate(mon.getUTCDate() + endOffset);
+  return { start: isoD(mon), end: isoD(end) };
+}
+
+export async function customersBoughtInCycle(
+  rows: Array<{ id: string; periodicity: string | null; omieClientCode?: string | null }>,
+  routeDateStr: string,
+): Promise<Set<string>> {
+  const bought = new Set<string>();
+  if (!rows || rows.length === 0) return bought;
+  // Limite superior = DIA ANTERIOR a data da rota (venda do proprio dia nao conta).
+  const prevDay = (() => { const d = new Date(routeDateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const winById = new Map<string, { start: string; end: string }>();
+  let minStart = prevDay;
+  for (const r of rows) {
+    const w = cycleWindowFor(routeDateStr, r.periodicity || 'semanal');
+    winById.set(r.id, w);
+    if (w.start < minStart) minStart = w.start;
+  }
+  if (minStart > prevDay) return bought; // ciclo comeca hoje/depois: nada a checar
+  const ids = rows.map(r => r.id).filter(Boolean);
+  // 1) Pedido de VENDA real (billing_pipeline) — por customer_id.
+  try {
+    const idsCsv = ids.join(',');
+    const pres: any = await db.execute(sql`
+      SELECT customer_id,
+             COALESCE(scheduled_billing_date::date, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date)::text AS d
+      FROM billing_pipeline
+      WHERE customer_id = ANY(string_to_array(${idsCsv}, ','))
+        AND LOWER(COALESCE(NULLIF(operation_type, ''), 'venda')) = 'venda'
+        AND COALESCE(CAST(sale_value AS NUMERIC), 0) > 0
+        AND COALESCE(scheduled_billing_date::date, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) >= ${minStart}
+        AND COALESCE(scheduled_billing_date::date, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) <= ${prevDay}`);
+    for (const row of ((pres as any).rows || [])) {
+      const cid = String(row.customer_id); const d = String(row.d);
+      const w = winById.get(cid); if (w && d >= w.start && d <= w.end) bought.add(cid);
+    }
+  } catch (e) { console.warn('[bought-in-cycle][pipeline]', (e as any)?.message); }
+  // 2) Faturamento/NF (billings) via codigo omie do cliente.
+  try {
+    const omieToId = new Map<string, string>();
+    for (const r of rows) if (r.omieClientCode) omieToId.set(String(r.omieClientCode), r.id);
+    const codes = Array.from(omieToId.keys());
+    if (codes.length) {
+      const codesCsv = codes.join(',');
+      const bres: any = await db.execute(sql`
+        SELECT omie_customer_code AS code, DATE(order_date)::text AS od, DATE(invoice_date)::text AS idt
+        FROM billings
+        WHERE omie_customer_code = ANY(string_to_array(${codesCsv}, ','))
+          AND is_cancelled = false
+          AND COALESCE(CAST(total_value AS NUMERIC), 0) > 0
+          AND (
+            (order_date IS NOT NULL AND DATE(order_date) >= ${minStart} AND DATE(order_date) <= ${prevDay})
+            OR (invoice_date IS NOT NULL AND DATE(invoice_date) >= ${minStart} AND DATE(invoice_date) <= ${prevDay})
+          )`);
+      for (const row of ((bres as any).rows || [])) {
+        const cid = omieToId.get(String(row.code)); if (!cid) continue;
+        const w = winById.get(cid); if (!w) continue;
+        for (const d of [row.od, row.idt]) { if (d && d >= w.start && d <= w.end) { bought.add(cid); break; } }
+      }
+    }
+  } catch (e) { console.warn('[bought-in-cycle][billings]', (e as any)?.message); }
+  return bought;
+}
+
 export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: string): Promise<User | undefined> {
@@ -1240,6 +1330,22 @@ export class DatabaseStorage implements IStorage {
           isNotNull(customers.longitude)
         )
       );
+    // [JA-COMPROU-NO-CICLO] (set/2026): remove da rota quem ja teve VENDA real na
+    // janela do ciclo vigente (ate ontem). Vale p/ todas as periodicidades. Assim um
+    // cliente mensal que ja comprou no mes nao reaparece na rota de outro dia do mes.
+    try {
+      if (custs.length > 0) {
+        const boughtSet = await customersBoughtInCycle(
+          custs.map((c: any) => ({ id: c.id, periodicity: (c as any).visitPeriodicity, omieClientCode: (c as any).omieClientCode })),
+          dateStr,
+        );
+        if (boughtSet.size > 0) {
+          const filtered = custs.filter((c: any) => !boughtSet.has(c.id));
+          console.log(`[JA-COMPROU] getCustomersForDate: ${custs.length - filtered.length} cliente(s) ja compraram no ciclo - fora da rota ${dateStr} (restam ${filtered.length})`);
+          return filtered;
+        }
+      }
+    } catch (e) { console.warn('⚠️ getCustomersForDate: filtro ja-comprou-no-ciclo falhou (mantendo todos):', (e as any)?.message); }
     console.log(`✅ getCustomersForDate: ${custs.length} clientes com visita agendada em ${dateStr} para vendedor ${sellerId}`);
     return custs;
   }
