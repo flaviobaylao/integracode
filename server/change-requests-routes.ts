@@ -116,6 +116,7 @@ function summarizeRequest(types: string[], details: any): string {
     else if (t === "area_vendas" && d.areaVendas) parts.push(`Área de vendas → ${d.areaVendas}`);
     else if (t === "presencial_virtual" && d.modalidade) parts.push(`Modalidade → ${d.modalidade === "virtual" ? "Virtual" : "Presencial"}`);
     else if (t === "inicio_atendimento" && d.inicioAtendimento) parts.push(`Início de atendimento → ${d.inicioAtendimento}`);
+    else if (t === "inativar" && d.inativar) parts.push(`Inativar: ${d.inativar}`);
     else if (t === "dia_sobrecarregado" && d.outro) parts.push(String(d.outro));
     else if (t === "outro" && d.outro) parts.push(`Outro: ${d.outro}`);
     else parts.push(TYPE_LABEL_SRV[t] || t);
@@ -421,6 +422,14 @@ export function registerChangeRequestsRoutes(app: Express) {
     }
     if (types.includes("inicio_atendimento") && inD.inicioAtendimento) {
       details.inicioAtendimento = String(inD.inicioAtendimento);
+    }
+    // 28/set/2026 — INATIVAR exige o motivo escrito. Antes o servidor nem gravava
+    // details.inativar (o texto digitado pelo vendedor se perdia no caminho); agora é
+    // obrigatório e é persistido junto com os demais detalhes.
+    if (types.includes("inativar")) {
+      const motivo = String(inD.inativar || "").trim();
+      if (!motivo) return res.status(400).json({ error: "Descreva o motivo da inativação." });
+      details.inativar = motivo.slice(0, 4000);
     }
     if (types.includes("outro") && inD.outro) {
       details.outro = String(inD.outro).slice(0, 4000);
