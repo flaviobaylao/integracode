@@ -1383,7 +1383,7 @@ export class DatabaseStorage implements IStorage {
       // Sem isso, uma linha ANTIGA de visit_agenda (com seller_id desatualizado após rezoneamento)
       // fazia o cliente de OUTRA carteira aparecer na rota deste vendedor. O caminho presencial
       // (getCustomersForDate) já faz essa reconferência; aqui faltava. (29/jul/2026)
-      return await db.select().from(customers).where(
+      const _vcusts = await db.select().from(customers).where(
         and(
           inArray(customers.id, customerIds),
           eq(customers.sellerId, sellerId),
@@ -1412,6 +1412,15 @@ export class DatabaseStorage implements IStorage {
           )`
         )
       );
+      // [JA-COMPROU-NO-CICLO] tambem no caminho VIRTUAL (set/2026): cliente virtual que ja
+      // teve VENDA real no ciclo vigente (ate ontem) nao aparece na rota do dia. Mesma regra do presencial.
+      try {
+        if (_vcusts.length > 0) {
+          const boughtSet = await customersBoughtInCycle(_vcusts.map((c: any) => ({ id: c.id, periodicity: (c as any).visitPeriodicity, omieClientCode: (c as any).omieClientCode })), dateStr);
+          if (boughtSet.size > 0) return _vcusts.filter((c: any) => !boughtSet.has(c.id));
+        }
+      } catch (e) { console.warn('[virtual ja-comprou-no-ciclo] falhou (mantendo todos):', (e as any)?.message); }
+      return _vcusts;
     } catch (error: any) {
       console.warn(`⚠️ Erro em getCustomersWithVirtualVisitsOnDate:`, error.message);
       return [];
