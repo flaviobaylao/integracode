@@ -102,6 +102,7 @@ function Detalhes({ details }: { details: any }) {
       {details.areaVendas && <div>Área de vendas: <b>{details.areaVendas}</b></div>}
       {details.modalidade && <div>Modalidade: <b>{details.modalidade === "virtual" ? "Virtual" : "Presencial"}</b></div>}
       {details.inicioAtendimento && <div>Início de atendimento: <b>{details.inicioAtendimento}</b></div>}
+      {details.inativar && <div>Motivo da inativação: <span className="italic">{details.inativar}</span></div>}
       {details.outro && <div>Outro: <span className="italic">{details.outro}</span></div>}
     </div>
   );
