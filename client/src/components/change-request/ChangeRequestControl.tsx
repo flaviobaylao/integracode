@@ -365,7 +365,10 @@ export function ChangeRequestControl(props: ControlProps) {
       if (selected.has("area_vendas") && areaVendas) details.areaVendas = areaVendas;
       if (selected.has("presencial_virtual") && modalidade) details.modalidade = modalidade;
       if (selected.has("inicio_atendimento") && inicioAtendimento) details.inicioAtendimento = inicioAtendimento;
-      if (selected.has("inativar") && inativarTexto.trim()) details.inativar = inativarTexto.trim();
+      if (selected.has("inativar")) {
+        if (!inativarTexto.trim()) throw new Error("Descreva o motivo da inativação.");
+        details.inativar = inativarTexto.trim();
+      }
       if (selected.has("outro") && outro.trim()) details.outro = outro.trim();
       return apiRequest("POST", "/api/change-requests", {
         entityType, entityId, customerId: customerId || null, entityName: entityName || null,
@@ -408,6 +411,8 @@ export function ChangeRequestControl(props: ControlProps) {
     (selected.has("area_vendas") && !areaVendas) ||
     (selected.has("presencial_virtual") && !modalidade) ||
     (selected.has("inicio_atendimento") && !inicioAtendimento) ||
+    // 28/set/2026 — Inativar passou a EXIGIR o motivo escrito (ou ditado).
+    (selected.has("inativar") && !inativarTexto.trim()) ||
     (selected.has("outro") && !outro.trim());
 
   const stop = (e: any) => e.stopPropagation();
@@ -542,10 +547,15 @@ export function ChangeRequestControl(props: ControlProps) {
                     <Textarea
                       value={inativarTexto}
                       onChange={(e) => setInativarTexto(e.target.value)}
-                      placeholder="Descreva o motivo da inativação… (ou grave um áudio) (opcional)"
+                      placeholder="Descreva o motivo da inativação… (ou grave um áudio) — obrigatório"
                       rows={3}
                       data-testid="cr-inativar-texto"
                     />
+                    {!inativarTexto.trim() && (
+                      <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">
+                        O motivo da inativação é obrigatório.
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 mt-2">
                       {!(recording && recordTarget === "inativar") ? (
                         <Button type="button" size="sm" variant="outline" className="gap-1" onClick={(e) => { stop(e); startRecording("inativar"); }} disabled={transcribing} data-testid="cr-inativar-audio-record">
