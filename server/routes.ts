@@ -17457,6 +17457,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               WHERE id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const ownerOf = new Map<string, string | null>();
             const leadOf = new Map<string, boolean>();
+            const perOf = new Map<string, string>();
+            const omieOf = new Map<string, string | null>();
             (ownRows?.rows || []).forEach((r: any) => { ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null); leadOf.set(String(r.id), r.is_lead === true); perOf.set(String(r.id), String(r.visit_periodicity || 'semanal')); omieOf.set(String(r.id), r.omie_client_code ? String(r.omie_client_code) : null); });
             // [JA-COMPROU-NO-CICLO] (set/2026): cliente com venda real na janela do ciclo
             // vigente (ate ontem) sai da rota — mesmo que ja estivesse gravado (ex.: comprou
