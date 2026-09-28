@@ -3,7 +3,7 @@ import { fireAutomation, fireOrderAutomation } from './automation-engine';
 import { ensureEntregaTempoSchema, registrarTempoEntregaCliente, notifyRotaIniciada, notifyEntregaFinalizada, testarNotificacoesRota } from './rota-entrega-notificacoes';
 import { createServer, type Server } from "http";
 import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
-import { storage } from "./storage";
+import { storage, customersBoughtInCycle } from "./storage";
 import { setupAuth, isAuthenticated } from "./session";
 import { validateLocalAdmin, createLocalSession, validateUser, setUserPassword, initializeDefaultAdmin } from "./localAuth";
 import { authenticateUser, authenticateAdmin, requireRole, checkSellerAccess, gone, rateLimitPorIp, somenteLeituraContador } from "./authMiddleware";
@@ -17453,11 +17453,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // customers.seller_id ao delegado, então isto respeita delegação: o cliente só é
             // "desta rota" se seu dono atual for o vendedor da rota (igual ao getCustomersForDate).
             const ownRows: any = await _dbPrune.execute(sql`
-              SELECT id, seller_id, is_lead FROM customers
+              SELECT id, seller_id, is_lead, visit_periodicity, omie_client_code FROM customers
               WHERE id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const ownerOf = new Map<string, string | null>();
             const leadOf = new Map<string, boolean>();
-            (ownRows?.rows || []).forEach((r: any) => { ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null); leadOf.set(String(r.id), r.is_lead === true); });
+            (ownRows?.rows || []).forEach((r: any) => { ownerOf.set(String(r.id), r.seller_id ? String(r.seller_id) : null); leadOf.set(String(r.id), r.is_lead === true); perOf.set(String(r.id), String(r.visit_periodicity || 'semanal')); omieOf.set(String(r.id), r.omie_client_code ? String(r.omie_client_code) : null); });
+            // [JA-COMPROU-NO-CICLO] (set/2026): cliente com venda real na janela do ciclo
+            // vigente (ate ontem) sai da rota — mesmo que ja estivesse gravado (ex.: comprou
+            // depois que a rota foi gerada). Adição MANUAL continua permanecendo.
+            let boughtInCycle = new Set<string>();
+            try {
+              boughtInCycle = await customersBoughtInCycle(
+                custIds.map((id) => ({ id, periodicity: perOf.get(id) || 'semanal', omieClientCode: omieOf.get(id) || null })),
+                date,
+              );
+            } catch (e) { console.warn('[AGENDA-PRUNE][ja-comprou] falhou:', (e as any)?.message); }
             // Adições manuais do dia (sempre permanecem).
             const manRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM sales_cards
@@ -17470,10 +17480,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const naCarteira = ownerOf.get(sm.eid) === String(sellerId);
                 const temAgenda = agendaDateIds.has(sm.eid);
                 const manual = manualIds.has(sm.eid);
+                const jaComprou = boughtInCycle.has(sm.eid);
                 // 🚫 Registro isLead NÃO é presencial: some da rota (só aparece pela data do próximo
                 // contato, via reconcile de leads). Mantém só se: adição MANUAL, OU (não é lead E é da
                 // carteira deste vendedor E tem visita na agenda do dia).
-                if (!manual && (ehLead || !(naCarteira && temAgenda))) {
+                if (!manual && (ehLead || jaComprou || !(naCarteira && temAgenda))) {
                   removed++; if (curStops[sm.stop]) delete curStops[sm.stop]; continue;
                 }
               }
