@@ -13,6 +13,8 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/useAuth";
+import ProducaoFaturamento from "./ProducaoFaturamento";
 import DashboardHistory from "./DashboardHistory";
 import DailyHistory from "./DailyHistory";
 import ClientesAtivos from "./ClientesAtivos";
@@ -167,7 +169,9 @@ export default function Dashboard() {
   const [modalSearch, setModalSearch] = useState<string>("");
   const [sortKey, setSortKey] = useState<string>("fatMes");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [histView, setHistView] = useState<"painel" | "historico">("painel");
+  const [histView, setHistView] = useState<"painel" | "historico" | "diario" | "clientes" | "producao">("painel");
+  const { user } = useAuth();
+  const isAdmin = (user as any)?.role === "admin";
 
   const stats = data?.stats || {};
   const ov = data?.ordersOverview || {};
@@ -423,8 +427,9 @@ export default function Dashboard() {
         <button type="button" onClick={() => setHistView("historico")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "historico" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Histórico</button>
         <button type="button" onClick={() => setHistView("diario")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "diario" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Histórico Diário</button>
         <button type="button" onClick={() => setHistView("clientes")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "clientes" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Variação de Vendas</button>
+        {isAdmin && <button type="button" onClick={() => setHistView("producao")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "producao" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Produção &amp; Faturamento</button>}
       </div>
-      {histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
+      {histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Efetivo (Hoje)</CardTitle><InfoDot text="Faturamento efetivo de hoje: NF-e de VENDA autorizadas hoje (nota fiscal real emitida pelo Integra 2.0), ja excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
