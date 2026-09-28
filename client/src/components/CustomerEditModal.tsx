@@ -1112,6 +1112,7 @@ export default function CustomerEditModal({
             {/* Envio automático de documentos por e-mail (replicado do Integra 1.0) */}
             <div className="space-y-3 border border-sky-200 bg-sky-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-sky-900">Envio Automático de Documentos por E-mail</Label>
+              <AuditLine campos={['notificationEmail', 'sendDanfeEmail', 'sendXmlEmail', 'sendBoletoPixEmail', 'sendPedidoEmail']} />
               <div>
                 <Label className="text-sm">E-mail para envio</Label>
                 <Input
@@ -1143,6 +1144,7 @@ export default function CustomerEditModal({
                 Os dois blocos são independentes: dá para usar só um, ou os dois. */}
             <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-emerald-900">Envio Automático de Documentos por WhatsApp</Label>
+              <AuditLine campos={['notificationWhatsapp', 'sendDanfeWhatsapp', 'sendXmlWhatsapp', 'sendBoletoPixWhatsapp', 'sendPedidoWhatsapp']} />
               <div>
                 <Label className="text-sm">WhatsApp para envio</Label>
                 <Input
