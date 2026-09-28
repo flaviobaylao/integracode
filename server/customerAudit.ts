@@ -69,9 +69,20 @@ const LABELS: Record<string, string> = {
   collectionDiscount: 'Desconto de cobrança',
   paymentInstallments: 'Parcelas',
   averageDeliveryTime: 'Tempo médio de entrega',
+  // Envio automático de documentos (boxes "Envio Automático" do cadastro)
+  notificationEmail: 'E-mail p/ envio de documentos',
+  sendDanfeEmail: 'Envio de DANFE por e-mail',
+  sendXmlEmail: 'Envio de XML por e-mail',
+  sendBoletoPixEmail: 'Envio de Boleto/PIX por e-mail',
+  sendPedidoEmail: 'Envio de Pedido por e-mail',
+  notificationWhatsapp: 'WhatsApp p/ envio de documentos',
+  sendDanfeWhatsapp: 'Envio de DANFE por WhatsApp',
+  sendXmlWhatsapp: 'Envio de XML por WhatsApp',
+  sendBoletoPixWhatsapp: 'Envio de Boleto/PIX por WhatsApp',
+  sendPedidoWhatsapp: 'Envio de Pedido por WhatsApp',
 };
 
-const BOOL_FIELDS = new Set(['isActive', 'virtualService', 'isLead', 'isConsumerClient', 'exclusiveVehicle', 'isSupplier']);
+const BOOL_FIELDS = new Set(['isActive', 'virtualService', 'isLead', 'isConsumerClient', 'exclusiveVehicle', 'isSupplier', 'sendDanfeEmail', 'sendXmlEmail', 'sendBoletoPixEmail', 'sendPedidoEmail', 'sendDanfeWhatsapp', 'sendXmlWhatsapp', 'sendBoletoPixWhatsapp', 'sendPedidoWhatsapp']);
 const JSON_FIELDS = new Set(['weekdays', 'receivingWeekdays', 'vehicleTypes', 'deliveryTimeSlots', 'deliverySaturdayTimeSlots', 'deliveryWeekdays']);
 const DATE_FIELDS = new Set(['serviceStartDate']);
 

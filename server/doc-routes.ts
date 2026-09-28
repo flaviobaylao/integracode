@@ -17,6 +17,7 @@ import { authenticateUser, requireRole } from './authMiddleware';
 import { entregarDocumento, testarSmtp, smtpConfigurado, ensureDocDeliverySchema, type DocKind } from './doc-delivery';
 import { montarDanfePdf, montarXmlNfe, montarCobrancaPdf, montarPedidoPdf } from './doc-builders';
 import { storage } from './storage';
+import { logCustomerChanges } from './customerAudit';
 
 export function registerDocRoutes(app: Express) {
   // Prepara as tabelas do envio de documentos EM BACKGROUND — nunca no caminho critico
@@ -130,6 +131,15 @@ export function registerDocRoutes(app: Express) {
       await ensureDocDeliverySchema();
       const b = req.body || {};
       const fone = String(b.notificationWhatsapp ?? '').trim() || null;
+      // 📜 Snapshot ANTES (para registrar "última alteração" no box de Envio por WhatsApp).
+      const beforeQ: any = await db.execute(sql`
+        SELECT COALESCE(notification_whatsapp, '') AS "notificationWhatsapp",
+               COALESCE(send_danfe_whatsapp, false) AS "sendDanfeWhatsapp",
+               COALESCE(send_xml_whatsapp, false) AS "sendXmlWhatsapp",
+               COALESCE(send_boleto_pix_whatsapp, false) AS "sendBoletoPixWhatsapp",
+               COALESCE(send_pedido_whatsapp, false) AS "sendPedidoWhatsapp"
+        FROM customers WHERE id = ${req.params.id} LIMIT 1`);
+      const __wppBefore = beforeQ.rows?.[0] || {};
       await db.execute(sql`
         UPDATE customers SET
           notification_whatsapp = ${fone},
@@ -139,6 +149,23 @@ export function registerDocRoutes(app: Express) {
           send_pedido_whatsapp = ${b.sendPedidoWhatsapp === true},
           updated_at = now()
         WHERE id = ${req.params.id}`);
+      // 📜 Auditoria por box (WhatsApp) — não bloqueia o salvamento.
+      try {
+        const u = (req as any).currentUser;
+        await logCustomerChanges({
+          customerId: String(req.params.id),
+          before: __wppBefore,
+          changes: {
+            notificationWhatsapp: fone,
+            sendDanfeWhatsapp: b.sendDanfeWhatsapp === true,
+            sendXmlWhatsapp: b.sendXmlWhatsapp === true,
+            sendBoletoPixWhatsapp: b.sendBoletoPixWhatsapp === true,
+            sendPedidoWhatsapp: b.sendPedidoWhatsapp === true,
+          },
+          actor: { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email },
+          source: 'doc-delivery',
+        });
+      } catch (_e) { /* auditoria nunca quebra o salvamento */ }
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
