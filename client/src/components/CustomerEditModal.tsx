@@ -69,6 +69,28 @@ export default function CustomerEditModal({
     queryKey: ['/api/users'],
   });
 
+  // 📜 Histórico de alterações (por campo) — usado p/ mostrar "Última alteração: <usuário> — <data>"
+  // em cada box de entrega/recebimento. Fonte: /api/customers/:id/change-history (já existente).
+  const { data: changeHistory = [] } = useQuery<any[]>({
+    queryKey: ['customer-change-history', (customer as any)?.id],
+    queryFn: async () => (customer as any)?.id ? await apiRequest('GET', `/api/customers/${(customer as any).id}/change-history`) : [],
+    enabled: !!(customer as any)?.id,
+  });
+  // Retorna a linha de última alteração para os campos de um box (o histórico vem em ordem DECRESCENTE).
+  const ultimaAlteracaoBox = (campos: string[]): string | null => {
+    const row = ((changeHistory as any[]) || []).find((h) => campos.includes(String(h?.field)));
+    if (!row || !row.changed_by_name) return null;
+    const d = row.created_at ? new Date(row.created_at) : null;
+    const quando = d && !isNaN(d.getTime())
+      ? d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : '';
+    return `Última alteração: ${row.changed_by_name}${quando ? ' — ' + quando : ''}`;
+  };
+  const AuditLine = ({ campos }: { campos: string[] }) => {
+    const txt = ultimaAlteracaoBox(campos);
+    return txt ? <p className="text-[11px] text-muted-foreground italic mt-1" data-testid="box-ultima-alteracao">{txt}</p> : null;
+  };
+
   // Verificar se cliente está na lista de ativos (não verificar para leads)
   useEffect(() => {
     const checkActiveStatus = async () => {
@@ -1150,6 +1172,7 @@ export default function CustomerEditModal({
             {/* Veículo Exclusivo */}
             <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-orange-900">Veículo Exclusivo</Label>
+              <AuditLine campos={['exclusiveVehicle', 'vehicleTypes']} />
               
               <div className="flex items-center space-x-2">
                 <Checkbox
@@ -1198,6 +1221,7 @@ export default function CustomerEditModal({
             {/* Dias de Recebimento */}
             <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-blue-900">Dias da Semana para Recebimento</Label>
+              <AuditLine campos={['receivingWeekdays']} />
               
               <div className="grid grid-cols-4 gap-3">
                 {[
@@ -1227,6 +1251,7 @@ export default function CustomerEditModal({
             {/* Horários de Recebimento (Seg-Sex) */}
             <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</Label>
+              <AuditLine campos={['deliveryTimeSlots']} />
               
               <div className="grid grid-cols-4 gap-3">
                 {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
@@ -1248,6 +1273,7 @@ export default function CustomerEditModal({
             {/* Horários de Recebimento aos Sábados */}
             <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
               <Label className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</Label>
+              <AuditLine campos={['deliverySaturdayTimeSlots']} />
               
               <div className="grid grid-cols-4 gap-3">
                 {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (

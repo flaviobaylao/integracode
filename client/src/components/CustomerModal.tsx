@@ -148,6 +148,28 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
     retry: false,
   });
 
+  // 📜 Histórico de alterações (por campo) — mostra "Última alteração: <usuário> — <data>"
+  // em cada box de entrega/recebimento. Fonte: /api/customers/:id/change-history (já existente).
+  const { data: changeHistory = [] } = useQuery<any[]>({
+    queryKey: ['customer-change-history', (customer as any)?.id],
+    queryFn: async () => (customer as any)?.id ? await apiRequest('GET', `/api/customers/${(customer as any).id}/change-history`) : [],
+    enabled: !!(customer as any)?.id,
+    retry: false,
+  });
+  const ultimaAlteracaoBox = (campos: string[]): string | null => {
+    const row = ((changeHistory as any[]) || []).find((h) => campos.includes(String(h?.field)));
+    if (!row || !row.changed_by_name) return null;
+    const d = row.created_at ? new Date(row.created_at) : null;
+    const quando = d && !isNaN(d.getTime())
+      ? d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : '';
+    return `Última alteração: ${row.changed_by_name}${quando ? ' — ' + quando : ''}`;
+  };
+  const AuditLine = ({ campos }: { campos: string[] }) => {
+    const txt = ultimaAlteracaoBox(campos);
+    return txt ? <p className="text-[11px] text-muted-foreground italic mt-1" data-testid="box-ultima-alteracao">{txt}</p> : null;
+  };
+
   const form = useForm<InsertCustomer>({
     resolver: zodResolver(insertCustomerSchema),
     defaultValues: {
@@ -1701,6 +1723,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                 
                 {/* Veículo Exclusivo */}
                 <div className="space-y-3 border border-orange-200 bg-orange-50 p-4 rounded-lg mb-4">
+                  <AuditLine campos={['exclusiveVehicle', 'vehicleTypes']} />
                   <FormField
                     control={form.control}
                     name="exclusiveVehicle"
@@ -1785,6 +1808,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                 {/* Dias de Recebimento */}
                 <div className="space-y-3 border border-blue-200 bg-blue-50 p-4 rounded-lg mb-4">
                   <FormLabel className="text-sm font-medium text-blue-900">Dias da Semana para Recebimento</FormLabel>
+                  <AuditLine campos={['receivingWeekdays']} />
                   <FormField
                     control={form.control}
                     name="receivingWeekdays"
@@ -1831,6 +1855,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                 {/* Horários de Recebimento (Seg-Sex) */}
                 <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg mb-4">
                   <FormLabel className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</FormLabel>
+                  <AuditLine campos={['deliveryTimeSlots']} />
                   <FormField
                     control={form.control}
                     name="deliveryTimeSlots"
@@ -1869,6 +1894,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                 {/* Horários de Recebimento aos Sábados */}
                 <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
                   <FormLabel className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</FormLabel>
+                  <AuditLine campos={['deliverySaturdayTimeSlots']} />
                   <FormField
                     control={form.control}
                     name="deliverySaturdayTimeSlots"
