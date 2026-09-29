@@ -27,6 +27,7 @@ const TYPE_LABEL: Record<string, string> = {
 };
 const ENTITY_LABEL: Record<string, string> = {
   customer: "Cliente", lead: "Lead", repescagem: "Repescagem", agenda_dia: "Agenda da carteira",
+  sistema: "Verificação do sistema",
 };
 const RESULT_META: Record<string, { label: string; cls: string }> = {
   efetuadas: { label: "Efetuadas", cls: "bg-green-100 text-green-800 border-green-300" },
@@ -103,7 +104,7 @@ function Detalhes({ details }: { details: any }) {
       {details.modalidade && <div>Modalidade: <b>{details.modalidade === "virtual" ? "Virtual" : "Presencial"}</b></div>}
       {details.inicioAtendimento && <div>Início de atendimento: <b>{details.inicioAtendimento}</b></div>}
       {details.inativar && <div>Motivo da inativação: <span className="italic">{details.inativar}</span></div>}
-      {details.outro && <div>Outro: <span className="italic">{details.outro}</span></div>}
+      {details.outro && <div>Outro: <span className="italic whitespace-pre-wrap break-words">{details.outro}</span></div>}
     </div>
   );
 }
