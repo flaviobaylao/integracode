@@ -33,6 +33,7 @@ export default function SalesCardFilters({
 
   const statusOptions = [
     { value: 'all', label: 'Todos os Status' },
+    { value: 'draft', label: 'Rascunho' },
     { value: 'pending', label: 'Pendente' },
     { value: 'completed', label: 'Finalizado' },
     { value: 'telemarketing', label: 'Telemarketing' },
