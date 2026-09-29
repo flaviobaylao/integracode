@@ -341,7 +341,7 @@ export function registerIndustriaRoutes(app: Express) {
 
       const months: Record<string, Record<string, any>> = {};
       const ensure = (m: string) => {
-        if (!months[m]) { months[m] = {}; for (const f of FLAVORS) for (const sz of ['900', '350']) months[m][f + '|' + sz] = { prod: 0, cu_wsum: 0, cu_q: 0, vend: 0, fat: 0, est: 0, ce: 0 }; }
+        if (!months[m]) { months[m] = {}; for (const f of FLAVORS) for (const sz of ['900', '350']) months[m][f + '|' + sz] = { prod: 0, cu_wsum: 0, cu_q: 0, vend: 0, fat: 0, ta: 0, est: 0, ce: 0 }; }
         return months[m];
       };
 
@@ -359,14 +359,24 @@ export function registerIndustriaRoutes(app: Express) {
         const q = Number(l.quantity) || 0; invAgg[k].est += q; invAgg[k].ce += Number(l.total_cost) || 0;
         if (Number(l.unit_cost)) { invAgg[k].wsum += Number(l.unit_cost) * q; invAgg[k].q += q; }
       }
-      // Faturamento/vendidas por mês/SKU (só operações de venda)
+      // Faturamento/vendidas + trocas/amostras por mês/SKU.
+      // 'venda' => quantidade vendida e faturamento; 'troca'/'amostra' => quantidade
+      // de garrafas cedidas (custo calculado depois = qtd × custo unitário do lote).
+      // Demais tipos (bonificação, remessa, transferência, devolução) são ignorados.
       for (const r of (pipeR.rows || [])) {
-        if (String(r.operation_type || '').toLowerCase() !== 'venda') continue;
+        const op = String(r.operation_type || 'venda').toLowerCase();
+        const isVenda = op === 'venda';
+        const isTA = op === 'troca' || op === 'amostra';
+        if (!isVenda && !isTA) continue;
         const d = ym(r.scheduled_billing_date || r.created_at); if (!d || d < START) continue;
         let prods: any = r.products; if (typeof prods === 'string') { try { prods = JSON.parse(prods); } catch { prods = []; } }
         if (!Array.isArray(prods)) continue;
         const M = ensure(d);
-        for (const p of prods) { const { fl, size } = parse(p.name); if (!size) continue; const k = fl + '|' + size; if (M[k]) { M[k].vend += Number(p.quantity) || 0; M[k].fat += Number(p.totalPrice) || 0; } }
+        for (const p of prods) {
+          const { fl, size } = parse(p.name); if (!size) continue; const k = fl + '|' + size; if (!M[k]) continue;
+          if (isVenda) { M[k].vend += Number(p.quantity) || 0; M[k].fat += Number(p.totalPrice) || 0; }
+          else { M[k].ta += Number(p.quantity) || 0; }
+        }
       }
 
       const monthKeys = Object.keys(months).sort();
@@ -380,9 +390,9 @@ export function registerIndustriaRoutes(app: Express) {
           const a = months[m][f + '|' + sz];
           const cu = a.cu_q > 0 ? round2(a.cu_wsum / a.cu_q * 100) / 100 : null;
           const cuv = a.cu_q > 0 ? Math.round(a.cu_wsum / a.cu_q * 10000) / 10000 : null;
-          rows.push({ sabor: f, tam: sz, produzidas: Math.round(a.prod), custo_unit: cuv, custo_total_prod: cuv ? round2(a.prod * cuv) : 0, vendidas: Math.round(a.vend), faturamento: round2(a.fat), estoque: Math.round(a.est), custo_estoque: round2(a.ce) });
+          rows.push({ sabor: f, tam: sz, produzidas: Math.round(a.prod), custo_unit: cuv, custo_total_prod: cuv ? round2(a.prod * cuv) : 0, vendidas: Math.round(a.vend), faturamento: round2(a.fat), trocas_amostras: Math.round(a.ta), custo_trocas_amostras: cuv ? round2(a.ta * cuv) : 0, estoque: Math.round(a.est), custo_estoque: round2(a.ce) });
         }
-        const sub = (f: (x: any) => boolean) => { const r = rows.filter(f); return { produzidas: r.reduce((s, x) => s + x.produzidas, 0), custo_total_prod: round2(r.reduce((s, x) => s + x.custo_total_prod, 0)), vendidas: r.reduce((s, x) => s + x.vendidas, 0), faturamento: round2(r.reduce((s, x) => s + x.faturamento, 0)), estoque: r.reduce((s, x) => s + x.estoque, 0), custo_estoque: round2(r.reduce((s, x) => s + x.custo_estoque, 0)) }; };
+        const sub = (f: (x: any) => boolean) => { const r = rows.filter(f); return { produzidas: r.reduce((s, x) => s + x.produzidas, 0), custo_total_prod: round2(r.reduce((s, x) => s + x.custo_total_prod, 0)), vendidas: r.reduce((s, x) => s + x.vendidas, 0), faturamento: round2(r.reduce((s, x) => s + x.faturamento, 0)), trocas_amostras: r.reduce((s, x) => s + x.trocas_amostras, 0), custo_trocas_amostras: round2(r.reduce((s, x) => s + x.custo_trocas_amostras, 0)), estoque: r.reduce((s, x) => s + x.estoque, 0), custo_estoque: round2(r.reduce((s, x) => s + x.custo_estoque, 0)) }; };
         return { month: m, rows, sub900: sub((x) => x.tam === '900'), sub350: sub((x) => x.tam === '350'), total: sub(() => true) };
       });
       res.json({ generatedAt: new Date().toISOString(), months: out });

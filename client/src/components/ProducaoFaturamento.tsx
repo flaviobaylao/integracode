@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 const nf = (n: any) => new Intl.NumberFormat("pt-BR").format(Number(n) || 0);
 const brl = (n: any) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(n) || 0);
 const brl0 = (n: any) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(n) || 0);
+const pct = (n: number | null) => n == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
 const cap = (s: string) => String(s || "").toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 const mesLabel = (ym: string) => {
   const [y, m] = (ym || "").split("-");
@@ -16,11 +17,39 @@ const mesLabel = (ym: string) => {
   return (nomes[Number(m)] || ym) + "/" + (y || "");
 };
 
-type Row = { sabor: string; tam: string; produzidas: number; custo_unit: number | null; custo_total_prod: number; vendidas: number; faturamento: number; estoque: number; custo_estoque: number };
+type Row = { sabor: string; tam: string; produzidas: number; custo_unit: number | null; custo_total_prod: number; vendidas: number; faturamento: number; trocas_amostras: number; custo_trocas_amostras: number; estoque: number; custo_estoque: number };
 type MonthData = { month: string; rows: Row[]; sub900: any; sub350: any; total: any };
 
+// Preço médio realizado = faturamento ÷ garrafas vendidas.
+const precoMedio = (fat: number, vend: number) => (Number(vend) > 0 ? Number(fat) / Number(vend) : null);
+// Custo das vendidas (COGS) = Σ custo unitário do lote × garrafas vendidas.
+const cogsOf = (rows: Row[]) => rows.reduce((s, r) => s + (r.custo_unit != null ? r.custo_unit * r.vendidas : 0), 0);
+// Margem bruta = (faturamento − custo das vendidas) ÷ faturamento.
+const margemDe = (fat: number, cogs: number) => (Number(fat) > 0 ? (Number(fat) - Number(cogs)) / Number(fat) : null);
+
+// Ícone "i" com tooltip explicando origem/composição do dado da coluna.
+const Info = ({ t }: { t: string }) => (
+  <span title={t} className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-500 text-[9px] font-bold cursor-help align-[1px] normal-case tracking-normal">i</span>
+);
+
+const INFO = {
+  sabor: "Sabor do suco conforme o nome do SKU cadastrado no módulo Indústria.",
+  emb: "Embalagem da garrafa (900 ml ou 350 ml), extraída do nome do SKU.",
+  produzidas: "Soma das garrafas nas ordens de produção do mês (módulo Indústria › ordens de produção), agrupadas por SKU.",
+  custoUnit: "Custo unitário do lote em uso (módulo Indústria › lotes de estoque). Ainda NÃO inclui energia elétrica nem mão de obra.",
+  custoProd: "Custo de produção = garrafas produzidas × custo unitário do lote. Ainda NÃO inclui energia elétrica nem mão de obra.",
+  vendidas: "Soma das garrafas em operações do tipo 'venda' no mês (pipeline de faturamento).",
+  faturamento: "Soma do valor de venda das operações do tipo 'venda' no mês (pipeline de faturamento).",
+  preco: "Preço médio de venda realizado = Faturamento ÷ Garrafas vendidas.",
+  margem: "Margem bruta = (Faturamento − custo das vendidas) ÷ Faturamento, com custo das vendidas = custo unitário do lote × garrafas vendidas. Ainda NÃO considera energia elétrica nem mão de obra.",
+  trocasAmostras: "Garrafas cedidas em operações do tipo 'troca' ou 'amostra' no mês (pipeline de faturamento). Não entram em Vendidas nem em Faturamento.",
+  custoTA: "Custo das trocas/amostras = garrafas cedidas × custo unitário do lote. Ainda NÃO inclui energia elétrica nem mão de obra.",
+  estoque: "Saldo atual de garrafas em lotes 'em uso' (snapshot do momento da consulta, módulo Indústria).",
+  custoEstoque: "Valor atual em estoque = soma do custo total dos lotes 'em uso' (snapshot do momento da consulta).",
+};
+
 export default function ProducaoFaturamento() {
-  const { data, isLoading, error } = useQuery<any>({ queryKey: ["/api/industria/dashboard-producao-faturamento"], refetchOnWindowFocus: true, staleTime: 0 });
+  const { data, isLoading, error } = useQuery<any>({ queryKey: ["/api/industria/dashboard-producao-faturamento"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
   const months: MonthData[] = data?.months || [];
   const [sel, setSel] = useState<string>("");
   const current = useMemo(() => months.find((m) => m.month === sel) || months[months.length - 1], [months, sel]);
@@ -36,6 +65,8 @@ export default function ProducaoFaturamento() {
     { lab: "Custo de produção", u: "", dot: "bg-amber-500", fmt: brl0, v900: S9.custo_total_prod, v350: S3.custo_total_prod, tot: T.custo_total_prod, note: "Ainda não inclui energia e mão de obra" },
     { lab: "Garrafas vendidas", u: "un", dot: "bg-rose-600", fmt: nf, v900: S9.vendidas, v350: S3.vendidas, tot: T.vendidas },
     { lab: "Faturamento", u: "", dot: "bg-rose-600", fmt: brl0, v900: S9.faturamento, v350: S3.faturamento, tot: T.faturamento },
+    { lab: "Trocas / Amostras", u: "un", dot: "bg-sky-500", fmt: nf, v900: S9.trocas_amostras, v350: S3.trocas_amostras, tot: T.trocas_amostras, note: "Não entram em vendidas/faturamento" },
+    { lab: "Custo trocas / amostras", u: "", dot: "bg-sky-500", fmt: brl0, v900: S9.custo_trocas_amostras, v350: S3.custo_trocas_amostras, tot: T.custo_trocas_amostras },
     { lab: "Estoque atual", u: "un", dot: "bg-emerald-600", fmt: nf, v900: S9.estoque, v350: S3.estoque, tot: T.estoque },
     { lab: "Custo em estoque", u: "", dot: "bg-amber-500", fmt: brl0, v900: S9.custo_estoque, v350: S3.custo_estoque, tot: T.custo_estoque },
   ];
@@ -44,27 +75,46 @@ export default function ProducaoFaturamento() {
   const r350 = current.rows.filter((r) => r.tam === "350");
   const cell = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
   const th = "px-3 py-2 text-right text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap";
-  const SubRow = ({ label, d }: { label: string; d: any }) => (
-    <tr className="bg-slate-100 font-semibold text-slate-800 border-y-2 border-slate-300">
-      <td className="px-3 py-2 text-left"><span className="border-l-4 border-slate-400 pl-2">{label}</span></td><td></td>
-      <td className={cell}>{nf(d.produzidas)}</td><td></td><td className={cell}>{brl0(d.custo_total_prod)}</td>
-      <td className={cell}>{nf(d.vendidas)}</td><td className={cell}>{brl0(d.faturamento)}</td>
-      <td className={cell}>{nf(d.estoque)}</td><td className={cell}>{brl0(d.custo_estoque)}</td>
-    </tr>
-  );
-  const DataRow = ({ r }: { r: Row }) => (
-    <tr className="border-b border-gray-100">
-      <td className="px-3 py-2 text-left font-medium">{cap(r.sabor)}</td>
-      <td className="px-3 py-2 text-left"><span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.tam}ml</span></td>
-      <td className={cell}>{nf(r.produzidas)}</td>
-      <td className={cell}>{r.custo_unit != null ? brl(r.custo_unit) : <span className="text-gray-400">—</span>}</td>
-      <td className={cell}>{brl0(r.custo_total_prod)}</td>
-      <td className={cell}>{nf(r.vendidas)}</td>
-      <td className={cell}>{brl0(r.faturamento)}</td>
-      <td className={cell}>{nf(r.estoque)}</td>
-      <td className={cell}>{brl0(r.custo_estoque)}</td>
-    </tr>
-  );
+  const Margem = ({ m }: { m: number | null }) => m == null
+    ? <span className="text-gray-400">—</span>
+    : <span className={m < 0 ? "text-rose-600 font-semibold" : "text-emerald-700 font-semibold"}>{pct(m)}</span>;
+  const SubRow = ({ label, d, rows }: { label: string; d: any; rows: Row[] }) => {
+    const preco = precoMedio(d.faturamento, d.vendidas);
+    const marg = margemDe(d.faturamento, cogsOf(rows));
+    return (
+      <tr className="bg-slate-100 font-semibold text-slate-800 border-y-2 border-slate-300">
+        <td className="px-3 py-2 text-left"><span className="border-l-4 border-slate-400 pl-2">{label}</span></td><td></td>
+        <td className={cell}>{nf(d.produzidas)}</td><td></td><td className={cell}>{brl0(d.custo_total_prod)}</td>
+        <td className={cell}>{nf(d.vendidas)}</td><td className={cell}>{brl0(d.faturamento)}</td>
+        <td className={cell}>{preco != null ? brl(preco) : <span className="text-gray-400">—</span>}</td>
+        <td className={cell}><Margem m={marg} /></td>
+        <td className={cell + " text-sky-700"}>{nf(d.trocas_amostras)}</td>
+        <td className={cell + " text-sky-700"}>{brl0(d.custo_trocas_amostras)}</td>
+        <td className={cell}>{nf(d.estoque)}</td><td className={cell}>{brl0(d.custo_estoque)}</td>
+      </tr>
+    );
+  };
+  const DataRow = ({ r }: { r: Row }) => {
+    const preco = precoMedio(r.faturamento, r.vendidas);
+    const marg = r.custo_unit != null ? margemDe(r.faturamento, r.custo_unit * r.vendidas) : null;
+    return (
+      <tr className="border-b border-gray-100">
+        <td className="px-3 py-2 text-left font-medium">{cap(r.sabor)}</td>
+        <td className="px-3 py-2 text-left"><span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.tam}ml</span></td>
+        <td className={cell}>{nf(r.produzidas)}</td>
+        <td className={cell}>{r.custo_unit != null ? brl(r.custo_unit) : <span className="text-gray-400">—</span>}</td>
+        <td className={cell}>{brl0(r.custo_total_prod)}</td>
+        <td className={cell}>{nf(r.vendidas)}</td>
+        <td className={cell}>{brl0(r.faturamento)}</td>
+        <td className={cell}>{preco != null ? brl(preco) : <span className="text-gray-400">—</span>}</td>
+        <td className={cell}><Margem m={marg} /></td>
+        <td className={cell + " text-sky-700"}>{nf(r.trocas_amostras)}</td>
+        <td className={cell + " text-sky-700"}>{brl0(r.custo_trocas_amostras)}</td>
+        <td className={cell}>{nf(r.estoque)}</td>
+        <td className={cell}>{brl0(r.custo_estoque)}</td>
+      </tr>
+    );
+  };
 
   return (
     <div className="mt-4 space-y-5">
@@ -105,29 +155,42 @@ export default function ProducaoFaturamento() {
 
       <Card><CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: 760 }}>
+          <table className="w-full text-sm" style={{ minWidth: 1140 }}>
             <thead><tr className="border-b border-gray-200">
-              <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Sabor</th>
-              <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Emb.</th>
-              <th className={th}>Produzidas</th><th className={th}>Custo unit.</th><th className={th}>Custo produção</th>
-              <th className={th}>Vendidas</th><th className={th}>Faturamento</th><th className={th}>Estoque</th><th className={th}>Custo estoque</th>
+              <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">Sabor<Info t={INFO.sabor} /></th>
+              <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">Emb.<Info t={INFO.emb} /></th>
+              <th className={th}>Produzidas<Info t={INFO.produzidas} /></th>
+              <th className={th}>Custo unit.<Info t={INFO.custoUnit} /></th>
+              <th className={th}>Custo produção<Info t={INFO.custoProd} /></th>
+              <th className={th}>Vendidas<Info t={INFO.vendidas} /></th>
+              <th className={th}>Faturamento<Info t={INFO.faturamento} /></th>
+              <th className={th}>Preço venda<Info t={INFO.preco} /></th>
+              <th className={th}>Margem<Info t={INFO.margem} /></th>
+              <th className={th + " text-sky-700"}>Trocas/Amostras<Info t={INFO.trocasAmostras} /></th>
+              <th className={th + " text-sky-700"}>Custo T/A<Info t={INFO.custoTA} /></th>
+              <th className={th}>Estoque<Info t={INFO.estoque} /></th>
+              <th className={th}>Custo estoque<Info t={INFO.custoEstoque} /></th>
             </tr></thead>
             <tbody>
               {r900.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
-              <SubRow label="Subtotal 900 ml" d={current.sub900} />
+              <SubRow label="Subtotal 900 ml" d={current.sub900} rows={r900} />
               {r350.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
-              <SubRow label="Subtotal 350 ml" d={current.sub350} />
+              <SubRow label="Subtotal 350 ml" d={current.sub350} rows={r350} />
               <tr className="bg-emerald-600 text-white font-bold text-[15px] border-t-4 border-emerald-800">
                 <td className="px-3 py-2.5 text-left tracking-wide">TOTAL</td><td></td>
                 <td className={cell}>{nf(T.produzidas)}</td><td></td><td className={cell}>{brl0(T.custo_total_prod)}</td>
                 <td className={cell}>{nf(T.vendidas)}</td><td className={cell}>{brl0(T.faturamento)}</td>
+                <td className={cell}>{precoMedio(T.faturamento, T.vendidas) != null ? brl(precoMedio(T.faturamento, T.vendidas)) : "—"}</td>
+                <td className={cell}>{pct(margemDe(T.faturamento, cogsOf(current.rows)))}</td>
+                <td className={cell}>{nf(T.trocas_amostras)}</td>
+                <td className={cell}>{brl0(T.custo_trocas_amostras)}</td>
                 <td className={cell}>{nf(T.estoque)}</td><td className={cell}>{brl0(T.custo_estoque)}</td>
               </tr>
             </tbody>
           </table>
         </div>
       </CardContent></Card>
-      <p className="text-[11px] text-gray-400">Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção, vendas e faturamento são do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote — <span className="text-amber-600 font-medium">ainda não inclui energia elétrica nem mão de obra</span>.</p>
+      <p className="text-[11px] text-gray-400">Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção, vendas e faturamento são do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote — <span className="text-amber-600 font-medium">ainda não inclui energia elétrica nem mão de obra</span>. Preço de venda = faturamento ÷ vendidas; margem bruta = (faturamento − custo das vendidas) ÷ faturamento. Trocas/amostras são contabilizadas à parte (garrafas cedidas × custo unitário) e não entram em vendidas nem em faturamento. Passe o mouse sobre o <span className="font-semibold">i</span> de cada coluna para ver a origem do dado. Os dados se atualizam automaticamente na mesma cadência do Painel (a cada 30 min e ao focar a janela).</p>
     </div>
   );
 }
