@@ -1276,6 +1276,11 @@ export function registerChangeRequestsRoutes(app: Express) {
                ORDER BY sc.created_at DESC LIMIT 1) AS pista
         FROM agg r
        WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = r.customer_id)
+         -- 28/set/2026 — LEAD NÃO É ÓRFÃO. A visita a um lead adicionado à mão na Rota do Dia
+         -- (sales_cards.source='manual_route_addition') aponta para leads.id, que por definição
+         -- não está em customers. Sem esta linha, TODA visita a lead virava um "cadastro órfão"
+         -- no Inbox — foi o que gerou os 8 cards "(nome não recuperado)" do Radilton.
+         AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id::text = r.customer_id::text)
        ORDER BY 3 NULLS LAST
        LIMIT ${limit}`));
 
@@ -1326,7 +1331,11 @@ export function registerChangeRequestsRoutes(app: Express) {
   // --------------------------------------------------------------------------
   app.post("/api/admin/regularize-orphans", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
     const dryRun = req.body?.dryRun !== false;
-    const naoExiste = (col: string) => sql.raw(`NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = ${col})`);
+    // 28/set/2026 — exclui LEADS: um card de visita a lead aponta para leads.id e não está em
+    // customers; sem isso esta rotina cancelaria visitas legítimas da Rota do Dia.
+    const naoExiste = (col: string) => sql.raw(
+      `NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = ${col})` +
+      ` AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id::text = ${col}::text)`);
     // contagens
     const cCards = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM sales_cards sc WHERE sc.status IN ('pending','overdue') AND sc.customer_id IS NOT NULL AND ${naoExiste("sc.customer_id")}`))[0]?.n || 0;
     const cBlocked = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM blocked_orders bo WHERE bo.status='blocked' AND bo.customer_id IS NOT NULL AND ${naoExiste("bo.customer_id")}`))[0]?.n || 0;
