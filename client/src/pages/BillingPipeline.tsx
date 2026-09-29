@@ -226,6 +226,11 @@ function instanceBadgeClass(name: string | null): string {
 // geraria divergência, por isso a troca é liberada apenas antes do faturamento.
 const STAGES_INSTANCIA_EDITAVEL = new Set(['bloqueado', 'agendado', 'pedido', 'a_faturar']);
 
+// ALERTA DE BLOQUEIO: etapas do funil (fora de Bloqueados/Entregue/Lixeira) em que, se o MESMO
+// cliente tiver simultaneamente um card em Bloqueados, o nome fantasia deve aparecer em VERMELHO
+// com o motivo do bloqueio no tooltip — sinalizando pendencia a resolver antes do faturamento.
+const STAGES_ALERTA_BLOQUEIO = new Set(['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota']);
+
 // Normaliza um nome para comparação (minúsculas, sem acentos, sem pontuação, espaços colapsados)
 function normName(s: string): string {
   return (s || '')
@@ -826,6 +831,21 @@ export default function BillingPipeline() {
     }
     return groups;
   }, [items, blockedOrders, customerById, cidadeLabelByKey]);
+
+  // Mapa customerId -> motivo(s) do bloqueio, para clientes que tem card em Bloqueados. Usado para
+  // pintar o nome de VERMELHO nos cards do MESMO cliente que estao em outras etapas do funil.
+  // Desbloqueado (ex.: debito resolvido) -> some de blocked_orders -> o nome volta ao normal sozinho.
+  const blockedCustomerReason = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of (blockedOrders as any[])) {
+      const cid = String(b?.customerId || '');
+      if (!cid) continue;
+      const motivo = String(b?.blockDetails || b?.blockReason || 'Pedido bloqueado — pendencia a resolver antes do faturamento').trim();
+      const prev = m.get(cid);
+      m.set(cid, (prev && !prev.includes(motivo)) ? (prev + ' | ' + motivo) : (prev || motivo));
+    }
+    return m;
+  }, [blockedOrders]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -1587,6 +1607,7 @@ export default function BillingPipeline() {
                       canEdit={canEdit}
                       canPriority={canEdit && STAGES_PRIORIZAVEIS.has(item.stage)}
                       onTogglePriority={() => priorityMutation.mutate({ id: item.id, isPriority: !item.isPriority })}
+                      blockedReason={STAGES_ALERTA_BLOQUEIO.has(String(item.stage)) ? (blockedCustomerReason.get(String(item.customerId || '')) || null) : null}
                     />
                     </div>
                   ))}
@@ -2194,6 +2215,7 @@ function KanbanCard({
   canEdit = true,
   canPriority = false,
   onTogglePriority,
+  blockedReason,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -2214,6 +2236,7 @@ function KanbanCard({
   canEdit?: boolean;
   canPriority?: boolean;
   onTogglePriority?: () => void;
+  blockedReason?: string | null;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
@@ -2248,7 +2271,7 @@ function KanbanCard({
           />
           )}
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-sm truncate">{item.customerName}</p>
+            <p className={`font-semibold text-sm truncate ${blockedReason ? 'text-red-600 dark:text-red-400 cursor-help' : ''}`} title={blockedReason || undefined}>{item.customerName}</p>
             {(item.sellerName || item.customerCity) && (
               <p className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                 {item.sellerName && (
