@@ -1131,7 +1131,9 @@ export function registerChangeRequestsRoutes(app: Express) {
     const linhas = lista.map((o: any, i: number) => {
       const nome = String(o.nome || "").trim();
       const origens = String(o.origens || "").trim();
-      return `${i + 1}. ${nome || "(nome não recuperado)"} — id ${o.cid}${origens ? ` · ${origens}` : ""}`;
+      const pista = String(o.pista || "").trim();
+      const cabeca = nome || (pista ? `(sem nome) ${pista}` : "(nome não recuperado)");
+      return `${i + 1}. ${cabeca} — id ${o.cid}${origens ? ` · ${origens}` : ""}`;
     });
     return [
       `⚠️ Cadastros ÓRFÃOS (${lista.length}): existe pedido, recebível ou visita em aberto, mas o cliente não está mais cadastrado.`,
@@ -1178,7 +1180,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     }
 
     const note = textoOrfaos(lista);
-    const details = { outro: note, orfaos: lista.map((o: any) => ({ id: o.cid, nome: o.nome || null, origens: o.origens || null })), fingerprint };
+    const details = { outro: note, orfaos: lista.map((o: any) => ({ id: o.cid, nome: o.nome || null, origens: o.origens || null, pista: o.pista || null })), fingerprint };
     const nomeCard = `Cadastros órfãos (${lista.length})`;
 
     if (!card) {
@@ -1266,7 +1268,12 @@ export function registerChangeRequestsRoutes(app: Express) {
       ), agg AS (
         SELECT customer_id, string_agg(DISTINCT origem, ', ' ORDER BY origem) AS origens FROM refs GROUP BY customer_id
       )
-      SELECT r.customer_id AS cid, r.origens, ${nomeExpr} AS nome
+      SELECT r.customer_id AS cid, r.origens, ${nomeExpr} AS nome,
+             (SELECT NULLIF(btrim(concat_ws(' · ',
+                       (SELECT NULLIF(btrim(concat_ws(' ', u.first_name, u.last_name)),'') FROM users u WHERE u.id = sc.seller_id),
+                       NULLIF(btrim(sc.customer_address),''))), '')
+                FROM sales_cards sc WHERE sc.customer_id::text = r.customer_id::text
+               ORDER BY sc.created_at DESC LIMIT 1) AS pista
         FROM agg r
        WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = r.customer_id)
        ORDER BY 3 NULLS LAST
@@ -1291,7 +1298,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       orfaosEncontrados: orfaos.length,
       criadosIncompletos, criadosOrfaos,
       amostraIncompletos: incompletos.slice(0, 10).map((c: any) => ({ id: c.id, nome: c.nome, semDia: c.sem_dia, semPer: c.sem_per, semVend: c.sem_vend })),
-      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome, origens: o.origens })),
+      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome, origens: o.origens, pista: o.pista })),
     };
   }
 
