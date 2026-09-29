@@ -239,6 +239,18 @@ export function registerHotsitePix(app: Express): void {
         }
       }
 
+      // 🚚 AREA DE ENTREGA — antes de gerar a cobranca. A loja ja barra o CEP fora
+      // de area no formulario, mas pagina em cache/POST direto passariam por cima e
+      // o cliente pagaria um PIX de um pedido que nao temos como entregar.
+      {
+        const { barrarSeForaDaAreaDeEntrega } = await import('./entrega-area');
+        const fora = barrarSeForaDaAreaDeEntrega(c.address);
+        if (fora) {
+          console.warn('🚚 [LOJA-PIX] cobranca recusada — fora da area de entrega:', fora.cidade + '/' + fora.uf);
+          return res.status(400).json(fora);
+        }
+      }
+
       const accounts = await storage.getFinancialAccounts();
       const account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
       if (!account) return res.status(503).json({ message: 'Pagamento PIX indisponível no momento. Tente novamente em instantes.' });
