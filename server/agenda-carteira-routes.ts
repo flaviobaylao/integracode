@@ -1087,6 +1087,66 @@ export function registerAgendaCarteira(app: Express) {
       res.json(rows[0] ? JSON.parse(rows[0].value) : { finished: true, total: 0, ok: 0, skip: 0, erros: [] });
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
   });
+
+  // REGENERAR-AGENDA-TODOS: regenera a agenda (dia de rota + periodicidade, ancorada em HOJE)
+  // de TODOS os clientes elegiveis (ativos, nao fornecedor, nao lead, nao colaborador, com dia
+  // de rota valido), independente de divergencia. Usa regenerateCustomerAgenda, que preserva HOJE
+  // e o passado e respeita semana de atendimento / BSB / fase do inicio de fornecimento. Preenche
+  // service_start_date faltante antes (mantem a fase dos quinzenais). Roda em segundo plano e
+  // grava o progresso em system_settings (key regen_agenda_todos_last). Restrito ao Admin.
+  app.post("/api/admin/carteira/regenerar-agenda-todos", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const esc = escopo(req);
+      if (!ADMINS_VISITA.includes(esc.email)) return res.status(403).json({ ok: false, error: "Restrito ao Admin." });
+      const bf: any = await db.execute(sql`
+        UPDATE customers SET service_start_date = COALESCE(created_at, now())::date
+        WHERE is_active = true AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND (is_colaborador IS NOT TRUE) AND seller_id IS NOT NULL AND service_start_date IS NULL
+          AND weekdays IS NOT NULL AND weekdays NOT IN ('[]','null','')`);
+      const datasPreenchidas = bf.rowCount ?? 0;
+      const elig: any = await db.execute(sql`
+        SELECT id FROM customers
+        WHERE is_active = true AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
+          AND (is_colaborador IS NOT TRUE) AND seller_id IS NOT NULL
+          AND weekdays IS NOT NULL AND weekdays NOT IN ('[]','null','')`);
+      const ids: string[] = (((elig as any).rows || elig) as any[]).map((r: any) => String(r.id)).filter(Boolean);
+      res.json({ ok: true, started: true, total: ids.length, datasPreenchidas });
+      (async () => {
+        const prog: any = { at: new Date().toISOString(), total: ids.length, datasPreenchidas, regenerados: 0, semData: 0, erros: [], finished: false };
+        const salvar = async () => {
+          try {
+            const payload = JSON.stringify(prog).slice(0, 100000);
+            const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key='regen_agenda_todos_last'"));
+            if ((((ex as any).rows || ex) as any[]).length > 0) await db.execute(sql`UPDATE system_settings SET value=${payload}, updated_at=now() WHERE key='regen_agenda_todos_last'`);
+            else await db.execute(sql`INSERT INTO system_settings (key, value, description, updated_by) VALUES ('regen_agenda_todos_last', ${payload}, 'ultima regeneracao de agenda de todos', 'regen-agenda-todos')`);
+          } catch (e) { /* ignora */ }
+        };
+        try {
+          const { regenerateCustomerAgenda } = await import("./visitScheduleService");
+          for (const id of ids) {
+            try { const n = await regenerateCustomerAgenda(id); if (n > 0) prog.regenerados++; else prog.semData++; }
+            catch (e: any) { if (prog.erros.length < 50) prog.erros.push({ id: id.slice(0, 8), err: String(e?.message || e).slice(0, 100) }); }
+            if ((prog.regenerados + prog.semData) % 25 === 0) await salvar();
+          }
+          await db.execute(sql`
+            DELETE FROM visit_agenda
+            WHERE visit_status = 'pending' AND EXTRACT(DOW FROM scheduled_date) = 0
+              AND scheduled_date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '1 day')`);
+        } catch (e: any) { if (prog.erros.length < 50) prog.erros.push({ id: 'GERAL', err: String(e?.message || e).slice(0, 120) }); }
+        prog.finished = true; prog.at = new Date().toISOString();
+        await salvar();
+        console.log(`[REGEN-AGENDA-TODOS] total=${prog.total}, regenerados=${prog.regenerados}, semData=${prog.semData}, erros=${prog.erros.length}, datasPreenchidas=${datasPreenchidas}`);
+      })().catch((e) => console.error("[regen-agenda-todos] erro geral", e));
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  app.get("/api/admin/carteira/regenerar-agenda-todos/status", authenticateUser, async (_req: Request, res: Response) => {
+    try {
+      const r: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key='regen_agenda_todos_last'"));
+      const rows = (((r as any).rows || r) as any[]);
+      res.json(rows[0] ? JSON.parse(rows[0].value) : { finished: true, total: 0, regenerados: 0, semData: 0, erros: [] });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
 }
 
 /**
