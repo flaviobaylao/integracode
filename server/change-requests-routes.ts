@@ -1130,7 +1130,8 @@ export function registerChangeRequestsRoutes(app: Express) {
   function textoOrfaos(lista: any[]): string {
     const linhas = lista.map((o: any, i: number) => {
       const nome = String(o.nome || "").trim();
-      return `${i + 1}. ${nome || "(nome não recuperado)"} — id ${o.cid}`;
+      const origens = String(o.origens || "").trim();
+      return `${i + 1}. ${nome || "(nome não recuperado)"} — id ${o.cid}${origens ? ` · ${origens}` : ""}`;
     });
     return [
       `⚠️ Cadastros ÓRFÃOS (${lista.length}): existe pedido, recebível ou visita em aberto, mas o cliente não está mais cadastrado.`,
@@ -1177,7 +1178,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     }
 
     const note = textoOrfaos(lista);
-    const details = { outro: note, orfaos: lista.map((o: any) => ({ id: o.cid, nome: o.nome || null })), fingerprint };
+    const details = { outro: note, orfaos: lista.map((o: any) => ({ id: o.cid, nome: o.nome || null, origens: o.origens || null })), fingerprint };
     const nomeCard = `Cadastros órfãos (${lista.length})`;
 
     if (!card) {
@@ -1245,19 +1246,30 @@ export function registerChangeRequestsRoutes(app: Express) {
       (SELECT customer_name::text FROM ${sql.raw(`"${tabela}"`)} WHERE customer_id::text = r.customer_id::text
          AND NULLIF(btrim(customer_name),'') IS NOT NULL
          ${temDel ? sql`AND deleted_at IS NULL` : sql``} ORDER BY created_at DESC LIMIT 1)`;
-    const nomeExpr = fontesNome.length === 0
-      ? sql`NULL::text`
-      : sql`COALESCE(${sql.join(fontesNome.map((f: any) => nomeOrfao(String(f.t), f.tem_del === true)), sql`, `)})`;
+    // Última cartada: o nome que o cadastro tinha antes de sumir, no histórico de alterações.
+    const nomeHistorico = sql`
+      (SELECT COALESCE(NULLIF(btrim(new_value),''), NULLIF(btrim(old_value),''))
+         FROM customer_change_history
+        WHERE customer_id::text = r.customer_id::text AND field IN ('name','fantasyName','fantasy_name','razaoSocial')
+          AND COALESCE(NULLIF(btrim(new_value),''), NULLIF(btrim(old_value),'')) IS NOT NULL
+        ORDER BY created_at DESC LIMIT 1)`;
+    const candidatos = [
+      ...fontesNome.map((f: any) => nomeOrfao(String(f.t), f.tem_del === true)),
+      ...(rowsOf(await db.execute(sql`SELECT to_regclass('public.customer_change_history') AS t`))[0]?.t ? [nomeHistorico] : []),
+    ];
+    const nomeExpr = candidatos.length === 0 ? sql`NULL::text` : sql`COALESCE(${sql.join(candidatos, sql`, `)})`;
     const orfaos = rowsOf(await db.execute(sql`
       WITH refs AS (
-        SELECT DISTINCT customer_id FROM blocked_orders WHERE status='blocked' AND customer_id IS NOT NULL
-        UNION SELECT DISTINCT customer_id FROM sales_cards WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL
-        UNION SELECT DISTINCT customer_id FROM receivables WHERE customer_id IS NOT NULL AND deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0
+        SELECT customer_id, 'pedido bloqueado' AS origem FROM blocked_orders WHERE status='blocked' AND customer_id IS NOT NULL
+        UNION ALL SELECT customer_id, 'visita/card de venda' FROM sales_cards WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL
+        UNION ALL SELECT customer_id, 'recebível em aberto' FROM receivables WHERE customer_id IS NOT NULL AND deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0
+      ), agg AS (
+        SELECT customer_id, string_agg(DISTINCT origem, ', ' ORDER BY origem) AS origens FROM refs GROUP BY customer_id
       )
-      SELECT r.customer_id AS cid, ${nomeExpr} AS nome
-        FROM refs r
+      SELECT r.customer_id AS cid, r.origens, ${nomeExpr} AS nome
+        FROM agg r
        WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = r.customer_id)
-       ORDER BY 2 NULLS LAST
+       ORDER BY 3 NULLS LAST
        LIMIT ${limit}`));
 
     let criadosIncompletos = 0, criadosOrfaos = 0;
@@ -1279,7 +1291,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       orfaosEncontrados: orfaos.length,
       criadosIncompletos, criadosOrfaos,
       amostraIncompletos: incompletos.slice(0, 10).map((c: any) => ({ id: c.id, nome: c.nome, semDia: c.sem_dia, semPer: c.sem_per, semVend: c.sem_vend })),
-      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome })),
+      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome, origens: o.origens })),
     };
   }
 
