@@ -1147,6 +1147,35 @@ export function registerAgendaCarteira(app: Express) {
       res.json(rows[0] ? JSON.parse(rows[0].value) : { finished: true, total: 0, regenerados: 0, semData: 0, erros: [] });
     } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || String(e) }); }
   });
+
+  // SET-PRIMEIRA-DATA-LOTE: fixa a PRIMEIRA visita futura de cada cliente numa data escolhida e
+  // encadeia a periodicidade a partir dela (mantendo dia de rota e periodicidade do cadastro).
+  // Usado p/ rebalancear rota (ex.: quem nao comprou vem para hoje; quem comprou fica na proxima).
+  // items: [{ id, primeiraData 'YYYY-MM-DD' }]. Restrito ao Admin.
+  app.post("/api/admin/carteira/set-primeira-data-lote", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const esc = escopo(req);
+      if (!ADMINS_VISITA.includes(esc.email)) return res.status(403).json({ ok: false, error: "Restrito ao Admin." });
+      const items = Array.isArray((req.body || {}).items) ? (req.body as any).items : [];
+      if (!items.length) return res.status(400).json({ ok: false, error: "items vazio." });
+      const out: any[] = [];
+      for (const it of items) {
+        const id = String((it && it.id) || "");
+        const pd = String((it && it.primeiraData) || "");
+        if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(pd)) { out.push({ id, ok: false, err: "payload" }); continue; }
+        try {
+          const rows = (await db.execute(sql`SELECT visit_periodicity::text AS per, weekdays FROM customers WHERE id = ${id} LIMIT 1`)).rows as any[];
+          if (!rows.length) { out.push({ id, ok: false, err: "nao encontrado" }); continue; }
+          const per = String(rows[0].per || "semanal");
+          const dias = diasDoCadastro(rows[0].weekdays);
+          if (!dias.length) { out.push({ id, ok: false, err: "sem dia de rota" }); continue; }
+          const n = await reprogramarAgenda(id, dias, per, null, pd);
+          out.push({ id, ok: true, gravadas: n });
+        } catch (e: any) { out.push({ id, ok: false, err: String(e?.message || e).slice(0, 120) }); }
+      }
+      return res.json({ ok: true, total: items.length, resultados: out });
+    } catch (e: any) { return res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
 }
 
 /**
