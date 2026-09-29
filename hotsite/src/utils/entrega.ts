@@ -1,18 +1,23 @@
 // ──────────────────────────────────────────────────────────────────────────────
 // ÁREA DE ENTREGA / FRETE GRÁTIS — Honest Sucos (loja.bebahonest.com.br)
 //
-// O frete grátis vale SOMENTE para:
-//   • Grande Goiânia (Goiânia + Região Metropolitana)
-//   • Brasília / Distrito Federal e circunvizinhança do Plano Piloto (Entorno)
+// 29/set/2026 — COBERTURA REDUZIDA, EM CARÁTER PROVISÓRIO, a:
+//   • Goiânia/GO
+//   • Aparecida de Goiânia/GO
+//
+// Antes a loja aceitava toda a Grande Goiânia e ainda Brasília/DF + entorno do
+// Plano Piloto. A operação de entrega não alcança essas praças por ora; a
+// previsão é voltar a ampliar. A vitrine avisa isso ANTES do carrinho.
 //
 // Fora dessas cidades o checkout BLOQUEIA a finalização e mostra um popup
-// orientando o cliente a falar com a equipe pelo WhatsApp.
+// orientando o cliente a falar com a equipe pelo WhatsApp. A mesma regra vale
+// no SERVIDOR (server/entrega-area.ts) — regra só no navegador é contornável.
 //
-// 👉 PARA MUDAR A COBERTURA: edite apenas as duas listas abaixo. Nada mais
-//    precisa ser alterado — o formulário e o popup leem daqui.
+// 👉 PARA AMPLIAR A COBERTURA: acrescente as cidades na lista abaixo E na lista
+//    gêmea de server/entrega-area.ts. As duas precisam bater.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type RegiaoAtendida = 'grande_goiania' | 'df_entorno';
+export type RegiaoAtendida = 'grande_goiania';
 
 export interface ResultadoCobertura {
   atendido: boolean;
@@ -21,54 +26,32 @@ export interface ResultadoCobertura {
   uf: string;
 }
 
-/** Goiânia + Região Metropolitana (Grande Goiânia). */
-export const CIDADES_GRANDE_GOIANIA: string[] = [
+/** Cidades com entrega. PROVISÓRIO (29/set/2026) — só Goiânia e Aparecida. */
+export const CIDADES_ATENDIDAS: string[] = [
   'Goiânia',
   'Aparecida de Goiânia',
-  'Senador Canedo',
-  'Trindade',
-  'Goianira',
-  'Nerópolis',
-  'Santo Antônio de Goiás',
-  'Abadia de Goiás',
-  'Aragoiânia',
-  'Bela Vista de Goiás',
-  'Bonfinópolis',
-  'Brazabrantes',
-  'Caldazinha',
-  'Caturaí',
-  'Goianápolis',
-  'Guapó',
-  'Hidrolândia',
-  'Inhumas',
-  'Nova Veneza',
-  'Terezópolis de Goiás',
 ];
 
-/**
- * Cidades de GOIÁS na circunvizinhança do Plano Piloto (Entorno do DF).
- * Todo o Distrito Federal já é atendido pela regra de UF = DF — esta lista é
- * só para os municípios goianos vizinhos.
- */
-export const CIDADES_ENTORNO_DF: string[] = [
-  'Águas Lindas de Goiás',
-  'Cidade Ocidental',
-  'Cristalina',
-  'Formosa',
-  'Luziânia',
-  'Novo Gama',
-  'Padre Bernardo',
-  'Planaltina',
-  'Santo Antônio do Descoberto',
-  'Valparaíso de Goiás',
-];
+/** Nome antigo mantido para não quebrar quem importa daqui. */
+export const CIDADES_GRANDE_GOIANIA = CIDADES_ATENDIDAS;
 
 /** WhatsApp da equipe, usado no popup de fora de área. */
 export const WHATSAPP_HONEST = '5562995782812';
 
 /** Texto curto da área atendida — usado no carrinho e no checkout. */
-export const TEXTO_AREA_ATENDIDA =
-  'Grande Goiânia, Brasília/DF e entorno do Plano Piloto';
+export const TEXTO_AREA_ATENDIDA = 'Goiânia e Aparecida de Goiânia';
+
+/**
+ * Aviso de cobertura provisória — vitrine, carrinho e checkout.
+ * Deixa claro que a limitação é temporária e que a área vai crescer.
+ */
+// O título nomeia as DUAS cidades de propósito: dizer "Grande Goiânia" faria
+// quem é de Senador Canedo, Trindade ou Aparecida do interior montar o carrinho
+// para ser barrado no CEP lá na frente.
+export const TITULO_AVISO_COBERTURA = 'Entregamos em Goiânia e Aparecida — por enquanto';
+export const TEXTO_AVISO_COBERTURA =
+  'No momento entregamos apenas em Goiânia e Aparecida de Goiânia. ' +
+  'Estamos ampliando a área de entrega aos poucos — em breve atenderemos mais cidades.';
 
 const normalizar = (valor: string): string =>
   (valor || '')
@@ -78,8 +61,7 @@ const normalizar = (valor: string): string =>
     .trim()
     .toLowerCase();
 
-const GRANDE_GOIANIA_NORM = CIDADES_GRANDE_GOIANIA.map(normalizar);
-const ENTORNO_DF_NORM = CIDADES_ENTORNO_DF.map(normalizar);
+const ATENDIDAS_NORM = CIDADES_ATENDIDAS.map(normalizar);
 
 /** Deixa só os dígitos do CEP (máx. 8). */
 export const limparCep = (valor: string): string =>
@@ -137,24 +119,15 @@ export async function buscarCep(cepBruto: string): Promise<EnderecoCep> {
 
 /**
  * Decide se a cidade/UF está na área com entrega e frete grátis.
- * Todo o Distrito Federal é atendido (o ViaCEP devolve "Brasília" para o DF
- * inteiro, incluindo Taguatinga, Ceilândia, Gama e demais regiões).
+ * 29/set/2026: só Goiânia e Aparecida de Goiânia, ambas em GO. Brasília/DF e o
+ * entorno do Plano Piloto saíram — a entrega não alcança essas praças por ora.
  */
 export function avaliarCobertura(cidade: string, uf: string): ResultadoCobertura {
   const ufNorm = (uf || '').trim().toUpperCase();
   const cidadeNorm = normalizar(cidade);
 
-  if (ufNorm === 'DF') {
-    return { atendido: true, regiao: 'df_entorno', cidade, uf: ufNorm };
-  }
-
-  if (ufNorm === 'GO') {
-    if (GRANDE_GOIANIA_NORM.includes(cidadeNorm)) {
-      return { atendido: true, regiao: 'grande_goiania', cidade, uf: ufNorm };
-    }
-    if (ENTORNO_DF_NORM.includes(cidadeNorm)) {
-      return { atendido: true, regiao: 'df_entorno', cidade, uf: ufNorm };
-    }
+  if (ufNorm === 'GO' && ATENDIDAS_NORM.includes(cidadeNorm)) {
+    return { atendido: true, regiao: 'grande_goiania', cidade, uf: ufNorm };
   }
 
   return { atendido: false, regiao: null, cidade, uf: ufNorm };
