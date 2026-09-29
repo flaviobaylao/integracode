@@ -148,15 +148,15 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
         {/* Footer */}
         {items.length > 0 && (
           <div className="border-t p-4 bg-gray-50">
-            {/* Frete Grátis — SOMENTE na área atendida (Grande Goiânia + Brasília/DF e entorno) */}
+            {/* Frete Grátis — SOMENTE na área atendida (provisoriamente Goiânia e Aparecida) */}
             <div className="mb-3 p-3 bg-green-50 border-2 border-green-400 rounded-lg">
               <p className="text-sm font-bold text-green-700 flex items-center gap-2">
                 <span>🚚</span>
                 Frete Grátis para {TEXTO_AREA_ATENDIDA}
               </p>
               <p className="text-xs text-green-600 mt-1">
-                Confirmamos o seu CEP na próxima etapa. Fora dessa região ainda não realizamos
-                entregas.
+                Confirmamos o seu CEP na próxima etapa. Ainda não entregamos fora dessa
+                região — estamos ampliando a cobertura aos poucos.
               </p>
             </div>
 
