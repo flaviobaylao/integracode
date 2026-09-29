@@ -30,13 +30,14 @@ export default function ProducaoFaturamento() {
   if (!current) return <div className="mt-6 text-sm text-gray-500">Sem dados de produção a partir de Set/2026.</div>;
 
   const T = current.total;
+  const S9 = current.sub900, S3 = current.sub350;
   const kpis = [
-    { lab: "Garrafas produzidas", val: nf(T.produzidas), u: "un", dot: "bg-emerald-600", split: `900: ${nf(current.sub900.produzidas)} · 350: ${nf(current.sub350.produzidas)}` },
-    { lab: "Custo de produção", val: brl0(T.custo_total_prod), u: "", dot: "bg-amber-500", split: `900: ${brl0(current.sub900.custo_total_prod)} · 350: ${brl0(current.sub350.custo_total_prod)}` },
-    { lab: "Garrafas vendidas", val: nf(T.vendidas), u: "un", dot: "bg-rose-600", split: `900: ${nf(current.sub900.vendidas)} · 350: ${nf(current.sub350.vendidas)}` },
-    { lab: "Faturamento", val: brl0(T.faturamento), u: "", dot: "bg-rose-600", split: `900: ${brl0(current.sub900.faturamento)} · 350: ${brl0(current.sub350.faturamento)}` },
-    { lab: "Estoque atual", val: nf(T.estoque), u: "un", dot: "bg-emerald-600", split: `900: ${nf(current.sub900.estoque)} · 350: ${nf(current.sub350.estoque)}` },
-    { lab: "Custo em estoque", val: brl0(T.custo_estoque), u: "", dot: "bg-amber-500", split: `900: ${brl0(current.sub900.custo_estoque)} · 350: ${brl0(current.sub350.custo_estoque)}` },
+    { lab: "Garrafas produzidas", u: "un", dot: "bg-emerald-600", fmt: nf, v900: S9.produzidas, v350: S3.produzidas, tot: T.produzidas },
+    { lab: "Custo de produção", u: "", dot: "bg-amber-500", fmt: brl0, v900: S9.custo_total_prod, v350: S3.custo_total_prod, tot: T.custo_total_prod, note: "Ainda não inclui energia e mão de obra" },
+    { lab: "Garrafas vendidas", u: "un", dot: "bg-rose-600", fmt: nf, v900: S9.vendidas, v350: S3.vendidas, tot: T.vendidas },
+    { lab: "Faturamento", u: "", dot: "bg-rose-600", fmt: brl0, v900: S9.faturamento, v350: S3.faturamento, tot: T.faturamento },
+    { lab: "Estoque atual", u: "un", dot: "bg-emerald-600", fmt: nf, v900: S9.estoque, v350: S3.estoque, tot: T.estoque },
+    { lab: "Custo em estoque", u: "", dot: "bg-amber-500", fmt: brl0, v900: S9.custo_estoque, v350: S3.custo_estoque, tot: T.custo_estoque },
   ];
 
   const r900 = current.rows.filter((r) => r.tam === "900");
@@ -44,8 +45,8 @@ export default function ProducaoFaturamento() {
   const cell = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
   const th = "px-3 py-2 text-right text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap";
   const SubRow = ({ label, d }: { label: string; d: any }) => (
-    <tr className="bg-gray-50 font-semibold">
-      <td className="px-3 py-2 text-left">{label}</td><td></td>
+    <tr className="bg-slate-100 font-semibold text-slate-800 border-y-2 border-slate-300">
+      <td className="px-3 py-2 text-left"><span className="border-l-4 border-slate-400 pl-2">{label}</span></td><td></td>
       <td className={cell}>{nf(d.produzidas)}</td><td></td><td className={cell}>{brl0(d.custo_total_prod)}</td>
       <td className={cell}>{nf(d.vendidas)}</td><td className={cell}>{brl0(d.faturamento)}</td>
       <td className={cell}>{nf(d.estoque)}</td><td className={cell}>{brl0(d.custo_estoque)}</td>
@@ -86,8 +87,18 @@ export default function ProducaoFaturamento() {
         {kpis.map((k, i) => (
           <Card key={i}><CardContent className="p-4">
             <div className="flex items-center gap-2 text-xs font-semibold text-gray-500"><span className={"w-2 h-2 rounded-sm " + k.dot}></span>{k.lab}</div>
-            <div className="mt-1.5 text-2xl font-bold text-gray-800 tabular-nums">{k.val} {k.u && <span className="text-sm font-medium text-gray-400">{k.u}</span>}</div>
-            <div className="mt-1 text-xs text-gray-500 tabular-nums">{k.split}</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-gray-50 px-2.5 py-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">900 ml</div>
+                <div className="text-xl font-bold text-gray-800 tabular-nums leading-tight">{k.fmt(k.v900)}{k.u && <span className="text-xs font-medium text-gray-400"> {k.u}</span>}</div>
+              </div>
+              <div className="rounded-lg bg-gray-50 px-2.5 py-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">350 ml</div>
+                <div className="text-xl font-bold text-gray-800 tabular-nums leading-tight">{k.fmt(k.v350)}{k.u && <span className="text-xs font-medium text-gray-400"> {k.u}</span>}</div>
+              </div>
+            </div>
+            <div className="mt-1.5 text-xs text-gray-500 tabular-nums">Total: <span className="font-semibold text-gray-700">{k.fmt(k.tot)}{k.u ? " " + k.u : ""}</span></div>
+            {k.note && <div className="mt-1 text-[10px] font-medium text-amber-600">⚠ {k.note}</div>}
           </CardContent></Card>
         ))}
       </div>
@@ -106,8 +117,8 @@ export default function ProducaoFaturamento() {
               <SubRow label="Subtotal 900 ml" d={current.sub900} />
               {r350.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
               <SubRow label="Subtotal 350 ml" d={current.sub350} />
-              <tr className="bg-emerald-50 font-bold border-t-2 border-emerald-600">
-                <td className="px-3 py-2 text-left">TOTAL</td><td></td>
+              <tr className="bg-emerald-600 text-white font-bold text-[15px] border-t-4 border-emerald-800">
+                <td className="px-3 py-2.5 text-left tracking-wide">TOTAL</td><td></td>
                 <td className={cell}>{nf(T.produzidas)}</td><td></td><td className={cell}>{brl0(T.custo_total_prod)}</td>
                 <td className={cell}>{nf(T.vendidas)}</td><td className={cell}>{brl0(T.faturamento)}</td>
                 <td className={cell}>{nf(T.estoque)}</td><td className={cell}>{brl0(T.custo_estoque)}</td>
@@ -116,7 +127,7 @@ export default function ProducaoFaturamento() {
           </table>
         </div>
       </CardContent></Card>
-      <p className="text-[11px] text-gray-400">Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção, vendas e faturamento são do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote.</p>
+      <p className="text-[11px] text-gray-400">Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção, vendas e faturamento são do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote — <span className="text-amber-600 font-medium">ainda não inclui energia elétrica nem mão de obra</span>.</p>
     </div>
   );
 }
