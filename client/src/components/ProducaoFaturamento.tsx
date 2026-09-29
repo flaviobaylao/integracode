@@ -39,7 +39,7 @@ const INFO = {
   custoUnit: "Custo unitário do lote em uso (módulo Indústria › lotes de estoque). Ainda NÃO inclui energia elétrica nem mão de obra.",
   custoProd: "Custo de produção = garrafas produzidas × custo unitário do lote. Ainda NÃO inclui energia elétrica nem mão de obra.",
   vendidas: "Garrafas vendidas = soma das quantidades dos itens das NF-e de venda emitidas no mês (regra oficial, a mesma do Painel: NF autorizada, deduplicada por nº, sem devolução/troca/transferência/remessa/bonificação/amostra).",
-  faturamento: "Valor dos produtos vendidos = soma do valor dos itens das NF-e de venda do mês (regra oficial do Painel). Pode diferir do total da NF por frete/impostos lançados no rodapé — o total oficial da NF está indicado abaixo da tabela.",
+  faturamento: "Valor dos produtos vendidos = soma do valor dos itens das NF-e de venda do mês (regra oficial do Painel). Pode diferir do total da NF por ajustes de rodapé (descontos, frete, impostos) — o total oficial da NF está indicado abaixo da tabela.",
   preco: "Preço médio de venda realizado = Faturamento ÷ Garrafas vendidas.",
   margem: "Margem bruta = (Faturamento − custo das vendidas) ÷ Faturamento, com custo das vendidas = custo unitário do lote × garrafas vendidas. Ainda NÃO considera energia elétrica nem mão de obra.",
   trocasAmostras: "Garrafas cedidas em operações do tipo 'troca' ou 'amostra' no mês (pipeline de faturamento). Não entram em Vendidas nem em Faturamento.",
@@ -164,7 +164,7 @@ export default function ProducaoFaturamento() {
           <span>Faturamento oficial da NF no mês (igual ao Painel): <span className="font-semibold text-gray-800 tabular-nums">{brl(T.faturamento_oficial_nf)}</span></span>
           <span>Soma do valor dos produtos por SKU: <span className="font-semibold text-gray-800 tabular-nums">{brl(T.faturamento)}</span></span>
           {Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)) >= 0.5 && (
-            <span className="text-amber-600">Diferença de {brl(Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)))} = frete/impostos no rodapé da NF (não rateados por SKU).</span>
+            <span className="text-amber-600">Diferença de {brl(Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)))} = ajustes de rodapé da NF (descontos, frete e impostos), que não são rateados por SKU.</span>
           )}
         </div>
       )}
