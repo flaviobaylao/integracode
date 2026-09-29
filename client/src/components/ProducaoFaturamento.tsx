@@ -19,27 +19,6 @@ const mesLabel = (ym: string) => {
 type Row = { sabor: string; tam: string; produzidas: number; custo_unit: number | null; custo_total_prod: number; vendidas: number; faturamento: number; estoque: number; custo_estoque: number };
 type MonthData = { month: string; rows: Row[]; sub900: any; sub350: any; total: any };
 
-function Chart({ rows }: { rows: Row[] }) {
-  const data = [...rows].sort((a, b) => b.vendidas - a.vendidas);
-  const max = Math.max(1, ...data.map((r) => Math.max(r.produzidas, r.vendidas)));
-  const rowH = 30, gap = 10, padL = 168, padR = 56, padT = 6, W = 760, H = padT + data.length * (rowH + gap), barH = 11;
-  const scale = (v: number) => (v / max) * (W - padL - padR);
-  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(max * f));
-  return (
-    <svg viewBox={`0 0 ${W} ${H + 26}`} width="100%" preserveAspectRatio="xMinYMin meet" role="img" aria-label="Produzido versus vendido por SKU" style={{ fontFamily: "inherit" }}>
-      {grid.map((g, i) => { const x = padL + scale(g); return (<g key={i}><line x1={x} y1={padT} x2={x} y2={H} stroke="#e5e7eb" /><text x={x} y={H + 16} fill="#6b7280" fontSize="10" textAnchor="middle">{nf(g)}</text></g>); })}
-      {data.map((r, i) => { const y = padT + i * (rowH + gap); return (
-        <g key={r.sabor + r.tam}>
-          <text x={padL - 8} y={y + rowH / 2} fill="#374151" fontSize="11" textAnchor="end" dominantBaseline="middle">{cap(r.sabor) + " " + r.tam}</text>
-          <rect x={padL} y={y + 2} width={Math.max(scale(r.produzidas), 0)} height={barH} rx="2.5" fill="#059669" />
-          <rect x={padL} y={y + 2 + barH + 3} width={Math.max(scale(r.vendidas), 0)} height={barH} rx="2.5" fill="#e11d48" />
-          <text x={padL + scale(r.produzidas) + 5} y={y + 2 + barH / 2} fill="#6b7280" fontSize="9.5" dominantBaseline="middle">{nf(r.produzidas)}</text>
-          <text x={padL + scale(r.vendidas) + 5} y={y + 2 + barH + 3 + barH / 2} fill="#6b7280" fontSize="9.5" dominantBaseline="middle">{nf(r.vendidas)}</text>
-        </g>); })}
-    </svg>
-  );
-}
-
 export default function ProducaoFaturamento() {
   const { data, isLoading, error } = useQuery<any>({ queryKey: ["/api/industria/dashboard-producao-faturamento"], refetchOnWindowFocus: true, staleTime: 0 });
   const months: MonthData[] = data?.months || [];
@@ -112,15 +91,6 @@ export default function ProducaoFaturamento() {
           </CardContent></Card>
         ))}
       </div>
-
-      <Card><CardContent className="p-4">
-        <div className="flex items-center gap-4 text-xs text-gray-500 mb-2">
-          <span className="font-semibold text-gray-700">Produzido × Vendido (garrafas)</span>
-          <span><span className="inline-block w-2.5 h-2.5 rounded-sm align-[-1px] mr-1 bg-emerald-600"></span>Produzidas</span>
-          <span><span className="inline-block w-2.5 h-2.5 rounded-sm align-[-1px] mr-1 bg-rose-600"></span>Vendidas</span>
-        </div>
-        <div className="overflow-x-auto"><Chart rows={current.rows} /></div>
-      </CardContent></Card>
 
       <Card><CardContent className="p-0">
         <div className="overflow-x-auto">
