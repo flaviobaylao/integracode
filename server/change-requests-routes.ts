@@ -1299,6 +1299,16 @@ export function registerChangeRequestsRoutes(app: Express) {
       criadosIncompletos, criadosOrfaos,
       amostraIncompletos: incompletos.slice(0, 10).map((c: any) => ({ id: c.id, nome: c.nome, semDia: c.sem_dia, semPer: c.sem_per, semVend: c.sem_vend })),
       amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome, origens: o.origens, pista: o.pista })),
+      // 🔎 Só no dry-run: de onde vieram os cards órfãos (para investigar a causa raiz).
+      diagnosticoOrfaos: !dryRun || orfaos.length === 0 ? undefined : rowsOf(await db.execute(sql`
+        SELECT sc.customer_id, sc.id AS card_id, sc.status, sc.source, sc.created_at, sc.scheduled_date,
+               sc.recurrence_type, sc.is_permanent, sc.operation_type, sc.parent_card_id, sc.duplicated_from_id,
+               sc.campaign_id, sc.attribution_kind, sc.customer_address, left(COALESCE(sc.notes,''), 120) AS notes,
+               EXISTS (SELECT 1 FROM leads l WHERE l.id::text = sc.customer_id::text) AS era_lead
+          FROM sales_cards sc
+         WHERE sc.customer_id::text IN (${sql.join(orfaos.map((o: any) => sql`${String(o.cid)}`), sql`, `)})
+         ORDER BY sc.created_at
+         LIMIT 60`)),
     };
   }
 
