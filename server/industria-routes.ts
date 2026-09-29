@@ -312,6 +312,83 @@ export function registerIndustriaRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // ============================================================================
+  // Dashboard admin: Produção & Faturamento por SKU/mês (a partir de Set/2026).
+  // Fontes: ordens de produção (produzidas), lotes de estoque in_use (custo unit
+  // e valor em estoque atual), billing_pipeline (vendidas + faturamento, só venda).
+  // Rota sob /api/industria → já restrita a role 'admin' no server/index.ts.
+  // ============================================================================
+  app.get('/api/industria/dashboard-producao-faturamento', async (_req, res) => {
+    try {
+      const START = '2026-09';
+      const FLAVORS = ['ACEROLA','FRUTAS VERMELHAS','LIMONADA','MARACUJA','MORANGO COM LIMAO','MORANGO COM MARACUJA','PINK LEMONADE','UVA'];
+      const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+      const parse = (n: any) => {
+        const m = String(n || '').match(/(900|350)\s*ml/i);
+        const size = m ? m[1] : null;
+        const fl = norm(n).replace(/^SUCO MISTO DE FRUTA\s*-\s*/, '').replace(/^SUCO\s*-?\s*/, '').replace(/\s*\d+\s*ML.*$/, '').trim();
+        return { fl, size };
+      };
+      const ym = (d: any) => { if (!d) return ''; try { return new Date(d).toISOString().slice(0, 7); } catch { return String(d).slice(0, 7); } };
+
+      const orders = await loadOrders();
+      const lotsR: any = await db.execute(sql`SELECT product_id, quantity, unit_cost, total_cost FROM inventory_lots WHERE stock_type = 'in_use'`);
+      const prodR: any = await db.execute(sql`SELECT id, name FROM products`);
+      const pipeR: any = await db.execute(sql`SELECT products, operation_type, scheduled_billing_date, created_at FROM billing_pipeline`);
+
+      const pmap: Record<string, any> = {};
+      for (const p of (prodR.rows || [])) pmap[p.id] = parse(p.name);
+
+      const months: Record<string, Record<string, any>> = {};
+      const ensure = (m: string) => {
+        if (!months[m]) { months[m] = {}; for (const f of FLAVORS) for (const sz of ['900', '350']) months[m][f + '|' + sz] = { prod: 0, cu_wsum: 0, cu_q: 0, vend: 0, fat: 0, est: 0, ce: 0 }; }
+        return months[m];
+      };
+
+      // Produção por mês/SKU
+      for (const o of (orders as any[])) {
+        const d = ym(o.production_date || o.end_date || o.created_at); if (!d || d < START) continue;
+        const { fl, size } = parse(o.product_name); if (!size) continue;
+        const M = ensure(d); const k = fl + '|' + size; if (M[k]) M[k].prod += Number(o.quantity) || 0;
+      }
+      // Estoque atual (snapshot) por SKU
+      const invAgg: Record<string, { est: number; ce: number; wsum: number; q: number }> = {};
+      for (const l of (lotsR.rows || [])) {
+        const pm = pmap[l.product_id]; if (!pm || !pm.size) continue;
+        const k = pm.fl + '|' + pm.size; (invAgg[k] = invAgg[k] || { est: 0, ce: 0, wsum: 0, q: 0 });
+        const q = Number(l.quantity) || 0; invAgg[k].est += q; invAgg[k].ce += Number(l.total_cost) || 0;
+        if (Number(l.unit_cost)) { invAgg[k].wsum += Number(l.unit_cost) * q; invAgg[k].q += q; }
+      }
+      // Faturamento/vendidas por mês/SKU (só operações de venda)
+      for (const r of (pipeR.rows || [])) {
+        if (String(r.operation_type || '').toLowerCase() !== 'venda') continue;
+        const d = ym(r.scheduled_billing_date || r.created_at); if (!d || d < START) continue;
+        let prods: any = r.products; if (typeof prods === 'string') { try { prods = JSON.parse(prods); } catch { prods = []; } }
+        if (!Array.isArray(prods)) continue;
+        const M = ensure(d);
+        for (const p of prods) { const { fl, size } = parse(p.name); if (!size) continue; const k = fl + '|' + size; if (M[k]) { M[k].vend += Number(p.quantity) || 0; M[k].fat += Number(p.totalPrice) || 0; } }
+      }
+
+      const monthKeys = Object.keys(months).sort();
+      const latest = monthKeys[monthKeys.length - 1];
+      if (latest) for (const k in invAgg) if (months[latest][k]) { months[latest][k].est = invAgg[k].est; months[latest][k].ce = invAgg[k].ce; months[latest][k].cu_wsum = invAgg[k].wsum; months[latest][k].cu_q = invAgg[k].q; }
+
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      const out = monthKeys.map((m) => {
+        const rows: any[] = [];
+        for (const f of FLAVORS) for (const sz of ['900', '350']) {
+          const a = months[m][f + '|' + sz];
+          const cu = a.cu_q > 0 ? round2(a.cu_wsum / a.cu_q * 100) / 100 : null;
+          const cuv = a.cu_q > 0 ? Math.round(a.cu_wsum / a.cu_q * 10000) / 10000 : null;
+          rows.push({ sabor: f, tam: sz, produzidas: Math.round(a.prod), custo_unit: cuv, custo_total_prod: cuv ? round2(a.prod * cuv) : 0, vendidas: Math.round(a.vend), faturamento: round2(a.fat), estoque: Math.round(a.est), custo_estoque: round2(a.ce) });
+        }
+        const sub = (f: (x: any) => boolean) => { const r = rows.filter(f); return { produzidas: r.reduce((s, x) => s + x.produzidas, 0), custo_total_prod: round2(r.reduce((s, x) => s + x.custo_total_prod, 0)), vendidas: r.reduce((s, x) => s + x.vendidas, 0), faturamento: round2(r.reduce((s, x) => s + x.faturamento, 0)), estoque: r.reduce((s, x) => s + x.estoque, 0), custo_estoque: round2(r.reduce((s, x) => s + x.custo_estoque, 0)) }; };
+        return { month: m, rows, sub900: sub((x) => x.tam === '900'), sub350: sub((x) => x.tam === '350'), total: sub(() => true) };
+      });
+      res.json({ generatedAt: new Date().toISOString(), months: out });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.post('/api/industria/production-orders', async (req: any, res) => {
     try {
       const b = req.body || {};
