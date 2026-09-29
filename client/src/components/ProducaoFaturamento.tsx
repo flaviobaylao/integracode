@@ -59,18 +59,6 @@ export default function ProducaoFaturamento() {
   if (!current) return <div className="mt-6 text-sm text-gray-500">Sem dados de produção a partir de Set/2026.</div>;
 
   const T = current.total;
-  const S9 = current.sub900, S3 = current.sub350;
-  const kpis = [
-    { lab: "Garrafas produzidas", u: "un", dot: "bg-emerald-600", fmt: nf, v900: S9.produzidas, v350: S3.produzidas, tot: T.produzidas },
-    { lab: "Custo de produção", u: "", dot: "bg-amber-500", fmt: brl0, v900: S9.custo_total_prod, v350: S3.custo_total_prod, tot: T.custo_total_prod, note: "Ainda não inclui energia e mão de obra" },
-    { lab: "Garrafas vendidas", u: "un", dot: "bg-rose-600", fmt: nf, v900: S9.vendidas, v350: S3.vendidas, tot: T.vendidas },
-    { lab: "Faturamento", u: "", dot: "bg-rose-600", fmt: brl0, v900: S9.faturamento, v350: S3.faturamento, tot: T.faturamento },
-    { lab: "Trocas / Amostras", u: "un", dot: "bg-sky-500", fmt: nf, v900: S9.trocas_amostras, v350: S3.trocas_amostras, tot: T.trocas_amostras, note: "Não entram em vendidas/faturamento" },
-    { lab: "Custo trocas / amostras", u: "", dot: "bg-sky-500", fmt: brl0, v900: S9.custo_trocas_amostras, v350: S3.custo_trocas_amostras, tot: T.custo_trocas_amostras },
-    { lab: "Estoque atual", u: "un", dot: "bg-emerald-600", fmt: nf, v900: S9.estoque, v350: S3.estoque, tot: T.estoque },
-    { lab: "Custo em estoque", u: "", dot: "bg-amber-500", fmt: brl0, v900: S9.custo_estoque, v350: S3.custo_estoque, tot: T.custo_estoque },
-  ];
-
   const r900 = current.rows.filter((r) => r.tam === "900");
   const r350 = current.rows.filter((r) => r.tam === "350");
   const cell = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
@@ -131,26 +119,6 @@ export default function ProducaoFaturamento() {
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {kpis.map((k, i) => (
-          <Card key={i}><CardContent className="p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold text-gray-500"><span className={"w-2 h-2 rounded-sm " + k.dot}></span>{k.lab}</div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <div className="rounded-lg bg-gray-50 px-2.5 py-1.5">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">900 ml</div>
-                <div className="text-xl font-bold text-gray-800 tabular-nums leading-tight">{k.fmt(k.v900)}{k.u && <span className="text-xs font-medium text-gray-400"> {k.u}</span>}</div>
-              </div>
-              <div className="rounded-lg bg-gray-50 px-2.5 py-1.5">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">350 ml</div>
-                <div className="text-xl font-bold text-gray-800 tabular-nums leading-tight">{k.fmt(k.v350)}{k.u && <span className="text-xs font-medium text-gray-400"> {k.u}</span>}</div>
-              </div>
-            </div>
-            <div className="mt-1.5 text-xs text-gray-500 tabular-nums">Total: <span className="font-semibold text-gray-700">{k.fmt(k.tot)}{k.u ? " " + k.u : ""}</span></div>
-            {k.note && <div className="mt-1 text-[10px] font-medium text-amber-600">⚠ {k.note}</div>}
-          </CardContent></Card>
-        ))}
       </div>
 
       <Card><CardContent className="p-0">
