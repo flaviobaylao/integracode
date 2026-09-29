@@ -772,10 +772,28 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
         }
       }
       if (!c.hasCharge) {
-        if (!confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return;
-        const em = await fetch(`/api/financial/receivables/${r.id}/emit-boleto`, { method: 'POST', credentials: 'include' });
-        const j = await em.json();
-        if (!(j.success || j.ok)) { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); return; }
+        // A forma de pagamento do TITULO manda: titulo "pix" gera cobranca PIX, o resto gera
+        // boleto (que ja sai hibrido, com PIX embutido). Antes este botao chamava sempre o
+        // emit-boleto e o titulo marcado como PIX recebia um boleto.
+        const querPix = String(r.paymentMethod || '').toLowerCase() === 'pix';
+        const emitir = async (rota: string) => {
+          const em = await fetch(`/api/financial/receivables/${r.id}/${rota}`, { method: 'POST', credentials: 'include' });
+          return em.json();
+        };
+        if (querPix) {
+          if (!confirm('Nenhuma cobrança vinculada a esta conta (forma de pagamento: PIX). Emitir uma cobrança PIX agora?')) return;
+          let j = await emitir('emit-pix');
+          if (!(j.success || j.ok)) {
+            // PIX indisponivel (conta sem PIX BB, instancia SERV, recusa do banco): oferece boleto.
+            if (!confirm('Não foi possível emitir o PIX: ' + (j.error || 'erro') + '\n\nEmitir um BOLETO (com PIX embutido) no lugar?')) return;
+            j = await emitir('emit-boleto');
+            if (!(j.success || j.ok)) { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); return; }
+          }
+        } else {
+          if (!confirm('Nenhuma cobrança vinculada a esta conta. Emitir um boleto (com PIX) agora?')) return;
+          const j = await emitir('emit-boleto');
+          if (!(j.success || j.ok)) { alert('Falha ao emitir cobrança: ' + (j.error || j.persistError || 'erro')); return; }
+        }
         c = await load();
       }
       if (!c.hasCharge || (!c.boleto && !c.pix)) { alert('Cobrança não encontrada.'); return; }
