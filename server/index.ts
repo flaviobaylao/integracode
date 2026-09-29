@@ -3707,7 +3707,57 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  // Pagina publica de visualizacao de cobranca PIX (espelha a do boleto).
+  // Emite cobranca PIX (cob imediata) para um recebivel — ESPELHO do emit-boleto acima.
+  // Motivo: o botao de cobranca da tela Contas a Receber chamava SEMPRE o emit-boleto,
+  // entao um titulo com forma de pagamento "pix" acabava recebendo um BOLETO. Agora a
+  // tela escolhe a rota pela forma de pagamento do titulo e cai no boleto so quando o PIX
+  // nao esta disponivel (conta sem PIX BB, instancia SERV, etc).
+  // A expiracao acompanha o vencimento do titulo, com minimo de 3 dias — mesma regra do
+  // hook de faturamento (generatePixForReceivable), onde "a vista" expirava em 1h e o
+  // cliente nao conseguia pagar.
+  app.post("/api/financial/receivables/:id/emit-pix", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req, res) => {
+    try {
+      const recId = req.params.id;
+      const ex: any = await db.execute(sql`SELECT id FROM pix_charges WHERE receivable_id = ${recId} AND status NOT IN ('REMOVIDA_PELO_USUARIO_RECEBEDOR','REMOVIDA_PELO_PSP') ORDER BY created_at DESC LIMIT 1`);
+      if (ex.rows?.[0]) return res.json({ ok: true, success: true, alreadyExists: true, pixChargeId: ex.rows[0].id, viewUrl: `/api/pix-view/${ex.rows[0].id}` });
+      const resolved = await boletoParamsFromReceivable(recId);
+      if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado, ja quitado ou cancelado" });
+      // SERV (PURO SERVICOS, CNPJ ...0105) nao emite PIX — decisao de 06/jul, a mesma do hook.
+      try {
+        const _ref = String(resolved.omieInstanceId || '');
+        if (_ref) {
+          const iq: any = await db.execute(sql`SELECT name, cnpj FROM omie_instances WHERE id = ${_ref} LIMIT 1`);
+          const _row = iq.rows?.[0];
+          const _c = String(_row?.cnpj || '').replace(/\D/g, '');
+          if (String(_row?.name || '').toUpperCase() === 'SERV' || _c === '52921727000105') {
+            return res.status(422).json({ error: "A instancia SERV nao emite PIX — gere boleto.", pixIndisponivel: true });
+          }
+        }
+      } catch { /* sem instancia resolvida: segue e deixa o BB decidir */ }
+      const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
+      const accId = accq.rows?.[0]?.id;
+      if (!accId) return res.status(422).json({ error: "nenhuma conta com PIX BB habilitado", pixIndisponivel: true });
+      const p: any = resolved.params;
+      const tq: any = await db.execute(sql`SELECT title_number FROM receivables WHERE id = ${recId} LIMIT 1`);
+      const titulo = tq.rows?.[0]?.title_number || '';
+      const dueMs = p.dueDate instanceof Date ? p.dueDate.getTime() : Date.now();
+      const expirationSeconds = Math.max(259200, Math.round((dueMs - Date.now()) / 1000));
+      const pixSvc: any = await import("./bb-pix-service");
+      const charge = await pixSvc.createImmediateCharge(accId, {
+        amount: p.amount,
+        debtorName: p.debtorName,
+        debtorDocument: p.debtorDocument || undefined,
+        description: titulo ? `Titulo ${titulo}` : undefined,
+        expirationSeconds,
+        receivableId: recId,
+        customerId: p.customerId || undefined,
+        createdBy: (req as any)?.user?.email || null,
+      });
+      return res.json({ ok: true, success: true, pixChargeId: charge.id, txid: charge.txid, viewUrl: `/api/pix-view/${charge.id}` });
+    } catch (e: any) { res.status(422).json({ error: e?.message || String(e), pixIndisponivel: true }); }
+  });
+
+
   app.get("/api/pix-view/:id", async (req, res) => {
     try {
       const r: any = await db.execute(sql`SELECT txid, amount, status, debtor_name, debtor_document, description, pix_copia_e_cola, qr_code_base64, due_date FROM pix_charges WHERE id = ${req.params.id} LIMIT 1`);
