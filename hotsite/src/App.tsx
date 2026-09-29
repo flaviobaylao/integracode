@@ -16,6 +16,8 @@ import { api } from './utils/api';
 import { capturarOrigem, origemDoPedido } from './utils/origem';
 // Central de Marketing: eventos do Pixel. No-op se o Pixel nao foi injetado.
 import { pixel, pixelUmaVez, conteudos } from './utils/pixel';
+// Aviso de cobertura de entrega (provisoria) — mostrado na vitrine, antes do carrinho.
+import { TITULO_AVISO_COBERTURA, TEXTO_AVISO_COBERTURA } from './utils/entrega';
 import { useRef } from 'react';
 import type { Product, CartItem, Customer } from './types';
 
@@ -645,6 +647,20 @@ function HotsiteContent() {
             <p className="text-xl text-gray-600 max-w-2xl mx-auto">
               Escolha seus sabores favoritos e receba em casa
             </p>
+          </div>
+
+          {/* 🚚 COBERTURA DE ENTREGA (29/set/2026) — o cliente precisa saber ANTES de
+              montar o carrinho que a entrega hoje só alcança Goiânia e Aparecida, e
+              que isso é provisório. O bloqueio real é pelo CEP, no checkout. */}
+          <div
+            className="max-w-3xl mx-auto -mt-8 mb-12 bg-amber-50 border border-amber-300 rounded-2xl px-5 py-4 flex items-start gap-3"
+            data-testid="aviso-cobertura-vitrine"
+          >
+            <span className="text-2xl leading-none shrink-0" aria-hidden="true">🚚</span>
+            <div className="text-left">
+              <p className="font-semibold text-amber-900">{TITULO_AVISO_COBERTURA}</p>
+              <p className="text-sm text-amber-800 mt-0.5">{TEXTO_AVISO_COBERTURA}</p>
+            </div>
           </div>
 
       {/* Conteúdo Principal */}
