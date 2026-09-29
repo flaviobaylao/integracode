@@ -61,6 +61,102 @@ export default function ProducaoFaturamento() {
   const T = current.total;
   const r900 = current.rows.filter((r) => r.tam === "900");
   const r350 = current.rows.filter((r) => r.tam === "350");
+
+  // Exporta o mês selecionado para .xlsx com a mesma formatação da tela
+  // (cabeçalho, subtotais e TOTAL destacados, R$ e %). Usa xlsx-js-style.
+  async function exportarExcel() {
+    const mod: any = await import("xlsx-js-style");
+    const XLSX: any = mod.default ?? mod;
+    const M2 = '"R$" #,##0.00', M0 = '"R$" #,##0', PC = '0.0%', IN = '#,##0';
+    const bd = { style: "thin", color: { rgb: "D1D5DB" } };
+    const B = { top: bd, bottom: bd, left: bd, right: bd };
+    const sTitle = { font: { bold: true, sz: 14, color: { rgb: "0F5132" } } };
+    const sSub = { font: { sz: 9, color: { rgb: "6B7280" } } };
+    const sMonth = { font: { bold: true, sz: 11, color: { rgb: "047857" } } };
+    const sHead = { font: { bold: true, sz: 10, color: { rgb: "374151" } }, fill: { patternType: "solid", fgColor: { rgb: "F1F5F9" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: B };
+    const cText = (v: any, extra: any = {}) => ({ v: v == null ? "" : String(v), t: "s", s: { alignment: { vertical: "center" }, border: B, ...extra } });
+    const cNum = (v: any, z: string, extra: any = {}) => (v == null ? { v: "—", t: "s", s: { alignment: { horizontal: "right", vertical: "center" }, border: B, ...extra } } : { v: Number(v), t: "n", z, s: { alignment: { horizontal: "right", vertical: "center" }, numFmt: z, border: B, ...extra } });
+    const rowFill = (rgb: string, white = false, bold = true) => ({ fill: { patternType: "solid", fgColor: { rgb } }, font: { bold, ...(white ? { color: { rgb: "FFFFFF" } } : {}) } });
+
+    const NC = 13;
+    const aoa: any[][] = [];
+    const blank = () => Array.from({ length: NC }, () => cText(""));
+    // Cabeçalho de documento
+    const rTitle = blank(); rTitle[0] = { v: "Produção & Faturamento por SKU", t: "s", s: sTitle }; aoa.push(rTitle);
+    const rSrc = blank(); rSrc[0] = { v: "Fonte: módulo Indústria (produção + lotes) e NF-e de venda oficial (regra do Painel). Trocas/amostras: pipeline.", t: "s", s: sSub }; aoa.push(rSrc);
+    const rMon = blank(); rMon[0] = { v: mesLabel(current.month) + (data?.generatedAt ? "  ·  atualizado em " + new Date(data.generatedAt).toLocaleString("pt-BR") : ""), t: "s", s: sMonth }; aoa.push(rMon);
+    aoa.push(blank());
+    // Cabeçalho da tabela
+    aoa.push(["Sabor", "Emb.", "Produzidas", "Custo unit.", "Custo produção", "Vendidas", "Faturamento", "Preço venda", "Margem", "Trocas/Amostras", "Custo T/A", "Estoque", "Custo estoque"].map((h) => ({ v: h, t: "s", s: sHead })));
+
+    const dataRow = (r: Row, extra: any = {}) => {
+      const preco = precoMedio(r.faturamento, r.vendidas);
+      const marg = r.custo_unit != null ? margemDe(r.faturamento, r.custo_unit * r.vendidas) : null;
+      return [
+        cText(cap(r.sabor), extra), cText(r.tam + "ml", { alignment: { horizontal: "center", vertical: "center" }, ...extra }),
+        cNum(r.produzidas, IN, extra), cNum(r.custo_unit, M2, extra), cNum(r.custo_total_prod, M0, extra),
+        cNum(r.vendidas, IN, extra), cNum(r.faturamento, M0, extra), cNum(preco, M2, extra), cNum(marg, PC, extra),
+        cNum(r.trocas_amostras, IN, extra), cNum(r.custo_trocas_amostras, M0, extra), cNum(r.estoque, IN, extra), cNum(r.custo_estoque, M0, extra),
+      ];
+    };
+    const subRow = (label: string, d: any, rows: Row[], fill: string) => {
+      const preco = precoMedio(d.faturamento, d.vendidas);
+      const marg = margemDe(d.faturamento, cogsOf(rows));
+      const ex = rowFill(fill);
+      return [
+        cText(label, ex), cText("", ex), cNum(d.produzidas, IN, ex), cText("", ex), cNum(d.custo_total_prod, M0, ex),
+        cNum(d.vendidas, IN, ex), cNum(d.faturamento, M0, ex), cNum(preco, M2, ex), cNum(marg, PC, ex),
+        cNum(d.trocas_amostras, IN, ex), cNum(d.custo_trocas_amostras, M0, ex), cNum(d.estoque, IN, ex), cNum(d.custo_estoque, M0, ex),
+      ];
+    };
+    r900.forEach((r) => aoa.push(dataRow(r)));
+    aoa.push(subRow("Subtotal 900 ml", current.sub900, r900, "EEF2F7"));
+    r350.forEach((r) => aoa.push(dataRow(r)));
+    aoa.push(subRow("Subtotal 350 ml", current.sub350, r350, "EEF2F7"));
+    // TOTAL (verde, branco)
+    {
+      const ex = rowFill("059669", true);
+      const preco = precoMedio(T.faturamento, T.vendidas);
+      const marg = margemDe(T.faturamento, cogsOf(current.rows));
+      aoa.push([
+        cText("TOTAL", ex), cText("", ex), cNum(T.produzidas, IN, ex), cText("", ex), cNum(T.custo_total_prod, M0, ex),
+        cNum(T.vendidas, IN, ex), cNum(T.faturamento, M0, ex), cNum(preco, M2, ex), cNum(marg, PC, ex),
+        cNum(T.trocas_amostras, IN, ex), cNum(T.custo_trocas_amostras, M0, ex), cNum(T.estoque, IN, ex), cNum(T.custo_estoque, M0, ex),
+      ]);
+    }
+    aoa.push(blank());
+    // Reconciliação + nota
+    const noteRow = (txt: string) => { const r = blank(); r[0] = { v: txt, t: "s", s: sSub }; return r; };
+    if (T.faturamento_oficial_nf != null) {
+      aoa.push(noteRow("Faturamento oficial da NF no mês (igual ao Painel): " + brl(T.faturamento_oficial_nf) + "   |   Soma do valor dos produtos por SKU: " + brl(T.faturamento)));
+    }
+    aoa.push(noteRow("Custo de produção não inclui energia elétrica nem mão de obra. Preço de venda = faturamento ÷ vendidas; margem bruta = (faturamento − custo das vendidas) ÷ faturamento. Trocas/amostras à parte (garrafas cedidas × custo unitário)."));
+
+    // Monta worksheet
+    const ws: any = {};
+    for (let r = 0; r < aoa.length; r++) for (let c = 0; c < NC; c++) {
+      const cellObj = aoa[r][c]; if (!cellObj) continue;
+      ws[XLSX.utils.encode_cell({ r, c })] = cellObj;
+    }
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: NC - 1 } });
+    ws["!cols"] = [{ wch: 22 }, { wch: 7 }, { wch: 11 }, { wch: 11 }, { wch: 14 }, { wch: 10 }, { wch: 13 }, { wch: 12 }, { wch: 9 }, { wch: 15 }, { wch: 11 }, { wch: 10 }, { wch: 13 }];
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: NC - 1 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: NC - 1 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: NC - 1 } },
+    ];
+    ws["!rows"] = [{ hpt: 20 }, { hpt: 14 }, { hpt: 16 }, { hpt: 6 }, { hpt: 26 }];
+    ws["!freeze"] = { xSplit: 0, ySplit: 5 };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Produção & Faturamento");
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const url = URL.createObjectURL(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = "producao-faturamento-" + current.month + ".xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
   const cell = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
   const th = "px-3 py-2 text-right text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap";
   const Margem = ({ m }: { m: number | null }) => m == null
@@ -111,13 +207,20 @@ export default function ProducaoFaturamento() {
           <h2 className="text-lg font-semibold text-gray-800">Produção &amp; Faturamento por SKU</h2>
           <p className="text-xs text-gray-500">Fonte: módulo Indústria (ordens de produção + lotes) e pipeline de faturamento. Dados a partir de Set/2026{data?.generatedAt ? " · atualizado em " + new Date(data.generatedAt).toLocaleString("pt-BR") : ""}.</p>
         </div>
-        <div className="flex gap-1.5 flex-wrap">
-          {months.map((m) => (
-            <button key={m.month} type="button" onClick={() => setSel(m.month)}
-              className={"text-xs font-semibold px-3 py-1.5 rounded-full border " + (current.month === m.month ? "bg-emerald-600 border-emerald-600 text-white" : "border-gray-300 text-gray-500 hover:text-gray-700")}>
-              {mesLabel(m.month)}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap">
+            {months.map((m) => (
+              <button key={m.month} type="button" onClick={() => setSel(m.month)}
+                className={"text-xs font-semibold px-3 py-1.5 rounded-full border " + (current.month === m.month ? "bg-emerald-600 border-emerald-600 text-white" : "border-gray-300 text-gray-500 hover:text-gray-700")}>
+                {mesLabel(m.month)}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={exportarExcel} title="Exportar o mês selecionado para Excel (.xlsx)"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-600 text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+            Exportar para Excel
+          </button>
         </div>
       </div>
 
