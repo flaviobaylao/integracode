@@ -444,6 +444,16 @@ export function registerHotsiteCard(app: Express): void {
           return res.status(400).json(barrado);
         }
       }
+
+      // 🚚 AREA DE ENTREGA — antes de autorizar o cartao (mesma regra do PIX).
+      {
+        const { barrarSeForaDaAreaDeEntrega } = await import('./entrega-area');
+        const fora = barrarSeForaDaAreaDeEntrega(order?.customer?.address);
+        if (fora) {
+          console.warn('🚚 [LOJA-CARTAO] cobranca recusada — fora da area de entrega:', fora.cidade + '/' + fora.uf);
+          return res.status(400).json(fora);
+        }
+      }
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
       const installments = Math.max(1, Math.min(cfg.maxInstallments, parseInt(body.installments, 10) || 1));
@@ -555,6 +565,16 @@ export function registerHotsiteCard(app: Express): void {
         if (barrado) {
           console.warn('🔒 [LOJA-GPAY] cobranca recusada por pedido minimo:', barrado.subtotal, '<', barrado.minimo);
           return res.status(400).json(barrado);
+        }
+      }
+
+      // 🚚 AREA DE ENTREGA — antes de autorizar o Google Pay (mesma regra do PIX).
+      {
+        const { barrarSeForaDaAreaDeEntrega } = await import('./entrega-area');
+        const fora = barrarSeForaDaAreaDeEntrega(order?.customer?.address);
+        if (fora) {
+          console.warn('🚚 [LOJA-GPAY] cobranca recusada — fora da area de entrega:', fora.cidade + '/' + fora.uf);
+          return res.status(400).json(fora);
         }
       }
 
