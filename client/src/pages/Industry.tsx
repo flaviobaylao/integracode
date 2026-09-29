@@ -29,6 +29,7 @@ import ChecklistIndustria from '@/components/ChecklistIndustria';
 import FuncionariosIndustria from '@/components/FuncionariosIndustria';
 import ChecklistProducao from '@/components/ChecklistProducao';
 import ManutencaoMaquinas from '@/components/ManutencaoMaquinas';
+import TrocasIndustria from '@/components/TrocasIndustria';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import {
@@ -36,7 +37,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye, ClipboardCheck, Users,
-  Truck, DollarSign, Lock, ListChecks, Wrench,
+  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -2180,6 +2181,17 @@ function EstoqueTab() {
 // ===========================================================================
 export default function Industry() {
   const [activeTab, setActiveTab] = useState('materia');
+  // Aba Trocas (28/set/2026): só admins e Naiara — quem decide é o servidor
+  // (GET /api/industria/trocas/acesso); a aba nem é montada para os demais.
+  const { data: acessoTrocas } = useQuery<{ ok: boolean }>({
+    queryKey: ['/api/industria/trocas/acesso'],
+    queryFn: async () => {
+      const r = await fetch('/api/industria/trocas/acesso', { credentials: 'include' });
+      return r.ok ? r.json() : { ok: false };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const podeVerTrocas = acessoTrocas?.ok === true;
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="p-4 md:p-6">
@@ -2223,6 +2235,11 @@ export default function Industry() {
             <TabsTrigger value="funcionarios" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <Users className="h-4 w-4" /> Funcionários
             </TabsTrigger>
+            {podeVerTrocas && (
+              <TabsTrigger value="trocas" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700" data-testid="tab-industria-trocas">
+                <Repeat className="h-4 w-4" /> Trocas
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="materia"><MateriaPrimaTab /></TabsContent>
@@ -2234,6 +2251,7 @@ export default function Industry() {
           <TabsContent value="documentos"><DocumentosEmpresa /></TabsContent>
           <TabsContent value="checklist-ind"><ChecklistIndustria /></TabsContent>
           <TabsContent value="funcionarios"><FuncionariosIndustria /></TabsContent>
+          {podeVerTrocas && <TabsContent value="trocas"><TrocasIndustria /></TabsContent>}
         </Tabs>
       </div>
     </div>

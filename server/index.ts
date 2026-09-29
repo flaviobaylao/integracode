@@ -69,6 +69,7 @@ import { registerIndustriaRoutes } from './industria-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
+import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
 import { registerFabricaRoutes } from './fabrica-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
@@ -3135,6 +3136,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
   // Rotas /api/industria/checklists*, /checklist-execucoes*, /funcionarios*.
   try { registerChecklistIndustriaRoutes(app); } catch (e) { console.error('[checklist-ind]', e); }
+  // Trocas (aba Trocas do modulo Industria): lista das solicitacoes de troca do
+  // pipeline com cliente, solicitante, motivo, data e foto — so admins e Naiara — 28/set/2026.
+  // Rotas /api/industria/trocas*.
+  try { registerTrocasIndustriaRoutes(app); } catch (e) { console.error('[trocas-ind]', e); }
   // Checklist de producao + manutencao de maquinas (Flavio 05/set) — mesmo guard /api/industria
   try { registerFabricaRoutes(app); } catch (e) { console.error('[fabrica]', e); }
 
