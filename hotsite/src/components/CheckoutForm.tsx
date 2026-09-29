@@ -4,7 +4,7 @@ import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { api } from '../utils/api';
 import type { Customer, CartItem } from '../types';
 import { Loader2, AlertCircle, Check } from 'lucide-react';
-// 🚚 ÁREA DE ENTREGA (frete grátis só para Grande Goiânia + Brasília/DF e entorno)
+// 🚚 ÁREA DE ENTREGA (provisoriamente só Goiânia e Aparecida de Goiânia)
 import {
   buscarCep,
   formatarCep,
@@ -167,9 +167,10 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   };
 
   // ── 🚚 ENDEREÇO POR CEP + ÁREA DE ENTREGA ──────────────────────────────────
-  // O frete grátis (e a entrega) valem só para a Grande Goiânia e Brasília/DF
-  // e entorno do Plano Piloto. O CEP é consultado no ViaCEP; se a cidade estiver
-  // fora da área, abre o popup e o pedido NÃO pode ser finalizado.
+  // 29/set/2026: a entrega alcança só Goiânia e Aparecida de Goiânia, em caráter
+  // provisório. O CEP é consultado no ViaCEP; se a cidade estiver fora da área,
+  // abre o popup e o pedido NÃO pode ser finalizado. O servidor repete a regra
+  // (server/entrega-area.ts) — aqui é só a primeira barreira, e a mais gentil.
   const [cepInput, setCepInput] = useState('');
   const [enderecoCep, setEnderecoCep] = useState<EnderecoCep | null>(null);
   const [buscandoCep, setBuscandoCep] = useState(false);
@@ -1052,6 +1053,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               </h3>
               <p className="text-gray-700">
                 No momento entregamos apenas em <strong>{TEXTO_AREA_ATENDIDA}</strong>.
+                Estamos ampliando a área de entrega aos poucos — em breve atenderemos mais cidades.
               </p>
               <p className="text-gray-600 text-sm mt-3">
                 O CEP informado é de <strong>{enderecoCep.cidade}/{enderecoCep.uf}</strong>, fora
