@@ -1227,25 +1227,34 @@ export function registerChangeRequestsRoutes(app: Express) {
     //      agora varremos todas as tabelas que guardam o nome do cliente junto do customer_id.
     //   2) em vez de um card por órfão (sem nome, inúteis), o Inbox recebe UM ÚNICO card com a
     //      lista completa — ver upsertCardOrfaos() logo abaixo.
-    const nomeOrfao = (tabela: any, extra: any) => sql`
-      (SELECT customer_name FROM ${tabela} WHERE customer_id = r.customer_id
-         AND NULLIF(btrim(customer_name),'') IS NOT NULL ${extra} ORDER BY created_at DESC LIMIT 1)`;
+    // A lista de tabelas sai do catálogo do próprio banco, não de uma lista fixa: o schema do
+    // código anda na frente do banco em produção e uma tabela sem a coluna derrubava o scan
+    // inteiro com 'column "customer_name" does not exist'.
+    const fontesNome = rowsOf(await db.execute(sql`
+      SELECT c1.table_name AS t, (c3.column_name IS NOT NULL) AS tem_del
+        FROM information_schema.columns c1
+        JOIN information_schema.columns c2
+          ON c2.table_schema = c1.table_schema AND c2.table_name = c1.table_name AND c2.column_name = 'customer_id'
+        JOIN information_schema.columns c4
+          ON c4.table_schema = c1.table_schema AND c4.table_name = c1.table_name AND c4.column_name = 'created_at'
+        LEFT JOIN information_schema.columns c3
+          ON c3.table_schema = c1.table_schema AND c3.table_name = c1.table_name AND c3.column_name = 'deleted_at'
+       WHERE c1.table_schema = 'public' AND c1.column_name = 'customer_name'
+       ORDER BY CASE c1.table_name WHEN 'billing_pipeline' THEN 0 WHEN 'receivables' THEN 1 ELSE 2 END, c1.table_name`));
+    const nomeOrfao = (tabela: string, temDel: boolean) => sql`
+      (SELECT customer_name::text FROM ${sql.raw(`"${tabela}"`)} WHERE customer_id::text = r.customer_id::text
+         AND NULLIF(btrim(customer_name),'') IS NOT NULL
+         ${temDel ? sql`AND deleted_at IS NULL` : sql``} ORDER BY created_at DESC LIMIT 1)`;
+    const nomeExpr = fontesNome.length === 0
+      ? sql`NULL::text`
+      : sql`COALESCE(${sql.join(fontesNome.map((f: any) => nomeOrfao(String(f.t), f.tem_del === true)), sql`, `)})`;
     const orfaos = rowsOf(await db.execute(sql`
       WITH refs AS (
         SELECT DISTINCT customer_id FROM blocked_orders WHERE status='blocked' AND customer_id IS NOT NULL
         UNION SELECT DISTINCT customer_id FROM sales_cards WHERE status IN ('pending','overdue') AND customer_id IS NOT NULL
         UNION SELECT DISTINCT customer_id FROM receivables WHERE customer_id IS NOT NULL AND deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0
       )
-      SELECT r.customer_id AS cid,
-             COALESCE(
-               ${nomeOrfao(sql`billing_pipeline`, sql``)},
-               ${nomeOrfao(sql`receivables`, sql`AND deleted_at IS NULL`)},
-               ${nomeOrfao(sql`fiscal_invoices`, sql``)},
-               ${nomeOrfao(sql`visit_agenda`, sql``)},
-               ${nomeOrfao(sql`delivery_history`, sql``)},
-               ${nomeOrfao(sql`route_checkpoints`, sql``)},
-               ${nomeOrfao(sql`delivery_route_stops`, sql``)}
-             ) AS nome
+      SELECT r.customer_id AS cid, ${nomeExpr} AS nome
         FROM refs r
        WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = r.customer_id)
        ORDER BY 2 NULLS LAST
