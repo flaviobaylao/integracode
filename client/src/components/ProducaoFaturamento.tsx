@@ -38,8 +38,8 @@ const INFO = {
   produzidas: "Soma das garrafas nas ordens de produção do mês (módulo Indústria › ordens de produção), agrupadas por SKU.",
   custoUnit: "Custo unitário do lote em uso (módulo Indústria › lotes de estoque). Ainda NÃO inclui energia elétrica nem mão de obra.",
   custoProd: "Custo de produção = garrafas produzidas × custo unitário do lote. Ainda NÃO inclui energia elétrica nem mão de obra.",
-  vendidas: "Soma das garrafas em operações do tipo 'venda' no mês (pipeline de faturamento).",
-  faturamento: "Soma do valor de venda das operações do tipo 'venda' no mês (pipeline de faturamento).",
+  vendidas: "Garrafas vendidas = soma das quantidades dos itens das NF-e de venda emitidas no mês (regra oficial, a mesma do Painel: NF autorizada, deduplicada por nº, sem devolução/troca/transferência/remessa/bonificação/amostra).",
+  faturamento: "Valor dos produtos vendidos = soma do valor dos itens das NF-e de venda do mês (regra oficial do Painel). Pode diferir do total da NF por frete/impostos lançados no rodapé — o total oficial da NF está indicado abaixo da tabela.",
   preco: "Preço médio de venda realizado = Faturamento ÷ Garrafas vendidas.",
   margem: "Margem bruta = (Faturamento − custo das vendidas) ÷ Faturamento, com custo das vendidas = custo unitário do lote × garrafas vendidas. Ainda NÃO considera energia elétrica nem mão de obra.",
   trocasAmostras: "Garrafas cedidas em operações do tipo 'troca' ou 'amostra' no mês (pipeline de faturamento). Não entram em Vendidas nem em Faturamento.",
@@ -158,7 +158,18 @@ export default function ProducaoFaturamento() {
           </table>
         </div>
       </CardContent></Card>
-      <p className="text-[11px] text-gray-400">Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção, vendas e faturamento são do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote — <span className="text-amber-600 font-medium">ainda não inclui energia elétrica nem mão de obra</span>. Preço de venda = faturamento ÷ vendidas; margem bruta = (faturamento − custo das vendidas) ÷ faturamento. Trocas/amostras são contabilizadas à parte (garrafas cedidas × custo unitário) e não entram em vendidas nem em faturamento. Passe o mouse sobre o <span className="font-semibold">i</span> de cada coluna para ver a origem do dado. Os dados se atualizam automaticamente na mesma cadência do Painel (a cada 30 min e ao focar a janela).</p>
+
+      {T.faturamento_oficial_nf != null && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-gray-600 px-1">
+          <span>Faturamento oficial da NF no mês (igual ao Painel): <span className="font-semibold text-gray-800 tabular-nums">{brl(T.faturamento_oficial_nf)}</span></span>
+          <span>Soma do valor dos produtos por SKU: <span className="font-semibold text-gray-800 tabular-nums">{brl(T.faturamento)}</span></span>
+          {Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)) >= 0.5 && (
+            <span className="text-amber-600">Diferença de {brl(Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)))} = frete/impostos no rodapé da NF (não rateados por SKU).</span>
+          )}
+        </div>
+      )}
+
+      <p className="text-[11px] text-gray-400">Vendidas e faturamento vêm da <span className="font-medium">NF-e de venda emitida</span> (regra oficial, a mesma do Painel), rateados por SKU pelos itens da nota. Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção é do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote — <span className="text-amber-600 font-medium">ainda não inclui energia elétrica nem mão de obra</span>. Preço de venda = faturamento ÷ vendidas; margem bruta = (faturamento − custo das vendidas) ÷ faturamento. Trocas/amostras são contabilizadas à parte (garrafas cedidas × custo unitário) e não entram em vendidas nem em faturamento. Passe o mouse sobre o <span className="font-semibold">i</span> de cada coluna para ver a origem do dado. Os dados se atualizam automaticamente na mesma cadência do Painel (a cada 30 min e ao focar a janela).</p>
     </div>
   );
 }

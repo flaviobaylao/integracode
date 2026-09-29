@@ -16,6 +16,7 @@ import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { getProductionOrderTransferLock, getProductionOrderTransferLocks } from "./lot-lock";
+import { nfVendaFrom, nfVendaWhere, nfData } from "./faturamento-oficial";
 
 const num = (v: any): number | null => {
   if (v === '' || v == null) return null;
@@ -334,7 +335,25 @@ export function registerIndustriaRoutes(app: Express) {
       const orders = await loadOrders();
       const lotsR: any = await db.execute(sql`SELECT product_id, quantity, unit_cost, total_cost FROM inventory_lots WHERE stock_type = 'in_use'`);
       const prodR: any = await db.execute(sql`SELECT id, name FROM products`);
-      const pipeR: any = await db.execute(sql`SELECT products, operation_type, scheduled_billing_date, created_at FROM billing_pipeline`);
+      // VENDAS/FATURAMENTO = NF-e emitida, regra OFICIAL (mesma do Painel):
+      // fiscal_invoices de venda, autorizadas, deduplicadas por nº de NF, data oficial.
+      // Aqui abrimos por ITEM da nota (fiscal_invoice_items) para ratear por SKU.
+      const nfItemsR: any = await db.execute(sql.raw(
+        `SELECT it.product_name AS name, it.quantity AS quantity, it.total_price AS total, ${nfData('fi')}::date::text AS d
+         FROM ${nfVendaFrom('fi')}
+         JOIN fiscal_invoice_items it ON it.invoice_id = fi.id
+         WHERE ${nfData('fi')}::date >= '${START}-01'`));
+      // Total oficial por mês (soma de total_invoice, idêntico ao Painel) p/ reconciliação.
+      const nfTotR: any = await db.execute(sql.raw(
+        `SELECT to_char(${nfData('fi')}, 'YYYY-MM') AS m, COALESCE(SUM(fi.total_invoice), 0) AS tot
+         FROM ${nfVendaFrom('fi')}
+         WHERE ${nfData('fi')}::date >= '${START}-01'
+         GROUP BY 1`));
+      const nfTotByMonth: Record<string, number> = {};
+      for (const r of (nfTotR.rows || [])) nfTotByMonth[String(r.m)] = Number(r.tot) || 0;
+      // TROCAS/AMOSTRAS continuam do pipeline (operação de troca/amostra) — são cessões
+      // operacionais, sem faturamento.
+      const pipeR: any = await db.execute(sql`SELECT products, operation_type, scheduled_billing_date, created_at FROM billing_pipeline WHERE LOWER(COALESCE(operation_type,'')) IN ('troca','amostra')`);
 
       const pmap: Record<string, any> = {};
       for (const p of (prodR.rows || [])) pmap[p.id] = parse(p.name);
@@ -359,23 +378,23 @@ export function registerIndustriaRoutes(app: Express) {
         const q = Number(l.quantity) || 0; invAgg[k].est += q; invAgg[k].ce += Number(l.total_cost) || 0;
         if (Number(l.unit_cost)) { invAgg[k].wsum += Number(l.unit_cost) * q; invAgg[k].q += q; }
       }
-      // Faturamento/vendidas + trocas/amostras por mês/SKU.
-      // 'venda' => quantidade vendida e faturamento; 'troca'/'amostra' => quantidade
-      // de garrafas cedidas (custo calculado depois = qtd × custo unitário do lote).
-      // Demais tipos (bonificação, remessa, transferência, devolução) são ignorados.
+      // Vendidas/faturamento por mês/SKU — a partir dos ITENS da NF-e de venda oficial.
+      for (const r of (nfItemsR.rows || [])) {
+        const d = ym(r.d); if (!d || d < START) continue;
+        const { fl, size } = parse(r.name); if (!size) continue;
+        const M = ensure(d); const k = fl + '|' + size; if (!M[k]) continue;
+        M[k].vend += Number(r.quantity) || 0; M[k].fat += Number(r.total) || 0;
+      }
+      // Trocas/amostras por mês/SKU (garrafas cedidas; custo = qtd × custo unitário do lote,
+      // calculado depois). Fonte: pipeline (operações de troca/amostra).
       for (const r of (pipeR.rows || [])) {
-        const op = String(r.operation_type || 'venda').toLowerCase();
-        const isVenda = op === 'venda';
-        const isTA = op === 'troca' || op === 'amostra';
-        if (!isVenda && !isTA) continue;
         const d = ym(r.scheduled_billing_date || r.created_at); if (!d || d < START) continue;
         let prods: any = r.products; if (typeof prods === 'string') { try { prods = JSON.parse(prods); } catch { prods = []; } }
         if (!Array.isArray(prods)) continue;
         const M = ensure(d);
         for (const p of prods) {
           const { fl, size } = parse(p.name); if (!size) continue; const k = fl + '|' + size; if (!M[k]) continue;
-          if (isVenda) { M[k].vend += Number(p.quantity) || 0; M[k].fat += Number(p.totalPrice) || 0; }
-          else { M[k].ta += Number(p.quantity) || 0; }
+          M[k].ta += Number(p.quantity) || 0;
         }
       }
 
@@ -393,7 +412,12 @@ export function registerIndustriaRoutes(app: Express) {
           rows.push({ sabor: f, tam: sz, produzidas: Math.round(a.prod), custo_unit: cuv, custo_total_prod: cuv ? round2(a.prod * cuv) : 0, vendidas: Math.round(a.vend), faturamento: round2(a.fat), trocas_amostras: Math.round(a.ta), custo_trocas_amostras: cuv ? round2(a.ta * cuv) : 0, estoque: Math.round(a.est), custo_estoque: round2(a.ce) });
         }
         const sub = (f: (x: any) => boolean) => { const r = rows.filter(f); return { produzidas: r.reduce((s, x) => s + x.produzidas, 0), custo_total_prod: round2(r.reduce((s, x) => s + x.custo_total_prod, 0)), vendidas: r.reduce((s, x) => s + x.vendidas, 0), faturamento: round2(r.reduce((s, x) => s + x.faturamento, 0)), trocas_amostras: r.reduce((s, x) => s + x.trocas_amostras, 0), custo_trocas_amostras: round2(r.reduce((s, x) => s + x.custo_trocas_amostras, 0)), estoque: r.reduce((s, x) => s + x.estoque, 0), custo_estoque: round2(r.reduce((s, x) => s + x.custo_estoque, 0)) }; };
-        return { month: m, rows, sub900: sub((x) => x.tam === '900'), sub350: sub((x) => x.tam === '350'), total: sub(() => true) };
+        const total = sub(() => true);
+        // Faturamento oficial da NF (soma de total_invoice) para reconciliar com o Painel.
+        // A soma por SKU (vProd dos itens) pode diferir do total da NF por frete/impostos
+        // lançados no rodapé da nota; expomos os dois para transparência.
+        const fatOficial = round2(nfTotByMonth[m] || 0);
+        return { month: m, rows, sub900: sub((x) => x.tam === '900'), sub350: sub((x) => x.tam === '350'), total: { ...total, faturamento_oficial_nf: fatOficial } };
       });
       res.json({ generatedAt: new Date().toISOString(), months: out });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
