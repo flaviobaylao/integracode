@@ -37,7 +37,9 @@ const safe = (fn: (req: Request, res: Response) => Promise<any>) =>
 const VALID_TYPES = new Set(["periodicidade", "dia_rota", "area_vendas", "presencial_virtual", "inicio_atendimento", "inativar", "dia_sobrecarregado", "outro"]);
 // 'agenda_dia' nao e' um cadastro: e' uma CELULA do quadro da Agenda da Carteira
 // (vendedor|canal|dia da semana) que passou do teto de clientes por dia.
-const VALID_ENTITY = new Set(["customer", "lead", "repescagem", "agenda_dia"]);
+// "sistema": cards abertos pelo próprio Integra que não apontam para um cadastro específico
+// (ex.: a lista única de cadastros órfãos). Sem botões de cliente, só conversa e fechamento.
+const VALID_ENTITY = new Set(["customer", "lead", "repescagem", "agenda_dia", "sistema"]);
 const VALID_RESOLUTION = new Set(["efetuadas", "parcial", "rejeitadas", "lido"]);
 
 const DDL: string[] = [
@@ -1114,6 +1116,93 @@ export function registerChangeRequestsRoutes(app: Express) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 📋 CARD ÚNICO DOS CADASTROS ÓRFÃOS — 28/set/2026.
+  //   Antes o scan abria um card por cliente órfão e, como o nome quase nunca era recuperado,
+  //   o Inbox enchia de "(nome não recuperado)" sem dizer de quem se tratava. Agora existe UM
+  //   card do Sistema com a lista completa (nome + id). Ele se mantém atualizado: se a lista
+  //   muda, o card é reescrito e ganha uma mensagem na conversa; se não há mais nenhum órfão,
+  //   ele se fecha sozinho. Os cards antigos, um por órfão, são recolhidos para Resolvidas.
+  // ---------------------------------------------------------------------------
+  const ORFAOS_ENTITY_TYPE = "sistema";
+  const ORFAOS_ENTITY_ID = "orfaos-consolidado";
+
+  function textoOrfaos(lista: any[]): string {
+    const linhas = lista.map((o: any, i: number) => {
+      const nome = String(o.nome || "").trim();
+      return `${i + 1}. ${nome || "(nome não recuperado)"} — id ${o.cid}`;
+    });
+    return [
+      `⚠️ Cadastros ÓRFÃOS (${lista.length}): existe pedido, recebível ou visita em aberto, mas o cliente não está mais cadastrado.`,
+      `Regularizar cada um (recriar o cadastro ou cancelar/inativar as pendências):`,
+      "",
+      ...linhas,
+    ].join("\n");
+  }
+
+  async function upsertCardOrfaos(lista: any[]): Promise<number> {
+    // Recolhe os cards antigos (um por órfão) — viraram esta lista única.
+    const antigos = rowsOf(await db.execute(sql`
+      SELECT id FROM change_requests
+       WHERE status = 'pending' AND entity_type = 'customer' AND requested_by_name = 'Sistema'
+         AND COALESCE(details->>'outro','') LIKE '%ÓRFÃO%'`));
+    if (antigos.length > 0) {
+      const aviso = mkMsg("admin", SISTEMA, "Recolhido: os cadastros órfãos passaram a ser listados em um único card do Inbox.", "system");
+      for (const a of antigos) {
+        await db.execute(sql`
+          UPDATE change_requests
+             SET status = 'lido', resolved_at = NOW(),
+                 messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([aviso])}::jsonb
+           WHERE id = ${a.id}`);
+      }
+    }
+
+    const fingerprint = lista.map((o: any) => String(o.cid)).sort().join(",");
+    const atual = rowsOf(await db.execute(sql`
+      SELECT id, details FROM change_requests
+       WHERE status = 'pending' AND entity_type = ${ORFAOS_ENTITY_TYPE} AND entity_id = ${ORFAOS_ENTITY_ID}
+       LIMIT 1`));
+    const card = atual[0];
+
+    if (lista.length === 0) {
+      if (card) {
+        const fim = mkMsg("admin", SISTEMA, "✅ Não há mais cadastros órfãos. Card encerrado automaticamente.", "system");
+        await db.execute(sql`
+          UPDATE change_requests
+             SET status = 'lido', resolved_at = NOW(),
+                 messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([fim])}::jsonb
+           WHERE id = ${card.id}`);
+      }
+      return 0;
+    }
+
+    const note = textoOrfaos(lista);
+    const details = { outro: note, orfaos: lista.map((o: any) => ({ id: o.cid, nome: o.nome || null })), fingerprint };
+    const nomeCard = `Cadastros órfãos (${lista.length})`;
+
+    if (!card) {
+      const seed = mkMsg("admin", SISTEMA, note, "system");
+      await db.execute(sql`
+        INSERT INTO change_requests
+          (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+           types, details, status, requested_by, requested_by_name, messages)
+        VALUES
+          (${ORFAOS_ENTITY_TYPE}, ${ORFAOS_ENTITY_ID}, NULL, ${nomeCard}, NULL, NULL,
+           ${JSON.stringify(["outro"])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending',
+           NULL, 'Sistema', ${JSON.stringify([seed])}::jsonb)`);
+      return lista.length;
+    }
+
+    if (String((card.details || {}).fingerprint || "") === fingerprint) return 0; // nada mudou
+    const att = mkMsg("admin", SISTEMA, `🔄 Lista atualizada.\n\n${note}`, "system");
+    await db.execute(sql`
+      UPDATE change_requests
+         SET entity_name = ${nomeCard}, details = ${JSON.stringify(details)}::jsonb,
+             messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([att])}::jsonb
+       WHERE id = ${card.id}`);
+    return lista.length;
+  }
+
   async function scanInbox(dryRun: boolean, limit: number): Promise<any> {
     await ensureTables();
     const semVendedorSql = sql`NOT EXISTS (SELECT 1 FROM users u WHERE u.id = c.seller_id OR u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-',''))`;
@@ -1132,7 +1221,15 @@ export function registerChangeRequestsRoutes(app: Express) {
          AND NOT EXISTS (SELECT 1 FROM change_requests cr WHERE cr.entity_type='customer' AND cr.entity_id=c.id AND cr.status='pending')
        ORDER BY c.updated_at DESC NULLS LAST
        LIMIT ${limit}`));
-    // (b) órfãos: referenciados por pedido bloqueado, sales_card pendente ou recebível em aberto, mas sem cadastro
+    // (b) órfãos: referenciados por pedido bloqueado, sales_card pendente ou recebível em aberto, mas sem cadastro.
+    // 28/set/2026 — dois ajustes pedidos pelo Flavio:
+    //   1) o nome vinha "(nome não recuperado)" porque só olhávamos billing_pipeline e receivables;
+    //      agora varremos todas as tabelas que guardam o nome do cliente junto do customer_id.
+    //   2) em vez de um card por órfão (sem nome, inúteis), o Inbox recebe UM ÚNICO card com a
+    //      lista completa — ver upsertCardOrfaos() logo abaixo.
+    const nomeOrfao = (tabela: any, extra: any) => sql`
+      (SELECT customer_name FROM ${tabela} WHERE customer_id = r.customer_id
+         AND NULLIF(btrim(customer_name),'') IS NOT NULL ${extra} ORDER BY created_at DESC LIMIT 1)`;
     const orfaos = rowsOf(await db.execute(sql`
       WITH refs AS (
         SELECT DISTINCT customer_id FROM blocked_orders WHERE status='blocked' AND customer_id IS NOT NULL
@@ -1140,11 +1237,18 @@ export function registerChangeRequestsRoutes(app: Express) {
         UNION SELECT DISTINCT customer_id FROM receivables WHERE customer_id IS NOT NULL AND deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0
       )
       SELECT r.customer_id AS cid,
-             (SELECT customer_name FROM billing_pipeline WHERE customer_id = r.customer_id AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS nome_bp,
-             (SELECT customer_name FROM receivables WHERE customer_id = r.customer_id AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1) AS nome_rc
+             COALESCE(
+               ${nomeOrfao(sql`billing_pipeline`, sql``)},
+               ${nomeOrfao(sql`receivables`, sql`AND deleted_at IS NULL`)},
+               ${nomeOrfao(sql`fiscal_invoices`, sql``)},
+               ${nomeOrfao(sql`visit_agenda`, sql``)},
+               ${nomeOrfao(sql`delivery_history`, sql``)},
+               ${nomeOrfao(sql`route_checkpoints`, sql``)},
+               ${nomeOrfao(sql`delivery_route_stops`, sql``)}
+             ) AS nome
         FROM refs r
        WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = r.customer_id)
-         AND NOT EXISTS (SELECT 1 FROM change_requests cr WHERE cr.entity_type='customer' AND cr.entity_id=r.customer_id AND cr.status='pending')
+       ORDER BY 2 NULLS LAST
        LIMIT ${limit}`));
 
     let criadosIncompletos = 0, criadosOrfaos = 0;
@@ -1158,11 +1262,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         const note = `⚠️ Verificação automática: cadastro incompleto — faltando ${falta.join(", ")}. Revisar e completar.`;
         if (await criarVerificacaoSistema({ entityId: c.id, entityName: c.nome, sellerId: c.seller_id, sellerName: c.vendedor || null, types, note, customerId: c.id })) criadosIncompletos++;
       }
-      for (const o of orfaos) {
-        const nome = o.nome_bp || o.nome_rc || "(nome não recuperado)";
-        const note = `⚠️ Cadastro ÓRFÃO: existe pedido/recebível/visita em aberto, mas o cliente não está mais cadastrado. Nome preservado: "${nome}". Regularizar (recriar cadastro ou cancelar/inativar as pendências).`;
-        if (await criarVerificacaoSistema({ entityId: o.cid, entityName: nome, sellerId: null, sellerName: null, types: ["inativar"], note, customerId: o.cid })) criadosOrfaos++;
-      }
+      criadosOrfaos = await upsertCardOrfaos(orfaos);
     }
     return {
       dryRun,
@@ -1170,7 +1270,7 @@ export function registerChangeRequestsRoutes(app: Express) {
       orfaosEncontrados: orfaos.length,
       criadosIncompletos, criadosOrfaos,
       amostraIncompletos: incompletos.slice(0, 10).map((c: any) => ({ id: c.id, nome: c.nome, semDia: c.sem_dia, semPer: c.sem_per, semVend: c.sem_vend })),
-      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome_bp || o.nome_rc })),
+      amostraOrfaos: orfaos.slice(0, 10).map((o: any) => ({ id: o.cid, nome: o.nome })),
     };
   }
 
