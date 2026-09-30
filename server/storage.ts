@@ -8906,6 +8906,18 @@ export class DatabaseStorage implements IStorage {
     if (Array.isArray(_clean.products)) {
       _clean.products = sanitizeOrderLines(_clean.products, 'createBillingPipelineItem').lines;
     }
+    // ⭐ PRIORIDADE AUTOMATICA: cliente Classe A+ ou B+ ja entra no pipeline com a
+    // estrela de roteirizacao marcada. A classe vem do snapshot diario
+    // (tabela customer_classe, ver runSnapshotClasses). So LIGA a estrela: se o
+    // card ja veio priorizado, mantem; nunca rebaixa. Falha (ex.: tabela ainda
+    // nao criada) nao bloqueia a criacao do pedido.
+    if (_clean.isPriority !== true && _clean.customerId) {
+      try {
+        const r: any = await db.execute(sql`SELECT classe FROM customer_classe WHERE customer_id = ${_clean.customerId} LIMIT 1`);
+        const classe = r?.rows?.[0]?.classe ? String(r.rows[0].classe) : '';
+        if (classe === 'A+' || classe === 'B+') _clean.isPriority = true;
+      } catch { /* customer_classe pode nao existir ainda; ignora */ }
+    }
     const [item] = await db.insert(billingPipeline).values(_clean).returning();
     return item;
   }
