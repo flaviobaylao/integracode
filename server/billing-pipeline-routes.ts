@@ -16,6 +16,7 @@ import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
 import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
+import { runSnapshotClasses } from './carteira-routes';
 
 // Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
 // sai com CFOP incorreto e é REJEITADA pela SEFAZ. Barramos ANTES da trava/baixa de estoque/criação
@@ -2440,6 +2441,28 @@ export function registerBillingPipelineRoutes(app: Express) {
       console.log(`${isPriority ? '⭐' : '☆'} [PRIORIDADE] ${updated}/${ids.length} card(s) → ${isPriority ? 'prioritário' : 'normal'} (${user?.email || '?'})`);
       res.json({ ok: true, updated, total: ids.length, ignorados: ids.length - updated });
     } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // BACKFILL: recalcula o snapshot de classe e liga a estrela de prioridade nos
+  // cards que JÁ estão no pipeline hoje cujo cliente é Classe A+ ou B+ (uma vez).
+  // Só liga (nunca rebaixa); ignora a Lixeira. Admin only.
+  app.post('/api/billing-pipeline/classe-prioridade/backfill', authenticateUser, isAdminOnly, async (req: any, res) => {
+    try {
+      const snap = await runSnapshotClasses();
+      const r: any = await db.execute(sql`
+        UPDATE billing_pipeline SET is_priority = true, updated_at = NOW()
+        WHERE is_priority = false
+          AND stage <> 'lixeira'
+          AND customer_id IN (SELECT customer_id FROM customer_classe WHERE classe IN ('A+','B+'))
+      `);
+      const marcados = r?.rowCount ?? r?.rows?.length ?? 0;
+      const user = req.currentUser || req.user;
+      console.log(`⭐ [BACKFILL-CLASSE] ${marcados} card(s) marcados como prioritário (A+/B+) por ${user?.email || '?'}.`);
+      res.json({ ok: true, snapshot: snap, cardsMarcados: marcados });
+    } catch (error: any) {
+      console.error('Erro no backfill de classe/prioridade:', error);
       res.status(500).json({ message: error.message });
     }
   });
