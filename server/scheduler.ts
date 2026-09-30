@@ -15,6 +15,7 @@ import { runRotaNaoVisitadosCron } from './rota-nao-visitados-alert';
 import { sweepOpenBoletos } from './bb-boleto-service';
 import { runGarantirCobranca } from './charge-guarantee-routes';
 import { varreduraSobrecargaDiaria } from './agenda-carteira-routes';
+import { runSnapshotClasses } from './carteira-routes';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
@@ -38,6 +39,30 @@ cron.schedule('0 7 * * *', async () => {
     console.error('❌ [SCHEDULER] Aviso de previsão de pagamento falhou:', error?.message);
   }
 }, { timezone: 'America/Sao_Paulo' });
+
+// ── SNAPSHOT DIÁRIO DA CLASSE DO CLIENTE (A+..D-), 04:30 ────────────────────
+// Recalcula a classe de todos os clientes (mesma fonte da tela da Carteira) e
+// grava em customer_classe. A entrada no pipeline lê essa tabela e liga a estrela
+// de prioridade para A+/B+. Roda também no boot, para popular logo após o deploy.
+cron.schedule('30 4 * * *', async () => {
+  console.log('⭐ [SCHEDULER] Snapshot diário de classe do cliente (04:30)...');
+  try {
+    const r = await runSnapshotClasses();
+    console.log(`✅ [SCHEDULER] Snapshot de classe: ${r.total} clientes (A+=${r.aMais}, B+=${r.bMais}).`);
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Snapshot de classe falhou:', error?.message);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
+// Popular o snapshot no boot (async, não bloqueia a inicialização).
+(async () => {
+  try {
+    const r = await runSnapshotClasses();
+    console.log(`✅ [SCHEDULER] Snapshot de classe inicial: ${r.total} clientes (A+=${r.aMais}, B+=${r.bMais}).`);
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Snapshot de classe inicial falhou:', error?.message);
+  }
+})();
 
 cron.schedule('0 7 * * *', async () => {
   console.log('📅 [SCHEDULER] Varredura de dias sobrecarregados (07:00)...');
