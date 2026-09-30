@@ -340,6 +340,7 @@ export default function BillingPipeline() {
   // Classificação por data de criação em cada raia (asc = A-Z / mais antigos primeiro).
   const [stageSort, setStageSort] = useState<Record<string, 'asc' | 'desc'>>({});
   const [showLegend, setShowLegend] = useState(false);
+  const [showDrafts, setShowDrafts] = useState(false);
   const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
@@ -369,6 +370,29 @@ export default function BillingPipeline() {
   const { data: customersList = [] } = useQuery<any[]>({ queryKey: ['/api/customers'] });
   // Empresas do grupo (emissora) — pick-list da edição do pedido no modal de detalhes.
   const { data: omieInstancesList = [] } = useQuery<any[]>({ queryKey: ['/api/companies/public'], staleTime: 5 * 60 * 1000 });
+
+  // Rascunhos para o painel do pipeline. O servidor decide o escopo:
+  // admin + Lanucy veem todos; vendedor ve so os seus.
+  const { data: draftsData } = useQuery<{ seeAll: boolean; total: number; drafts: any[] }>({
+    queryKey: ['/api/billing-pipeline/drafts'],
+    queryFn: async () => await apiRequest('GET', '/api/billing-pipeline/drafts'),
+    staleTime: 60 * 1000,
+  });
+  const draftsList: any[] = Array.isArray(draftsData?.drafts) ? draftsData!.drafts : [];
+  const draftsTotal = draftsData?.total ?? draftsList.length;
+  // Agrupar por vendedor (nome), ordenado por quantidade desc.
+  const draftsBySeller = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const d of draftsList) {
+      const key = d.sellerName || 'Sem vendedor';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(d);
+    }
+    return Array.from(map.entries())
+      .map(([seller, items]) => ({ seller, items }))
+      .sort((a, b) => b.items.length - a.items.length || a.seller.localeCompare(b.seller));
+  }, [draftsList]);
+  const irParaCartoes = () => { window.location.href = '/?view=sales-cards&status=draft'; };
   const [prodSearch, setProdSearch] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1229,6 +1253,19 @@ export default function BillingPipeline() {
               )}
               Atualizar
             </Button>
+            {draftsTotal > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-300"
+                onClick={() => setShowDrafts(true)}
+                title={draftsData?.seeAll ? 'Rascunhos de pedido por vendedor' : 'Seus rascunhos de pedido'}
+                data-testid="button-rascunhos-pipeline"
+              >
+                <FileText className="h-4 w-4 mr-1" />
+                Rascunhos ({draftsTotal})
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -2055,6 +2092,69 @@ export default function BillingPipeline() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* PAINEL DE RASCUNHOS por vendedor (botão "Rascunhos (N)" no cabeçalho) */}
+      <Dialog open={showDrafts} onOpenChange={setShowDrafts}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-amber-600" />
+              Rascunhos de pedido ({draftsTotal})
+            </DialogTitle>
+            <DialogDescription>
+              {draftsData?.seeAll
+                ? 'Pedidos salvos como rascunho, agrupados por vendedor. Ainda não enviados ao pipeline.'
+                : 'Seus pedidos salvos como rascunho, ainda não enviados ao pipeline.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {draftsBySeller.length === 0 ? (
+            <p className="text-sm text-gray-500 py-6 text-center">Nenhum rascunho no momento.</p>
+          ) : (
+            <div className="space-y-4">
+              {draftsBySeller.map(({ seller, items }) => (
+                <div key={seller} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-gray-800/60">
+                    <span className="font-semibold text-sm flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-gray-400" />
+                      {seller}
+                    </span>
+                    <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300">
+                      {items.length} rascunho{items.length > 1 ? 's' : ''}
+                    </Badge>
+                  </div>
+                  <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {items.map((d: any) => (
+                      <li key={d.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">{d.customerName}</p>
+                          <p className="text-xs text-gray-500 capitalize">{d.operationType || 'venda'}</p>
+                        </div>
+                        <span className="text-sm font-medium text-green-600 whitespace-nowrap ml-2">
+                          {d.saleValue != null
+                            ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(parseFloat(d.saleValue) || 0)
+                            : '—'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <DialogFooter className="mt-2">
+            <Button
+              className="w-full bg-honest-blue hover:bg-blue-700"
+              onClick={irParaCartoes}
+              data-testid="button-ir-cartoes-rascunhos"
+            >
+              <ArrowRightCircle className="h-4 w-4 mr-2" />
+              Abrir na tela de Cartões
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
