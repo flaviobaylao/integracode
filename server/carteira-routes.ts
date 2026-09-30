@@ -216,111 +216,19 @@ async function ensureAnotacoes(): Promise<void> {
   __anotacoesProntas = true;
 }
 
-export function registerCarteira(app: Express) {
-  // Aba "Agenda da carteira" (tabela dinamica de atendimentos por dia da semana).
-  registerAgendaCarteira(app);
-  // Aba "Rede de Cliente" (grupos de filiais / mesma gestao, consolidados).
-  registerRedesClientes(app);
-
-  // ---------------------------------------------------------------------------
-  // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
-  // ---------------------------------------------------------------------------
-  app.get("/api/carteira/anotacoes", authenticateUser, async (req: Request, res: Response) => {
-    try {
-      await ensureAnotacoes();
-      const esc = escopoDoUsuario(req);
-      const filtro = esc.restrito
-        ? ` WHERE a.chave IN (${sqlDocsDaCarteira(esc.idsCarteira)})`
-        : "";
-      const rows = (await db.execute(sql.raw(`
-        SELECT a.id, a.chave, a.cliente_nome, a.balde, a.texto, a.autor_nome,
-               to_char(a.created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM/YYYY HH24:MI') AS quando,
-               a.created_at
-        FROM carteira_anotacoes a${filtro}
-        ORDER BY a.created_at DESC
-        LIMIT 5000`))).rows as any[];
-      res.json(rows.map((r) => ({
-        id: String(r.id), chave: String(r.chave), cliente: r.cliente_nome || "",
-        balde: r.balde || "", texto: String(r.texto || ""),
-        autor: r.autor_nome || "—", quando: r.quando || "",
-      })));
-    } catch (e: any) {
-      console.error("[carteira-anotacoes GET]", e);
-      res.status(500).json({ ok: false, error: e?.message || String(e) });
-    }
-  });
-
-  // ---------------------------------------------------------------------------
-  // POST /api/carteira/anotacoes — grava um registro no cliente.
-  // ---------------------------------------------------------------------------
-  app.post("/api/carteira/anotacoes", authenticateUser, async (req: Request, res: Response) => {
-    try {
-      await ensureAnotacoes();
-      const esc = escopoDoUsuario(req);
-      const b: any = req.body || {};
-      const chave = String(b.chave || "").trim();
-      const texto = String(b.texto || "").trim();
-      if (!chave) return res.status(400).json({ ok: false, error: "Cliente não informado." });
-      if (!texto) return res.status(400).json({ ok: false, error: "Escreva alguma coisa antes de salvar." });
-      if (texto.length > 4000) return res.status(400).json({ ok: false, error: "Texto muito longo (máx. 4000)." });
-      // Vendedor so anota em cliente da carteira dele.
-      if (esc.restrito) {
-        const ok = (await db.execute(sql.raw(
-          `SELECT 1 FROM (${sqlDocsDaCarteira(esc.idsCarteira)}) t WHERE t.doc = ${sql.raw("'" + chave.replace(/'/g, "''") + "'")} LIMIT 1`
-        ))).rows as any[];
-        if (!ok.length) return res.status(403).json({ ok: false, error: "Esse cliente não está na sua carteira." });
-      }
-      await db.execute(sql`
-        INSERT INTO carteira_anotacoes (chave, customer_id, cliente_nome, balde, texto, autor_id, autor_nome)
-        VALUES (${chave}, ${b.customerId || null}, ${String(b.clienteNome || "").slice(0, 200)},
-                ${String(b.balde || "").slice(0, 40)}, ${texto}, ${esc.usuario?.id || null}, ${esc.nome || "—"})`);
-      res.json({ ok: true });
-    } catch (e: any) {
-      console.error("[carteira-anotacoes POST]", e);
-      res.status(500).json({ ok: false, error: e?.message || String(e) });
-    }
-  });
-
-
-  // ---------------------------------------------------------------------------
-  // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
-  // ---------------------------------------------------------------------------
-  app.get("/api/reports/gestao-carteiras", authenticateUser, async (req: Request, res: Response) => {
-    try {
+// ── CALCULO DA CARTEIRA (fonte unica) ───────────────────────────────────────
+// Extraido do handler GET /api/reports/gestao-carteiras para ser reusado pelo
+// snapshot diario de CLASSE (ver runSnapshotClasses). Mesma logica -> mesmos numeros.
+export async function computeCarteiraClientes(opts: { inicio: string; fim: string; restrito?: boolean; idsCarteira?: string[] }): Promise<{ clientes: any[]; meses: string[]; serieRec: any[]; serieTit: any[]; debitoTotal: number }> {
+      const inicio = opts.inicio;
+      const fim = opts.fim;
+      const restrito = !!opts.restrito;
+      const idsCarteira = (opts.idsCarteira && opts.idsCarteira.length) ? opts.idsCarteira : (restrito ? ["__sem_carteira__"] : []);
       const hoje = mesAtual();
-      const inicio = normMes(req.query.inicio, "2025-01");
-      const fimBruto = normMes(req.query.fim, hoje);
-      const fim = fimBruto > hoje ? hoje : fimBruto;
       const iniDate = `${inicio}-01`;
       const fimDateExcl = proximoMes1(fim);
       const meses = listaMeses(inicio, fim);
-
       const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
-
-      // ── ESCOPO DE QUEM ESTA OLHANDO ─────────────────────────────────────────
-      // Vendedor e telemarketing enxergam SO a propria carteira. O corte e feito
-      // aqui no servidor (nao na tela): quem chamar o endpoint na mao tambem so
-      // recebe os clientes dele. Os demais papeis continuam vendo tudo.
-      const usuario: any = (req as any).currentUser || (req as any).user || null;
-      const papel = String(usuario?.role || "");
-      const restrito = ["vendedor", "telemarketing"].includes(papel);
-      const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
-      const idsCarteira: string[] = [];
-      if (restrito) {
-        const add = (x: any) => { const v = limpaId(x); if (v && !idsCarteira.includes(v)) idsCarteira.push(v); };
-        add(usuario?.id);
-        const codigos: any[] = [];
-        if (usuario?.omieVendorCode) codigos.push(usuario.omieVendorCode);
-        const mapaCodigos = usuario?.omieVendorCodes;
-        if (mapaCodigos && typeof mapaCodigos === "object") {
-          for (const v of Object.values(mapaCodigos)) if (v) codigos.push(v);
-        }
-        for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
-        // Vendedor sem nenhum vinculo nao pode cair no "sem filtro" — fica vazio.
-        if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
-      }
-      const nomeUsuario = [usuario?.firstName, usuario?.lastName].filter(Boolean).join(" ").trim() || usuario?.email || "";
-
       // CTE com os documentos da carteira do usuario (so quando ha restricao).
       const CTE_CARTEIRA = restrito
         ? `minha_carteira AS (
@@ -893,6 +801,137 @@ export function registerCarteira(app: Express) {
           porMes: Object.fromEntries(Object.entries(porMes).map(([m, v]) => [m, Number(v) || 0])),
         };
       });
+      return { clientes, meses, serieRec, serieTit, debitoTotal };
+}
+
+// ── SNAPSHOT DIARIO DA CLASSE (A+..D-) ──────────────────────────────────────
+// Calcula a classe de TODOS os clientes (mesma fonte da tela da Carteira) e grava
+// em customer_classe, para leitura barata na entrada do pipeline (a estrela de
+// prioridade liga sozinha p/ A+ e B+). Idempotente; cria a tabela se faltar.
+export async function runSnapshotClasses(): Promise<{ total: number; aMais: number; bMais: number }> {
+  await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS customer_classe (
+    customer_id varchar PRIMARY KEY,
+    classe varchar NOT NULL,
+    computed_at timestamptz NOT NULL DEFAULT now()
+  )`));
+  const hoje = mesAtual();
+  const { clientes } = await computeCarteiraClientes({ inicio: "2025-01", fim: hoje, restrito: false });
+  const rows = (clientes || [])
+    .filter((c: any) => c && c.customerId && c.classe)
+    .map((c: any) => ({ id: String(c.customerId), classe: String(c.classe) }));
+  let aMais = 0, bMais = 0;
+  for (const r of rows) { if (r.classe === "A+") aMais++; else if (r.classe === "B+") bMais++; }
+  const esc = (s: string) => "'" + String(s).replace(/'/g, "''") + "'";
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const vals = chunk.map((r) => `(${esc(r.id)}, ${esc(r.classe)}, now())`).join(",");
+    if (!vals) continue;
+    await db.execute(sql.raw(`INSERT INTO customer_classe (customer_id, classe, computed_at) VALUES ${vals}
+      ON CONFLICT (customer_id) DO UPDATE SET classe = EXCLUDED.classe, computed_at = EXCLUDED.computed_at`));
+  }
+  console.log(`⭐ [SNAPSHOT-CLASSE] ${rows.length} clientes (A+=${aMais}, B+=${bMais}).`);
+  return { total: rows.length, aMais, bMais };
+}
+
+export function registerCarteira(app: Express) {
+  // Aba "Agenda da carteira" (tabela dinamica de atendimentos por dia da semana).
+  registerAgendaCarteira(app);
+  // Aba "Rede de Cliente" (grupos de filiais / mesma gestao, consolidados).
+  registerRedesClientes(app);
+
+  // ---------------------------------------------------------------------------
+  // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
+  // ---------------------------------------------------------------------------
+  app.get("/api/carteira/anotacoes", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureAnotacoes();
+      const esc = escopoDoUsuario(req);
+      const filtro = esc.restrito
+        ? ` WHERE a.chave IN (${sqlDocsDaCarteira(esc.idsCarteira)})`
+        : "";
+      const rows = (await db.execute(sql.raw(`
+        SELECT a.id, a.chave, a.cliente_nome, a.balde, a.texto, a.autor_nome,
+               to_char(a.created_at AT TIME ZONE 'America/Sao_Paulo','DD/MM/YYYY HH24:MI') AS quando,
+               a.created_at
+        FROM carteira_anotacoes a${filtro}
+        ORDER BY a.created_at DESC
+        LIMIT 5000`))).rows as any[];
+      res.json(rows.map((r) => ({
+        id: String(r.id), chave: String(r.chave), cliente: r.cliente_nome || "",
+        balde: r.balde || "", texto: String(r.texto || ""),
+        autor: r.autor_nome || "—", quando: r.quando || "",
+      })));
+    } catch (e: any) {
+      console.error("[carteira-anotacoes GET]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/carteira/anotacoes — grava um registro no cliente.
+  // ---------------------------------------------------------------------------
+  app.post("/api/carteira/anotacoes", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      await ensureAnotacoes();
+      const esc = escopoDoUsuario(req);
+      const b: any = req.body || {};
+      const chave = String(b.chave || "").trim();
+      const texto = String(b.texto || "").trim();
+      if (!chave) return res.status(400).json({ ok: false, error: "Cliente não informado." });
+      if (!texto) return res.status(400).json({ ok: false, error: "Escreva alguma coisa antes de salvar." });
+      if (texto.length > 4000) return res.status(400).json({ ok: false, error: "Texto muito longo (máx. 4000)." });
+      // Vendedor so anota em cliente da carteira dele.
+      if (esc.restrito) {
+        const ok = (await db.execute(sql.raw(
+          `SELECT 1 FROM (${sqlDocsDaCarteira(esc.idsCarteira)}) t WHERE t.doc = ${sql.raw("'" + chave.replace(/'/g, "''") + "'")} LIMIT 1`
+        ))).rows as any[];
+        if (!ok.length) return res.status(403).json({ ok: false, error: "Esse cliente não está na sua carteira." });
+      }
+      await db.execute(sql`
+        INSERT INTO carteira_anotacoes (chave, customer_id, cliente_nome, balde, texto, autor_id, autor_nome)
+        VALUES (${chave}, ${b.customerId || null}, ${String(b.clienteNome || "").slice(0, 200)},
+                ${String(b.balde || "").slice(0, 40)}, ${texto}, ${esc.usuario?.id || null}, ${esc.nome || "—"})`);
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("[carteira-anotacoes POST]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+
+  // ---------------------------------------------------------------------------
+  // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
+  // ---------------------------------------------------------------------------
+  app.get("/api/reports/gestao-carteiras", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const hoje = mesAtual();
+      const inicio = normMes(req.query.inicio, "2025-01");
+      const fimBruto = normMes(req.query.fim, hoje);
+      const fim = fimBruto > hoje ? hoje : fimBruto;
+      // ── ESCOPO DE QUEM ESTA OLHANDO ─────────────────────────────────────────
+      // Vendedor e telemarketing enxergam SO a propria carteira. O corte e feito
+      // aqui no servidor (nao na tela): quem chamar o endpoint na mao tambem so
+      // recebe os clientes dele. Os demais papeis continuam vendo tudo.
+      const usuario: any = (req as any).currentUser || (req as any).user || null;
+      const papel = String(usuario?.role || "");
+      const restrito = ["vendedor", "telemarketing"].includes(papel);
+      const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
+      const idsCarteira: string[] = [];
+      if (restrito) {
+        const add = (x: any) => { const v = limpaId(x); if (v && !idsCarteira.includes(v)) idsCarteira.push(v); };
+        add(usuario?.id);
+        const codigos: any[] = [];
+        if (usuario?.omieVendorCode) codigos.push(usuario.omieVendorCode);
+        const mapaCodigos = usuario?.omieVendorCodes;
+        if (mapaCodigos && typeof mapaCodigos === "object") {
+          for (const v of Object.values(mapaCodigos)) if (v) codigos.push(v);
+        }
+        for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
+        // Vendedor sem nenhum vinculo nao pode cair no "sem filtro" — fica vazio.
+        if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
+      }
+      const nomeUsuario = [usuario?.firstName, usuario?.lastName].filter(Boolean).join(" ").trim() || usuario?.email || "";
+      const { clientes, meses, serieRec, serieTit, debitoTotal } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
 
       const totalGeral = clientes.reduce((s, c) => s + c.total, 0);
 
