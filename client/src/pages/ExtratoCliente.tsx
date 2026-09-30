@@ -124,6 +124,8 @@ type Extrato = {
     valorFantasma?: number;
     duplicadasComBaixa?: number;
     valorDuplicadasComBaixa?: number;
+    notasTituloExcluido?: number;
+    valorTituloExcluido?: number;
   };
   linhas: Linha[];
   totalLinhas: number;
@@ -580,6 +582,13 @@ export default function ExtratoCliente() {
                 <div className="mt-2 text-[11px] text-red-700 dark:text-red-300">
                   ⚠ {r?.duplicadasComBaixa} título(s) com cara de duplicata <strong>têm baixa</strong> ({fmtBRL(r?.valorDuplicadasComBaixa)}
                   {" "}recebidos) e por isso continuam na lista. Confira se houve recebimento em duplicidade.
+                </div>
+              ) : null}
+              {(r?.notasTituloExcluido || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.notasTituloExcluido} nota(s) de {fmtBRL(r?.valorTituloExcluido)} ficaram <strong>fora do extrato</strong>: o
+                  título correspondente foi <strong>excluído do Contas a Receber</strong>. O pedido continua faturado, mas a nota
+                  não é recriada aqui — se a cobrança existe, o caminho é restaurar o título no financeiro.
                 </div>
               ) : null}
             </CardContent>
