@@ -10,6 +10,7 @@ import { useQuery, useMutation, queryClient, apiRequest } from "@/lib/queryClien
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
+import { QuarentenaTag } from "@/components/QuarentenaTag";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -299,6 +300,7 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
               />
             )}
             <span>{r.entityName || r.entityId}</span>
+            {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
@@ -525,6 +527,7 @@ function ResolvedCard({ r }: { r: any }) {
         <div>
           <div className="font-semibold flex items-center gap-1.5">
             <span>{r.entityName || r.entityId}</span>
+            {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">

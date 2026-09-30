@@ -6,6 +6,7 @@ import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { QuarentenaTag } from "@/components/QuarentenaTag";
 import { usePermissions } from "@/lib/permissions";
 
 const CARD_ATIVOS = "Clientes Ativos";
@@ -1490,6 +1491,7 @@ export default function ActiveCustomers() {
                                 </button>
                                 <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
                                   {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
+                                  <QuarentenaTag customerId={ac.customer?.id} date={(ac.customer as any)?.serviceStartDate} />
                                 </div>
                                 {(ac.customer as any)?.isColaborador && (
                                   <span className="text-[10px] font-normal italic text-slate-400 whitespace-nowrap" title="Colaborador — não entra em rota/agenda de visitas">colaborador</span>

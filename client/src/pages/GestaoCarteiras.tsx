@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { QuarentenaTag } from "@/components/QuarentenaTag";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1331,6 +1332,7 @@ export default function GestaoCarteiras() {
                                   onSalvo={recarregaAnotacoes}
                                 />
                                 {c.nome}
+                                <QuarentenaTag customerId={c.customerId || undefined} />
                                 <span className="block text-xs text-muted-foreground">
                                   {c.cidade ? cidadePadrao(c.cidade) : "sem cidade"}
                                   {balde === "debito" && c.situacao !== "ativo" ? ` · ${c.situacao}` : ""}
@@ -2065,6 +2067,7 @@ export default function GestaoCarteiras() {
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
                           {c.nome}
+                          <QuarentenaTag customerId={c.customerId || undefined} />
                           {/* Situacao da carteira, a mesma do gráfico de barras acima.
                               INATIVO = cadastro desativado (a empresa já disse que ele saiu).
                               PERDIDO = cadastro ativo, comprava com regularidade e parou —
@@ -2204,6 +2207,7 @@ export default function GestaoCarteiras() {
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
                           {c.nome}
+                          <QuarentenaTag customerId={c.customerId || undefined} />
                           {c.cidade ? <span className="block text-xs text-muted-foreground">{cidadePadrao(c.cidade)}</span> : null}
                         </TableCell>
                         <TableCell>

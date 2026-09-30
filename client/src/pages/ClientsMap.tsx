@@ -10,6 +10,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw, Copy, Check, Search } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
+import { QuarentenaTag } from "@/components/QuarentenaTag";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import GeocodeAllButton from "@/components/GeocodeAllButton";
@@ -363,7 +364,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
       <Popup>
         <div className="space-y-3 min-w-[220px]">
           <div className="flex items-center gap-2">
-            <h3 className="font-bold text-base">{nomePonto}</h3>
+            <h3 className="font-bold text-base">{nomePonto}{!ehLead && customer?.id && <QuarentenaTag customerId={String(customer.id)} />}</h3>
             <button
               type="button"
               onClick={() => aoCopiar(String(customer.id), nomePonto)}

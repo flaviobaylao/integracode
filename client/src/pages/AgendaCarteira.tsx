@@ -18,6 +18,7 @@ import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { QuarentenaTag } from "@/components/QuarentenaTag";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1057,6 +1058,7 @@ function EditorCliente(props: {
       <PopoverTrigger asChild>
         <button type="button" className="text-left hover:underline decoration-dotted" data-testid={`btn-editar-${item.id}`}>
           {item.nome}
+          {item.tipo === "cliente" && <QuarentenaTag customerId={item.id} />}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 space-y-3">
