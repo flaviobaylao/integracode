@@ -39,6 +39,29 @@ export type OpcoesExcel = {
   filtro?: boolean;
   /** Deixa a ultima linha em negrito (linha de "Total"). Padrao: false. */
   negritoUltimaLinha?: boolean;
+  /**
+   * Tamanho da fonte da planilha inteira, em pontos. Sem isto, o Excel usa o
+   * padrao dele (11) -- e e assim que sai toda exportacao antiga, de proposito.
+   * A largura das colunas acompanha: fonte maior pede coluna mais larga, senao
+   * o texto encosta na borda e o numero vira "####".
+   */
+  fonte?: number;
+  /**
+   * Centraliza o CORPO da planilha. O cabecalho ja e centralizado sempre.
+   * "texto"  -> centraliza tudo menos as colunas de DINHEIRO, que continuam a
+   *             direita (e assim que a virgula alinha e da para comparar valor
+   *             com valor de bate-pronto). Contador -- "#", "Meses com compra",
+   *             "Parado ha (meses)" -- e' rotulo, nao valor: fica centralizado;
+   * "tudo"   -> centraliza inclusive dinheiro;
+   * false    -> o padrao antigo (nada centralizado).
+   */
+  centralizar?: "texto" | "tudo" | false;
+  /**
+   * Teto da largura de coluna, em caracteres. Padrao: 46 -- o nome muito longo
+   * e' cortado para a planilha nao virar uma faixa. Quem precisa que o texto
+   * caiba inteiro na celula (lista de cliente, por exemplo) sobe este teto.
+   */
+  larguraMaxima?: number;
 };
 
 export type AbaExcel = { nome: string; linhas: Record<string, any>[]; opcoes?: OpcoesExcel };
@@ -154,10 +177,28 @@ export function montarPlanilha(linhas: Record<string, any>[], opcoes?: OpcoesExc
   const ref = XLSX.utils.decode_range(ws["!ref"] || "A1");
   const ultimaLinha = Math.max(ref.e.r, 0);
 
+  // Fonte: so' entra no estilo quando pedida, para nao mexer no visual de
+  // nenhuma exportacao que ja existia.
+  const fonte = opcoes?.fonte && opcoes.fonte > 0 ? { sz: opcoes.fonte } : null;
+  const centralizar = opcoes?.centralizar || false;
+  // Quanto a largura cresce com a fonte: a largura do Excel e contada em
+  // caracteres da fonte padrao (11pt), entao fonte 12 pede ~9% a mais.
+  const fatorLargura = fonte ? Math.max(1, fonte.sz / 11) : 1;
+  const larguraMax = Math.max(LARGURA_MIN, opcoes?.larguraMaxima || LARGURA_MAX);
+
   const estiloCabecalho = {
-    font: { bold: true },
+    font: { bold: true, ...(fonte || {}) },
     alignment: { horizontal: "center", vertical: "center", wrapText: true },
   } as any;
+
+  // So' o DINHEIRO fica a direita: e' o unico caso em que alinhar a virgula
+  // muda a leitura (comparar valor com valor de cima para baixo). Contador e
+  // data sao rotulo e ficam centralizados como o resto.
+  const alinhamentoDoCorpo = (f: FormatoColuna) => {
+    if (!centralizar) return { vertical: "center" };
+    if (centralizar === "texto" && f === "moeda") return { vertical: "center", horizontal: "right" };
+    return { vertical: "center", horizontal: "center" };
+  };
 
   const larguras: number[] = [];
   cols.forEach((titulo, c) => {
@@ -172,19 +213,23 @@ export function montarPlanilha(linhas: Record<string, any>[], opcoes?: OpcoesExc
       const bruto = (dados[r - 1] || {})[titulo];
       maiorDado = Math.max(maiorDado, larguraDoValor(cel ? cel.v : bruto, formatos[c]));
       if (!cel) continue;
-      cel.s = { alignment: { vertical: "center" }, ...(numFmt ? { numFmt } : {}) } as any;
+      cel.s = {
+        alignment: alinhamentoDoCorpo(formatos[c]),
+        ...(fonte ? { font: { ...fonte } } : {}),
+        ...(numFmt ? { numFmt } : {}),
+      } as any;
       if (numFmt) cel.z = numFmt;
     }
-    larguras[c] = Math.min(
-      LARGURA_MAX,
-      Math.max(LARGURA_MIN, maiorPalavra(titulo) + 2, Math.min(maiorDado + 2, LARGURA_MAX)),
-    );
+    const bruta = Math.max(LARGURA_MIN, maiorPalavra(titulo) + 2, Math.min(maiorDado + 2, larguraMax));
+    // Centralizado o texto respira nas duas pontas, entao pede 2 caracteres a mais.
+    const folga = centralizar ? 2 : 0;
+    larguras[c] = Math.min(larguraMax * fatorLargura + folga, Math.ceil(bruta * fatorLargura) + folga);
   });
 
   if (opcoes?.negritoUltimaLinha && ultimaLinha >= 1) {
     for (let c = 0; c < cols.length; c++) {
       const cel = ws[XLSX.utils.encode_cell({ r: ultimaLinha, c })];
-      if (cel) cel.s = { ...(cel.s || {}), font: { ...((cel.s || {}).font || {}), bold: true } };
+      if (cel) cel.s = { ...(cel.s || {}), font: { ...(fonte || {}), ...((cel.s || {}).font || {}), bold: true } };
     }
   }
 
@@ -195,7 +240,8 @@ export function montarPlanilha(linhas: Record<string, any>[], opcoes?: OpcoesExc
     const porLinha = Math.max(1, larguras[c] - 1);
     return Math.max(m, Math.min(3, Math.ceil(String(titulo || "").length / porLinha)));
   }, 1);
-  ws["!rows"] = [{ hpt: Math.max(30, 14 * linhasCabecalho + 8) }];
+  const alturaLinha = fonte ? Math.max(14, fonte.sz * 1.3) : 14;
+  ws["!rows"] = [{ hpt: Math.max(30, alturaLinha * linhasCabecalho + 8) }];
 
   if (opcoes?.filtro && cols.length > 0) ws["!autofilter"] = { ref: ws["!ref"] as string };
 
