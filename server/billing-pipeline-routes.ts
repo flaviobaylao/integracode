@@ -1812,6 +1812,32 @@ export function registerBillingPipelineRoutes(app: Express) {
     res.json({ active: internalBillingModeActive, activatedBy: internalBillingActivatedBy });
   });
 
+  // Rascunhos para o painel do pipeline (agrupados por vendedor no front).
+  // ACESSO: admin (role) + 3 admins + Lanucy veem TODOS; vendedor ve so os seus.
+  // Registrada ANTES de /:id para nao ser capturada como :id='drafts'.
+  app.get('/api/billing-pipeline/drafts', authenticateUser, isPipelineViewer, async (req: any, res) => {
+    try {
+      const user = req.currentUser || req.user;
+      const seeAll = canEditPedidoSeller(user);
+      const cards = seeAll
+        ? await storage.getSalesCards(undefined, { status: 'draft' })
+        : await storage.getSalesCards(user.id, { status: 'draft' });
+      const drafts = (cards || []).map((c: any) => ({
+        id: c.id,
+        customerName: c.customer?.fantasyName || c.customer?.name || 'Cliente',
+        sellerId: c.sellerId || c.seller?.id || null,
+        sellerName: c.seller ? `${c.seller.firstName || ''} ${c.seller.lastName || ''}`.trim() || 'Sem vendedor' : 'Sem vendedor',
+        saleValue: c.saleValue || null,
+        operationType: c.operationType || 'venda',
+        updatedAt: c.updatedAt || c.createdAt || null,
+      }));
+      res.json({ seeAll, total: drafts.length, drafts });
+    } catch (error) {
+      console.error('Error fetching pipeline drafts:', error);
+      res.status(500).json({ message: 'Failed to fetch drafts' });
+    }
+  });
+
   // FLAVIO-ONLY: Toggle internal billing mode ON/OFF
   app.post('/api/billing-pipeline/mode', authenticateUser, isFlavioOnly, async (req: any, res) => {
     const { active } = req.body;
