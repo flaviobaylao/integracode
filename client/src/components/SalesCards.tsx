@@ -37,7 +37,15 @@ import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
   const [, navigate] = useLocation();
-  const [statusFilter, setStatusFilter] = useState('all');
+  // Deep-link: /?status=draft abre a tela ja filtrada em rascunhos (vindo do pipeline).
+  const [statusFilter, setStatusFilter] = useState(() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      return s ? s : 'all';
+    } catch {
+      return 'all';
+    }
+  });
   const [routeFilter, setRouteFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
