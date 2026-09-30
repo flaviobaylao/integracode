@@ -25,7 +25,16 @@ import { useState } from "react";
 
 export default function Home() {
   const { user, isLoading } = useAuth();
-  const [activeView, setActiveView] = useState('dashboard');
+  // Deep-link: /?view=sales-cards abre direto a tela de Cartões (usado pelo painel
+  // de Rascunhos do pipeline). Sem o parametro, abre o dashboard normal.
+  const [activeView, setActiveView] = useState(() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get('view');
+      return v ? v : 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
 
   if (isLoading) {
     return (
