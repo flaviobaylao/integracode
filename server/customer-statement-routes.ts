@@ -221,6 +221,42 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const receivables: any[] = recRes?.rows || recRes || [];
       const recIds = receivables.map((r) => r.id);
 
+      // 1b) TÍTULOS EXCLUÍDOS — a NF não pode voltar pela porta dos fundos
+      // ------------------------------------------------------------------
+      // Caso real (ESQUINAO CONVENIENCIA, 30/set/2026): os títulos NF-104147 e
+      // NF-104158 foram excluídos à mão em 23/jul. Sumiram do Contas a Receber —
+      // mas as etapas 3 (NF-e) e 4 (pedido faturado), que existem para fechar
+      // buracos do histórico, viram "NF sem título no financeiro" e RECRIARAM as
+      // duas notas a partir do card do pipeline, com vencimento novo e situação
+      // Vencida. R$ 504,00 de dívida inexistente no faturado, no vencido e no
+      // saldo devedor, divergindo da tela de títulos.
+      //
+      // Decisão do Flavio (30/set/2026): se a NF JÁ TEVE título e ele foi
+      // excluído, o Extrato não recria a nota. Buraco de histórico continua
+      // sendo fechado normalmente para NF que NUNCA teve título.
+      //
+      // Só vale quando TODOS os títulos daquela NF estão excluídos: se sobrou um
+      // vivo, ele entra pelo caminho normal e a NF já está em `nfSeen`.
+      const excRes: any = await db.execute(sql`
+        SELECT r.id, r.title_number, r.notes, r.amount, r.billing_pipeline_id, r.deleted_at
+        FROM receivables r
+        WHERE r.deleted_at IS NOT NULL
+          AND (r.customer_id = ${customerId} ${docCond})
+      `);
+      const excluidos: any[] = excRes?.rows || excRes || [];
+      const nfExcluidas = new Set<string>();
+      const bpExcluidos = new Set<string>();
+      const valorPorNfExcluida = new Map<string, number>();
+      for (const r of excluidos) {
+        const nf = nfKeyOf(noteVal(r.notes, "nf")) || nfKeyOf(r.title_number);
+        if (nf) {
+          nfExcluidas.add(nf);
+          valorPorNfExcluida.set(nf, (valorPorNfExcluida.get(nf) || 0) + num(r.amount));
+        }
+        if (r.billing_pipeline_id) bpExcluidos.add(String(r.billing_pipeline_id));
+      }
+      const notasTituloExcluido: Array<{ nf: string; valor: number }> = [];
+
       // 2) Baixas com data real
       let payments: any[] = [];
       if (recIds.length) {
@@ -299,6 +335,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       }
 
       // ── Monta as notas (agrupando parcelas do mesmo número de NF) ───────────
+      // (o log das notas barradas por título excluído sai depois da etapa 4)
       type NotaAgg = {
         key: string;
         nf: string;
@@ -387,6 +424,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
           continue;
         }
         if (nf && nfSeen.has(nf)) continue; // já veio pelo financeiro
+        if (nf && nfExcluidas.has(nf)) { // título excluído: não ressuscita (ver 1b)
+          notasTituloExcluido.push({ nf, valor: valorPorNfExcluida.get(nf) || num(f.total_invoice) });
+          nfSeen.add(nf);
+          continue;
+        }
         const key = nf ? `NF:${nf}` : `NFE:${f.id}`;
         if (notas.has(key)) continue;
         notas.set(key, {
@@ -421,6 +463,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
       for (const b of bpRows) {
         const nf = nfKeyOf(b.invoice_number);
         if (!nf || nfSeen.has(nf)) continue;
+        if (nfExcluidas.has(nf) || bpExcluidos.has(String(b.id))) { // título excluído (ver 1b)
+          notasTituloExcluido.push({ nf, valor: valorPorNfExcluida.get(nf) || num(b.sale_value) });
+          nfSeen.add(nf);
+          continue;
+        }
         const key = `NF:${nf}`;
         if (notas.has(key)) continue;
         notas.set(key, {
@@ -439,6 +486,14 @@ export function registerCustomerStatementRoutes(app: Express): void {
           bpId: b.id,
         });
         nfSeen.add(nf);
+      }
+
+      if (notasTituloExcluido.length) {
+        console.log(
+          `[extrato-cliente] ${notasTituloExcluido.length} nota(s) NAO recriada(s) p/ cliente ${customerId} ` +
+            `(titulo excluido do financeiro): ` +
+            notasTituloExcluido.map((x) => `NF ${x.nf}=${x.valor}`).join(", ")
+        );
       }
 
       // ── Produtos faturados por nota ─────────────────────────────────────────
@@ -828,6 +883,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
         duplicadasComBaixa: duplicadasComBaixa.length,
         valorDuplicadasComBaixa:
           Math.round(duplicadasComBaixa.reduce((s2, r) => s2 + num(r.amount_paid), 0) * 100) / 100,
+        // NF cujo título foi excluído do financeiro: não é recriada a partir do
+        // pedido nem da NF-e (ver 1b).
+        notasTituloExcluido: notasTituloExcluido.length,
+        valorTituloExcluido:
+          Math.round(notasTituloExcluido.reduce((s2, x) => s2 + x.valor, 0) * 100) / 100,
       };
 
       res.json({
