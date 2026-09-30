@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
-import { QuarentenaTag } from "@/components/QuarentenaTag";
+import { QuarentenaTag, useQuarentenaMap } from "@/components/QuarentenaTag";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -397,6 +397,11 @@ export default function GestaoCarteiras() {
   const filtrarVend = nomesSel.size > 0;
   // Filtro PJ / PF: vazio = todos. Recorta a carteira inteira (KPIs, ABC, faixas, listas).
   const [tipoPessoa, setTipoPessoa] = useState<string>("");
+  // Filtro de quarentena (Sim = cliente com Data de Início do Fornecimento no
+  // futuro). Como a carteira é agregada e não traz o serviceStartDate por linha,
+  // olhamos o customerId no mapa de quarentena (cache de /api/customers).
+  const [quarentenaSel, setQuarentenaSel] = useState<string>(""); // "", "sim", "nao"
+  const qMap = useQuarentenaMap();
   // Como o filtro aparece em varias frases: 1 vendedor mostra o nome, mais de um
   // vira "nas N carteiras selecionadas".
   const rotuloCarteira = !filtrarVend
@@ -423,7 +428,8 @@ export default function GestaoCarteiras() {
 
   const filtrarTipo = tipoPessoa !== "";
   const filtrarCidade = cidades.length > 0;
-  const filtrando = filtrarVend || filtrarTipo || filtrarCidade;
+  const filtrarQuarentena = quarentenaSel !== "";
+  const filtrando = filtrarVend || filtrarTipo || filtrarCidade || filtrarQuarentena;
   const clientes = useMemo(() => {
     let out = filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos;
     if (filtrarTipo) out = out.filter((c) => c.tipo === tipoPessoa);
@@ -431,8 +437,14 @@ export default function GestaoCarteiras() {
       const sel = new Set(cidades);
       out = out.filter((c) => sel.has(cidadePadrao(c.cidade) || "(sem cidade)"));
     }
+    if (filtrarQuarentena) {
+      out = out.filter((c) => {
+        const emQ = !!c.customerId && qMap.has(String(c.customerId));
+        return quarentenaSel === "sim" ? emQ : !emQ;
+      });
+    }
     return out;
-  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa, filtrarCidade, cidades, cidadePadrao]);
+  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa, filtrarCidade, cidades, cidadePadrao, filtrarQuarentena, quarentenaSel, qMap]);
 
   /** Complemento de frase quando há cidade escolhida. */
   const rotuloCidade = !filtrarCidade
@@ -1114,6 +1126,20 @@ export default function GestaoCarteiras() {
                 <SelectItem value="PJ">Somente PJ</SelectItem>
                 <SelectItem value="PF">Somente PF</SelectItem>
                 <SelectItem value="Não identificado">Não identificado</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {/* Quarentena: Sim = Data de Início do Fornecimento no futuro (mesmo critério da marca). */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Quarentena</label>
+            <Select value={quarentenaSel || "todos"} onValueChange={(v) => setQuarentenaSel(v === "todos" ? "" : v)}>
+              <SelectTrigger className="w-[160px]" data-testid="select-quarentena">
+                <SelectValue placeholder="Quarentena" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="sim">Em quarentena</SelectItem>
+                <SelectItem value="nao">Fora de quarentena</SelectItem>
               </SelectContent>
             </Select>
           </div>
