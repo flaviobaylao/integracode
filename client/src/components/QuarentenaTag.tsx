@@ -41,6 +41,17 @@ function fmtBR(v: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : "";
 }
 
+/**
+ * Mapa id-do-cliente → data de início (ISO) apenas dos clientes EM QUARENTENA
+ * (serviceStartDate no futuro). Reaproveita o cache de ['/api/customers'].
+ * Use em telas que só têm o customerId por linha (ex.: Gestão de Carteiras)
+ * para filtrar/rotular por quarentena. Ex.: `qMap.has(String(c.customerId))`.
+ */
+export function useQuarentenaMap(): Map<string, string> {
+  const { data } = useQuery<any[]>({ queryKey: ["/api/customers"] });
+  return quarentenaMap(data);
+}
+
 export function QuarentenaTag({
   customerId,
   date,
