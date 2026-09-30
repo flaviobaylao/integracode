@@ -525,6 +525,7 @@ export default function GestaoCarteiras() {
     if (!ordSitCol) return listaSituacao;
     const valor = (c: Cliente) => {
       if (ordSitCol === "nome") return (c.nome || "").toLocaleLowerCase("pt-BR");
+      if (ordSitCol === "vendedor") return (c.vendedor || "").toLocaleLowerCase("pt-BR");
       if (ordSitCol === "valor") return balde === "debito" ? c.debito || 0 : c.potencialMes || 0;
       return c.mesesSemComprar >= 99 ? -1 : c.mesesSemComprar; // "parado há"
     };
@@ -984,6 +985,38 @@ export default function GestaoCarteiras() {
     );
   };
 
+  // ── EXPORTAR O BALDE ABERTO ────────────────────────────────────────────────
+  // Sai a lista INTEIRA do balde, nao os 200 que cabem na tela. O arquivo
+  // carrega o recorte no nome (balde + periodo + vendedor), porque quem recebe
+  // por e-mail nao ve os filtros que estavam na tela.
+  const exportarSituacao = () => {
+    const rotulo = balde === "inativos" ? "Inativos" : balde === "perdidos" ? "Perdidos" : "Com débito";
+    const linhas = listaSituacaoOrdenada.map((c, i) => ({
+      "#": i + 1,
+      Cliente: c.nome,
+      Vendedor: c.vendedor,
+      "CPF/CNPJ": c.doc || "",
+      Cidade: cidadePadrao(c.cidade),
+      Situação: c.situacao,
+      Classe: c.classe || "",
+      "Potencial/mês": Number((c.potencialMes || 0).toFixed(2)),
+      "Débito vencido": Number((c.debito || 0).toFixed(2)),
+      "Parado há (meses)": c.mesesSemComprar >= 99 ? "" : c.mesesSemComprar,
+      "Última compra": c.ultimaCompra || "",
+      "Meses com compra": c.mesesComCompra,
+      "Faturamento no período": Number((c.total || 0).toFixed(2)),
+    }));
+    exportToExcel(linhas, `clientes-por-situacao_${balde}_${inicio}_a_${fim}${filtrarVend ? `_${rotuloCarteira.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : ""}`, {
+      aba: rotulo.slice(0, 31),
+      fonte: 12,
+      centralizar: "texto",
+      // Razao social de cliente passa de 50 caracteres com folga; no teto
+      // padrao (46) o nome sai cortado dentro da propria celula.
+      larguraMaxima: 60,
+      filtro: true,
+    });
+  };
+
   const varPct = kpis?.varPct;
 
   return (
@@ -1123,6 +1156,15 @@ export default function GestaoCarteiras() {
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {/* So' na lista: na visao de barras nao ha lista para levar. */}
+                    {visao === "clientes" ? (
+                      <Button size="sm" variant="outline" onClick={exportarSituacao}
+                        disabled={listaSituacao.length === 0}
+                        title={`Baixar os ${NUM(listaSituacao.length)} clientes deste balde`}
+                        data-testid="button-export-situacao">
+                        <Download className="h-4 w-4 mr-1.5" />Exportar Excel
+                      </Button>
+                    ) : null}
                     <Button size="sm" variant={visao === "situacao" ? "default" : "outline"} onClick={() => setVisao("situacao")} data-testid="button-situacao">Situação</Button>
                     <Button size="sm" variant={visao === "clientes" ? "default" : "outline"} onClick={() => setVisao("clientes")} data-testid="button-lista-situacao">Clientes</Button>
                     <Popover>
@@ -1197,8 +1239,9 @@ export default function GestaoCarteiras() {
                             </ul>
                             <p className="text-muted-foreground">
                               Um cliente pode aparecer em "com débito" e também em inativos ou perdidos — os dois primeiros
-                              baldes é que são exclusivos entre si. O Exportar Excel lá em cima leva situação, potencial e
-                              débito de todos os clientes.
+                              baldes é que são exclusivos entre si. O Exportar Excel deste card leva o balde aberto,
+                              cliente a cliente, com vendedor, potencial e débito; o de cima, no topo da tela, leva a
+                              carteira inteira.
                             </p>
                           </>
                         )}
@@ -1270,6 +1313,7 @@ export default function GestaoCarteiras() {
                           <TableRow>
                             <TableHead className="w-8">#</TableHead>
                             {thSituacao("nome", "Cliente")}
+                            {thSituacao("vendedor", "Vendedor", "w-32 whitespace-nowrap")}
                             {thSituacao("valor", balde === "debito" ? "Vencido em aberto" : "Potencial/mês", "text-right whitespace-nowrap", true)}
                             {thSituacao("parado", "Parado há", "text-right w-20 whitespace-nowrap", true)}
                           </TableRow>
@@ -1288,8 +1332,16 @@ export default function GestaoCarteiras() {
                                 />
                                 {c.nome}
                                 <span className="block text-xs text-muted-foreground">
-                                  {c.vendedor}{c.cidade ? ` · ${cidadePadrao(c.cidade)}` : ""}
+                                  {c.cidade ? cidadePadrao(c.cidade) : "sem cidade"}
                                   {balde === "debito" && c.situacao !== "ativo" ? ` · ${c.situacao}` : ""}
+                                </span>
+                              </TableCell>
+                              {/* Vendedor em coluna propria: da para ordenar por
+                                  ele e ver de quem e' cada cliente parado sem
+                                  precisar ler linha por linha. */}
+                              <TableCell className="text-sm leading-tight">
+                                <span className={c.vendedor === "Sem vendedor" ? "text-muted-foreground italic" : ""}>
+                                  {c.vendedor}
                                 </span>
                               </TableCell>
                               <TableCell className="text-right font-semibold whitespace-nowrap">
@@ -1301,7 +1353,7 @@ export default function GestaoCarteiras() {
                             </TableRow>
                           ))}
                           {listaSituacao.length === 0 ? (
-                            <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">
+                            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">
                               Nenhum cliente neste balde no recorte atual.
                             </TableCell></TableRow>
                           ) : null}
@@ -1312,7 +1364,7 @@ export default function GestaoCarteiras() {
                       {listaSituacao.length > 200
                         ? `Mostrando os 200 maiores de ${NUM(listaSituacao.length)} clientes.`
                         : `${NUM(listaSituacao.length)} clientes neste balde.`}
-                      {" "}Use o Exportar Excel para a lista completa com situação, potencial e débito.
+                      {" "}O Exportar Excel aqui do card leva a lista completa deste balde, com vendedor, potencial e débito.
                     </p>
                   </>
                 )}
