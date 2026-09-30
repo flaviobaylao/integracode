@@ -1175,8 +1175,10 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
           deliveryTimeSlots: deliveryTimeSlots,
           customerLatitude: customerLatitude || null,
           customerLongitude: customerLongitude || null,
-          boletoDays: boletoDays
-          // NÃO enviamos 'status' aqui, então o card mantém status atual (in_progress)
+          boletoDays: boletoDays,
+          // "Salvar e Sair" grava o pedido como RASCUNHO para finalizar depois:
+          // aparece no painel de Rascunhos (contador/selo/Retomar) na tela de Cartões.
+          status: 'draft'
         }
       });
 
@@ -1184,8 +1186,8 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
       
       // Mostrar feedback de sucesso ao usuário
       toast({
-        title: "✅ Produtos Salvos!",
-        description: `${products.length} produto(s) salvos. Você pode continuar editando ou voltar depois para finalizar.`,
+        title: "✅ Rascunho salvo!",
+        description: `${products.length} produto(s) salvos como rascunho. O pedido fica em "Rascunhos" na tela de Cartões para você retomar depois.`,
         duration: 4000,
       });
       
@@ -1220,7 +1222,9 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
 
     try {
       // Buscar visita relacionada ao card
-      const visitResponse = await fetch(`/api/visit-agenda?salesCardId=${card.id}`, {
+      // visitStatus= (vazio) desliga o filtro padrao 'pending' no servidor, para
+      // encontrar a visita mesmo apos o check-in (quando o status ja mudou).
+      const visitResponse = await fetch(`/api/visit-agenda?salesCardId=${card.id}&visitStatus=`, {
         credentials: 'include'
       });
 
@@ -1228,8 +1232,12 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
         throw new Error('Erro ao buscar visita');
       }
 
-      const visits = await visitResponse.json();
-      
+      // A rota retorna { visits, pagination } (nao um array). Desempacotar com
+      // fallback para array por seguranca, senao visits[0] fica undefined e
+      // ler .actualCheckIn estoura ("Cannot read properties of undefined").
+      const visitData = await visitResponse.json();
+      const visits = Array.isArray(visitData) ? visitData : (visitData?.visits || []);
+
       if (!visits || visits.length === 0) {
         toast({
           title: "Aviso",
@@ -1957,7 +1965,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
             {/* Botão Salvar e Sair (sem finalizar) */}
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
               <p className="text-sm text-yellow-800 mb-2">
-                💡 <strong>Salvar e Sair:</strong> Os produtos serão salvos para finalizar depois. Você pode fazer check-out e voltar mais tarde.
+                💡 <strong>Salvar e Sair:</strong> O pedido é salvo como <strong>rascunho</strong> para finalizar depois (aparece em "Rascunhos" na tela de Cartões). Você pode fazer check-out e voltar mais tarde.
               </p>
               <Button 
                 variant="outline" 
