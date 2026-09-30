@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
-import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2, AlertCircle, Send, Clock, Loader2 } from "lucide-react";
+import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2, AlertCircle, Send, Clock, Loader2, FileText, PlayCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SalesCardModal from "./SalesCardModal";
@@ -57,6 +57,7 @@ export default function SalesCards() {
   const [showBulkImportDialog, setShowBulkImportDialog] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const [discardDraftCard, setDiscardDraftCard] = useState<SalesCardWithRelations | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -74,6 +75,14 @@ export default function SalesCards() {
     queryFn: () => fetch(`/api/sales-cards${buildQueryString()}`, { credentials: 'include' }).then(r => r.json()),
     retry: false,
   });
+
+  // Contagem de rascunhos independente do filtro ativo (para o atalho no topo)
+  const { data: draftCardsList } = useQuery({
+    queryKey: ['/api/sales-cards', 'drafts-only'],
+    queryFn: () => fetch('/api/sales-cards?status=draft', { credentials: 'include' }).then(r => r.json()),
+    retry: false,
+  });
+  const draftCount = Array.isArray(draftCardsList) ? draftCardsList.length : 0;
 
   const updateCardMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
@@ -110,6 +119,32 @@ export default function SalesCards() {
     onError: (error) => {
       toast({
         title: "Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Descartar rascunho: volta o card ao estado "pendente" (visita limpa), sem apagar a visita agendada
+  const discardDraftMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest('PUT', `/api/sales-cards/${id}`, {
+        status: 'pending',
+        products: [],
+        saleValue: '0',
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+      setDiscardDraftCard(null);
+      toast({
+        title: "Rascunho descartado",
+        description: "O card voltou para a lista de visitas pendentes.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao descartar rascunho",
         description: error.message,
         variant: "destructive",
       });
@@ -319,6 +354,8 @@ export default function SalesCards() {
         return 'bg-blue-100 text-blue-800';
       case 'no_sale':
         return 'bg-red-100 text-red-800';
+      case 'draft':
+        return 'bg-amber-100 text-amber-800 border border-amber-300';
       default:
         return 'bg-gray-100 text-gray-800';
     }
@@ -334,9 +371,19 @@ export default function SalesCards() {
         return 'Pendente';
       case 'no_sale':
         return 'Não Venda';
+      case 'draft':
+        return 'Rascunho';
       default:
         return status;
     }
+  };
+
+  // Rascunho parado há N dias (a partir de updatedAt)
+  const draftIdleDays = (card: SalesCardWithRelations): number => {
+    const ref = (card as any).updatedAt || (card as any).createdAt;
+    if (!ref) return 0;
+    const diffMs = Date.now() - new Date(ref).getTime();
+    return Math.max(0, Math.floor(diffMs / 86400000));
   };
 
   const filteredCards = salesCards?.filter((card: SalesCardWithRelations) => {
@@ -393,6 +440,20 @@ export default function SalesCards() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Cards de Venda</h2>
         <div className="flex gap-2">
+          {draftCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => setStatusFilter(statusFilter === 'draft' ? 'all' : 'draft')}
+              className={statusFilter === 'draft'
+                ? 'border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200'
+                : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'}
+              title="Pedidos salvos como rascunho, ainda não enviados"
+              data-testid="button-rascunhos"
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              Rascunhos ({draftCount})
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => setShowBulkImportDialog(true)}
@@ -476,6 +537,12 @@ export default function SalesCards() {
                         Presencial
                       </Badge>
                     )}
+                    {card.status === 'draft' && draftIdleDays(card) >= 2 && (
+                      <Badge className="bg-red-100 text-red-800 border border-red-300" title="Rascunho sem movimentação — retomar ou excluir">
+                        <Clock className="h-3 w-3 mr-1" />
+                        parado há {draftIdleDays(card)}d
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center space-x-2">
                     <Button
@@ -557,6 +624,34 @@ export default function SalesCards() {
                 </div>
                 
                 <div className="mt-6">
+                  {card.status === 'draft' && (
+                    <div className="flex items-center space-x-3">
+                      <Button
+                        className="flex-1 bg-honest-blue hover:bg-blue-700"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedCardForSale(card);
+                          setShowSaleModal(true);
+                        }}
+                        data-testid="button-retomar-rascunho"
+                      >
+                        <PlayCircle className="h-4 w-4 mr-2" />
+                        Retomar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="text-red-600 border-red-300 hover:bg-red-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDiscardDraftCard(card);
+                        }}
+                        data-testid="button-excluir-rascunho"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Descartar
+                      </Button>
+                    </div>
+                  )}
                   {card.status === 'pending' && (
                     <div className="flex items-center space-x-3">
                       <WhatsAppButton 
@@ -618,6 +713,39 @@ export default function SalesCards() {
           </div>
         )}
       </div>
+
+      {/* Descartar Rascunho Dialog */}
+      <Dialog open={!!discardDraftCard} onOpenChange={(o) => { if (!o) setDiscardDraftCard(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Descartar rascunho</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600">
+            O pedido salvo em rascunho de{' '}
+            <span className="font-semibold text-gray-800">
+              {discardDraftCard?.customer?.fantasyName || discardDraftCard?.customer?.name}
+            </span>{' '}
+            será descartado e o card voltará para a lista de visitas pendentes. Os itens digitados serão perdidos. A visita agendada não é apagada.
+          </p>
+          <div className="flex justify-end space-x-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDiscardDraftCard(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-red-500 hover:bg-red-600"
+              onClick={() => discardDraftCard && discardDraftMutation.mutate(discardDraftCard.id)}
+              disabled={discardDraftMutation.isPending}
+              data-testid="button-confirm-discard-draft"
+            >
+              {discardDraftMutation.isPending ? 'Descartando...' : 'Descartar rascunho'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Sale Dialog */}
       <Dialog open={actionDialog.type === 'sale'} onOpenChange={() => setActionDialog({ type: null, card: null })}>
