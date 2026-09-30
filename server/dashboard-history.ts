@@ -342,7 +342,7 @@ async function scopeSellerName(req: any): Promise<string> {
     if (impU && role === 'admin') { const SID2 = String(impU).replace(/[^a-zA-Z0-9_-]/g, ''); if (SID2) { const r2 = await rawq("SELECT COALESCE(role,'') AS role, NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome, is_active FROM users WHERE id='" + SID2 + "' LIMIT 1"); if (r2[0] && r2[0].is_active !== false) { role = String(r2[0].role || ''); row = r2[0]; } } }
     const imp = s.impersonateRole;
     if (imp && role === 'admin') role = String(imp);
-    if (role !== 'vendedor' && role !== 'telemarketing') return "";
+    if (role === 'admin') return "";
     return String(row.nome || '');
   } catch (e) { return ""; }
 }
