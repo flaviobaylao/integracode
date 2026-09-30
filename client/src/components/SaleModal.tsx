@@ -37,6 +37,20 @@ interface SaleModalProps {
   salesCard: SalesCard | null;
 }
 
+// Data/hora do último rascunho salvo, no formato pt-BR
+function fmtRascunhoSalvoEm(value: any): string {
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('pt-BR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -938,22 +952,29 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   Voltar
                 </Button>
                 
-                <Button 
-                  variant="outline"
-                  onClick={saveDraft}
-                  disabled={saveDraftMutation.isPending}
-                  className="bg-blue-50 hover:bg-blue-100 border-blue-200"
-                  data-testid="button-save-draft"
-                >
-                  {saveDraftMutation.isPending ? (
-                    <>Salvando...</>
-                  ) : (
-                    <>
-                      <FileText className="h-4 w-4 mr-2" />
-                      Salvar Pedido
-                    </>
+                <div className="flex flex-col">
+                  <Button
+                    variant="outline"
+                    onClick={saveDraft}
+                    disabled={saveDraftMutation.isPending}
+                    className="bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800"
+                    data-testid="button-save-draft"
+                  >
+                    {saveDraftMutation.isPending ? (
+                      <>Salvando...</>
+                    ) : (
+                      <>
+                        <FileText className="h-4 w-4 mr-2" />
+                        Salvar rascunho
+                      </>
+                    )}
+                  </Button>
+                  {(salesCard as any)?.status === 'draft' && (salesCard as any)?.updatedAt && (
+                    <span className="text-[11px] text-gray-500 mt-1 text-center">
+                      Último rascunho salvo em {fmtRascunhoSalvoEm((salesCard as any).updatedAt)}
+                    </span>
                   )}
-                </Button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
