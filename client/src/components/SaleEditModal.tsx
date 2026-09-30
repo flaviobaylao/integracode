@@ -1239,11 +1239,14 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
       const visits = Array.isArray(visitData) ? visitData : (visitData?.visits || []);
 
       if (!visits || visits.length === 0) {
+        // Sem visita na agenda (ex.: atendimento virtual ou card sem visita gerada):
+        // nao ha o que fazer check-out. O rascunho ja foi salvo acima, entao concluimos
+        // normalmente em vez de mostrar um erro vermelho.
         toast({
-          title: "Aviso",
-          description: "Nenhuma visita encontrada para este pedido.",
-          variant: "destructive"
+          title: "Rascunho salvo",
+          description: "Sem visita na agenda para check-out; o pedido ficou salvo em Rascunhos.",
         });
+        onClose();
         return;
       }
 
