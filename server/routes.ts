@@ -19528,6 +19528,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           s.region = 'GO';
         }
       }
+      // ODOMETRO (set/2026): leitura inicial/final do hodometro do carro por vendedor e
+      // por mes. Quando existe, ELA e a km do mes (km real rodada) e o pagamento usa ela;
+      // o calculado por check-in continua visivel ao lado. Persistido em config_global
+      // (mapa "sellerId|YYYY-MM" -> { inicial, final }).
+      let odoMap: Record<string, any> = {};
+      try {
+        const ro: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_odometro' LIMIT 1`);
+        const ov = ro?.rows?.[0]?.valor;
+        if (ov) { const pm = JSON.parse(String(ov)); if (pm && typeof pm === 'object') odoMap = pm; }
+      } catch (e) { /* sem odometro ainda */ }
+      for (const s2 of sellers) {
+        s2.odoByMonth = {};
+        for (const mo of months) {
+          const it = odoMap[`${s2.sellerId}|${mo}`];
+          if (!it) continue;
+          const ini = Number(it.inicial), fim = Number(it.final);
+          if (!isFinite(ini) || !isFinite(fim) || fim < ini) continue;
+          s2.odoByMonth[mo] = { inicial: ini, final: fim, km: Math.round((fim - ini) * 10) / 10 };
+        }
+      }
       let mesAtual = ''; let mesFechado = false;
       try {
         const ni: any = await db.execute(sql`
@@ -19669,6 +19689,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro ao salvar tarifa do vendedor:', error);
       res.status(500).json({ message: 'Erro ao salvar tarifa do vendedor', error: error?.message });
+    }
+  });
+
+  // Odometro do mes por vendedor (leitura inicial/final do hodometro do carro).
+  // Admin apenas. Persistido em config_global (mapa "sellerId|YYYY-MM"). Enviar
+  // inicial/final vazios REMOVE a leitura do mes (volta a valer o calculado).
+  app.post('/api/admin/km-vendedores/odometro', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const sellerId = String(req.body?.sellerId || '').trim();
+      const mes = String(req.body?.mes || '').trim();
+      if (!sellerId || !/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ message: 'sellerId e mes (YYYY-MM) sao obrigatorios' });
+      const _num = (v: any): number | null => { if (v === null || v === undefined || String(v).trim() === '') return null; const n = Number(String(v).replace(',', '.')); return isFinite(n) && n >= 0 ? n : NaN; };
+      const inicial = _num(req.body?.inicial), final = _num(req.body?.final);
+      if (Number.isNaN(inicial) || Number.isNaN(final)) return res.status(400).json({ message: 'Leituras invalidas' });
+      const limpar = inicial === null && final === null;
+      if (!limpar && (inicial === null || final === null)) return res.status(400).json({ message: 'Informe as duas leituras (inicial e final)' });
+      if (!limpar && (final as number) < (inicial as number)) return res.status(400).json({ message: 'A leitura final nao pode ser menor que a inicial' });
+      let map: Record<string, any> = {};
+      try {
+        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_odometro' LIMIT 1`);
+        const rv = rg?.rows?.[0]?.valor;
+        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') map = pm; }
+      } catch (e) { /* primeiro registro */ }
+      const chave = `${sellerId}|${mes}`;
+      if (limpar) delete map[chave]; else map[chave] = { inicial, final };
+      await db.execute(sql`
+        INSERT INTO config_global (chave, valor, descricao) VALUES ('km_odometro', ${JSON.stringify(map)}, 'Leitura do hodometro (inicial/final) por vendedor e mes')
+        ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()
+      `);
+      res.json({ success: true, sellerId, mes, inicial, final, km: limpar ? null : Math.round(((final as number) - (inicial as number)) * 10) / 10 });
+    } catch (error: any) {
+      console.error('Erro ao salvar odometro:', error);
+      res.status(500).json({ message: 'Erro ao salvar o odometro', error: error?.message });
     }
   });
 
