@@ -38,12 +38,14 @@ type SellerRow = {
   sellerRate?: number;
   region?: Region;
   // Odometro do carro por mes (leitura inicial/final). Quando existe, ELE e a km do mes.
-  odoByMonth?: Record<string, { inicial: number; final: number; km: number }>;
+  odoByMonth?: Record<string, { inicial: number; final: number; finalAuto: number; finalManual: number | null; automatica: boolean; km: number; kmCalc: number; inicialHerdada?: boolean }>;
 };
 type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; ratePerKmGO?: number; ratePerKmDF?: number; ratePerKmPSN?: number; mesAtual?: string; mesFechado?: boolean };
 // Histórico DIÁRIO: por vendedor, cada dia com a km separada (Normal / Intermunicipal / Prospecção).
 type DiaRow = { dia: string; total: number; intermunicipal: number; normal: number; prospeccao: number; mode: string };
-type DiarioSeller = { sellerId: string; sellerName: string; dias: DiaRow[]; total: number; totalInter: number; totalNormal: number; totalProsp: number };
+type DiarioSeller = { sellerId: string; sellerName: string; dias: DiaRow[]; total: number; totalInter: number; totalNormal: number; totalProsp: number;
+  odoByMonth?: Record<string, { inicial: number; final: number; finalAuto: number; finalManual: number | null; automatica: boolean; km: number; kmCalc: number; inicialHerdada?: boolean }>;
+  calcByMonth?: Record<string, number> };
 type DiarioResp = { sellers: DiarioSeller[]; geradoEm?: string };
 
 const MES_LABEL: Record<string, string> = { "01": "jan", "02": "fev", "03": "mar", "04": "abr", "05": "mai", "06": "jun", "07": "jul", "08": "ago", "09": "set", "10": "out", "11": "nov", "12": "dez" };
@@ -145,7 +147,7 @@ export default function KmVendedores() {
       const init: Record<string, { inicial: string; final: string }> = {};
       for (const sl of data.sellers || []) {
         const it = sl.odoByMonth?.[mesPagto];
-        init[sl.sellerId] = { inicial: it ? String(it.inicial) : "", final: it ? String(it.final) : "" };
+        init[sl.sellerId] = { inicial: it ? String(it.inicial) : "", final: it && it.finalManual !== null ? String(it.finalManual) : "" };
       }
       setOdo(init);
       setOdoLoaded(true);
@@ -160,13 +162,13 @@ export default function KmVendedores() {
 
   // Km do odometro no mes de pagamento (null quando nao ha leitura valida).
   const odoKm = (r: SellerRow): number | null => {
+    const it = r.odoByMonth?.[mesPagto];
     const v = odo[r.sellerId];
+    // Final informada na mao (conferencia com o painel do carro) manda no numero.
     if (v && v.inicial.trim() !== "" && v.final.trim() !== "") {
       const i = parseRate(v.inicial), f = parseRate(v.final);
       if (isFinite(i) && isFinite(f) && f >= i) return Math.round((f - i) * 10) / 10;
-      return null;
     }
-    const it = r.odoByMonth?.[mesPagto];
     return it ? it.km : null;
   };
   // Km que MANDA no pagamento do mes: odometro quando houver; senao o calculado.
@@ -177,12 +179,12 @@ export default function KmVendedores() {
     if (!isAdmin) return;
     const v = odo[r.sellerId] || { inicial: "", final: "" };
     const vazio = v.inicial.trim() === "" && v.final.trim() === "";
-    if (!vazio && (v.inicial.trim() === "" || v.final.trim() === "")) return;
-    if (!vazio && parseRate(v.final) < parseRate(v.inicial)) {
+    if (!vazio && v.inicial.trim() === "") return; // a inicial abre a marcacao; a final e opcional (roda sozinha)
+    if (!vazio && v.inicial.trim() !== "" && v.final.trim() !== "" && parseRate(v.final) < parseRate(v.inicial)) {
       toast({ title: "Leitura final menor que a inicial", variant: "destructive" });
       return;
     }
-    odoMut.mutate({ sellerId: r.sellerId, mes: mesPagto, inicial: vazio ? null : v.inicial, final: vazio ? null : v.final });
+    odoMut.mutate({ sellerId: r.sellerId, mes: mesPagto, inicial: vazio ? null : v.inicial, final: vazio || v.final.trim() === "" ? null : v.final });
   };
 
   // Regiao/tarifa escolhida do vendedor e a tarifa efetiva (valor da referencia escolhida).
@@ -376,21 +378,23 @@ export default function KmVendedores() {
                           <div className="flex items-center justify-center gap-1">
                             <input type="number" inputMode="numeric" value={odo[r.sellerId]?.inicial ?? ""}
                               onChange={(e) => setOdo((m) => ({ ...m, [r.sellerId]: { inicial: e.target.value, final: m[r.sellerId]?.final ?? "" } }))}
-                              onBlur={() => commitOdo(r)} placeholder="inicial"
+                              onBlur={() => commitOdo(r)} placeholder={r.odoByMonth?.[mesPagto]?.inicialHerdada ? "herdada" : "inicial"}
                               className="w-24 rounded-md border bg-background px-2 py-1 text-sm text-right tabular-nums"
-                              title="Leitura do hodometro no inicio do mes" />
+                              title={r.odoByMonth?.[mesPagto]?.inicialHerdada ? "Herdada da leitura final do mes anterior" : "Leitura do hodometro no inicio do mes"} />
                             <span className="text-muted-foreground">-</span>
                             <input type="number" inputMode="numeric" value={odo[r.sellerId]?.final ?? ""}
                               onChange={(e) => setOdo((m) => ({ ...m, [r.sellerId]: { inicial: m[r.sellerId]?.inicial ?? "", final: e.target.value } }))}
-                              onBlur={() => commitOdo(r)} placeholder="final"
+                              onBlur={() => commitOdo(r)} placeholder={r.odoByMonth?.[mesPagto] ? fmtKm(r.odoByMonth[mesPagto].finalAuto) : "final"}
                               className="w-24 rounded-md border bg-background px-2 py-1 text-sm text-right tabular-nums"
-                              title="Leitura do hodometro no fim do mes" />
+                              title="Leitura final do carro (opcional). Em branco, o sistema roda a final sozinho: inicial + km do mes." />
                           </div>
                         ) : (
                           <div className="text-center text-sm tabular-nums">{odoKm(r) !== null ? fmtKm(odoKm(r) as number) : <span className="text-gray-300">-</span>}</div>
                         )}
                         <div className="text-[11px] text-center text-muted-foreground mt-1">
-                          {odoKm(r) !== null ? `${fmtKm(odoKm(r) as number)} km rodados` : "sem leitura - usa o calculado"}
+                          {odoKm(r) !== null
+                            ? `${fmtKm(odoKm(r) as number)} km${r.odoByMonth?.[mesPagto]?.automatica ? " · final automatica" : " · final informada"}${r.odoByMonth?.[mesPagto]?.inicialHerdada ? " · inicial herdada" : ""}`
+                            : "sem leitura inicial - usa o calculado"}
                         </div>
                       </td>
                       <td className="py-2 px-3 whitespace-nowrap">
@@ -430,7 +434,7 @@ export default function KmVendedores() {
               </table>
             </div>
           )}
-          <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). Quando o odometro do mes esta preenchido (leitura inicial e final do carro), a km paga e a diferenca entre as duas leituras; sem leitura, vale a km calculada por check-in. "R$ a pagar" = km paga do mes de {fmtMes(mesPagto)} x a tarifa da referencia escolhida do vendedor (GO, DF ou PSN). O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
+          <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). Quando o odometro do mes esta preenchido (leitura inicial e final do carro), a km paga e a diferenca entre as duas leituras; sem leitura, vale a km calculada por check-in. A leitura INICIAL abre a marcacao do mes e e informada na mao; a FINAL roda sozinha (inicial + km do mes pelas regras de check-in), entao fim de semana e uso pessoal do carro nao entram. Informar a final na mao (conferencia com o painel do carro) sobrepoe a automatica. A final de um mes vale como inicial do mes seguinte ate voce informar uma nova. "R$ a pagar" = km paga do mes de {fmtMes(mesPagto)} x a tarifa da referencia escolhida do vendedor (GO, DF ou PSN). O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
         </CardContent>
       </Card>
       )}
@@ -439,7 +443,7 @@ export default function KmVendedores() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Histórico por dia</CardTitle>
-            <div className="text-xs text-muted-foreground mt-1">A km de cada dia separada em <b>Normal · dia</b>, <b>Intermunicipal · dia</b> e <b>Prospecção</b> (a soma dos três = total do dia). Só vendedores externos ativos. Escolha o vendedor nas abas abaixo.</div>
+            <div className="text-xs text-muted-foreground mt-1">A km de cada dia separada em <b>Normal · dia</b>, <b>Intermunicipal · dia</b> e <b>Prospecção</b> (a soma dos três = total do dia). Só vendedores externos ativos. Escolha o vendedor nas abas abaixo. O quadro do odômetro compara, mês a mês, a marcação do hodômetro com a soma dos dias.</div>
           </CardHeader>
           <CardContent>
             {diarioLoading ? (
@@ -460,6 +464,47 @@ export default function KmVendedores() {
                     </button>
                   ))}
                 </div>
+                {selDiario && Object.keys(selDiario.odoByMonth || {}).length > 0 && (
+                  <div className="mb-4 rounded-lg border overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <th className="text-left font-bold py-2 px-3 bg-background border-b">Odômetro · mês</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Leitura inicial</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Leitura final</th>
+                          <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Origem</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Km odômetro</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Km calculada</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Diferença</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.keys(selDiario.odoByMonth || {}).sort().map((mo) => {
+                          const o = (selDiario.odoByMonth || {})[mo];
+                          const calc = (selDiario.calcByMonth || {})[mo] || 0;
+                          const dif = Math.round((o.km - calc) * 10) / 10;
+                          return (
+                            <tr key={mo} className="border-t hover:bg-muted/40">
+                              <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtMes(mo)}</td>
+                              <td className="py-2 px-3 text-right tabular-nums" title={o.inicialHerdada ? "Herdada da leitura final do mes anterior" : "Leitura informada"}>
+                                {fmtKm(o.inicial)}{o.inicialHerdada ? <span className="text-[11px] text-muted-foreground"> (herdada)</span> : null}
+                              </td>
+                              <td className="py-2 px-3 text-right tabular-nums">{fmtKm(o.final)}</td>
+                              <td className="py-2 px-3 text-center text-[11px] whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded-full border ${o.automatica ? "text-indigo-700 border-indigo-200 bg-indigo-50" : "text-emerald-700 border-emerald-200 bg-emerald-50"}`}>{o.automatica ? "automatica" : "informada"}</span>
+                              </td>
+                              <td className="py-2 px-3 text-right tabular-nums font-bold">{fmtKm(o.km)}</td>
+                              <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtKm(calc)}</td>
+                              <td className={`py-2 px-3 text-right tabular-nums ${dif > 0 ? "text-amber-700" : dif < 0 ? "text-rose-700" : "text-muted-foreground"}`} title="Km do odometro menos a km calculada por check-in">
+                                {dif > 0 ? "+" : ""}{fmtKm(dif)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
                 {selDiario && (
                   <div className="overflow-auto max-h-[65vh] rounded-lg border">
                     <table className="w-full text-sm">
@@ -470,20 +515,32 @@ export default function KmVendedores() {
                           <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-amber-700">Intermunicipal · dia</th>
                           <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-violet-700">Prospecção</th>
                           <th className="text-right font-bold py-2 px-3 bg-background border-b">Total</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Odômetro no fim do dia</th>
                         </tr>
                       </thead>
                       <tbody>
                         {selDiario.dias.length === 0 ? (
-                          <tr><td colSpan={5} className="text-center text-muted-foreground py-6 px-3">Sem dias com km.</td></tr>
-                        ) : selDiario.dias.map((d) => (
+                          <tr><td colSpan={6} className="text-center text-muted-foreground py-6 px-3">Sem dias com km.</td></tr>
+                        ) : selDiario.dias.map((d) => {
+                          const mo = d.dia.slice(0, 7);
+                          const o = (selDiario.odoByMonth || {})[mo];
+                          // Odometro ao fim do dia = inicial do mes + km dos dias do mes ate aqui.
+                          const doMes = selDiario.dias.filter((x) => x.dia.slice(0, 7) === mo);
+                          const ateAqui = doMes.filter((x) => x.dia <= d.dia).reduce((a, x) => a + x.total, 0);
+                          const odoDia = o ? Math.round((o.inicial + ateAqui) * 10) / 10 : null;
+                          return (
                           <tr key={d.dia} className="border-t hover:bg-muted/40">
                             <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDia(d.dia)}</td>
                             <td className="py-2 px-3 text-right tabular-nums">{d.normal ? fmtKm(d.normal) : <span className="text-gray-300">-</span>}</td>
                             <td className="py-2 px-3 text-right tabular-nums text-amber-700">{d.intermunicipal ? fmtKm(d.intermunicipal) : <span className="text-gray-300">-</span>}</td>
                             <td className="py-2 px-3 text-right tabular-nums text-violet-700">{d.prospeccao ? fmtKm(d.prospeccao) : <span className="text-gray-300">-</span>}</td>
                             <td className="py-2 px-3 text-right tabular-nums font-bold">{fmtKm(d.total)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-muted-foreground" title={odoDia !== null ? "Leitura inicial do mes + a km dos dias ate este" : "Sem leitura inicial no mes"}>
+                              {odoDia !== null ? fmtKm(odoDia) : <span className="text-gray-300">-</span>}
+                            </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 bg-muted/30 font-bold">
@@ -492,12 +549,13 @@ export default function KmVendedores() {
                           <td className="py-2 px-3 text-right tabular-nums text-amber-700">{fmtKm(selDiario.totalInter)}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-violet-700">{fmtKm(selDiario.totalProsp)}</td>
                           <td className="py-2 px-3 text-right tabular-nums">{fmtKm(selDiario.total)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">-</td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
                 )}
-                <div className="text-[11px] text-muted-foreground mt-2">"Intermunicipal · dia" conta do portão de saída da cidade → pontos fora → casa. "Normal · dia" é o restante (trecho urbano). A soma dos três = km total do dia. Os valores de Intermunicipal aparecem conforme as rotas são recalculadas.</div>
+                <div className="text-[11px] text-muted-foreground mt-2">O quadro do odômetro mostra as leituras do mês. A inicial é informada na mão e a final roda sozinha, somando a km de cada dia de rota; quando você informa a final na mão, ela é marcada como "informada" e passa a valer. A coluna "Odômetro no fim do dia" mostra a marcação acumulada dia a dia. "Intermunicipal · dia" conta do portão de saída da cidade → pontos fora → casa. "Normal · dia" é o restante (trecho urbano). A soma dos três = km total do dia. Os valores de Intermunicipal aparecem conforme as rotas são recalculadas.</div>
               </>
             )}
           </CardContent>
