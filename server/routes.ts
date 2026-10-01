@@ -19434,6 +19434,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // vendedor e por mês, e devolve a matriz (vendedor × mês) já pivotada, com o
   // nome do vendedor resolvido (first+last → email → id) e a função (role).
   // ──────────────────────────────────────────────────────────────────────────
+  // ODOMETRO — resolucao das leituras com ENCADEAMENTO (out/2026): a leitura FINAL de
+  // um mes e a INICIAL do mes seguinte. Por isso basta registrar a final de cada mes;
+  // a inicial so e digitada no primeiro mes (ou quando o carro troca). Guardado em
+  // config_global (mapa "sellerId|YYYY-MM" -> { inicial?, final }).
+  const __odoLoadMap = async (): Promise<Record<string, any>> => {
+    try {
+      const ro: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_odometro' LIMIT 1`);
+      const ov = ro?.rows?.[0]?.valor;
+      if (ov) { const pm = JSON.parse(String(ov)); if (pm && typeof pm === 'object') return pm; }
+    } catch (e) { /* sem odometro ainda */ }
+    return {};
+  };
+  // Devolve { 'YYYY-MM': { inicial, final, km, finalAuto, inicialHerdada } } por vendedor.
+  // REGRA (out/2026): a INICIAL do mes e informada na mao (abre a marcacao); a FINAL
+  // RODA SOZINHA conforme as regras de km — final = inicial + km calculada do mes (soma
+  // dos dias com rota). Assim o hodometro do sistema anda so em dia de trabalho: fim de
+  // semana e uso pessoal do carro nao entram. Uma final informada na mao (conferencia
+  // com o painel do carro) tem prioridade sobre a automatica.
+  const __odoResolve = (map: Record<string, any>, sellerId: string, kmCalcByMonth: Record<string, number> = {}): Record<string, any> => {
+    const meses = Array.from(new Set([
+      ...Object.keys(map).filter((k) => k.startsWith(`${sellerId}|`)).map((k) => k.split('|')[1]),
+      ...Object.keys(kmCalcByMonth),
+    ])).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();
+    const out: Record<string, any> = {};
+    let ultimaFinal: number | null = null;
+    for (const mo of meses) {
+      const it = map[`${sellerId}|${mo}`] || {};
+      const iniRaw = it.inicial === null || it.inicial === undefined || it.inicial === '' ? null : Number(it.inicial);
+      const herdada = iniRaw === null && ultimaFinal !== null;
+      const ini = herdada ? (ultimaFinal as number) : iniRaw;
+      if (ini === null || !isFinite(ini)) continue;
+      const finalManual = it.final === null || it.final === undefined || it.final === '' ? null : Number(it.final);
+      const kmCalc = Math.round(Number(kmCalcByMonth[mo] || 0) * 10) / 10;
+      const finalAuto = Math.round((ini + kmCalc) * 10) / 10;
+      const fim = finalManual !== null && isFinite(finalManual) && finalManual >= ini ? finalManual : finalAuto;
+      out[mo] = {
+        inicial: ini,
+        final: fim,
+        finalAuto,
+        finalManual: finalManual !== null && isFinite(finalManual) ? finalManual : null,
+        automatica: !(finalManual !== null && isFinite(finalManual) && finalManual >= ini),
+        km: Math.round((fim - ini) * 10) / 10,
+        kmCalc,
+        inicialHerdada: herdada,
+      };
+      ultimaFinal = fim;
+    }
+    return out;
+  };
+
   app.get('/api/admin/km-vendedores', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
     try {
       const r: any = await db.execute(sql`
@@ -19532,22 +19582,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // por mes. Quando existe, ELA e a km do mes (km real rodada) e o pagamento usa ela;
       // o calculado por check-in continua visivel ao lado. Persistido em config_global
       // (mapa "sellerId|YYYY-MM" -> { inicial, final }).
-      let odoMap: Record<string, any> = {};
-      try {
-        const ro: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_odometro' LIMIT 1`);
-        const ov = ro?.rows?.[0]?.valor;
-        if (ov) { const pm = JSON.parse(String(ov)); if (pm && typeof pm === 'object') odoMap = pm; }
-      } catch (e) { /* sem odometro ainda */ }
-      for (const s2 of sellers) {
-        s2.odoByMonth = {};
-        for (const mo of months) {
-          const it = odoMap[`${s2.sellerId}|${mo}`];
-          if (!it) continue;
-          const ini = Number(it.inicial), fim = Number(it.final);
-          if (!isFinite(ini) || !isFinite(fim) || fim < ini) continue;
-          s2.odoByMonth[mo] = { inicial: ini, final: fim, km: Math.round((fim - ini) * 10) / 10 };
-        }
-      }
+      const odoMap = await __odoLoadMap();
+      for (const s2 of sellers) s2.odoByMonth = __odoResolve(odoMap, s2.sellerId, s2.byMonth);
       let mesAtual = ''; let mesFechado = false;
       try {
         const ni: any = await db.execute(sql`
@@ -19607,6 +19643,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         s.totalProsp = Math.round((s.totalProsp + prosp) * 10) / 10;
       }
       const sellers = Array.from(byId.values()).sort((a, b) => b.total - a.total);
+      // ODOMETRO por mes (com encadeamento) + km calculada do mesmo mes: deixa a aba
+      // "Historico por dia" comparar o hodometro do carro com a soma dos dias.
+      const odoMapD = await __odoLoadMap();
+      for (const s2 of sellers) {
+        const calcByMonth: Record<string, number> = {};
+        for (const d of s2.dias) {
+          const mo = String(d.dia).slice(0, 7);
+          calcByMonth[mo] = Math.round(((calcByMonth[mo] || 0) + d.total) * 10) / 10;
+        }
+        s2.calcByMonth = calcByMonth;
+        s2.odoByMonth = __odoResolve(odoMapD, s2.sellerId, calcByMonth);
+      }
       res.json({ sellers, geradoEm: getBrazilDateString() });
     } catch (error: any) {
       console.error('Erro no historico diario de km:', error);
@@ -19704,21 +19752,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const inicial = _num(req.body?.inicial), final = _num(req.body?.final);
       if (Number.isNaN(inicial) || Number.isNaN(final)) return res.status(400).json({ message: 'Leituras invalidas' });
       const limpar = inicial === null && final === null;
-      if (!limpar && (inicial === null || final === null)) return res.status(400).json({ message: 'Informe as duas leituras (inicial e final)' });
-      if (!limpar && (final as number) < (inicial as number)) return res.status(400).json({ message: 'A leitura final nao pode ser menor que a inicial' });
-      let map: Record<string, any> = {};
-      try {
-        const rg: any = await db.execute(sql`SELECT valor FROM config_global WHERE chave = 'km_odometro' LIMIT 1`);
-        const rv = rg?.rows?.[0]?.valor;
-        if (rv) { const pm = JSON.parse(String(rv)); if (pm && typeof pm === 'object') map = pm; }
-      } catch (e) { /* primeiro registro */ }
+      const map: Record<string, any> = await __odoLoadMap();
       const chave = `${sellerId}|${mes}`;
-      if (limpar) delete map[chave]; else map[chave] = { inicial, final };
+      const _mesAnterior = (m: string): string => { const [y, mm] = m.split('-').map(Number); const d = new Date(Date.UTC(y, mm - 2, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
+      // Inicial: informada na mao, ou herdada da final do mes anterior (que por sua vez
+      // pode ser a automatica). A FINAL e opcional: sem ela, o sistema roda a final
+      // sozinho (inicial + km calculada do mes).
+      const prevIt = map[`${sellerId}|${_mesAnterior(mes)}`];
+      const herdada = prevIt && prevIt.final !== null && prevIt.final !== undefined && isFinite(Number(prevIt.final)) ? Number(prevIt.final) : null;
+      const iniEfetiva = inicial !== null ? inicial : herdada;
+      if (!limpar && iniEfetiva === null) return res.status(400).json({ message: 'Informe a leitura inicial do mes' });
+      if (!limpar && final !== null && (final as number) < (iniEfetiva as number)) return res.status(400).json({ message: 'A leitura final nao pode ser menor que a inicial' });
+      if (limpar) {
+        delete map[chave];
+      } else {
+        const reg: any = {};
+        if (inicial !== null && inicial !== herdada) reg.inicial = inicial;
+        if (final !== null) reg.final = final;
+        map[chave] = reg;
+      }
       await db.execute(sql`
         INSERT INTO config_global (chave, valor, descricao) VALUES ('km_odometro', ${JSON.stringify(map)}, 'Leitura do hodometro (inicial/final) por vendedor e mes')
         ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()
       `);
-      res.json({ success: true, sellerId, mes, inicial, final, km: limpar ? null : Math.round(((final as number) - (inicial as number)) * 10) / 10 });
+      res.json({ success: true, sellerId, mes, inicial: limpar ? null : iniEfetiva, final, inicialHerdada: !limpar && inicial === null && herdada !== null, finalAutomatica: !limpar && final === null });
     } catch (error: any) {
       console.error('Erro ao salvar odometro:', error);
       res.status(500).json({ message: 'Erro ao salvar o odometro', error: error?.message });
