@@ -473,7 +473,7 @@ export default function KmVendedores() {
                         <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Origem</th>
                         <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Ref</th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">R$/km</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">Valor pago</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">Valor a Pagar</th>
                       </tr>
                     </thead>
                     <tbody>
