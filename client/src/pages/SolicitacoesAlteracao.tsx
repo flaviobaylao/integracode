@@ -640,6 +640,10 @@ export default function SolicitacoesAlteracao() {
   const [busca, setBusca] = useState("");
   // Filtro por vendedor (quem solicitou; aplica a Pendentes e Resolvidas).
   const [filtroVendedor, setFiltroVendedor] = useState("");
+  // 01/out/2026 — Filtro por MOTIVO (o rótulo que o vendedor escolheu no report:
+  // "Outro", "Sem verba", "Estoque cheio"…). A lista é montada a partir dos próprios
+  // cards, então acompanha sozinha qualquer motivo novo que o formulário passe a oferecer.
+  const [filtroMotivo, setFiltroMotivo] = useState("");
 
   // ✅ Seleção em lote + "Limpar caixa de pendentes": marca solicitações e as resolve
   // (status "lido") de uma vez — elas saem de Pendentes e vão para Resolvidas.
@@ -676,14 +680,24 @@ export default function SolicitacoesAlteracao() {
   for (const s of sugestoes) { if (s.from_name) vendedoresSet.add(s.from_name); if (s.to_name) vendedoresSet.add(s.to_name); }
   const vendedores = Array.from(vendedoresSet).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
+  // Motivos existentes nos cards (pendentes + resolvidos), para alimentar o filtro.
+  const motivosSet = new Set<string>();
+  for (const r of [...pending, ...resolved]) {
+    const m = String((r.details || {}).motivo || "").trim();
+    if (m) motivosSet.add(m);
+  }
+  const motivos = Array.from(motivosSet).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
   // Filtro de busca por nome do cliente (case-insensitive) + filtro por vendedor.
   const q = busca.trim().toLowerCase();
   const matchNome = (nome) => !q || String(nome || "").toLowerCase().includes(q);
   const matchVend = (nome?: string) => !filtroVendedor || String(nome || "") === filtroVendedor;
   const matchVendSug = (s: any) => !filtroVendedor || s.from_name === filtroVendedor || s.to_name === filtroVendedor;
-  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName));
-  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName));
-  const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s));
+  const matchMotivo = (r: any) => !filtroMotivo || String((r.details || {}).motivo || "").trim() === filtroMotivo;
+  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && matchMotivo(r));
+  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && matchMotivo(r));
+  // Sugestões de migração de carteira não têm motivo — somem quando o filtro está ativo.
+  const sugestoesF = filtroMotivo ? [] : sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s));
 
   // Seleção em lote (escopada à lista de pendentes já filtrada).
   const selectedIds = pendingF.filter((r) => selected.has(r.id)).map((r) => r.id);
@@ -730,9 +744,20 @@ export default function SolicitacoesAlteracao() {
           <option value="">Todos os vendedores</option>
           {vendedores.map((v) => <option key={v} value={v}>{v}</option>)}
         </select>
-        {filtroVendedor && (
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => setFiltroVendedor("")}>
-            Limpar filtro
+        <select
+          value={filtroMotivo}
+          onChange={(e) => setFiltroMotivo(e.target.value)}
+          className="border rounded-lg px-3 py-2 text-sm bg-white max-w-[220px] disabled:opacity-50"
+          title="Filtrar por motivo do report"
+          disabled={motivos.length === 0}
+          data-testid="select-filtro-motivo"
+        >
+          <option value="">Todos os motivos</option>
+          {motivos.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        {(filtroVendedor || filtroMotivo) && (
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setFiltroMotivo(""); }}>
+            Limpar filtros
           </Button>
         )}
       </div>
