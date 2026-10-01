@@ -83,7 +83,7 @@ export default function KmVendedores() {
   });
 
   // Abas: "mensal" (padrão) e "diario" (histórico por dia com sub-abas por vendedor).
-  const [aba, setAba] = useState<"mensal" | "diario">("mensal");
+  const [aba, setAba] = useState<"mensal" | "pagamento" | "diario">("mensal");
   const [diarioSeller, setDiarioSeller] = useState<string>("");
   const { data: diario, isLoading: diarioLoading } = useQuery<DiarioResp>({
     queryKey: ["/api/admin/km-vendedores/diario"],
@@ -92,7 +92,23 @@ export default function KmVendedores() {
     staleTime: 60_000,
   });
   const diarioSellers = diario?.sellers || [];
-  const selDiario = diarioSellers.find((s) => s.sellerId === diarioSeller) || diarioSellers[0];
+  const selDiarioRaw = diarioSellers.find((s) => s.sellerId === diarioSeller) || diarioSellers[0];
+  // MARCACAO DIARIA = so o MES VIGENTE (dinamica): a cada virada de mes a tabela zera e
+  // recomeca. O historico fixo por mes fica no quadro do odometro (abaixo) e na aba
+  // "Km e pagamento por mes". (out/2026)
+  const selDiario = useMemo(() => {
+    if (!selDiarioRaw) return undefined;
+    const dias = (selDiarioRaw.dias || []).filter((d) => d.dia.slice(0, 7) === mesPagto);
+    const soma = (f: (d: DiaRow) => number) => Math.round(dias.reduce((a, d) => a + f(d), 0) * 10) / 10;
+    return {
+      ...selDiarioRaw,
+      dias,
+      total: soma((d) => d.total),
+      totalInter: soma((d) => d.intermunicipal),
+      totalNormal: soma((d) => d.normal),
+      totalProsp: soma((d) => d.prospeccao),
+    };
+  }, [selDiarioRaw, mesPagto]);
 
   const months = (data?.months || []).filter((m) => m >= "2026-01");
   const sellers = data?.sellers || [];
@@ -211,6 +227,31 @@ export default function KmVendedores() {
     return t;
   }, [months, rows]);
   const valorSeller = (r: SellerRow) => kmPagto(r) * rateOf(r);
+
+  // Aba "Km e pagamento por mes": HISTORICO FIXO, uma linha por vendedor e mes, com a
+  // km que vale no pagamento (odometro quando o mes tem leitura; senao a calculada), a
+  // tarifa da referencia atual do vendedor e o valor pago. Mes mais recente primeiro.
+  const linhasMes = useMemo(() => {
+    const out: Array<{ mes: string; sellerId: string; sellerName: string; km: number; calc: number; odo: boolean; region: Region; rate: number; valor: number }> = [];
+    for (const r of rows) {
+      for (const mo of months) {
+        const calc = r.byMonth[mo] || 0;
+        const o = r.odoByMonth?.[mo];
+        const km = o ? o.km : calc;
+        if (!km && !calc) continue;
+        const rg = regionOf(r);
+        const rate = rateForRegion(rg);
+        out.push({ mes: mo, sellerId: r.sellerId, sellerName: r.sellerName, km, calc, odo: !!o, region: rg, rate, valor: km * rate });
+      }
+    }
+    return out.sort((a, b) => (a.mes === b.mes ? b.valor - a.valor : b.mes.localeCompare(a.mes)));
+  }, [rows, months, regions, rateGONum, rateDFNum, ratePSNNum]);
+
+  // Tarifa R$/km de um vendedor da aba diaria (mesma referencia escolhida na aba mensal).
+  const rateDoVendedor = (sellerId: string): number => {
+    const r = sellers.find((x) => x.sellerId === sellerId);
+    return r ? rateForRegion(regionOf(r)) : rateGONum;
+  };
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
   // Exporta TODAS as colunas para .xlsx no padrao unico do INTEGRA
@@ -259,7 +300,7 @@ export default function KmVendedores() {
 
       {/* Abas: Histórico mensal | Histórico por dia */}
       <div className="flex items-center gap-1 mb-3 border-b">
-        {([["mensal", "Histórico mensal"], ["diario", "Histórico por dia"]] as const).map(([id, label]) => (
+        {([["mensal", "Histórico mensal"], ["pagamento", "Km e pagamento por mês"], ["diario", "Mês vigente por dia"]] as const).map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -439,11 +480,73 @@ export default function KmVendedores() {
       </Card>
       )}
 
+      {aba === "pagamento" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><DollarSign className="w-4 h-4" /> Km e pagamento por mês</CardTitle>
+            <div className="text-xs text-muted-foreground mt-1">Histórico fixo: uma linha por vendedor e mês, com a km que vale no pagamento, a origem do número (odômetro ou calculado) e o valor pago.</div>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="text-sm text-muted-foreground py-6">Carregando...</div>
+            ) : linhasMes.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6">Nenhuma rota com quilometragem registrada ainda.</div>
+            ) : (
+              <>
+                <div className="overflow-auto max-h-[70vh] rounded-lg border">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <th className="text-left font-bold py-2 px-3 bg-background border-b">Mês</th>
+                        <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Km rodada</th>
+                        <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Origem</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Km calculada</th>
+                        <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Ref</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">R$/km</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">Valor pago</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {linhasMes.map((l) => (
+                        <tr key={l.mes + l.sellerId} className="border-t hover:bg-muted/40">
+                          <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtMes(l.mes)}</td>
+                          <td className="py-2 px-3 whitespace-nowrap">{l.sellerName}</td>
+                          <td className="py-2 px-3 text-right tabular-nums font-semibold">{fmtKm(l.km)}</td>
+                          <td className="py-2 px-3 text-center text-[11px] whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded-full border ${l.odo ? "text-emerald-700 border-emerald-200 bg-emerald-50" : "text-slate-600 border-slate-200 bg-slate-50"}`}>{l.odo ? "odômetro" : "calculado"}</span>
+                          </td>
+                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtKm(l.calc)}</td>
+                          <td className="py-2 px-3 text-center font-semibold">{REGION_LABEL[l.region]}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtBRL(l.rate)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums font-bold text-green-700">{fmtBRL(l.valor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 bg-muted/30 font-bold">
+                        <td className="py-2 px-3" colSpan={2}>Total ({linhasMes.length} linha(s))</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{fmtKm(linhasMes.reduce((a, l) => a + l.km, 0))}</td>
+                        <td className="py-2 px-3"></td>
+                        <td className="py-2 px-3 text-right tabular-nums">{fmtKm(linhasMes.reduce((a, l) => a + l.calc, 0))}</td>
+                        <td className="py-2 px-3" colSpan={2}></td>
+                        <td className="py-2 px-3 text-right tabular-nums text-green-700">{fmtBRL(linhasMes.reduce((a, l) => a + l.valor, 0))}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-2">"Km rodada" é o que vale no pagamento: a leitura do odômetro quando o mês tem leitura, senão a km calculada por check-in. A tarifa é a referência atual do vendedor (GO, DF ou PSN), então trocar a referência recalcula todos os meses desta tela. A busca por nome do topo também filtra aqui.</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {aba === "diario" && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Histórico por dia</CardTitle>
-            <div className="text-xs text-muted-foreground mt-1">A km de cada dia separada em <b>Normal · dia</b>, <b>Intermunicipal · dia</b> e <b>Prospecção</b> (a soma dos três = total do dia). Só vendedores externos ativos. Escolha o vendedor nas abas abaixo. O quadro do odômetro compara, mês a mês, a marcação do hodômetro com a soma dos dias.</div>
+            <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Mês vigente por dia</CardTitle>
+            <div className="text-xs text-muted-foreground mt-1">A marcação diária mostra <b>apenas o mês vigente</b> e recomeça a cada virada de mês. O quadro do odômetro, logo abaixo, guarda o histórico fixo de todos os meses. Só vendedores externos ativos; escolha o vendedor nas abas abaixo.</div>
           </CardHeader>
           <CardContent>
             {diarioLoading ? (
@@ -516,11 +619,12 @@ export default function KmVendedores() {
                           <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-violet-700">Prospecção</th>
                           <th className="text-right font-bold py-2 px-3 bg-background border-b">Total</th>
                           <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Odômetro no fim do dia</th>
+                          <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">R$ a pagar</th>
                         </tr>
                       </thead>
                       <tbody>
                         {selDiario.dias.length === 0 ? (
-                          <tr><td colSpan={6} className="text-center text-muted-foreground py-6 px-3">Sem dias com km.</td></tr>
+                          <tr><td colSpan={7} className="text-center text-muted-foreground py-6 px-3">Sem dias com km no mês vigente.</td></tr>
                         ) : selDiario.dias.map((d) => {
                           const mo = d.dia.slice(0, 7);
                           const o = (selDiario.odoByMonth || {})[mo];
@@ -528,6 +632,8 @@ export default function KmVendedores() {
                           const doMes = selDiario.dias.filter((x) => x.dia.slice(0, 7) === mo);
                           const ateAqui = doMes.filter((x) => x.dia <= d.dia).reduce((a, x) => a + x.total, 0);
                           const odoDia = o ? Math.round((o.inicial + ateAqui) * 10) / 10 : null;
+                          // Valor do dia = km do dia x a tarifa da referencia do vendedor.
+                          const valorDia = d.total * rateDoVendedor(selDiario.sellerId);
                           return (
                           <tr key={d.dia} className="border-t hover:bg-muted/40">
                             <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDia(d.dia)}</td>
@@ -538,6 +644,7 @@ export default function KmVendedores() {
                             <td className="py-2 px-3 text-right tabular-nums text-muted-foreground" title={odoDia !== null ? "Leitura inicial do mes + a km dos dias ate este" : "Sem leitura inicial no mes"}>
                               {odoDia !== null ? fmtKm(odoDia) : <span className="text-gray-300">-</span>}
                             </td>
+                            <td className="py-2 px-3 text-right tabular-nums font-semibold text-green-700" title="Km do dia x a tarifa da referencia do vendedor">{fmtBRL(valorDia)}</td>
                           </tr>
                           );
                         })}
@@ -550,12 +657,13 @@ export default function KmVendedores() {
                           <td className="py-2 px-3 text-right tabular-nums text-violet-700">{fmtKm(selDiario.totalProsp)}</td>
                           <td className="py-2 px-3 text-right tabular-nums">{fmtKm(selDiario.total)}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">-</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-green-700">{fmtBRL(selDiario.total * rateDoVendedor(selDiario.sellerId))}</td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
                 )}
-                <div className="text-[11px] text-muted-foreground mt-2">O quadro do odômetro mostra as leituras do mês. A inicial é informada na mão e a final roda sozinha, somando a km de cada dia de rota; quando você informa a final na mão, ela é marcada como "informada" e passa a valer. A coluna "Odômetro no fim do dia" mostra a marcação acumulada dia a dia. "Intermunicipal · dia" conta do portão de saída da cidade → pontos fora → casa. "Normal · dia" é o restante (trecho urbano). A soma dos três = km total do dia. Os valores de Intermunicipal aparecem conforme as rotas são recalculadas.</div>
+                <div className="text-[11px] text-muted-foreground mt-2">O quadro do odômetro mostra as leituras do mês. A inicial é informada na mão e a final roda sozinha, somando a km de cada dia de rota; quando você informa a final na mão, ela é marcada como "informada" e passa a valer. A coluna "Odômetro no fim do dia" mostra a marcação acumulada dia a dia, e "R$ a pagar" é a km do dia pela tarifa do vendedor (prévia: o que vale no fechamento é a km do mês). "Intermunicipal · dia" conta do portão de saída da cidade → pontos fora → casa. "Normal · dia" é o restante (trecho urbano). A soma dos três = km total do dia. Os valores de Intermunicipal aparecem conforme as rotas são recalculadas.</div>
               </>
             )}
           </CardContent>
