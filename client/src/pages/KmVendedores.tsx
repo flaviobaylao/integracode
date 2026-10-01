@@ -118,6 +118,18 @@ export default function KmVendedores() {
     onError: () => toast({ title: "Erro ao salvar a tarifa do vendedor", variant: "destructive" }),
   });
 
+  // Regiao/tarifa escolhida do vendedor e a tarifa efetiva (valor da referencia escolhida).
+  const regionOf = (r: SellerRow): Region => regions[r.sellerId] ?? normRegion(r.region);
+  const rateForRegion = (rg: Region) => (rg === "DF" ? rateDFNum : rg === "PSN" ? ratePSNNum : rateGONum);
+  const rateOf = (r: SellerRow) => rateForRegion(regionOf(r));
+  // Salva a escolha da linha (GO/DF/PSN) no servidor.
+  const commitRegion = (r: SellerRow, rg: Region) => {
+    if (!isAdmin) return;
+    setRegions((m) => ({ ...m, [r.sellerId]: rg }));
+    r.region = rg;
+    regionMut.mutate({ sellerId: r.sellerId, region: rg });
+  };
+
   const rows = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const list = q ? sellers.filter((s) => (s.sellerName || "").toLowerCase().includes(q)) : sellers;
