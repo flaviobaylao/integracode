@@ -93,6 +93,13 @@ export default function KmVendedores() {
   });
   const diarioSellers = diario?.sellers || [];
   const selDiarioRaw = diarioSellers.find((s) => s.sellerId === diarioSeller) || diarioSellers[0];
+
+  const months = (data?.months || []).filter((m) => m >= "2026-01");
+  const sellers = data?.sellers || [];
+  const mesAtualCol = months.length ? months[months.length - 1] : "";
+  const mesPagto = data?.mesAtual || mesAtualCol;
+  const mesFechado = !!data?.mesFechado;
+
   // MARCACAO DIARIA = so o MES VIGENTE (dinamica): a cada virada de mes a tabela zera e
   // recomeca. O historico fixo por mes fica no quadro do odometro (abaixo) e na aba
   // "Km e pagamento por mes". (out/2026)
@@ -109,12 +116,6 @@ export default function KmVendedores() {
       totalProsp: soma((d) => d.prospeccao),
     };
   }, [selDiarioRaw, mesPagto]);
-
-  const months = (data?.months || []).filter((m) => m >= "2026-01");
-  const sellers = data?.sellers || [];
-  const mesAtualCol = months.length ? months[months.length - 1] : "";
-  const mesPagto = data?.mesAtual || mesAtualCol;
-  const mesFechado = !!data?.mesFechado;
   const savedGO = Number(data?.ratePerKmGO ?? data?.ratePerKm ?? 0);
   const savedDF = Number(data?.ratePerKmDF ?? data?.ratePerKm ?? 0);
   const savedPSN = Number(data?.ratePerKmPSN ?? 0);
