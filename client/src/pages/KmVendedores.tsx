@@ -10,8 +10,11 @@
 // pago segue a tarifa de referencia da escolha (a celula da linha nao e editavel,
 // so reflete). O valor a pagar = km do mes x tarifa escolhida do vendedor. O mes
 // so e FECHADO (definitivo) no ultimo dia do mes apos as 20h (SP).
+// Odometro (set/2026): leitura inicial/final do hodometro do carro por vendedor e
+// mes. Preenchido, ele vira a km do mes usada no pagamento (km real rodada); o
+// calculado por check-in segue visivel nas colunas de meses, para comparacao.
 // Endpoints: GET /api/admin/km-vendedores | POST /api/admin/km-vendedores/rate
-//            POST /api/admin/km-vendedores/region
+//            POST /api/admin/km-vendedores/region | POST /api/admin/km-vendedores/odometro
 // ============================================================================
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
@@ -34,6 +37,8 @@ type SellerRow = {
   totalDias: number;
   sellerRate?: number;
   region?: Region;
+  // Odometro do carro por mes (leitura inicial/final). Quando existe, ELE e a km do mes.
+  odoByMonth?: Record<string, { inicial: number; final: number; km: number }>;
 };
 type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; ratePerKmGO?: number; ratePerKmDF?: number; ratePerKmPSN?: number; mesAtual?: string; mesFechado?: boolean };
 // Histórico DIÁRIO: por vendedor, cada dia com a km separada (Normal / Intermunicipal / Prospecção).
@@ -130,6 +135,56 @@ export default function KmVendedores() {
     onError: () => toast({ title: "Erro ao salvar a tarifa do vendedor", variant: "destructive" }),
   });
 
+  // ODOMETRO do mes de pagamento: leitura inicial/final do hodometro do carro.
+  // Quando as duas estao preenchidas, a km paga do mes passa a ser final - inicial
+  // (km real rodada); o calculado por check-in continua na tabela para comparacao.
+  const [odo, setOdo] = useState<Record<string, { inicial: string; final: string }>>({});
+  const [odoLoaded, setOdoLoaded] = useState<boolean>(false);
+  useEffect(() => {
+    if (data && !odoLoaded) {
+      const init: Record<string, { inicial: string; final: string }> = {};
+      for (const sl of data.sellers || []) {
+        const it = sl.odoByMonth?.[mesPagto];
+        init[sl.sellerId] = { inicial: it ? String(it.inicial) : "", final: it ? String(it.final) : "" };
+      }
+      setOdo(init);
+      setOdoLoaded(true);
+    }
+  }, [data, odoLoaded, mesPagto]);
+
+  const odoMut = useMutation({
+    mutationFn: (p: { sellerId: string; mes: string; inicial: string | null; final: string | null }) => apiRequest("POST", "/api/admin/km-vendedores/odometro", p),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores"] }); },
+    onError: (e: any) => toast({ title: "Erro ao salvar o odometro", description: String(e?.message || ""), variant: "destructive" }),
+  });
+
+  // Km do odometro no mes de pagamento (null quando nao ha leitura valida).
+  const odoKm = (r: SellerRow): number | null => {
+    const v = odo[r.sellerId];
+    if (v && v.inicial.trim() !== "" && v.final.trim() !== "") {
+      const i = parseRate(v.inicial), f = parseRate(v.final);
+      if (isFinite(i) && isFinite(f) && f >= i) return Math.round((f - i) * 10) / 10;
+      return null;
+    }
+    const it = r.odoByMonth?.[mesPagto];
+    return it ? it.km : null;
+  };
+  // Km que MANDA no pagamento do mes: odometro quando houver; senao o calculado.
+  const kmPagto = (r: SellerRow): number => { const o = odoKm(r); return o !== null ? o : (r.byMonth[mesPagto] || 0); };
+  const fontePagto = (r: SellerRow): string => (odoKm(r) !== null ? "odometro" : "calculado");
+  // Salva (ou limpa) a leitura do vendedor no mes de pagamento.
+  const commitOdo = (r: SellerRow) => {
+    if (!isAdmin) return;
+    const v = odo[r.sellerId] || { inicial: "", final: "" };
+    const vazio = v.inicial.trim() === "" && v.final.trim() === "";
+    if (!vazio && (v.inicial.trim() === "" || v.final.trim() === "")) return;
+    if (!vazio && parseRate(v.final) < parseRate(v.inicial)) {
+      toast({ title: "Leitura final menor que a inicial", variant: "destructive" });
+      return;
+    }
+    odoMut.mutate({ sellerId: r.sellerId, mes: mesPagto, inicial: vazio ? null : v.inicial, final: vazio ? null : v.final });
+  };
+
   // Regiao/tarifa escolhida do vendedor e a tarifa efetiva (valor da referencia escolhida).
   const regionOf = (r: SellerRow): Region => regions[r.sellerId] ?? normRegion(r.region);
   const rateForRegion = (rg: Region) => (rg === "DF" ? rateDFNum : rg === "PSN" ? ratePSNNum : rateGONum);
@@ -153,7 +208,7 @@ export default function KmVendedores() {
     for (const mo of months) t[mo] = rows.reduce((s, r) => s + (r.byMonth[mo] || 0), 0);
     return t;
   }, [months, rows]);
-  const valorSeller = (r: SellerRow) => (r.byMonth[mesPagto] || 0) * rateOf(r);
+  const valorSeller = (r: SellerRow) => kmPagto(r) * rateOf(r);
   const totalPagar = rows.reduce((s, r) => s + valorSeller(r), 0);
 
   // Exporta TODAS as colunas para .xlsx no padrao unico do INTEGRA
@@ -161,16 +216,20 @@ export default function KmVendedores() {
   // R$/km e R$ a pagar em moeda contabil, e linha de Total em negrito.
   function exportarExcel() {
     const meses = months;
-    const headers = ["Vendedor", "Funcao", ...meses.map(fmtMes), "Ref", "R$/km", `R$ a pagar (${fmtMes(mesPagto)})`];
+    const headers = ["Vendedor", "Funcao", ...meses.map(fmtMes), "Odometro inicial", "Odometro final", `Km paga (${fmtMes(mesPagto)})`, "Fonte", "Ref", "R$/km", `R$ a pagar (${fmtMes(mesPagto)})`];
     const dataRows = rows.map((r) => [
       r.sellerName,
       r.role ? (ROLE_LABEL[r.role] || r.role) : "",
       ...meses.map((mo) => r.byMonth[mo] || 0),
+      parseRate((odo[r.sellerId]?.inicial ?? "")) || null,
+      parseRate((odo[r.sellerId]?.final ?? "")) || null,
+      Number(kmPagto(r).toFixed(1)),
+      fontePagto(r),
       REGION_LABEL[regionOf(r)],
       Number(rateOf(r).toFixed(2)),
       Number(valorSeller(r).toFixed(2)),
     ]);
-    const totalRow: any[] = ["Total", "", ...meses.map(() => null), "", null, Number(totalPagar.toFixed(2))];
+    const totalRow: any[] = ["Total", "", ...meses.map(() => null), null, null, Number(rows.reduce((a, r) => a + kmPagto(r), 0).toFixed(1)), "", "", null, Number(totalPagar.toFixed(2))];
     // Padrao unico de planilha do INTEGRA: cabecalho congelado/negrito, larguras
     // ajustadas, R$ contabil, sem faixas nem bordas (fica a grade do Excel).
     const linhas = [...dataRows, totalRow].map((linha) =>
@@ -293,13 +352,14 @@ export default function KmVendedores() {
                     {months.map((mo) => (
                       <th key={mo} className={`text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap ${mo === mesAtualCol ? "text-indigo-600" : ""}`}>{fmtMes(mo)}</th>
                     ))}
+                    <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Odometro ({fmtMes(mesPagto)})</th>
                     <th className="text-center font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Tarifa de Referencia</th>
                     <th className="text-right font-bold py-2 px-3 bg-background border-b whitespace-nowrap text-green-700">R$ a pagar ({fmtMes(mesPagto)})</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 ? (
-                    <tr><td colSpan={months.length + 3} className="text-center text-muted-foreground py-6 px-3">Nenhum vendedor encontrado.</td></tr>
+                    <tr><td colSpan={months.length + 4} className="text-center text-muted-foreground py-6 px-3">Nenhum vendedor encontrado.</td></tr>
                   ) : rows.map((r) => (
                     <tr key={r.sellerId} className="border-t align-top hover:bg-muted/40">
                       <td className="py-2 px-3 bg-background sticky left-0">
@@ -311,6 +371,28 @@ export default function KmVendedores() {
                           {r.byMonth[mo] ? fmtKm(r.byMonth[mo]) : <span className="text-gray-300">-</span>}
                         </td>
                       ))}
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        {isAdmin ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <input type="number" inputMode="numeric" value={odo[r.sellerId]?.inicial ?? ""}
+                              onChange={(e) => setOdo((m) => ({ ...m, [r.sellerId]: { inicial: e.target.value, final: m[r.sellerId]?.final ?? "" } }))}
+                              onBlur={() => commitOdo(r)} placeholder="inicial"
+                              className="w-24 rounded-md border bg-background px-2 py-1 text-sm text-right tabular-nums"
+                              title="Leitura do hodometro no inicio do mes" />
+                            <span className="text-muted-foreground">-</span>
+                            <input type="number" inputMode="numeric" value={odo[r.sellerId]?.final ?? ""}
+                              onChange={(e) => setOdo((m) => ({ ...m, [r.sellerId]: { inicial: m[r.sellerId]?.inicial ?? "", final: e.target.value } }))}
+                              onBlur={() => commitOdo(r)} placeholder="final"
+                              className="w-24 rounded-md border bg-background px-2 py-1 text-sm text-right tabular-nums"
+                              title="Leitura do hodometro no fim do mes" />
+                          </div>
+                        ) : (
+                          <div className="text-center text-sm tabular-nums">{odoKm(r) !== null ? fmtKm(odoKm(r) as number) : <span className="text-gray-300">-</span>}</div>
+                        )}
+                        <div className="text-[11px] text-center text-muted-foreground mt-1">
+                          {odoKm(r) !== null ? `${fmtKm(odoKm(r) as number)} km rodados` : "sem leitura - usa o calculado"}
+                        </div>
+                      </td>
                       <td className="py-2 px-3 whitespace-nowrap">
                         <div className="flex items-center justify-center gap-2">
                           {isAdmin ? (
@@ -330,7 +412,7 @@ export default function KmVendedores() {
                           <span className="text-sm tabular-nums text-muted-foreground min-w-[64px] text-right" title="Valor da tarifa escolhida (nao editavel)">{fmtBRL(rateOf(r))}</span>
                         </div>
                       </td>
-                      <td className={`py-2 px-3 text-right tabular-nums font-bold whitespace-nowrap ${mesFechado ? "text-green-700" : "text-amber-700"}`} title={`${fmtKm(r.byMonth[mesPagto] || 0)} km x ${fmtBRL(rateOf(r))}/km (${REGION_LABEL[regionOf(r)]})`}>{fmtBRL(valorSeller(r))}</td>
+                      <td className={`py-2 px-3 text-right tabular-nums font-bold whitespace-nowrap ${mesFechado ? "text-green-700" : "text-amber-700"}`} title={`${fmtKm(kmPagto(r))} km (${fontePagto(r)}) x ${fmtBRL(rateOf(r))}/km (${REGION_LABEL[regionOf(r)]})`}>{fmtBRL(valorSeller(r))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -340,6 +422,7 @@ export default function KmVendedores() {
                     {months.map((mo) => (
                       <td key={mo} className="py-2 px-3 text-right tabular-nums whitespace-nowrap">{fmtKm(totalPorMes[mo] || 0)}</td>
                     ))}
+                    <td className="py-2 px-3 text-center tabular-nums whitespace-nowrap">{fmtKm(rows.reduce((a, r) => a + kmPagto(r), 0))}</td>
                     <td className="py-2 px-3 text-center tabular-nums text-muted-foreground">-</td>
                     <td className={`py-2 px-3 text-right tabular-nums ${mesFechado ? "text-green-700" : "text-amber-700"}`}>{fmtBRL(totalPagar)}</td>
                   </tr>
@@ -347,7 +430,7 @@ export default function KmVendedores() {
               </table>
             </div>
           )}
-          <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). "R$ a pagar" = km do mes de {fmtMes(mesPagto)} x a tarifa da referencia escolhida do vendedor (GO, DF ou PSN). O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
+          <div className="text-[11px] text-muted-foreground mt-2">Valores em quilometros (km). Quando o odometro do mes esta preenchido (leitura inicial e final do carro), a km paga e a diferenca entre as duas leituras; sem leitura, vale a km calculada por check-in. "R$ a pagar" = km paga do mes de {fmtMes(mesPagto)} x a tarifa da referencia escolhida do vendedor (GO, DF ou PSN). O valor so e definitivo no ultimo dia do mes apos as 20h (horario de Brasilia); antes disso e uma previa e pode mudar conforme novas rotas do mes. Passe o mouse na celula para ver o calculo.</div>
         </CardContent>
       </Card>
       )}
