@@ -24,6 +24,7 @@ import type { DailyRouteResponse } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
 import LeadActions from "@/components/LeadActions";
+import NovoLeadDialog from "@/components/NovoLeadDialog";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
 import NoSaleModal from "@/components/NoSaleModal";
@@ -180,6 +181,7 @@ export default function RotaDoDia() {
   const [showAddVisitModal, setShowAddVisitModal] = useState(false);
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [addVisitTab, setAddVisitTab] = useState<'customer' | 'lead'>('customer');
+  const [showNovoLead, setShowNovoLead] = useState(false);
   const [leadSearchQuery, setLeadSearchQuery] = useState('');
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [showLeadCheckInModal, setShowLeadCheckInModal] = useState(false);
@@ -2722,18 +2724,6 @@ export default function RotaDoDia() {
                                 </div>
                               )}
 
-                              {/* Ações do Lead (Converter / Não converter / Prorrogar) — só enquanto NÃO atendido */}
-                              {isLead && !leadDone && (
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  <LeadActions
-                                    leadId={visit.entityId || visit.leadId || visit.customerId}
-                                    leadName={visit.customerName}
-                                    sellerId={selectedSellerId}
-                                    date={selectedDate}
-                                    onDone={() => refetch()}
-                                  />
-                                </div>
-                              )}
                             </div>
 
                             {hasOffsite && (
@@ -2843,6 +2833,18 @@ export default function RotaDoDia() {
                         </div>
                       </div>
 
+                      {/* Acoes do Lead visiveis mesmo com o card recolhido (lado direito) */}
+                      {isLead && !leadDone && (
+                        <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                          <LeadActions
+                            leadId={visit.entityId || visit.leadId || visit.customerId}
+                            leadName={visit.customerName}
+                            sellerId={selectedSellerId}
+                            date={selectedDate}
+                            onDone={() => refetch()}
+                          />
+                        </div>
+                      )}
                       {/* ➕ Rodapé: visita adicionada manualmente à rota */}
                       {(visit as any).addedManually && (
                         <div
@@ -2850,7 +2852,7 @@ export default function RotaDoDia() {
                           data-testid={`manual-added-${visit.customerId}`}
                         >
                           <Plus className="h-3 w-3" />
-                          Adicionado manualmente
+                          Incluído manualmente
                         </div>
                       )}
                       </>
@@ -3654,6 +3656,16 @@ export default function RotaDoDia() {
                   data-testid="input-lead-search"
                 />
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full border-dashed border-purple-400 text-purple-700 dark:text-purple-300"
+                onClick={() => setShowNovoLead(true)}
+                data-testid="button-novo-lead"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Novo Lead
+              </Button>
               <div className="max-h-96 overflow-y-auto border rounded-lg">
                 {leads && leads.length > 0 ? (
                   leads.filter((lead: any) => {
@@ -3704,6 +3716,18 @@ export default function RotaDoDia() {
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      {/* Novo Lead (mesmo formulario da Gestao de Leads) — cria e ja inclui na rota do dia */}
+      <NovoLeadDialog
+        open={showNovoLead}
+        onClose={() => setShowNovoLead(false)}
+        defaultAssignedTo={selectedSellerId}
+        onCreated={(lead) => {
+          setShowNovoLead(false);
+          setShowAddVisitModal(false);
+          if (route?.id && lead?.id) addLeadMutation.mutate({ routeId: route.id, leadId: lead.id });
+        }}
+      />
 
       {/* Modal de Ações para Cliente Virtual */}
       <Dialog open={showVirtualActionModal} onOpenChange={setShowVirtualActionModal}>
