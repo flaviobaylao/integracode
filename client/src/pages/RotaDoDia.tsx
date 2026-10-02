@@ -2748,6 +2748,17 @@ export default function RotaDoDia() {
                           >
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </Button>
+                          {/* 🎯 Ações do Lead como ícones na linha do nome (Check-in, Registro, Converter, Não converter, Prorrogar) */}
+                          {isLead && !leadDone && (
+                            <LeadActions
+                              variant="icons"
+                              leadId={visit.entityId || visit.leadId || visit.customerId}
+                              leadName={visit.customerName}
+                              sellerId={selectedSellerId}
+                              date={selectedDate}
+                              onDone={() => refetch()}
+                            />
+                          )}
                           {/* 📋 Solicitar Alteração — SOMENTE clientes ativos (não leads). No mobile fica ABAIXO dos ícones. */}
                           {!isLead && (
                           <div className="order-last basis-full flex justify-end mt-1 sm:order-none sm:basis-auto sm:mt-0">
@@ -2833,18 +2844,6 @@ export default function RotaDoDia() {
                         </div>
                       </div>
 
-                      {/* Acoes do Lead visiveis mesmo com o card recolhido (lado direito) */}
-                      {isLead && !leadDone && (
-                        <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
-                          <LeadActions
-                            leadId={visit.entityId || visit.leadId || visit.customerId}
-                            leadName={visit.customerName}
-                            sellerId={selectedSellerId}
-                            date={selectedDate}
-                            onDone={() => refetch()}
-                          />
-                        </div>
-                      )}
                       {/* ➕ Rodapé: visita adicionada manualmente à rota */}
                       {(visit as any).addedManually && (
                         <div
@@ -3717,7 +3716,7 @@ export default function RotaDoDia() {
         </DialogContent>
       </Dialog>
 
-      {/* Novo Lead (mesmo formulario da Gestao de Leads) — cria e ja inclui na rota do dia */}
+      {/* Cadastrar Lead (nome + localizacao + observacao) — cria e ja inclui na rota do dia */}
       <NovoLeadDialog
         open={showNovoLead}
         onClose={() => setShowNovoLead(false)}
