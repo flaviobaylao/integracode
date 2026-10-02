@@ -31,6 +31,7 @@ import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
 import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportReplyControl, InboxPendenciasBox, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
+import CampanhaRotaAvisos from "@/components/CampanhaRotaAvisos";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 
@@ -2274,6 +2275,8 @@ export default function RotaDoDia() {
           {selectedSellerId && (
             <InboxPendenciasBox sellerId={selectedSellerId} date={selectedDate} excludeKeys={rotaKeysTodos} canRemove={isAdmin} />
           )}
+          {/* 🏆 Campanha de Outubro: réplica do admin sobre os cadastros de novos clientes. */}
+          {selectedSellerId && <CampanhaRotaAvisos sellerId={selectedSellerId} />}
 
           <Card>
             <CardHeader>
