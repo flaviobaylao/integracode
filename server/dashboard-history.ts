@@ -3,6 +3,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import cron from "node-cron";
 import { nfVendaWhere, nfVendaFrom, nfData, VENDEDOR_JOIN, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
+import { registerCampanhaRoutes } from "./campanha-outubro";
 
 // ============================================================================
 // HISTORICO DO DASHBOARD (Faturamento Efetivo) -- reconcilia com a regra OFICIAL.
@@ -348,6 +349,9 @@ async function scopeSellerName(req: any): Promise<string> {
 }
 
 export function registerDashboardHistoryRoutes(app: Express): void {
+  // Campanha de Outubro (metricas por papel, inbox de novos, aprovar/rejeitar, rota).
+  try { registerCampanhaRoutes(app); } catch (e: any) { console.error("[campanha-outubro]", e?.message || e); }
+
   // Garante tabela + backfill inicial (uma vez, em background) sem travar o boot.
   ensureDashboardHistoryTable().then(async () => {
     try {
