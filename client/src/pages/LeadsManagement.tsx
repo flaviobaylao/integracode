@@ -551,13 +551,6 @@ export default function LeadsManagement() {
     discarded: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
   };
 
-  const temperatureLabels: Record<string, string> = {
-    cold: "Frio",
-    warm: "Morno",
-    hot: "Quente",
-    very_hot: "Muito Quente"
-  };
-
   const exportToExcel = () => {
     const data = filteredLeads.map((lead) => ({
       "Nome": lead.fantasyName || "",
@@ -567,7 +560,6 @@ export default function LeadsManagement() {
       "Latitude": lead.latitude ? parseFloat(lead.latitude.toString()).toFixed(6) : "",
       "Longitude": lead.longitude ? parseFloat(lead.longitude.toString()).toFixed(6) : "",
       "Status": statusLabels[lead.status] || lead.status,
-      "Temperatura": temperatureLabels[lead.temperature || ""] || "",
       "Observação": lead.observation || "",
       "Atribuído a": lead.assignedTo || "",
       "Criado por": lead.createdByName || "",
@@ -576,13 +568,6 @@ export default function LeadsManagement() {
     }));
     exportPadraoExcel(data, `leads_${hojeBR()}`, { aba: "Leads" });
     toast({ title: "Exportação concluída", description: `${data.length} leads exportados com sucesso.` });
-  };
-
-  const temperatureColors: Record<string, string> = {
-    cold: "bg-blue-500",
-    warm: "bg-yellow-500",
-    hot: "bg-orange-500",
-    very_hot: "bg-red-500"
   };
 
   // Base para estatísticas e lista: aplica TODOS os filtros (nome, vendedor,
