@@ -260,6 +260,7 @@ export async function rotaAvisos(seller: string, ym: string = CAMPAIGN_YM): Prom
   const rows = await rawq(
     "SELECT customer_name, status, justification, decided_at::text AS decided_at" +
     " FROM campaign_new_clients WHERE campaign_ym = '" + ym + "' AND seller_name = '" + s + "' AND status IN ('aprovado','rejeitado')" +
+    " AND decided_at >= now() - INTERVAL '7 days'" +
     " ORDER BY decided_at DESC NULLS LAST"
   );
   return rows.map((r) => ({ cliente: r.customer_name, status: r.status, justificativa: r.justification || "", quando: r.decided_at || "" }));
@@ -346,7 +347,11 @@ export function registerCampanhaRoutes(app: Express): void {
       const { role, name } = await resolveUser(req);
       if (!role) return res.status(401).json({ error: "unauthorized" });
       let seller = name;
-      if (role === "admin") seller = String((req.query as any).seller || "");
+      if (role === "admin") {
+        seller = String((req.query as any).seller || "");
+        const sid = String((req.query as any).sellerId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+        if (!seller && sid) { const u = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE id='" + sid + "' LIMIT 1"); seller = String((u[0] && u[0].nome) || ""); }
+      }
       if (!seller) return res.json({ rows: [] });
       const rows = await rotaAvisos(seller);
       res.json({ rows });
