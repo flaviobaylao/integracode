@@ -23345,14 +23345,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const leadData = req.body;
 
-      // 🔒 TRAVA TELEFONE NO LEAD: cadastro de lead exige telefone valido (mesmas regras da venda: anti-numero-falso).
-      const _leadDigits = String((leadData && leadData.phone) || '').replace(/[^0-9]/g, '');
-      const _leadSellerDigits = String((user && (user as any).phone) || '').replace(/[^0-9]/g, '');
-      const _leadIsFake = (d: string) => !d || /^(\d)\1+$/.test(d) || '01234567890123456789'.includes(d) || '98765432109876543210'.includes(d) || d.includes('00000') || (!!_leadSellerDigits && _leadSellerDigits.length >= 10 && d === _leadSellerDigits);
-      if (_leadDigits.length < 10 || _leadDigits.length > 13 || _leadIsFake(_leadDigits)) {
-        console.log('🔒 [TRAVA-TELEFONE-LEAD] Bloqueado cadastro de lead - telefone ausente/invalido/falso:', JSON.stringify((leadData && leadData.phone) || ''));
-        return res.status(400).json({ message: 'Para cadastrar o lead é obrigatório um telefone de contato VÁLIDO (DDD + número real). Números repetidos, sequências ou o seu próprio telefone não são aceitos.', code: 'LEAD_PHONE_REQUIRED' });
-      }
+      // ℹ️ Telefone do lead NÃO é mais obrigatório no cadastro (ajuste set/2026 a pedido do negócio).
+      // Quando informado é aproveitado; quando ausente, o lead é criado sem telefone.
 
       if ((user.role === 'vendedor' || user.role === 'telemarketing') && !leadData.assignedTo) {
         leadData.assignedTo = user.id;
@@ -23364,31 +23358,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: user.id
       });
 
-      // 📅 RETORNO AUTOMÁTICO (cadastro + 15 dias, em dia útil): data TRAVADA de revisita na rota do vendedor.
-      // O vendedor não pode alterá-la (o PATCH só libera photo/observation/status). Só admin ajusta.
+      // 📅 PRÓXIMO CONTATO conforme o STATUS informado no cadastro (ajuste set/2026):
+      //  • "agendado" (scheduled): usa a data do formulário; se vier vazia, hoje + 7 dias (mesmo
+      //    dia da semana). A data é editável no formulário.
+      //  • qualquer outro status (padrão "pending"/Pendente): NÃO agenda retorno — fica sem data de
+      //    próximo contato até que seja agendado.
       try {
-        let _ret = dataCalendario(hojeBR());
-        _ret.setDate(_ret.getDate() + 15);
-        const _dow = _ret.getDay();               // 0=Dom, 6=Sáb
-        if (_dow === 6) _ret.setDate(_ret.getDate() + 2);      // sábado → segunda
-        else if (_dow === 0) _ret.setDate(_ret.getDate() + 1); // domingo → segunda
-        // Encaixa no dia de rota da região do lead (cliente ativo mais próximo), até ±3 dias.
-        try {
-          const _custs = await __sellerCustomers(String((lead as any).assignedTo || user.id));
-          const _wd = __regionTargetWeekday(_custs, Number((lead as any).latitude), Number((lead as any).longitude));
-          _ret = __snapToWeekday(_ret, _wd, 3, null, null);
-        } catch (_snapErr) { /* mantém _ret */ }
-        await db.execute(sql`
-          UPDATE leads
-          SET next_contact_date = ${_ret}, original_return_date = ${_ret}, status = 'scheduled', updated_at = NOW()
-          WHERE id = ${lead.id}
-        `);
-        (lead as any).nextContactDate = _ret;
-        (lead as any).originalReturnDate = _ret;
-        (lead as any).status = 'scheduled';
-        console.log(`📅 [LEAD-RETORNO] ${lead.fantasyName}: retorno agendado p/ ${_ret.toISOString().slice(0,10)} (vendedor ${lead.assignedTo || user.id})`);
+        const _submStatus = String((leadData as any)?.status || 'pending');
+        const _formDate = String((leadData as any)?.nextContactDate || '').slice(0, 10);
+        if (_submStatus === 'scheduled') {
+          let _ret: Date;
+          if (/^\d{4}-\d{2}-\d{2}$/.test(_formDate)) {
+            _ret = dataCalendario(_formDate);
+          } else {
+            _ret = dataCalendario(hojeBR());
+            _ret.setDate(_ret.getDate() + 7); // hoje + 7 dias = mesmo dia da semana
+          }
+          await db.execute(sql`
+            UPDATE leads
+            SET next_contact_date = ${_ret}, original_return_date = ${_ret}, status = 'scheduled', updated_at = NOW()
+            WHERE id = ${lead.id}
+          `);
+          (lead as any).nextContactDate = _ret;
+          (lead as any).originalReturnDate = _ret;
+          (lead as any).status = 'scheduled';
+          console.log(`📅 [LEAD-RETORNO] ${lead.fantasyName}: agendado p/ ${_ret.toISOString().slice(0,10)} (vendedor ${lead.assignedTo || user.id})`);
+        } else {
+          await db.execute(sql`
+            UPDATE leads
+            SET next_contact_date = NULL, original_return_date = NULL, status = ${_submStatus}, updated_at = NOW()
+            WHERE id = ${lead.id}
+          `);
+          (lead as any).nextContactDate = null;
+          (lead as any).status = _submStatus;
+          console.log(`📝 [LEAD-CRIADO] ${lead.fantasyName}: status '${_submStatus}' (sem agendamento de retorno).`);
+        }
       } catch (retErr) {
-        console.error('Erro ao agendar retorno automático do lead:', retErr);
+        console.error('Erro ao definir próximo contato do lead:', retErr);
       }
 
       // Registrar prospecção por criação de lead
@@ -23586,6 +23592,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro ao preencher municipio dos leads:', error);
       return res.status(500).json({ message: 'Erro ao preencher município dos leads', error: error?.message });
+    }
+  });
+
+  // 🌍 Geocode reverso ON-DEMAND: devolve o município (cidade) de uma coordenada. Usado pelo
+  // formulário de Novo Lead para preencher a Cidade automaticamente ao "Capturar Localização".
+  app.get('/api/geocode/city', authenticateUser, async (req: any, res) => {
+    try {
+      const lat = String(req.query.lat ?? '').trim();
+      const lng = String(req.query.lng ?? '').trim();
+      if (!lat || !lng) return res.status(400).json({ message: 'lat e lng são obrigatórios' });
+      const { reverseGeocodeCity } = await import('./geocode-provider');
+      const city = await reverseGeocodeCity(lat, lng);
+      return res.json({ city: city || null });
+    } catch (error: any) {
+      console.error('Erro no geocode reverso de cidade:', error);
+      return res.status(500).json({ message: 'Erro ao obter o município', error: error?.message });
     }
   });
 
