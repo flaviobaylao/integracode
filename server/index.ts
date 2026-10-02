@@ -4853,7 +4853,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
             const __imp = __s?.impersonateRole;
             if (__impU && __u.role === 'admin') { const __t = await storage.getUser(String(__impU)); if (__t) { __role = __t.role; __sid = String(__t.id || ''); } }
             else if (__imp && __u.role === 'admin') { __role = __imp; }
-            if (__role === 'vendedor' || __role === 'telemarketing') __scopeSellerId = __sid;
+            if (__role !== 'admin') __scopeSellerId = __sid;
           }
         }
       } catch (e) {}
