@@ -18287,7 +18287,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // O front exibe "Adicionado manualmente" no rodapé do box dessas visitas.
       // (manualCustomerIds já foi calculado acima, antes da regra de venda recente.)
       visits.forEach((v: any) => {
-        if (v && v.customerId && manualCustomerIds.has(v.customerId)) {
+        // Cobre tambem LEADS (entityId/leadId): o sales_card do lead usa source
+        // 'manual_route_addition', entao o id do lead entra em manualCustomerIds.
+        const _mid = v && (v.customerId || (v as any).entityId || (v as any).leadId);
+        if (_mid && manualCustomerIds.has(String(_mid))) {
           v.addedManually = true;
         }
       });
