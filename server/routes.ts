@@ -23352,6 +23352,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         leadData.assignedTo = user.id;
       }
 
+      // 📅 A data de próximo contato é aplicada logo abaixo via UPDATE (como data de calendário).
+      // Captura e REMOVE do payload do INSERT para não gravar a string 'YYYY-MM-DD' crua numa
+      // coluna timestamp (isso causava erro 500 no cadastro de lead "Agendado").
+      const _formNextContact = String((leadData as any)?.nextContactDate || '').slice(0, 10);
+      delete (leadData as any).nextContactDate;
+      delete (leadData as any).originalReturnDate;
+
       // Adicionar o createdBy
       const lead = await storage.createLead({
         ...leadData,
@@ -23365,7 +23372,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       //    próximo contato até que seja agendado.
       try {
         const _submStatus = String((leadData as any)?.status || 'pending');
-        const _formDate = String((leadData as any)?.nextContactDate || '').slice(0, 10);
+        const _formDate = _formNextContact;
         if (_submStatus === 'scheduled') {
           let _ret: Date;
           if (/^\d{4}-\d{2}-\d{2}$/.test(_formDate)) {
