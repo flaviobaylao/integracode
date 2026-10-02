@@ -10947,8 +10947,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             products: _snapProds.length ? _snapProds : (_cardProds.length ? _cardProds : (salesCard as any).products),
             paymentMethod: (order as any).paymentMethod || (salesCard as any).paymentMethod || null,
           };
-          let pipelineItem: any = null;
-          try { pipelineItem = (await finalizarPedidoParaPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true })).item; } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
+          let pipelineItem: any = null; let pipelineItemId: string | null = null;
+          try { pipelineItem = (await finalizarPedidoParaPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true })).item; if (pipelineItem?.id) pipelineItemId = String(pipelineItem.id); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
           // Idempotencia: so conta como "entrou" se ja existe item DESTE pedido no funil — mesmo card
           // + mesma operacao + mesmo valor. Um item de OUTRA operacao (ex.: uma venda) no mesmo card
           // NAO significa que a troca/amostra liberada entrou: isso mascarava a colisao e a troca sumia.
@@ -10957,10 +10957,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const existing = await storage.getBillingPipelineItems();
               const _op = String((cardForPipeline as any).operationType || '');
               const _val = parseFloat(String((cardForPipeline as any).saleValue || '0')) || 0;
-              if (existing.find((i: any) => i.salesCardId === order.salesCardId
+              const _found = existing.find((i: any) => i.salesCardId === order.salesCardId
                     && String(i.stage) !== 'lixeira'
                     && String((i as any).operationType || '') === _op
-                    && (parseFloat(String((i as any).saleValue || '0')) || 0) === _val)) pipelineItem = { existing: true };
+                    && (parseFloat(String((i as any).saleValue || '0')) || 0) === _val);
+              if (_found) { pipelineItem = _found; if ((_found as any).id) pipelineItemId = String((_found as any).id); }
             } catch {}
           }
           // SO marca liberado se o pedido REALMENTE entrou no funil. Se nao entrou, mantem em
@@ -10972,6 +10973,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           await db.update(blockedOrders).set({ status: 'released', releasedAt: agora(), releasedBy: userId }).where(eq(blockedOrders.id, orderId));
           try { await storage.updateSalesCard(order.salesCardId, { notes: (salesCard.notes || '') + `\n\nLiberado para faturamento: ${formatBrazilDateTime(new Date())}` }); } catch {}
+          // HISTÓRICO DO CARD: registra QUEM liberou e QUANDO (dia/hora BRT) no stage_history, para
+          // aparecer no "Histórico de Etapas" do card (evento 'liberado' = "Liberado de Bloqueados").
+          if (pipelineItemId) {
+            try { const { appendStageHistory } = await import('./deliveryPipelineSync.js'); await appendStageHistory(pipelineItemId, 'liberado', req.currentUser?.email || String(userId)); } catch (e: any) { console.warn('[RELEASE-BLOCKED] stage_history liberado falhou:', e?.message); }
+          }
           released++;
           console.log('[RELEASE-BLOCKED] pedido ' + orderId + ' liberado para o pipeline por ' + req.currentUser.email);
         } catch (error: any) {
@@ -15270,7 +15276,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('Sale data:', { products, totalValue, orderNumber, operationType });
 
       // Check if order should be blocked
-      let shouldBlockOrder = shouldBlock || false; // Use from frontend
+      // ⚠️ BUG FIX: NÃO pré-marcar shouldBlockOrder com `shouldBlock` do frontend.
+      // Antes: `let shouldBlockOrder = shouldBlock || false;` — isso deixava
+      // shouldBlockOrder=true já de cara e PULAVA todas as atribuições de motivo
+      // (guardadas por !shouldBlockOrder), gravando o pedido em Bloqueados com
+      // blockReason/blockDetails VAZIOS. Agora começamos em false, deixamos as
+      // regras específicas atribuírem o motivo, e o `shouldBlock` do frontend
+      // vira um fallback no fim (com motivo preenchido).
+      let shouldBlockOrder = false;
       let blockReason = '';
       let blockDetails = '';
 
@@ -15278,16 +15291,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (operationType === 'troca' || operationType === 'amostra') {
         shouldBlockOrder = true;
         blockReason = 'operation_type';
-        blockDetails = operationType === 'troca' 
+        blockDetails = operationType === 'troca'
           ? 'Pedido de troca requer aprovação manual'
           : 'Pedido de amostra requer aprovação manual';
-      }
-
-      // Block if frontend indicates it should be blocked (e.g., boleto terms)
-      if (shouldBlock && !shouldBlockOrder) {
-        shouldBlockOrder = true;
-        blockReason = 'payment_terms';
-        blockDetails = 'Pedido com condições de pagamento que requerem aprovação';
       }
 
       // ✅ Block if boleto with terms > 7 days
@@ -15318,6 +15324,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
           console.warn('Error checking customer debt:', error);
         }
+      }
+
+      // Fallback: o frontend sinalizou bloqueio (shouldBlock) mas nenhuma regra
+      // específica acima disparou (ex.: boleto com prazo != 7 mas <= 7 dias).
+      // Garante que NUNCA gravamos um pedido bloqueado com motivo vazio.
+      if (!shouldBlockOrder && shouldBlock) {
+        shouldBlockOrder = true;
+        blockReason = 'payment_terms';
+        blockDetails = (paymentMethod === 'boleto' && boletoDays && Number(boletoDays) !== 7)
+          ? `Boleto com prazo de ${boletoDays} dias (diferente de 7) requer aprovação manual`
+          : 'Pedido com condições de pagamento que requerem aprovação';
+        console.log(`🚫 [FINALIZE-SALE] Bloqueando (fallback): ${blockDetails}`);
       }
 
       if (shouldBlockOrder) {
