@@ -176,9 +176,9 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     else if (String(r.status) === "pendente") emValidacao[s] = (emValidacao[s] || 0) + (Number(r.n) || 0);
   }
 
-  // Nomes de admin para excluir da tabela (como no termometro).
-  const adminRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role = 'admin'");
-  const adminSet = new Set(adminRows.map((r: any) => String(r.nome || "")));
+  // Participam da campanha apenas usuarios ativos com papel vendedor/telemarketing.
+  const vendRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role::text IN ('vendedor','telemarketing') AND is_active IS TRUE");
+  const vendSet = new Set(vendRows.map((r: any) => String(r.nome || "")).filter(Boolean));
 
   const names = new Set<string>();
   Object.keys(carteiraCount).forEach((s) => names.add(s));
@@ -187,7 +187,7 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
 
   let sellers: CampaignSeller[] = [];
   for (const seller of names) {
-    if (!seller || seller === "Sem vendedor" || adminSet.has(seller)) continue;
+    if (!seller || seller === "Sem vendedor" || !vendSet.has(seller)) continue;
     if (only && seller !== only) continue;
     const cartN = carteiraCount[seller] || 0;
     const pos = positivados[seller] || 0;
