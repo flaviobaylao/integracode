@@ -438,16 +438,25 @@ export default function LeadsManagement() {
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setFormData({
-          ...formData,
-          latitude: position.coords.latitude.toFixed(6),
-          longitude: position.coords.longitude.toFixed(6)
-        });
+      async (position) => {
+        const _lat = position.coords.latitude.toFixed(6);
+        const _lng = position.coords.longitude.toFixed(6);
+        setFormData((prev) => ({ ...prev, latitude: _lat, longitude: _lng }));
         toast({
           title: "Sucesso",
           description: "Localização capturada!",
         });
+        // 🌍 Preenche a Cidade automaticamente a partir da coordenada capturada (geocode reverso).
+        try {
+          const res = await fetch(`/api/geocode/city?lat=${_lat}&lng=${_lng}`, { credentials: "include" });
+          if (res.ok) {
+            const j = await res.json();
+            if (j?.city) {
+              setFormData((prev) => ({ ...prev, city: String(j.city) }));
+              toast({ title: "Município detectado", description: String(j.city) });
+            }
+          }
+        } catch (_e) { /* cidade é complementar; segue sem travar */ }
       },
       () => {
         toast({
@@ -469,42 +478,9 @@ export default function LeadsManagement() {
       return;
     }
 
-    if (!formData.temperature) {
-      toast({
-        title: "Erro",
-        description: "Temperatura do lead é obrigatória",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // 🔒 TRAVA: telefone válido é obrigatório para cadastrar um novo lead
-    if (!editingLead) {
-      const _leadDigits = (formData.phone || '').replace(/\D/g, '');
-      if (_leadDigits.length < 10 || _leadDigits.length > 13) {
-        toast({
-          title: "Telefone do lead obrigatório",
-          description: "Informe o telefone de contato (DDD + número) para cadastrar o lead.",
-          variant: "destructive",
-        });
-        return;
-      }
-      const _leadFake = /^(\d)\1+$/.test(_leadDigits)
-        || '01234567890123456789'.includes(_leadDigits)
-        || '98765432109876543210'.includes(_leadDigits)
-        || _leadDigits.includes('00000');
-      if (_leadFake) {
-        toast({
-          title: "Telefone inválido",
-          description: "Informe um número real. Números repetidos, sequências ou placeholders não são aceitos.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
     const payload: any = { ...formData };
     if (!payload.nextContactDate) delete payload.nextContactDate;
+    if (!payload.temperature) delete payload.temperature;
 
     if (editingLead) {
       updateLeadMutation.mutate({
@@ -1360,7 +1336,7 @@ export default function LeadsManagement() {
             </div>
 
             <div>
-              <Label htmlFor="phone">Telefone *</Label>
+              <Label htmlFor="phone">Telefone</Label>
               <Input
                 id="phone"
                 value={formData.phone}
@@ -1382,63 +1358,29 @@ export default function LeadsManagement() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="temperature">Temperatura do Lead *</Label>
-                <Select
-                  value={formData.temperature}
-                  onValueChange={(value: any) => setFormData({ ...formData, temperature: value })}
-                >
-                  <SelectTrigger data-testid="select-temperature">
-                    <SelectValue placeholder="Selecione a temperatura" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cold">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-blue-500" />
-                        Frio
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="warm">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                        Morno
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="hot">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-orange-500" />
-                        Quente
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="very_hot">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-red-500" />
-                        Muito Quente
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label htmlFor="status">Status</Label>
-                <Select
-                  value={formData.status}
-                  onValueChange={(value: any) => setFormData({ ...formData, status: value })}
-                >
-                  <SelectTrigger data-testid="select-status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">Pendente</SelectItem>
-                    <SelectItem value="scheduled">Agendado</SelectItem>
-                    <SelectItem value="visited">Visitado</SelectItem>
-                    <SelectItem value="converted">Convertido</SelectItem>
-                    <SelectItem value="discarded">Descartado</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div>
+              <Label htmlFor="status">Status</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(value: any) => setFormData((prev) => ({
+                  ...prev,
+                  status: value,
+                  // 📅 Ao marcar "Agendado", agenda automaticamente hoje + 7 dias (mesmo dia da
+                  // semana). O campo "Data do Próximo Contato" aparece abaixo e continua editável.
+                  nextContactDate: value === "scheduled" ? (prev.nextContactDate || diaMaisBR(7)) : prev.nextContactDate,
+                }))}
+              >
+                <SelectTrigger data-testid="select-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="scheduled">Agendado</SelectItem>
+                  <SelectItem value="visited">Visitado</SelectItem>
+                  <SelectItem value="converted">Convertido</SelectItem>
+                  <SelectItem value="discarded">Descartado</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
@@ -1479,9 +1421,9 @@ export default function LeadsManagement() {
               <p className="text-xs text-muted-foreground mt-1">Padrão: Semanal. Não obrigatório — frequência de visita sugerida.</p>
             </div>
 
-            {editingLead && isAdmin && (
+            {(formData.status === "scheduled" || (editingLead && isAdmin)) && (
               <div>
-                <Label htmlFor="nextContactDate">Próximo Contato</Label>
+                <Label htmlFor="nextContactDate">Data do Próximo Contato</Label>
                 <Input
                   id="nextContactDate"
                   type="date"
@@ -1490,7 +1432,7 @@ export default function LeadsManagement() {
                   data-testid="input-next-contact-date"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Data em que o lead voltará a aparecer na rota do vendedor.
+                  Preenchida automaticamente com hoje + 7 dias (mesmo dia da semana) quando o Status é "Agendado". Você pode editar — é a data em que o lead voltará a aparecer na rota do vendedor.
                 </p>
               </div>
             )}
