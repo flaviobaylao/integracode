@@ -186,16 +186,11 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   const atendStop = () => { try { atendRecRef.current && atendRecRef.current.stop(); } catch (_e) {} setAtendGravando(false); };
   const salvarAtendMut = useMutation({
     mutationFn: async () => {
-      if (!atendCoords) throw new Error("Capture a localização (GPS) do local antes de salvar.");
-      if (!atendPhoto) throw new Error("Anexe a foto do local antes de salvar.");
-      const fd = new FormData();
-      fd.append("latitude", String(atendCoords.lat));
-      fd.append("longitude", String(atendCoords.lng));
-      fd.append("photo", atendPhoto);
-      if (atendTexto.trim()) fd.append("notes", atendTexto.trim());
-      return apiRequestMultipart("POST", `/api/leads/${leadId}/check-in`, fd);
+      const txt = atendTexto.trim();
+      if (!txt) throw new Error("Digite o registro do atendimento antes de salvar.");
+      return apiRequest("POST", `/api/leads/${leadId}/visits`, { observation: txt });
     },
-    onSuccess: () => { toast({ title: "Atendimento registrado", description: "Localização e foto salvas no histórico do lead." }); atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); invalidate(); },
+    onSuccess: () => { toast({ title: "Registro salvo", description: "Atendimento registrado e enviado ao inbox do admin." }); atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); invalidate(); },
     onError: (e: any) => toast({ title: "Erro ao registrar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
   const atendDesfecho = (tipo: 'conv' | 'nao' | 'pro') => {
@@ -400,35 +395,8 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
               <Textarea id={`atend-${leadId}`} rows={6} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder="Digite o registro do atendimento ou use o botão Gravar áudio para ditar..." data-testid={`textarea-lead-atend-${leadId}`} />
               {atendGravando && <p className="text-[11px] text-red-600 mt-1 animate-pulse">● Gravando… fale e o texto aparece automaticamente.</p>}
             </div>
-            {/* 📍 Localização (obrigatória) */}
-            <div className="rounded-md border p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium flex items-center gap-1"><MapPin className="w-4 h-4" /> Localização (obrigatória)</span>
-                <Button type="button" size="sm" variant="outline" onClick={capturarLocalizacaoAtend} data-testid={`button-lead-atend-location-${leadId}`}>Capturar localização</Button>
-              </div>
-              {atendCoords ? (
-                <p className="text-xs text-green-700 dark:text-green-400">✓ Lat: {atendCoords.lat.toFixed(6)} · Lng: {atendCoords.lng.toFixed(6)}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">Toque em “Capturar localização” para registrar o ponto do atendimento.</p>
-              )}
-            </div>
-            {/* 📷 Foto (obrigatória) */}
-            <div className="rounded-md border p-3 space-y-2">
-              <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto do local (obrigatória)</span>
-              {atendPhotoUrl ? (
-                <div className="space-y-2">
-                  <img src={atendPhotoUrl} alt="Foto do atendimento" className="w-full max-h-48 object-contain rounded border" />
-                  <Button type="button" size="sm" variant="outline" onClick={() => { setAtendPhoto(null); setAtendPhotoUrl(null); }} data-testid={`button-lead-atend-photo-remove-${leadId}`}>Trocar foto</Button>
-                </div>
-              ) : (
-                <Input type="file" accept="image/*" capture="environment" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; setAtendPhoto(f); const rd = new FileReader(); rd.onload = (ev) => setAtendPhotoUrl(ev.target?.result as string); rd.readAsDataURL(f); }} data-testid={`input-lead-atend-photo-${leadId}`} />
-              )}
-            </div>
-            {(!atendCoords || !atendPhoto) && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">Para salvar o registro é obrigatório capturar a localização e anexar a foto do local.</p>
-            )}
             <div className="flex justify-end">
-              <Button onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendCoords || !atendPhoto} data-testid={`button-lead-atend-save-${leadId}`}>
+              <Button onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendTexto.trim()} data-testid={`button-lead-atend-save-${leadId}`}>
                 {salvarAtendMut.isPending ? "Salvando…" : "Salvar registro"}
               </Button>
             </div>
