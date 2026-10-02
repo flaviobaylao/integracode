@@ -291,9 +291,11 @@ export function registerCampanhaRoutes(app: Express): void {
   // Metricas da campanha (escopo por papel). Detecta novos sob demanda no mes vigente.
   app.get("/api/campanha/outubro", async (req, res) => {
     try {
-      const { name } = await resolveUser(req);
+      const { role, name } = await resolveUser(req);
+      if (!role) return res.status(401).json({ error: "unauthorized" });
+      if (role !== "admin" && !name) return res.json({ asOf: "", ym: CAMPAIGN_YM, premissas: {}, sellers: [], totais: null, ativo: campaignActive() });
       if (campaignActive()) { try { await detectNovos(CAMPAIGN_YM); } catch (e) {} }
-      const r = await computeCampaign(name || undefined);
+      const r = await computeCampaign(role === "admin" ? undefined : name);
       res.json({ ...r, ativo: campaignActive() });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
@@ -302,6 +304,7 @@ export function registerCampanhaRoutes(app: Express): void {
   app.get("/api/campanha/outubro/novos", async (req, res) => {
     try {
       const { role, name } = await resolveUser(req);
+      if (!role) return res.status(401).json({ error: "unauthorized" });
       let seller = String((req.query as any).seller || "");
       if (role !== "admin") seller = name; // vendedor so ve o seu
       if (!seller) return res.json({ sellers: [], rows: [] });
@@ -341,6 +344,7 @@ export function registerCampanhaRoutes(app: Express): void {
   app.get("/api/campanha/outubro/rota-avisos", async (req, res) => {
     try {
       const { role, name } = await resolveUser(req);
+      if (!role) return res.status(401).json({ error: "unauthorized" });
       let seller = name;
       if (role === "admin") seller = String((req.query as any).seller || "");
       if (!seller) return res.json({ rows: [] });
