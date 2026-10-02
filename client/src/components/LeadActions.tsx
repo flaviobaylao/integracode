@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle, XCircle, Clock, FileText, Phone, MapPin, Camera } from "lucide-react";
+import { CheckCircle, XCircle, Clock, FileText, MapPin, Camera, UserCheck } from "lucide-react";
 
 // Ações de um LEAD que está na Rota do Dia (paradas de lead da rota sequencial).
 // Reaproveita os mesmos endpoints do painel "Retornos de Lead":
@@ -33,9 +33,11 @@ interface LeadActionsProps {
   sellerId?: string;
   date?: string;
   onDone?: () => void;
+  // 'labeled' = botoes com texto (padrao); 'icons' = somente icones (linha do nome do lead na Rota do Dia)
+  variant?: 'labeled' | 'icons';
 }
 
-export default function LeadActions({ leadId, leadName, sellerId, date, onDone }: LeadActionsProps) {
+export default function LeadActions({ leadId, leadName, sellerId, date, onDone, variant = 'labeled' }: LeadActionsProps) {
   const { toast } = useToast();
   const [naoConverterOpen, setNaoConverterOpen] = useState(false);
   const [motivo, setMotivo] = useState<string>("");
@@ -51,13 +53,18 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
   const prorrogarMax = (() => { const d = new Date(); d.setDate(d.getDate() + 15); return _toDay(d); })();
   // Registro de Atendimento (texto livre + ditado por voz via Web Speech API)
   const [atendOpen, setAtendOpen] = useState(false);
+  // 'registro' = Registro de Atendimento (contato, telefone, descricao + check-in)
+  // 'checkin'  = Fazer Check-in (nome, localizacao, foto, observacao)
+  const [atendMode, setAtendMode] = useState<'registro' | 'checkin'>('registro');
+  const [atendContato, setAtendContato] = useState("");
+  const [atendTelefone, setAtendTelefone] = useState("");
   const [atendTexto, setAtendTexto] = useState("");
   const [atendGravando, setAtendGravando] = useState(false);
   const atendRecRef = useRef<any>(null);
   const atendSpeechSupported = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
-  // 📍📷 O Registro de Atendimento agora EXIGE localização (GPS) + foto do local — sem os dois
-  // não é possível salvar. Vai pelo MESMO endpoint do check-in (foto obrigatória no servidor,
-  // grava/trava a coordenada, entra no histórico do lead e conta como atendido/verde na rota).
+  // 📍📷 Registro de Atendimento e Fazer Check-in EXIGEM localização (GPS) + foto do local — sem os dois
+  // não é possível salvar. Vão pelo MESMO endpoint do check-in (foto obrigatória no servidor,
+  // grava/trava a coordenada, entra no histórico do lead, notifica o inbox e conta como atendido na rota).
   const [atendCoords, setAtendCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [atendPhoto, setAtendPhoto] = useState<File | null>(null);
   const [atendPhotoUrl, setAtendPhotoUrl] = useState<string | null>(null);
@@ -184,18 +191,40 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
     } catch (_e) { setAtendGravando(false); }
   };
   const atendStop = () => { try { atendRecRef.current && atendRecRef.current.stop(); } catch (_e) {} setAtendGravando(false); };
+  const resetAtend = () => { atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendContato(""); setAtendTelefone(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); };
+  // Abre o modal (Registro ou Check-in) ja buscando contato/telefone atuais do lead para pre-preencher.
+  const abrirAtend = async (mode: 'registro' | 'checkin') => {
+    setAtendMode(mode); setAtendTexto(""); setAtendGravando(false); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null);
+    setAtendContato(""); setAtendTelefone(""); setAtendOpen(true);
+    if (mode !== 'registro') return;
+    try {
+      const res = await fetch(`/api/leads/${leadId}`, { credentials: "include" });
+      if (res.ok) { const l = await res.json(); setAtendContato(l?.contact || ""); setAtendTelefone(l?.phone || ""); }
+    } catch (_e) { /* usuario preenche manualmente */ }
+  };
+  // Salvar / Fazer Check-in: check-in REAL (foto + GPS obrigatorios) + observacao + contato/telefone.
   const salvarAtendMut = useMutation({
     mutationFn: async () => {
+      if (!atendCoords) throw new Error("Capture a localização antes de salvar.");
+      if (!atendPhoto) throw new Error("Anexe a foto do local antes de salvar.");
+      const fd = new FormData();
+      fd.append('latitude', String(atendCoords.lat));
+      fd.append('longitude', String(atendCoords.lng));
+      fd.append('photo', atendPhoto);
       const txt = atendTexto.trim();
-      if (!txt) throw new Error("Digite o registro do atendimento antes de salvar.");
-      return apiRequest("POST", `/api/leads/${leadId}/visits`, { observation: txt });
+      if (txt) fd.append('notes', txt);
+      if (atendMode === 'registro') {
+        if (atendContato.trim()) fd.append('contact', atendContato.trim());
+        if (atendTelefone.trim()) fd.append('phone', atendTelefone.trim());
+      }
+      return apiRequestMultipart("POST", `/api/leads/${leadId}/check-in`, fd);
     },
-    onSuccess: () => { toast({ title: "Registro salvo", description: "Atendimento registrado e enviado ao inbox do admin." }); atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); invalidate(); },
+    onSuccess: () => { toast({ title: "✓ Check-in realizado", description: atendMode === 'registro' ? "Atendimento registrado, check-in feito e enviado ao inbox do admin." : "Check-in no lead realizado e enviado ao inbox do admin." }); resetAtend(); invalidate(); },
     onError: (e: any) => toast({ title: "Erro ao registrar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
   const atendDesfecho = (tipo: 'conv' | 'nao' | 'pro') => {
     const txt = atendTexto.trim();
-    atendStop(); setAtendOpen(false); setAtendTexto("");
+    resetAtend();
     if (tipo === 'nao') { setMotivo(""); setObs(txt); setNaoConverterOpen(true); return; }
     if (txt) { try { apiRequest("POST", `/api/leads/${leadId}/visits`, { observation: txt }); } catch (_e) {} }
     if (tipo === 'conv') openConverter(); else abrirProrrogar();
@@ -203,12 +232,46 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
 
   return (
     <>
+      {variant === 'icons' ? (
+        /* Icones na linha do nome do lead (como os demais clientes da rota) */
+        <>
+          <Button size="icon" variant="ghost" className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
+            onClick={(e) => { e.stopPropagation(); abrirAtend('checkin'); }} title="Fazer Check-in" aria-label="Fazer Check-in" data-testid={`button-lead-checkin-${leadId}`}>
+            <MapPin className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+            onClick={(e) => { e.stopPropagation(); abrirAtend('registro'); }} title="Registro de Atendimento" aria-label="Registro de Atendimento" data-testid={`button-lead-atendimento-${leadId}`}>
+            <FileText className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-8 w-8 text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950"
+            onClick={(e) => { e.stopPropagation(); openConverter(); }} title="Converter em cliente" aria-label="Converter em cliente" data-testid={`button-lead-converter-${leadId}`}>
+            <UserCheck className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+            onClick={(e) => { e.stopPropagation(); setMotivo(""); setObs(""); setNaoConverterOpen(true); }} title="Não converter" aria-label="Não converter" data-testid={`button-lead-naoconverter-${leadId}`}>
+            <XCircle className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950"
+            disabled={prorrogarMut.isPending} onClick={(e) => { e.stopPropagation(); abrirProrrogar(); }} title="Prorrogar" aria-label="Prorrogar" data-testid={`button-lead-prorrogar-${leadId}`}>
+            <Clock className="h-4 w-4" />
+          </Button>
+        </>
+      ) : (
       <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-dashed border-amber-300 dark:border-amber-700">
+        <Button
+          size="sm"
+          className="bg-green-600 hover:bg-green-700 text-white h-8"
+          onClick={(e) => { e.stopPropagation(); abrirAtend('checkin'); }}
+          title="Fazer Check-in"
+          data-testid={`button-lead-checkin-${leadId}`}
+        >
+          <MapPin className="w-4 h-4 mr-1" /> Check-in
+        </Button>
         <Button
           size="sm"
           variant="outline"
           className="border-blue-400 text-blue-700 dark:text-blue-400 h-8"
-          onClick={(e) => { e.stopPropagation(); setAtendTexto(""); setAtendGravando(false); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); abrirAtend('registro'); }}
           title="Registro de Atendimento"
           data-testid={`button-lead-atendimento-${leadId}`}
         >
@@ -216,11 +279,12 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
         </Button>
         <Button
           size="sm"
-          className="bg-green-600 hover:bg-green-700 text-white h-8"
+          variant="outline"
+          className="border-emerald-500 text-emerald-700 dark:text-emerald-400 h-8"
           onClick={(e) => { e.stopPropagation(); openConverter(); }}
           data-testid={`button-lead-converter-${leadId}`}
         >
-          <CheckCircle className="w-4 h-4 mr-1" /> Converter
+          <UserCheck className="w-4 h-4 mr-1" /> Converter
         </Button>
         <Button
           size="sm"
@@ -243,6 +307,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
           <Clock className="w-4 h-4 mr-1" /> Prorrogar
         </Button>
       </div>
+      )}
 
       {/* Dialog: Prorrogar (escolher data, até +15 dias) */}
       <Dialog open={prorrogarOpen} onOpenChange={(o) => { if (!o) setProrrogarOpen(false); }}>
@@ -379,32 +444,66 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
         </DialogContent>
       </Dialog>
 
-      {/* Dialog: Registro de Atendimento (texto livre + ditado por voz) */}
-      <Dialog open={atendOpen} onOpenChange={(o) => { if (!o) { atendStop(); setAtendOpen(false); } }}>
-        <DialogContent className="max-w-lg" onClick={(e) => e.stopPropagation()}>
+      {/* Dialog: Registro de Atendimento / Fazer Check-in (GPS + foto obrigatorios, ditado por voz) */}
+      <Dialog open={atendOpen} onOpenChange={(o) => { if (!o) resetAtend(); }}>
+        <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
           <DialogHeader>
-            <DialogTitle>Registro de Atendimento</DialogTitle>
+            <DialogTitle>{atendMode === 'checkin' ? 'Fazer Check-in' : 'Registro de Atendimento'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">{leadName}</p>
+            <div>
+              <Label>Nome</Label>
+              <Input value={leadName} readOnly className="bg-muted/50" data-testid={`input-lead-atend-nome-${leadId}`} />
+            </div>
+            {atendMode === 'registro' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor={`atend-contato-${leadId}`}>Contato</Label>
+                  <Input id={`atend-contato-${leadId}`} value={atendContato} onChange={(e) => setAtendContato(e.target.value)} placeholder="Nome do contato" data-testid={`input-lead-atend-contato-${leadId}`} />
+                </div>
+                <div>
+                  <Label htmlFor={`atend-tel-${leadId}`}>Telefone</Label>
+                  <Input id={`atend-tel-${leadId}`} value={atendTelefone} onChange={(e) => setAtendTelefone(e.target.value)} placeholder="(00) 00000-0000" data-testid={`input-lead-atend-telefone-${leadId}`} />
+                </div>
+              </div>
+            )}
+            {/* 📍 Localização (obrigatória) */}
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium flex items-center gap-1"><MapPin className="w-4 h-4" /> Localização (obrigatória)</span>
+                <Button type="button" size="sm" variant="outline" onClick={capturarLocalizacaoAtend} data-testid={`button-lead-atend-location-${leadId}`}>Capturar localização</Button>
+              </div>
+              {atendCoords ? (
+                <p className="text-xs text-green-700 dark:text-green-400">✓ Lat: {atendCoords.lat.toFixed(6)} · Lng: {atendCoords.lng.toFixed(6)}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Toque em “Capturar localização” para registrar o ponto do atendimento.</p>
+              )}
+            </div>
+            {/* 📷 Foto (obrigatória) */}
+            <div className="rounded-md border p-3 space-y-2">
+              <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto do local (obrigatória)</span>
+              {atendPhotoUrl ? (
+                <div className="space-y-2">
+                  <img src={atendPhotoUrl} alt="Foto do atendimento" className="w-full max-h-48 object-contain rounded border" />
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setAtendPhoto(null); setAtendPhotoUrl(null); }} data-testid={`button-lead-atend-photo-remove-${leadId}`}>Trocar foto</Button>
+                </div>
+              ) : (
+                <Input type="file" accept="image/*" capture="environment" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; setAtendPhoto(f); const rd = new FileReader(); rd.onload = (ev) => setAtendPhotoUrl(ev.target?.result as string); rd.readAsDataURL(f); }} data-testid={`input-lead-atend-photo-${leadId}`} />
+              )}
+            </div>
             <div>
               <div className="flex items-center justify-between mb-1">
-                <Label htmlFor={`atend-${leadId}`}>Descrição do atendimento</Label>
+                <Label htmlFor={`atend-${leadId}`}>{atendMode === 'checkin' ? 'Observação' : 'Descrição do atendimento'}</Label>
                 <VoiceDictateButton onText={(t) => setAtendTexto((prev) => (prev ? prev.trim() + ' ' : '') + t)} testId={`button-lead-atend-record-${leadId}`} />
               </div>
-              <Textarea id={`atend-${leadId}`} rows={6} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder="Digite o registro do atendimento ou use o botão Gravar áudio para ditar..." data-testid={`textarea-lead-atend-${leadId}`} />
+              <Textarea id={`atend-${leadId}`} rows={4} value={atendTexto} onChange={(e) => setAtendTexto(e.target.value)} placeholder={atendMode === 'checkin' ? "Observações sobre a visita (opcional)..." : "Digite o registro do atendimento ou use o botão Gravar áudio para ditar..."} data-testid={`textarea-lead-atend-${leadId}`} />
               {atendGravando && <p className="text-[11px] text-red-600 mt-1 animate-pulse">● Gravando… fale e o texto aparece automaticamente.</p>}
-            </div>
-            <div className="flex justify-end">
-              <Button onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendTexto.trim()} data-testid={`button-lead-atend-save-${leadId}`}>
-                {salvarAtendMut.isPending ? "Salvando…" : "Salvar registro"}
-              </Button>
             </div>
             <div className="border-t pt-3">
               <p className="text-xs text-muted-foreground mb-2">Desfecho do lead</p>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => atendDesfecho('conv')} data-testid={`button-lead-atend-converter-${leadId}`}>
-                  <CheckCircle className="w-4 h-4 mr-1" /> Converter
+                <Button size="sm" variant="outline" className="border-emerald-500 text-emerald-700 dark:text-emerald-400" onClick={() => atendDesfecho('conv')} data-testid={`button-lead-atend-converter-${leadId}`}>
+                  <UserCheck className="w-4 h-4 mr-1" /> Converter
                 </Button>
                 <Button size="sm" variant="destructive" onClick={() => atendDesfecho('nao')} data-testid={`button-lead-atend-naoconverter-${leadId}`}>
                   <XCircle className="w-4 h-4 mr-1" /> Não converter
@@ -414,7 +513,16 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone }
                 </Button>
               </div>
             </div>
+            {(!atendCoords || !atendPhoto) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">Para {atendMode === 'checkin' ? 'fazer o check-in' : 'salvar o registro'} é obrigatório capturar a localização e anexar a foto do local.</p>
+            )}
           </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={resetAtend}>Cancelar</Button>
+            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendCoords || !atendPhoto} data-testid={`button-lead-atend-save-${leadId}`}>
+              {salvarAtendMut.isPending ? "Salvando…" : (atendMode === 'checkin' ? "✓ Fazer Check-in" : "Salvar/Fazer Check-in")}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

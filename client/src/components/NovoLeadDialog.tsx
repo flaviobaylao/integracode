@@ -6,17 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Navigation, ChevronsUpDown, Check, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { CIDADES_GO_DF } from "@/lib/cidadesGoDf";
+import { Navigation } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-// Formulário de "Novo Lead" reutilizado na Rota do Dia — mesmos campos e funcionalidade do
-// formulário de "Novo Lead" da Gestão de Leads. Cria o lead (POST /api/leads) e devolve o lead
-// criado via onCreated, para quem chamou já incluir na rota do dia.
+// "Cadastrar Lead" — formulario rapido na Rota do Dia: Nome, Capturar localizacao (coordenada)
+// e Observacao. Cria o lead (POST /api/leads) e devolve via onCreated para ja incluir na rota.
 export default function NovoLeadDialog(props: {
   open: boolean;
   onClose: () => void;
@@ -24,239 +18,97 @@ export default function NovoLeadDialog(props: {
   onCreated: (lead: any) => void;
 }) {
   const { toast } = useToast();
-  const [cityOpen, setCityOpen] = useState(false);
-  const emptyForm = {
-    fantasyName: "",
-    city: "",
-    latitude: "",
-    longitude: "",
-    contact: "",
-    phone: "",
-    observation: "",
-    periodicity: "semanal",
-  };
-  const [formData, setFormData] = useState({ ...emptyForm });
-  const resetForm = () => setFormData({ ...emptyForm });
+  const empty = { fantasyName: "", latitude: "", longitude: "", observation: "" };
+  const [form, setForm] = useState({ ...empty });
+  const reset = () => setForm({ ...empty });
 
-  const handleCaptureLocation = () => {
+  const capturar = () => {
     if (!navigator.geolocation) {
       toast({ title: "Erro", description: "Seu navegador não suporta geolocalização", variant: "destructive" });
       return;
     }
+    const ok = (pos: GeolocationPosition) => {
+      setForm((p) => ({ ...p, latitude: pos.coords.latitude.toFixed(6), longitude: pos.coords.longitude.toFixed(6) }));
+      toast({ title: "Localização capturada", description: `Lat: ${pos.coords.latitude.toFixed(6)}, Lng: ${pos.coords.longitude.toFixed(6)}` });
+    };
+    const err = () => toast({ title: "Erro", description: "Não foi possível capturar a localização. Verifique o GPS.", variant: "destructive" });
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const _lat = position.coords.latitude.toFixed(6);
-        const _lng = position.coords.longitude.toFixed(6);
-        setFormData((prev) => ({ ...prev, latitude: _lat, longitude: _lng }));
-        toast({ title: "Sucesso", description: "Localização capturada!" });
-        try {
-          const res = await fetch(`/api/geocode/city?lat=${_lat}&lng=${_lng}`, { credentials: "include" });
-          if (res.ok) {
-            const j = await res.json();
-            if (j?.city) {
-              setFormData((prev) => ({ ...prev, city: String(j.city) }));
-              toast({ title: "Município detectado", description: String(j.city) });
-            }
-          }
-        } catch (_e) { /* cidade é complementar; segue sem travar */ }
-      },
-      () => {
-        toast({ title: "Erro", description: "Não foi possível capturar a localização", variant: "destructive" });
-      }
+      ok,
+      () => navigator.geolocation.getCurrentPosition(ok, err, { enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 }),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
     );
   };
 
   const createMut = useMutation({
     mutationFn: async () => {
-      const payload: any = { ...formData, status: "scheduled" };
+      const payload: any = {
+        fantasyName: form.fantasyName,
+        latitude: form.latitude,
+        longitude: form.longitude,
+        observation: form.observation,
+        status: "scheduled",
+      };
       if (props.defaultAssignedTo) payload.assignedTo = props.defaultAssignedTo;
       return await apiRequest("POST", "/api/leads", payload);
     },
-    onSuccess: (lead: any) => {
-      toast({ title: "Lead criado", description: "Lead cadastrado com sucesso." });
-      resetForm();
-      props.onCreated(lead);
-    },
-    onError: (e: any) => {
-      toast({ title: "Erro", description: e?.message || "Erro ao criar lead", variant: "destructive" });
-    },
+    onSuccess: (lead: any) => { toast({ title: "Lead cadastrado", description: "Lead criado com sucesso." }); reset(); props.onCreated(lead); },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Erro ao cadastrar lead", variant: "destructive" }),
   });
 
-  const handleSubmit = () => {
-    if (!formData.fantasyName || !formData.latitude || !formData.longitude) {
-      toast({ title: "Erro", description: "Nome fantasia, latitude e longitude são obrigatórios", variant: "destructive" });
+  const submit = () => {
+    if (!form.fantasyName || !form.latitude || !form.longitude) {
+      toast({ title: "Campos obrigatórios", description: "Informe o nome e capture a localização.", variant: "destructive" });
       return;
     }
     createMut.mutate();
   };
 
   return (
-    <Dialog open={props.open} onOpenChange={(open) => { if (!open) { resetForm(); props.onClose(); } }}>
-      <DialogContent className="max-w-2xl z-[10000]">
+    <Dialog open={props.open} onOpenChange={(o) => { if (!o) { reset(); props.onClose(); } }}>
+      <DialogContent className="max-w-md z-[10000]">
         <DialogHeader>
-          <DialogTitle>Novo Lead</DialogTitle>
+          <DialogTitle>Cadastrar Lead</DialogTitle>
         </DialogHeader>
-
-        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        <div className="space-y-4">
           <div>
-            <Label htmlFor="nl-fantasyName">Nome Fantasia *</Label>
+            <Label htmlFor="cl-nome">Nome Fantasia *</Label>
             <Input
-              id="nl-fantasyName"
-              value={formData.fantasyName}
-              onChange={(e) => setFormData({ ...formData, fantasyName: e.target.value })}
+              id="cl-nome"
+              value={form.fantasyName}
+              onChange={(e) => setForm({ ...form, fantasyName: e.target.value })}
               placeholder="Nome do lead"
-              data-testid="nl-input-fantasy-name"
+              data-testid="cl-input-nome"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="nl-latitude">Latitude *</Label>
-              <Input
-                id="nl-latitude"
-                type="number"
-                step="0.000001"
-                value={formData.latitude}
-                onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
-                onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData({ ...formData, latitude: p[1], longitude: p[2] }); } }}
-                placeholder="-16.686891"
-                data-testid="nl-input-latitude"
-              />
+          <div className="rounded-md border p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium flex items-center gap-1"><Navigation className="w-4 h-4" /> Localização (obrigatória)</span>
+              <Button type="button" size="sm" variant="outline" onClick={capturar} data-testid="cl-capturar">Capturar Localização</Button>
             </div>
-            <div>
-              <Label htmlFor="nl-longitude">Longitude *</Label>
-              <Input
-                id="nl-longitude"
-                type="number"
-                step="0.000001"
-                value={formData.longitude}
-                onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
-                onPaste={(e) => { const p = e.clipboardData.getData('text').match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (p) { e.preventDefault(); setFormData({ ...formData, latitude: p[1], longitude: p[2] }); } }}
-                placeholder="-49.264794"
-                data-testid="nl-input-longitude"
-              />
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleCaptureLocation}
-            className="w-full"
-            data-testid="nl-button-capture-location"
-          >
-            <Navigation className="h-4 w-4 mr-2" />
-            Capturar Localização Atual
-          </Button>
-
-          <div>
-            <Label htmlFor="nl-city">Cidade</Label>
-            <Popover open={cityOpen} onOpenChange={setCityOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={cityOpen}
-                  className="w-full justify-between font-normal"
-                  data-testid="nl-button-city"
-                >
-                  <span className={cn(!formData.city && "text-muted-foreground")}>
-                    {formData.city || "Selecione o município..."}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Buscar município (GO + DF)..." />
-                  <CommandList>
-                    <CommandEmpty>Nenhum município encontrado.</CommandEmpty>
-                    <CommandGroup>
-                      {formData.city && (
-                        <CommandItem
-                          value="__limpar__"
-                          onSelect={() => { setFormData({ ...formData, city: "" }); setCityOpen(false); }}
-                          className="text-muted-foreground"
-                        >
-                          <X className="mr-2 h-4 w-4" />
-                          Limpar seleção
-                        </CommandItem>
-                      )}
-                      {CIDADES_GO_DF.map((cidade) => (
-                        <CommandItem
-                          key={cidade}
-                          value={cidade}
-                          onSelect={() => { setFormData({ ...formData, city: cidade }); setCityOpen(false); }}
-                        >
-                          <Check className={cn("mr-2 h-4 w-4", formData.city === cidade ? "opacity-100" : "opacity-0")} />
-                          {cidade}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            {form.latitude && form.longitude ? (
+              <p className="text-xs text-green-700 dark:text-green-400">✓ Lat: {form.latitude} · Lng: {form.longitude}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Toque em "Capturar Localização" para registrar o ponto do lead.</p>
+            )}
           </div>
 
           <div>
-            <Label htmlFor="nl-contact">Contato</Label>
-            <Input
-              id="nl-contact"
-              value={formData.contact}
-              onChange={(e) => setFormData({ ...formData, contact: e.target.value })}
-              placeholder="Nome do contato"
-              data-testid="nl-input-contact"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="nl-phone">Telefone</Label>
-            <Input
-              id="nl-phone"
-              value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              placeholder="(DDD) 9XXXX-XXXX"
-              data-testid="nl-input-phone"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="nl-observation">Observação</Label>
+            <Label htmlFor="cl-obs">Observação</Label>
             <Textarea
-              id="nl-observation"
-              value={formData.observation}
-              onChange={(e) => setFormData({ ...formData, observation: e.target.value })}
+              id="cl-obs"
+              value={form.observation}
+              onChange={(e) => setForm({ ...form, observation: e.target.value })}
               placeholder="Observações sobre o lead"
               rows={3}
-              data-testid="nl-input-observation"
+              data-testid="cl-input-obs"
             />
           </div>
-
-          <div>
-            <Label htmlFor="nl-periodicity">Periodicidade</Label>
-            <Select
-              value={formData.periodicity || "semanal"}
-              onValueChange={(value) => setFormData({ ...formData, periodicity: value })}
-            >
-              <SelectTrigger data-testid="nl-select-periodicity">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="semanal">Semanal</SelectItem>
-                <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                <SelectItem value="mensal">Mensal</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground mt-1">Padrão: Semanal. Frequência de visita sugerida.</p>
-          </div>
         </div>
-
         <DialogFooter>
-          <Button variant="outline" onClick={() => { resetForm(); props.onClose(); }}>Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={createMut.isPending} data-testid="nl-button-save">
-            {createMut.isPending ? "Salvando..." : "Salvar Lead"}
+          <Button variant="outline" onClick={() => { reset(); props.onClose(); }}>Cancelar</Button>
+          <Button onClick={submit} disabled={createMut.isPending} className="bg-green-600 hover:bg-green-700 text-white" data-testid="cl-salvar">
+            {createMut.isPending ? "Salvando..." : "Cadastrar Lead"}
           </Button>
         </DialogFooter>
       </DialogContent>
