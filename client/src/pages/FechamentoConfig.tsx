@@ -75,6 +75,22 @@ function RegrasTab() {
   const sellers = (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role) && u?.isActive);
   const [admSeller, setAdmSeller] = useState<string>("");
   const [admDate, setAdmDate] = useState<string>("");
+  // Ao escolher o vendedor, busca o DIA PENDENTE (rota bloqueada) e ja preenche a data —
+  // e essa data que a "Liberar rota" precisa usar. Sem isto o admin tinha de adivinhar a data
+  // e, se errasse, a rota continuava bloqueada (parecia que o botao "nao funcionava").
+  const [admPendente, setAdmPendente] = useState<string | null>(null);
+  const [admPendLoad, setAdmPendLoad] = useState<boolean>(false);
+  useEffect(() => {
+    let vivo = true;
+    setAdmPendente(null);
+    if (!admSeller) return;
+    setAdmPendLoad(true);
+    apiRequest("GET", "/api/vendedor/fechamento/bloqueio?sellerId=" + encodeURIComponent(admSeller))
+      .then((r: any) => { if (!vivo) return; const p = r && r.blocked ? r.pendingDate : null; setAdmPendente(p || null); if (p) setAdmDate(p); })
+      .catch(() => { if (vivo) setAdmPendente(null); })
+      .finally(() => { if (vivo) setAdmPendLoad(false); });
+    return () => { vivo = false; };
+  }, [admSeller]);
   const admOk = !!admSeller && /^\d{4}-\d{2}-\d{2}$/.test(admDate);
   const liberar = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/admin/fechamento/liberar", { sellerId: admSeller, date: admDate }),
@@ -172,6 +188,13 @@ function RegrasTab() {
             <button onClick={() => liberar.mutate()} disabled={!admOk || liberar.isPending} className="px-3 py-2 rounded-lg text-sm font-semibold border bg-white text-gray-700 disabled:opacity-50">🔓 Liberar rota</button>
             <button onClick={() => reabrir.mutate()} disabled={!admOk || reabrir.isPending} className="px-3 py-2 rounded-lg text-sm font-semibold border bg-white text-gray-700 disabled:opacity-50">↺ Reabrir dia</button>
           </div>
+          {admSeller ? (admPendLoad ? (
+            <div className="text-[11px] text-amber-700 mt-3">Verificando dia pendente...</div>
+          ) : admPendente ? (
+            <div className="text-[11px] text-amber-700 font-semibold mt-3">Dia pendente (rota bloqueada): {fmtDataBR(admPendente)} — ja preenchido na data acima. Clique em Liberar rota.</div>
+          ) : (
+            <div className="text-[11px] text-green-700 font-semibold mt-3">Nenhuma rota bloqueada para este vendedor.</div>
+          )) : null}
           <div className="text-[11px] text-muted-foreground mt-3">A “Liberar rota” usa a data do dia pendente que aparece para o vendedor na tela de bloqueio.</div>
         </CardContent>
       </Card>
