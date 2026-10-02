@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
+import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -783,6 +784,7 @@ export default function SolicitacoesAlteracao() {
       </div>
 
         <TabsContent value="pendentes" className="space-y-3 mt-3">
+          <CampanhaInboxPanel />
           {sugestoesF.length > 0 && (
             <div className="space-y-2">
               <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Migração de carteira (repescagem)</div>
