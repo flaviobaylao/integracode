@@ -21,6 +21,10 @@ const BONUS_NOVO = 30;         // R$ por novo cliente apto
 const BONUS_POS = 500;         // R$ por 90% de positivacao
 const BONUS_META = 500;        // R$ por bater a meta de faturamento
 
+// Contas fora da campanha (canais digitais, contas institucionais e excecoes do gestor).
+const EXCLUIDOS = new Set(["hotsite", "instagram", "honest colaboradores", "honest admin", "honest fornecedores", "maria e.", "natalia b."]);
+function excluido(nome: string): boolean { return EXCLUIDOS.has(String(nome || "").trim().toLowerCase()); }
+
 const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
 function todayBrt(): string {
@@ -92,6 +96,7 @@ export async function detectNovos(ym: string): Promise<number> {
     const c = cust[doc];
     if (!c) continue; // sem cadastro (ou excluido por PURO) — ignora
     const seller = docSeller[doc] || "";
+    if (excluido(seller)) continue; // conta fora da campanha
     const val = Math.round((Number(r.dayv) || 0) * 100) / 100;
     const fd = String(r.first_d).slice(0, 10);
     const docE = doc.replace(/'/g, "");
@@ -187,7 +192,7 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
 
   let sellers: CampaignSeller[] = [];
   for (const seller of names) {
-    if (!seller || seller === "Sem vendedor" || !vendSet.has(seller)) continue;
+    if (!seller || seller === "Sem vendedor" || !vendSet.has(seller) || excluido(seller)) continue;
     if (only && seller !== only) continue;
     const cartN = carteiraCount[seller] || 0;
     const pos = positivados[seller] || 0;
@@ -237,7 +242,7 @@ export async function inboxPendentes(ym: string = CAMPAIGN_YM): Promise<any[]> {
     "SELECT id, customer_name, seller_name, region, order_value, first_order_date::text AS first_order_date, status, justification" +
     " FROM campaign_new_clients WHERE campaign_ym = '" + ym + "' ORDER BY (status='pendente') DESC, first_order_date DESC NULLS LAST"
   );
-  return rows.map((r) => ({ id: String(r.id), cliente: r.customer_name, vendedor: r.seller_name, regiao: r.region, pedido: Number(r.order_value) || 0, data: r.first_order_date || "", status: r.status, justificativa: r.justification || "" }));
+  return rows.map((r) => ({ id: String(r.id), cliente: r.customer_name, vendedor: r.seller_name, regiao: r.region, pedido: Number(r.order_value) || 0, data: r.first_order_date || "", status: r.status, justificativa: r.justification || "" })).filter((x) => !excluido(x.vendedor));
 }
 
 export async function decidir(id: string, acao: "aprovar" | "rejeitar", justificativa: string, adminName: string): Promise<boolean> {
