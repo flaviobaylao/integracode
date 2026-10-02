@@ -23490,7 +23490,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         // Vendedor pode atualizar apenas: photo, observation, status, lastCheckInAt, lastCheckOutAt
-        const allowedFields = ['photo', 'observation', 'status', 'lastCheckInAt', 'lastCheckOutAt'];
+        const allowedFields = ['photo', 'observation', 'status', 'lastCheckInAt', 'lastCheckOutAt', 'contact', 'phone'];
         const requestedFields = Object.keys(updateData);
         const hasDisallowedField = requestedFields.some(field => !allowedFields.includes(field));
         
@@ -23874,6 +23874,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
       const checkInNotes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+      // 👤 Registro de Atendimento (Rota do Dia): contato/telefone informados junto com o check-in.
+      const checkInContact = typeof req.body?.contact === 'string' ? req.body.contact.trim() : '';
+      const checkInPhone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
 
       console.log(`📍 Check-in em lead ${id} - User: ${user?.email || 'UNKNOWN'}, File: ${req.file ? 'Sim' : 'Não'}, Coords: (${latitude}, ${longitude}), Obs: ${checkInNotes ? 'sim' : 'não'}`);
       
@@ -23960,6 +23963,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             photo: photoUrl, // Salvar foto no lead
             // Registra a observação do check-in (quando informada) no campo do lead.
             ...(checkInNotes ? { observation: checkInNotes } : {}),
+            ...(checkInContact ? { contact: checkInContact } : {}),
+            ...(checkInPhone ? { phone: checkInPhone } : {}),
             // Coordenada confirmada por GPS (1a visita adota; depois corrige no local).
             ...leadCoordUpdate,
             updatedAt: now
