@@ -19191,11 +19191,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { routeId } = req.params;
       const { customerId } = req.body;
       
-      // Apenas administradores podem adicionar visitas
-      if (!['admin', 'coordinator', 'administrative'].includes(user.role)) {
-        return res.status(403).json({ message: 'Acesso negado. Apenas administradores podem adicionar visitas.' });
-      }
-      
       if (!customerId) {
         return res.status(400).json({ message: 'customerId é obrigatório' });
       }
@@ -19205,6 +19200,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!route) {
         return res.status(404).json({ message: 'Rota não encontrada' });
+      }
+
+      // Permissao: admin/coordenacao/administrativo em qualquer rota; vendedor/telemarketing
+      // apenas na SUA PROPRIA rota. (Exclusao continua restrita a admin/administrativo.)
+      {
+        const isAdminAdd = ['admin', 'coordinator', 'administrative'].includes(user.role);
+        const isOwnRouteAdd = ['vendedor', 'telemarketing'].includes(user.role) && route.sellerId === user.id;
+        if (!isAdminAdd && !isOwnRouteAdd) {
+          return res.status(403).json({ message: 'Acesso negado. Voce pode adicionar visitas apenas na sua propria rota.' });
+        }
       }
       
       // Buscar cliente para validar e obter dados
@@ -19292,7 +19297,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verificar acesso: admin/coordinator/administrative podem adicionar em qualquer rota
       // Vendedores podem adicionar apenas na sua própria rota
       const isAdmin = ['admin', 'coordinator', 'administrative'].includes(user.role);
-      const isOwnRoute = user.role === 'vendedor' && route.sellerId === user.id;
+      const isOwnRoute = ['vendedor', 'telemarketing'].includes(user.role) && route.sellerId === user.id;
       
       if (!isAdmin && !isOwnRoute) {
         return res.status(403).json({ message: 'Acesso negado. Você pode adicionar leads apenas na sua própria rota.' });
