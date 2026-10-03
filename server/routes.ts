@@ -23753,6 +23753,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔎 DIAGNÓSTICO Street View (admin): mostra o status cru do metadata do Google para uma coordenada,
+  // para distinguir "API não habilitada/chave restrita" (REQUEST_DENIED) de "sem imagem" (ZERO_RESULTS).
+  app.get('/api/admin/leads/streetview-debug', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const lat = String(req.query.lat ?? '-16.6786').trim();
+      const lng = String(req.query.lng ?? '-49.2539').trim();
+      const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
+      const out: any = { hasKey: !!key, keyLen: key.length };
+      if (key) {
+        const u = (src: string) => `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(lat)},${encodeURIComponent(lng)}${src}&key=${encodeURIComponent(key)}`;
+        try { const r1 = await fetch(u('&source=outdoor'), { signal: AbortSignal.timeout(12000) }); out.outdoor = await r1.json(); } catch (e: any) { out.outdoorErr = String(e?.message || e); }
+        try { const r2 = await fetch(u(''), { signal: AbortSignal.timeout(12000) }); out.default = await r2.json(); } catch (e: any) { out.defaultErr = String(e?.message || e); }
+      }
+      return res.json(out);
+    } catch (e: any) { return res.status(500).json({ error: e?.message }); }
+  });
+
   // Deletar lead (apenas admin)
   app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
