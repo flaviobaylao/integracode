@@ -81,6 +81,7 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Administração", "Cenários Fiscais", REPORTS],
   ["Administração", "Cielo (PIX/Cartão)", REPORTS],
   ["Administração", "Acessos e Delegações", [A]],
+  ["Administração", "Feriados", [A]],
 ];
 
 export const ROLE_LABEL: Record<string, string> = {

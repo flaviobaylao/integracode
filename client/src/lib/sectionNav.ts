@@ -87,6 +87,7 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/admin/system": "Administração",
   "/admin/empresas": "Administração",
   "/admin/ambiente-fiscal": "Administração",
+  "/admin/feriados": "Administração",
 };
 
 // Retorna o rotulo do grupo (secao) para uma rota, ou null se desconhecida.
