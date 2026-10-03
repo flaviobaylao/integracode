@@ -545,6 +545,60 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // GET /api/change-requests/history/customer/:customerId
+  //   HISTÓRICO DE AÇÕES DO CLIENTE. Achata, para um cliente, todos os registros
+  //   do Inbox (change_requests): Descrição e Observações da solicitação/report,
+  //   Réplicas (admin) e Tréplicas (vendedor) do histórico de conversa, e a
+  //   Resolução do admin. Cada item traz data/hora e autor. Ordenado do mais
+  //   recente para o mais antigo e limitado aos 50 ÚLTIMOS (nada é apagado — ao
+  //   passar de 50, os mais antigos apenas deixam de aparecer).
+  //   NÃO inclui alterações de cadastro (essas seguem no "relógio" — tabela
+  //   customer_change_history).
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/history/customer/:customerId", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const cid = String(req.params.customerId || "").trim();
+    if (!cid) return res.json({ items: [] });
+    // Limite amplo na leitura (200 registros) porque cada registro gera vários
+    // itens (descrição + observação + mensagens + resolução); o corte final de 50
+    // é feito depois de achatar e ordenar.
+    const rows = rowsOf(await db.execute(sql`
+      SELECT * FROM change_requests
+      WHERE customer_id = ${cid} OR (entity_type = 'customer' AND entity_id = ${cid})
+      ORDER BY created_at DESC
+      LIMIT 200`));
+    const items: any[] = [];
+    for (const r0 of rows) {
+      const r = mapRow(r0);
+      const d: any = r.details || {};
+      const autorBase = r.requestedByName || r.sellerName || "—";
+      // Descrição (pedido do vendedor) ou rótulo do report.
+      let desc = "";
+      if (r.kind === "report") desc = d.reportLabel || REPORT_KIND_LABEL[d.reportKind] || "Report";
+      else desc = summarizeRequest(r.types, d) || "Solicitação de alteração";
+      items.push({ id: r.id + ":desc", tipo: "descricao", tipoLabel: r.kind === "report" ? "Report" : "Descrição", texto: desc, autor: autorBase, data: r.createdAt });
+      // Observação livre escrita pelo vendedor (campo "texto"/"outro").
+      const obs = String(d.texto || d.outro || d.observacao || "").trim();
+      if (obs && obs !== desc) items.push({ id: r.id + ":obs", tipo: "observacao", tipoLabel: "Observação", texto: obs, autor: autorBase, data: r.createdAt });
+      // Mensagens: réplica (admin) / tréplica (vendedor). Pula a mensagem-semente
+      // do report (kind='report', já exibida acima) e marcações internas.
+      for (const m of (r.messages || [])) {
+        const txt = String(m?.text || "").trim();
+        if (!txt) continue;
+        if (m.kind === "report" || m.kind === "pendencia_removida") continue;
+        if (m.role !== "admin" && m.role !== "seller") continue;
+        const tipo = m.role === "admin" ? "replica" : "treplica";
+        items.push({ id: m.id || (r.id + ":m" + items.length), tipo, tipoLabel: tipo === "replica" ? "Réplica" : "Tréplica", texto: txt, autor: m.byName || "—", data: m.at || r.createdAt });
+      }
+      // Resolução do admin ao fechar a solicitação.
+      const resNote = String(r.resolutionNote || "").trim();
+      if (resNote) items.push({ id: r.id + ":res", tipo: "resolucao", tipoLabel: "Resolução", texto: resNote, autor: r.resolvedByName || "—", data: r.resolvedAt || r.createdAt });
+    }
+    items.sort((a, b) => new Date(b.data || 0).getTime() - new Date(a.data || 0).getTime());
+    res.json({ items: items.slice(0, 50) });
+  }));
+
+  // --------------------------------------------------------------------------
   // GET /api/change-requests/states?keys=customer:ID,lead:ID,repescagem:ID
   //   Retorna o mapa { "entityType:entityId": <última solicitação> } para os
   //   cards decidirem o que mostrar (botão / selo pendente / selo de resultado).
