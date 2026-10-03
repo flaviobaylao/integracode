@@ -1122,10 +1122,12 @@ export default function LeadsManagement() {
                       <td className="py-3 px-4">
                         {(() => {
                           const visitado = !!(lead as any).lastCheckInAt || lead.status === 'visited' || !!lastServiceLogs[lead.id];
+                          const agendado = lead.status === 'scheduled';
+                          const prorrogado = Number((lead as any).postponementCount || 0) >= 1 && lead.status !== 'discarded' && lead.status !== 'converted';
                           return (
                             <div
-                              className={`w-4 h-4 rounded-full ${descartado ? 'bg-gray-300' : (visitado ? 'bg-green-500' : 'bg-red-500')}`}
-                              title={descartado ? 'Descartado' : (visitado ? 'Visitado' : 'Não visitado')}
+                              className={`w-4 h-4 rounded-full ${descartado ? 'bg-gray-300' : (visitado ? 'bg-green-500' : (prorrogado ? 'bg-blue-500' : (agendado ? 'bg-yellow-500' : 'bg-red-500')))}`}
+                              title={descartado ? 'Descartado' : (visitado ? 'Visitado' : (prorrogado ? 'Prorrogado' : (agendado ? 'Agendado' : 'Pendente')))}
                             />
                           );
                         })()}
