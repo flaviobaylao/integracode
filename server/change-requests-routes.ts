@@ -626,7 +626,17 @@ export function registerChangeRequestsRoutes(app: Express) {
       const msgs = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "whatsapp");
       const hasAdminReply = msgs.some((m: any) => m && m.role === "admin" && m.kind === "reply");
       if (!hasAdminReply) continue; // só interessa ao vendedor quando o admin respondeu
-      { let lr = -1; msgs.forEach((m: any, i: number) => { if (m.role === "admin" && m.kind === "reply") lr = i; }); if (lr >= 0 && pendenciaRemovida(msgs, lr)) continue; }
+      let lr = -1; msgs.forEach((m: any, i: number) => { if (m.role === "admin" && m.kind === "reply") lr = i; });
+      if (lr >= 0 && pendenciaRemovida(msgs, lr)) continue;
+      // 03/out/2026 — O badge "Resposta do admin" é um CHAMADO, não um arquivo da conversa.
+      // Antes bastava existir uma réplica no histórico para ele ficar piscando na Rota do Dia
+      // para sempre: o vendedor respondia, o admin fechava com "Report lido" (kind='resolution',
+      // que NÃO é réplica) e o card voltava assim mesmo, convidando a mais uma resposta — que
+      // reabria o card no Inbox, e o ciclo recomeçava. Agora o badge some assim que o vendedor
+      // responde a última réplica; só volta se o admin escrever uma réplica NOVA de verdade.
+      let respondida = false;
+      for (let i = lr + 1; i < msgs.length; i++) if (msgs[i] && msgs[i].role === "seller") { respondida = true; break; }
+      if (respondida) continue;
       const last = msgs[msgs.length - 1] || {};
       out[key] = { ...mapRow(r), messages: msgs, hasAdminReply, lastRole: last.role || null };
     }
