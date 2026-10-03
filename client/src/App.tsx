@@ -104,6 +104,7 @@ import ProgramaIndicacao from "@/pages/ProgramaIndicacao";
 import AgentesIA from "@/pages/AgentesIA";
 import AcessosEDelegacoes from "@/pages/AcessosEDelegacoes";
 import SolicitacoesAlteracao from "@/pages/SolicitacoesAlteracao";
+import FeriadosAdmin from "@/pages/FeriadosAdmin";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
 import TabelaPrecos from "@/pages/TabelaPrecos";
@@ -320,6 +321,7 @@ function Router() {
           <Route path="/admin/agentes" component={AgentesIA} />
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/admin/solicitacoes-alteracao" component={SolicitacoesAlteracao} />
+          <Route path="/admin/feriados" component={FeriadosAdmin} />
           <Route path="/cenarios-fiscais" component={CenariosFiscais} />
           <Route path="/telefones-clientes" component={TelefonesClientes} />
           <Route path="/tabela-precos" component={TabelaPrecos} />
