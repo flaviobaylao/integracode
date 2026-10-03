@@ -346,8 +346,10 @@ type PropsPonto = {
   aoMudarDiaDeRota: (c: any, diaLabel: string) => void;
   /** Abre a caixa "Ações do Cliente" ao clicar no nome (clientes com cadastro). */
   aoAbrirAcoes: (c: any) => void;
+  /** Abre o Histórico de Ações do LEAD ao clicar no nome de um lead. */
+  aoAbrirHistoricoLead: (c: any) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita, aoMudarDiaDeRota, aoAbrirAcoes }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita, aoMudarDiaDeRota, aoAbrirAcoes, aoAbrirHistoricoLead }: PropsPonto) {
   // Telefone é campo de texto: só grava ao sair do campo (ou Enter), não a cada tecla.
   const [tel, setTel] = useState<string>(customer.phone || '');
   useEffect(() => { setTel(customer.phone || ''); }, [customer.phone]);
@@ -370,6 +372,8 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
             <h3 className="font-bold text-base">
               {!ehLead && !ehPonto && customer?.id ? (
                 <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => aoAbrirAcoes(customer)} data-testid={`btn-acoes-${customer.id}`}>{nomePonto}</button>
+              ) : ehLead && !ehPonto && customer?.id ? (
+                <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => aoAbrirHistoricoLead(customer)} data-testid={`btn-hist-lead-${customer.id}`}>{nomePonto}</button>
               ) : nomePonto}
               {!ehLead && customer?.id && <QuarentenaTag customerId={String(customer.id)} />}
             </h3>
@@ -1001,6 +1005,11 @@ export default function ClientsMap() {
   const abrirAcoesCliente = useCallback((c: any) => {
     setAcaoCliente({ id: String(c.id), name: c.fantasyName || c.name || "Cliente" });
   }, []);
+  // Histórico de Ações do lead ao clicar no nome de um lead no mapa.
+  const [histLead, setHistLead] = useState<{ id: string; name: string } | null>(null);
+  const abrirHistoricoLead = useCallback((c: any) => {
+    setHistLead({ id: String(c.id), name: c.fantasyName || c.name || "Lead" });
+  }, []);
 
   // ⚡ Os marcadores só são reconstruídos quando o conjunto de pontos (ou a permissão/cópia) muda.
   const marcadores = useMemo(() => activeCustomersWithCoords.map((customer) => (
@@ -1021,8 +1030,9 @@ export default function ClientsMap() {
       aoMudarProximaVisita={mudarProximaVisita}
       aoMudarDiaDeRota={mudarDiaDeRota}
       aoAbrirAcoes={abrirAcoesCliente}
+      aoAbrirHistoricoLead={abrirHistoricoLead}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita, mudarDiaDeRota, abrirAcoesCliente]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita, mudarDiaDeRota, abrirAcoesCliente, abrirHistoricoLead]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
@@ -1353,6 +1363,14 @@ export default function ClientsMap() {
         onClose={() => setAcaoCliente(null)}
         customerId={acaoCliente?.id || null}
         customerName={acaoCliente?.name || null}
+      />
+
+      <ActionHistoryModal
+        open={!!histLead}
+        onClose={() => setHistLead(null)}
+        entityType="lead"
+        customerId={histLead?.id || null}
+        customerName={histLead?.name || null}
       />
     </div>
   );

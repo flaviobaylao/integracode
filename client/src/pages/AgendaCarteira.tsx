@@ -26,6 +26,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Download, Search, ArrowUp, ArrowDown, ChevronsUpDown, Info, CalendarDays, Users, RefreshCw, Pencil } from "lucide-react";
 import ClientActionsModal from "@/components/ClientActionsModal";
+import ActionHistoryModal from "@/components/ActionHistoryModal";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
 type Item = {
@@ -155,6 +156,7 @@ export default function AgendaCarteira() {
 
   const qc = useQueryClient();
   const [acaoCliente, setAcaoCliente] = useState<{ id: string; name: string } | null>(null);
+  const [histLead, setHistLead] = useState<{ id: string; name: string } | null>(null);
   const { data, isLoading, error, isFetching, refetch, dataUpdatedAt } = useQuery<any>({
     queryKey: ["/api/carteira/agenda"],
     queryFn: async () => {
@@ -947,6 +949,7 @@ export default function AgendaCarteira() {
                             podeEditarVisita={podeEditarVisita}
                             onSalvo={() => { setEditando(""); qc.invalidateQueries({ queryKey: ["/api/carteira/agenda"] }); }}
                             onAbrirAcoes={(it) => setAcaoCliente({ id: it.id, name: it.nome })}
+                            onAbrirHistoricoLead={(it) => setHistLead({ id: it.id, name: it.nome })}
                           />
                         </TableCell>
                         <TableCell className="text-xs">
@@ -1005,6 +1008,14 @@ export default function AgendaCarteira() {
         customerId={acaoCliente?.id || null}
         customerName={acaoCliente?.name || null}
       />
+
+      <ActionHistoryModal
+        open={!!histLead}
+        onClose={() => setHistLead(null)}
+        entityType="lead"
+        customerId={histLead?.id || null}
+        customerName={histLead?.name || null}
+      />
     </div>
   );
 }
@@ -1020,6 +1031,7 @@ function EditorCliente(props: {
   podeEditarVisita: boolean;
   onSalvo: () => void;
   onAbrirAcoes?: (item: Item) => void;
+  onAbrirHistoricoLead?: (item: Item) => void;
 }) {
   const { item, aberto, podeEditarVisita } = props;
   const ehLead = item.tipo === "lead";
@@ -1066,25 +1078,17 @@ function EditorCliente(props: {
 
   return (
     <span className="inline-flex items-center gap-1 flex-wrap">
-      {/* Cliente: o nome abre a caixa "Ações do Cliente"; o lápis abre o editor de
-          periodicidade/dia/cidade. Lead: o nome segue abrindo o editor. */}
-      {!ehLead && (
-        <button type="button" className="text-left hover:underline decoration-dotted font-medium" onClick={() => props.onAbrirAcoes?.(item)} data-testid={`btn-acoes-${item.id}`}>
-          {item.nome}
-        </button>
-      )}
+      {/* O nome abre: cliente → "Ações do Cliente"; lead → Histórico de Ações do
+          lead. O lápis (ao lado) abre o editor de periodicidade/dia/cidade. */}
+      <button type="button" className="text-left hover:underline decoration-dotted font-medium" onClick={() => (ehLead ? props.onAbrirHistoricoLead?.(item) : props.onAbrirAcoes?.(item))} data-testid={`btn-${ehLead ? "hist-lead" : "acoes"}-${item.id}`}>
+        {item.nome}
+      </button>
       {!ehLead && <QuarentenaTag customerId={item.id} />}
     <Popover open={aberto} onOpenChange={props.onAbrir}>
       <PopoverTrigger asChild>
-        {ehLead ? (
-          <button type="button" className="text-left hover:underline decoration-dotted" data-testid={`btn-editar-${item.id}`}>
-            {item.nome}
-          </button>
-        ) : (
-          <button type="button" className="text-muted-foreground hover:text-foreground align-middle" title="Editar periodicidade, dia e cidade" data-testid={`btn-editar-${item.id}`}>
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-        )}
+        <button type="button" className="text-muted-foreground hover:text-foreground align-middle" title="Editar periodicidade, dia e cidade" data-testid={`btn-editar-${item.id}`}>
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 space-y-3">
         <div>
