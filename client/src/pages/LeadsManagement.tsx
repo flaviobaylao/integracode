@@ -168,6 +168,24 @@ export default function LeadsManagement() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [leads]);
 
+  // 🔎 Coleta da ficha básica do Google (Places) em lote, sob demanda
+  const coletarGoogleMutation = useMutation({
+    mutationFn: async () => {
+      const res: any = await apiRequest('POST', '/api/admin/leads/preencher-google', { limite: 60 });
+      return (res && typeof res.json === 'function') ? await res.json() : res;
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      if (data && data.ok) {
+        toast({ title: 'Ficha Google atualizada', description: `+${data.atualizados} nesta leva · faltam ${data.restantes}` });
+      } else {
+        toast({ title: 'Não foi possível coletar', description: (data && data.message) || 'Verifique a Places API no Google Cloud.', variant: 'destructive' });
+      }
+    },
+    onError: (e: any) => toast({ title: 'Erro na coleta Google', description: String((e && e.message) || e), variant: 'destructive' }),
+  });
+  const leadsSemGoogle = useMemo(() => (leads || []).filter((l: any) => !l.googlePlace).length, [leads]);
+
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
       return await apiRequest('POST', '/api/leads', {
@@ -1023,6 +1041,17 @@ export default function LeadsManagement() {
             <div className="mb-3 flex items-center gap-3 flex-wrap">
               <span className="text-sm text-gray-600 dark:text-gray-300">{selectedLeadIds.size} selecionado(s)</span>
               <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => coletarGoogleMutation.mutate()}
+                disabled={coletarGoogleMutation.isPending}
+                data-testid="button-coletar-google"
+              >
+                <MapPin className="h-4 w-4 mr-1" />
+                {coletarGoogleMutation.isPending ? 'Coletando…' : `Coletar ficha Google${leadsSemGoogle ? ` (${leadsSemGoogle})` : ''}`}
+              </Button>
+              <Button
                 size="sm"
                 variant="outline"
                 disabled={selectedLeadIds.size === 0}
@@ -1056,6 +1085,7 @@ export default function LeadsManagement() {
                   <SortableTh label="Bairro" colKey="neighborhood" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Coordenadas" colKey="coords" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
+                  <th className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950">Google</th>
                   <SortableTh label="Criado em" colKey="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   <SortableTh label="Próximo Contato" colKey="nextContact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="text-left py-3 px-4 font-semibold sticky top-0 z-10 bg-white dark:bg-gray-950" />
                   {canAct && <th className="text-right py-3 px-4 font-semibold sticky top-0 right-0 z-20 bg-white dark:bg-gray-950">Ações</th>}
@@ -1151,6 +1181,45 @@ export default function LeadsManagement() {
                             </button>
                           )}
                         </div>
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {lead.googlePlace ? (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button type="button" className="text-left leading-tight hover:underline" data-testid="cell-google">
+                                <div className="flex items-center gap-1 font-medium">
+                                  <span>⭐ {lead.googlePlace.nota != null ? lead.googlePlace.nota : '—'}</span>
+                                  <span className="text-muted-foreground">({lead.googlePlace.avaliacoes || 0})</span>
+                                </div>
+                                {typeof lead.googlePlace.score === 'number' && (
+                                  <div className="text-[11px] text-muted-foreground">score {lead.googlePlace.score}</div>
+                                )}
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent align="start" className="w-72 text-sm">
+                              {(() => { const g = lead.googlePlace; return (
+                                <div className="space-y-1">
+                                  <div className="font-semibold">{g.nome || lead.fantasyName}</div>
+                                  {g.categoria && <div className="text-muted-foreground">{g.categoria}</div>}
+                                  <div>Nota: {g.nota != null ? g.nota : '—'} ({g.avaliacoes || 0} avaliações)</div>
+                                  {typeof g.faixaPreco === 'number' && <div>Faixa de preço: {'$'.repeat(g.faixaPreco + 1)}</div>}
+                                  {typeof g.score === 'number' && <div>Score de atratividade: {g.score}/100</div>}
+                                  {g.businessStatus && <div>Situação: {g.businessStatus === 'OPERATIONAL' ? 'Em funcionamento' : g.businessStatus}</div>}
+                                  {Array.isArray(g.horario) && g.horario.length > 0 && (
+                                    <div className="pt-1">
+                                      <div className="font-medium">Horário</div>
+                                      {g.horario.map((h: string, i: number) => (<div key={i} className="text-xs text-muted-foreground">{h}</div>))}
+                                    </div>
+                                  )}
+                                  {g.endereco && <div className="text-xs text-muted-foreground pt-1">{g.endereco}</div>}
+                                  {g.placeId && <a className="text-xs text-blue-600 hover:underline" href={`https://www.google.com/maps/place/?q=place_id:${g.placeId}`} target="_blank" rel="noreferrer">Ver no Google Maps</a>}
+                                </div>
+                              ); })()}
+                            </PopoverContent>
+                          </Popover>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-xs whitespace-nowrap">
                         {lead.createdAt ? formatInTimeZone(new Date(lead.createdAt), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
