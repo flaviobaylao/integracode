@@ -256,6 +256,7 @@ export default function ActiveCustomers() {
   const [bulkWeekdays, setBulkWeekdays] = useState<string[]>([]);
   const [bulkStartDate, setBulkStartDate] = useState("");
   const [bulkSemana, setBulkSemana] = useState("");
+  const [bulkHolidayRule, setBulkHolidayRule] = useState("");
   const [bulkGeocode, setBulkGeocode] = useState(false);
   const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["4","4ª do mês"],["ultima","Última do mês"]];
   const { toast } = useToast();
@@ -860,6 +861,7 @@ export default function ActiveCustomers() {
       if (bulkWeekdays.length) fields.weekdays = bulkWeekdays;
       if (bulkStartDate) fields.serviceStartDate = bulkStartDate;
       if (bulkVirtualType) fields.virtualService = bulkVirtualType === 'virtual';
+      if (bulkHolidayRule) fields.holidayRule = bulkHolidayRule;
       let updated = 0; let agendaRegen = 0;
       if (Object.keys(fields).length > 0) {
         const r: any = await apiRequest('POST', '/api/customers/bulk-update', { ids, fields });
@@ -1741,6 +1743,18 @@ export default function ActiveCustomers() {
                   </select>
                 </div>
                 <div>
+                  <label className="block text-xs font-medium mb-1">Regra de feriado
+                    <span title="Exceção da regra de deslocamento por feriado para estes clientes. 'Padrão' volta a seguir a regra da periodicidade (Administração › Feriados)." className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+                  </label>
+                  <select value={bulkHolidayRule} onChange={(e) => setBulkHolidayRule(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-holiday-rule">
+                    <option value="">— não alterar —</option>
+                    <option value="padrao">Padrão (regra da periodicidade)</option>
+                    <option value="post">Postergar (próximo dia útil)</option>
+                    <option value="ant">Antecipar (dia útil anterior)</option>
+                    <option value="none">Não deslocar</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-xs font-medium mb-1">Dias de Visita <span className="text-gray-400">(marque para alterar)</span></label>
                   <div className="flex flex-wrap gap-2">
                     {[['Seg', 'Segunda'], ['Ter', 'Terça'], ['Qua', 'Quarta'], ['Qui', 'Quinta'], ['Sex', 'Sexta'], ['Sab', 'Sábado'], ['Dom', 'Domingo']].map(([v, l]) => (
@@ -1766,7 +1780,7 @@ export default function ActiveCustomers() {
               <div className="px-5 py-3 border-t flex justify-end gap-2">
                 <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
                 <button
-                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkSemana && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkGeocode) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkSemana && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkHolidayRule && !bulkGeocode) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
                   disabled={bulkUpdateMutation.isPending}
                   className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
                 >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
