@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,6 +85,21 @@ export default function FeriadosAdmin() {
     mutationFn: () => apiRequest("POST", "/api/holidays/revert", { month }),
     onSuccess: (r: any) => { toast({ title: "Realocação revertida", description: `${r?.reverted || 0} visita(s) voltaram à data original.` }); setPreview(null); },
     onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao reverter." }),
+  });
+
+  // Regras de deslocamento (editáveis).
+  const { data: rulesData } = useQuery<{ rules: any }>({
+    queryKey: ["/api/holidays/rules"],
+    queryFn: () => apiRequest("GET", "/api/holidays/rules"),
+  });
+  const [rules, setRules] = useState<any | null>(null);
+  useEffect(() => { if (rulesData?.rules && !rules) setRules(rulesData.rules); }, [rulesData]);
+  const R = rules || rulesData?.rules || {};
+  const setRule = (k: string, v: any) => setRules((p: any) => ({ ...(p || rulesData?.rules || {}), [k]: v }));
+  const saveRulesMut = useMutation({
+    mutationFn: () => apiRequest("PUT", "/api/holidays/rules", R),
+    onSuccess: (r: any) => { toast({ title: "Regras salvas", description: "Valem para a próxima geração/aplicação da agenda." }); setRules(r?.rules || R); queryClient.invalidateQueries({ queryKey: ["/api/holidays/rules"] }); },
+    onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao salvar regras." }),
   });
 
   const stat = useMemo(() => ({
@@ -199,16 +214,41 @@ export default function FeriadosAdmin() {
 
         {/* REGRAS */}
         <TabsContent value="regras" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Card><CardHeader className="pb-2"><CardTitle className="text-base">Semanal</CardTitle></CardHeader><CardContent className="pt-0"><Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border-transparent">→ próximo dia útil</Badge><p className="text-sm text-muted-foreground mt-2">Visita no feriado é <b>postergada</b> para o próximo dia útil.</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-base">Quinzenal</CardTitle></CardHeader><CardContent className="pt-0"><Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border-transparent">← dia útil anterior</Badge><p className="text-sm text-muted-foreground mt-2">Visita é <b>antecipada</b> para o dia útil anterior.</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-base">Mensal</CardTitle></CardHeader><CardContent className="pt-0"><Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border-transparent">← dia útil anterior</Badge><p className="text-sm text-muted-foreground mt-2">Mesma regra do quinzenal: <b>antecipa</b> para o dia útil anterior.</p></CardContent></Card>
+          <p className="text-sm text-muted-foreground">Defina, por periodicidade, para onde a visita vai quando cai num feriado. As regras valem para a próxima geração/aplicação da agenda.</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {([["semanal","Semanal"],["trisemanal","Trissemanal"],["quinzenal","Quinzenal"],["mensal","Mensal"]] as const).map(([k,label]) => (
+              <Card key={k}>
+                <CardHeader className="pb-2"><CardTitle className="text-base">{label}</CardTitle></CardHeader>
+                <CardContent className="pt-0 space-y-2">
+                  <Select value={String(R[k] || "post")} onValueChange={(v) => setRule(k, v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="post">Postergar → próximo dia útil</SelectItem>
+                      <SelectItem value="ant">Antecipar ← dia útil anterior</SelectItem>
+                      <SelectItem value="none">Não deslocar</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">{R[k] === "ant" ? "Antecipa para o dia útil anterior." : R[k] === "none" ? "Mantém no feriado (não move)." : "Posterga para o próximo dia útil."}</p>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-          <Card><CardContent className="p-4 text-sm text-muted-foreground space-y-2">
-            <p>• Cascata: se o dia-alvo também for feriado ou fim de semana, anda mais um dia útil na mesma direção.</p>
-            <p>• Atendimentos virtuais não são deslocados (não dependem do feriado presencial).</p>
-            <p>• O deslocamento é reaplicado sozinho sempre que a agenda do cliente é regenerada.</p>
+
+          <Card><CardContent className="p-4 space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="w-4 h-4 mt-0.5 accent-indigo-600" checked={R.cascata !== false} onChange={(e) => setRule("cascata", e.target.checked)} />
+              <span><span className="text-sm font-medium">Cascata em feriados/fins de semana consecutivos</span><br /><span className="text-xs text-muted-foreground">Se o dia-alvo também for feriado ou fim de semana, anda mais um dia útil na mesma direção.</span></span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="w-4 h-4 mt-0.5 accent-indigo-600" checked={R.incluirVirtuais === true} onChange={(e) => setRule("incluirVirtuais", e.target.checked)} />
+              <span><span className="text-sm font-medium">Incluir atendimentos virtuais</span><br /><span className="text-xs text-muted-foreground">Por padrão, virtuais não são deslocados (não dependem do feriado presencial).</span></span>
+            </label>
           </CardContent></Card>
+
+          <div className="flex items-center gap-2">
+            <Button onClick={() => saveRulesMut.mutate()} disabled={saveRulesMut.isPending}>{saveRulesMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar regras"}</Button>
+            <span className="text-xs text-muted-foreground">O deslocamento é reaplicado sozinho quando a agenda do cliente é regenerada.</span>
+          </div>
         </TabsContent>
 
         {/* PRÉVIA */}
