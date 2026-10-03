@@ -102,6 +102,29 @@ export default function FeriadosAdmin() {
     onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao salvar regras." }),
   });
 
+  // Regras fixas por região (macro UF / micro cidade).
+  const { data: rrData } = useQuery<{ regionRules: { id: string; uf: string; city: string | null; rule: string }[] }>({
+    queryKey: ["/api/holidays/region-rules"],
+    queryFn: () => apiRequest("GET", "/api/holidays/region-rules"),
+  });
+  const regionRules = rrData?.regionRules || [];
+  const [rrUf, setRrUf] = useState("GO");
+  const [rrCity, setRrCity] = useState("");
+  const [rrRule, setRrRule] = useState("ant");
+  const rrCities = useMemo(() => { const m = macro.find((x) => x.uf === rrUf); return m ? m.cidades.map((c) => c.city) : []; }, [macro, rrUf]);
+  const invalidateRR = () => queryClient.invalidateQueries({ queryKey: ["/api/holidays/region-rules"] });
+  const addRegionRuleMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/holidays/region-rules", { uf: rrUf, city: rrCity || null, rule: rrRule }),
+    onSuccess: () => { toast({ title: "Regra de região salva", description: "Vale para a próxima geração/aplicação da agenda." }); invalidateRR(); },
+    onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao salvar." }),
+  });
+  const delRegionRuleMut = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/holidays/region-rules/${id}`),
+    onSuccess: () => { toast({ title: "Regra de região removida" }); invalidateRR(); },
+    onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao remover." }),
+  });
+  const ruleLabel = (r: string) => r === "ant" ? "Antecipar" : r === "none" ? "Não deslocar" : "Postergar";
+
   const stat = useMemo(() => ({
     total: holidays.length,
     uteis: holidays.filter((h) => { const g = new Date(h.date + "T12:00:00Z").getUTCDay(); return g >= 1 && g <= 5 && h.active; }).length,
@@ -249,6 +272,60 @@ export default function FeriadosAdmin() {
             <Button onClick={() => saveRulesMut.mutate()} disabled={saveRulesMut.isPending}>{saveRulesMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar regras"}</Button>
             <span className="text-xs text-muted-foreground">O deslocamento é reaplicado sozinho quando a agenda do cliente é regenerada.</span>
           </div>
+
+          {/* Regras fixas por região (macro/micro) */}
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-base">Regras fixas por região</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">Amarre uma direção a uma macro-região (UF inteira) ou micro-região (cidade). A regra da região vence a regra da periodicidade — e a exceção por cliente vence a da região.</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Macro (UF)</label>
+                  <Select value={rrUf} onValueChange={(v) => { setRrUf(v); setRrCity(""); }}>
+                    <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="GO">GO</SelectItem><SelectItem value="DF">DF</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Micro (cidade)</label>
+                  <Select value={rrCity || "__all"} onValueChange={(v) => setRrCity(v === "__all" ? "" : v)}>
+                    <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all">Toda a {rrUf} (macro)</SelectItem>
+                      {rrCities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Direção</label>
+                  <Select value={rrRule} onValueChange={setRrRule}>
+                    <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="post">Postergar (próximo dia útil)</SelectItem>
+                      <SelectItem value="ant">Antecipar (dia útil anterior)</SelectItem>
+                      <SelectItem value="none">Não deslocar</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={() => addRegionRuleMut.mutate()} disabled={addRegionRuleMut.isPending}>{addRegionRuleMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Adicionar"}</Button>
+              </div>
+
+              {regionRules.length > 0 ? (
+                <div className="border rounded-lg divide-y">
+                  {regionRules.map((rr) => (
+                    <div key={rr.id} className="flex items-center gap-3 p-2.5">
+                      <Badge variant="outline" className={`border-transparent ${rr.city ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300" : "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"}`}>{rr.city ? "Micro" : "Macro"}</Badge>
+                      <span className="text-sm flex-1 min-w-0">{rr.city ? <>{rr.city} <span className="text-muted-foreground">· {rr.uf}</span></> : <>Toda a {rr.uf}</>}</span>
+                      <Badge className={`border-transparent ${rr.rule === "ant" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" : rr.rule === "none" ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"}`}>{ruleLabel(rr.rule)}</Badge>
+                      <Button size="sm" variant="ghost" className="text-red-500" onClick={() => { if (window.confirm("Remover esta regra de região?")) delRegionRuleMut.mutate(rr.id); }}><Trash2 className="w-4 h-4" /></Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Nenhuma regra por região. Sem regra, a região segue a regra da periodicidade.</p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* PRÉVIA */}
