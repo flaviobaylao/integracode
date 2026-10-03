@@ -87,7 +87,8 @@ export default function LeadsManagement() {
   const [filterSellerId, setFilterSellerId] = useState("");
   const [filterCity, setFilterCity] = useState("");
   const [filterPeriodicity, setFilterPeriodicity] = useState("");
-  const [filterNeighborhood, setFilterNeighborhood] = useState("");
+  const [filterNeighborhood, setFilterNeighborhood] = useState<string[]>([]);
+  const [bairroOpen, setBairroOpen] = useState(false);
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterNextContactFrom, setFilterNextContactFrom] = useState("");
@@ -630,8 +631,8 @@ export default function LeadsManagement() {
         return false;
       }
 
-      // Filtro por bairro
-      if (filterNeighborhood && String(lead.neighborhood || '') !== filterNeighborhood) {
+      // Filtro por bairro (múltipla escolha)
+      if (filterNeighborhood.length > 0 && !filterNeighborhood.includes(String(lead.neighborhood || ''))) {
         return false;
       }
 
@@ -876,17 +877,59 @@ export default function LeadsManagement() {
 
             <div>
               <Label htmlFor="filter-neighborhood">Bairro</Label>
-              <Select value={filterNeighborhood || "all"} onValueChange={(val) => setFilterNeighborhood(val === "all" ? "" : val)}>
-                <SelectTrigger data-testid="select-filter-neighborhood">
-                  <SelectValue placeholder="Todos" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  {filterNeighborhoods.map((b) => (
-                    <SelectItem key={b} value={b}>{b}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={bairroOpen} onOpenChange={setBairroOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={bairroOpen}
+                    className="w-full justify-between font-normal"
+                    data-testid="select-filter-neighborhood"
+                  >
+                    <span className={cn("truncate", filterNeighborhood.length === 0 && "text-muted-foreground")}>
+                      {filterNeighborhood.length === 0
+                        ? "Todos"
+                        : filterNeighborhood.length === 1
+                          ? filterNeighborhood[0]
+                          : `${filterNeighborhood.length} bairros selecionados`}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar bairro..." />
+                    <CommandList>
+                      <CommandEmpty>Nenhum bairro encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {filterNeighborhood.length > 0 && (
+                          <CommandItem
+                            onSelect={() => setFilterNeighborhood([])}
+                            className="text-muted-foreground"
+                          >
+                            <X className="mr-2 h-4 w-4" />
+                            Limpar seleção
+                          </CommandItem>
+                        )}
+                        {filterNeighborhoods.map((b) => {
+                          const marcado = filterNeighborhood.includes(b);
+                          return (
+                            <CommandItem
+                              key={b}
+                              value={b}
+                              onSelect={() => setFilterNeighborhood((prev) => prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b])}
+                            >
+                              <Check className={cn("mr-2 h-4 w-4", marcado ? "opacity-100" : "opacity-0")} />
+                              {b}
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
 
             <div>
@@ -945,7 +988,7 @@ export default function LeadsManagement() {
               </Select>
             </div>
           </div>
-          {(filterName || filterSellerId || filterCity || filterNeighborhood || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
+          {(filterName || filterSellerId || filterCity || filterNeighborhood.length || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -954,7 +997,7 @@ export default function LeadsManagement() {
                 setFilterName("");
                 setFilterSellerId("");
                 setFilterCity("");
-                setFilterNeighborhood("");
+                setFilterNeighborhood([]);
                 setFilterPeriodicity("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
