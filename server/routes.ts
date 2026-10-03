@@ -23071,6 +23071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let leadsData = rows.map((row: any) => ({
         id: row.id || '',
         fantasyName: row.fantasyName || '',
+        googlePlace: row.googlePlace || null,
         latitude: String(row.latitude || '0'),
         longitude: String(row.longitude || '0'),
         contact: row.contact || '',
