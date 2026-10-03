@@ -359,6 +359,7 @@ export function registerHolidaysRoutes(app: Express) {
   // cada cidade é uma micro-região, classificada pela UF ('GO'/'DF') ou, quando o
   // cadastro não tem UF, pelo nome oficial da cidade (Brasília → DF).
   app.get("/api/holidays/regions", authenticateUser, safe(async (_req, res) => {
+    const { cidadeCanonica } = await import("../shared/cidadePadrao");
     const rows = rowsOf(await db.execute(sql`
       SELECT state AS uf, city, COUNT(*)::int AS n
         FROM customers WHERE is_active = true AND COALESCE(city,'') <> ''
@@ -366,16 +367,18 @@ export function registerHolidaysRoutes(app: Express) {
     const macro = new Map<string, { uf: string; total: number; cidades: Array<{ city: string; n: number }> }>();
     macro.set("GO", { uf: "GO", total: 0, cidades: [] });
     macro.set("DF", { uf: "DF", total: 0, cidades: [] });
-    const seen = new Map<string, Set<string>>([["GO", new Set()], ["DF", new Set()]]);
+    // Agrupa pela cidade PADRONIZADA (nome oficial GO/DF), deduplicando grafias.
+    const byCity = new Map<string, { uf: string; city: string; n: number }>();
     for (const r of rows) {
-      const cityNorm = norm(r.city);
-      const uf = macroUf(r.city, r.uf); // GO/DF; sem UF, Brasília e RAs → DF, resto → GO
-      const g = macro.get(uf)!;
-      const s = seen.get(uf)!;
-      if (s.has(cityNorm)) { const ex = g.cidades.find((c) => norm(c.city) === cityNorm); if (ex) ex.n += Number(r.n); }
-      else { s.add(cityNorm); g.cidades.push({ city: r.city, n: Number(r.n) }); }
-      g.total += Number(r.n);
+      const canon = cidadeCanonica(r.city) || String(r.city || "").trim();
+      if (!canon) continue;
+      const uf = macroUf(canon, r.uf); // GO/DF; sem UF, Brasília e RAs → DF, resto → GO
+      const key = uf + "|" + norm(canon);
+      const ex = byCity.get(key);
+      if (ex) ex.n += Number(r.n);
+      else byCity.set(key, { uf, city: canon, n: Number(r.n) });
     }
+    for (const v of byCity.values()) { const g = macro.get(v.uf)!; g.cidades.push({ city: v.city, n: v.n }); g.total += v.n; }
     for (const g of macro.values()) g.cidades.sort((a, b) => a.city.localeCompare(b.city, "pt-BR"));
     res.json({ macro: Array.from(macro.values()) });
   }));
@@ -408,7 +411,8 @@ export function registerHolidaysRoutes(app: Express) {
     await ensureHolidayTables();
     const b: any = req.body || {};
     const uf = String(b.uf || "").trim().toUpperCase();
-    const city = b.city ? String(b.city).trim() : null;
+    let city = b.city ? String(b.city).trim() : null;
+    if (city) { try { const { cidadeCanonica } = await import("../shared/cidadePadrao"); city = cidadeCanonica(city) || city; } catch { /* noop */ } }
     const rule = String(b.rule || "");
     if (uf !== "GO" && uf !== "DF") return res.status(400).json({ error: "UF deve ser GO ou DF." });
     if (!["post", "ant", "none"].includes(rule)) return res.status(400).json({ error: "Regra inválida." });
