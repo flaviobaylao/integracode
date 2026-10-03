@@ -23461,6 +23461,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } catch (_e) { /* silencioso: bairro é complementar */ }
         })();
       }
+      // 📸 Foto automática do Google Street View (fachada/rua) quando o cadastro NÃO enviou foto - best-effort.
+      const _temFoto = String((leadData as any)?.photo || '').trim();
+      if (!_temFoto) {
+        (async () => {
+          try {
+            const { streetViewPhoto } = await import('./geocode-provider');
+            const foto = await streetViewPhoto((lead as any).latitude, (lead as any).longitude);
+            if (foto) await db.execute(sql`UPDATE leads SET photo = ${foto} WHERE id = ${lead.id}`);
+          } catch (_e) { /* silencioso: foto é complementar */ }
+        })();
+      }
 
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
@@ -23682,6 +23693,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro ao preencher bairro dos leads:', error);
       return res.status(500).json({ message: 'Erro ao preencher bairro dos leads', error: error?.message });
+    }
+  });
+
+  // 📸 Preenche a FOTO do lead com uma imagem do Google Street View na coordenada (fachada/rua).
+  // Admin. Processa, por lote, os leads SEM foto e COM coordenadas. Marca photo_tries para não
+  // reprocessar eternamente coordenadas sem imagem. Requer GOOGLE_MAPS_API_KEY + Street View Static API.
+  app.post('/api/admin/leads/preencher-foto', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { streetViewPhoto, geocodeThrottleMs, geocodeProvider } = await import('./geocode-provider');
+      if (geocodeProvider() !== 'google') {
+        return res.status(400).json({ message: 'Street View indisponível: GOOGLE_MAPS_API_KEY não configurada.', code: 'SEM_GOOGLE' });
+      }
+      try { await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS photo_tries integer DEFAULT 0`)); } catch (_e) {}
+      const limit = Math.min(Math.max(Number(req.body?.limite) || 25, 1), 60);
+      const pend: any = await db.execute(sql`
+        SELECT id, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
+        FROM leads
+        WHERE (photo IS NULL OR photo = '')
+          AND COALESCE(photo_tries, 0) < 2
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0
+          AND COALESCE(status::text, '') NOT IN ('converted', 'discarded')
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `);
+      const rows = (pend?.rows || []) as any[];
+      let atualizados = 0, semImagem = 0;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (const r of rows) {
+        try {
+          const dataUrl = await streetViewPhoto((r as any).lat, (r as any).lng);
+          if (dataUrl) {
+            await db.execute(sql`UPDATE leads SET photo = ${dataUrl}, updated_at = NOW() WHERE id = ${(r as any).id}`);
+            atualizados++;
+          } else {
+            await db.execute(sql`UPDATE leads SET photo_tries = COALESCE(photo_tries, 0) + 1 WHERE id = ${(r as any).id}`);
+            semImagem++;
+          }
+        } catch (_e) {
+          try { await db.execute(sql`UPDATE leads SET photo_tries = COALESCE(photo_tries, 0) + 1 WHERE id = ${(r as any).id}`); } catch (_e2) {}
+          semImagem++;
+        }
+        await wait(Math.max(geocodeThrottleMs(), 150));
+      }
+      const restRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM leads
+        WHERE (photo IS NULL OR photo = '') AND COALESCE(photo_tries, 0) < 2
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0
+          AND COALESCE(status::text, '') NOT IN ('converted', 'discarded')
+      `);
+      const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
+      console.log(`📸 [LEADS-FOTO] processados ${rows.length}, atualizados ${atualizados}, sem imagem ${semImagem}, restam ${restantes} por ${req.currentUser?.email}`);
+      return res.json({ ok: true, processados: rows.length, atualizados, semImagem, restantes });
+    } catch (error: any) {
+      console.error('Erro ao preencher foto (Street View) dos leads:', error);
+      return res.status(500).json({ message: 'Erro ao preencher foto dos leads', error: error?.message });
     }
   });
 
