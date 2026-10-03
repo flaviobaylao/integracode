@@ -24213,6 +24213,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         assignedTo: _sellerId || null
       });
 
+      // 🔗 Vínculo lead→cliente: grava o id do lead no cliente para que o
+      // Histórico de Ações do cliente mostre a fase de lead (migra na conversão).
+      try {
+        await db.execute(sql.raw("ALTER TABLE customers ADD COLUMN IF NOT EXISTS origin_lead_id varchar"));
+        await db.execute(sql`UPDATE customers SET origin_lead_id = ${id} WHERE id = ${customer.id}`);
+      } catch (_linkErr: any) { console.warn('⚠️ [LEAD→CLIENTE] vínculo origin_lead_id:', _linkErr?.message); }
+
       // 🗂️ Histórico + INBOX: conversão do lead em cliente.
       try {
         await storage.createLeadVisit({ leadId: id, userId: req.currentUser?.id, userName: req.currentUser?.name || req.currentUser?.email, observation: `CONVERTIDO em cliente${customer?.name ? ' — ' + customer.name : ''}` } as any);

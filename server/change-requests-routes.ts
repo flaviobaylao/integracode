@@ -382,6 +382,89 @@ export async function avisarPrevisoesPagamento(): Promise<{ avisados: number; wh
   return { avisados, whatsapp };
 }
 
+// Achata linhas de change_requests (Inbox) em itens do Histórico de Ações:
+// Descrição/Report, Observação, Réplica (admin), Tréplica (vendedor) e Resolução.
+function flattenCrRows(rows: any[], items: any[]): void {
+  for (const r0 of rows) {
+    const r = mapRow(r0);
+    const d: any = r.details || {};
+    const autorBase = r.requestedByName || r.sellerName || "—";
+    let desc = "";
+    if (r.kind === "report") desc = d.reportLabel || REPORT_KIND_LABEL[d.reportKind] || "Report";
+    else desc = summarizeRequest(r.types, d) || "Solicitação de alteração";
+    items.push({ id: r.id + ":desc", tipo: "descricao", tipoLabel: r.kind === "report" ? "Report" : "Descrição", texto: desc, autor: autorBase, data: r.createdAt });
+    const obs = String(d.texto || d.outro || d.observacao || "").trim();
+    if (obs && obs !== desc) items.push({ id: r.id + ":obs", tipo: "observacao", tipoLabel: "Observação", texto: obs, autor: autorBase, data: r.createdAt });
+    for (const m of (r.messages || [])) {
+      const txt = String(m?.text || "").trim();
+      if (!txt) continue;
+      if (m.kind === "report" || m.kind === "pendencia_removida") continue;
+      if (m.role !== "admin" && m.role !== "seller") continue;
+      const tipo = m.role === "admin" ? "replica" : "treplica";
+      items.push({ id: m.id || (r.id + ":m" + items.length), tipo, tipoLabel: tipo === "replica" ? "Réplica" : "Tréplica", texto: txt, autor: m.byName || "—", data: m.at || r.createdAt });
+    }
+    const resNote = String(r.resolutionNote || "").trim();
+    if (resNote) items.push({ id: r.id + ":res", tipo: "resolucao", tipoLabel: "Resolução", texto: resNote, autor: r.resolvedByName || "—", data: r.resolvedAt || r.createdAt });
+  }
+}
+
+// Itens do Histórico vindos da FASE DE LEAD: observação inicial, check-in/out,
+// foto, cada registro de atendimento do vendedor (lead_visits) e os desfechos
+// (conversão, não-conversão, prorrogação, resgate — já gravados em lead_visits).
+async function leadHistoryItems(leadId: string): Promise<any[]> {
+  const out: any[] = [];
+  if (!leadId) return out;
+  try {
+    const lr = rowsOf(await db.execute(sql`SELECT observation, photo, last_check_in_at, last_check_out_at, created_by_name, created_at FROM leads WHERE id = ${leadId} LIMIT 1`));
+    const l = lr[0];
+    if (l) {
+      if (String(l.observation || "").trim()) out.push({ id: leadId + ":lead-obs", tipo: "observacao", tipoLabel: "Observação (lead)", texto: String(l.observation).trim(), autor: l.created_by_name || "—", data: l.created_at });
+      if (l.last_check_in_at) out.push({ id: leadId + ":checkin", tipo: "checkin", tipoLabel: "Check-in", texto: "Check-in realizado no lead.", autor: "—", data: l.last_check_in_at });
+      if (l.last_check_out_at) out.push({ id: leadId + ":checkout", tipo: "checkout", tipoLabel: "Check-out", texto: "Check-out realizado no lead.", autor: "—", data: l.last_check_out_at });
+      if (String(l.photo || "").trim()) out.push({ id: leadId + ":foto", tipo: "foto", tipoLabel: "Foto", texto: "Foto registrada no check-in do lead.", autor: "—", data: l.last_check_in_at || l.created_at, url: String(l.photo) });
+    }
+  } catch (e: any) { console.warn("[HIST-LEAD] leads:", e?.message); }
+  try {
+    const vs = rowsOf(await db.execute(sql`SELECT observation, user_name, visit_date, created_at FROM lead_visits WHERE lead_id = ${leadId} ORDER BY COALESCE(visit_date, created_at) DESC LIMIT 200`));
+    for (const v of vs) {
+      const txt = String(v.observation || "").trim();
+      if (!txt) continue;
+      const up = txt.toUpperCase();
+      let tipo = "visita", tipoLabel = "Atendimento (lead)";
+      if (up.startsWith("CONVERTIDO")) { tipo = "conversao"; tipoLabel = "Conversão"; }
+      else if (up.startsWith("NÃO CONVERTIDO") || up.startsWith("NAO CONVERTIDO")) { tipo = "nao_conversao"; tipoLabel = "Não conversão"; }
+      else if (up.startsWith("PRORROGADO")) { tipo = "prorrogacao"; tipoLabel = "Prorrogação"; }
+      else if (up.startsWith("RESGATADO")) { tipo = "resgate"; tipoLabel = "Resgate"; }
+      out.push({ id: leadId + ":v" + out.length, tipo, tipoLabel, texto: txt, autor: v.user_name || "—", data: v.visit_date || v.created_at });
+    }
+  } catch (e: any) { console.warn("[HIST-LEAD] lead_visits:", e?.message); }
+  return out;
+}
+
+// Descobre o lead que originou um cliente: 1) coluna origin_lead_id (gravada na
+// conversão); 2) heurística p/ clientes convertidos antes do vínculo — lead
+// 'converted' com MESMO nome fantasia e MESMO telefone (dígitos), e único.
+async function findOriginLeadId(customerId: string): Promise<string | null> {
+  try {
+    try { await db.execute(sql.raw("ALTER TABLE customers ADD COLUMN IF NOT EXISTS origin_lead_id varchar")); } catch { /* noop */ }
+    const cr = rowsOf(await db.execute(sql`SELECT fantasy_name, name, phone, origin_lead_id FROM customers WHERE id = ${customerId} LIMIT 1`));
+    const c = cr[0];
+    if (!c) return null;
+    if (c.origin_lead_id) return String(c.origin_lead_id);
+    const nome = String(c.fantasy_name || c.name || "").trim();
+    const fone = String(c.phone || "").replace(/\D/g, "");
+    if (!nome || !fone) return null;
+    const lr = rowsOf(await db.execute(sql`
+      SELECT id FROM leads
+      WHERE status = 'converted'
+        AND upper(btrim(fantasy_name)) = upper(btrim(${nome}))
+        AND regexp_replace(coalesce(phone,''), '\D', '', 'g') = ${fone}
+      LIMIT 2`));
+    if (lr.length === 1) return String(lr[0].id);
+    return null;
+  } catch (e: any) { console.warn("[HIST-LEAD] findOriginLead:", e?.message); return null; }
+}
+
 export function registerChangeRequestsRoutes(app: Express) {
   void ensureTables();
 
@@ -568,32 +651,29 @@ export function registerChangeRequestsRoutes(app: Express) {
       ORDER BY created_at DESC
       LIMIT 200`));
     const items: any[] = [];
-    for (const r0 of rows) {
-      const r = mapRow(r0);
-      const d: any = r.details || {};
-      const autorBase = r.requestedByName || r.sellerName || "—";
-      // Descrição (pedido do vendedor) ou rótulo do report.
-      let desc = "";
-      if (r.kind === "report") desc = d.reportLabel || REPORT_KIND_LABEL[d.reportKind] || "Report";
-      else desc = summarizeRequest(r.types, d) || "Solicitação de alteração";
-      items.push({ id: r.id + ":desc", tipo: "descricao", tipoLabel: r.kind === "report" ? "Report" : "Descrição", texto: desc, autor: autorBase, data: r.createdAt });
-      // Observação livre escrita pelo vendedor (campo "texto"/"outro").
-      const obs = String(d.texto || d.outro || d.observacao || "").trim();
-      if (obs && obs !== desc) items.push({ id: r.id + ":obs", tipo: "observacao", tipoLabel: "Observação", texto: obs, autor: autorBase, data: r.createdAt });
-      // Mensagens: réplica (admin) / tréplica (vendedor). Pula a mensagem-semente
-      // do report (kind='report', já exibida acima) e marcações internas.
-      for (const m of (r.messages || [])) {
-        const txt = String(m?.text || "").trim();
-        if (!txt) continue;
-        if (m.kind === "report" || m.kind === "pendencia_removida") continue;
-        if (m.role !== "admin" && m.role !== "seller") continue;
-        const tipo = m.role === "admin" ? "replica" : "treplica";
-        items.push({ id: m.id || (r.id + ":m" + items.length), tipo, tipoLabel: tipo === "replica" ? "Réplica" : "Tréplica", texto: txt, autor: m.byName || "—", data: m.at || r.createdAt });
-      }
-      // Resolução do admin ao fechar a solicitação.
-      const resNote = String(r.resolutionNote || "").trim();
-      if (resNote) items.push({ id: r.id + ":res", tipo: "resolucao", tipoLabel: "Resolução", texto: resNote, autor: r.resolvedByName || "—", data: r.resolvedAt || r.createdAt });
-    }
+    flattenCrRows(rows, items);
+    // A FASE DE LEAD migra junto com a conversão: anexa os registros do lead que
+    // originou este cliente (observações, check-in/out, foto e desfechos).
+    try {
+      const leadId = await findOriginLeadId(cid);
+      if (leadId) (await leadHistoryItems(leadId)).forEach((it) => items.push(it));
+    } catch (e: any) { console.warn("[HIST] merge lead:", e?.message); }
+    items.sort((a, b) => new Date(b.data || 0).getTime() - new Date(a.data || 0).getTime());
+    res.json({ items: items.slice(0, 50) });
+  }));
+
+  // --------------------------------------------------------------------------
+  // GET /api/change-requests/history/lead/:leadId
+  //   HISTÓRICO DE AÇÕES DO LEAD (Gestão de Leads, Mapa, Agenda, Inbox): tudo
+  //   que o vendedor registrou no lead — observações, visitas/atendimentos,
+  //   check-in/out, foto e o desfecho (conversão, não-conversão, prorrogação,
+  //   resgate). 50 mais recentes.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/history/lead/:leadId", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const lid = String(req.params.leadId || "").trim();
+    if (!lid) return res.json({ items: [] });
+    const items: any[] = await leadHistoryItems(lid);
     items.sort((a, b) => new Date(b.data || 0).getTime() - new Date(a.data || 0).getTime());
     res.json({ items: items.slice(0, 50) });
   }));
