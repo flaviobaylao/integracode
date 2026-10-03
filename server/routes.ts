@@ -4361,7 +4361,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (typeof fields?.isSupplier === 'boolean') patch.isSupplier = fields.isSupplier;
       // 👷 Colaborador em massa: true = marca como Colaborador (tag + sai de rota/agenda, fica em Clientes Ativos).
       if (typeof fields?.isColaborador === 'boolean') patch.isColaborador = fields.isColaborador;
-      if (Object.keys(patch).length === 0) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
+      // 🎌 Exceção de regra de feriado por cliente (pontual ou em massa). Valores: post/ant/none/padrao.
+      // Gravada direto na coluna customers.holiday_rule (fora do patch do drizzle). 'padrao' = volta ao padrão (NULL).
+      const holidayRuleVal = ['post', 'ant', 'none', 'padrao'].includes(String(fields?.holidayRule)) ? String(fields.holidayRule) : undefined;
+      if (Object.keys(patch).length === 0 && holidayRuleVal === undefined) return res.status(400).json({ message: "Nenhum campo válido para alterar" });
+      if (holidayRuleVal !== undefined) { try { await db.execute(sql.raw("ALTER TABLE customers ADD COLUMN IF NOT EXISTS holiday_rule varchar")); } catch (_e) {} }
       const __bulkUser = req.currentUser;
       const __bulkActor = { id: __bulkUser?.id, name: [__bulkUser?.firstName, __bulkUser?.lastName].filter(Boolean).join(' ').trim() || __bulkUser?.email };
       // Mudou a Data de Início do Fornecimento? Então as próximas visitas precisam
@@ -4371,9 +4375,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const id of ids) {
         try {
           const __b = await storage.getCustomer(String(id)).catch(() => null);
-          await storage.updateCustomer(String(id), patch); updated++;
-          // 📜 Histórico de alterações (edição em massa / rezoneamento)
-          try { await logCustomerChanges({ customerId: String(id), before: __b, changes: patch, actor: __bulkActor, source: 'bulk' }); } catch (_e) {}
+          if (Object.keys(patch).length > 0) {
+            await storage.updateCustomer(String(id), patch);
+            // 📜 Histórico de alterações (edição em massa / rezoneamento)
+            try { await logCustomerChanges({ customerId: String(id), before: __b, changes: patch, actor: __bulkActor, source: 'bulk' }); } catch (_e) {}
+          }
+          // 🎌 Exceção de regra de feriado do cliente.
+          if (holidayRuleVal !== undefined) {
+            const val = holidayRuleVal === 'padrao' ? null : holidayRuleVal;
+            await db.execute(sql`UPDATE customers SET holiday_rule = ${val} WHERE id = ${String(id)}`);
+            try { const { reapplyHolidayShiftsForCustomer } = await import('./holidays-routes'); await reapplyHolidayShiftsForCustomer(String(id)); } catch (_e) {}
+          }
+          updated++;
           // 🔁 Regenera as próximas visitas a partir da nova Data de Início do Fornecimento.
           if (__regenAgenda) {
             try { const n = await regenerateCustomerAgenda(String(id)); if (n > 0) agendaRegenerada++; }

@@ -85,6 +85,8 @@ const DDL: string[] = [
      rules jsonb NOT NULL DEFAULT '{}'::jsonb,
      updated_at timestamptz DEFAULT now()
    );`,
+  // Exceção de regra por cliente: 'post' | 'ant' | 'none' | NULL (= usa a regra da periodicidade).
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS holiday_rule varchar;`,
 ];
 
 // Regra de deslocamento por periodicidade: 'post' (próximo dia útil), 'ant' (dia
@@ -168,9 +170,11 @@ function direcaoFor(recurrence: string, rules: Record<string, any>): 1 | -1 | 0 
   const v = String(rules[perKey(recurrence)] || "post");
   return v === "ant" ? -1 : v === "none" ? 0 : 1;
 }
-function shiftOffHoliday(iso: string, recurrence: string, feriados: Map<string, any>, rules: Record<string, any>): { date: string; tipo: "post" | "ant" } | null {
-  const dir = direcaoFor(recurrence, rules);
-  if (dir === 0) return null; // periodicidade configurada para NÃO deslocar
+function shiftOffHoliday(iso: string, recurrence: string, feriados: Map<string, any>, rules: Record<string, any>, override?: string | null): { date: string; tipo: "post" | "ant" } | null {
+  // Exceção por cliente (override) vence a regra da periodicidade.
+  const ov = String(override || "");
+  const dir: 1 | -1 | 0 = ov === "post" ? 1 : ov === "ant" ? -1 : ov === "none" ? 0 : direcaoFor(recurrence, rules);
+  if (dir === 0) return null; // configurado para NÃO deslocar
   const cascata = rules.cascata !== false;
   let cur = iso;
   for (let i = 0; i < 31; i++) {
@@ -198,7 +202,7 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
   const whereSql = sql.join(conds, sql` AND `);
   const rows = rowsOf(await db.execute(sql`
     SELECT va.id, va.customer_id, va.scheduled_date, va.recurrence_type, va.customer_name,
-           c.city AS c_city, c.state AS c_state
+           c.city AS c_city, c.state AS c_state, c.holiday_rule AS c_rule
       FROM visit_agenda va
       LEFT JOIN customers c ON c.id = va.customer_id
      WHERE ${whereSql}
@@ -214,8 +218,8 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
     const diaOrig = isoDay(new Date(r.scheduled_date));
     const hit = fer.get(diaOrig);
     if (!hit) continue;
-    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules);
-    if (!sh) continue; // periodicidade configurada para não deslocar
+    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, r.c_rule);
+    if (!sh) continue; // configurado para não deslocar
     const { date: alvo, tipo } = sh;
     const nota = `${tipo === "post" ? "Postergação" : "Antecipação"} de visita devido ao feriado ${brDate(diaOrig)}`;
     const alvoDt = new Date(alvo + "T12:00:00Z");
@@ -240,7 +244,7 @@ async function previewShift(monthStart: string, monthEnd: string): Promise<any[]
   if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
   const rows = rowsOf(await db.execute(sql`
     SELECT va.id, va.customer_id, va.scheduled_date, va.recurrence_type, va.customer_name,
-           c.city AS c_city, c.state AS c_state
+           c.city AS c_city, c.state AS c_state, c.holiday_rule AS c_rule
       FROM visit_agenda va
       LEFT JOIN customers c ON c.id = va.customer_id
      WHERE ${sql.join(conds, sql` AND `)}
@@ -254,7 +258,7 @@ async function previewShift(monthStart: string, monthEnd: string): Promise<any[]
     const diaOrig = isoDay(new Date(r.scheduled_date));
     const hit = fer.get(diaOrig);
     if (!hit) continue;
-    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules);
+    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, r.c_rule);
     if (!sh) continue;
     const { date: alvo, tipo } = sh;
     const alvoDt = new Date(alvo + "T12:00:00Z");
@@ -274,6 +278,27 @@ export async function applyHolidayShiftsForCustomer(customerId: string): Promise
   } catch (e: any) { console.warn("[feriados] applyHolidayShiftsForCustomer:", e?.message); }
 }
 
+/** Reverte os deslocamentos FUTUROS de um cliente e reaplica com a regra atual.
+ *  Usado quando a exceção de regra do cliente muda. Nunca lança. */
+export async function reapplyHolidayShiftsForCustomer(customerId: string): Promise<void> {
+  try {
+    if (!customerId) return;
+    await ensureHolidayTables();
+    const rows = rowsOf(await db.execute(sql`
+      SELECT id, holiday_original_date FROM visit_agenda
+       WHERE customer_id = ${customerId} AND holiday_original_date IS NOT NULL
+         AND holiday_original_date::date >= CURRENT_DATE`));
+    for (const r of rows) {
+      const orig = new Date(r.holiday_original_date);
+      await db.execute(sql`
+        UPDATE visit_agenda SET scheduled_date = ${orig}, route_day = ${DIAS[orig.getUTCDay()]},
+               holiday_note = NULL, holiday_original_date = NULL, updated_at = now()
+         WHERE id = ${r.id}`);
+    }
+    await processShift({ customerId, onlyFuture: true });
+  } catch (e: any) { console.warn("[feriados] reapplyHolidayShiftsForCustomer:", e?.message); }
+}
+
 export function registerHolidaysRoutes(app: Express) {
   void ensureHolidayTables();
   const admin = requireRole(["admin", "coordinator", "administrative"]);
@@ -288,19 +313,30 @@ export function registerHolidaysRoutes(app: Express) {
     res.json({ holidays: rows.map(mapRow) });
   }));
 
-  // Macro/micro-regiões derivadas do cadastro (UF = macro, cidade = micro).
+  // Macro/micro-regiões derivadas do cadastro. As macro-regiões são apenas GO e DF;
+  // cada cidade é uma micro-região, classificada pela UF ('GO'/'DF') ou, quando o
+  // cadastro não tem UF, pelo nome oficial da cidade (Brasília → DF).
   app.get("/api/holidays/regions", authenticateUser, safe(async (_req, res) => {
     const rows = rowsOf(await db.execute(sql`
       SELECT state AS uf, city, COUNT(*)::int AS n
         FROM customers WHERE is_active = true AND COALESCE(city,'') <> ''
         GROUP BY state, city ORDER BY state, city`));
     const macro = new Map<string, { uf: string; total: number; cidades: Array<{ city: string; n: number }> }>();
+    macro.set("GO", { uf: "GO", total: 0, cidades: [] });
+    macro.set("DF", { uf: "DF", total: 0, cidades: [] });
+    const DF_CIDADES = new Set(["BRASILIA", "TAGUATINGA", "CEILANDIA", "GAMA", "SOBRADINHO", "PLANALTINA", "GUARA", "AGUAS CLARAS", "SAMAMBAIA", "SANTA MARIA", "RECANTO DAS EMAS"]);
+    const seen = new Map<string, Set<string>>([["GO", new Set()], ["DF", new Set()]]);
     for (const r of rows) {
-      const uf = (r.uf || "—").toString();
-      if (!macro.has(uf)) macro.set(uf, { uf, total: 0, cidades: [] });
+      const cityNorm = norm(r.city);
+      let uf = norm(r.uf);
+      if (uf !== "GO" && uf !== "DF") uf = DF_CIDADES.has(cityNorm) ? "DF" : "GO"; // sem UF: Brasília e RAs → DF; resto → GO
       const g = macro.get(uf)!;
-      g.total += Number(r.n); g.cidades.push({ city: r.city, n: Number(r.n) });
+      const s = seen.get(uf)!;
+      if (s.has(cityNorm)) { const ex = g.cidades.find((c) => norm(c.city) === cityNorm); if (ex) ex.n += Number(r.n); }
+      else { s.add(cityNorm); g.cidades.push({ city: r.city, n: Number(r.n) }); }
+      g.total += Number(r.n);
     }
+    for (const g of macro.values()) g.cidades.sort((a, b) => a.city.localeCompare(b.city, "pt-BR"));
     res.json({ macro: Array.from(macro.values()) });
   }));
 
