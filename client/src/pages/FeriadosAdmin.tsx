@@ -84,7 +84,11 @@ export default function FeriadosAdmin() {
   });
   const revertMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/holidays/revert", { month }),
-    onSuccess: (r: any) => { toast({ title: "Realocação revertida", description: `${r?.reverted || 0} visita(s) voltaram à data original.` }); setPreview(null); },
+    onSuccess: (r: any) => {
+      toast({ title: "Realocação revertida", description: `${r?.reverted || 0} visita(s) voltaram à data original.` });
+      // Visitas voltaram ao feriado → recarrega a prévia para mostrar todos os clientes de novo.
+      previewMut.mutate();
+    },
     onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao reverter." }),
   });
 
