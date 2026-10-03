@@ -80,7 +80,33 @@ const DDL: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS ux_rh_dedup ON route_holidays (hdate, scope, COALESCE(uf,''), COALESCE(city,''));`,
   `ALTER TABLE visit_agenda ADD COLUMN IF NOT EXISTS holiday_note text;`,
   `ALTER TABLE visit_agenda ADD COLUMN IF NOT EXISTS holiday_original_date timestamptz;`,
+  `CREATE TABLE IF NOT EXISTS holiday_rules (
+     id varchar PRIMARY KEY DEFAULT 'default',
+     rules jsonb NOT NULL DEFAULT '{}'::jsonb,
+     updated_at timestamptz DEFAULT now()
+   );`,
 ];
+
+// Regra de deslocamento por periodicidade: 'post' (próximo dia útil), 'ant' (dia
+// útil anterior) ou 'none' (não desloca). + opções gerais (editáveis pelo admin).
+const DEFAULT_RULES: Record<string, any> = {
+  semanal: "post", trisemanal: "post", quinzenal: "ant", mensal: "ant",
+  cascata: true, incluirVirtuais: false,
+};
+async function loadRules(): Promise<Record<string, any>> {
+  try {
+    const r = rowsOf(await db.execute(sql`SELECT rules FROM holiday_rules WHERE id = 'default' LIMIT 1`));
+    const saved = (r[0] && r[0].rules) || {};
+    return { ...DEFAULT_RULES, ...saved };
+  } catch { return { ...DEFAULT_RULES }; }
+}
+function perKey(rec: string): "semanal" | "trisemanal" | "quinzenal" | "mensal" {
+  const r = norm(rec);
+  if (r.startsWith("QUINZ") || r.startsWith("BIWEEK")) return "quinzenal";
+  if (r.startsWith("MENS") || r.startsWith("MONTH")) return "mensal";
+  if (r.startsWith("TRI")) return "trisemanal";
+  return "semanal";
+}
 
 let _ready: Promise<void> | null = null;
 export function ensureHolidayTables(): Promise<void> {
@@ -129,27 +155,29 @@ async function holidaysApplicableTo(customer: { city?: any; state?: any }): Prom
   return m;
 }
 
-function ehDiaUtil(iso: string, feriados: Map<string, any>): boolean {
+// Dia útil = não é fim de semana e (quando cascata ligada) não é feriado.
+function ehDiaUtil(iso: string, feriados: Map<string, any>, cascata: boolean): boolean {
   const d = new Date(iso + "T12:00:00Z");
   const dow = d.getUTCDay();
   if (dow === 0 || dow === 6) return false;
-  if (feriados.has(iso)) return false;
+  if (cascata && feriados.has(iso)) return false;
   return true;
 }
-// Direção do deslocamento: semanal/trisemanal posterga (+1); quinzenal/mensal antecipa (-1).
-function direcao(recurrence: string): 1 | -1 {
-  const r = norm(recurrence);
-  if (r.startsWith("QUINZ") || r.startsWith("MENS") || r.startsWith("MONTH") || r.startsWith("BIWEEK")) return -1;
-  return 1;
+// Direção vinda das REGRAS configuráveis: +1 posterga, -1 antecipa, 0 não desloca.
+function direcaoFor(recurrence: string, rules: Record<string, any>): 1 | -1 | 0 {
+  const v = String(rules[perKey(recurrence)] || "post");
+  return v === "ant" ? -1 : v === "none" ? 0 : 1;
 }
-function shiftOffHoliday(iso: string, recurrence: string, feriados: Map<string, any>): { date: string; tipo: "post" | "ant" } {
-  const dir = direcao(recurrence);
+function shiftOffHoliday(iso: string, recurrence: string, feriados: Map<string, any>, rules: Record<string, any>): { date: string; tipo: "post" | "ant" } | null {
+  const dir = direcaoFor(recurrence, rules);
+  if (dir === 0) return null; // periodicidade configurada para NÃO deslocar
+  const cascata = rules.cascata !== false;
   let cur = iso;
   for (let i = 0; i < 31; i++) {
     const d = new Date(cur + "T12:00:00Z");
     d.setUTCDate(d.getUTCDate() + dir);
     cur = isoDay(d);
-    if (ehDiaUtil(cur, feriados)) break;
+    if (ehDiaUtil(cur, feriados, cascata)) break;
   }
   return { date: cur, tipo: dir === 1 ? "post" : "ant" };
 }
@@ -160,7 +188,9 @@ const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
 // linhas já deslocadas (holiday_original_date preenchido) e virtuais.
 async function processShift(opts: { customerId?: string; monthStart?: string; monthEnd?: string; onlyFuture?: boolean }): Promise<{ moved: number; list: any[] }> {
   await ensureHolidayTables();
-  const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`, sql`va.is_virtual = false`];
+  const rules = await loadRules();
+  const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`];
+  if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
   if (opts.customerId) conds.push(sql`va.customer_id = ${opts.customerId}`);
   if (opts.monthStart) conds.push(sql`va.scheduled_date::date >= ${opts.monthStart}::date`);
   if (opts.monthEnd) conds.push(sql`va.scheduled_date::date <= ${opts.monthEnd}::date`);
@@ -184,7 +214,9 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
     const diaOrig = isoDay(new Date(r.scheduled_date));
     const hit = fer.get(diaOrig);
     if (!hit) continue;
-    const { date: alvo, tipo } = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer);
+    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules);
+    if (!sh) continue; // periodicidade configurada para não deslocar
+    const { date: alvo, tipo } = sh;
     const nota = `${tipo === "post" ? "Postergação" : "Antecipação"} de visita devido ao feriado ${brDate(diaOrig)}`;
     const alvoDt = new Date(alvo + "T12:00:00Z");
     await db.execute(sql`
@@ -202,13 +234,16 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
 // Prévia (sem gravar): mesma lógica, só calcula.
 async function previewShift(monthStart: string, monthEnd: string): Promise<any[]> {
   await ensureHolidayTables();
+  const rules = await loadRules();
+  const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`,
+    sql`va.scheduled_date::date >= ${monthStart}::date`, sql`va.scheduled_date::date <= ${monthEnd}::date`];
+  if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
   const rows = rowsOf(await db.execute(sql`
     SELECT va.id, va.customer_id, va.scheduled_date, va.recurrence_type, va.customer_name,
            c.city AS c_city, c.state AS c_state
       FROM visit_agenda va
       LEFT JOIN customers c ON c.id = va.customer_id
-     WHERE va.visit_status = 'pending' AND va.holiday_original_date IS NULL AND va.is_virtual = false
-       AND va.scheduled_date::date >= ${monthStart}::date AND va.scheduled_date::date <= ${monthEnd}::date
+     WHERE ${sql.join(conds, sql` AND `)}
      ORDER BY va.scheduled_date ASC LIMIT 5000`));
   const cache = new Map<string, Map<string, any>>();
   const list: any[] = [];
@@ -219,7 +254,9 @@ async function previewShift(monthStart: string, monthEnd: string): Promise<any[]
     const diaOrig = isoDay(new Date(r.scheduled_date));
     const hit = fer.get(diaOrig);
     if (!hit) continue;
-    const { date: alvo, tipo } = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer);
+    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules);
+    if (!sh) continue;
+    const { date: alvo, tipo } = sh;
     const alvoDt = new Date(alvo + "T12:00:00Z");
     list.push({ customerId: r.customer_id, customerName: r.customer_name, periodicidade: r.recurrence_type,
       de: brDate(diaOrig), para: brDate(alvo), paraDow: DIAS[alvoDt.getUTCDay()], tipo, feriado: hit.name,
@@ -265,6 +302,24 @@ export function registerHolidaysRoutes(app: Express) {
       g.total += Number(r.n); g.cidades.push({ city: r.city, n: Number(r.n) });
     }
     res.json({ macro: Array.from(macro.values()) });
+  }));
+
+  // Regras de deslocamento (editáveis): direção por periodicidade + cascata + virtuais.
+  app.get("/api/holidays/rules", authenticateUser, safe(async (_req, res) => {
+    res.json({ rules: await loadRules() });
+  }));
+  app.put("/api/holidays/rules", authenticateUser, admin, safe(async (req, res) => {
+    await ensureHolidayTables();
+    const b: any = req.body || {};
+    const DIR = new Set(["post", "ant", "none"]);
+    const merged: Record<string, any> = { ...DEFAULT_RULES };
+    for (const k of ["semanal", "trisemanal", "quinzenal", "mensal"]) if (DIR.has(b[k])) merged[k] = b[k];
+    if (typeof b.cascata === "boolean") merged.cascata = b.cascata;
+    if (typeof b.incluirVirtuais === "boolean") merged.incluirVirtuais = b.incluirVirtuais;
+    await db.execute(sql`
+      INSERT INTO holiday_rules (id, rules, updated_at) VALUES ('default', ${JSON.stringify(merged)}::jsonb, now())
+      ON CONFLICT (id) DO UPDATE SET rules = EXCLUDED.rules, updated_at = now()`);
+    res.json({ rules: merged });
   }));
 
   app.post("/api/holidays", authenticateUser, admin, safe(async (req: any, res) => {
