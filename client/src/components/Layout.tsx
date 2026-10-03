@@ -514,6 +514,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
       { id: 'acessos-delegacoes', label: 'Acessos e Delegações', icon: 'fas fa-user-shield', available: canAccessUsers, badge: null },
       { id: 'solicitacoes-alteracao', label: 'Solicitações de Alteração', icon: 'fas fa-inbox', available: canAccessUsers, badge: null },
+      { id: 'feriados', label: 'Feriados', icon: 'fas fa-calendar-day', available: canAccessUsers, badge: null },
       ],
     },
   ];
@@ -654,6 +655,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     }
     if (itemId === 'acessos-delegacoes') { navigate('/admin/acessos-delegacoes'); return; }
     if (itemId === 'solicitacoes-alteracao') { navigate('/admin/solicitacoes-alteracao'); return; }
+    if (itemId === 'feriados') { navigate('/admin/feriados'); return; }
 
     if (itemId === 'admin-system') {
       navigate('/admin/system');
