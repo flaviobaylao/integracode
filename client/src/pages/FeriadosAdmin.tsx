@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import { MultiSelect } from "@/lib/tableTools";
 import { CalendarDays, Plus, Trash2, Loader2, CalendarClock } from "lucide-react";
 
 type Holiday = { id: string; date: string; name: string; scope: string; uf: string | null; city: string | null; deslocaRota: boolean; active: boolean; source: string };
@@ -109,13 +110,18 @@ export default function FeriadosAdmin() {
   });
   const regionRules = rrData?.regionRules || [];
   const [rrUf, setRrUf] = useState("GO");
-  const [rrCity, setRrCity] = useState("");
+  const [rrCitySel, setRrCitySel] = useState<string[]>([]);
   const [rrRule, setRrRule] = useState("ant");
-  const rrCities = useMemo(() => { const m = macro.find((x) => x.uf === rrUf); return m ? m.cidades.map((c) => c.city) : []; }, [macro, rrUf]);
+  const rrCityOptions = useMemo(() => { const m = macro.find((x) => x.uf === rrUf); return m ? m.cidades.map((c) => c.city) : []; }, [macro, rrUf]);
   const invalidateRR = () => queryClient.invalidateQueries({ queryKey: ["/api/holidays/region-rules"] });
   const addRegionRuleMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/holidays/region-rules", { uf: rrUf, city: rrCity || null, rule: rrRule }),
-    onSuccess: () => { toast({ title: "Regra de região salva", description: "Vale para a próxima geração/aplicação da agenda." }); invalidateRR(); },
+    mutationFn: async () => {
+      // Nenhuma cidade = regra da macro-região (UF inteira). Várias cidades = uma regra por cidade.
+      if (rrCitySel.length === 0) { await apiRequest("POST", "/api/holidays/region-rules", { uf: rrUf, city: null, rule: rrRule }); return 1; }
+      await Promise.all(rrCitySel.map((c) => apiRequest("POST", "/api/holidays/region-rules", { uf: rrUf, city: c, rule: rrRule })));
+      return rrCitySel.length;
+    },
+    onSuccess: (n: any) => { toast({ title: "Regra(s) de região salva(s)", description: `${n} regra(s). Vale para a próxima geração/aplicação da agenda.` }); setRrCitySel([]); invalidateRR(); },
     onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao salvar." }),
   });
   const delRegionRuleMut = useMutation({
@@ -281,20 +287,14 @@ export default function FeriadosAdmin() {
               <div className="flex flex-wrap items-end gap-2">
                 <div>
                   <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Macro (UF)</label>
-                  <Select value={rrUf} onValueChange={(v) => { setRrUf(v); setRrCity(""); }}>
+                  <Select value={rrUf} onValueChange={(v) => { setRrUf(v); setRrCitySel([]); }}>
                     <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="GO">GO</SelectItem><SelectItem value="DF">DF</SelectItem></SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Micro (cidade)</label>
-                  <Select value={rrCity || "__all"} onValueChange={(v) => setRrCity(v === "__all" ? "" : v)}>
-                    <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all">Toda a {rrUf} (macro)</SelectItem>
-                      {rrCities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Micro (cidades)</label>
+                  <MultiSelect label={rrCitySel.length ? `${rrCitySel.length} cidade(s)` : `Toda a ${rrUf} (macro)`} options={rrCityOptions} selected={rrCitySel} onChange={setRrCitySel} searchable testId="rr-cidades" />
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Direção</label>
