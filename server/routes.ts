@@ -23448,15 +23448,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } catch (_e) { /* silencioso: município é complementar */ }
         })();
       }
-      // 🏘️ Preenche SEMPRE o bairro (neighborhood) via geocode reverso das coordenadas - best-effort.
-      // (o job automático em 2o plano tenta de novo se aqui falhar por rede)
-      (async () => {
-        try {
-          const { reverseGeocodeNeighborhood } = await import('./geocode-provider');
-          const bairro = await reverseGeocodeNeighborhood((lead as any).latitude, (lead as any).longitude);
-          if (bairro) await db.execute(sql`UPDATE leads SET neighborhood = ${bairro} WHERE id = ${lead.id}`);
-        } catch (_e) { /* silencioso: bairro é complementar */ }
-      })();
+      // 🏘️ Preenche o bairro (neighborhood) via geocode reverso - best-effort. Só quando o cadastro
+      // NÃO informou o bairro (campo do formulário): não sobrescreve o que o vendedor capturou/editou.
+      // (o job automático em 2o plano tenta de novo se faltar.)
+      const _bairroInformado = String((leadData as any)?.neighborhood || '').trim();
+      if (!_bairroInformado) {
+        (async () => {
+          try {
+            const { reverseGeocodeNeighborhood } = await import('./geocode-provider');
+            const bairro = await reverseGeocodeNeighborhood((lead as any).latitude, (lead as any).longitude);
+            if (bairro) await db.execute(sql`UPDATE leads SET neighborhood = ${bairro} WHERE id = ${lead.id}`);
+          } catch (_e) { /* silencioso: bairro é complementar */ }
+        })();
+      }
 
       console.log(`✅ Lead criado: ${lead.fantasyName} por ${user.email}`);
       res.status(201).json(lead);
@@ -23630,9 +23634,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const lat = String(req.query.lat ?? '').trim();
       const lng = String(req.query.lng ?? '').trim();
       if (!lat || !lng) return res.status(400).json({ message: 'lat e lng são obrigatórios' });
-      const { reverseGeocodeCity } = await import('./geocode-provider');
-      const city = await reverseGeocodeCity(lat, lng);
-      return res.json({ city: city || null });
+      const { reverseGeocodeCity, reverseGeocodeNeighborhood } = await import('./geocode-provider');
+      const [city, neighborhood] = await Promise.all([
+        reverseGeocodeCity(lat, lng).catch(() => null),
+        reverseGeocodeNeighborhood(lat, lng).catch(() => null),
+      ]);
+      return res.json({ city: city || null, neighborhood: neighborhood || null });
     } catch (error: any) {
       console.error('Erro no geocode reverso de cidade:', error);
       return res.status(500).json({ message: 'Erro ao obter o município', error: error?.message });
