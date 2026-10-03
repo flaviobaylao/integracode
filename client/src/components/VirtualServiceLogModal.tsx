@@ -307,7 +307,6 @@ export default function VirtualServiceLogModal({
       images, 
       serviceType,
       nextContactDate: nextContactDate || undefined,
-      temperature: temperature || undefined,
       attendanceDate: serviceDate || undefined
     });
   };
@@ -487,37 +486,6 @@ export default function VirtualServiceLogModal({
                     />
                   </div>
                 </div>
-
-                {entityType === 'lead' && (
-                  <div>
-                    <Label className="flex items-center gap-2">
-                      <Thermometer className="h-4 w-4" />
-                      Temperatura do Lead
-                    </Label>
-                    <div className="mt-2 flex gap-2 flex-wrap">
-                      {([
-                        { value: '', label: 'Manter atual', color: 'bg-gray-100 text-gray-600 border-gray-200' },
-                        { value: 'cold', label: 'Frio', color: 'bg-blue-100 text-blue-700 border-blue-200' },
-                        { value: 'warm', label: 'Morno', color: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
-                        { value: 'hot', label: 'Quente', color: 'bg-orange-100 text-orange-700 border-orange-200' },
-                        { value: 'very_hot', label: 'Muito Quente', color: 'bg-red-100 text-red-700 border-red-200' },
-                      ]).map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => setTemperature(opt.value)}
-                          className={`flex items-center gap-1 px-3 py-1.5 rounded-lg border-2 text-sm transition-all ${
-                            temperature === opt.value
-                              ? `${opt.color} border-current font-medium shadow-sm`
-                              : 'border-gray-200 hover:border-gray-300 text-gray-500 hover:text-gray-700'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {entityType === 'lead' && (
                   <div>
