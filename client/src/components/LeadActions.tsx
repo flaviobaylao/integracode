@@ -47,6 +47,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
   const [loadingLead, setLoadingLead] = useState(false);
   const [prorrogarOpen, setProrrogarOpen] = useState(false);
   const [novaData, setNovaData] = useState<string>("");
+  const [prorrogarObs, setProrrogarObs] = useState<string>("");
   const _pad = (n: number) => String(n).padStart(2, "0");
   const _toDay = (d: Date) => `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`;
   const prorrogarMin = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return _toDay(d); })();
@@ -97,10 +98,10 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
   });
 
   const prorrogarMut = useMutation({
-    mutationFn: async () => { const pos = await getPos(); return apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "prorrogar", data: novaData, ...pos }); },
+    mutationFn: async () => { const pos = await getPos(); return apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "prorrogar", data: novaData, observacao: prorrogarObs.trim(), ...pos }); },
     onSuccess: (r: any) => {
       toast({ title: "Retorno prorrogado", description: "Nova data de visita registrada." });
-      setProrrogarOpen(false);
+      setProrrogarOpen(false); setProrrogarObs("");
       invalidate();
     },
     onError: (e: any) => toast({ title: "Não foi possível prorrogar", description: e?.message || "Erro", variant: "destructive" }),
@@ -171,6 +172,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
 
   const abrirProrrogar = () => {
     setNovaData(prorrogarMax);
+    setProrrogarObs("");
     setProrrogarOpen(true);
   };
 
@@ -279,8 +281,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
         </Button>
         <Button
           size="sm"
-          variant="outline"
-          className="border-emerald-500 text-emerald-700 dark:text-emerald-400 h-8"
+          className="bg-emerald-600 hover:bg-emerald-700 text-white h-8"
           onClick={(e) => { e.stopPropagation(); openConverter(); }}
           data-testid={`button-lead-converter-${leadId}`}
         >
@@ -297,8 +298,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
         </Button>
         <Button
           size="sm"
-          variant="outline"
-          className="border-amber-400 text-amber-700 dark:text-amber-400 h-8"
+          className="bg-amber-500 hover:bg-amber-600 text-white h-8"
           disabled={prorrogarMut.isPending}
           title="Prorrogar (escolha livremente a data)"
           onClick={(e) => { e.stopPropagation(); abrirProrrogar(); }}
@@ -322,12 +322,19 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               <Input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} />
               <p className="text-[11px] text-muted-foreground mt-1">Escolha livremente a data da próxima visita.</p>
             </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label>Descrição do atendimento *</Label>
+                <VoiceDictateButton onText={(t) => setProrrogarObs((prev) => (prev ? prev.trim() + ' ' : '') + t)} testId={`button-lead-prorrogar-record-${leadId}`} />
+              </div>
+              <Textarea rows={4} value={prorrogarObs} onChange={(e) => setProrrogarObs(e.target.value)} placeholder="Descreva o atendimento (obrigatório para prorrogar)" />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setProrrogarOpen(false)}>Cancelar</Button>
             <Button
               className="bg-amber-500 hover:bg-amber-600 text-white"
-              disabled={!novaData || prorrogarMut.isPending}
+              disabled={!novaData || !prorrogarObs.trim() || prorrogarMut.isPending}
               onClick={() => prorrogarMut.mutate()}
             >
               Confirmar prorrogação
@@ -354,13 +361,16 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               </Select>
             </div>
             <div>
-              <Label>Observação (opcional)</Label>
-              <Input value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Detalhe, se quiser" />
+              <div className="flex items-center justify-between mb-1">
+                <Label>Descrição do atendimento *</Label>
+                <VoiceDictateButton onText={(t) => setObs((prev) => (prev ? prev.trim() + ' ' : '') + t)} testId={`button-lead-naoconv-record-${leadId}`} />
+              </div>
+              <Textarea rows={4} value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Descreva o atendimento (obrigatório para não converter)" />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNaoConverterOpen(false)}>Cancelar</Button>
-            <Button variant="destructive" disabled={!motivo || naoConverterMut.isPending} onClick={() => naoConverterMut.mutate()}>
+            <Button variant="destructive" disabled={!motivo || !obs.trim() || naoConverterMut.isPending} onClick={() => naoConverterMut.mutate()}>
               Confirmar não-conversão
             </Button>
           </DialogFooter>
