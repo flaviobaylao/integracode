@@ -280,6 +280,17 @@ export default function RotaDoDia() {
     refetchInterval: 30000, // Atualiza automaticamente a cada 30 segundos
   });
 
+  // 🎌 Selos de feriado (antecipação/postergação) por cliente na data selecionada.
+  const { data: holidayNotesData } = useQuery<{ notes: Record<string, string> }>({
+    queryKey: ['/api/holidays/notes', selectedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/holidays/notes?date=${selectedDate}`, { credentials: 'include' });
+      return r.ok ? r.json() : { notes: {} };
+    },
+    enabled: !!selectedDate,
+  });
+  const holidayNotes = holidayNotesData?.notes || {};
+
   // Repescagem2 (Fase 3): camada de repescagem sobreposta na rota do dia.
   // Decisao do cliente sobre a visita de hoje (resposta ao aviso do WhatsApp).
   const { data: rotaDecisoes } = useQuery<any>({
@@ -2564,6 +2575,11 @@ export default function RotaDoDia() {
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
                                 {visit.customerName}
                               </p>
+                              {holidayNotes[String(visit.customerId)] && (
+                                <Badge variant="outline" className="text-[11px] border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title={holidayNotes[String(visit.customerId)]} data-testid={`badge-feriado-${visit.customerId}`}>
+                                  🎌 {holidayNotes[String(visit.customerId)]}
+                                </Badge>
+                              )}
                               {!isLead && <SalesCycleDots cycles={cyclesByCustomer.get(String(visit.customerId))} />}
                               {isExpanded && (<>
                               <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
