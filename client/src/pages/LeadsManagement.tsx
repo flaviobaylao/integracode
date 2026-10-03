@@ -1182,7 +1182,7 @@ export default function LeadsManagement() {
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-xs">
+                      <td className="py-3 px-4 text-xs" onClick={(e) => e.stopPropagation()}>
                         {lead.googlePlace ? (
                           <Popover>
                             <PopoverTrigger asChild>
