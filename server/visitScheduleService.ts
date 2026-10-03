@@ -429,6 +429,12 @@ async function __gravarAgendaDatas(c: any, periodicity: string, dates: Date[]): 
     }).onConflictDoNothing();
     created++;
   }
+  // 🎌 Feriados: reaplica os deslocamentos (antecipação/postergação) às datas que
+  // caíram em feriado desta região. Auto-cura a cada regeneração. Nunca derruba.
+  try {
+    const { applyHolidayShiftsForCustomer } = await import('./holidays-routes');
+    await applyHolidayShiftsForCustomer(c.id);
+  } catch (e: any) { console.warn('[agenda] holiday shift:', e?.message); }
   return created;
 }
 

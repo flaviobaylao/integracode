@@ -24,6 +24,7 @@ import { registerMktEnsaio } from "./mkt-ensaio";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { registerChangeRequestsRoutes } from "./change-requests-routes";
+import { registerHolidaysRoutes } from "./holidays-routes";
 import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { registerFichaLogisticaRoutes } from "./ficha-logistica";
 import { registerTemperaturaEntregasRoutes } from "./temperatura-entregas";
@@ -383,6 +384,7 @@ run();
   // "IA linha de frente" (b257db4) — sem isto, POST/GET /api/change-requests caíam no
   // index.html do SPA ("Failed to parse JSON response"). Re-registrado. (29/jul/2026)
   registerChangeRequestsRoutes(app);
+  try { registerHolidaysRoutes(app); } catch (e) { console.error('[feriados]', e); }
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
