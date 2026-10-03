@@ -5,13 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
-import { Plus, User, Clock, History, Thermometer } from "lucide-react";
+import { Plus, History } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -36,15 +35,32 @@ const temperatureColors: Record<LeadTemperature, string> = {
   very_hot: "bg-red-500"
 };
 
-interface LeadVisit {
-  id: string;
-  leadId: string;
-  userId: string;
-  userName: string;
-  observation: string;
-  temperature: LeadTemperature | null;
-  visitDate: string;
-  createdAt: string;
+// Mesma visão do Histórico de Ações (cliente/lead): check-in/out, foto, visitas,
+// observações e desfecho (conversão, não-conversão, prorrogação, resgate).
+type HistItem = { id: string; tipo: string; tipoLabel: string; texto: string; autor: string; data: string | null; url?: string | null };
+
+const TIPO_STYLE: Record<string, string> = {
+  descricao: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+  observacao: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  replica: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  treplica: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  resolucao: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  report: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+  checkin: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  checkout: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  foto: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300",
+  visita: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+  conversao: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
+  nao_conversao: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  prorrogacao: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  resgate: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
+};
+
+function fmtDataHora(v: string | null): string {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 interface LeadVisitHistoryModalProps {
@@ -56,10 +72,10 @@ interface LeadVisitHistoryModalProps {
   onSuccess?: () => void;
 }
 
-export default function LeadVisitHistoryModal({ 
-  open, 
-  onClose, 
-  leadId, 
+export default function LeadVisitHistoryModal({
+  open,
+  onClose,
+  leadId,
   leadName,
   currentTemperature,
   onSuccess
@@ -69,17 +85,20 @@ export default function LeadVisitHistoryModal({
   const [observation, setObservation] = useState("");
   const [temperature, setTemperature] = useState<LeadTemperature | "">("");
 
-  const { data: visits, isLoading } = useQuery<LeadVisit[]>({
-    queryKey: [`/api/leads/${leadId}/visits`],
+  const HIST_KEY = ["/api/change-requests/history/lead", leadId];
+  const { data, isLoading } = useQuery<{ items: HistItem[] }>({
+    queryKey: HIST_KEY,
     enabled: open && !!leadId,
+    staleTime: 30 * 1000,
   });
+  const items = data?.items || [];
 
   const createVisitMutation = useMutation({
     mutationFn: async (data: { observation: string; temperature?: LeadTemperature }) => {
       return await apiRequest('POST', `/api/leads/${leadId}/visits`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/leads/${leadId}/visits`] });
+      queryClient.invalidateQueries({ queryKey: HIST_KEY });
       queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
       setIsCreating(false);
       setObservation("");
@@ -128,13 +147,13 @@ export default function LeadVisitHistoryModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
-            Histórico de Visitas - {leadName}
+            Histórico de Ações do Lead - {leadName}
           </DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden flex flex-col">
           {currentTemperature && (
-            <div className="flex items-center gap-2 mb-4 text-sm text-gray-600">
+            <div className="flex items-center gap-2 mb-4 text-sm text-gray-600 dark:text-gray-300">
               <span>Temperatura atual:</span>
               <div className="flex items-center gap-1">
                 <div className={`w-3 h-3 rounded-full ${temperatureColors[currentTemperature]}`} />
@@ -142,6 +161,10 @@ export default function LeadVisitHistoryModal({
               </div>
             </div>
           )}
+
+          <p className="text-xs text-muted-foreground mb-3">
+            Observações, visitas, check-in/out, foto e desfecho do lead — 50 registros mais recentes.
+          </p>
 
           {!isCreating ? (
             <Button
@@ -230,43 +253,31 @@ export default function LeadVisitHistoryModal({
             {isLoading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-24 w-full" />
+                  <Skeleton key={i} className="h-20 w-full" />
                 ))}
               </div>
-            ) : visits && visits.length > 0 ? (
-              <div className="space-y-3 pr-4">
-                {visits.map((visit) => (
-                  <Card key={visit.id} className="border">
-                    <CardContent className="pt-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <User className="h-4 w-4" />
-                          <span className="font-medium">{visit.userName}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <Clock className="h-3 w-3" />
-                          {format(new Date(visit.visitDate), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
-                        </div>
-                      </div>
-                      
-                      {visit.temperature && (
-                        <div className="flex items-center gap-1 mb-2 text-xs">
-                          <Thermometer className="h-3 w-3 text-gray-500" />
-                          <span className="text-gray-500">Temperatura alterada para:</span>
-                          <div className={`w-2 h-2 rounded-full ${temperatureColors[visit.temperature]}`} />
-                          <span className="font-medium">{temperatureLabels[visit.temperature]}</span>
-                        </div>
-                      )}
-                      
-                      <p className="text-sm whitespace-pre-wrap">{visit.observation}</p>
-                    </CardContent>
-                  </Card>
+            ) : items.length > 0 ? (
+              <div className="space-y-2 pr-4">
+                {items.map((it) => (
+                  <div key={it.id} className="rounded-md border border-border p-2.5" data-testid="hist-item">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <Badge variant="outline" className={`text-[10px] border-transparent ${TIPO_STYLE[it.tipo] || TIPO_STYLE.descricao}`}>
+                        {it.tipoLabel}
+                      </Badge>
+                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDataHora(it.data)}</span>
+                    </div>
+                    <p className="text-sm whitespace-pre-wrap break-words">{it.texto}</p>
+                    {it.url && (
+                      <a href={it.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-600 hover:underline break-all">Ver foto</a>
+                    )}
+                    <p className="text-[11px] text-muted-foreground mt-1">por {it.autor || "—"}</p>
+                  </div>
                 ))}
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">
                 <History className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p>Nenhuma visita registrada ainda</p>
+                <p>Nenhum registro ainda</p>
                 <p className="text-xs">Clique em "Registrar Nova Visita" para começar</p>
               </div>
             )}
