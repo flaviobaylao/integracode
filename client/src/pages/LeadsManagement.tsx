@@ -66,11 +66,13 @@ export default function LeadsManagement() {
   const [formData, setFormData] = useState({
     fantasyName: "",
     city: "",
+    neighborhood: "",
     latitude: "",
     longitude: "",
     contact: "",
     phone: "",
     observation: "",
+    photo: "",
     status: "pending" as const,
     assignedTo: "",
     temperature: "" as "" | "cold" | "warm" | "hot" | "very_hot",
@@ -414,11 +416,13 @@ export default function LeadsManagement() {
     setFormData({
       fantasyName: "",
       city: "",
+      neighborhood: "",
       latitude: "",
       longitude: "",
       contact: "",
       phone: "",
       observation: "",
+      photo: "",
       status: "pending",
       assignedTo: "",
       temperature: "",
@@ -446,17 +450,20 @@ export default function LeadsManagement() {
           title: "Sucesso",
           description: "Localização capturada!",
         });
-        // 🌍 Preenche a Cidade automaticamente a partir da coordenada capturada (geocode reverso).
+        // 🌍 Preenche Cidade e Bairro/Setor automaticamente a partir da coordenada (geocode reverso).
         try {
           const res = await fetch(`/api/geocode/city?lat=${_lat}&lng=${_lng}`, { credentials: "include" });
           if (res.ok) {
             const j = await res.json();
-            if (j?.city) {
-              setFormData((prev) => ({ ...prev, city: String(j.city) }));
-              toast({ title: "Município detectado", description: String(j.city) });
-            }
+            setFormData((prev) => ({
+              ...prev,
+              ...(j?.city ? { city: String(j.city) } : {}),
+              ...(j?.neighborhood ? { neighborhood: String(j.neighborhood) } : {}),
+            }));
+            const _det = [j?.city, j?.neighborhood].filter(Boolean).join(" · ");
+            if (_det) toast({ title: "Localização detectada", description: _det });
           }
-        } catch (_e) { /* cidade é complementar; segue sem travar */ }
+        } catch (_e) { /* cidade/bairro são complementares; segue sem travar */ }
       },
       () => {
         toast({
@@ -466,6 +473,35 @@ export default function LeadsManagement() {
         });
       }
     );
+  };
+
+  // 📷 Foto do lead: tira na câmera ou faz upload; redimensiona para ~1280px (JPEG) e guarda
+  // como data URL em formData.photo (enviado no cadastro; leads.photo é a mesma coluna do check-in).
+  const handlePhotoChange = (e: any) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const src = ev.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const max = 1280;
+          let w = img.width, h = img.height;
+          if (w > max || h > max) { const sc = Math.min(max / w, max / h); w = Math.round(w * sc); h = Math.round(h * sc); }
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (ctx) ctx.drawImage(img, 0, 0, w, h);
+          setFormData((prev) => ({ ...prev, photo: canvas.toDataURL("image/jpeg", 0.8) }));
+        } catch (_err) {
+          setFormData((prev) => ({ ...prev, photo: src }));
+        }
+      };
+      img.onerror = () => setFormData((prev) => ({ ...prev, photo: src }));
+      img.src = src;
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = () => {
@@ -481,6 +517,7 @@ export default function LeadsManagement() {
     const payload: any = { ...formData };
     if (!payload.nextContactDate) delete payload.nextContactDate;
     if (!payload.temperature) delete payload.temperature;
+    if (!payload.photo) delete payload.photo;
 
     if (editingLead) {
       updateLeadMutation.mutate({
@@ -511,11 +548,13 @@ export default function LeadsManagement() {
     setFormData({
       fantasyName: lead.fantasyName,
       city: (lead as any).city || "",
+      neighborhood: (lead as any).neighborhood || "",
       latitude: lead.latitude.toString(),
       longitude: lead.longitude.toString(),
       contact: lead.contact || "",
       phone: lead.phone || "",
       observation: lead.observation || "",
+      photo: (lead as any).photo || "",
       status: lead.status as any,
       assignedTo: lead.assignedTo || "",
       temperature: (lead.temperature || "") as "" | "cold" | "warm" | "hot" | "very_hot",
@@ -1310,6 +1349,18 @@ export default function LeadsManagement() {
             </div>
 
             <div>
+              <Label htmlFor="neighborhood">Bairro / Setor</Label>
+              <Input
+                id="neighborhood"
+                value={formData.neighborhood}
+                onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
+                placeholder="Preenchido pela captura de localização"
+                data-testid="input-neighborhood"
+              />
+              <p className="text-xs text-muted-foreground mt-1">Preenchido automaticamente ao capturar a localização (pode editar).</p>
+            </div>
+
+            <div>
               <Label htmlFor="contact">Contato</Label>
               <Input
                 id="contact"
@@ -1341,6 +1392,21 @@ export default function LeadsManagement() {
                 rows={3}
                 data-testid="input-observation"
               />
+            </div>
+
+            <div>
+              <Label>Foto (registro ou upload)</Label>
+              {formData.photo ? (
+                <div className="space-y-2">
+                  <img src={formData.photo} alt="Foto do lead" className="w-full max-h-48 object-contain rounded border" />
+                  <Button type="button" variant="outline" size="sm" onClick={() => setFormData({ ...formData, photo: "" })} data-testid="button-remove-photo">
+                    Remover / trocar foto
+                  </Button>
+                </div>
+              ) : (
+                <Input type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} data-testid="input-photo" />
+              )}
+              <p className="text-xs text-muted-foreground mt-1">Tire a foto na hora (câmera) ou envie um arquivo.</p>
             </div>
 
             <div>
@@ -1386,24 +1452,6 @@ export default function LeadsManagement() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div>
-              <Label htmlFor="periodicity">Periodicidade</Label>
-              <Select
-                value={formData.periodicity || "semanal"}
-                onValueChange={(value) => setFormData({ ...formData, periodicity: value })}
-              >
-                <SelectTrigger data-testid="select-periodicity">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="semanal">Semanal</SelectItem>
-                  <SelectItem value="quinzenal">Quinzenal</SelectItem>
-                  <SelectItem value="mensal">Mensal</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground mt-1">Padrão: Semanal. Não obrigatório — frequência de visita sugerida.</p>
             </div>
 
             {(formData.status === "scheduled" || (editingLead && isAdmin)) && (
