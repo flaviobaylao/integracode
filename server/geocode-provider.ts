@@ -211,3 +211,40 @@ export async function reverseGeocodeNeighborhood(lat: number | string, lon: numb
     return null;
   }
 }
+
+/**
+ * 📸 Foto do Google Street View na coordenada (fachada/rua do lead). Consulta primeiro o metadata
+ * (grátis) para saber se há imagem; havendo, baixa a imagem estática e devolve como data URL (base64)
+ * pronta para gravar em leads.photo. Requer GOOGLE_MAPS_API_KEY com a Street View Static API habilitada.
+ * Devolve null se não houver imagem na coordenada, se o provider não for Google, ou em caso de erro.
+ */
+export async function streetViewPhoto(lat: number | string, lon: number | string): Promise<string | null> {
+  const la = String(lat ?? "").trim();
+  const lo = String(lon ?? "").trim();
+  if (!la || !lo) return null;
+  if (geocodeProvider() !== "google") return null;
+  const key = GOOGLE_KEY();
+  try {
+    // 1) metadata (grátis): confirma que existe imagem de Street View na coordenada
+    const metaUrl =
+      "https://maps.googleapis.com/maps/api/streetview/metadata?" +
+      `location=${encodeURIComponent(la)},${encodeURIComponent(lo)}&source=outdoor&key=${encodeURIComponent(key)}`;
+    const metaResp = await fetch(metaUrl, { signal: AbortSignal.timeout(15000) });
+    if (!metaResp.ok) return null;
+    const meta: any = await metaResp.json();
+    if (String(meta?.status || "") !== "OK") return null; // ZERO_RESULTS / NOT_FOUND / OVER_QUERY_LIMIT / REQUEST_DENIED
+    // 2) imagem estática (JPEG) da fachada/rua
+    const imgUrl =
+      "https://maps.googleapis.com/maps/api/streetview?" +
+      `size=640x640&location=${encodeURIComponent(la)},${encodeURIComponent(lo)}&fov=90&source=outdoor&return_error_code=true&key=${encodeURIComponent(key)}`;
+    const imgResp = await fetch(imgUrl, { signal: AbortSignal.timeout(20000) });
+    if (!imgResp.ok) return null;
+    const ct = String(imgResp.headers.get("content-type") || "").split(";")[0];
+    if (!ct.startsWith("image/")) return null;
+    const buf = Buffer.from(await imgResp.arrayBuffer());
+    if (!buf || buf.length < 1500) return null; // imagem vazia/cinza de "sem imagem"
+    return `data:${ct};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
