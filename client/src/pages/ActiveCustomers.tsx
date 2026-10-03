@@ -32,6 +32,7 @@ import CustomerEditModal from "@/components/CustomerEditModal";
 import GeocodeAllButton from "@/components/GeocodeAllButton";
 import CustomerHistoryBox from "@/components/CustomerHistoryBox";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
+import ActionHistoryModal from "@/components/ActionHistoryModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
@@ -236,6 +237,8 @@ export default function ActiveCustomers() {
   const [serviceLogCustomer, setServiceLogCustomer] = useState<{id: string; name: string} | null>(null);
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{id: string; name: string} | null>(null);
+  const [showActionHistoryModal, setShowActionHistoryModal] = useState(false);
+  const [actionHistoryCustomer, setActionHistoryCustomer] = useState<{id: string; name: string} | null>(null);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const [customerToInactivate, setCustomerToInactivate] = useState<{id: string; name: string; activeCustomerId: string} | null>(null);
   const [showLastOrderModal, setShowLastOrderModal] = useState(false);
@@ -486,6 +489,24 @@ export default function ActiveCustomers() {
     setIsLeadMode(false);
     setShowCustomerEditModal(true);
   };
+
+  // Deep-link vindo da caixa "Ações do Cliente" de outras telas (Gestão de
+  // Carteiras, Agenda, Mapa, Inbox): /clientes-ativos?acaoCliente=pedido|ultimo&clienteId=ID
+  // Abre aqui o fluxo completo (card de vendas / último pedido) pelo id do cliente.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const acao = p.get("acaoCliente");
+    const cid = p.get("clienteId");
+    if (!acao || !cid) return;
+    // Remove os parâmetros da URL para não repetir a ação ao atualizar a página.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("acaoCliente");
+    url.searchParams.delete("clienteId");
+    window.history.replaceState({}, "", url.pathname + url.search);
+    const fakeEvt = { stopPropagation: () => {} } as any;
+    if (acao === "pedido") handleRowClick(cid);
+    else if (acao === "ultimo") handleViewLastOrder(fakeEvt, cid);
+  }, []);
 
 
   const { 
@@ -1883,27 +1904,26 @@ export default function ActiveCustomers() {
                 Ver Histórico do Último Pedido
               </Button>
 
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                {/* Botão Editar Telefone */}
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  className="text-blue-500 justify-start"
-                  onClick={(e) => {
-                    const ac = activeCustomers.find(ac => ac.customer?.id === virtualActionCustomer?.id);
-                    if (ac?.customer) {
-                      handleEditPhone(e as any, ac.customer.id, ac.customer.fantasyName || ac.customer.name, ac.customer.phone || '', ac.customer.contact || '');
-                      setShowVirtualActionModal(false);
-                    }
-                  }}
-                >
-                  <Phone className="h-4 w-4 mr-2" />
-                  Editar Telefone
-                </Button>
+              {/* Botão Histórico de Ações do Cliente (registros do Inbox) */}
+              <Button
+                variant="outline"
+                className="w-full justify-start h-12 text-slate-700 dark:text-slate-200 hover:bg-slate-50"
+                onClick={() => {
+                  if (virtualActionCustomer) {
+                    setActionHistoryCustomer({ id: virtualActionCustomer.id, name: virtualActionCustomer.name });
+                    setShowActionHistoryModal(true);
+                    setShowVirtualActionModal(false);
+                  }
+                }}
+              >
+                <History className="h-5 w-5 mr-3" />
+                Histórico de Ações do Cliente
+              </Button>
 
-                {/* Botão Editar Cliente */}
-                <Button 
-                  variant="ghost" 
+              <div className="grid grid-cols-1 gap-2 mt-2">
+                {/* Botão Editar Cliente (edição de telefone é feita aqui dentro) */}
+                <Button
+                  variant="ghost"
                   size="sm"
                   className="justify-start"
                   onClick={(e) => {
@@ -1922,7 +1942,7 @@ export default function ActiveCustomers() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-red-500 justify-start col-span-2"
+                    className="text-red-500 justify-start"
                     onClick={(e) => {
                       const ac = activeCustomers.find(ac => ac.customer?.id === virtualActionCustomer?.id);
                       if (ac?.customer) {
@@ -1939,6 +1959,14 @@ export default function ActiveCustomers() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Histórico de Ações do Cliente (registros do Inbox) */}
+        <ActionHistoryModal
+          open={showActionHistoryModal}
+          onClose={() => { setShowActionHistoryModal(false); setActionHistoryCustomer(null); }}
+          customerId={actionHistoryCustomer?.id || null}
+          customerName={actionHistoryCustomer?.name || null}
+        />
 
         {/* Modal de Registro de Atendimento Virtual */}
         {serviceLogCustomer && (

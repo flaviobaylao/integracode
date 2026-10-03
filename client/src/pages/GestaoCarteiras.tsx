@@ -3,6 +3,7 @@ import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { QuarentenaTag, useQuarentenaMap } from "@/components/QuarentenaTag";
+import ClientActionsModal from "@/components/ClientActionsModal";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -402,6 +403,7 @@ export default function GestaoCarteiras() {
   // olhamos o customerId no mapa de quarentena (cache de /api/customers).
   const [quarentenaSel, setQuarentenaSel] = useState<string>(""); // "", "sim", "nao"
   const qMap = useQuarentenaMap();
+  const [acaoCliente, setAcaoCliente] = useState<{ id: string; name: string } | null>(null);
   // Como o filtro aparece em varias frases: 1 vendedor mostra o nome, mais de um
   // vira "nas N carteiras selecionadas".
   const rotuloCarteira = !filtrarVend
@@ -1357,7 +1359,9 @@ export default function GestaoCarteiras() {
                                   notas={anotacoesPorChave.get(c.chave) || []}
                                   onSalvo={recarregaAnotacoes}
                                 />
-                                {c.nome}
+                                {c.customerId ? (
+                                  <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => setAcaoCliente({ id: c.customerId as string, name: c.nome })} data-testid="btn-acoes-cliente">{c.nome}</button>
+                                ) : c.nome}
                                 <QuarentenaTag customerId={c.customerId || undefined} />
                                 <span className="block text-xs text-muted-foreground">
                                   {c.cidade ? cidadePadrao(c.cidade) : "sem cidade"}
@@ -2092,7 +2096,9 @@ export default function GestaoCarteiras() {
                         )}
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
-                          {c.nome}
+                          {c.customerId ? (
+                            <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => setAcaoCliente({ id: c.customerId as string, name: c.nome })} data-testid="btn-acoes-cliente">{c.nome}</button>
+                          ) : c.nome}
                           <QuarentenaTag customerId={c.customerId || undefined} />
                           {/* Situacao da carteira, a mesma do gráfico de barras acima.
                               INATIVO = cadastro desativado (a empresa já disse que ele saiu).
@@ -2232,7 +2238,9 @@ export default function GestaoCarteiras() {
                       <TableRow key={c.chave} data-testid={`row-implantacao-${i}`}>
                         <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                         <TableCell className="font-medium">
-                          {c.nome}
+                          {c.customerId ? (
+                            <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => setAcaoCliente({ id: c.customerId as string, name: c.nome })} data-testid="btn-acoes-cliente">{c.nome}</button>
+                          ) : c.nome}
                           <QuarentenaTag customerId={c.customerId || undefined} />
                           {c.cidade ? <span className="block text-xs text-muted-foreground">{cidadePadrao(c.cidade)}</span> : null}
                         </TableCell>
@@ -2316,6 +2324,13 @@ export default function GestaoCarteiras() {
       )}
       </>
       )}
+
+      <ClientActionsModal
+        open={!!acaoCliente}
+        onClose={() => setAcaoCliente(null)}
+        customerId={acaoCliente?.id || null}
+        customerName={acaoCliente?.name || null}
+      />
     </div>
   );
 }

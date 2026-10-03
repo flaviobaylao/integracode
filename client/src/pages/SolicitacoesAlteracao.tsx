@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
+import ClientActionsModal from "@/components/ClientActionsModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -111,7 +112,7 @@ function Detalhes({ details }: { details: any }) {
   );
 }
 
-function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boolean; onToggleSelect?: (id: string) => void }) {
+function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes }: { r: any; selected?: boolean; onToggleSelect?: (id: string) => void; onAbrirAcoes?: (id: string, name: string) => void }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
   // Item 4: ao retornar "Efetuadas", a rota do dia do vendedor é reotimizada automaticamente.
@@ -300,7 +301,11 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
                 data-testid={`cr-select-${r.id}`}
               />
             )}
-            <span>{r.entityName || r.entityId}</span>
+            {r.entityType === "customer" ? (
+              <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => onAbrirAcoes?.(r.customerId || r.entityId, r.entityName || r.entityId)} data-testid="btn-acoes-cliente">{r.entityName || r.entityId}</button>
+            ) : (
+              <span>{r.entityName || r.entityId}</span>
+            )}
             {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
@@ -508,7 +513,7 @@ function PendingCard({ r, selected, onToggleSelect }: { r: any; selected?: boole
   );
 }
 
-function ResolvedCard({ r }: { r: any }) {
+function ResolvedCard({ r, onAbrirAcoes }: { r: any; onAbrirAcoes?: (id: string, name: string) => void }) {
   const { toast } = useToast();
   const m = RESULT_META[r.status];
   const isReport = r?.kind === "report";
@@ -527,7 +532,11 @@ function ResolvedCard({ r }: { r: any }) {
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-semibold flex items-center gap-1.5">
-            <span>{r.entityName || r.entityId}</span>
+            {r.entityType === "customer" ? (
+              <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => onAbrirAcoes?.(r.customerId || r.entityId, r.entityName || r.entityId)} data-testid="btn-acoes-cliente">{r.entityName || r.entityId}</button>
+            ) : (
+              <span>{r.entityName || r.entityId}</span>
+            )}
             {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
@@ -617,6 +626,7 @@ function CarteiraSugestaoCard({ s }: { s: any }) {
 export default function SolicitacoesAlteracao() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [acaoCliente, setAcaoCliente] = useState<{ id: string; name: string } | null>(null);
 
   const { data: pendingData, isLoading: loadingP } = useQuery<any>({
     queryKey: ["/api/change-requests", "pending"],
@@ -796,7 +806,7 @@ export default function SolicitacoesAlteracao() {
           ) : pendingF.length === 0 ? (
             sugestoesF.length === 0 ? <div className="text-sm text-muted-foreground py-8 text-center">Nenhuma solicitação pendente. 🎉</div> : null
           ) : (
-            pendingF.map((r) => <PendingCard key={r.id} r={r} selected={selected.has(r.id)} onToggleSelect={toggleSelect} />)
+            pendingF.map((r) => <PendingCard key={r.id} r={r} selected={selected.has(r.id)} onToggleSelect={toggleSelect} onAbrirAcoes={(id, name) => setAcaoCliente({ id, name })} />)
           )}
         </TabsContent>
 
@@ -806,10 +816,17 @@ export default function SolicitacoesAlteracao() {
           ) : resolvedF.length === 0 ? (
             <div className="text-sm text-muted-foreground py-8 text-center">Nada resolvido ainda.</div>
           ) : (
-            resolvedF.map((r) => <ResolvedCard key={r.id} r={r} />)
+            resolvedF.map((r) => <ResolvedCard key={r.id} r={r} onAbrirAcoes={(id, name) => setAcaoCliente({ id, name })} />)
           )}
         </TabsContent>
     </Tabs>
+
+    <ClientActionsModal
+      open={!!acaoCliente}
+      onClose={() => setAcaoCliente(null)}
+      customerId={acaoCliente?.id || null}
+      customerName={acaoCliente?.name || null}
+    />
     </div>
   );
 }

@@ -11,6 +11,7 @@ import { MapPin, Users, Pencil, AlertCircle, X, RefreshCw, Copy, Check, Search }
 import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
+import ClientActionsModal from "@/components/ClientActionsModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import GeocodeAllButton from "@/components/GeocodeAllButton";
@@ -343,8 +344,10 @@ type PropsPonto = {
   aoMudarProximaVisita: (c: any, dataISO: string) => void;
   /** Troca o dia de rota do CLIENTE e leva a próxima visita junto. */
   aoMudarDiaDeRota: (c: any, diaLabel: string) => void;
+  /** Abre a caixa "Ações do Cliente" ao clicar no nome (clientes com cadastro). */
+  aoAbrirAcoes: (c: any) => void;
 };
-const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita, aoMudarDiaDeRota }: PropsPonto) {
+const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita, aoMudarDiaDeRota, aoAbrirAcoes }: PropsPonto) {
   // Telefone é campo de texto: só grava ao sair do campo (ou Enter), não a cada tecla.
   const [tel, setTel] = useState<string>(customer.phone || '');
   useEffect(() => { setTel(customer.phone || ''); }, [customer.phone]);
@@ -364,7 +367,12 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
       <Popup>
         <div className="space-y-3 min-w-[220px]">
           <div className="flex items-center gap-2">
-            <h3 className="font-bold text-base">{nomePonto}{!ehLead && customer?.id && <QuarentenaTag customerId={String(customer.id)} />}</h3>
+            <h3 className="font-bold text-base">
+              {!ehLead && !ehPonto && customer?.id ? (
+                <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => aoAbrirAcoes(customer)} data-testid={`btn-acoes-${customer.id}`}>{nomePonto}</button>
+              ) : nomePonto}
+              {!ehLead && customer?.id && <QuarentenaTag customerId={String(customer.id)} />}
+            </h3>
             <button
               type="button"
               onClick={() => aoCopiar(String(customer.id), nomePonto)}
@@ -988,6 +996,12 @@ export default function ClientsMap() {
     setIsEditModalOpen(true);
   }, []);
 
+  // Caixa "Ações do Cliente" aberta ao clicar no nome no popup do mapa.
+  const [acaoCliente, setAcaoCliente] = useState<{ id: string; name: string } | null>(null);
+  const abrirAcoesCliente = useCallback((c: any) => {
+    setAcaoCliente({ id: String(c.id), name: c.fantasyName || c.name || "Cliente" });
+  }, []);
+
   // ⚡ Os marcadores só são reconstruídos quando o conjunto de pontos (ou a permissão/cópia) muda.
   const marcadores = useMemo(() => activeCustomersWithCoords.map((customer) => (
     <PontoDoMapa
@@ -1006,8 +1020,9 @@ export default function ClientsMap() {
       aoSalvarCliente={salvarCliente}
       aoMudarProximaVisita={mudarProximaVisita}
       aoMudarDiaDeRota={mudarDiaDeRota}
+      aoAbrirAcoes={abrirAcoesCliente}
     />
-  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita, mudarDiaDeRota]);
+  )), [activeCustomersWithCoords, canEditCustomer, copiadoId, salvandoDiaId, salvandoVendedorId, vendedoresParaEscolha, copiarNome, handleEditCustomer, mudarDiaDoLead, mudarDataDoLead, mudarVendedor, salvarCliente, mudarProximaVisita, mudarDiaDeRota, abrirAcoesCliente]);
 
   const handleCloseEditModal = () => {
     setIsEditModalOpen(false);
@@ -1331,6 +1346,13 @@ export default function ClientsMap() {
         isOpen={isEditModalOpen}
         onClose={handleCloseEditModal}
         customer={selectedCustomer}
+      />
+
+      <ClientActionsModal
+        open={!!acaoCliente}
+        onClose={() => setAcaoCliente(null)}
+        customerId={acaoCliente?.id || null}
+        customerName={acaoCliente?.name || null}
       />
     </div>
   );
