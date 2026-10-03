@@ -87,7 +87,45 @@ const DDL: string[] = [
    );`,
   // Exceção de regra por cliente: 'post' | 'ant' | 'none' | NULL (= usa a regra da periodicidade).
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS holiday_rule varchar;`,
+  // Regra fixa por REGIÃO: amarra uma direção à macro (UF) ou micro-região (cidade).
+  `CREATE TABLE IF NOT EXISTS holiday_region_rules (
+     id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+     uf varchar NOT NULL,
+     city varchar,
+     rule varchar NOT NULL,
+     created_at timestamptz DEFAULT now(),
+     updated_at timestamptz DEFAULT now()
+   );`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS ux_hrr_region ON holiday_region_rules (uf, COALESCE(city,''));`,
 ];
+
+// Macro-região (UF) de um cliente: GO/DF do cadastro; sem UF, Brasília e RAs → DF.
+const DF_CIDADES = new Set(["BRASILIA", "TAGUATINGA", "CEILANDIA", "GAMA", "SOBRADINHO", "PLANALTINA", "GUARA", "AGUAS CLARAS", "SAMAMBAIA", "SANTA MARIA", "RECANTO DAS EMAS", "AGUAS LINDAS DE GOIAS"]);
+function macroUf(city: any, state: any): string {
+  const u = norm(state);
+  if (u === "GO" || u === "DF") return u;
+  return DF_CIDADES.has(norm(city)) ? "DF" : "GO";
+}
+// Regras fixas por região → Map com chaves "UF|CIDADE" (micro) e "UF|" (macro).
+async function loadRegionRules(): Promise<Map<string, string>> {
+  const m = new Map<string, string>();
+  try {
+    const rows = rowsOf(await db.execute(sql`SELECT uf, city, rule FROM holiday_region_rules`));
+    for (const r of rows) m.set(norm(r.uf) + "|" + norm(r.city), String(r.rule));
+  } catch { /* noop */ }
+  return m;
+}
+// Override efetivo: cliente > micro-região (cidade) > macro-região (UF) > nulo (periodicidade).
+function resolveOverride(clientRule: any, regionRules: Map<string, string>, city: any, state: any): string | null {
+  const cr = String(clientRule || "");
+  if (cr === "post" || cr === "ant" || cr === "none") return cr;
+  const uf = macroUf(city, state);
+  const micro = regionRules.get(uf + "|" + norm(city));
+  if (micro) return micro;
+  const macro = regionRules.get(uf + "|");
+  if (macro) return macro;
+  return null;
+}
 
 // Regra de deslocamento por periodicidade: 'post' (próximo dia útil), 'ant' (dia
 // útil anterior) ou 'none' (não desloca). + opções gerais (editáveis pelo admin).
@@ -193,6 +231,7 @@ const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
 async function processShift(opts: { customerId?: string; monthStart?: string; monthEnd?: string; onlyFuture?: boolean }): Promise<{ moved: number; list: any[] }> {
   await ensureHolidayTables();
   const rules = await loadRules();
+  const regionRules = await loadRegionRules();
   const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`];
   if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
   if (opts.customerId) conds.push(sql`va.customer_id = ${opts.customerId}`);
@@ -218,7 +257,8 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
     const diaOrig = isoDay(new Date(r.scheduled_date));
     const hit = fer.get(diaOrig);
     if (!hit) continue;
-    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, r.c_rule);
+    const override = resolveOverride(r.c_rule, regionRules, r.c_city, r.c_state);
+    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, override);
     if (!sh) continue; // configurado para não deslocar
     const { date: alvo, tipo } = sh;
     const nota = `${tipo === "post" ? "Postergação" : "Antecipação"} de visita devido ao feriado ${brDate(diaOrig)}`;
@@ -239,6 +279,7 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
 async function previewShift(monthStart: string, monthEnd: string): Promise<any[]> {
   await ensureHolidayTables();
   const rules = await loadRules();
+  const regionRules = await loadRegionRules();
   const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`,
     sql`va.scheduled_date::date >= ${monthStart}::date`, sql`va.scheduled_date::date <= ${monthEnd}::date`];
   if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
@@ -258,7 +299,8 @@ async function previewShift(monthStart: string, monthEnd: string): Promise<any[]
     const diaOrig = isoDay(new Date(r.scheduled_date));
     const hit = fer.get(diaOrig);
     if (!hit) continue;
-    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, r.c_rule);
+    const override = resolveOverride(r.c_rule, regionRules, r.c_city, r.c_state);
+    const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, override);
     if (!sh) continue;
     const { date: alvo, tipo } = sh;
     const alvoDt = new Date(alvo + "T12:00:00Z");
@@ -324,12 +366,10 @@ export function registerHolidaysRoutes(app: Express) {
     const macro = new Map<string, { uf: string; total: number; cidades: Array<{ city: string; n: number }> }>();
     macro.set("GO", { uf: "GO", total: 0, cidades: [] });
     macro.set("DF", { uf: "DF", total: 0, cidades: [] });
-    const DF_CIDADES = new Set(["BRASILIA", "TAGUATINGA", "CEILANDIA", "GAMA", "SOBRADINHO", "PLANALTINA", "GUARA", "AGUAS CLARAS", "SAMAMBAIA", "SANTA MARIA", "RECANTO DAS EMAS"]);
     const seen = new Map<string, Set<string>>([["GO", new Set()], ["DF", new Set()]]);
     for (const r of rows) {
       const cityNorm = norm(r.city);
-      let uf = norm(r.uf);
-      if (uf !== "GO" && uf !== "DF") uf = DF_CIDADES.has(cityNorm) ? "DF" : "GO"; // sem UF: Brasília e RAs → DF; resto → GO
+      const uf = macroUf(r.city, r.uf); // GO/DF; sem UF, Brasília e RAs → DF, resto → GO
       const g = macro.get(uf)!;
       const s = seen.get(uf)!;
       if (s.has(cityNorm)) { const ex = g.cidades.find((c) => norm(c.city) === cityNorm); if (ex) ex.n += Number(r.n); }
@@ -356,6 +396,33 @@ export function registerHolidaysRoutes(app: Express) {
       INSERT INTO holiday_rules (id, rules, updated_at) VALUES ('default', ${JSON.stringify(merged)}::jsonb, now())
       ON CONFLICT (id) DO UPDATE SET rules = EXCLUDED.rules, updated_at = now()`);
     res.json({ rules: merged });
+  }));
+
+  // ── Regras fixas por REGIÃO (macro UF ou micro cidade) ──
+  app.get("/api/holidays/region-rules", authenticateUser, safe(async (_req, res) => {
+    await ensureHolidayTables();
+    const rows = rowsOf(await db.execute(sql`SELECT id, uf, city, rule FROM holiday_region_rules ORDER BY uf, COALESCE(city,'')`));
+    res.json({ regionRules: rows.map((r: any) => ({ id: r.id, uf: r.uf, city: r.city || null, rule: r.rule })) });
+  }));
+  app.post("/api/holidays/region-rules", authenticateUser, admin, safe(async (req: any, res) => {
+    await ensureHolidayTables();
+    const b: any = req.body || {};
+    const uf = String(b.uf || "").trim().toUpperCase();
+    const city = b.city ? String(b.city).trim() : null;
+    const rule = String(b.rule || "");
+    if (uf !== "GO" && uf !== "DF") return res.status(400).json({ error: "UF deve ser GO ou DF." });
+    if (!["post", "ant", "none"].includes(rule)) return res.status(400).json({ error: "Regra inválida." });
+    const r = rowsOf(await db.execute(sql`
+      INSERT INTO holiday_region_rules (uf, city, rule) VALUES (${uf}, ${city}, ${rule})
+      ON CONFLICT (uf, COALESCE(city,'')) DO UPDATE SET rule = EXCLUDED.rule, updated_at = now()
+      RETURNING id, uf, city, rule`));
+    const row = r[0];
+    res.json({ regionRule: { id: row.id, uf: row.uf, city: row.city || null, rule: row.rule } });
+  }));
+  app.delete("/api/holidays/region-rules/:id", authenticateUser, admin, safe(async (req, res) => {
+    await ensureHolidayTables();
+    await db.execute(sql`DELETE FROM holiday_region_rules WHERE id = ${req.params.id}`);
+    res.json({ ok: true });
   }));
 
   app.post("/api/holidays", authenticateUser, admin, safe(async (req: any, res) => {
