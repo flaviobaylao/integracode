@@ -130,7 +130,6 @@ export default function LeadVisitHistoryModal({
 
     createVisitMutation.mutate({
       observation: observation.trim(),
-      temperature: temperature || undefined,
     });
   };
 
@@ -152,16 +151,6 @@ export default function LeadVisitHistoryModal({
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden flex flex-col">
-          {currentTemperature && (
-            <div className="flex items-center gap-2 mb-4 text-sm text-gray-600 dark:text-gray-300">
-              <span>Temperatura atual:</span>
-              <div className="flex items-center gap-1">
-                <div className={`w-3 h-3 rounded-full ${temperatureColors[currentTemperature]}`} />
-                <span className="font-medium">{temperatureLabels[currentTemperature]}</span>
-              </div>
-            </div>
-          )}
-
           <p className="text-xs text-muted-foreground mb-3">
             Observações, visitas, check-in/out, foto e desfecho do lead — 50 registros mais recentes.
           </p>
@@ -187,44 +176,6 @@ export default function LeadVisitHistoryModal({
                     placeholder="Descreva o que foi tratado na visita..."
                     rows={3}
                   />
-                </div>
-
-                <div>
-                  <Label htmlFor="temperature">Atualizar Temperatura (opcional)</Label>
-                  <Select
-                    value={temperature}
-                    onValueChange={(value: LeadTemperature | "") => setTemperature(value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Manter temperatura atual" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cold">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full bg-blue-500" />
-                          Frio
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="warm">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                          Morno
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="hot">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full bg-orange-500" />
-                          Quente
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="very_hot">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full bg-red-500" />
-                          Muito Quente
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
 
                 <div className="flex gap-2">
