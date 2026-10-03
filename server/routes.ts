@@ -23685,6 +23685,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🔎 Ficha básica do Google (Places API New) para leads — coleta em lote sob demanda.
+  // Admin. Processa leads COM coordenadas que ainda não têm ficha (google_place), consultando
+  // o Google por nome + localização. Marca google_tries p/ não reprocessar eternamente.
+  // Requer GOOGLE_MAPS_API_KEY com "Places API (New)" habilitada no Google Cloud.
+  app.post('/api/admin/leads/preencher-google', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
+      if (!key) {
+        return res.status(400).json({ message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.', code: 'SEM_GOOGLE' });
+      }
+      try {
+        await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place jsonb`));
+        await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_tries integer DEFAULT 0`));
+      } catch (_e) { /* colunas complementares */ }
+      const limit = Math.min(Math.max(Number(req.body?.limite) || 25, 1), 60);
+      const pend: any = await db.execute(sql`
+        SELECT id, fantasy_name AS nome, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
+        FROM leads
+        WHERE google_place IS NULL
+          AND COALESCE(google_tries, 0) < 2
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `);
+      const rows = (pend?.rows || []) as any[];
+      let atualizados = 0, semResultado = 0;
+      let ultimoErro: any = null;
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const PRICE: any = { PRICE_LEVEL_FREE: 0, PRICE_LEVEL_INEXPENSIVE: 1, PRICE_LEVEL_MODERATE: 2, PRICE_LEVEL_EXPENSIVE: 3, PRICE_LEVEL_VERY_EXPENSIVE: 4 };
+      const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.priceLevel,places.businessStatus,places.regularOpeningHours.weekdayDescriptions,places.formattedAddress,places.location';
+      for (const r of rows) {
+        try {
+          const lat = parseFloat((r as any).lat), lng = parseFloat((r as any).lng);
+          const nome = String((r as any).nome || '').trim();
+          const body = {
+            textQuery: nome || 'estabelecimento comercial',
+            languageCode: 'pt-BR',
+            regionCode: 'BR',
+            maxResultCount: 1,
+            locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 180.0 } }
+          };
+          const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': FIELD_MASK },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(15000)
+          });
+          const js: any = await resp.json().catch(() => ({}));
+          if (!resp.ok) {
+            ultimoErro = { httpStatus: resp.status, status: js?.error?.status || null, message: js?.error?.message || null };
+            try { await db.execute(sql`UPDATE leads SET google_tries = COALESCE(google_tries, 0) + 1 WHERE id = ${(r as any).id}`); } catch (_e) {}
+            if (resp.status === 403 || js?.error?.status === 'PERMISSION_DENIED') break;
+            continue;
+          }
+          const p = ((js && js.places) || [])[0];
+          if (!p) {
+            try { await db.execute(sql`UPDATE leads SET google_tries = COALESCE(google_tries, 0) + 1 WHERE id = ${(r as any).id}`); } catch (_e) {}
+            semResultado++;
+            await wait(200);
+            continue;
+          }
+          const nota = typeof p.rating === 'number' ? p.rating : null;
+          const avaliacoes = typeof p.userRatingCount === 'number' ? p.userRatingCount : 0;
+          const faixaPreco = (p.priceLevel && (p.priceLevel in PRICE)) ? PRICE[p.priceLevel] : null;
+          let score: number | null = null;
+          if (nota != null) {
+            const pop = Math.min(1, Math.log10(avaliacoes + 1) / 3);
+            score = Math.round((nota / 5) * (0.35 + 0.65 * pop) * 100);
+          }
+          const ficha: any = {
+            placeId: p.id || null,
+            nome: (p.displayName && p.displayName.text) || nome,
+            categoria: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || null,
+            tipo: p.primaryType || (Array.isArray(p.types) ? p.types[0] : null) || null,
+            tipos: Array.isArray(p.types) ? p.types.slice(0, 6) : [],
+            nota, avaliacoes, faixaPreco,
+            businessStatus: p.businessStatus || null,
+            horario: (p.regularOpeningHours && p.regularOpeningHours.weekdayDescriptions) || null,
+            endereco: p.formattedAddress || null,
+            local: p.location ? { lat: p.location.latitude, lng: p.location.longitude } : null,
+            score,
+            coletadoEm: new Date().toISOString()
+          };
+          await db.execute(sql`UPDATE leads SET google_place = ${JSON.stringify(ficha)}::jsonb, google_tries = COALESCE(google_tries, 0) + 1, updated_at = NOW() WHERE id = ${(r as any).id}`);
+          atualizados++;
+          await wait(220);
+        } catch (e: any) {
+          ultimoErro = { message: String(e?.message || e) };
+          try { await db.execute(sql`UPDATE leads SET google_tries = COALESCE(google_tries, 0) + 1 WHERE id = ${(r as any).id}`); } catch (_e2) {}
+          semResultado++;
+        }
+      }
+      const restRes: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM leads
+        WHERE google_place IS NULL AND COALESCE(google_tries, 0) < 2
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0
+      `);
+      const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
+      console.log(`🔎 [LEADS-GOOGLE] processados ${rows.length}, atualizados ${atualizados}, sem resultado ${semResultado}, restam ${restantes} por ${req.currentUser?.email}`);
+      return res.json({ ok: true, processados: rows.length, atualizados, semResultado, restantes, ultimoErro });
+    } catch (error: any) {
+      console.error('Erro ao preencher ficha Google dos leads:', error);
+      return res.status(500).json({ message: 'Erro ao preencher ficha Google dos leads', error: error?.message });
+    }
+  });
+
   // Deletar lead (apenas admin)
   app.delete('/api/leads/:id', authenticateUser, async (req: any, res) => {
     try {
