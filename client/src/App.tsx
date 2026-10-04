@@ -124,6 +124,7 @@ import TodasAsContas from "@/pages/TodasAsContas";
 import FluxoCaixa from "@/pages/FluxoCaixa";
 import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
 import ConferenciaRecebimentos from "@/pages/ConferenciaRecebimentos";
+import Comodatos from "@/pages/Comodatos";
 import AmbienteFiscal from "@/pages/AmbienteFiscal";
 import InutilizacaoNF from "@/pages/InutilizacaoNF";
 import Contabilidade from "@/pages/Contabilidade";
@@ -341,6 +342,7 @@ function Router() {
           <Route path="/fluxo-caixa" component={FluxoCaixa} />
           <Route path="/conferencia-pagamentos" component={ConferenciaPagamentos} />
           <Route path="/conferencia-recebimentos" component={ConferenciaRecebimentos} />
+          <Route path="/comodatos" component={Comodatos} />
           <Route path="/validacao-rotas" component={RoutesValidation} />
           <Route path="/sales-card/:id" component={SalesCardDetail} />
           <Route path="/fiscal-invoices" component={FiscalInvoices} />
