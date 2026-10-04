@@ -112,8 +112,10 @@ async function main() {
   err = null;
   try { await deductStockForBilling({ ...card, id: 'p-2', salesCardId: 'sc-2', products: [{ id: 'e-b', name: 'SUCO B', quantity: 7 }] }, { email: 'h' }); } catch (e) { err = e; }
   t('pedido sem estoque em uso -> lanca bloqueio', ehBloqueioEstoque(err), err?.message);
-  const serv = await deductStockForBilling({ ...card, id: 'p-3', omieInstanceId: 'e-serv', omieInstanceName: 'SERV', products: [{ id: 'e-b', name: 'SUCO B', quantity: 999 }] }, { email: 'h' });
-  t('SERV continua sem controle de estoque', Object.keys(serv).length === 0);
+  // Auditoria 04/out/2026: a SERV passou a controlar o PROPRIO estoque (decisao do Flavio).
+  err = null;
+  try { await deductStockForBilling({ ...card, id: 'p-3', omieInstanceId: 'e-serv', omieInstanceName: 'SERV', products: [{ id: 'e-b', name: 'SUCO B', quantity: 999 }] }, { email: 'h' }); } catch (e) { err = e; }
+  t('SERV controla o proprio estoque: sem saldo -> bloqueio', ehBloqueioEstoque(err), err?.message);
   // Pedido SEM filial: mesma filial do emitente (pedido -> cliente -> GYN), gravada no item.
   await db.execute(sql`INSERT INTO customers (id, name, customer_type, phone, address, seller_id, weekdays, omie_instance_id)
     VALUES ('e-cli', 'CLIENTE IND', 'pessoa_juridica', '0', 'x', 's', '[]', 'e-ind')`);

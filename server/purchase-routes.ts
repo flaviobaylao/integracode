@@ -3,6 +3,7 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { purchaseInvoices, omieInstances, payables, chartOfAccounts, digitalCertificates } from "@shared/schema";
 import { eq, desc, and, sql, ilike, or } from "drizzle-orm";
+import { normalizarNumeroLote } from "./estoque-em-uso";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario } from "@shared/tempo";
 import * as xmlJs from "xml-js";
@@ -816,40 +817,62 @@ export function registerPurchaseRoutes(app: Express) {
         return res.status(400).json({ error: "Mapeamento de itens obrigatório" });
       }
 
-      const results: any[] = [];
-      for (const mapping of itemMappings) {
-        const { productId, instanceId, quantity, lotNumber } = mapping;
-        if (!productId || !quantity) continue;
+      // ENTRADA DE PRODUTO ACABADO POR NF DE COMPRA (ex.: a SERV comprando da
+      // industria). Corrigido em 04/out/2026: antes somava no PRIMEIRO lote em uso
+      // do produto e RENOMEAVA esse lote com o numero novo (o saldo antigo passava a
+      // ter outro lote), e o movimento ia sem lot_id e com saldo anterior 0. Agora:
+      // lote exato pelo numero (normalizado), movimento com lote e saldos reais,
+      // tudo numa transacao.
+      const by = (req as any).currentUser?.email || (req as any).currentUser?.id || 'radar-compras';
+      const results: any[] = await db.transaction(async (tx: any) => {
+        const out: any[] = [];
+        for (const mapping of itemMappings) {
+          const { productId, instanceId, quantity, lotNumber, unitCost } = mapping;
+          const qty = Number(quantity) || 0;
+          if (!productId || qty <= 0) continue;
 
-        const targetInstanceId = instanceId || invoice.omieInstanceId;
-        const lot = lotNumber || `NF-${invoice.invoiceNumber}-${new Date().toISOString().slice(0, 10)}`;
+          const targetInstanceId = instanceId || invoice.omieInstanceId;
+          if (!targetInstanceId) throw Object.assign(new Error(`Filial de destino nao informada para o produto ${productId}`), { status: 400 });
+          const inst: any = await tx.execute(sql`SELECT id FROM omie_instances WHERE id = ${targetInstanceId} LIMIT 1`);
+          if (!((inst as any).rows || []).length) throw Object.assign(new Error(`Filial ${targetInstanceId} nao existe`), { status: 400 });
 
-        const existingLotRes: any = await db.execute(sql`
-          SELECT id, quantity FROM inventory_lots
-          WHERE product_id = ${productId} AND instance_id = ${targetInstanceId} AND stock_type = 'in_use'
-          LIMIT 1
-        `);
-        const existingLot = ((existingLotRes as any).rows || existingLotRes)[0];
+          const lot = normalizarNumeroLote(lotNumber || `NF-${invoice.invoiceNumber}-${new Date().toISOString().slice(0, 10)}`);
+          const uc = unitCost != null && Number(unitCost) > 0 ? Number(unitCost).toFixed(4) : null;
 
-        if (existingLot) {
-          await db.execute(sql`
-            UPDATE inventory_lots SET quantity = quantity + ${quantity}, lot_number = ${lot}, updated_at = NOW()
-            WHERE id = ${(existingLot as any).id}
+          const existingLotRes: any = await tx.execute(sql`
+            SELECT id, quantity FROM inventory_lots
+            WHERE product_id = ${productId} AND instance_id = ${targetInstanceId} AND stock_type = 'in_use'
+              AND UPPER(REPLACE(TRIM(lot_number), ' ', '')) = ${lot}
+            LIMIT 1 FOR UPDATE
           `);
-        } else {
-          await db.execute(sql`
-            INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, created_at, updated_at)
-            VALUES (gen_random_uuid(), ${productId}, ${targetInstanceId}, 'in_use', ${lot}, ${quantity}, NOW(), NOW())
+          const existingLot = ((existingLotRes as any).rows || [])[0];
+          let lotId: string; let prev = 0;
+          if (existingLot) {
+            lotId = existingLot.id; prev = Number(existingLot.quantity) || 0;
+            await tx.execute(sql`
+              UPDATE inventory_lots SET quantity = ${(prev + qty).toFixed(4)}, is_active = true,
+                unit_cost = COALESCE(unit_cost, ${uc}), updated_at = NOW()
+              WHERE id = ${lotId}
+            `);
+          } else {
+            const ins: any = await tx.execute(sql`
+              INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, min_quantity, unit_cost, notes, is_active, created_at, updated_at)
+              VALUES (gen_random_uuid(), ${productId}, ${targetInstanceId}, 'in_use', ${lot}, ${qty.toFixed(4)}, '0', ${uc},
+                      ${`Entrada NF ${invoice.invoiceNumber} - ${invoice.supplierName}`}, true, NOW(), NOW())
+              RETURNING id
+            `);
+            lotId = ((ins as any).rows || [])[0].id;
+          }
+
+          await tx.execute(sql`
+            INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, source_type, source_id, quantity, previous_quantity, new_quantity, lot_number, notes, created_by, created_at)
+            VALUES (gen_random_uuid(), ${lotId}, ${productId}, ${targetInstanceId}, 'replenish', 'invoice', ${invoice.id}, ${qty.toFixed(4)}, ${prev.toFixed(4)}, ${(prev + qty).toFixed(4)}, ${lot},
+                    ${`Entrada NF ${invoice.invoiceNumber} - ${invoice.supplierName}`}, ${by}, NOW())
           `);
+          out.push({ productId, quantity: qty, lotNumber: lot, lotId });
         }
-
-        await db.execute(sql`
-          INSERT INTO inventory_movements (id, product_id, instance_id, movement_type, source_type, source_id, quantity, previous_quantity, new_quantity, notes, created_by, created_at)
-          VALUES (gen_random_uuid(), ${productId}, ${targetInstanceId}, 'replenish', 'invoice', ${invoice.id}, ${quantity}, 0, ${quantity}, ${`Entrada NF ${invoice.invoiceNumber} - ${invoice.supplierName}`}, ${(req as any).currentUser?.id || (req as any).currentUser?.email || 'radar-compras'}, NOW())
-        `);
-
-        results.push({ productId, quantity, lotNumber: lot });
-      }
+        return out;
+      });
 
       const [updatedInvoice] = await db.update(purchaseInvoices)
         .set({ stockProcessed: true, updatedAt: agora() })
@@ -859,7 +882,7 @@ export function registerPurchaseRoutes(app: Express) {
       res.json({ invoice: updatedInvoice, stockEntries: results });
     } catch (err: any) {
       console.error("[PURCHASES] Process stock error:", err.message);
-      res.status(500).json({ error: err.message });
+      res.status(err?.status || 500).json({ error: err.message });
     }
   });
 
@@ -1006,18 +1029,20 @@ export function registerPurchaseRoutes(app: Express) {
 
         // 1) Produtos acabados (inventory_lots / inventory_movements, amarrados por source_id)
         const movs = rowsOf(await tx.execute(sql`
-          SELECT id, product_id, instance_id, quantity FROM inventory_movements
+          SELECT id, lot_id, product_id, instance_id, quantity FROM inventory_movements
           WHERE source_type = 'invoice' AND source_id = ${invoice.id} AND movement_type = 'replenish'
             AND COALESCE(notes, '') NOT LIKE ${"%" + EST + "%"}
           FOR UPDATE
         `));
         for (const m of movs) {
           const qty = Number(m.quantity) || 0;
-          const lot = rowsOf(await tx.execute(sql`
-            SELECT id, quantity, lot_number FROM inventory_lots
-            WHERE product_id = ${m.product_id} AND instance_id = ${m.instance_id} AND stock_type = 'in_use'
-            LIMIT 1 FOR UPDATE
-          `))[0];
+          // O lote certo e o do movimento de entrada. Entradas antigas (sem lot_id)
+          // caem no comportamento anterior.
+          const lot = rowsOf(await tx.execute(m.lot_id
+            ? sql`SELECT id, quantity, lot_number FROM inventory_lots WHERE id = ${m.lot_id} LIMIT 1 FOR UPDATE`
+            : sql`SELECT id, quantity, lot_number FROM inventory_lots
+                  WHERE product_id = ${m.product_id} AND instance_id = ${m.instance_id} AND stock_type = 'in_use'
+                  LIMIT 1 FOR UPDATE`))[0];
           if (!lot) throw new Error(`Lote do produto ${m.product_id} não encontrado para estornar`);
           const prev = Number(lot.quantity) || 0;
           const next = prev - qty;

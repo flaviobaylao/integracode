@@ -24,8 +24,11 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 
 // Instancias que NAO controlam estoque por lote no Integra: o faturamento por elas
-// nao e bloqueado por falta de saldo e nao gera baixa de lote. Hoje so a SERV
-// (PURO SERVICOS), que fatura mercadoria sem manter inventario proprio.
+// nao e bloqueado por falta de saldo e nao gera baixa de lote.
+// VAZIO desde 04/out/2026 (Flavio, auditoria de estoque): a SERV (PURO SERVICOS)
+// vende do estoque PROPRIO dela, como qualquer filial — antes ela faturava sem
+// mexer em estoque nenhum (198 un so na semana de 28/set). O estoque da SERV entra
+// pela NF de compra (Compras > processar estoque) ou por transferencia.
 // ATENCAO: incluir uma instancia aqui DESLIGA a trava de estoque para TODAS as notas dela.
 // 30/08/2026: a SERV (PURO SERVICOS) entrou aqui porque nao tinha lotes.
 // 04/10/2026 (Flavio): a SERV passa a se comportar IGUAL as demais — o estoque dela
@@ -472,4 +475,225 @@ export async function estornarBaixa(sourceId: string, motivo: string, by: string
     }
   });
   return n;
+}
+
+
+// ============================================================================
+// AUDITORIA DE ESTOQUE 28/set-04/out/2026 — estorno, espelho e lixeira pelos
+// MOVIMENTOS REAIS (Flavio, 04/out/2026)
+// ============================================================================
+const MARCA_ESTORNADO = '[estornado]';
+const MARCA_ESTORNO_TRF = '[estorno-transferencia]';
+const soDigitos = (v: any) => String(v ?? '').replace(/\D/g, '');
+
+// Numero de lote canonico: sem espacos, maiusculo. "h180626" e "H180626" eram
+// dois lotes do mesmo produto na mesma filial para o FIFO e para o recall.
+export function normalizarNumeroLote(v: any): string {
+  return String(v ?? '').trim().replace(/\s+/g, '').toUpperCase();
+}
+
+export type ResultadoEstornoMov = { handled: boolean; undone: string[]; warnings: string[]; nadaABaixar?: boolean };
+
+// Estorna as baixas (consume) e entradas espelho (replenish) VIVAS gravadas com
+// os source_ids informados. Cada baixa volta ao MESMO lote na MESMA quantidade;
+// cada espelho sai do lote do destino. Idempotente pela marca [estornado].
+// Sem movimento nenhum, nada volta — o estoque nunca e inventado.
+export async function estornarMovimentos(sourceIds: string[], opts: { by: string | null; rotulo: string; novoSourceId: string }): Promise<ResultadoEstornoMov> {
+  const undone: string[] = [];
+  const warnings: string[] = [];
+  const ids = Array.from(new Set(sourceIds.filter(Boolean).map(String)));
+  if (!ids.length) return { handled: false, undone, warnings };
+  const lista = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+
+  return await db.transaction(async (tx) => {
+    const movs = rowsOf(await tx.execute(sql`
+      SELECT * FROM inventory_movements
+      WHERE source_type = 'invoice' AND source_id IN (${lista})
+        AND movement_type IN ('consume', 'replenish')
+        AND COALESCE(notes, '') NOT LIKE ${'%' + MARCA_ESTORNADO + '%'}
+        AND COALESCE(notes, '') NOT LIKE ${'%' + MARCA_ESTORNO_TRF + '%'}
+      ORDER BY created_at ASC
+      FOR UPDATE`));
+
+    if (!movs.length) {
+      const ja = rowsOf(await tx.execute(sql`
+        SELECT 1 FROM inventory_movements
+        WHERE source_type = 'invoice' AND source_id IN (${lista})
+          AND movement_type IN ('consume', 'replenish') LIMIT 1`));
+      warnings.push(ja.length
+        ? 'estoque ja estornado anteriormente — nada a fazer'
+        : 'esta nota nao tinha baixado estoque — nada a devolver (nenhum estoque foi inventado)');
+      return { handled: true, undone, warnings, nadaABaixar: !ja.length };
+    }
+
+    for (const mv of movs) {
+      const lot = rowsOf(await tx.execute(sql`SELECT * FROM inventory_lots WHERE id = ${mv.lot_id} LIMIT 1 FOR UPDATE`))[0];
+      if (!lot) { warnings.push(`lote ${mv.lot_number} do movimento ${mv.id} nao existe mais — nao estornado`); continue; }
+      // consumeStock antigo gravava consume NEGATIVO; a direcao vem do tipo.
+      const qty = Math.abs(Number(mv.quantity) || 0);
+      if (qty <= 0) continue;
+      const isConsume = String(mv.movement_type) === 'consume';
+      const prev = Number(lot.quantity) || 0;
+      const novo = Math.round((isConsume ? prev + qty : prev - qty) * 10000) / 10000;
+      if (!isConsume && novo < 0) warnings.push(`lote ${lot.lot_number} no destino ja tinha saida (${prev} de ${qty}) — saldo ficou ${novo}; conferir estoque da filial`);
+      await tx.execute(sql`
+        UPDATE inventory_lots SET quantity = ${novo.toFixed(4)},
+          is_active = ${novo > 0 ? true : (isConsume ? lot.is_active : false)},
+          updated_at = now()
+        WHERE id = ${lot.id}`);
+      await tx.execute(sql`
+        INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, quantity, previous_quantity, new_quantity, source_type, source_id, lot_number, notes, created_by, created_at)
+        VALUES (gen_random_uuid()::varchar, ${lot.id}, ${lot.product_id}, ${lot.instance_id}, 'cancel_reversal', ${(isConsume ? qty : -qty).toFixed(4)}, ${prev.toFixed(4)}, ${novo.toFixed(4)},
+                'invoice', ${opts.novoSourceId}, ${lot.lot_number},
+                ${(isConsume ? 'Devolucao ao lote de origem' : 'Retirada da entrada espelho no destino') + ' — estorno ' + opts.rotulo + ' ' + MARCA_ESTORNADO}, ${opts.by}, now())`);
+      await tx.execute(sql`UPDATE inventory_movements SET notes = COALESCE(notes, '') || ${' ' + MARCA_ESTORNADO} WHERE id = ${mv.id}`);
+      undone.push(`${isConsume ? 'origem' : 'destino'} ${lot.lot_number}: ${isConsume ? '+' : '-'}${fmtQtd(qty)}`);
+    }
+    return { handled: true, undone, warnings };
+  });
+}
+
+// Origens de baixa de uma NF: a propria NF e TODOS os cards do pedido (mesmo
+// sales_card_id — ja houve card duplicado, INT-827b1148 — ou, no pedido interno
+// sem card, a referencia "Pedido pipeline interno - <n>").
+async function origensDaNf(invoice: any): Promise<string[]> {
+  const ids: string[] = [String(invoice?.id || '')];
+  const sc = invoice?.salesCardId || invoice?.sales_card_id || null;
+  const ref = /^Pedido pipeline interno - (.+)$/.exec(String(invoice?.notes || ''))?.[1] || null;
+  if (sc || ref) {
+    const cards = rowsOf(await db.execute(sql`
+      SELECT id FROM billing_pipeline
+      WHERE (${sc}::varchar IS NOT NULL AND sales_card_id = ${sc})
+         OR (${ref}::varchar IS NOT NULL AND order_number = ${ref})`));
+    for (const c of cards) ids.push(String(c.id));
+  }
+  return ids.filter(Boolean);
+}
+
+// Cancelamento/devolucao de NF: substitui o estorno "generico" (quantidade da
+// nota no primeiro lote em uso), que devolvia o que nunca tinha saido (+64 un na
+// semana de 28/set) e no lote errado (78% das unidades).
+export async function estornarEstoqueDaNfPorMovimentos(invoice: any, by: string | null): Promise<ResultadoEstornoMov> {
+  const rotulo = `da ${invoice?.invoiceNumber ? 'NF-e ' + invoice.invoiceNumber : 'NF-e'}`;
+  return estornarMovimentos(await origensDaNf(invoice), { by, rotulo, novoSourceId: String(invoice?.id) });
+}
+
+// Card mandado para a Lixeira depois de baixar o estoque, mas SEM NF autorizada:
+// a mercadoria nao saiu — o estoque volta. Com NF autorizada (ou em transmissao)
+// nada acontece aqui: quem estorna e o cancelamento/devolucao da nota.
+export async function estornarBaixaDeCardSemNf(cardId: string, by: string | null): Promise<ResultadoEstornoMov | null> {
+  const card = rowsOf(await db.execute(sql`SELECT id, sales_card_id, order_number FROM billing_pipeline WHERE id = ${cardId} LIMIT 1`))[0];
+  if (!card) return null;
+  const viva = rowsOf(await db.execute(sql`
+    SELECT 1 FROM inventory_movements
+    WHERE source_type = 'invoice' AND source_id = ${String(card.id)} AND movement_type = 'consume'
+      AND COALESCE(notes, '') NOT LIKE ${'%' + MARCA_ESTORNADO + '%'}
+      AND COALESCE(notes, '') NOT LIKE ${'%' + MARCA_ESTORNO_TRF + '%'} LIMIT 1`));
+  if (!viva.length) return null;
+  const ref = card.order_number ? 'Pedido pipeline interno - ' + card.order_number : null;
+  const nfs = rowsOf(await db.execute(sql`
+    SELECT id, status FROM fiscal_invoices
+    WHERE (${card.sales_card_id || null}::varchar IS NOT NULL AND sales_card_id = ${card.sales_card_id || null})
+       OR (${ref}::varchar IS NOT NULL AND sales_card_id IS NULL AND notes = ${ref})`));
+  if (nfs.some((n: any) => ['authorized', 'processing'].includes(String(n.status)))) return null;
+  // NF cancelada/devolvida ANTES desta correcao foi estornada pelo caminho
+  // generico, que devolvia o estoque sem marcar a baixa. Estornar de novo aqui
+  // contaria a mercadoria duas vezes.
+  if (nfs.length) {
+    const gen = rowsOf(await db.execute(sql`
+      SELECT 1 FROM inventory_movements WHERE movement_type = 'cancel_reversal'
+        AND source_id IN (${sql.join(nfs.map((n: any) => sql`${String(n.id)}`), sql`, `)}) LIMIT 1`));
+    if (gen.length) return null;
+  }
+  const r = await estornarMovimentos([String(card.id)], { by, rotulo: `do pedido ${card.order_number || card.id} (lixeira sem NF autorizada)`, novoSourceId: String(card.id) });
+  console.log(`🗑️ [ESTOQUE] ${card.order_number || card.id} foi para a Lixeira sem NF autorizada — baixa estornada: ${r.undone.join(', ') || 'nada'}`);
+  return r;
+}
+
+// Filial de destino de uma transferencia: a da linha (pedido TRF) ou a do CNPJ do
+// destinatario (transferencia GYN -> BSB feita como pedido comum, que nunca
+// creditava o destino — NF 107377 e 107452).
+export async function destinoDaTransferencia(item: any): Promise<{ id: string; name: string; display_name: string | null } | null> {
+  const linhas = Array.isArray(item?.products) ? item.products : [];
+  const explicito = linhas.find((p: any) => p?.transferToInstanceId)?.transferToInstanceId;
+  const todas = rowsOf(await db.execute(sql`SELECT id, name, display_name, cnpj FROM omie_instances`));
+  if (explicito) return todas.find((i: any) => i.id === explicito) || null;
+  let doc = soDigitos(item?.customerDocument);
+  if (doc.length < 14 && item?.customerId) {
+    const c = rowsOf(await db.execute(sql`SELECT cnpj FROM customers WHERE id = ${String(item.customerId)} LIMIT 1`))[0];
+    doc = soDigitos(c?.cnpj);
+  }
+  return todas.find((i: any) => doc.length >= 14 && soDigitos(i.cnpj) === doc) || null;
+}
+
+// ENTRADA ESPELHO DA TRANSFERENCIA pelos lotes que a baixa REALMENTE consumiu:
+// mesmo numero de lote, mesmo CMV (regra 18/set), entrando como BLOQUEADO na
+// filial (fila de reposicao — regra do PR #118). Idempotente: se ja existe entrada
+// viva para o pedido, nao repete.
+export async function espelharTransferenciaPelosMovimentos(item: any, user: any): Promise<{ creditado: string[]; avisos: string[] }> {
+  const creditado: string[] = [];
+  const avisos: string[] = [];
+  if (String(item?.operationType || '').toLowerCase() !== 'transferencia') return { creditado, avisos };
+  const destino = await destinoDaTransferencia(item);
+  if (!destino) {
+    avisos.push('destino da transferencia nao identificado (CNPJ do destinatario nao bate com nenhuma filial) — entrada no destino NAO feita');
+    return { creditado, avisos };
+  }
+  if (destino.id === item?.omieInstanceId) { avisos.push('origem e destino sao a mesma filial — nada a espelhar'); return { creditado, avisos }; }
+  const quem = user?.email || 'system';
+  const rotulo = String(item.orderNumber || item.id);
+  const origemNome = item.omieInstanceName || 'origem';
+  const destNome = destino.display_name || destino.name;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'estoque-espelho:' + String(item.id)}))`);
+    const ja = rowsOf(await tx.execute(sql`
+      SELECT 1 FROM inventory_movements
+      WHERE source_type = 'invoice' AND source_id = ${String(item.id)} AND movement_type = 'replenish'
+        AND COALESCE(notes, '') NOT LIKE ${'%' + MARCA_ESTORNADO + '%'}
+        AND COALESCE(notes, '') NOT LIKE ${'%' + MARCA_ESTORNO_TRF + '%'} LIMIT 1`));
+    if (ja.length) { avisos.push('entrada no destino ja feita anteriormente'); return; }
+    const baixas = rowsOf(await tx.execute(sql`
+      SELECT m.*, l.unit_cost AS lot_unit_cost, l.production_order_id AS lot_op
+      FROM inventory_movements m LEFT JOIN inventory_lots l ON l.id = m.lot_id
+      WHERE m.source_type = 'invoice' AND m.source_id = ${String(item.id)} AND m.movement_type = 'consume'
+        AND COALESCE(m.notes, '') NOT LIKE ${'%' + MARCA_ESTORNADO + '%'}
+        AND COALESCE(m.notes, '') NOT LIKE ${'%' + MARCA_ESTORNO_TRF + '%'}
+      ORDER BY m.created_at ASC`));
+    if (!baixas.length) { avisos.push('transferencia sem baixa na origem — nada a creditar no destino'); return; }
+    for (const b of baixas) {
+      const qty = Math.abs(Number(b.quantity) || 0);
+      if (qty <= 0) continue;
+      const numLote = normalizarNumeroLote(b.lot_number) || 'SEM-LOTE';
+      const unit = b.lot_unit_cost != null && Number(b.lot_unit_cost) > 0 ? Number(b.lot_unit_cost) : null;
+      const exist = rowsOf(await tx.execute(sql`
+        SELECT * FROM inventory_lots
+        WHERE product_id = ${b.product_id} AND instance_id = ${destino.id} AND stock_type = 'blocked'
+          AND UPPER(REPLACE(TRIM(lot_number), ' ', '')) = ${numLote}
+        ORDER BY is_active DESC, created_at ASC LIMIT 1 FOR UPDATE`))[0];
+      let lotId: string; let prev = 0;
+      if (exist) {
+        lotId = exist.id; prev = Number(exist.quantity) || 0;
+        await tx.execute(sql`
+          UPDATE inventory_lots SET quantity = ${(prev + qty).toFixed(4)}, is_active = true,
+            unit_cost = COALESCE(${unit != null ? unit.toFixed(4) : null}, unit_cost), updated_at = now()
+          WHERE id = ${lotId}`);
+      } else {
+        const ins = rowsOf(await tx.execute(sql`
+          INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, min_quantity, unit_cost, total_cost, production_order_id, notes, is_active, created_at, updated_at)
+          VALUES (gen_random_uuid()::varchar, ${b.product_id}, ${destino.id}, 'blocked', ${numLote}, ${qty.toFixed(4)}, '0',
+                  ${unit != null ? unit.toFixed(4) : null}, ${unit != null ? (unit * qty).toFixed(2) : null}, ${b.lot_op || null},
+                  ${`Recebido por transferencia ${rotulo} de ${origemNome}`}, true, now(), now())
+          RETURNING id`));
+        lotId = ins[0].id;
+      }
+      await tx.execute(sql`
+        INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, quantity, previous_quantity, new_quantity, source_type, source_id, lot_number, notes, created_by, created_at)
+        VALUES (gen_random_uuid()::varchar, ${lotId}, ${b.product_id}, ${destino.id}, 'replenish', ${qty.toFixed(4)}, ${prev.toFixed(4)}, ${(prev + qty).toFixed(4)},
+                'invoice', ${String(item.id)}, ${numLote}, ${`Entrada por transferencia ${rotulo} (${origemNome} -> ${destNome})`}, ${quem}, now())`);
+      creditado.push(`${numLote}: +${fmtQtd(qty)}`);
+    }
+  });
+  if (creditado.length) console.log(`🔁 [TRANSFER] ${rotulo} -> ${destNome} (bloqueado): ${creditado.join(', ')}`);
+  return { creditado, avisos };
 }

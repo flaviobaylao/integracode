@@ -31,6 +31,7 @@ async function main() {
   await db.execute(sql`CREATE TABLE IF NOT EXISTS raw_material_movements (id varchar PRIMARY KEY, raw_material_id varchar, movement_type varchar, quantity numeric, previous_quantity numeric, new_quantity numeric, production_order_id varchar, notes text, created_by varchar, created_at timestamp, unit_cost numeric)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS recipes (id varchar PRIMARY KEY, name varchar, product_name varchar, product_id varchar, is_active boolean DEFAULT true, updated_at timestamp)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS recipe_items (id varchar PRIMARY KEY, recipe_id varchar, raw_material_id varchar, quantity numeric, unit varchar)`);
+  await db.execute(sql`DELETE FROM system_settings WHERE key = 'op_tolerancia_receita_pct'`);
   for (const tb of ['inventory_movements', 'inventory_lots', 'production_order_items', 'production_orders', 'raw_material_movements', 'raw_materials', 'recipe_items', 'recipes']) await db.execute(sql.raw(`DELETE FROM ${tb}`));
   await db.execute(sql`DELETE FROM products WHERE id LIKE 'h-%'`);
   await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'h-%'`);
@@ -77,12 +78,35 @@ async function main() {
     t('notes registra a baixa', /Baixa de insumos: 2 item/.test((await status('op1')).notes));
 
     console.log('\n2) Tela manda materials vazio, mas a OP tem itens: baixa pelos itens');
-    await mkOp('op2', 'OP-2', [['mp-polpa', 5], ['mp-acucar', 2]]);
+    await mkOp('op2', 'OP-2', [['mp-polpa', 10.5], ['mp-garrafa', 102]]);
     r = await call('POST', '/api/industria/production-orders/op2/finalize', { ...base, materials: [] });
     t('200', r.status === 200, r.json);
     t('origem itens_da_op, 2 insumos', r.json?.origemInsumos === 'itens_da_op' && r.json?.consumed?.length === 2, r.json);
-    t('polpa 90 -> 85', (await qtd('mp-polpa')) === 85);
-    t('acucar 50 -> 48', (await qtd('mp-acucar')) === 48);
+    t('polpa 90 -> 79.5', (await qtd('mp-polpa')) === 79.5);
+    t('garrafa 900 -> 798', (await qtd('mp-garrafa')) === 798);
+
+    console.log('\n2b) Conferencia com a receita (04/out/2026: BLOQUEIA)');
+    await mkOp('op2b', 'OP-2B');
+    r = await call('POST', '/api/industria/production-orders/op2b/finalize', { ...base, materials: [{ raw_material_id: 'mp-polpa', quantity_used: 10 }] });
+    t('insumo da receita faltando (garrafa) -> 400 FORA_DA_RECEITA', r.status === 400 && r.json?.code === 'FORA_DA_RECEITA' && r.json?.divergencias?.some((d: any) => d.tipo === 'faltando' && d.raw_material_id === 'mp-garrafa'), r.json);
+    r = await call('POST', '/api/industria/production-orders/op2b/finalize', { ...base, materials: [{ raw_material_id: 'mp-polpa', quantity_used: 10 }, { raw_material_id: 'mp-garrafa', quantity_used: 100 }, { raw_material_id: 'mp-acucar', quantity_used: 2 }] });
+    t('insumo fora da receita (acucar) -> 400', r.status === 400 && r.json?.divergencias?.some((d: any) => d.tipo === 'fora_da_receita'), r.json);
+    r = await call('POST', '/api/industria/production-orders/op2b/finalize', { ...base, materials: [{ raw_material_id: 'mp-polpa', quantity_used: 12 }, { raw_material_id: 'mp-garrafa', quantity_used: 100 }] });
+    t('desvio de +20% na polpa -> 400 (tolerancia 15%)', r.status === 400 && r.json?.divergencias?.some((d: any) => d.tipo === 'desvio' && d.desvio_pct === 20), r.json);
+    t('nada baixado nas recusas', (await qtd('mp-polpa')) === 79.5 && (await status('op2b')).status === 'em_producao');
+    await db.execute(sql`INSERT INTO system_settings (id, key, value, updated_by) VALUES (gen_random_uuid()::varchar, 'op_tolerancia_receita_pct', '25', 'harness') ON CONFLICT (key) DO UPDATE SET value = '25'`);
+    r = await call('POST', '/api/industria/production-orders/op2b/finalize', { ...base, lot_number: 'H2B', materials: [{ raw_material_id: 'mp-polpa', quantity_used: 12 }, { raw_material_id: 'mp-garrafa', quantity_used: 100 }] });
+    t('com tolerancia 25% o mesmo consumo passa', r.status === 200, r.json);
+    await db.execute(sql`DELETE FROM system_settings WHERE key = 'op_tolerancia_receita_pct'`);
+    await db.execute(sql`INSERT INTO products (id, name, price) VALUES ('h-prod-sem-rec', 'PRODUTO SEM RECEITA', 1) ON CONFLICT (id) DO NOTHING`);
+    await db.execute(sql`INSERT INTO production_orders (id, order_number, product_id, product_name, quantity, instance_id, instance_name, status, production_date) VALUES ('op2c', 'OP-2C', 'h-prod-sem-rec', 'PRODUTO SEM RECEITA', 10, 'h-ind', 'IND', 'em_producao', current_date)`);
+    r = await call('POST', '/api/industria/production-orders/op2c/finalize', { ...base, quantity_produced: 10, materials: [{ raw_material_id: 'mp-polpa', quantity_used: 1 }] });
+    t('produto sem receita -> 400 OP_SEM_RECEITA', r.status === 400 && r.json?.code === 'OP_SEM_RECEITA', r.json);
+    await db.execute(sql`UPDATE raw_materials SET quantity = 5 WHERE id = 'mp-garrafa'`);
+    await mkOp('op2d', 'OP-2D');
+    r = await call('POST', '/api/industria/production-orders/op2d/finalize', { ...base, materials: [{ raw_material_id: 'mp-polpa', quantity_used: 10 }, { raw_material_id: 'mp-garrafa', quantity_used: 100 }] });
+    t('insumo sem saldo -> 400 INSUMO_SEM_SALDO, nada gravado', r.status === 400 && r.json?.code === 'INSUMO_SEM_SALDO' && (await qtd('mp-polpa')) === 67.5 && (await status('op2d')).status === 'em_producao', r.json);
+    await db.execute(sql`UPDATE raw_materials SET quantity = 698 WHERE id = 'mp-garrafa'`);
 
     console.log('\n3) Sem insumo nenhum e sem confirmacao: 400, ordem continua aberta');
     await mkOp('op3', 'OP-3');
@@ -91,12 +115,12 @@ async function main() {
     t('ordem segue em_producao', (await status('op3')).status === 'em_producao');
     t('nenhum lote criado', (await q(sql`SELECT * FROM inventory_lots WHERE production_order_id='op3'`)).length === 0);
 
-    console.log('\n4) Com confirmacao explicita: finaliza sem baixa e deixa registrado');
+    console.log('\n4) "Confirmar sem insumos" deixou de existir (04/out/2026): continua 400');
     r = await call('POST', '/api/industria/production-orders/op3/finalize', { ...base, confirm_sem_insumos: true });
-    t('200', r.status === 200, r.json);
-    t('0 insumos, aviso', r.json?.consumed?.length === 0 && (r.json?.warnings || []).some((w: string) => /SEM baixa/.test(w)), r.json);
-    t('notes: SEM BAIXA DE INSUMOS (confirmado por ...)', /SEM BAIXA DE INSUMOS \(confirmado por harness@honest.test\)/.test((await status('op3')).notes), await status('op3'));
-    t('lote criado sem CMV', Number((await q(sql`SELECT * FROM inventory_lots WHERE production_order_id='op3'`))[0]?.unit_cost ?? 0) === 0);
+    t('400 SEM_INSUMOS mesmo com a confirmacao', r.status === 400 && r.json?.code === 'SEM_INSUMOS', r.json);
+    // caso LEGADO (antes da regra): OP finalizada sem baixa, para os passos 6/7
+    await db.execute(sql`UPDATE production_orders SET status = 'finalizada', end_date = now(), lot_number = 'H050926', notes = 'SEM BAIXA DE INSUMOS (confirmado por harness@honest.test)' WHERE id = 'op3'`);
+    await db.execute(sql`INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, production_order_id) VALUES ('lot3', 'h-prod', 'h-ind', 'in_use', 'H050926', 100, 'op3')`);
 
     console.log('\n5) Material inexistente: 400 e NADA gravado (rollback)');
     await mkOp('op4', 'OP-4');
@@ -125,15 +149,15 @@ async function main() {
     console.log('\n7) Reparo: baixa retroativa pelos itens (op5) e pela receita (op3); idempotente');
     r = await call('POST', '/api/industria/production-orders/op5/baixar-insumos', {});
     t('op5 200, fonte itens_da_op', r.status === 200 && r.json?.fonte === 'itens_da_op', r.json);
-    t('acucar 48 -> 41', (await qtd('mp-acucar')) === 41);
+    t('acucar 50 -> 43', (await qtd('mp-acucar')) === 43);
     t('movimento aponta para op5 com nota de reparo', (await baixas('op5')).length === 1 && /retroativa/.test((await baixas('op5'))[0].notes));
     t('CMV preenchido no lote (7*4/200 = 0.14)', Number((await q(sql`SELECT unit_cost FROM inventory_lots WHERE id='lot5'`))[0].unit_cost) === 0.14);
     r = await call('POST', '/api/industria/production-orders/op5/baixar-insumos', {});
     t('segundo reparo -> 409', r.status === 409, r.json);
-    t('acucar segue 41', (await qtd('mp-acucar')) === 41);
+    t('acucar segue 43', (await qtd('mp-acucar')) === 43);
     r = await call('POST', '/api/industria/production-orders/op3/baixar-insumos', {});
     t('op3 200, fonte receita', r.status === 200 && r.json?.fonte === 'receita' && r.json?.consumed?.length === 2, r.json);
-    t('polpa 85 -> 75, garrafa 900 -> 800', (await qtd('mp-polpa')) === 75 && (await qtd('mp-garrafa')) === 800);
+    t('polpa 67.5 -> 57.5, garrafa 698 -> 598', (await qtd('mp-polpa')) === 57.5 && (await qtd('mp-garrafa')) === 598);
     t('CMV no lote da op3 (10*10+100*0.5)/100 = 1.5', Number((await q(sql`SELECT unit_cost FROM inventory_lots WHERE production_order_id='op3'`))[0].unit_cost) === 1.5);
     r = await call('GET', '/api/industria/production-orders/auditoria-baixa');
     t('auditoria zerada', r.json?.total === 0, r.json);
@@ -142,7 +166,7 @@ async function main() {
     console.log('\n8) Reabrir a op5 estorna a baixa retroativa (mesmo mecanismo)');
     r = await call('POST', '/api/industria/production-orders/op5/reopen');
     t('reopen 200', r.status === 200, r.json);
-    t('acucar volta a 48', (await qtd('mp-acucar')) === 48);
+    t('acucar volta a 50', (await qtd('mp-acucar')) === 50);
 
     console.log('\n9) Perdas/avarias: somam no CMV e na baixa (movimento perda), estornam na reabertura');
     await mkOp('op6', 'OP-6');
@@ -153,7 +177,7 @@ async function main() {
       { raw_material_id: 'mp-acucar', quantity_used: 0, quantity_lost: 1 } ] });
     t('200', r.status === 200, r.json);
     t('CMV = (12*10)+(106*0.5)+(1*4) = 177; perdas = 20+3+4 = 27', r.json?.cmv?.total === 177 && r.json?.cmv?.perdas === 27, r.json?.cmv);
-    t('polpa -12, garrafa -106, acucar -1', (await qtd('mp-polpa')) === pol0 - 12 && (await qtd('mp-garrafa')) === gar0 - 106 && (await qtd('mp-acucar')) === 47);
+    t('polpa -12, garrafa -106, acucar -1', (await qtd('mp-polpa')) === pol0 - 12 && (await qtd('mp-garrafa')) === gar0 - 106 && (await qtd('mp-acucar')) === 49);
     const perdas6 = await q(sql`SELECT * FROM raw_material_movements WHERE production_order_id='op6' AND movement_type='perda'`);
     t('3 movimentos perda + 2 saida_producao', perdas6.length === 3 && (await baixas('op6')).length === 2, perdas6.length);
     const mvPolpa = await q(sql`SELECT movement_type, quantity, previous_quantity, new_quantity FROM raw_material_movements WHERE production_order_id='op6' AND raw_material_id='mp-polpa' ORDER BY created_at, movement_type DESC`);
@@ -164,7 +188,7 @@ async function main() {
     t('notes cita perdas', /incl\. perdas R\$ 27\.00/.test((await status('op6')).notes), (await status('op6')).notes);
     r = await call('POST', '/api/industria/production-orders/op6/reopen');
     t('reopen 200', r.status === 200, r.json);
-    t('estoque volta (polpa, garrafa, acucar)', (await qtd('mp-polpa')) === pol0 && (await qtd('mp-garrafa')) === gar0 && (await qtd('mp-acucar')) === 48);
+    t('estoque volta (polpa, garrafa, acucar)', (await qtd('mp-polpa')) === pol0 && (await qtd('mp-garrafa')) === gar0 && (await qtd('mp-acucar')) === 50);
     r = await call('GET', '/api/industria/production-orders');
     const o6 = (r.json?.orders || []).find((o: any) => o.id === 'op6');
     t('reaberta: itens com perda continuam na OP', o6 && o6.items.length === 3 && o6.items.some((i: any) => Number(i.quantity_lost) === 2), o6?.items);
@@ -174,6 +198,16 @@ async function main() {
     r = await call('PATCH', '/api/industria/production-orders/op4', { items: [{ raw_material_id: 'mp-polpa', quantity_used: 3, quantity_lost: 0.5 }, { raw_material_id: 'mp-acucar', quantity_used: 0, quantity_lost: 0 }] });
     const it4 = await q(sql`SELECT * FROM production_order_items WHERE production_order_id='op4'`);
     t('PATCH grava perda e descarta linha zerada', r.status === 200 && it4.length === 1 && Number(it4[0].quantity_lost) === 0.5, it4);
+    console.log('\n10) Movimentacao manual de insumo');
+    r = await call('POST', '/api/industria/raw-materials/mp-acucar/movement', { type: 'saida_producao', quantity: 1, notes: 'teste' });
+    t('saida_producao avulsa -> 400', r.status === 400 && r.json?.code === 'SAIDA_PRODUCAO_AVULSA', r.json);
+    r = await call('POST', '/api/industria/raw-materials/mp-acucar/movement', { type: 'saida', quantity: 999, notes: 'teste' });
+    t('saida acima do saldo -> 400', r.status === 400 && r.json?.code === 'SALDO_INSUFICIENTE', r.json);
+    r = await call('POST', '/api/industria/raw-materials/mp-acucar/movement', { type: 'ajuste', quantity: 40 });
+    t('ajuste sem motivo -> 400', r.status === 400 && r.json?.code === 'MOTIVO_OBRIGATORIO', r.json);
+    const acAntes = await qtd('mp-acucar');
+    r = await call('POST', '/api/industria/raw-materials/mp-acucar/movement', { type: 'ajuste', quantity: 40, notes: 'contagem fisica' });
+    t('ajuste para baixo grava delta NEGATIVO', r.status === 200 && Number(r.json?.movement?.quantity) === 40 - acAntes && 40 - acAntes < 0 && (await qtd('mp-acucar')) === 40, r.json);
   } finally { server.close(); }
   console.log(`\n${ok} ok, ${fail} falha(s)`);
   process.exit(fail ? 1 : 0);
