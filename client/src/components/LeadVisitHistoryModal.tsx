@@ -219,7 +219,7 @@ export default function LeadVisitHistoryModal({
                     </div>
                     <p className="text-sm whitespace-pre-wrap break-words">{it.texto}</p>
                     {it.url && (
-                      <a href={it.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-600 hover:underline break-all">Ver foto</a>
+                      <button type="button" onClick={() => { const u = (it as any).url || ''; try { if (typeof u === 'string' && u.startsWith('data:')) { const comma = u.indexOf(','); const meta = u.slice(0, comma); const b64 = u.slice(comma + 1); const mime = (meta.match(/data:(.*?)(;|$)/) || [])[1] || 'image/jpeg'; const bin = atob(b64); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); const blobUrl = URL.createObjectURL(new Blob([arr], { type: mime })); const w = window.open(blobUrl, '_blank'); if (!w) { const a = document.createElement('a'); a.href = blobUrl; a.download = 'foto.jpg'; document.body.appendChild(a); a.click(); a.remove(); } setTimeout(() => URL.revokeObjectURL(blobUrl), 60000); } else if (u) { window.open(u, '_blank', 'noopener,noreferrer'); } } catch (e) { if (u) window.open(u, '_blank', 'noopener,noreferrer'); } }} className="text-[11px] text-blue-600 hover:underline break-all">Ver foto</button>
                     )}
                     <p className="text-[11px] text-muted-foreground mt-1">por {it.autor || "—"}</p>
                   </div>
