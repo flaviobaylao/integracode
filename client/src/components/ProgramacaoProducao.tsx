@@ -176,7 +176,7 @@ export default function ProgramacaoProducao() {
     if (!data) return;
     const prog = produtos.map((p) => ({
       Produto: p.nome, Código: p.codigo || '', Status: STATUS[p.calculo.status].label,
-      'Estoque fábrica (IND)': p.estoque.fabrica, 'Estoque escritório (GYN)': p.estoque.escritorio, 'Estoque BSB': p.estoque.porInstancia.BSB || 0, 'Estoque total': p.estoque.total,
+      'Estoque fábrica (IND)': p.estoque.fabrica, 'Estoque escritório (GYN)': p.estoque.escritorio, 'Estoque BSB': p.estoque.porInstancia.BSB || 0, 'Estoque SERV': p.estoque.porInstancia.SERV || 0, 'Estoque total': p.estoque.total,
       [`Saídas ${janela}d`]: p.saidas.total, 'Média/dia': p.saidas.mediaDia, 'Média/semana': p.saidas.mediaSemana, 'Média/mês': p.saidas.mediaMes, 'Pico semanal': p.saidas.picoSemana,
       'Cobertura (dias)': p.calculo.coberturaDias ?? '', 'Ruptura prevista': p.calculo.dataRuptura || '', 'Estoque mínimo': p.calculo.estoqueMinimo, 'Estoque alvo': p.calculo.estoqueAlvo,
       'Programado (OPs abertas)': p.programado.aberto, 'Sugestão produzir': p.calculo.sugestaoProduzir, 'Fardos': p.calculo.sugestaoFardos ?? '', 'Produzir até': p.calculo.dataLimiteProducao || '',
@@ -242,7 +242,7 @@ export default function ProgramacaoProducao() {
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <Kpi icone={<Factory className="h-4 w-4" />} rotulo="Estoque na fábrica (IND)" valor={fmtInt(t!.estoqueFabrica)} sub="garrafas em lotes in_use" />
             <Kpi icone={<Building2 className="h-4 w-4" />} rotulo="Estoque no escritório (GYN)" valor={fmtInt(t!.estoqueEscritorio)} sub="garrafas (em uso + bloqueadas)" />
-            <Kpi icone={<Warehouse className="h-4 w-4" />} rotulo="Estoque BSB" valor={fmtInt(t!.estoquePorInstancia.BSB || 0)} sub="garrafas · SERV sem controle de estoque" />
+            <Kpi icone={<Warehouse className="h-4 w-4" />} rotulo="Estoque BSB" valor={fmtInt(t!.estoquePorInstancia.BSB || 0)} sub="garrafas" />
             <Kpi icone={<TrendingDown className="h-4 w-4" />} rotulo={`Saídas últimos ${data.janelaMediaDias} dias`} valor={fmtInt(t!.saidasJanela)} sub={`${fmt1(t!.mediaDia)} garrafas/dia útil (${data.diasUteisJanela} dias úteis) · ${data.instanciasDemanda.join(' + ')}`} />
             <Kpi icone={<AlertTriangle className="h-4 w-4" />} rotulo="Produtos em alerta" valor={String(alerta)} sub={`${t!.porStatus.ruptura || 0} ruptura · ${t!.porStatus.critico || 0} crítico · ${t!.porStatus.atencao || 0} atenção`} destaque={alerta > 0} />
             <Kpi icone={<PlayCircle className="h-4 w-4" />} rotulo="Sugestão de produção" valor={fmtInt(t!.sugestaoProduzir)} sub={`garrafas · ${fmtInt(t!.programado)} já programadas em OP`} />
@@ -252,7 +252,7 @@ export default function ProgramacaoProducao() {
           <Card><CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
               <div className="font-semibold text-sm flex items-center gap-2"><TrendingDown className="h-4 w-4 text-emerald-600" /> Saídas de produto acabado por {gran === 'mes' ? 'mês' : gran} <span className="text-gray-400 font-normal">({fmtData(data.periodo.de)} a {fmtData(data.periodo.ate)})</span></div>
-              <div className="text-xs text-gray-500">venda + troca + amostra + bonificação · transferências IND→filial não contam · SERV pelos pedidos faturados (sem estoque)</div>
+              <div className="text-xs text-gray-500">venda + troca + amostra + bonificação · transferências IND→filial não contam</div>
             </div>
             <div className="h-64 w-full">
               {serieGeral.length === 0 ? <div className="flex h-full items-center justify-center text-sm text-gray-500">Sem saídas no período.</div> : (
@@ -292,6 +292,7 @@ export default function ProgramacaoProducao() {
                   <TableHead className="text-right">Fábrica</TableHead>
                   <TableHead className="text-right">Escritório</TableHead>
                   <TableHead className="text-right">BSB</TableHead>
+                  <TableHead className="text-right">SERV</TableHead>
                   <TableHead className="text-right">Média/dia útil</TableHead>
                   <TableHead className="text-right">Média/sem</TableHead>
                   <TableHead className="text-right">Cobertura (d.u.)</TableHead>
@@ -304,7 +305,7 @@ export default function ProgramacaoProducao() {
                   <TableHead className="w-36">Data produção</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {produtos.length === 0 && <TableRow><TableCell colSpan={16} className="text-center text-gray-500 py-6">Nenhum produto.</TableCell></TableRow>}
+                  {produtos.length === 0 && <TableRow><TableCell colSpan={17} className="text-center text-gray-500 py-6">Nenhum produto.</TableCell></TableRow>}
                   {produtos.map((pr) => {
                     const st = STATUS[pr.calculo.status];
                     const cob = pr.calculo.coberturaDias;
@@ -322,6 +323,9 @@ export default function ProgramacaoProducao() {
                         </TableCell>
                         <TableCell className="text-right tabular-nums" title={pr.estoque.bloqueadoPorInstancia?.BSB ? `inclui ${fmtInt(pr.estoque.bloqueadoPorInstancia.BSB)} bloqueadas` : ''}>
                           {fmtInt(pr.estoque.porInstancia.BSB || 0)}{pr.estoque.bloqueadoPorInstancia?.BSB ? <span className="text-[10px] text-gray-400 ml-0.5">*</span> : null}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums" title={pr.estoque.bloqueadoPorInstancia?.SERV ? `inclui ${fmtInt(pr.estoque.bloqueadoPorInstancia.SERV)} bloqueadas` : ''}>
+                          {fmtInt(pr.estoque.porInstancia.SERV || 0)}{pr.estoque.bloqueadoPorInstancia?.SERV ? <span className="text-[10px] text-gray-400 ml-0.5">*</span> : null}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{fmt1(pr.saidas.mediaDia)}</TableCell>
                         <TableCell className="text-right tabular-nums" title={`média/dia útil × 5 · pico semanal ${fmtInt(pr.saidas.picoSemana)} · ${pr.saidas.diasComSaida} dias com saída`}>{fmt1(pr.saidas.mediaSemana)}</TableCell>

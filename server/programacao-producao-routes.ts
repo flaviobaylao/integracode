@@ -15,8 +15,8 @@
 // Fontes (somente leitura, exceto a criação de OP e os parâmetros):
 //   inventory_movements (consume / cancel_reversal, source_type='invoice')
 //       → saída real de estoque por instância (IND, GYN, BSB);
-//   billing_pipeline (cards faturados/entregues) → saídas da SERV, que não
-//       tem controle de estoque e por isso não gera inventory_movements; a OPERAÇÃO vem do
+//   billing_pipeline (cards faturados/entregues sem movimento) → histórico da
+//       SERV anterior ao controle de estoque dela (04/out/2026); a OPERAÇÃO vem do
 //         billing_pipeline (operation_type) via source_id; transferências
 //         IND→filial NÃO são demanda (são movimentação interna).
 //         created_at é gravado em UTC (now() do banco) → convertido p/ BRT.
@@ -198,9 +198,9 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
       const instancias = (instR.rows || []).map((r: any) => ({ id: String(r.id), name: String(r.name || "").toUpperCase(), displayName: r.display_name || r.name }));
       const nomePorId: Record<string, string> = {};
       for (const i of instancias) nomePorId[i.id] = i.name;
-      // Todas as instâncias contam como demanda, inclusive a SERV (Flavio 04/out).
-      // A SERV não tem controle de estoque (não gera inventory_movements), então a
-      // saída dela vem dos cards do pipeline já faturados/entregues.
+      // Todas as instâncias contam como demanda e estoque, inclusive a SERV
+      // (Flavio 04/out: SERV se comporta igual às demais; abastecida por NF de
+      // venda da GYN a CMV).
       const todasComEstoque: string[] = instancias.map((i: any) => String(i.name));
       const selecionadas: string[] = String(req.query.instancias || "")
         .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
@@ -227,9 +227,11 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
           AND NOT (fi.id IS NOT NULL AND (UPPER(COALESCE(fi.nature_of_operation, '')) LIKE '%TRANSFER%' OR fi.cfop IN ('5152', '6152', '5409', '6409')))
         GROUP BY 1, 2, 3, 4, 5, 6`);
 
-      // 1b) SAÍDAS das instâncias SEM controle de estoque (SERV): cards do pipeline
-      //     a partir de 'faturado' (fora lixeira), produtos do jsonb; data = NF
-      //     autorizada do card, senão criação do card. Mesma forma das linhas acima.
+      // 1b) HISTÓRICO da SERV antes do controle de estoque (até 04/out/2026 a SERV
+      //     faturava sem lote, então não há inventory_movements desses pedidos):
+      //     cards do pipeline a partir de 'faturado' (fora lixeira) SEM movimento de
+      //     estoque associado; produtos do jsonb; data = NF autorizada, senão criação
+      //     do card. Cards novos da SERV já baixam lote e entram pela consulta 1.
       const movServR: any = await db.execute(sql`
         SELECT (p->>'id') AS product_id, bp.omie_instance_id AS instance_id,
                (COALESCE(fi.d, bp.created_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
@@ -244,6 +246,7 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
           FROM fiscal_invoices WHERE sales_card_id = bp.sales_card_id AND status IN ('authorized', 'autorizada')
           ORDER BY created_at DESC LIMIT 1) fi ON true
         WHERE UPPER(oi.name) IN ('SERV')
+          AND NOT EXISTS (SELECT 1 FROM inventory_movements im WHERE im.source_type = 'invoice' AND im.source_id::text = bp.id::text)
           AND bp.stage::text NOT IN ('agendado', 'pedido', 'a_faturar') AND bp.stage::text NOT LIKE '%lixeira%'
           AND LOWER(COALESCE(bp.operation_type, '')) <> 'transferencia'
           AND COALESCE(fi.d, bp.created_at) >= (${inicioConsulta}::date::timestamp + INTERVAL '3 hours')

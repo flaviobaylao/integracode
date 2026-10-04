@@ -27,7 +27,12 @@ import { sql } from 'drizzle-orm';
 // nao e bloqueado por falta de saldo e nao gera baixa de lote. Hoje so a SERV
 // (PURO SERVICOS), que fatura mercadoria sem manter inventario proprio.
 // ATENCAO: incluir uma instancia aqui DESLIGA a trava de estoque para TODAS as notas dela.
-export const INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE = new Set(['SERV']);
+// 30/08/2026: a SERV (PURO SERVICOS) entrou aqui porque nao tinha lotes.
+// 04/10/2026 (Flavio): a SERV passa a se comportar IGUAL as demais — o estoque dela
+// e abastecido por NF de VENDA emitida pela GYN a preco de CMV (botao "Pedido
+// GYN -> SERV" no pipeline / pedido de transferencia com destino SERV, que sai como
+// venda intercompany) e cada NF da SERV baixa lote normalmente. Lista vazia de proposito.
+export const INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE = new Set<string>([]);
 
 export function instanciaSemControleDeEstoque(nomeInstancia: string | null | undefined): boolean {
   return INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE.has(String(nomeInstancia || '').toUpperCase().trim());

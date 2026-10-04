@@ -2998,6 +2998,24 @@ async function cmvDoLoteDeOrigem(productId: string, origemId: string | null, lot
   }
 }
 
+/** true quando o pedido de transferência tem como destino uma instância de OUTRO
+ *  CNPJ raiz (outra empresa do grupo, ex.: SERV) — aí a NF sai como venda. */
+export async function isTransferenciaIntercompany(item: any, issuerCnpj: any): Promise<boolean> {
+  try {
+    const products = (item?.products as any[]) || [];
+    const destinoId = products.map((p: any) => p?.transferToInstanceId).find(Boolean);
+    if (!destinoId) return false;
+    const destino: any = await storage.getOmieInstance(String(destinoId));
+    const raizDestino = String(destino?.cnpj || '').replace(/\D/g, '').slice(0, 8);
+    const raizEmitente = String(issuerCnpj || '').replace(/\D/g, '').slice(0, 8);
+    if (!raizDestino || !raizEmitente) return false;
+    return raizDestino !== raizEmitente;
+  } catch (e: any) {
+    console.warn('[TRANSFER] intercompany check falhou:', e?.message);
+    return false;
+  }
+}
+
 // exportada para o harness server/__tests__/harness-mirror.ts
 export async function mirrorTransferToDestination(item: any, user: any): Promise<void> {
   if (String(item?.operationType || '').toLowerCase() !== 'transferencia') return;
@@ -3298,6 +3316,16 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
   } else if (operationType === 'amostra') {
     cfop = isWithinState ? '5911' : '6911';
     natureOfOperation = 'Amostra grátis';
+  } else if (operationType === 'transferencia' && await isTransferenciaIntercompany(item, issuerCnpj)) {
+    // Transferência para OUTRA EMPRESA do grupo (ex.: GYN -> SERV / Puro Serviços,
+    // CNPJ raiz diferente): fiscalmente é VENDA (CFOP 5101/6101), precificada a
+    // CMV pelo pedido de transferência. A natureza carrega "transferência" de
+    // propósito: faturamento-oficial.ts (DRE/Painel) exclui naturezas com
+    // TRANSFER, então essa venda intercompany não vira receita nem demanda no
+    // Integra, e o estoque espelho entra no destino pelo mesmo caminho da
+    // transferência entre filiais (mirrorTransferToDestination). Flavio 04/out/2026.
+    natureOfOperation = 'Venda de mercadoria - transferencia entre empresas do grupo';
+    cfop = isWithinState ? '5101' : '6101';
   } else if (operationType === 'transferencia') {
     // Transferência entre filiais: usa o CENÁRIO FISCAL de transferência
     // (CFOP/CST/natureza configurados em Cenários Fiscais), preferindo o cenário
