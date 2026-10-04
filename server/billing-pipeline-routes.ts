@@ -2865,19 +2865,19 @@ export function registerBillingPipelineRoutes(app: Express) {
 }
 
 // FILIAL DO ESTOQUE do pedido. Regra geral: a filial do pedido (= emitente).
-// Excecao — VENDA DE BALCAO (NFC-e): o produto sai do estoque da FABRICA (IND),
-// embora a NFC-e continue emitida pelo CNPJ da GYN (onde estao CSC/serie 65).
+// VENDA DE BALCAO (NFC-e): o produto sai SEMPRE do estoque da GYN — a mesma
+// filial que emite a NFC-e (CSC/serie 65), seja qual for a filial do pedido.
 // Pedido de balcao = sales_cards.source = 'balcao' (mesmo criterio do modelo 65).
-export const INSTANCIA_ESTOQUE_BALCAO = 'IND';
+export const INSTANCIA_ESTOQUE_BALCAO = 'GYN';
 export async function instanciaDeEstoque(item: any): Promise<string | null> {
   try {
     if (item?.salesCardId) {
       const r: any = await db.execute(sql`SELECT source FROM sales_cards WHERE id = ${item.salesCardId} LIMIT 1`);
       const src = String(((r?.rows ?? r ?? []) as any[])[0]?.source || '').toLowerCase();
       if (src === 'balcao') {
-        const ind: any = (await storage.getOmieInstances()).find((i: any) => String(i?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_BALCAO);
-        if (ind) return ind.id;
-        console.warn('[STOCK] instancia IND nao encontrada para o estoque do balcao; usando a do pedido.');
+        const inst: any = (await storage.getOmieInstances()).find((i: any) => String(i?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_BALCAO);
+        if (inst) return inst.id;
+        console.warn('[STOCK] instancia GYN nao encontrada para o estoque do balcao; usando a do pedido.');
       }
     }
   } catch (e: any) {
@@ -3677,8 +3677,8 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       return await danfeNfceDoCard(salesCardId); // idempotente: ja faturado
     }
 
-    // 1b) EMITENTE GYN. A NFC-e sai pelo CNPJ da GYN (CSC/serie 65), mas o
-    //     ESTOQUE baixado e o da fabrica (IND) — ver instanciaDeEstoque().
+    // 1b) GYN. A NFC-e sai pelo CNPJ da GYN (CSC/serie 65) e o estoque
+    //     baixado tambem e o da GYN — ver instanciaDeEstoque().
     //     O CONSUMIDOR BALCAO e sintetico e nao tem instancia, entao o item
     //     nascia sem omieInstanceId e deductStockForBilling pulava a baixa
     //     inteira ("sem omieInstanceId"). Alem disso o card do PDV grava o

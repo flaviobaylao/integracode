@@ -1864,8 +1864,8 @@ export async function prepararEstoqueParaEmissao(
     if (nome) inst = instancias.find((i) => sigla(i) === nome) || null;
   }
   if (!inst) inst = instancias.find((i) => sigla(i) === 'GYN') || null;
-  // NFC-e (venda de balcao): o produto sai do estoque da fabrica (IND), mesmo com
-  // a nota emitida pela GYN — mesma regra de instanciaDeEstoque no pipeline.
+  // NFC-e (venda de balcao): o produto sai sempre do estoque da GYN — mesma
+  // regra de instanciaDeEstoque no pipeline.
   let modeloNf = String(invoice.invoiceModel || '');
   if (!modeloNf) {
     try {
@@ -1874,8 +1874,8 @@ export async function prepararEstoqueParaEmissao(
     } catch { modeloNf = '55'; }
   }
   if (modeloNf === '65') {
-    const ind = instancias.find((i) => sigla(i) === 'IND');
-    if (ind) inst = ind;
+    const gyn = instancias.find((i) => sigla(i) === 'GYN');
+    if (gyn) inst = gyn;
   }
   const instanceId: string | null = inst?.id || null;
   // a sigla (GYN/IND/SERV) pode estar no name ou no display_name
