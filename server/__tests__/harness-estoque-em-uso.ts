@@ -9,7 +9,7 @@ import {
   verificarEstoqueEmUso, baixarEstoqueEmUso, baixaVigenteDoPedido, distribuirLotes, textoLotes,
   ehBloqueioEstoque, EstoqueInsuficienteError, LinhaSemProdutoError,
 } from '../estoque-em-uso';
-import { deductStockForBilling } from '../billing-pipeline-routes';
+import { deductStockForBilling, garantirInstanciaEstoque, registrarBloqueioEstoqueNoPedido } from '../billing-pipeline-routes';
 import { consumeStock } from '../inventory-routes';
 import { prepararEstoqueParaEmissao } from '../nfe-routes';
 
@@ -32,9 +32,11 @@ async function main() {
     await db.execute(sql.raw(`DELETE FROM ${tb}`));
   }
   await db.execute(sql`DELETE FROM products WHERE id LIKE 'e-%'`);
-  await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'e-%' OR name IN ('IND', 'SERV')`);
+  await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'e-%' OR name IN ('IND', 'SERV', 'GYN')`);
+  await db.execute(sql`DELETE FROM customers WHERE id LIKE 'e-%'`);
   await db.execute(sql`INSERT INTO omie_instances (id, name, display_name, app_key, app_secret, cnpj, is_active) VALUES
     ('e-ind', 'IND', 'Industria', 'k', 's', '11111111000191', true),
+    ('e-gyn', 'GYN', 'Goiania', 'k', 's', '22222222000192', true),
     ('e-serv', 'SERV', 'Puro Servicos', 'k', 's', '33333333000193', true)`);
   await db.execute(sql`INSERT INTO products (id, name, price, omie_instance_id) VALUES
     ('e-a', 'SUCO A 350ml', 5, 'e-ind'), ('e-b', 'SUCO B 900ml', 12, 'e-ind')`);
@@ -112,9 +114,24 @@ async function main() {
   t('pedido sem estoque em uso -> lanca bloqueio', ehBloqueioEstoque(err), err?.message);
   const serv = await deductStockForBilling({ ...card, id: 'p-3', omieInstanceId: 'e-serv', omieInstanceName: 'SERV', products: [{ id: 'e-b', name: 'SUCO B', quantity: 999 }] }, { email: 'h' });
   t('SERV continua sem controle de estoque', Object.keys(serv).length === 0);
-  err = null;
-  try { await deductStockForBilling({ ...card, id: 'p-4', omieInstanceId: null, omieInstanceName: null }, { email: 'h' }); } catch (e) { err = e; }
-  t('pedido sem instancia -> bloqueio', ehBloqueioEstoque(err));
+  // Pedido SEM filial: mesma filial do emitente (pedido -> cliente -> GYN), gravada no item.
+  await db.execute(sql`INSERT INTO customers (id, name, customer_type, phone, address, seller_id, weekdays, omie_instance_id)
+    VALUES ('e-cli', 'CLIENTE IND', 'pessoa_juridica', '0', 'x', 's', '[]', 'e-ind')`);
+  await db.execute(sql`INSERT INTO billing_pipeline (id, sales_card_id, customer_id, order_number, customer_name, stage, products) VALUES
+    ('p-4', 'sc-4', 'e-cli', 'PED-4', 'CLIENTE IND', 'pedido', '[]'::jsonb),
+    ('p-5', 'sc-5', 'cli-sem', 'PED-5', 'SEM CADASTRO', 'pedido', '[]'::jsonb)`);
+  const lb0 = await saldo('e-lb');
+  const c4: any = { ...card, id: 'p-4', salesCardId: 'sc-4', orderNumber: 'PED-4', customerId: 'e-cli', omieInstanceId: null, omieInstanceName: null, products: [{ id: 'e-b', name: 'SUCO B', quantity: 1 }] };
+  lm = await deductStockForBilling(c4, { email: 'h' });
+  t('sem filial, cliente da IND -> baixa da IND', lm['e-b']?.[0]?.lotNumber === 'LB' && (await saldo('e-lb')) === lb0 - 1 && c4.omieInstanceId === 'e-ind', lm);
+  t('filial gravada no pedido', (await q(sql`SELECT omie_instance_id FROM billing_pipeline WHERE id = 'p-4'`))[0]?.omie_instance_id === 'e-ind');
+  await lote('e-g1', 'e-b', 'e-gyn', 'in_use', 'G1', 20, 2);
+  const c5: any = { ...card, id: 'p-5', salesCardId: 'sc-5', orderNumber: 'PED-5', customerId: 'cli-sem', omieInstanceId: null, omieInstanceName: null, products: [{ id: 'e-b', name: 'SUCO B', quantity: 3 }] };
+  lm = await deductStockForBilling(c5, { email: 'h' });
+  t('sem filial e sem cadastro -> GYN (fallback do emitente)', lm['e-b']?.[0]?.lotNumber === 'G1' && (await saldo('e-g1')) === 17 && c5.omieInstanceName === 'Goiania', lm);
+  const so: any = { id: 'p-x', customerId: 'e-cli', omieInstanceId: null };
+  await garantirInstanciaEstoque(so, { persist: false });
+  t('modo leitura resolve sem gravar', so.omieInstanceId === 'e-ind');
 
   console.log('\n6) Lotes por linha da NF');
   const mapa = { 'e-a': [{ lotId: 'a1', lotNumber: 'L1', quantidade: 30 }, { lotId: 'a2', lotNumber: 'L2', quantidade: 20 }] };
@@ -126,10 +143,10 @@ async function main() {
 
   console.log('\n7) consumeStock (baixa avulsa) nao usa lote bloqueado');
   const c = await consumeStock('e-b', 'e-ind', 50, 'manual', 'avulso-1', null);
-  t('falta -> success=false, nada baixado', c.success === false && (await saldo('e-lb')) === 6, c);
+  t('falta -> success=false, nada baixado', c.success === false && (await saldo('e-lb')) === 5, c);
   await db.execute(sql`INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, is_active) VALUES ('e-bb', 'e-b', 'e-ind', 'blocked', 'BB', 500, true)`);
   const c2 = await consumeStock('e-b', 'e-ind', 50, 'manual', 'avulso-2', null);
-  t('com bloqueado sobrando: continua recusando', c2.success === false && (await saldo('e-bb')) === 500 && (await saldo('e-lb')) === 6, c2);
+  t('com bloqueado sobrando: continua recusando', c2.success === false && (await saldo('e-bb')) === 500 && (await saldo('e-lb')) === 5, c2);
 
   console.log('\n8) NF manual transmitida pela tela (/emit): prepararEstoqueParaEmissao');
   await db.execute(sql`INSERT INTO fiscal_invoices (id, status, operation_type, invoice_number, series, customer_name, total_invoice, omie_instance_id, fin_nfe)
@@ -214,6 +231,33 @@ async function main() {
   t('NO_CERTIFICATE estorna', falhaSemSaidaDeMercadoria('NO_CERTIFICATE'));
   t('NETWORK_ERROR / NO_PROTOCOL / 539 / INTERNAL_ERROR NAO estornam', !['NETWORK_ERROR', 'NO_PROTOCOL', '539', '204', 'INTERNAL_ERROR', 'REJECTED', ''].some(falhaSemSaidaDeMercadoria));
 
+  console.log('\n14) NF manual: linha fora do cadastro bloqueia; NF sem filial usa o emitente');
+  await db.execute(sql`INSERT INTO fiscal_invoices (id, status, operation_type, invoice_number, series, customer_name, total_invoice, omie_instance_id, fin_nfe, issuer_cnpj) VALUES
+    ('nf-av', 'draft', 'saida', 900010, '1', 'X', 0, 'e-ind', '1', null),
+    ('nf-cnpj', 'draft', 'saida', 900011, '1', 'X', 0, null, '1', '28.295.493/0001-53'),
+    ('nf-gyn', 'draft', 'saida', 900012, '1', 'X', 0, null, '1', null)`);
+  await db.execute(sql`INSERT INTO fiscal_invoice_items (id, invoice_id, item_number, product_id, product_name, quantity, unit_price, total_price) VALUES
+    ('it-av1', 'nf-av', 1, 'e-b', 'SUCO B', 1, 5, 5),
+    ('it-av2', 'nf-av', 2, null, 'BRINDE AVULSO', 2, 1, 2),
+    ('it-cn', 'nf-cnpj', 1, 'e-b', 'SUCO B', 1, 5, 5),
+    ('it-gy', 'nf-gyn', 1, 'e-b', 'SUCO B', 2, 5, 10)`);
+  const lbA = await saldo('e-lb');
+  p = await prepararEstoqueParaEmissao('nf-av', 'h');
+  t('linha sem produto -> bloqueio e nada baixado', !!p.bloqueio && /BRINDE AVULSO/.test(p.bloqueio.message) && (await saldo('e-lb')) === lbA, p);
+  p = await prepararEstoqueParaEmissao('nf-cnpj', 'h');
+  t('NF sem filial com CNPJ da IND -> baixa da IND', p.baixouAgora && (await saldo('e-lb')) === lbA - 1, p);
+  p = await prepararEstoqueParaEmissao('nf-gyn', 'h');
+  t('NF sem filial e sem CNPJ -> GYN', p.baixouAgora && (await saldo('e-g1')) === 15, p);
+
+  console.log('\n15) Bloqueio do balcao fica anotado no pedido (1x por dia)');
+  const pb: any = await storage.getBillingPipelineItem('p-5');
+  await registrarBloqueioEstoqueNoPedido(pb, 'SUCO B: precisa 9, em uso 0', 'NFC-e do balcão não emitida');
+  await registrarBloqueioEstoqueNoPedido({ ...pb, notes: pb.notes }, 'SUCO B: precisa 9, em uso 0', 'NFC-e do balcão não emitida');
+  const pb2: any = await storage.getBillingPipelineItem('p-5');
+  t('observacao gravada uma vez', (String(pb2.notes || '').match(/BLOQUEIO ESTOQUE/g) || []).length === 1 && /em uso 0/.test(pb2.notes), pb2.notes);
+  t('historico registra o bloqueio', (pb2.stageHistory || []).some((h: any) => h.changedBy === 'bloqueio-estoque'));
+
+  await db.execute(sql`DELETE FROM customers WHERE id LIKE 'e-%'`);
   // limpeza: as instancias IND/SERV de teste colidiriam (nome unico) com os outros harnesses
   await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'e-%'`);
   console.log(`\n${ok} ok, ${fail} falha(s)`);

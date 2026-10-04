@@ -1855,6 +1855,32 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Get all billing pipeline items (optionally filter by stage)
+  // Situacao do ESTOQUE EM USO dos pedidos ainda nao faturados (pedido, a faturar,
+  // agendado): o card mostra antes do clique se o faturamento vai travar.
+  // Somente leitura — a filial resolvida (pedido -> cliente -> GYN) NAO e gravada.
+  app.get('/api/billing-pipeline/stock-status', authenticateUser, isPipelineViewer, async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT id FROM billing_pipeline WHERE stage::text IN ('pedido','a_faturar','agendado')`);
+      const ids: string[] = ((r?.rows ?? r ?? []) as any[]).map((x: any) => String(x.id));
+      const out: Record<string, { ok: boolean; details: string; filial: string | null }> = {};
+      for (const id of ids) {
+        try {
+          const item: any = await storage.getBillingPipelineItem(id);
+          if (!item) continue;
+          const copia = { ...item };
+          await garantirInstanciaEstoque(copia, { persist: false });
+          const v = await validateStockForBilling(copia);
+          out[id] = { ok: v.valid, details: v.details, filial: copia.omieInstanceName || null };
+        } catch (e: any) {
+          out[id] = { ok: true, details: '', filial: null };
+        }
+      }
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get('/api/billing-pipeline', authenticateUser, isPipelineViewer, async (req: any, res) => {
     try {
       // Promove pedidos agendados vencidos antes de listar (throttle 60s para não custar a cada request).
@@ -2838,11 +2864,62 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 }
 
+// Deixa o bloqueio por estoque VISIVEL no proprio pedido (observacao + historico),
+// para quem abrir o card saber por que a nota nao saiu e fatura-lo apos corrigir
+// o estoque em uso. Nao repete a mesma anotacao no mesmo dia.
+export async function registrarBloqueioEstoqueNoPedido(item: any, details: string, oQue: string): Promise<void> {
+  try {
+    if (!item?.id) return;
+    const hoje = hojeBR();
+    const marca = `[BLOQUEIO ESTOQUE ${hoje}]`;
+    const notas = String(item.notes || '');
+    if (notas.includes(marca)) return;
+    const linha = `${marca} ${oQue}: estoque em uso insuficiente. ${String(details || '').replace(/\s*\n\s*/g, '; ')} — faturar pelo pipeline após corrigir o estoque.`;
+    const historico = Array.isArray(item.stageHistory) ? [...item.stageHistory] : [];
+    historico.push({ stage: item.stage, changedAt: paredeBR(agora()), changedBy: 'bloqueio-estoque', note: linha.slice(0, 500) });
+    const novasNotas = notas ? `${notas}\n${linha}` : linha;
+    await storage.updateBillingPipelineItem(item.id, { notes: novasNotas, stageHistory: historico } as any);
+    item.notes = novasNotas; item.stageHistory = historico;
+  } catch (e: any) {
+    console.warn('[STOCK] nao registrou o bloqueio no pedido:', e?.message);
+  }
+}
+
+// INSTANCIA DE ESTOQUE do pedido — a MESMA que vai emitir a NF.
+// Ordem: instancia do pedido -> instancia do cadastro do cliente -> GYN.
+// A GYN e o fallback do emitente (createInvoiceFromPipelineItem); sem isto,
+// os pedidos sem filial (metade dos faturados de set/26) ficariam bloqueados
+// por "pedido sem filial" ou sairiam da GYN sem baixar estoque. A instancia
+// resolvida e GRAVADA no item, para baixa, emitente e ambiente fiscal
+// sairem todos da mesma filial. Muta o objeto recebido.
+export async function garantirInstanciaEstoque(item: any, opts?: { persist?: boolean }): Promise<void> {
+  if (!item || item.omieInstanceId) return;
+  const persist = opts?.persist !== false;
+  try {
+    const instancias: any[] = await storage.getOmieInstances();
+    let alvo: any = null;
+    if (item.customerId) {
+      const cli: any = await storage.getCustomer(item.customerId).catch(() => null);
+      const cid = cli?.omieInstanceId;
+      if (cid) alvo = instancias.find((i: any) => i.id === cid) || null;
+    }
+    if (!alvo) alvo = instancias.find((i: any) => String(i?.name || '').toUpperCase().trim() === 'GYN') || null;
+    if (!alvo) return;
+    const patch = { omieInstanceId: alvo.id, omieInstanceName: alvo.displayName || alvo.name };
+    if (persist && item.id) await storage.updateBillingPipelineItem(item.id, patch).catch((e: any) => console.warn('[STOCK] nao gravou instancia no pedido:', e?.message));
+    Object.assign(item, patch);
+    if (persist) console.log(`📦 [STOCK] pedido ${item.orderNumber || item.id} sem filial -> ${patch.omieInstanceName} (fallback do emitente)`);
+  } catch (e: any) {
+    console.warn('[STOCK] falha ao resolver instancia do pedido:', e?.message);
+  }
+}
+
 // Trava de estoque do faturamento: so lotes EM USO contam (ver server/estoque-em-uso.ts).
 // Linha sem produto do cadastro tambem bloqueia — sem produto nao ha lote para a NF.
 async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: FaltaEstoque[]; semProduto: string[]; details: string }> {
   const products = item.products as any[] | null;
   if (!products || products.length === 0) return { valid: true, shortages: [], semProduto: [], details: '' };
+  await garantirInstanciaEstoque(item);
   if (instanciaSemControleDeEstoque(item.omieInstanceName)) {
     console.log(`📦 [STOCK] Instancia ${item.omieInstanceName} nao controla estoque - validacao dispensada (item ${item.id})`);
     return { valid: true, shortages: [], semProduto: [], details: '' };
@@ -3019,6 +3096,7 @@ export async function deductStockForBilling(item: any, user: any): Promise<MapaL
   const products = item.products as any[] | null;
   if (!products || products.length === 0) return {};
 
+  await garantirInstanciaEstoque(item);
   if (instanciaSemControleDeEstoque(item.omieInstanceName)) {
     console.log(`📦 [STOCK] Instancia ${item.omieInstanceName} nao controla estoque - baixa dispensada (item ${item.id})`);
     return {};
@@ -3082,6 +3160,8 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
   // 🚫 REDE FINAL: nenhuma NF nasce com item de quantidade zero, venha o pedido
   //    de onde vier (retentativa, balcao, reconciliacao, dado legado).
   assertNoZeroQuantityLines((item as any)?.products, `pedido ${item?.orderNumber || item?.salesCardId || item?.id}`);
+  // Emitente e estoque saem da MESMA filial (pedido -> cliente -> GYN), gravada no item.
+  await garantirInstanciaEstoque(item);
   // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
   // ⚠️ CHAVE À PROVA DE COLISÃO: casa pelo sales_card_id COMPLETO. O ref textual do pedido
   //    (orderNumber = 'INT-<8 hex>') TRUNCA o UUID em 8 caracteres e COLIDE entre cartões distintos
@@ -3607,6 +3687,7 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
     const stockCheckBalcao = await validateStockForBilling(item);
     if (!stockCheckBalcao.valid) {
       console.warn(`🚫 [BALCAO] NFC-e da venda ${salesCardId} bloqueada — estoque em uso insuficiente: ${stockCheckBalcao.details.replace(/\n/g, ' ')}`);
+      await registrarBloqueioEstoqueNoPedido(item, stockCheckBalcao.details, 'NFC-e do balcão não emitida');
       return null;
     }
 
@@ -3624,6 +3705,7 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       // tudo-ou-nada: nada baixou. Devolve o card e nao emite a NFC-e.
       await db.execute(sql`UPDATE billing_pipeline SET stage = ${item.stage}::billing_pipeline_stage, updated_at = now() WHERE id = ${item.id}`);
       console.warn(`🚫 [BALCAO] baixa de estoque recusada — NFC-e da venda ${salesCardId} nao emitida:`, e?.message);
+      if (ehBloqueioEstoque(e)) await registrarBloqueioEstoqueNoPedido(item, e.details || e.message, 'NFC-e do balcão não emitida');
       return null;
     }
 

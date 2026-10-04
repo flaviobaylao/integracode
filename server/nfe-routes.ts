@@ -1848,15 +1848,25 @@ export async function prepararEstoqueParaEmissao(
   if (!ehSaida || ehDevolucao) return { baixouAgora: false };
 
   const items: any[] = await storage.getFiscalInvoiceItems(invoiceId);
-  const comProduto = items.filter((it) => it.productId && Number(it.quantity) > 0);
-  if (!comProduto.length) return { baixouAgora: false };
+  const comQtd = items.filter((it) => Number(it.quantity) > 0);
+  const comProduto = comQtd.filter((it) => it.productId);
+  const semProduto = comQtd.filter((it) => !it.productId);
+  if (!comQtd.length) return { baixouAgora: false };
 
-  const instanceId = invoice.omieInstanceId || null;
-  if (instanceId) {
-    const inst: any = await storage.getOmieInstance(instanceId);
-    // a sigla (GYN/IND/SERV) pode estar no name ou no display_name
-    if (ee.instanciaSemControleDeEstoque(inst?.name) || ee.instanciaSemControleDeEstoque(inst?.displayName)) return { baixouAgora: false };
+  // Filial do estoque = filial EMITENTE da nota. NF sem instancia gravada: resolve
+  // pelo CNPJ do emitente; sem isso, GYN (o mesmo fallback do emitente).
+  const instancias: any[] = await storage.getOmieInstances();
+  const sigla = (i: any) => String(i?.name || '').toUpperCase().trim();
+  let inst: any = invoice.omieInstanceId ? instancias.find((i) => i.id === invoice.omieInstanceId) || null : null;
+  if (!inst && invoice.issuerCnpj) {
+    const cnpj = String(invoice.issuerCnpj).replace(/\D/g, '');
+    const nome = Object.keys(INSTANCE_COMPANY_DATA).find((k) => String(INSTANCE_COMPANY_DATA[k].cnpj || '').replace(/\D/g, '') === cnpj);
+    if (nome) inst = instancias.find((i) => sigla(i) === nome) || null;
   }
+  if (!inst) inst = instancias.find((i) => sigla(i) === 'GYN') || null;
+  const instanceId: string | null = inst?.id || null;
+  // a sigla (GYN/IND/SERV) pode estar no name ou no display_name
+  if (ee.instanciaSemControleDeEstoque(inst?.name) || ee.instanciaSemControleDeEstoque(inst?.displayName)) return { baixouAgora: false };
 
   // Baixa ja existente: da propria NF, ou do pedido do pipeline que a gerou
   // (achado por sales_card_id ou, no pedido interno sem card, pela referencia
@@ -1884,6 +1894,12 @@ export async function prepararEstoqueParaEmissao(
 
   let baixouAgora = false;
   if (!mapa) {
+    // NF manual/avulsa com linha fora do cadastro: sem produto nao ha estoque a
+    // baixar nem lote a informar — a mercadoria sairia sem rastro. Bloqueia.
+    if (semProduto.length) {
+      const e = new ee.LinhaSemProdutoError(semProduto.map((it) => String(it.productName || it.productCode || 'item sem nome')));
+      return { baixouAgora: false, bloqueio: { message: e.message, details: e.details, faltas: [] } };
+    }
     if (!instanceId) {
       const e = new ee.SemInstanciaEstoqueError();
       return { baixouAgora: false, bloqueio: { message: e.message, details: e.details, faltas: [] } };
