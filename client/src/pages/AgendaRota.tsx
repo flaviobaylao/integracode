@@ -131,7 +131,7 @@ export default function AgendaRota() {
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full w-max text-sm border-collapse" data-testid={`quadro-semana-${semana}`}>
+        <table className="w-max text-sm border-collapse" data-testid={`quadro-semana-${semana}`}>
           <thead>
             <tr className="bg-muted/40">
               <th className="text-left font-medium px-2 py-1 sticky left-0 bg-muted/40 z-10 w-24">&nbsp;</th>
