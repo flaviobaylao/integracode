@@ -1,12 +1,12 @@
 // ============================================================================
 // MÓDULO INDÚSTRIA 2.0 — formato 1.0 completo + melhorias (18/ago/2026)
-// Abas: Matéria-Prima · Receitas · Ordens de Produção · Estoque Produto Acabado · Documentos (05/set/2026)
+// Abas: Matéria-Prima · Receitas · Ordens de Produção · Estoque Produto Acabado · Programação (04/out/2026) · Documentos (05/set/2026)
 // Backend: /api/industria/* (industria-routes.ts) + /api/inventory/* (lotes).
 // Melhorias sobre o 1.0: finalização integrada ao estoque de produto acabado
 // (inventory_lots, consumido pela NF-e), polpa produzida entra no estoque de
 // matéria-prima automaticamente, CMV calculado ao vivo na finalização.
 // ============================================================================
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -30,14 +30,19 @@ import FuncionariosIndustria from '@/components/FuncionariosIndustria';
 import ChecklistProducao from '@/components/ChecklistProducao';
 import ManutencaoMaquinas from '@/components/ManutencaoMaquinas';
 import TrocasIndustria from '@/components/TrocasIndustria';
+import RelatorioInsumosDialog from '@/components/RelatorioInsumos';
+import ProgramacaoProducao from '@/components/ProgramacaoProducao';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
+import { gerarRe15Pdf, RE15_EMPRESA } from '@/lib/re15-pdf';
+import QRCode from 'qrcode';
+import { useAuth } from '@/hooks/useAuth';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye, ClipboardCheck, Users,
-  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat,
+  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat, CalendarClock, PenLine,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -142,6 +147,8 @@ function MateriaPrimaTab() {
   const [matDialog, setMatDialog] = useState<any>(null);      // {} = novo, material = editar
   const [movDialog, setMovDialog] = useState<Material | null>(null);
   const [histDialog, setHistDialog] = useState<Material | 'all' | null>(null);
+  // RELATORIO PRD/PP/INSUMO (Flavio 04/out): entradas, saidas e consumo em OP no periodo
+  const [relInsumosOpen, setRelInsumosOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -248,6 +255,10 @@ function MateriaPrimaTab() {
         <Button variant="outline" size="sm" onClick={() => setHistDialog('all')}>
           <History className="h-4 w-4 mr-1" /> Ver Movimentações
         </Button>
+        <Button variant="outline" size="sm" onClick={() => setRelInsumosOpen(true)} data-testid="btn-relatorio-prd-pp-insumo"
+          title="RELATÓRIO PRD/PP/INSUMO — entradas, saídas, consumo em ordens de produção, perdas e ajustes no período">
+          <FileText className="h-4 w-4 mr-1" /> Relatório PRD/PP/INSUMO
+        </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setMatDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Novo Material
         </Button>
@@ -314,6 +325,7 @@ function MateriaPrimaTab() {
       {matDialog != null && <MaterialDialog material={matDialog} onClose={() => setMatDialog(null)} onSave={saveMaterial} saving={saving} />}
       {movDialog && <MovementDialog material={movDialog} onClose={() => setMovDialog(null)} onDone={() => { setMovDialog(null); invalidate(); }} />}
       {histDialog && <MovementsDialog target={histDialog} onClose={() => setHistDialog(null)} />}
+      {relInsumosOpen && <RelatorioInsumosDialog onClose={() => setRelInsumosOpen(false)} />}
     </div>
   );
 }
@@ -921,7 +933,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
     status: order.status || 'planejada',
     production_date: order.production_date ? String(order.production_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
     notes: order.notes || '',
-    items: (order.items || []).map((it: any) => ({ raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), unit: it.unit || '', lot_number: it.lot_number || '' })),
+    items: (order.items || []).map((it: any) => ({ raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), quantity_lost: n(it.quantity_lost) > 0 ? String(it.quantity_lost) : '', unit: it.unit || '', lot_number: it.lot_number || '' })),
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const [saving, setSaving] = useState(false);
@@ -940,6 +952,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
         return {
           raw_material_id: it.raw_material_id,
           quantity_used: String(+(n(it.quantity) * mult).toFixed(4)),
+          quantity_lost: prev?.quantity_lost || '',
           unit: it.unit || '',
           lot_number: prev?.lot_number || '',
         };
@@ -952,7 +965,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
   const setItem = (idx: number, patch: any) => setF((p: any) => {
     const items = p.items.slice(); items[idx] = { ...items[idx], ...patch }; return { ...p, items };
   });
-  const addItem = () => setF((p: any) => ({ ...p, items: [...p.items, { raw_material_id: '', quantity_used: '', unit: '', lot_number: '' }] }));
+  const addItem = () => setF((p: any) => ({ ...p, items: [...p.items, { raw_material_id: '', quantity_used: '', quantity_lost: '', unit: '', lot_number: '' }] }));
   const rmItem = (idx: number) => setF((p: any) => ({ ...p, items: p.items.filter((_: any, i: number) => i !== idx) }));
 
   const save = async () => {
@@ -960,7 +973,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
     if (!(n(f.quantity) > 0)) { toast({ title: 'Quantidade inválida', variant: 'destructive' }); return; }
     setSaving(true);
     try {
-      const body = { ...f, items: f.items.filter((it: any) => it.raw_material_id && n(it.quantity_used) > 0) };
+      const body = { ...f, items: f.items.filter((it: any) => it.raw_material_id && (n(it.quantity_used) > 0 || n(it.quantity_lost) > 0)) };
       if (isNew) {
         const j = await jfetch('/api/industria/production-orders', { method: 'POST', body: JSON.stringify(body) });
         toast({ title: 'Ordem criada', description: j.order?.order_number });
@@ -1035,9 +1048,14 @@ function OrderDialog({ order, onClose, onDone }: any) {
               <Button type="button" variant="outline" size="sm" onClick={addItem}><Plus className="h-4 w-4 mr-1" /> Adicionar Material</Button>
             </div>
             {f.items.length === 0 && <p className="text-sm text-gray-400">Nenhum material adicionado. Use uma receita ou adicione manualmente.</p>}
+            {f.items.length > 0 && (
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-400 -mb-1">
+                <span className="flex-1">Material</span><span className="w-24">Consumido</span><span className="w-24 text-amber-600">Perda/Avaria</span><span className="w-28">Lote MP</span>
+              </div>
+            )}
             {f.items.map((it: any, idx: number) => {
               const mat = materials.find((m) => String(m.id) === String(it.raw_material_id));
-              const enough = mat ? n(mat.quantity) >= n(it.quantity_used) : true;
+              const enough = mat ? n(mat.quantity) >= n(it.quantity_used) + n(it.quantity_lost) : true;
               return (
                 <div key={idx} className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
@@ -1055,6 +1073,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
                     </Select>
                   </div>
                   <Input className="w-24 h-8 text-xs" inputMode="decimal" placeholder="Qtd Total" value={it.quantity_used} onChange={(e) => setItem(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-24 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda/Avaria" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={it.quantity_lost || ''} onChange={(e) => setItem(idx, { quantity_lost: e.target.value })} />
                   <Input className="w-28 h-8 text-xs" placeholder="Lote MP" title="Lote da matéria-prima" value={it.lot_number || ''} onChange={(e) => setItem(idx, { lot_number: e.target.value })} />
                   {mat && (
                     <span className={`text-xs whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -1169,24 +1188,28 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
     pasteurization_end_temp: order.pasteurization_end_temp != null ? String(order.pasteurization_end_temp) : '',
     notes: '',
     materials: (order.items || []).map((it: any) => ({
-      raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), lot_number: it.lot_number || '', unit: it.unit || '',
+      raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), quantity_lost: n(it.quantity_lost) > 0 ? String(it.quantity_lost) : '', lot_number: it.lot_number || '', unit: it.unit || '',
     })),
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const setMat = (idx: number, patch: any) => setF((p: any) => {
     const ms = p.materials.slice(); ms[idx] = { ...ms[idx], ...patch }; return { ...p, materials: ms };
   });
-  const addMat = () => setF((p: any) => ({ ...p, materials: [...p.materials, { raw_material_id: '', quantity_used: '', lot_number: '', unit: '' }] }));
+  const addMat = () => setF((p: any) => ({ ...p, materials: [...p.materials, { raw_material_id: '', quantity_used: '', quantity_lost: '', lot_number: '', unit: '' }] }));
   const rmMat = (idx: number) => setF((p: any) => ({ ...p, materials: p.materials.filter((_: any, i: number) => i !== idx) }));
   const [saving, setSaving] = useState(false);
 
+  // CMV = (consumido + perdido/avariado) x custo unitario do insumo
   const cmv = useMemo(() => {
-    const total = f.materials.reduce((s: number, m: any) => {
+    let total = 0, perdas = 0;
+    for (const m of f.materials) {
       const mat = materials.find((x) => String(x.id) === String(m.raw_material_id));
-      return s + n(m.quantity_used) * n(mat?.unit_cost);
-    }, 0);
+      const c = n(mat?.unit_cost);
+      total += (n(m.quantity_used) + n(m.quantity_lost)) * c;
+      perdas += n(m.quantity_lost) * c;
+    }
     const qty = n(f.quantity_produced);
-    return { total, unit: qty > 0 ? total / qty : 0 };
+    return { total, perdas, unit: qty > 0 ? total / qty : 0 };
   }, [f.materials, f.quantity_produced, materials]);
 
   const save = async () => {
@@ -1195,7 +1218,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
     if (!f.lot_expiry_date) { toast({ title: 'Validade do lote produzido é obrigatória', variant: 'destructive' }); return; }
     if (f.brix_degree !== '' && !(n(f.brix_degree) > 0)) { toast({ title: 'Grau Brix inválido', variant: 'destructive' }); return; }
     if (f.ph !== '' && !(n(f.ph) > 0)) { toast({ title: 'PH inválido', variant: 'destructive' }); return; }
-    const materiais = f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0);
+    const materiais = f.materials.filter((m: any) => m.raw_material_id && (n(m.quantity_used) > 0 || n(m.quantity_lost) > 0));
     // Sem insumo NAO passa em silencio (Flavio 05/set): ja houve OP finalizada
     // sem baixa de materia-prima. O servidor tambem recusa (400 SEM_INSUMOS)
     // a menos que a finalizacao sem baixa seja confirmada explicitamente.
@@ -1217,7 +1240,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
       const nIns = (j.consumed || []).length;
       toast({
         title: `Ordem ${order.order_number} finalizada`,
-        description: `${nIns ? `Baixa de ${nIns} insumo(s)` : 'SEM baixa de insumos'} · CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})`,
+        description: `${nIns ? `Baixa de ${nIns} insumo(s)` : 'SEM baixa de insumos'} · CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})${n(j.cmv?.perdas) > 0 ? ` · perdas ${fmtBRL(j.cmv?.perdas)}` : ''}`,
       });
       (j.warnings || []).forEach((w: string) => toast({ title: 'Atenção', description: w, variant: 'destructive' }));
       onDone();
@@ -1251,7 +1274,13 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
               <Label className="text-sm font-semibold">Matéria-Prima Consumida (real)</Label>
               <Button type="button" variant="outline" size="sm" onClick={addMat}><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
             </div>
-            {f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0).length === 0 && (
+            {f.materials.length > 0 && (
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-400 -mb-1">
+                <span className="flex-1">Material</span><span className="w-20">Consumido</span><span className="w-20 text-amber-600">Perda/Avaria</span><span className="w-28">Lote insumo</span>
+              </div>
+            )}
+            <p className="text-[11px] text-gray-500">Perdas/avarias somam ao consumido no CMV e também saem do estoque (lançadas como movimento "Perda").</p>
+            {f.materials.filter((m: any) => m.raw_material_id && (n(m.quantity_used) > 0 || n(m.quantity_lost) > 0)).length === 0 && (
               <div className="rounded-md border border-amber-300 bg-amber-50 text-amber-800 text-xs p-2 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <span><b>Nenhum insumo informado.</b> A finalização não vai dar baixa em matéria-prima nenhuma e o CMV ficará zerado. Adicione os materiais consumidos (a ordem foi criada sem itens ou a lista está vazia).</span>
@@ -1259,8 +1288,8 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
             )}
             {f.materials.map((m: any, idx: number) => {
               const mat = materials.find((x) => String(x.id) === String(m.raw_material_id));
-              const enough = mat ? n(mat.quantity) >= n(m.quantity_used) : true;
-              const sub = n(m.quantity_used) * n(mat?.unit_cost);
+              const enough = mat ? n(mat.quantity) >= n(m.quantity_used) + n(m.quantity_lost) : true;
+              const sub = (n(m.quantity_used) + n(m.quantity_lost)) * n(mat?.unit_cost);
               return (
                 <div key={idx} className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
@@ -1275,6 +1304,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
                     </Select>
                   </div>
                   <Input className="w-20 h-8 text-xs" inputMode="decimal" placeholder="Qtd Real" value={m.quantity_used} onChange={(e) => setMat(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-20 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={m.quantity_lost || ''} onChange={(e) => setMat(idx, { quantity_lost: e.target.value })} />
                   <Input className="w-28 h-8 text-xs" placeholder="Lote insumo" value={m.lot_number} onChange={(e) => setMat(idx, { lot_number: e.target.value })} />
                   <span className={`text-[10px] whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>est: {mat ? fmtQty(mat.quantity) : '?'}</span>
                   <span className="text-[10px] text-gray-500 whitespace-nowrap w-16 text-right">{fmtBRL(sub)}</span>
@@ -1311,7 +1341,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
           <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3">
             <p className="text-sm font-semibold mb-1">CMV — Custo de Mercadoria Vendida</p>
             <div className="grid grid-cols-3 gap-2 text-sm">
-              <div><p className="text-xs text-gray-500">Custo Total MP</p><p className="font-bold">{fmtBRL(cmv.total)}</p></div>
+              <div><p className="text-xs text-gray-500">Custo Total MP</p><p className="font-bold">{fmtBRL(cmv.total)}</p>{cmv.perdas > 0 && <p className="text-[10px] text-amber-700">incl. perdas {fmtBRL(cmv.perdas)}</p>}</div>
               <div><p className="text-xs text-gray-500">Qtd Produzida</p><p className="font-bold">{fmtQty(f.quantity_produced)}</p></div>
               <div><p className="text-xs text-gray-500">CMV Unitário</p><p className="font-bold">{fmtBRL(cmv.unit)}</p></div>
             </div>
@@ -1361,17 +1391,18 @@ function OrderDetailsDialog({ order, onClose }: any) {
           <div>
             <p className="font-semibold mb-1">Insumos</p>
             <Table>
-              <TableHeader><TableRow><TableHead>Material</TableHead><TableHead className="text-right">Qtd</TableHead><TableHead>Un.</TableHead><TableHead>Lote</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Material</TableHead><TableHead className="text-right">Consumido</TableHead><TableHead className="text-right">Perda/Avaria</TableHead><TableHead>Un.</TableHead><TableHead>Lote</TableHead></TableRow></TableHeader>
               <TableBody>
                 {(order.items || []).map((it: any) => (
                   <TableRow key={it.id}>
                     <TableCell>{it.raw_material_name}</TableCell>
                     <TableCell className="text-right">{fmtQty(it.quantity_used)}</TableCell>
+                    <TableCell className={`text-right ${n(it.quantity_lost) > 0 ? 'text-amber-700 font-medium' : 'text-gray-400'}`}>{n(it.quantity_lost) > 0 ? fmtQty(it.quantity_lost) : '-'}</TableCell>
                     <TableCell>{it.unit || '-'}</TableCell>
                     <TableCell>{it.lot_number || '-'}</TableCell>
                   </TableRow>
                 ))}
-                {(order.items || []).length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-gray-400">Sem insumos</TableCell></TableRow>}
+                {(order.items || []).length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-gray-400">Sem insumos</TableCell></TableRow>}
               </TableBody>
             </Table>
           </div>
@@ -1398,7 +1429,7 @@ function MateriaisReportDialog({ orders, onClose }: any) {
       for (const it of (o.items || [])) {
         const k = String(it.raw_material_id || it.raw_material_name || '');
         const cur = agg.get(k) || { id: it.raw_material_id, name: it.raw_material_name || '?', unit: it.unit || '', total: 0, ords: new Set<string>() };
-        cur.total += n(it.quantity_used);
+        cur.total += n(it.quantity_used) + n(it.quantity_lost);
         if (it.raw_material_name) cur.name = it.raw_material_name;
         if (it.unit) cur.unit = it.unit;
         cur.ords.add(o.order_number);
@@ -1539,23 +1570,72 @@ ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} mater
 // Com `semCusto` vira o RE-15 RELATÓRIO DE PRODUÇÃO: idêntico, mas sem
 // custo unitário/total dos insumos, sem CMV e sem o total de CMV.
 // ===========================================================================
+const data_semAssinatura = (orders: any[], validasDe: (id: any) => any[]) =>
+  orders.length === 0 || orders.some((o: any) => validasDe(o.id).length === 0);
+
 function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
   const { materials } = useIndustriaAux();
   const titulo = semCusto ? 'RE-15 RELATÓRIO DE PRODUÇÃO' : 'Relatório de Produção — Ordens de Produção';
+
+  // ---- Assinatura eletrônica (só no RE-15) --------------------------------
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user: me } = useAuth() as any;
+  const orderIds = useMemo(() => orders.map((o: any) => String(o.id)).sort(), [orders]);
+  const assinKey = ['/api/industria/re15/assinaturas', orderIds.join(',')];
+  const { data: assinData } = useQuery({
+    queryKey: assinKey,
+    queryFn: () => jfetch(`/api/industria/re15/assinaturas?ids=${encodeURIComponent(orderIds.join(','))}`),
+    enabled: semCusto && orderIds.length > 0,
+  });
+  const assinaturas: Record<string, any[]> = assinData?.porOrdem || {};
+  const validasDe = (id: any) => (assinaturas[String(id)] || []).filter((a: any) => a.situacao === 'valida');
+  const verifUrl = (codigo: string) => `${window.location.origin}/verificar/re15/${encodeURIComponent(codigo)}`;
+  const [qrs, setQrs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!semCusto) return;
+    let vivo = true;
+    (async () => {
+      const out: Record<string, string> = {};
+      for (const lista of Object.values(assinaturas)) {
+        for (const a of lista) {
+          if (a.situacao !== 'valida') continue;
+          try { out[a.codigo] = await QRCode.toDataURL(verifUrl(a.codigo), { margin: 0, width: 240, errorCorrectionLevel: 'M' }); } catch { /* sem QR, fica o código */ }
+        }
+      }
+      if (vivo) setQrs(out);
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assinData, semCusto]);
+  const [assinarOpen, setAssinarOpen] = useState(false);
+  const recarregarAssinaturas = () => qc.invalidateQueries({ queryKey: assinKey });
+  const revogar = async (a: any) => {
+    const motivo = window.prompt(`Revogar a assinatura de ${a.signer_name} (${a.papel_label}) na ordem? Informe o motivo:`, '');
+    if (motivo == null) return;
+    try {
+      await jfetch(`/api/industria/re15/assinaturas/${a.id}/revogar`, { method: 'POST', body: JSON.stringify({ motivo }) });
+      toast({ title: 'Assinatura revogada', description: a.codigo });
+      recarregarAssinaturas();
+    } catch (e: any) { toast({ title: 'Não foi possível revogar', description: String(e.message || e), variant: 'destructive' }); }
+  };
+  const semAssinaturaAlguma = data_semAssinatura(orders, validasDe);
 
   const data = useMemo(() => {
     const list = orders.map((o: any) => {
       const items = (o.items || []).map((it: any) => {
         const mat = materials.find((m: any) => String(m.id) === String(it.raw_material_id));
         const qty = n(it.quantity_used);
+        const lost = n(it.quantity_lost);
         const cost = mat ? n(mat.unit_cost) : 0;
         return {
           name: mat?.name || it.raw_material_name || '?',
           unit: it.unit || mat?.unit || '',
           qty,
+          lost,
           lot: it.lot_number || '',
           cost,
-          total: qty * cost,
+          total: (qty + lost) * cost,
         };
       }).sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
       const cmvTotal = items.reduce((s: number, i: any) => s + i.total, 0);
@@ -1619,7 +1699,7 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
         'Observações': o.notes || '',
       };
       if (r.items.length === 0) {
-        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Lote MP': '',
+        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Perda/Avaria': '', 'Lote MP': '',
           ...(semCusto ? {} : { 'Custo Unit. (R$)': '', 'Custo Total (R$)': '' }) });
       } else {
         for (const it of r.items) {
@@ -1628,6 +1708,7 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
             'Material': it.name,
             'Un.': it.unit,
             'Qtd Consumida': +it.qty.toFixed(3),
+            'Perda/Avaria': +it.lost.toFixed(3),
             'Lote MP': it.lot,
             ...(semCusto ? {} : {
               'Custo Unit. (R$)': +it.cost.toFixed(4),
@@ -1638,6 +1719,77 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
       }
     }
     exportToExcel(rows, `${semCusto ? 're-15-relatorio-producao' : 'relatorio-op'}-${new Date().toISOString().slice(0, 10)}`);
+  };
+
+  // RE-15: PDF pronto para envio externo (logo, dados da empresa, sem custos)
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const doPdf = async () => {
+    setPdfBusy(true);
+    try {
+      const hoje = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const temAnalise = (o: any) => o.brix_degree != null || o.ph != null || o.sensory_analysis || o.pasteurization_start_time || o.pasteurization_end_time;
+      await gerarRe15Pdf({
+        emitidoEm: hoje,
+        resumo: [
+          { rotulo: 'Ordens', valor: String(data.tot.ordens) },
+          { rotulo: 'Planejadas', valor: String(data.tot.planejadas) },
+          { rotulo: 'Em produção', valor: String(data.tot.emProducao) },
+          { rotulo: 'Finalizadas', valor: String(data.tot.finalizadas) },
+          { rotulo: 'Qtd planejada', valor: fmtQty(data.tot.planejada) },
+          { rotulo: 'Qtd produzida', valor: fmtQty(data.tot.produzida) },
+        ],
+        ordens: data.list.map((r: any) => {
+          const o = r.o;
+          return {
+            titulo: `${o.order_number} — ${o.product_name}`,
+            status: stLabel(o.status),
+            dados: [
+              ['Instância', String(o.instance_name || '-')],
+              ['Data de produção', fmtDate(o.production_date || o.created_at)],
+              ['Criada por', String(o.created_by || '-')],
+              ['Início', fmtDateTime(o.start_date)],
+              ['Fim', fmtDateTime(o.end_date)],
+              ['Lote produzido', `${o.lot_number || '-'} (val. ${fmtDate(o.lot_expiry_date)})`],
+              ['Qtd planejada', fmtQty(r.planejada)],
+              ['Qtd produzida', r.produzida ? fmtQty(r.produzida) : '-'],
+              ['Rendimento', r.rendimento == null ? '-' : r.rendimento.toFixed(1).replace('.', ',') + '%'],
+            ] as [string, string][],
+            analise: temAnalise(o) ? [
+              ['Grau Brix', String(o.brix_degree ?? '-')],
+              ['pH', String(o.ph ?? '-')],
+              ['Análise sensorial', sensLabel(o.sensory_analysis)],
+              ['Pasteurização', `${o.pasteurization_start_time || '-'} até ${o.pasteurization_end_time || '-'}`],
+              ['Temperatura', `${o.pasteurization_start_temp ?? '-'} °C a ${o.pasteurization_end_temp ?? '-'} °C`],
+            ] as [string, string][] : null,
+            insumos: r.items.map((it: any) => ({ material: String(it.name), unidade: String(it.unit || ''), qtd: fmtQty(it.qty), lote: String(it.lot || '') })),
+            observacoes: o.notes || undefined,
+            assinaturas: validasDe(o.id).map((a: any) => ({
+              papel: String(a.papel_label),
+              nome: String(a.signer_name || ''),
+              funcao: a.signer_funcao ? String(a.signer_funcao) : '',
+              dataHora: fmtDateTime(a.signed_at),
+              codigo: String(a.codigo),
+              url: verifUrl(a.codigo),
+              qr: qrs[a.codigo],
+            })),
+          };
+        }),
+        assinaturasManuais: semAssinaturaAlguma,
+      }, `RE-15-relatorio-producao-${new Date().toISOString().slice(0, 10)}`);
+    } catch (e: any) {
+      alert('Não foi possível gerar o PDF: ' + String(e?.message || e));
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  const assinHtml = (o: any) => {
+    const v = validasDe(o.id);
+    if (!v.length) return '<p class="sec">Assinaturas eletrônicas</p><p class="vazio">Ordem ainda não assinada eletronicamente.</p>';
+    return `<p class="sec">Assinaturas eletrônicas</p><div class="assel">${v.map((a: any) => `<div class="ass">${qrs[a.codigo] ? `<img src="${qrs[a.codigo]}" alt="QR">` : ''}<div>
+<b>${esc(a.signer_name)}</b>${a.signer_funcao ? ' — ' + esc(a.signer_funcao) : ''}<br>Responsável — ${esc(a.papel_label)}<br>
+Assinado eletronicamente via Integra em ${fmtDateTime(a.signed_at)}<br>Código de verificação: <b>${esc(a.codigo)}</b><br>
+<span class="url">${esc(verifUrl(a.codigo))}</span></div></div>`).join('')}</div>`;
   };
 
   const doPrint = () => {
@@ -1660,10 +1812,11 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
 <p class="sec">Análise do produto acabado</p>
 ${analise}
 <p class="sec">Matéria-prima consumida</p>
-<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Qtd</th><th>Lote MP</th>${semCusto ? '' : '<th class="num">Custo Unit.</th><th class="num">Custo Total</th>'}</tr></thead>
-<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td>${esc(it.lot || '-')}</td>${semCusto ? '' : `<td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td>`}</tr>`).join('') : `<tr><td colspan="${semCusto ? 4 : 6}">Sem insumos cadastrados</td></tr>`}</tbody>
-${semCusto ? '' : `<tfoot><tr><td colspan="5">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot>`}</table>
+<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Consumido</th><th class="num">Perda/Avaria</th><th>Lote MP</th>${semCusto ? '' : '<th class="num">Custo Unit.</th><th class="num">Custo Total</th>'}</tr></thead>
+<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td class="num">${it.lost ? fmtQty(it.lost) : '-'}</td><td>${esc(it.lot || '-')}</td>${semCusto ? '' : `<td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td>`}</tr>`).join('') : `<tr><td colspan="${semCusto ? 5 : 7}">Sem insumos cadastrados</td></tr>`}</tbody>
+${semCusto ? '' : `<tfoot><tr><td colspan="6">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot>`}</table>
 ${o.notes ? `<p class="obs"><b>Observações:</b> ${esc(o.notes)}</p>` : ''}
+${semCusto ? assinHtml(o) : ''}
 </div>`;
     }).join('');
 
@@ -1678,15 +1831,19 @@ table.kv th{width:12%;background:#f7f7f7}table.kv td{width:21%}
 .sec{font-size:12px;font-weight:bold;margin:10px 0 2px}.vazio{font-size:12px;color:#777;margin:2px 0}
 .obs{font-size:12px;margin-top:6px;white-space:pre-wrap}
 .resumo td,.resumo th{font-size:12px}
-.assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
+.assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}
+.assel{display:flex;flex-wrap:wrap;gap:10px}.ass{display:flex;gap:8px;align-items:center;border:1px solid #16a34a;border-radius:6px;padding:6px 8px;font-size:11px;flex:1;min-width:280px}
+.ass img{width:72px;height:72px}.url{color:#555;font-size:10px;word-break:break-all}</style></head><body>
 <div class="cab"><img src="${window.location.origin}/honest-logo.png" alt="Honest"><div>
 <h1>${titulo}</h1>
-<h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
+${semCusto
+  ? `<h2>${esc(RE15_EMPRESA.razao)} · CNPJ ${esc(RE15_EMPRESA.cnpj)}</h2><h2>${esc(RE15_EMPRESA.endereco)}</h2><h2>${esc(RE15_EMPRESA.contato)} · emitido em ${hoje}</h2>`
+  : `<h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>`}
 </div></div>
 <table class="resumo"><thead><tr><th>Ordens</th><th>Planejadas</th><th>Em produção</th><th>Finalizadas</th><th class="num">Qtd planejada</th><th class="num">Qtd produzida</th>${semCusto ? '' : '<th class="num">CMV total</th>'}</tr></thead>
 <tbody><tr><td>${data.tot.ordens}</td><td>${data.tot.planejadas}</td><td>${data.tot.emProducao}</td><td>${data.tot.finalizadas}</td><td class="num">${fmtQty(data.tot.planejada)}</td><td class="num">${fmtQty(data.tot.produzida)}</td>${semCusto ? '' : `<td class="num">${fmtBRL(data.tot.cmv)}</td>`}</tr></tbody></table>
 ${fichas}
-<div class="assin"><div>Produção</div><div>Qualidade</div><div>Data / Hora</div></div>
+${!semCusto || semAssinaturaAlguma ? '<div class="assin"><div>Produção</div><div>Qualidade</div><div>Data / Hora</div></div>' : ''}
 <script>window.onload=function(){window.print()}</script></body></html>`;
     const w = window.open('', '_blank');
     if (!w) { alert('Libere pop-ups para imprimir o relatório.'); return; }
@@ -1720,6 +1877,7 @@ ${fichas}
                   <TableHead className="text-right">Rend.</TableHead>
                   <TableHead>Lote</TableHead>
                   <TableHead>Brix / pH</TableHead>
+                  {semCusto && <TableHead>Assinaturas</TableHead>}
                   {!semCusto && <TableHead className="text-right">CMV</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -1734,11 +1892,28 @@ ${fichas}
                     <TableCell className="text-right text-xs">{r.rendimento == null ? '-' : `${r.rendimento.toFixed(1)}%`}</TableCell>
                     <TableCell className="text-xs">{r.o.lot_number || '-'}</TableCell>
                     <TableCell className="text-xs">{(r.o.brix_degree ?? '-') + ' / ' + (r.o.ph ?? '-')}</TableCell>
+                    {semCusto && (
+                      <TableCell className="text-xs">
+                        <div className="flex flex-col gap-1">
+                          {(assinaturas[String(r.o.id)] || []).map((a: any) => (
+                            <span key={a.id}
+                              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 border ${a.situacao === 'valida' ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-amber-50 border-amber-300 text-amber-800'}`}
+                              title={`${a.codigo} · ${fmtDateTime(a.signed_at)}${a.situacao === 'valida' ? '' : ' — a ordem foi alterada depois da assinatura; assine de novo'}`}>
+                              {a.situacao === 'valida' ? '✓' : '⚠'} {a.papel_label}: {a.signer_name}{a.situacao === 'valida' ? '' : ' (alterada)'}
+                              <button type="button" className="ml-1 text-gray-400 hover:text-red-600" onClick={() => revogar(a)} title="Revogar assinatura">×</button>
+                            </span>
+                          ))}
+                          {(assinaturas[String(r.o.id)] || []).length === 0 && (
+                            <span className="text-gray-400">{r.o.status === 'finalizada' ? 'não assinada' : 'só após finalizar'}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
                     {!semCusto && <TableCell className="text-right">{fmtBRL(r.cmvTotal)}</TableCell>}
                   </TableRow>
                 ))}
                 {data.list.length === 0 && (
-                  <TableRow><TableCell colSpan={semCusto ? 8 : 9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -1752,8 +1927,130 @@ ${fichas}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Fechar</Button>
           <Button variant="outline" onClick={doExcel}><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel</Button>
+          {semCusto && (
+            <Button variant="outline" onClick={() => setAssinarOpen(true)}
+              disabled={!data.list.some((r: any) => r.o.status === 'finalizada')}
+              className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+              title="Assinar eletronicamente as ordens finalizadas deste relatório com sua senha do Integra">
+              <PenLine className="h-4 w-4 mr-1" /> Assinar
+            </Button>
+          )}
+          {semCusto && (
+            <Button variant="outline" onClick={doPdf} disabled={pdfBusy || data.list.length === 0}
+              title="Baixa o RE-15 em PDF com a logo e os dados da empresa, pronto para enviar a clientes e fiscalização">
+              {pdfBusy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />} Baixar PDF
+            </Button>
+          )}
           <Button onClick={doPrint} className="bg-emerald-600 hover:bg-emerald-700 text-white">
             <Printer className="h-4 w-4 mr-1" /> Imprimir
+          </Button>
+        </DialogFooter>
+        {assinarOpen && (
+          <AssinarRe15Dialog
+            orders={data.list.map((r: any) => r.o)}
+            assinaturas={assinaturas}
+            me={me}
+            onClose={() => setAssinarOpen(false)}
+            onDone={() => { setAssinarOpen(false); recarregarAssinaturas(); }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// RE-15 — ASSINATURA ELETRÔNICA pelo responsável (senha do Integra)
+// O servidor grava o hash do conteúdo de cada ordem; se a ordem mudar depois,
+// a assinatura deixa de valer. Só ordens finalizadas.
+// ===========================================================================
+function AssinarRe15Dialog({ orders, assinaturas, me, onClose, onDone }: any) {
+  const { toast } = useToast();
+  const [papel, setPapel] = useState<'producao' | 'qualidade'>('producao');
+  const [funcao, setFuncao] = useState<string>(() => { try { return localStorage.getItem('re15-funcao') || ''; } catch { return ''; } });
+  const [senha, setSenha] = useState('');
+  const [declaro, setDeclaro] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const papelLabel = papel === 'producao' ? 'Produção' : 'Qualidade';
+  const finalizadas = orders.filter((o: any) => o.status === 'finalizada');
+  const pendentes = finalizadas.filter((o: any) =>
+    !(assinaturas[String(o.id)] || []).some((a: any) => a.papel === papel && a.situacao === 'valida'));
+  const nome = [me?.firstName, me?.lastName].filter(Boolean).join(' ') || me?.email || '';
+  const impersonando = !!me?._impersonatingRole;
+
+  const assinar = async () => {
+    setEnviando(true);
+    try {
+      try { localStorage.setItem('re15-funcao', funcao); } catch { /* sem storage */ }
+      const j = await jfetch('/api/industria/re15/assinar', {
+        method: 'POST',
+        body: JSON.stringify({ orderIds: pendentes.map((o: any) => o.id), papel, senha, funcao }),
+      });
+      const falhas = (j.resultado || []).filter((r: any) => !r.ok);
+      toast({ title: `${j.assinadas} ordem(ns) assinada(s) como ${papelLabel}` });
+      for (const f of falhas) toast({ title: `${f.ordem || f.id}: não assinada`, description: f.motivo, variant: 'destructive' });
+      onDone();
+    } catch (e: any) {
+      toast({ title: 'Assinatura não realizada', description: String(e.message || e), variant: 'destructive' });
+      setSenha('');
+    } finally { setEnviando(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Assinar RE-15 eletronicamente</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          {impersonando && (
+            <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-800">
+              Você está no modo "Entrar como". Saia dele para assinar — a assinatura é sempre de quem está logado de verdade.
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Assinar como responsável</Label>
+              <Select value={papel} onValueChange={(v: any) => setPapel(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="producao">Produção</SelectItem>
+                  <SelectItem value="qualidade">Qualidade</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Signatário</Label>
+              <Input value={nome} disabled />
+            </div>
+          </div>
+          <div>
+            <Label>Função / registro profissional (opcional)</Label>
+            <Input value={funcao} onChange={(e) => setFuncao(e.target.value)} maxLength={120}
+              placeholder="Ex.: Responsável Técnico — CRQ 12345" />
+          </div>
+          <div className="rounded border p-2 max-h-40 overflow-auto">
+            <p className="text-xs text-gray-500 mb-1">Ordens que serão assinadas como {papelLabel} ({pendentes.length}):</p>
+            {pendentes.map((o: any) => <p key={o.id} className="text-xs">{o.order_number} — {o.product_name} · lote {o.lot_number || '-'}</p>)}
+            {pendentes.length === 0 && <p className="text-xs text-gray-400">Nenhuma — todas as finalizadas já estão assinadas como {papelLabel}.</p>}
+            {orders.length > finalizadas.length && (
+              <p className="text-xs text-amber-700 mt-1">{orders.length - finalizadas.length} ordem(ns) não finalizada(s) ficam de fora.</p>
+            )}
+          </div>
+          <label className="flex items-start gap-2 text-xs">
+            <Checkbox checked={declaro} onCheckedChange={(v) => setDeclaro(!!v)} className="mt-0.5" />
+            <span>Declaro que conferi os dados das ordens acima (lote, quantidades, análises, pasteurização e matérias-primas) e
+              que os assino como responsável pela {papelLabel}. Se a ordem for alterada depois, esta assinatura perde o efeito.</span>
+          </label>
+          <div>
+            <Label>Sua senha do Integra</Label>
+            <Input type="password" autoComplete="current-password" value={senha} onChange={(e) => setSenha(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && declaro && senha && pendentes.length && !enviando && !impersonando) assinar(); }} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={assinar} disabled={!declaro || !senha || pendentes.length === 0 || enviando || impersonando}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            {enviando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <PenLine className="h-4 w-4 mr-1" />} Assinar {pendentes.length} ordem(ns)
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2244,6 +2541,9 @@ export default function Industry() {
             <TabsTrigger value="estoque" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <Factory className="h-4 w-4" /> Estoque Produto Acabado
             </TabsTrigger>
+            <TabsTrigger value="programacao" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700" data-testid="tab-industria-programacao">
+              <CalendarClock className="h-4 w-4" /> Programação
+            </TabsTrigger>
             <TabsTrigger value="checklist" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <ListChecks className="h-4 w-4" /> Checklist diário
             </TabsTrigger>
@@ -2270,6 +2570,7 @@ export default function Industry() {
           <TabsContent value="receitas"><RecipesEditor /></TabsContent>
           <TabsContent value="ordens"><OrdensTab /></TabsContent>
           <TabsContent value="estoque"><EstoqueTab /></TabsContent>
+          <TabsContent value="programacao"><ProgramacaoProducao /></TabsContent>
           <TabsContent value="checklist"><ChecklistProducao /></TabsContent>
           <TabsContent value="manutencao"><ManutencaoMaquinas /></TabsContent>
           <TabsContent value="documentos"><DocumentosEmpresa /></TabsContent>

@@ -26,6 +26,7 @@ async function main() {
     brix_degree numeric, ph numeric, sensory_analysis varchar, lot_expiry_date varchar, lot_number varchar,
     pasteurization_start_time varchar, pasteurization_end_time varchar, pasteurization_start_temp numeric, pasteurization_end_temp numeric)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS production_order_items (id varchar PRIMARY KEY, production_order_id varchar, raw_material_id varchar, raw_material_name varchar, quantity_used numeric, unit varchar, lot_number varchar, lot_expiry_date varchar)`);
+  await db.execute(sql`ALTER TABLE production_order_items ADD COLUMN IF NOT EXISTS quantity_lost numeric(14,3) NOT NULL DEFAULT 0`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS raw_materials (id varchar PRIMARY KEY, name varchar, unit varchar, quantity numeric, unit_cost numeric, updated_at timestamp)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS raw_material_movements (id varchar PRIMARY KEY, raw_material_id varchar, movement_type varchar, quantity numeric, previous_quantity numeric, new_quantity numeric, production_order_id varchar, notes text, created_by varchar, created_at timestamp, unit_cost numeric)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS recipes (id varchar PRIMARY KEY, name varchar, product_name varchar, product_id varchar, is_active boolean DEFAULT true, updated_at timestamp)`);
@@ -142,6 +143,37 @@ async function main() {
     r = await call('POST', '/api/industria/production-orders/op5/reopen');
     t('reopen 200', r.status === 200, r.json);
     t('acucar volta a 48', (await qtd('mp-acucar')) === 48);
+
+    console.log('\n9) Perdas/avarias: somam no CMV e na baixa (movimento perda), estornam na reabertura');
+    await mkOp('op6', 'OP-6');
+    const pol0 = await qtd('mp-polpa'), gar0 = await qtd('mp-garrafa');
+    r = await call('POST', '/api/industria/production-orders/op6/finalize', { ...base, lot_number: 'H-PERDA', materials: [
+      { raw_material_id: 'mp-polpa', quantity_used: 10, quantity_lost: 2 },
+      { raw_material_id: 'mp-garrafa', quantity_used: 100, quantity_lost: 6 },
+      { raw_material_id: 'mp-acucar', quantity_used: 0, quantity_lost: 1 } ] });
+    t('200', r.status === 200, r.json);
+    t('CMV = (12*10)+(106*0.5)+(1*4) = 177; perdas = 20+3+4 = 27', r.json?.cmv?.total === 177 && r.json?.cmv?.perdas === 27, r.json?.cmv);
+    t('polpa -12, garrafa -106, acucar -1', (await qtd('mp-polpa')) === pol0 - 12 && (await qtd('mp-garrafa')) === gar0 - 106 && (await qtd('mp-acucar')) === 47);
+    const perdas6 = await q(sql`SELECT * FROM raw_material_movements WHERE production_order_id='op6' AND movement_type='perda'`);
+    t('3 movimentos perda + 2 saida_producao', perdas6.length === 3 && (await baixas('op6')).length === 2, perdas6.length);
+    const mvPolpa = await q(sql`SELECT movement_type, quantity, previous_quantity, new_quantity FROM raw_material_movements WHERE production_order_id='op6' AND raw_material_id='mp-polpa' ORDER BY created_at, movement_type DESC`);
+    t('encadeamento de saldo polpa (saida depois perda)', mvPolpa.length === 2 && mvPolpa.some((m: any) => m.movement_type === 'perda' && Number(m.new_quantity) === pol0 - 12), mvPolpa);
+    const it6 = await q(sql`SELECT raw_material_id, quantity_used, quantity_lost FROM production_order_items WHERE production_order_id='op6' ORDER BY raw_material_id`);
+    t('itens gravam quantity_lost', it6.length === 3 && Number(it6.find((x: any) => x.raw_material_id === 'mp-garrafa')?.quantity_lost) === 6, it6);
+    t('lote com CMV unit 1.77', Number((await q(sql`SELECT unit_cost FROM inventory_lots WHERE production_order_id='op6'`))[0]?.unit_cost) === 1.77);
+    t('notes cita perdas', /incl\. perdas R\$ 27\.00/.test((await status('op6')).notes), (await status('op6')).notes);
+    r = await call('POST', '/api/industria/production-orders/op6/reopen');
+    t('reopen 200', r.status === 200, r.json);
+    t('estoque volta (polpa, garrafa, acucar)', (await qtd('mp-polpa')) === pol0 && (await qtd('mp-garrafa')) === gar0 && (await qtd('mp-acucar')) === 48);
+    r = await call('GET', '/api/industria/production-orders');
+    const o6 = (r.json?.orders || []).find((o: any) => o.id === 'op6');
+    t('reaberta: itens com perda continuam na OP', o6 && o6.items.length === 3 && o6.items.some((i: any) => Number(i.quantity_lost) === 2), o6?.items);
+    r = await call('POST', '/api/industria/production-orders/op6/finalize', { ...base, lot_number: 'H-PERDA', materials: [] });
+    t('refinaliza pelos itens da OP (com perdas): CMV 177', r.status === 200 && r.json?.cmv?.total === 177 && r.json?.origemInsumos === 'itens_da_op', r.json);
+    t('baixa refeita uma vez (polpa -12)', (await qtd('mp-polpa')) === pol0 - 12);
+    r = await call('PATCH', '/api/industria/production-orders/op4', { items: [{ raw_material_id: 'mp-polpa', quantity_used: 3, quantity_lost: 0.5 }, { raw_material_id: 'mp-acucar', quantity_used: 0, quantity_lost: 0 }] });
+    const it4 = await q(sql`SELECT * FROM production_order_items WHERE production_order_id='op4'`);
+    t('PATCH grava perda e descarta linha zerada', r.status === 200 && it4.length === 1 && Number(it4[0].quantity_lost) === 0.5, it4);
   } finally { server.close(); }
   console.log(`\n${ok} ok, ${fail} falha(s)`);
   process.exit(fail ? 1 : 0);

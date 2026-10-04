@@ -97,6 +97,10 @@ export function ensureCompanyDocumentsSchema(): Promise<void> {
       await db.execute(sql.raw(
         "CREATE INDEX IF NOT EXISTS idx_company_documents_category ON company_documents (category_id)"
       )).catch(() => {});
+      // --- versão / revisão do documento (04/out/2026) ---
+      await db.execute(sql.raw(
+        "ALTER TABLE company_documents ADD COLUMN IF NOT EXISTS revision varchar(60)"
+      )).catch(() => {});
       // Seed only once (tabela vazia) — depois disso o cadastro é do usuário.
       const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM company_document_categories`);
       if (Number(cnt.rows?.[0]?.n || 0) === 0) {
@@ -181,6 +185,7 @@ function mapRow(row: any) {
     validFrom: toISODate(row.valid_from),
     validUntil,
     status: row.status,
+    revision: row.revision || "",
     notes: row.notes || "",
     fileName: row.file_name || null,
     mimetype: row.mimetype || null,
@@ -245,6 +250,7 @@ function validarCampos(body: any, parcial = false): { erro?: string; campos?: an
     if (!cat) return { erro: "Selecione a categoria do documento" };
     campos.categoryId = cat;
   }
+  if (body.revision !== undefined) campos.revision = String(body.revision ?? "").trim().slice(0, 60) || null;
   if (body.notes !== undefined) campos.notes = String(body.notes ?? "").slice(0, 2000) || null;
   return { campos };
 }
@@ -404,7 +410,7 @@ export function registerCompanyDocumentsRoutes(app: Express) {
       if (status && STATUS_VALIDOS.includes(status)) conds.push(sql`d.status = ${status}`);
       if (categoria) conds.push(sql`d.category_id = ${categoria}`);
       const r: any = await db.execute(sql`
-        SELECT d.id, d.name, d.instance_name, d.valid_from, d.valid_until, d.status, d.notes,
+        SELECT d.id, d.name, d.instance_name, d.valid_from, d.valid_until, d.status, d.revision, d.notes,
                d.file_name, d.mimetype, d.file_size, d.created_at, d.updated_at,
                d.category_id, c.name AS category_name, c.color AS category_color
         FROM company_documents d
@@ -445,14 +451,14 @@ export function registerCompanyDocumentsRoutes(app: Express) {
 
       const r: any = await db.execute(sql`
         INSERT INTO company_documents
-          (name, instance_name, category_id, valid_from, valid_until, status, notes,
+          (name, instance_name, category_id, valid_from, valid_until, status, revision, notes,
            file_name, mimetype, file_size, data, created_by, updated_by, updated_at)
         VALUES
           (${c.name}, ${c.instanceName}, ${c.categoryId}, ${c.validFrom ?? null}, ${c.validUntil ?? null},
-           ${c.status}, ${c.notes ?? null},
+           ${c.status}, ${c.revision ?? null}, ${c.notes ?? null},
            ${fileName}, ${mimetype}, ${fileSize}, ${b64},
            ${req.currentUser?.id || null}, ${req.currentUser?.id || null}, now())
-        RETURNING id, name, instance_name, category_id, valid_from, valid_until, status, notes,
+        RETURNING id, name, instance_name, category_id, valid_from, valid_until, status, revision, notes,
                   file_name, mimetype, file_size, created_at, updated_at`);
       const doc = mapRow(r.rows?.[0] || {});
       console.log(`[DOCS-EMPRESA] criado: ${doc.name} (${doc.instanceName})${fileName ? ` + ${fileName} ${fileSize}B` : ""}`);
@@ -488,6 +494,7 @@ export function registerCompanyDocumentsRoutes(app: Express) {
       if (c.categoryId !== undefined) sets.push(sql`category_id = ${c.categoryId}`);
       if (c.validFrom !== undefined) sets.push(sql`valid_from = ${c.validFrom}`);
       if (c.validUntil !== undefined) sets.push(sql`valid_until = ${c.validUntil}`);
+      if (c.revision !== undefined) sets.push(sql`revision = ${c.revision}`);
       if (c.notes !== undefined) sets.push(sql`notes = ${c.notes}`);
 
       const file = req.file as Express.Multer.File | undefined;
@@ -505,7 +512,7 @@ export function registerCompanyDocumentsRoutes(app: Express) {
       const r: any = await db.execute(sql`
         UPDATE company_documents SET ${sql.join(sets, sql`, `)}
         WHERE id = ${id}
-        RETURNING id, name, instance_name, category_id, valid_from, valid_until, status, notes,
+        RETURNING id, name, instance_name, category_id, valid_from, valid_until, status, revision, notes,
                   file_name, mimetype, file_size, created_at, updated_at`);
       res.json({ message: "Documento atualizado", documento: mapRow(r.rows?.[0] || {}) });
     } catch (e: any) {

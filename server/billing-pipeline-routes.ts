@@ -3018,10 +3018,15 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
       continue;
     }
 
+    // ENTRADA EM ESTOQUE BLOQUEADO (Flavio, 04/out/2026): o que chega por NF de
+    // transferencia entra na filial como BLOQUEADO, atras do estoque em uso. Ele so
+    // vira "em uso" quando o lote em uso daquele produto acaba (promocao FIFO em
+    // deductStockForBilling / consumeStock). Por isso a soma no mesmo lote so
+    // acontece com um lote BLOQUEADO de mesmo numero — nunca com o que ja esta em uso.
     const existentes = await storage.getInventoryLots({
       productId: p.id,
       instanceId: destinoId,
-      stockType: 'in_use',
+      stockType: 'blocked',
       isActive: true,
     });
     const mesmoLote = existentes.find((l: any) => String(l.lotNumber).trim() === lotNumber);
@@ -3083,7 +3088,7 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
     const novoLote = await storage.createInventoryLot({
       productId: p.id,
       instanceId: destinoId,
-      stockType: 'in_use',
+      stockType: 'blocked',
       lotNumber,
       quantity: qty.toFixed(4),
       minQuantity: '0',
@@ -3106,7 +3111,7 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
       notes: `Entrada por transferencia ${item.orderNumber || item.id} (${item.omieInstanceName || 'origem'} -> ${p.transferToInstanceName || 'destino'})`,
       createdBy: quem,
     } as any);
-    console.log(`🔁 [TRANSFER] ${lotNumber}: lote criado em ${p.transferToInstanceName || destinoId} com ${qty} un. a CMV ${unitCost || 'n/d'}`);
+    console.log(`🔁 [TRANSFER] ${lotNumber}: lote BLOQUEADO criado em ${p.transferToInstanceName || destinoId} com ${qty} un. a CMV ${unitCost || 'n/d'}`);
   }
 }
 

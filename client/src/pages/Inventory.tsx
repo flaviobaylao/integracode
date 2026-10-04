@@ -210,15 +210,156 @@ export default function Inventory() {
     });
   }, [summaryQuery.data?.lots, filterInstance, filterStockType, searchTerm]);
 
-  const groupedByInstance = useMemo(() => {
+  // FINALIZADO (Flavio, 04/out/2026): lote sem saldo sai da lista principal e vai
+  // para a aba "Estoques Finalizados". Na lista principal: em uso primeiro,
+  // bloqueados (fila de reposicao, entrada por transferencia) no final.
+  const isFinalizado = (lot: { quantity: string }) => (parseFloat(lot.quantity || '0') || 0) <= 0;
+  const finalizedLots = useMemo(() => filteredLots.filter(isFinalizado), [filteredLots]);
+  const activeLots = useMemo(() => filteredLots.filter(l => !isFinalizado(l)), [filteredLots]);
+
+  const groupBy = (list: typeof filteredLots) => {
     const groups: Record<string, typeof filteredLots> = {};
-    for (const lot of filteredLots) {
+    for (const lot of list) {
       const key = lot.instanceId;
       if (!groups[key]) groups[key] = [];
       groups[key].push(lot);
     }
     return groups;
-  }, [filteredLots]);
+  };
+  const finalizedByInstance = useMemo(() => groupBy(finalizedLots), [finalizedLots]);
+
+  const groupedByInstance = useMemo(() => {
+    const groups: Record<string, typeof filteredLots> = {};
+    for (const lot of activeLots) {
+      const key = lot.instanceId;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(lot);
+    }
+    return groups;
+  }, [activeLots]);
+
+  // Em uso no topo, bloqueados no fim; dentro de cada tipo vale a ordenacao da coluna
+  // escolhida (sem coluna escolhida, bloqueados ficam na ordem de chegada = FIFO).
+  const orderLots = (list: any[]) => {
+    const getVal = (lot: any, key: string) => { switch (key) { case 'produto': return (lot.product && lot.product.name) || lot.productId || ''; case 'tipo': return lot.stockType || ''; case 'lote': return lot.lotNumber || ''; case 'qty': return parseFloat(lot.quantity || '0'); case 'minQty': return parseFloat(lot.minQuantity || '0'); case 'status': return (parseFloat(lot.minQuantity || '0') > 0 && parseFloat(lot.quantity || '0') <= parseFloat(lot.minQuantity || '0')) ? 0 : 1; default: return ''; } };
+    const emUso = sortRows(list.filter(l => l.stockType === 'in_use'), getVal);
+    const bloqueados = sortRows(list.filter(l => l.stockType !== 'in_use'), getVal);
+    return [...emUso, ...bloqueados];
+  };
+
+
+  const renderInstanceGroups = (groups: Record<string, any[]>, finalizados = false) => (
+    Object.entries(groups).map(([instanceId, lots]) => {
+                const instance = instanceMap.get(instanceId);
+                const colorClass = getInstanceColor(instance?.shortCode || 'default');
+                return (
+                  <Card key={instanceId} className="mb-4">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Badge variant="outline" className={`${colorClass} border px-3 py-1`}>
+                          {instance?.shortCode || instanceId}
+                        </Badge>
+                        <span className="text-gray-700 dark:text-gray-300">{instance?.name || 'Instância Desconhecida'}</span>
+                        <Badge variant="secondary" className="ml-auto">{lots.length} lotes</Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <SortableTh label="Produto" colKey="produto" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Tipo" colKey="tipo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Lote" colKey="lote" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Quantidade" colKey="qty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Qtd. Mínima" colKey="minQty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
+                              <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
+                              <TableHead className="text-right">Ações</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {orderLots(lots).map(lot => {
+                              const qty = parseFloat(lot.quantity);
+                              const minQty = parseFloat(lot.minQuantity || '0');
+                              const isLow = minQty > 0 && qty <= minQty;
+                              return (
+                                <TableRow key={lot.id} className={isLow ? 'bg-red-50 dark:bg-red-950/20' : ''}>
+                                  <TableCell className="font-medium">
+                                    {lot.product?.name || lot.productId}
+                                  </TableCell>
+                                  <TableCell>
+                                    {lot.stockType === 'in_use' ? (
+                                      <Badge className="bg-green-100 text-green-800 border-green-300">Em Uso</Badge>
+                                    ) : (
+                                      <Badge className="bg-amber-100 text-amber-800 border-amber-300">Bloqueado</Badge>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    <code className="text-sm bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
+                                      {lot.lotNumber}
+                                    </code>
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono">
+                                    <span className={isLow ? 'text-red-600 font-bold' : ''}>
+                                      {qty.toFixed(2)}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono text-gray-500">
+                                    {minQty.toFixed(2)}
+                                  </TableCell>
+                                  <TableCell>
+                                    {isFinalizado(lot) ? (
+                                      <Badge variant="secondary" className={qty < 0 ? 'bg-red-100 text-red-800' : 'bg-gray-200 text-gray-700'}>
+                                        {qty < 0 ? 'Finalizado (saldo negativo)' : 'Finalizado'}
+                                      </Badge>
+                                    ) : !lot.isActive ? (
+                                      <Badge variant="secondary">Inativo</Badge>
+                                    ) : isLow ? (
+                                      <Badge variant="destructive" className="flex items-center gap-1 w-fit">
+                                        <AlertTriangle className="h-3 w-3" />
+                                        Estoque Baixo
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="outline" className="text-green-600 border-green-300 flex items-center gap-1 w-fit">
+                                        <CheckCircle2 className="h-3 w-3" />
+                                        Normal
+                                      </Badge>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {lot.transferLock ? (
+                                      <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1 font-normal cursor-help"
+                                        title={lot.transferLock.reason}>
+                                        <Lock className="h-3 w-3" />
+                                        {lot.transferLock.invoiceNumber ? `NF-e ${lot.transferLock.invoiceNumber}` : (lot.transferLock.orderNumber || 'transferência')}
+                                      </Badge>
+                                    ) : (
+                                    <div className="flex justify-end gap-1">
+                                      <Button variant="ghost" size="sm" onClick={() => handleEdit(lot)}>
+                                        <Edit className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-red-500 hover:text-red-700"
+                                        onClick={() => handleDelete(lot)}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })
+  );
 
   const handleCreate = () => {
     if (!formData.productId || !formData.instanceId || !formData.lotNumber || !formData.quantity) {
@@ -357,6 +498,10 @@ export default function Inventory() {
               <Package className="h-4 w-4 mr-1" />
               Lotes de Estoque
             </TabsTrigger>
+            <TabsTrigger value="finalized">
+              <CheckCircle2 className="h-4 w-4 mr-1" />
+              Estoques Finalizados ({finalizedLots.length})
+            </TabsTrigger>
             <TabsTrigger value="movements">
               <History className="h-4 w-4 mr-1" />
               Movimentações
@@ -402,7 +547,7 @@ export default function Inventory() {
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
               </div>
-            ) : filteredLots.length === 0 ? (
+            ) : activeLots.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center text-gray-500">
                   <Package className="h-12 w-12 mx-auto mb-3 opacity-30" />
@@ -411,112 +556,26 @@ export default function Inventory() {
                 </CardContent>
               </Card>
             ) : (
-              Object.entries(groupedByInstance).map(([instanceId, lots]) => {
-                const instance = instanceMap.get(instanceId);
-                const colorClass = getInstanceColor(instance?.shortCode || 'default');
-                return (
-                  <Card key={instanceId} className="mb-4">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <Badge variant="outline" className={`${colorClass} border px-3 py-1`}>
-                          {instance?.shortCode || instanceId}
-                        </Badge>
-                        <span className="text-gray-700 dark:text-gray-300">{instance?.name || 'Instância Desconhecida'}</span>
-                        <Badge variant="secondary" className="ml-auto">{lots.length} lotes</Badge>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <SortableTh label="Produto" colKey="produto" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
-                              <SortableTh label="Tipo" colKey="tipo" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
-                              <SortableTh label="Lote" colKey="lote" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
-                              <SortableTh label="Quantidade" colKey="qty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
-                              <SortableTh label="Qtd. Mínima" colKey="minQty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" className="sticky top-0 z-20 bg-background h-12 px-4 text-right align-middle font-medium text-muted-foreground" />
-                              <SortableTh label="Status" colKey="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="sticky top-0 z-20 bg-background h-12 px-4 text-left align-middle font-medium text-muted-foreground" />
-                              <TableHead className="text-right">Ações</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {sortRows(lots, (lot: any, key: string) => { switch (key) { case 'produto': return (lot.product && lot.product.name) || lot.productId || ''; case 'tipo': return lot.stockType || ''; case 'lote': return lot.lotNumber || ''; case 'qty': return parseFloat(lot.quantity || '0'); case 'minQty': return parseFloat(lot.minQuantity || '0'); case 'status': return (parseFloat(lot.minQuantity || '0') > 0 && parseFloat(lot.quantity || '0') <= parseFloat(lot.minQuantity || '0')) ? 0 : 1; default: return ''; } }).map(lot => {
-                              const qty = parseFloat(lot.quantity);
-                              const minQty = parseFloat(lot.minQuantity || '0');
-                              const isLow = minQty > 0 && qty <= minQty;
-                              return (
-                                <TableRow key={lot.id} className={isLow ? 'bg-red-50 dark:bg-red-950/20' : ''}>
-                                  <TableCell className="font-medium">
-                                    {lot.product?.name || lot.productId}
-                                  </TableCell>
-                                  <TableCell>
-                                    {lot.stockType === 'in_use' ? (
-                                      <Badge className="bg-green-100 text-green-800 border-green-300">Em Uso</Badge>
-                                    ) : (
-                                      <Badge className="bg-amber-100 text-amber-800 border-amber-300">Bloqueado</Badge>
-                                    )}
-                                  </TableCell>
-                                  <TableCell>
-                                    <code className="text-sm bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
-                                      {lot.lotNumber}
-                                    </code>
-                                  </TableCell>
-                                  <TableCell className="text-right font-mono">
-                                    <span className={isLow ? 'text-red-600 font-bold' : ''}>
-                                      {qty.toFixed(2)}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell className="text-right font-mono text-gray-500">
-                                    {minQty.toFixed(2)}
-                                  </TableCell>
-                                  <TableCell>
-                                    {!lot.isActive ? (
-                                      <Badge variant="secondary">Inativo</Badge>
-                                    ) : isLow ? (
-                                      <Badge variant="destructive" className="flex items-center gap-1 w-fit">
-                                        <AlertTriangle className="h-3 w-3" />
-                                        Estoque Baixo
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="outline" className="text-green-600 border-green-300 flex items-center gap-1 w-fit">
-                                        <CheckCircle2 className="h-3 w-3" />
-                                        Normal
-                                      </Badge>
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    {lot.transferLock ? (
-                                      <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1 font-normal cursor-help"
-                                        title={lot.transferLock.reason}>
-                                        <Lock className="h-3 w-3" />
-                                        {lot.transferLock.invoiceNumber ? `NF-e ${lot.transferLock.invoiceNumber}` : (lot.transferLock.orderNumber || 'transferência')}
-                                      </Badge>
-                                    ) : (
-                                    <div className="flex justify-end gap-1">
-                                      <Button variant="ghost" size="sm" onClick={() => handleEdit(lot)}>
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="text-red-500 hover:text-red-700"
-                                        onClick={() => handleDelete(lot)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                    )}
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })
+              renderInstanceGroups(groupedByInstance)
+
+            )}
+          </TabsContent>
+
+          <TabsContent value="finalized" className="mt-4">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+              </div>
+            ) : finalizedLots.length === 0 ? (
+              <Card>
+                <CardContent className="py-12 text-center text-gray-500">
+                  <CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                  <p>Nenhum estoque finalizado</p>
+                  <p className="text-sm mt-1">Lotes que zeram o saldo aparecem aqui automaticamente</p>
+                </CardContent>
+              </Card>
+            ) : (
+              renderInstanceGroups(finalizedByInstance, true)
             )}
           </TabsContent>
 

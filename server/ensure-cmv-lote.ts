@@ -58,6 +58,7 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
     // OP-00008 (30 movimentos, com estorno) ficou 5x. Uma refinalizacao REESCREVE o
     // consumo daquele material; as tentativas anteriores sao historico de erro, nao
     // custo. Com DISTINCT ON, os 8 lotes com CMV batem com o rodape das ordens.
+    // Perdas/avarias da OP (movimento 'perda', 04/out/2026) tambem sao custo do lote.
     const fill: any = await db.execute(sql`
       UPDATE inventory_lots l
          SET total_cost = c.total,
@@ -66,11 +67,12 @@ export async function ensureCmvLoteColumns(): Promise<{ ok: boolean; backfilled?
         JOIN (
           SELECT production_order_id, SUM(quantity * COALESCE(unit_cost, 0)) AS total
             FROM (
-              SELECT DISTINCT ON (production_order_id, raw_material_id)
+              SELECT DISTINCT ON (production_order_id, raw_material_id, movement_type)
                      production_order_id, raw_material_id, quantity, unit_cost
                 FROM raw_material_movements
-               WHERE movement_type = 'saida_producao' AND production_order_id IS NOT NULL
-               ORDER BY production_order_id, raw_material_id, created_at DESC
+               WHERE movement_type IN ('saida_producao', 'perda') AND production_order_id IS NOT NULL
+                 AND COALESCE(notes, '') NOT LIKE '%[estornado]%'
+               ORDER BY production_order_id, raw_material_id, movement_type, created_at DESC
             ) ult
            GROUP BY production_order_id
           HAVING SUM(COALESCE(unit_cost, 0)) > 0
