@@ -23,6 +23,7 @@ describe('RELATORIO PRD/PP/INSUMO', () => {
     mv('4', 'A', 'entrada', 70, 80, '2026-10-02T10:00:00', { production_order_id: 'op2', notes: 'Estorno da finalizacao [estornado]' }),
     mv('5', 'A', 'perda', 80, 78, '2026-10-03T10:00:00'),
     mv('6', 'A', 'ajuste', 78, 75, '2026-10-03T11:00:00'),
+    mv('9', 'A', 'perda', 75, 74, '2026-10-03T12:00:00', { production_order_id: 'op1', order_number: 'OP-1' }),
     mv('8', 'P', 'entrada', 0, 10, '2026-10-02T12:00:00', { production_order_id: 'op1', order_number: 'OP-1' }),
   ];
   const rel = montarRelatorioInsumos(mats as any, movs as any, { de: '2026-10-01', ate: '2026-10-31' });
@@ -33,12 +34,12 @@ describe('RELATORIO PRD/PP/INSUMO', () => {
   });
   it('saldo inicial e final', () => {
     expect(A.saldo_inicial).toBe(100);
-    expect(A.saldo_final).toBe(75);
+    expect(A.saldo_final).toBe(74);
   });
   it('colunas', () => {
     expect(A.consumo_op).toBe(20);   // estornado fora
     expect(A.estornos).toBe(0);      // par se anula
-    expect(A.perdas).toBe(2);
+    expect(A.perdas).toBe(3);   // 2 manual + 1 na OP
     expect(A.ajustes).toBe(-3);
     expect(A.divergencia).toBe(0);
     expect(A.valor_consumo_op).toBe(40);
@@ -51,6 +52,8 @@ describe('RELATORIO PRD/PP/INSUMO', () => {
   it('consumo por OP e producao', () => {
     const op1 = rel.ops.find((o: any) => o.op === 'OP-1');
     expect(op1.insumos[0]).toMatchObject({ material: 'ACUCAR', quantidade: 20 });
+    expect(op1.perdas[0]).toMatchObject({ material: 'ACUCAR', quantidade: 1 });
+    expect(op1.custo_total).toBe(42); // (20 consumo + 1 perda) x R$ 2
     expect(op1.gerados[0]).toMatchObject({ material: 'POLPA', quantidade: 10 });
     expect(rel.ops.find((o: any) => o.op === 'OP-2')).toBeUndefined();
     const P = rel.linhas.find((l: any) => l.material_id === 'P');

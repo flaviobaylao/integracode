@@ -165,7 +165,7 @@ export function montarRelatorioInsumos(materials: MatRow[], movimentosTodos: Mov
       });
 
       // Consumo/geração por OP (só o que vale: estornados ficam de fora)
-      if (m.production_order_id && (c === 'consumoOP' || c === 'producao')) {
+      if (m.production_order_id && (c === 'consumoOP' || c === 'producao' || c === 'perdas')) {
         const k = String(m.production_order_id);
         let op = opMap.get(k);
         if (!op) {
@@ -173,17 +173,18 @@ export function montarRelatorioInsumos(materials: MatRow[], movimentosTodos: Mov
             id: k, op: m.order_number || '(OP excluída)', produto: m.op_product_name || '', lote: m.op_lot_number || '',
             status: m.op_status || '', quantidade: num(m.op_quantity),
             data_producao: m.op_production_date ? String(m.op_production_date).slice(0, 10) : '',
-            primeiro: num(m.epoch), insumos: [] as any[], gerados: [] as any[], custo_total: 0,
+            primeiro: num(m.epoch), insumos: [] as any[], perdas: [] as any[], gerados: [] as any[], custo_total: 0,
           };
           opMap.set(k, op);
         }
         op.primeiro = Math.min(op.primeiro, num(m.epoch));
-        const alvo = c === 'consumoOP' ? op.insumos : op.gerados;
+        // perda/avaria na OP (PR #117) entra no custo da ordem, como no CMV
+        const alvo = c === 'consumoOP' ? op.insumos : c === 'perdas' ? op.perdas : op.gerados;
         let it = alvo.find((x: any) => x.material_id === mat.id);
         if (!it) { it = { material_id: mat.id, material: mat.name, unidade: mat.unit || '', quantidade: 0, custo_unit: custo, valor: 0 }; alvo.push(it); }
         it.quantidade = r3(it.quantidade + Math.abs(d));
         it.valor = r2(it.valor + Math.abs(d) * custo);
-        if (c === 'consumoOP') op.custo_total = r2(op.custo_total + Math.abs(d) * custo);
+        if (c === 'consumoOP' || c === 'perdas') op.custo_total = r2(op.custo_total + Math.abs(d) * custo);
       }
     }
 
@@ -223,7 +224,7 @@ export function montarRelatorioInsumos(materials: MatRow[], movimentosTodos: Mov
   linhas.sort((a, b) => String(a.categoria).localeCompare(String(b.categoria)) || String(a.material).localeCompare(String(b.material)));
   extrato.sort((a, b) => a.epoch - b.epoch || String(a.id).localeCompare(String(b.id)));
   const ops = Array.from(opMap.values())
-    .map((o) => ({ ...o, insumos: o.insumos.sort((a: any, b: any) => a.material.localeCompare(b.material)), primeiro: dataHoraBR(o.primeiro) }))
+    .map((o) => ({ ...o, insumos: o.insumos.sort((a: any, b: any) => a.material.localeCompare(b.material)), perdas: o.perdas.sort((a: any, b: any) => a.material.localeCompare(b.material)), primeiro: dataHoraBR(o.primeiro) }))
     .sort((a, b) => String(a.op).localeCompare(String(b.op)));
 
   const soma = (k: string) => r2(linhas.reduce((s, l) => s + num(l[k]), 0));
