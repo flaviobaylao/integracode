@@ -45,6 +45,18 @@ async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; 
 // bloquear é feito pela tabela blocked_orders via POST /:id/block, não por mudança de stage.
 const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue', 'lixeira'] as const;
 
+// 🚫 Nenhuma saída sem baixa (Flavio 04/out/2026: todo produto que sai — venda,
+// troca, amostra, bonificação, por qualquer instância — conta nas saídas e no
+// estoque). A baixa de estoque e a NF acontecem na entrada em 'faturado'; pular
+// de uma etapa pré-faturamento direto para uma etapa pós-faturamento deixaria o
+// produto sair sem baixar lote. Lixeira continua livre.
+const ETAPAS_PRE_FATURAMENTO = new Set<string>(['agendado', 'pedido', 'a_faturar']);
+export function pulaFaturamento(de: string | null | undefined, para: string): boolean {
+  return ETAPAS_PRE_FATURAMENTO.has(String(de || 'pedido')) && !ETAPAS_PRE_FATURAMENTO.has(para)
+    && para !== 'faturado' && para !== 'lixeira';
+}
+const MSG_PULA_FATURAMENTO = 'Este pedido ainda não foi faturado. Mova para "Faturado" primeiro — é ali que o estoque é baixado e a NF emitida; nenhum produto pode sair sem baixa de estoque.';
+
 // Garante (idempotente, 1x por processo) o valor 'lixeira' no enum do Postgres.
 let __lixeiraStageReady = false;
 async function ensureLixeiraStage() {
@@ -2059,6 +2071,10 @@ export function registerBillingPipelineRoutes(app: Express) {
       const item = await storage.getBillingPipelineItem(req.params.id);
       if (!item) return res.status(404).json({ message: 'Item não encontrado' });
 
+      if (pulaFaturamento(item.stage as any, stage)) {
+        return res.status(400).json({ message: MSG_PULA_FATURAMENTO, skipBilling: true });
+      }
+
       const user = req.currentUser || req.user;
       const history = (item.stageHistory as any[]) || [];
       history.push({
@@ -2567,6 +2583,10 @@ export function registerBillingPipelineRoutes(app: Express) {
           const item = await storage.getBillingPipelineItem(id);
           if (!item) {
             results.push({ id, success: false, error: 'Item não encontrado' });
+            continue;
+          }
+          if (pulaFaturamento(item.stage as any, stage)) {
+            results.push({ id, success: false, error: MSG_PULA_FATURAMENTO });
             continue;
           }
 
