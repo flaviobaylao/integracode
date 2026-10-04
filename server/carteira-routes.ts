@@ -26,7 +26,7 @@ import { sql } from "drizzle-orm";
 import { nfVendaWhere } from "./faturamento-oficial";
 import { cteFaturamento, descricaoFonte, MES_NFE_INTEGRA } from "./faturamento-carteira";
 import { authenticateUser } from "./authMiddleware";
-import { registerAgendaCarteira } from "./agenda-carteira-routes";
+import { registerCarteiraReclassificacao } from "./carteira-reclassificacao-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
 
 const TZ = "America/Sao_Paulo";
@@ -834,8 +834,10 @@ export async function runSnapshotClasses(): Promise<{ total: number; aMais: numb
 }
 
 export function registerCarteira(app: Express) {
-  // Aba "Agenda da carteira" (tabela dinamica de atendimentos por dia da semana).
-  registerAgendaCarteira(app);
+  // Rotas de lote da agenda de visitas (reclassificacao, regeneracao, 1a data).
+  // Nao tem tela: eram vizinhas da aba "Agenda da carteira", retirada em
+  // 04/10/2026. Seguem de pe porque regravam a visit_agenda da Rota do Dia.
+  registerCarteiraReclassificacao(app);
   // Aba "Rede de Cliente" (grupos de filiais / mesma gestao, consolidados).
   registerRedesClientes(app);
 

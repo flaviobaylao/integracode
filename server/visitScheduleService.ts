@@ -371,7 +371,7 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
   // 📅 SEMANA DE ATENDIMENTO: cliente com semana fixa ("última terça") tem as
   // datas vindas do CALENDÁRIO, não do encadeamento por intervalo —
   // calculateNextVisitDate não tem como respeitar "qual semana do mês".
-  // Mesma regra de reprogramarAgenda (agenda-carteira-routes), senão a Rota do
+  // Mesma regra de reprogramarAgenda (carteira-reclassificacao-routes), senão a Rota do
   // Dia e a Agenda da Carteira mostrariam datas diferentes para o mesmo cliente.
   const semanaRegra = normalizarSemana(c.semanaAtendimento);
   if (semanaRegra !== 'toda') {
