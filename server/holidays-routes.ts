@@ -232,7 +232,8 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
   await ensureHolidayTables();
   const rules = await loadRules();
   const regionRules = await loadRegionRules();
-  const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`];
+  const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`,
+    sql`c.is_active = true`];
   if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
   if (opts.customerId) conds.push(sql`va.customer_id = ${opts.customerId}`);
   if (opts.monthStart) conds.push(sql`va.scheduled_date::date >= ${opts.monthStart}::date`);
@@ -281,6 +282,7 @@ async function previewShift(monthStart: string, monthEnd: string): Promise<any[]
   const rules = await loadRules();
   const regionRules = await loadRegionRules();
   const conds: any[] = [sql`va.visit_status = 'pending'`, sql`va.holiday_original_date IS NULL`,
+    sql`c.is_active = true`,
     sql`va.scheduled_date::date >= ${monthStart}::date`, sql`va.scheduled_date::date <= ${monthEnd}::date`];
   if (!rules.incluirVirtuais) conds.push(sql`va.is_virtual = false`);
   const rows = rowsOf(await db.execute(sql`
