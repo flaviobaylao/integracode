@@ -75,6 +75,7 @@ import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
 import { registerRelatorioInsumosRoutes } from './relatorio-insumos';
 import { registerFabricaRoutes } from './fabrica-routes';
 import { registerProgramacaoProducaoRoutes } from './programacao-producao-routes';
+import { registerPedidoGynServRoutes } from './pedido-gyn-serv-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
@@ -3171,6 +3172,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // (GYN) x BSB, lead time/cobertura e criacao de OPs planejadas — 04/out/2026.
   // Rotas /api/industria/programacao*.
   try { registerProgramacaoProducaoRoutes(app); } catch (e) { console.error('[programacao-producao]', e); }
+  // Pedido de venda GYN -> SERV (botao no Pipeline): necessario = pedidos pendentes
+  // da SERV - estoque SERV, lotes GYN por FIFO, preco = CMV atual da industria — 04/out/2026.
+  // Rotas /api/billing-pipeline/pedido-gyn-serv* (admin/coordinator/administrative).
+  try { registerPedidoGynServRoutes(app); } catch (e) { console.error('[pedido-gyn-serv]', e); }
 
   // Garante a coluna icms_csosn em customers (CSOSN por cliente p/ NF-e Simples: '101'/'102', default '102'). Idempotente.
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS icms_csosn varchar DEFAULT '102'`).catch(() => {});

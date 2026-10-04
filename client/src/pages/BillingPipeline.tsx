@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import PaymentLinkDialog from '@/components/PaymentLinkDialog';
+import PedidoGynServDialog from '@/components/PedidoGynServDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -347,6 +348,7 @@ export default function BillingPipeline() {
   const [stageSort, setStageSort] = useState<Record<string, 'asc' | 'desc'>>({});
   const [showLegend, setShowLegend] = useState(false);
   const [showDrafts, setShowDrafts] = useState(false);
+  const [showGynServ, setShowGynServ] = useState(false); // pedido de venda GYN -> SERV (04/out/2026)
   const [sellerFilter, setSellerFilter] = useState<Set<string>>(new Set());
   const [opFilter, setOpFilter] = useState<Set<string>>(new Set());
   const [instanceFilter, setInstanceFilter] = useState<Set<string>>(new Set());
@@ -420,6 +422,7 @@ export default function BillingPipeline() {
   });
 
   const isFlavio = (currentUser as any)?.email === 'flavio@bebahonest.com.br';
+  const podePedidoGynServ = ['admin', 'coordinator', 'administrative'].includes(String((currentUser as any)?.role || ''));
   // REGRA (Flavio): trocar o vendedor de um pedido so admin (role) + 3 admins + Lanucy.
   const canEditSeller = String((currentUser as any)?.role || '') === 'admin' || ['cinthiamarque90@gmail.com','flaviobaylao@gmail.com','flavio@bebahonest.com.br','lanucy@bebahonest.com.br'].includes(String((currentUser as any)?.email || '').toLowerCase());
   // Bloqueio manual de pedido: apenas os 3 admins (mesma lista da Rota do Dia).
@@ -1285,6 +1288,19 @@ export default function BillingPipeline() {
                   <Power className="h-4 w-4 mr-1" />
                 )}
                 {modeStatus?.active ? 'Desativar Interno' : 'Faturar Interno'}
+              </Button>
+            )}
+            {podePedidoGynServ && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-300"
+                onClick={() => setShowGynServ(true)}
+                title="Gera o pedido de venda da GYN para a SERV com o que falta para faturar os pedidos pendentes da SERV, a CMV da indústria"
+                data-testid="button-pedido-gyn-serv"
+              >
+                <Truck className="h-4 w-4 mr-1" />
+                Pedido GYN → SERV
               </Button>
             )}
             <Button
@@ -2428,6 +2444,9 @@ export default function BillingPipeline() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Pedido de venda GYN -> SERV (abastecimento da Puro Servicos a CMV) */}
+      <PedidoGynServDialog open={showGynServ} onClose={() => setShowGynServ(false)} />
 
       {/* CARTAO: link de pagamento do pedido */}
       <PaymentLinkDialog
