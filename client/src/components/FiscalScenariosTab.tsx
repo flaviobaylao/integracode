@@ -22,6 +22,7 @@ const OPERATION_TYPES = [
   { value: "bonificacao", label: "Bonificação" },
   { value: "troca", label: "Troca/Devolução" },
   { value: "transferencia", label: "Transferência" },
+  { value: "devolucao_compra", label: "Devolução de Compra (ao fornecedor)" },
   { value: "consignacao", label: "Consignação" },
   { value: "industrializacao", label: "Industrialização" },
   { value: "exportacao", label: "Exportação" },

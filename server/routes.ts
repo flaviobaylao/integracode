@@ -772,6 +772,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPurchaseRoutes(app);
   // NF-e de entrada própria — compra de insumos de fornecedor sem nota (out/2026)
   registerNfEntradaProdutorRoutes(app);
+  // Devolução de compra ao fornecedor (NF-e de saída finNFe=4) — 04/out/2026
+  try { const { registerDevolucaoCompraRoutes } = await import('./devolucao-compra.js'); registerDevolucaoCompraRoutes(app); } catch (e) { console.error('[devolucao-compra]', e); }
 
   // Extrato do Cliente (Vendas) - historico de notas faturadas + pagamentos
   registerCustomerStatementRoutes(app);
