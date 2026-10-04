@@ -418,6 +418,8 @@ run();
       // VOLUMES da NF-e (<transp><vol>), espelhados na nota para a DANFE.
       // INFORMAÇÕES COMPLEMENTARES da NF-e (infCpl do XML), para a DANFE.
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS inf_cpl text',
+      // NF-e DE ENTRADA PRÓPRIA (out/2026): código IBGE do município do remetente.
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS customer_city_code varchar',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_quantidade integer',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_especie varchar',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS peso_liquido_kg numeric(12,3)',
