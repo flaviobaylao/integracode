@@ -1864,6 +1864,19 @@ export async function prepararEstoqueParaEmissao(
     if (nome) inst = instancias.find((i) => sigla(i) === nome) || null;
   }
   if (!inst) inst = instancias.find((i) => sigla(i) === 'GYN') || null;
+  // NFC-e (venda de balcao): o produto sai do estoque da fabrica (IND), mesmo com
+  // a nota emitida pela GYN — mesma regra de instanciaDeEstoque no pipeline.
+  let modeloNf = String(invoice.invoiceModel || '');
+  if (!modeloNf) {
+    try {
+      const rm: any = await db.execute(sql`SELECT invoice_model FROM fiscal_invoices WHERE id = ${invoiceId} LIMIT 1`);
+      modeloNf = String(((rm?.rows ?? rm ?? []) as any[])[0]?.invoice_model || '55');
+    } catch { modeloNf = '55'; }
+  }
+  if (modeloNf === '65') {
+    const ind = instancias.find((i) => sigla(i) === 'IND');
+    if (ind) inst = ind;
+  }
   const instanceId: string | null = inst?.id || null;
   // a sigla (GYN/IND/SERV) pode estar no name ou no display_name
   if (ee.instanciaSemControleDeEstoque(inst?.name) || ee.instanciaSemControleDeEstoque(inst?.displayName)) return { baixouAgora: false };

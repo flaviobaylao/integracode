@@ -2864,6 +2864,28 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 }
 
+// FILIAL DO ESTOQUE do pedido. Regra geral: a filial do pedido (= emitente).
+// Excecao — VENDA DE BALCAO (NFC-e): o produto sai do estoque da FABRICA (IND),
+// embora a NFC-e continue emitida pelo CNPJ da GYN (onde estao CSC/serie 65).
+// Pedido de balcao = sales_cards.source = 'balcao' (mesmo criterio do modelo 65).
+export const INSTANCIA_ESTOQUE_BALCAO = 'IND';
+export async function instanciaDeEstoque(item: any): Promise<string | null> {
+  try {
+    if (item?.salesCardId) {
+      const r: any = await db.execute(sql`SELECT source FROM sales_cards WHERE id = ${item.salesCardId} LIMIT 1`);
+      const src = String(((r?.rows ?? r ?? []) as any[])[0]?.source || '').toLowerCase();
+      if (src === 'balcao') {
+        const ind: any = (await storage.getOmieInstances()).find((i: any) => String(i?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_BALCAO);
+        if (ind) return ind.id;
+        console.warn('[STOCK] instancia IND nao encontrada para o estoque do balcao; usando a do pedido.');
+      }
+    }
+  } catch (e: any) {
+    console.warn('[STOCK] nao foi possivel ler a origem do card (usa a filial do pedido):', e?.message);
+  }
+  return item?.omieInstanceId || null;
+}
+
 // Deixa o bloqueio por estoque VISIVEL no proprio pedido (observacao + historico),
 // para quem abrir o card saber por que a nota nao saiu e fatura-lo apos corrigir
 // o estoque em uso. Nao repete a mesma anotacao no mesmo dia.
@@ -2926,7 +2948,7 @@ async function validateStockForBilling(item: any): Promise<{ valid: boolean; sho
   }
   // Refaturamento de pedido que ja teve baixa (e nao foi estornada): o estoque ja saiu.
   if (await baixaVigenteDoPedido(item)) return { valid: true, shortages: [], semProduto: [], details: '' };
-  const instanceId = item.omieInstanceId;
+  const instanceId = await instanciaDeEstoque(item);
   if (!instanceId) {
     return { valid: false, shortages: [], semProduto: [], details: 'Pedido sem filial/instância de estoque definida — não há de onde baixar o estoque em uso.' };
   }
@@ -3113,7 +3135,7 @@ export async function deductStockForBilling(item: any, user: any): Promise<MapaL
     return vigente;
   }
 
-  const instanceId = item.omieInstanceId;
+  const instanceId = await instanciaDeEstoque(item);
   if (!instanceId) {
     throw new SemInstanciaEstoqueError();
   }
@@ -3655,7 +3677,8 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       return await danfeNfceDoCard(salesCardId); // idempotente: ja faturado
     }
 
-    // 1b) ESTOQUE DA GYN. A venda de balcao sai do estoque fisico de Goiania.
+    // 1b) EMITENTE GYN. A NFC-e sai pelo CNPJ da GYN (CSC/serie 65), mas o
+    //     ESTOQUE baixado e o da fabrica (IND) — ver instanciaDeEstoque().
     //     O CONSUMIDOR BALCAO e sintetico e nao tem instancia, entao o item
     //     nascia sem omieInstanceId e deductStockForBilling pulava a baixa
     //     inteira ("sem omieInstanceId"). Alem disso o card do PDV grava o

@@ -9,7 +9,7 @@ import {
   verificarEstoqueEmUso, baixarEstoqueEmUso, baixaVigenteDoPedido, distribuirLotes, textoLotes,
   ehBloqueioEstoque, EstoqueInsuficienteError, LinhaSemProdutoError,
 } from '../estoque-em-uso';
-import { deductStockForBilling, garantirInstanciaEstoque, registrarBloqueioEstoqueNoPedido } from '../billing-pipeline-routes';
+import { deductStockForBilling, garantirInstanciaEstoque, registrarBloqueioEstoqueNoPedido, instanciaDeEstoque } from '../billing-pipeline-routes';
 import { consumeStock } from '../inventory-routes';
 import { prepararEstoqueParaEmissao } from '../nfe-routes';
 
@@ -256,6 +256,23 @@ async function main() {
   const pb2: any = await storage.getBillingPipelineItem('p-5');
   t('observacao gravada uma vez', (String(pb2.notes || '').match(/BLOQUEIO ESTOQUE/g) || []).length === 1 && /em uso 0/.test(pb2.notes), pb2.notes);
   t('historico registra o bloqueio', (pb2.stageHistory || []).some((h: any) => h.changedBy === 'bloqueio-estoque'));
+
+  console.log('\n16) Venda de balcao (NFC-e): estoque sai da IND, nota segue pela GYN');
+  await db.execute(sql`ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS invoice_model varchar`);
+  await db.execute(sql`DELETE FROM sales_cards WHERE id LIKE 'e-sc%'`);
+  await db.execute(sql`INSERT INTO sales_cards (id, customer_id, seller_id, route_day, recurrence_type, source) VALUES ('e-scb', 'e-cli', 's', 'segunda', 'semanal', 'balcao')`);
+  t('card de balcao -> estoque da IND', (await instanciaDeEstoque({ salesCardId: 'e-scb', omieInstanceId: 'e-gyn' })) === 'e-ind');
+  t('card comum -> filial do pedido', (await instanciaDeEstoque({ salesCardId: 'sc-nao-existe', omieInstanceId: 'e-gyn' })) === 'e-gyn');
+  const lbB = await saldo('e-lb'); const g1B = await saldo('e-g1');
+  const cb: any = { id: 'p-b', salesCardId: 'e-scb', orderNumber: 'BAL-1', omieInstanceId: 'e-gyn', omieInstanceName: 'Goiania', products: [{ id: 'e-b', name: 'SUCO B', quantity: 1 }] };
+  lm = await deductStockForBilling(cb, { email: 'h' });
+  t('baixa do balcao saiu da IND, GYN intacta, emitente segue GYN', (await saldo('e-lb')) === lbB - 1 && (await saldo('e-g1')) === g1B && cb.omieInstanceId === 'e-gyn', lm);
+  await db.execute(sql`INSERT INTO fiscal_invoices (id, status, operation_type, invoice_number, series, customer_name, total_invoice, omie_instance_id, fin_nfe, invoice_model)
+    VALUES ('nf-65', 'draft', 'saida', 900020, '65', 'CONSUMIDOR', 0, 'e-gyn', '1', '65')`);
+  await db.execute(sql`INSERT INTO fiscal_invoice_items (id, invoice_id, item_number, product_id, product_name, quantity, unit_price, total_price) VALUES ('it-65', 'nf-65', 1, 'e-b', 'SUCO B', 1, 5, 5)`);
+  p = await prepararEstoqueParaEmissao('nf-65', 'h');
+  t('NFC-e avulsa da GYN baixa da IND', p.baixouAgora && (await saldo('e-lb')) === lbB - 2 && (await saldo('e-g1')) === g1B, p);
+  await db.execute(sql`DELETE FROM sales_cards WHERE id LIKE 'e-sc%'`);
 
   await db.execute(sql`DELETE FROM customers WHERE id LIKE 'e-%'`);
   // limpeza: as instancias IND/SERV de teste colidiriam (nome unico) com os outros harnesses

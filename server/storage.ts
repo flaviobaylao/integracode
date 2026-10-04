@@ -982,6 +982,17 @@ export class DatabaseStorage implements IStorage {
 
 
   async createCustomer(customer: InsertCustomer): Promise<Customer> {
+    // Cliente sem filial nasce na GYN (Flavio, 04/out/2026): pedido sem filial
+    // saia pelo emitente GYN mas sem filial de estoque, e a trava do estoque em
+    // uso o bloqueava. Filial explicita do cadastro continua valendo.
+    if (!(customer as any).omieInstanceId) {
+      try {
+        const gyn = (await this.getOmieInstances()).find((i: any) => String(i?.name || '').toUpperCase().trim() === 'GYN');
+        if (gyn) customer = { ...(customer as any), omieInstanceId: gyn.id };
+      } catch (e: any) {
+        console.warn('[CUSTOMER] nao resolveu a GYN para filial padrao:', e?.message);
+      }
+    }
     const [newCustomer] = await db.insert(customers).values(customer as any).returning();
     return newCustomer;
   }
