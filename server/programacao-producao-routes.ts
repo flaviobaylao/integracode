@@ -66,7 +66,8 @@ const PADRAO: ParametrosProgramacao = {
 };
 
 const nz = (v: any, d: number): number => {
-  const n = Number(String(v ?? "").replace(",", "."));
+  if (v == null || String(v).trim() === "") return d; // ausente/vazio = padrão (não zero)
+  const n = Number(String(v).replace(",", "."));
   return isFinite(n) && n >= 0 ? n : d;
 };
 const isoDate = (v: any): string | null =>
