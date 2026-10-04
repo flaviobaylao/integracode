@@ -429,6 +429,20 @@ export function registerHolidaysRoutes(app: Express) {
     res.json({ ok: true });
   }));
 
+  // Define a regra do cliente (post/ant/none/padrao) SEM reaplicar deslocamentos.
+  // Usado na prévia para alternar postergação/antecipação (pontual ou em massa) de forma não destrutiva.
+  app.post("/api/holidays/customer-rule", authenticateUser, admin, safe(async (req: any, res) => {
+    await ensureHolidayTables();
+    const b: any = req.body || {};
+    const ids: string[] = Array.isArray(b.ids) ? b.ids.map((x: any) => String(x)).filter(Boolean) : [];
+    const raw = String(b.rule || "");
+    if (!ids.length) return res.status(400).json({ error: "Informe ao menos um cliente." });
+    if (!["post", "ant", "none", "padrao"].includes(raw)) return res.status(400).json({ error: "Regra inválida." });
+    const rule = raw === "padrao" ? null : raw;
+    await db.execute(sql`UPDATE customers SET holiday_rule = ${rule} WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+    res.json({ ok: true, updated: ids.length });
+  }));
+
   app.post("/api/holidays", authenticateUser, admin, safe(async (req: any, res) => {
     await ensureHolidayTables();
     const b = req.body || {};
