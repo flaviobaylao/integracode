@@ -7,6 +7,8 @@
 //   • "Funcionários"  — cadastro próprio dos funcionários da indústria
 //                       (não são usuários do Integra; só são selecionados
 //                       como responsáveis pelos itens do check-list).
+//                       04/out/2026: + admissão, CPF, e-mail, CTPS/contrato,
+//                       últimas férias e ANEXOS (documentos, ASO, ponto...).
 //
 // Modelo de dados (MODELO × EXECUÇÃO):
 //   checklist_templates       — o modelo ("Check-list de Produção")
@@ -43,6 +45,17 @@ const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB
 const CONFORMIDADES = ["conforme", "nao_conforme", "na"]; // na = não se aplica
 const RUN_STATUS = ["aberta", "concluida", "cancelada"];
 const FONTES = ["camera", "upload"];
+const MAX_ANEXO_BYTES = 15 * 1024 * 1024; // 15MB (igual aos documentos da empresa)
+export const CATEGORIAS_ANEXO_FUNC = [
+  "documentos_pessoais", // RG, CPF, CNH, comprovante de residência...
+  "ctps_contrato",       // CTPS, contrato de trabalho, aditivos
+  "aso",                 // atestados de saúde ocupacional
+  "folha_ponto",         // folhas / espelhos de ponto
+  "ferias",              // avisos e recibos de férias
+  "treinamentos",        // certificados, treinamentos obrigatórios
+  "outros",
+];
+const uploadAnexo = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ANEXO_BYTES } });
 
 const uploadFoto = multer({
   storage: multer.memoryStorage(),
@@ -126,7 +139,30 @@ export function ensureChecklistSchema(): Promise<void> {
         "registered_at timestamptz, " +
         "created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())"
       ));
+      // Dados trabalhistas do funcionário (04/out/2026): admissão, CPF, e-mail,
+      // CTPS/contrato e últimas férias. ALTER idempotente — tabela já existia.
+      for (const col of [
+        "admission_date date",            // data de admissão
+        "cpf varchar(14)",                // só dígitos (11)
+        "email varchar(160)",
+        "work_card_number varchar(60)",   // nº da CTPS OU nº do contrato
+        "last_vacation_date date",        // data das últimas férias
+      ]) await db.execute(sql.raw(`ALTER TABLE industry_employees ADD COLUMN IF NOT EXISTS ${col}`)).catch(() => {});
+      // Anexos do funcionário (cópia de documentos, ASO, folhas de ponto...).
+      // Vários por funcionário; binário em base64, listagem nunca devolve `data`.
+      await db.execute(sql.raw(
+        "CREATE TABLE IF NOT EXISTS industry_employee_attachments (" +
+        "id varchar PRIMARY KEY DEFAULT gen_random_uuid()::varchar, " +
+        "employee_id varchar NOT NULL REFERENCES industry_employees(id) ON DELETE CASCADE, " +
+        "category varchar NOT NULL DEFAULT 'outros', " +
+        "description text, " +
+        "reference_date date, " +         // data a que o anexo se refere (ex.: mês da folha de ponto, data do ASO)
+        "file_name text NOT NULL, mimetype text, file_size integer NOT NULL DEFAULT 0, " +
+        "data text NOT NULL, " +
+        "created_by varchar, created_at timestamptz DEFAULT now())"
+      ));
       for (const ix of [
+        "CREATE INDEX IF NOT EXISTS idx_ind_emp_attach_emp ON industry_employee_attachments (employee_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_cl_items_template ON checklist_template_items (template_id, position)",
         "CREATE INDEX IF NOT EXISTS idx_cl_runs_date ON checklist_runs (run_date DESC)",
         "CREATE INDEX IF NOT EXISTS idx_cl_runs_template ON checklist_runs (template_id)",
@@ -191,6 +227,43 @@ function multerFoto(req: any, res: any, next: any) {
   });
 }
 
+function multerAnexo(req: any, res: any, next: any) {
+  uploadAnexo.single("arquivo")(req, res, (err: any) => {
+    if (err) {
+      const msg = err?.code === "LIMIT_FILE_SIZE"
+        ? "Arquivo acima de 15MB"
+        : (err?.message || "Falha no upload do anexo");
+      return res.status(400).json({ message: msg });
+    }
+    next();
+  });
+}
+
+// CPF: guarda só dígitos; valida tamanho e dígitos verificadores.
+// Devolve { ok, value } — value = null quando vazio (campo opcional).
+function normalizarCpf(v: any): { ok: boolean; value: string | null } {
+  const d = String(v ?? "").replace(/\D/g, "");
+  if (!d) return { ok: true, value: null };
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return { ok: false, value: null };
+  const dv = (base: string, peso: number) => {
+    let soma = 0;
+    for (const c of base) soma += Number(c) * peso--;
+    const r = (soma * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  if (dv(d.slice(0, 9), 10) !== Number(d[9]) || dv(d.slice(0, 10), 11) !== Number(d[10])) return { ok: false, value: null };
+  return { ok: true, value: d };
+}
+
+function emailOuNull(v: any): { ok: boolean; value: string | null } {
+  const s = String(v ?? "").trim().toLowerCase().slice(0, 160);
+  if (!s) return { ok: true, value: null };
+  return { ok: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s), value: s };
+}
+
+const COLS_EMPLOYEE = sql`id, name, role_name, registration, phone, instance_name, is_active,
+  notes, admission_date, cpf, email, work_card_number, last_vacation_date, created_at, updated_at`;
+
 function mapEmployee(row: any) {
   return {
     id: row.id,
@@ -201,8 +274,29 @@ function mapEmployee(row: any) {
     instanceName: row.instance_name || "IND",
     isActive: row.is_active !== false,
     notes: row.notes || "",
+    admissionDate: toISODate(row.admission_date),
+    cpf: row.cpf || "",
+    email: row.email || "",
+    workCardNumber: row.work_card_number || "",
+    lastVacationDate: toISODate(row.last_vacation_date),
+    attachmentsCount: Number(row.attachments_count || 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapAnexo(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    category: row.category || "outros",
+    description: row.description || "",
+    referenceDate: toISODate(row.reference_date),
+    fileName: row.file_name,
+    mimetype: row.mimetype || null,
+    fileSize: Number(row.file_size || 0),
+    createdAt: row.created_at,
+    url: `/api/industria/funcionarios/${row.employee_id}/anexos/${row.id}/arquivo`,
   };
 }
 
@@ -331,11 +425,13 @@ export function registerChecklistIndustriaRoutes(app: Express) {
       const conds: any[] = [sql`true`];
       if (!incluirInativos) conds.push(sql`is_active = true`);
       const r: any = await db.execute(sql`
-        SELECT id, name, role_name, registration, phone, instance_name, is_active,
-               notes, created_at, updated_at
-        FROM industry_employees
+        SELECT e.id, e.name, e.role_name, e.registration, e.phone, e.instance_name, e.is_active,
+               e.notes, e.admission_date, e.cpf, e.email, e.work_card_number, e.last_vacation_date,
+               e.created_at, e.updated_at,
+               (SELECT COUNT(*)::int FROM industry_employee_attachments a WHERE a.employee_id = e.id) AS attachments_count
+        FROM industry_employees e
         WHERE ${sql.join(conds, sql` AND `)}
-        ORDER BY is_active DESC, name`);
+        ORDER BY e.is_active DESC, e.name`);
       const funcionarios = (r.rows || []).map(mapEmployee);
       res.json({
         funcionarios,
@@ -358,9 +454,16 @@ export function registerChecklistIndustriaRoutes(app: Express) {
       const b = req.body || {};
       const name = String(b.name ?? "").trim().slice(0, 200);
       if (!name) return res.status(400).json({ message: "Informe o nome do funcionário" });
+      const cpf = normalizarCpf(b.cpf);
+      if (!cpf.ok) return res.status(400).json({ message: "CPF inválido" });
+      const email = emailOuNull(b.email);
+      if (!email.ok) return res.status(400).json({ message: "E-mail inválido" });
+      if (b.admissionDate && !dataOuNull(b.admissionDate)) return res.status(400).json({ message: "Data de admissão inválida" });
+      if (b.lastVacationDate && !dataOuNull(b.lastVacationDate)) return res.status(400).json({ message: "Data das últimas férias inválida" });
       const r: any = await db.execute(sql`
         INSERT INTO industry_employees
           (name, role_name, registration, phone, instance_name, is_active, notes,
+           admission_date, cpf, email, work_card_number, last_vacation_date,
            created_by, updated_by, updated_at)
         VALUES (${name},
                 ${String(b.roleName ?? "").trim().slice(0, 120) || null},
@@ -369,9 +472,11 @@ export function registerChecklistIndustriaRoutes(app: Express) {
                 ${String(b.instanceName ?? "IND").trim().toUpperCase().slice(0, 40) || "IND"},
                 ${b.isActive === false ? false : true},
                 ${String(b.notes ?? "").slice(0, 2000) || null},
+                ${dataOuNull(b.admissionDate)}, ${cpf.value}, ${email.value},
+                ${String(b.workCardNumber ?? "").trim().slice(0, 60) || null},
+                ${dataOuNull(b.lastVacationDate)},
                 ${req.currentUser?.id || null}, ${req.currentUser?.id || null}, now())
-        RETURNING id, name, role_name, registration, phone, instance_name, is_active,
-                  notes, created_at, updated_at`);
+        RETURNING ${COLS_EMPLOYEE}`);
       const f = mapEmployee(r.rows?.[0] || {});
       console.log(`[CHECKLIST-IND] funcionário criado: ${f.name}${f.roleName ? ` (${f.roleName})` : ""}`);
       res.json({ message: "Funcionário cadastrado", funcionario: f });
@@ -398,12 +503,30 @@ export function registerChecklistIndustriaRoutes(app: Express) {
       if (b.instanceName !== undefined) sets.push(sql`instance_name = ${String(b.instanceName ?? "IND").trim().toUpperCase().slice(0, 40) || "IND"}`);
       if (b.isActive !== undefined) sets.push(sql`is_active = ${b.isActive === true || b.isActive === "true"}`);
       if (b.notes !== undefined) sets.push(sql`notes = ${String(b.notes ?? "").slice(0, 2000) || null}`);
+      if (b.admissionDate !== undefined) {
+        if (b.admissionDate && !dataOuNull(b.admissionDate)) return res.status(400).json({ message: "Data de admissão inválida" });
+        sets.push(sql`admission_date = ${dataOuNull(b.admissionDate)}`);
+      }
+      if (b.cpf !== undefined) {
+        const cpf = normalizarCpf(b.cpf);
+        if (!cpf.ok) return res.status(400).json({ message: "CPF inválido" });
+        sets.push(sql`cpf = ${cpf.value}`);
+      }
+      if (b.email !== undefined) {
+        const email = emailOuNull(b.email);
+        if (!email.ok) return res.status(400).json({ message: "E-mail inválido" });
+        sets.push(sql`email = ${email.value}`);
+      }
+      if (b.workCardNumber !== undefined) sets.push(sql`work_card_number = ${String(b.workCardNumber ?? "").trim().slice(0, 60) || null}`);
+      if (b.lastVacationDate !== undefined) {
+        if (b.lastVacationDate && !dataOuNull(b.lastVacationDate)) return res.status(400).json({ message: "Data das últimas férias inválida" });
+        sets.push(sql`last_vacation_date = ${dataOuNull(b.lastVacationDate)}`);
+      }
       if (!sets.length) return res.status(400).json({ message: "Nada para atualizar" });
       sets.push(sql`updated_by = ${req.currentUser?.id || null}`, sql`updated_at = now()`);
       const r: any = await db.execute(sql`
         UPDATE industry_employees SET ${sql.join(sets, sql`, `)} WHERE id = ${req.params.id}
-        RETURNING id, name, role_name, registration, phone, instance_name, is_active,
-                  notes, created_at, updated_at`);
+        RETURNING ${COLS_EMPLOYEE}`);
       if (!r.rows?.length) return res.status(404).json({ message: "Funcionário não encontrado" });
       res.json({ message: "Funcionário atualizado", funcionario: mapEmployee(r.rows[0]) });
     } catch (e: any) {
@@ -431,6 +554,88 @@ export function registerChecklistIndustriaRoutes(app: Express) {
     } catch (e: any) {
       console.error("[CHECKLIST-IND] funcionario remover:", e?.message || e);
       res.status(500).json({ message: "Falha ao remover funcionário" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // ANEXOS DO FUNCIONÁRIO (04/out/2026): cópia de documentos, ASO, folhas de
+  // ponto, férias, treinamentos... Vários por funcionário, até 15MB cada.
+  // -------------------------------------------------------------------------
+  app.get("/api/industria/funcionarios/:id/anexos", async (req: any, res) => {
+    try {
+      await ensureChecklistSchema();
+      const r: any = await db.execute(sql`
+        SELECT id, employee_id, category, description, reference_date, file_name, mimetype, file_size, created_at
+        FROM industry_employee_attachments WHERE employee_id = ${req.params.id}
+        ORDER BY created_at DESC`);
+      res.json({ anexos: (r.rows || []).map(mapAnexo), categorias: CATEGORIAS_ANEXO_FUNC });
+    } catch (e: any) {
+      console.error("[CHECKLIST-IND] anexos listar:", e?.message || e);
+      res.status(500).json({ message: "Falha ao listar anexos" });
+    }
+  });
+
+  app.post("/api/industria/funcionarios/:id/anexos", multerAnexo, async (req: any, res) => {
+    try {
+      if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" });
+      await ensureChecklistSchema();
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ message: "Selecione um arquivo" });
+      const ex: any = await db.execute(sql`SELECT id FROM industry_employees WHERE id = ${req.params.id}`);
+      if (!ex.rows?.length) return res.status(404).json({ message: "Funcionário não encontrado" });
+      const b = req.body || {};
+      const category = CATEGORIAS_ANEXO_FUNC.includes(String(b.category || "")) ? String(b.category) : "outros";
+      const description = String(b.description ?? "").trim().slice(0, 300) || null;
+      const referenceDate = dataOuNull(b.referenceDate);
+      const r: any = await db.execute(sql`
+        INSERT INTO industry_employee_attachments
+          (employee_id, category, description, reference_date, file_name, mimetype, file_size, data, created_by)
+        VALUES (${req.params.id}, ${category}, ${description}, ${referenceDate},
+                ${(file.originalname || "anexo").slice(0, 200)}, ${file.mimetype || "application/octet-stream"},
+                ${file.size}, ${file.buffer.toString("base64")}, ${req.currentUser?.id || null})
+        RETURNING id, employee_id, category, description, reference_date, file_name, mimetype, file_size, created_at`);
+      const anexo = mapAnexo(r.rows?.[0] || {});
+      console.log(`[CHECKLIST-IND] anexo funcionário ${req.params.id}: ${anexo.fileName} (${category}, ${anexo.fileSize}B)`);
+      res.json({ message: "Anexo adicionado", anexo });
+    } catch (e: any) {
+      console.error("[CHECKLIST-IND] anexo criar:", e?.message || e);
+      res.status(500).json({ message: "Falha ao anexar arquivo" });
+    }
+  });
+
+  // Abrir/baixar. Inline por padrão; ?download=1 baixa.
+  app.get("/api/industria/funcionarios/:id/anexos/:anexoId/arquivo", async (req: any, res) => {
+    try {
+      await ensureChecklistSchema();
+      const r: any = await db.execute(sql`
+        SELECT file_name, mimetype, data FROM industry_employee_attachments
+        WHERE id = ${req.params.anexoId} AND employee_id = ${req.params.id}`);
+      const row = r.rows?.[0];
+      if (!row || !row.data) return res.status(404).json({ message: "Arquivo não encontrado" });
+      const buf = Buffer.from(String(row.data), "base64");
+      const disp = req.query?.download ? "attachment" : "inline";
+      const nome = String(row.file_name || "anexo").replace(/["\\]/g, "");
+      res.setHeader("Content-Type", String(row.mimetype || "application/octet-stream"));
+      res.setHeader("Content-Length", String(buf.length));
+      res.setHeader("Content-Disposition", `${disp}; filename="${nome}"`);
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.end(buf);
+    } catch (e: any) {
+      console.error("[CHECKLIST-IND] anexo arquivo:", e?.message || e);
+      res.status(500).json({ message: "Falha ao ler o arquivo" });
+    }
+  });
+
+  app.delete("/api/industria/funcionarios/:id/anexos/:anexoId", async (req: any, res) => {
+    try {
+      if (!podeEditar(req.currentUser)) return res.status(403).json({ message: "Access denied" });
+      await ensureChecklistSchema();
+      await db.execute(sql`
+        DELETE FROM industry_employee_attachments WHERE id = ${req.params.anexoId} AND employee_id = ${req.params.id}`);
+      res.json({ message: "Anexo removido" });
+    } catch (e: any) {
+      console.error("[CHECKLIST-IND] anexo remover:", e?.message || e);
+      res.status(500).json({ message: "Falha ao remover anexo" });
     }
   });
 
