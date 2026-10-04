@@ -19,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { exportSheetsToExcel } from '@/lib/tableTools';
+import { ehDiaUtilBR } from '@shared/tempo';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
@@ -58,6 +59,9 @@ const fmtData = (ymd: string | null) => (ymd ? ymd.slice(8, 10) + '/' + ymd.slic
 const fmtDataCurta = (ymd: string) => ymd.slice(8, 10) + '/' + ymd.slice(5, 7);
 const hojeIso = () => new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
 const addDias = (ymd: string, n: number) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+/** Soma N dias úteis (seg–sex, sem feriado nacional) a uma data. */
+const addDiasUteis = (ymd: string, n: number) => { let cur = ymd; let falta = Math.max(0, Math.floor(n)); let g = 0; while (falta > 0 && g++ < 2000) { cur = addDias(cur, 1); if (ehDiaUtilBR(cur)) falta--; } return cur; };
+const arredondaFardo = (q: number, fardo: number) => (q > 0 && fardo > 0 ? Math.ceil(q / fardo) * fardo : Math.max(0, Math.round(q)));
 const inicioSemana = (ymd: string) => { const d = new Date(ymd + 'T12:00:00Z'); const dow = (d.getUTCDay() + 6) % 7; return addDias(ymd, -dow); };
 const chaveDe = (dia: string, g: Gran) => (g === 'dia' ? dia : g === 'semana' ? inicioSemana(dia) : dia.slice(0, 7));
 const rotuloDe = (k: string, g: Gran) => (g === 'mes' ? k.slice(5, 7) + '/' + k.slice(0, 4) : g === 'semana' ? 'sem ' + fmtDataCurta(k) : fmtDataCurta(k));
@@ -88,6 +92,9 @@ export default function ProgramacaoProducao() {
   const [soAtencao, setSoAtencao] = useState(false);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [qtd, setQtd] = useState<Record<string, string>>({});
+  // Dias úteis de estoque desejado (Flavio 04/out): quanto produzir de cada sabor para
+  // ficar com N dias úteis de cobertura. Começa no alvo dos parâmetros (lead + segurança + horizonte).
+  const [diasDesejados, setDiasDesejados] = useState<string>('');
   const [dataProd, setDataProd] = useState<Record<string, string>>({});
   const [confirmar, setConfirmar] = useState(false);
   const [programando, setProgramando] = useState(false);
@@ -104,14 +111,32 @@ export default function ProgramacaoProducao() {
   // relatório recarrega (o usuário pode ajustar antes de programar).
   useEffect(() => {
     if (!data) return;
-    const q: Record<string, string> = {}; const d: Record<string, string> = {};
+    const d: Record<string, string> = {};
     for (const p of data.produtos) {
-      q[p.productId] = String(p.calculo.sugestaoProduzir || '');
       const lim = p.calculo.dataLimiteProducao;
       d[p.productId] = lim && lim > data.hoje ? lim : data.hoje;
     }
-    setQtd(q); setDataProd(d); setSel({});
+    setDataProd(d); setSel({});
+    if (!diasDesejados) setDiasDesejados(String(data.produtos[0]?.calculo.diasAlvo ?? (data.parametros.leadProducaoDias + data.parametros.leadTransferenciaDias + data.parametros.segurancaDias + data.parametros.horizonteDias)));
   }, [data?.geradoEm]);
+
+  const nDias = Math.max(0, Number(diasDesejados) || 0);
+  // Sugestão para N dias úteis = média/dia útil × N − estoque (fábrica + instâncias) − OPs abertas, em fardos fechados.
+  const sugestaoPara = (p: Produto) => arredondaFardo(p.saidas.mediaDia * nDias - p.estoque.cobertura - p.programado.aberto, p.fardoUnidades);
+  // Sempre que N muda (ou o relatório recarrega), a quantidade a produzir volta para a sugestão.
+  useEffect(() => {
+    if (!data) return;
+    const q: Record<string, string> = {};
+    for (const p of data.produtos) { const sg = sugestaoPara(p); q[p.productId] = sg > 0 ? String(sg) : ''; }
+    setQtd(q);
+  }, [data?.geradoEm, nDias]);
+  // Simulação: cobertura (dias úteis) e ruptura que teremos se a quantidade digitada for produzida.
+  const simular = (p: Produto) => {
+    const extra = Math.max(0, Number(qtd[p.productId]) || 0);
+    if (p.saidas.mediaDia <= 0) return { extra, dias: null as number | null, data: null as string | null };
+    const dias = (p.estoque.cobertura + p.programado.aberto + extra) / p.saidas.mediaDia;
+    return { extra, dias, data: data ? addDiasUteis(data.hoje, Math.floor(dias)) : null };
+  };
 
   const instDisponiveis = data?.instancias.map((i) => i.name) || ['IND', 'GYN', 'BSB', 'SERV'];
   const toggleInst = (n: string) => setInst((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]));
@@ -151,7 +176,7 @@ export default function ProgramacaoProducao() {
   const selecionados = produtos.filter((p) => sel[p.productId] && Number(qtd[p.productId]) > 0);
   const marcarSugeridos = () => {
     const nx: Record<string, boolean> = {};
-    for (const p of produtos) if (p.calculo.sugestaoProduzir > 0) nx[p.productId] = true;
+    for (const p of produtos) if (sugestaoPara(p) > 0) nx[p.productId] = true;
     setSel(nx);
   };
 
@@ -161,7 +186,7 @@ export default function ProgramacaoProducao() {
     try {
       const r = await jfetch('/api/industria/programacao/programar', {
         method: 'POST',
-        body: JSON.stringify({ itens: selecionados.map((p) => ({ product_id: p.productId, quantity: Number(qtd[p.productId]), production_date: dataProd[p.productId] || undefined, notes: `Programação de produção — sugestão ${p.calculo.sugestaoProduzir} un (cobertura ${p.calculo.coberturaDias ?? '∞'} d)` })) }),
+        body: JSON.stringify({ itens: selecionados.map((p) => ({ product_id: p.productId, quantity: Number(qtd[p.productId]), production_date: dataProd[p.productId] || undefined, notes: `Programação de produção — alvo ${nDias} dias úteis, sugestão ${sugestaoPara(p)} un (cobertura atual ${p.calculo.coberturaDias ?? '∞'} d.u.)` })) }),
       });
       toast({ title: `${r.criadas?.length || 0} OP(s) planejada(s)`, description: (r.criadas || []).map((c: any) => c.order_number).join(', ') });
       if (r.erros?.length) toast({ title: `${r.erros.length} item(ns) não programado(s)`, variant: 'destructive' });
@@ -179,7 +204,7 @@ export default function ProgramacaoProducao() {
       'Estoque fábrica (IND)': p.estoque.fabrica, 'Estoque escritório (GYN)': p.estoque.escritorio, 'Estoque BSB': p.estoque.porInstancia.BSB || 0, 'Estoque SERV': p.estoque.porInstancia.SERV || 0, 'Estoque total': p.estoque.total,
       [`Saídas ${janela}d`]: p.saidas.total, 'Média/dia': p.saidas.mediaDia, 'Média/semana': p.saidas.mediaSemana, 'Média/mês': p.saidas.mediaMes, 'Pico semanal': p.saidas.picoSemana,
       'Cobertura (dias)': p.calculo.coberturaDias ?? '', 'Ruptura prevista': p.calculo.dataRuptura || '', 'Estoque mínimo': p.calculo.estoqueMinimo, 'Estoque alvo': p.calculo.estoqueAlvo,
-      'Programado (OPs abertas)': p.programado.aberto, 'Sugestão produzir': p.calculo.sugestaoProduzir, 'Fardos': p.calculo.sugestaoFardos ?? '', 'Produzir até': p.calculo.dataLimiteProducao || '',
+      'Programado (OPs abertas)': p.programado.aberto, [`Produzir p/ ${nDias} d.u.`]: sugestaoPara(p), 'Qtd simulada': Number(qtd[p.productId]) || 0, 'Cobertura c/ simulação (d.u.)': simular(p).dias == null ? '' : Math.round((simular(p).dias as number) * 10) / 10, 'Ruptura c/ simulação': simular(p).data || '', 'Produzir até': p.calculo.dataLimiteProducao || '',
     }));
     const saidas = produtos.map((p) => { const row: Record<string, any> = { Produto: p.nome }; for (const k of periodos) row[rotuloDe(k, gran)] = Math.round(pivotProduto[p.productId]?.[k] || 0); return row; });
     exportSheetsToExcel([
@@ -228,6 +253,10 @@ export default function ProgramacaoProducao() {
             {[15, 30, 60, 90].map((d) => <option key={d} value={d}>{d} dias</option>)}
           </select>
         </div>
+        <div>
+          <Label className="text-xs">Estoque desejado (dias úteis)</Label>
+          <Input type="number" min={0} value={diasDesejados} onChange={(e) => setDiasDesejados(e.target.value)} className="h-8 w-28 mt-1 font-semibold" data-testid="input-dias-desejados" title="Quantos dias úteis de venda o estoque deve cobrir — a coluna Produzir é calculada para esse alvo" />
+        </div>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={() => setParamsOpen(true)}><Settings2 className="h-4 w-4 mr-1" /> Lead time</Button>
         <Button variant="outline" size="sm" onClick={exportar} disabled={!data}><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel</Button>
@@ -245,7 +274,7 @@ export default function ProgramacaoProducao() {
             <Kpi icone={<Warehouse className="h-4 w-4" />} rotulo="Estoque BSB" valor={fmtInt(t!.estoquePorInstancia.BSB || 0)} sub="garrafas" />
             <Kpi icone={<TrendingDown className="h-4 w-4" />} rotulo={`Saídas últimos ${data.janelaMediaDias} dias`} valor={fmtInt(t!.saidasJanela)} sub={`${fmt1(t!.mediaDia)} garrafas/dia útil (${data.diasUteisJanela} dias úteis) · ${data.instanciasDemanda.join(' + ')}`} />
             <Kpi icone={<AlertTriangle className="h-4 w-4" />} rotulo="Produtos em alerta" valor={String(alerta)} sub={`${t!.porStatus.ruptura || 0} ruptura · ${t!.porStatus.critico || 0} crítico · ${t!.porStatus.atencao || 0} atenção`} destaque={alerta > 0} />
-            <Kpi icone={<PlayCircle className="h-4 w-4" />} rotulo="Sugestão de produção" valor={fmtInt(t!.sugestaoProduzir)} sub={`garrafas · ${fmtInt(t!.programado)} já programadas em OP`} />
+            <Kpi icone={<PlayCircle className="h-4 w-4" />} rotulo={`Produzir para ${nDias} dias úteis`} valor={fmtInt(data.produtos.reduce((s, p) => s + sugestaoPara(p), 0))} sub={`garrafas · ${fmtInt(t!.programado)} já programadas em OP · simulado: ${fmtInt(data.produtos.reduce((s, p) => s + (Number(qtd[p.productId]) || 0), 0))}`} />
           </div>
 
           {/* ----- gráfico de saídas ----- */}
@@ -299,13 +328,14 @@ export default function ProgramacaoProducao() {
                   <TableHead>Ruptura prev.</TableHead>
                   <TableHead className="text-right">Est. mínimo</TableHead>
                   <TableHead className="text-right">Programado</TableHead>
-                  <TableHead className="text-right">Sugestão</TableHead>
+                  <TableHead className="text-right">Produzir p/ {nDias} d.u.</TableHead>
                   <TableHead>Produzir até</TableHead>
-                  <TableHead className="w-28">Qtd a produzir</TableHead>
+                  <TableHead className="w-28">Simular / produzir</TableHead>
+                  <TableHead className="text-right">Cobertura c/ simulação</TableHead>
                   <TableHead className="w-36">Data produção</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {produtos.length === 0 && <TableRow><TableCell colSpan={17} className="text-center text-gray-500 py-6">Nenhum produto.</TableCell></TableRow>}
+                  {produtos.length === 0 && <TableRow><TableCell colSpan={18} className="text-center text-gray-500 py-6">Nenhum produto.</TableCell></TableRow>}
                   {produtos.map((pr) => {
                     const st = STATUS[pr.calculo.status];
                     const cob = pr.calculo.coberturaDias;
@@ -337,12 +367,18 @@ export default function ProgramacaoProducao() {
                         <TableCell className="text-right tabular-nums" title={pr.programado.ops.map((o) => `${o.orderNumber} · ${fmtInt(o.quantidade)} · ${o.status}${o.productionDate ? ' · ' + fmtData(o.productionDate) : ''}`).join('\n')}>
                           {pr.programado.aberto ? <span className="underline decoration-dotted">{fmtInt(pr.programado.aberto)}</span> : '—'}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums font-semibold text-emerald-700">
-                          {pr.calculo.sugestaoProduzir ? fmtInt(pr.calculo.sugestaoProduzir) : '—'}
-                          {pr.calculo.sugestaoFardos ? <div className="text-[11px] font-normal text-gray-500">{pr.calculo.sugestaoFardos} fardos</div> : null}
+                        <TableCell className="text-right tabular-nums font-semibold text-emerald-700" title={`média ${fmt1(pr.saidas.mediaDia)}/d.u. × ${nDias} d.u. = ${fmtInt(pr.saidas.mediaDia * nDias)} un alvo − ${fmtInt(pr.estoque.cobertura)} em estoque − ${fmtInt(pr.programado.aberto)} em OP`}>
+                          {sugestaoPara(pr) ? fmtInt(sugestaoPara(pr)) : '—'}
+                          {sugestaoPara(pr) && pr.fardoUnidades ? <div className="text-[11px] font-normal text-gray-500">{Math.ceil(sugestaoPara(pr) / pr.fardoUnidades)} fardos</div> : null}
                         </TableCell>
                         <TableCell className={`text-xs ${pr.calculo.dataLimiteProducao && pr.calculo.dataLimiteProducao <= data.hoje ? 'text-red-600 font-semibold' : ''}`}>{fmtData(pr.calculo.dataLimiteProducao)}</TableCell>
-                        <TableCell><Input type="number" min={0} step={pr.fardoUnidades || 1} value={qtd[pr.productId] ?? ''} onChange={(e) => setQtd((q) => ({ ...q, [pr.productId]: e.target.value }))} className="h-8 text-right" /></TableCell>
+                        <TableCell><Input type="number" min={0} step={pr.fardoUnidades || 1} value={qtd[pr.productId] ?? ''} onChange={(e) => setQtd((q) => ({ ...q, [pr.productId]: e.target.value }))} className="h-8 text-right" data-testid={`sim-${pr.productId}`} /></TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {(() => { const sm = simular(pr); if (sm.dias == null) return <span className="text-gray-400">∞</span>; const ok = sm.dias >= nDias; return (<div title={`(${fmtInt(pr.estoque.cobertura)} estoque + ${fmtInt(pr.programado.aberto)} OP + ${fmtInt(sm.extra)} simulado) ÷ ${fmt1(pr.saidas.mediaDia)}/d.u.`}>
+                            <span className={`font-semibold ${sm.extra > 0 ? (ok ? 'text-emerald-700' : 'text-amber-700') : ''}`}>{fmt1(sm.dias)} d</span>
+                            <div className="text-[11px] text-gray-500">até {fmtData(sm.data)}</div>
+                          </div>); })()}
+                        </TableCell>
                         <TableCell><Input type="date" value={dataProd[pr.productId] ?? data.hoje} onChange={(e) => setDataProd((d) => ({ ...d, [pr.productId]: e.target.value }))} className="h-8" /></TableCell>
                       </TableRow>
                     );
@@ -356,7 +392,8 @@ export default function ProgramacaoProducao() {
                 <b>Média/dia útil</b> = saídas dos últimos {data.janelaMediaDias} dias ÷ {data.diasUteisJanela} dias úteis (seg–sex, sem feriado nacional).
                 {' '}<b>Cobertura</b> = (estoque fábrica + estoque das instâncias selecionadas) ÷ média/dia útil, em dias úteis — ruptura e "produzir até" pulam fins de semana e feriados.
                 {' '}<b>Estoque mínimo</b> = média/dia × (lead {p!.leadProducaoDias + p!.leadTransferenciaDias}d + segurança {p!.segurancaDias}d).
-                {' '}<b>Sugestão</b> = média/dia × (lead + segurança + horizonte {p!.horizonteDias}d) − estoque − OPs abertas, arredondada em fardos.
+                {' '}<b>Produzir p/ N d.u.</b> = média/dia útil × N dias úteis desejados (campo "Estoque desejado") − estoque − OPs abertas, arredondada em fardos.
+                {' '}<b>Simular / produzir</b>: digite uma quantidade e a coluna ao lado mostra a cobertura (dias úteis) e a data de ruptura que teremos com essa produção; o mesmo valor é o que o botão Programar cria em OP.
                 {' '}<b>Produzir até</b> = data da ruptura − lead − segurança. Status: crítico quando a cobertura (com OPs abertas) é menor que o lead; atenção quando é menor que lead + segurança.
               </div>
             </div>
