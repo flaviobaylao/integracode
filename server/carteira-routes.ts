@@ -27,6 +27,7 @@ import { nfVendaWhere } from "./faturamento-oficial";
 import { cteFaturamento, descricaoFonte, MES_NFE_INTEGRA } from "./faturamento-carteira";
 import { authenticateUser } from "./authMiddleware";
 import { registerCarteiraReclassificacao } from "./carteira-reclassificacao-routes";
+import { registerAgendaRota } from "./agenda-rota-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
 
 const TZ = "America/Sao_Paulo";
@@ -838,6 +839,8 @@ export function registerCarteira(app: Express) {
   // Nao tem tela: eram vizinhas da aba "Agenda da carteira", retirada em
   // 04/10/2026. Seguem de pe porque regravam a visit_agenda da Rota do Dia.
   registerCarteiraReclassificacao(app);
+  // Aba "Agenda de Rota" (atendimentos por semana/dia, na regua da Rota do Dia).
+  registerAgendaRota(app);
   // Aba "Rede de Cliente" (grupos de filiais / mesma gestao, consolidados).
   registerRedesClientes(app);
 
