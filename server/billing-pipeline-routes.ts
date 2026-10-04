@@ -2081,7 +2081,7 @@ export function registerBillingPipelineRoutes(app: Express) {
             message: 'Faturamento bloqueado: estoque em uso insuficiente',
             stockError: true,
             shortages: stockCheck.shortages,
-            details: `Este pedido só pode ser faturado quando houver estoque EM USO suficiente (lotes bloqueados não são usados).\n${stockCheck.details}`,
+            details: `Este pedido só pode ser faturado quando houver estoque suficiente (em uso + bloqueado, que é liberado automaticamente quando o em uso acaba).\n${stockCheck.details}`,
           });
         }
 
@@ -2124,7 +2124,7 @@ export function registerBillingPipelineRoutes(app: Express) {
               message: 'Faturamento bloqueado: estoque em uso insuficiente',
               stockError: true,
               shortages: stockError.faltas,
-              details: `Este pedido só pode ser faturado quando houver estoque EM USO suficiente (lotes bloqueados não são usados).\n${stockError.details}`,
+              details: `Este pedido só pode ser faturado quando houver estoque suficiente (em uso + bloqueado, que é liberado automaticamente quando o em uso acaba).\n${stockError.details}`,
             });
           }
           console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque (faturamento abortado):`, stockError.message);

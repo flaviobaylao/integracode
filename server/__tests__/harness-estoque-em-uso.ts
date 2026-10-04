@@ -44,14 +44,14 @@ async function main() {
   // A: em uso L1=30 (mais antigo), L2=50; bloqueado B1=100.  B: em uso 10.
   await lote('e-l1', 'e-a', 'e-ind', 'in_use', 'L1', 30, 10);
   await lote('e-l2', 'e-a', 'e-ind', 'in_use', 'L2', 50, 5);
-  await lote('e-b1', 'e-a', 'e-ind', 'blocked', 'B1', 100, 20);
+  // (bloqueado de A entra no cenario 1b, depois da conferencia)
   await lote('e-lb', 'e-b', 'e-ind', 'in_use', 'LB', 10, 3);
 
   console.log('\n1) Conferencia: so conta estoque em uso');
   let v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-a', name: 'SUCO A', quantity: 80 }]);
   t('80 cabe (30+50 em uso)', v.valid, v);
   v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-a', name: 'SUCO A', quantity: 81 }]);
-  t('81 NAO cabe — bloqueado nao conta', !v.valid && v.shortages[0]?.available === 80 && v.shortages[0]?.blocked === 100, v);
+  t('81 NAO cabe (so 80 em uso, nada bloqueado)', !v.valid && v.shortages[0]?.available === 80 && v.shortages[0]?.blocked === 0, v);
   v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-a', name: 'SUCO A', quantity: 50 }, { id: 'e-a', name: 'SUCO A', quantity: 40 }]);
   t('linhas repetidas somam (50+40=90 > 80)', !v.valid && v.shortages[0]?.required === 90, v);
   v = await verificarEstoqueEmUso('e-ind', [{ name: 'AVULSO', quantity: 1 }]);
@@ -60,7 +60,7 @@ async function main() {
   console.log('\n2) Baixa FIFO so de lotes em uso + texto de lote');
   let m = await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-a', name: 'SUCO A', quantity: 40 }], sourceId: 'card-1', rotulo: 'T1', createdBy: 'h' });
   t('consumiu L1 30 + L2 10', m['e-a']?.length === 2 && m['e-a'][0].lotNumber === 'L1' && m['e-a'][0].quantidade === 30 && m['e-a'][1].quantidade === 10, m);
-  t('L1=0, L2=40, B1 intacto 100', (await saldo('e-l1')) === 0 && (await saldo('e-l2')) === 40 && (await saldo('e-b1')) === 100);
+  t('L1=0, L2=40', (await saldo('e-l1')) === 0 && (await saldo('e-l2')) === 40);
   t('texto da NF com os 2 lotes', textoLotes(m['e-a']) === 'Lote: L1 (30) / L2 (10)', textoLotes(m['e-a']));
   t('um lote so: "Lote: X"', textoLotes([{ lotId: 'x', lotNumber: 'L9', quantidade: 5 }]) === 'Lote: L9');
 
@@ -71,7 +71,7 @@ async function main() {
     await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-b', name: 'SUCO B', quantity: 5 }, { id: 'e-a', name: 'SUCO A', quantity: 41 }], sourceId: 'card-2', rotulo: 'T2', createdBy: 'h' });
   } catch (e) { err = e; }
   t('lanca EstoqueInsuficienteError', err instanceof EstoqueInsuficienteError && ehBloqueioEstoque(err), err?.message);
-  t('falta cita disponivel em uso 40 e bloqueado 100', err?.faltas?.[0]?.available === 40 && err?.faltas?.[0]?.blocked === 100, err?.faltas);
+  t('falta cita disponivel em uso 40', err?.faltas?.[0]?.available === 40 && err?.faltas?.[0]?.blocked === 0, err?.faltas);
   t('produto B (que cabia) NAO foi baixado', (await saldo('e-lb')) === 10);
   t('nenhum movimento gravado', (await nMov()) === antes);
   err = null;
@@ -141,12 +141,30 @@ async function main() {
   const d2 = distribuirLotes(mapa, [{ id: 'e-a', quantity: 20, lotId: 'a2' }]);
   t('linha que pediu lote especifico pega ele', textoLotes(d2[0]) === 'Lote: L2', d2[0]);
 
-  console.log('\n7) consumeStock (baixa avulsa) nao usa lote bloqueado');
+  console.log('\n7) consumeStock e bloqueado como fila de reposicao (promocao FIFO)');
   const c = await consumeStock('e-b', 'e-ind', 50, 'manual', 'avulso-1', null);
-  t('falta -> success=false, nada baixado', c.success === false && (await saldo('e-lb')) === 5, c);
-  await db.execute(sql`INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, is_active) VALUES ('e-bb', 'e-b', 'e-ind', 'blocked', 'BB', 500, true)`);
+  t('falta sem bloqueado -> success=false, nada baixado', c.success === false && (await saldo('e-lb')) === 5, c);
+  await db.execute(sql`INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, is_active, created_at) VALUES
+    ('e-bb', 'e-b', 'e-ind', 'blocked', 'BB', 500, true, now() - interval '1 day'),
+    ('e-bc', 'e-b', 'e-ind', 'blocked', 'BC', 300, true, now())`);
+  v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-b', name: 'SUCO B', quantity: 50 }]);
+  t('conferencia soma o bloqueado (5 em uso + 800 bloqueado cobre 50)', v.valid, v);
+  v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-b', name: 'SUCO B', quantity: 900 }]);
+  t('900 nao cabe nem com o bloqueado', !v.valid && v.shortages[0]?.available === 5 && v.shortages[0]?.blocked === 800, v);
+  const movA = await nMov();
+  err = null;
+  try { await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-b', name: 'SUCO B', quantity: 900 }], sourceId: 'pr-0', rotulo: 'P0', createdBy: null }); } catch (e) { err = e; }
+  t('falta mesmo com fila: nada promovido, nada baixado', ehBloqueioEstoque(err) && (await nMov()) === movA
+    && (await q(sql`SELECT stock_type FROM inventory_lots WHERE id = 'e-bb'`))[0]?.stock_type === 'blocked');
   const c2 = await consumeStock('e-b', 'e-ind', 50, 'manual', 'avulso-2', null);
-  t('com bloqueado sobrando: continua recusando', c2.success === false && (await saldo('e-bb')) === 500 && (await saldo('e-lb')) === 5, c2);
+  const tipos = await q(sql`SELECT id, stock_type, quantity::float8 AS q FROM inventory_lots WHERE id IN ('e-lb','e-bb','e-bc') ORDER BY id`);
+  t('em uso acabou -> BB (mais antigo) promovido inteiro; BC segue bloqueado', c2.success === true
+    && tipos.find((x: any) => x.id === 'e-bb')?.stock_type === 'in_use' && tipos.find((x: any) => x.id === 'e-bc')?.stock_type === 'blocked', tipos);
+  t('consumo: LB 5 primeiro, depois 45 do BB', tipos.find((x: any) => x.id === 'e-lb')?.q === 0 && tipos.find((x: any) => x.id === 'e-bb')?.q === 455, tipos);
+  t('promocao registrada como movimento', (await q(sql`SELECT count(*)::int AS n FROM inventory_movements WHERE lot_id = 'e-bb' AND movement_type = 'transfer'`))[0].n === 1);
+  // devolve o cenario para os testes seguintes (LB com 5, sem os bloqueados)
+  await db.execute(sql`UPDATE inventory_lots SET quantity = 5 WHERE id = 'e-lb'`);
+  await db.execute(sql`DELETE FROM inventory_lots WHERE id IN ('e-bb', 'e-bc')`);
 
   console.log('\n8) NF manual transmitida pela tela (/emit): prepararEstoqueParaEmissao');
   await db.execute(sql`INSERT INTO fiscal_invoices (id, status, operation_type, invoice_number, series, customer_name, total_invoice, omie_instance_id, fin_nfe)

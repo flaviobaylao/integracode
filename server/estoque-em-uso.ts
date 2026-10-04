@@ -3,15 +3,16 @@
 //
 // Regras:
 //  1. A baixa de estoque de qualquer faturamento sai SOMENTE de lotes "em uso"
-//     (inventory_lots.stock_type = 'in_use', ativos, saldo > 0). Lote bloqueado
-//     (ou de qualquer outro tipo) nunca e usado para faturar — nem por
-//     "transferencia automatica" de bloqueado para em uso, como o consumeStock
-//     antigo fazia.
+//     (inventory_lots.stock_type = 'in_use', ativos, saldo > 0). O estoque
+//     BLOQUEADO e a fila de reposicao da filial (entrada por NF de transferencia,
+//     PR #118): quando o em uso de um produto nao cobre a saida, o lote bloqueado
+//     mais antigo e PROMOVIDO a "em uso" (inteiro, mesmo numero, mesmo CMV), dentro
+//     da mesma transacao, e so entao consumido. Nada sai direto de lote bloqueado.
 //  2. A NF-e sai com o numero de cada lote consumido em cada produto (e a
 //     quantidade tirada de cada um quando o produto sai de mais de um lote).
 //  3. Se faltar estoque em uso para QUALQUER produto do pedido, o faturamento
-//     inteiro e bloqueado — nada e baixado, nenhuma NF e criada. Libera quando
-//     entrar estoque novo em uso ou quando o estoque em uso for corrigido.
+//     inteiro e bloqueado — nada e baixado, nenhuma NF e criada (conta o em uso
+//     mais o bloqueado promovivel). Libera quando entrar estoque ou houver correcao.
 //
 // Esta e a UNICA rotina de verificacao e de baixa para faturamento. A baixa e
 // tudo-ou-nada e atomica: os lotes sao travados (SELECT ... FOR UPDATE) dentro
@@ -52,7 +53,7 @@ export type FaltaEstoque = {
   productName: string;
   required: number;
   available: number;
-  // saldo em lotes que NAO podem ser usados (bloqueados) — so informativo
+  // saldo bloqueado (fila de reposicao) — ja somado na conferencia; informativo
   blocked: number;
 };
 
@@ -121,7 +122,7 @@ const fmtQtd = (n: number) => {
 export function descreverFaltas(faltas: FaltaEstoque[]): string {
   return faltas.map((f) =>
     `• ${f.productName}: necessário ${fmtQtd(f.required)}, disponível em uso ${fmtQtd(f.available)}`
-    + (f.blocked > EPS ? ` (há ${fmtQtd(f.blocked)} em lote(s) bloqueado(s), que não podem ser faturados)` : ''),
+    + (f.blocked > EPS ? ` + ${fmtQtd(f.blocked)} bloqueado (fila de reposição) — mesmo liberando o bloqueado não cobre` : ''),
   ).join('\n');
 }
 
@@ -179,8 +180,11 @@ export async function verificarEstoqueEmUso(instanceId: string, products: LinhaP
       FROM inventory_lots
       WHERE product_id = ${n.productId} AND instance_id = ${instanceId} AND is_active = true`))[0] || {};
     const disponivel = Number(r.em_uso) || 0;
-    if (disponivel + EPS < n.quantidade) {
-      shortages.push({ productId: n.productId, productName: n.productName, required: n.quantidade, available: disponivel, blocked: Number(r.outros) || 0 });
+    const bloqueado = Number(r.outros) || 0;
+    // Bloqueado = fila de reposicao (entrada por transferencia): e liberado para
+    // "em uso" na baixa, FIFO, quando o em uso nao cobre. So falta se nem somando cobre.
+    if (disponivel + bloqueado + EPS < n.quantidade) {
+      shortages.push({ productId: n.productId, productName: n.productName, required: n.quantidade, available: disponivel, blocked: bloqueado });
     } else if (Object.keys(n.porLote).length) {
       const ls = rowsOf(await db.execute(sql`
         SELECT id, quantity::float8 AS qtd FROM inventory_lots
@@ -239,14 +243,39 @@ export async function baixarEstoqueEmUso(opts: {
           AND stock_type = 'in_use' AND is_active = true AND quantity > 0
         ORDER BY created_at ASC NULLS LAST, lot_number ASC
         FOR UPDATE`));
-      const disponivel = lotes.reduce((s, l) => s + (Number(l.qtd) || 0), 0);
+      let disponivel = lotes.reduce((s, l) => s + (Number(l.qtd) || 0), 0);
       if (disponivel + EPS < n.quantidade) {
-        const b = rowsOf(await tx.execute(sql`
-          SELECT COALESCE(SUM(quantity), 0)::float8 AS q FROM inventory_lots
+        // PROMOCAO DO BLOQUEADO (Flavio, 04/out/2026): o bloqueado e a fila de
+        // reposicao da filial (entrada por NF de transferencia). Quando o em uso nao
+        // cobre, o lote bloqueado mais antigo vira "em uso" — inteiro, com o PROPRIO
+        // numero e CMV — ate cobrir. Se nem a fila toda cobre, nada e promovido
+        // (o throw abaixo desfaz a transacao inteira).
+        const bloqueados = rowsOf(await tx.execute(sql`
+          SELECT id, lot_number, quantity::float8 AS qtd
+          FROM inventory_lots
           WHERE product_id = ${n.productId} AND instance_id = ${opts.instanceId}
-            AND stock_type <> 'in_use' AND is_active = true AND quantity > 0`))[0];
-        faltas.push({ productId: n.productId, productName: n.productName, required: n.quantidade, available: disponivel, blocked: Number(b?.q) || 0 });
-        continue;
+            AND stock_type = 'blocked' AND is_active = true AND quantity > 0
+          ORDER BY created_at ASC NULLS LAST, lot_number ASC
+          FOR UPDATE`));
+        const totalBloq = bloqueados.reduce((s, l) => s + (Number(l.qtd) || 0), 0);
+        if (disponivel + totalBloq + EPS < n.quantidade) {
+          faltas.push({ productId: n.productId, productName: n.productName, required: n.quantidade, available: disponivel, blocked: totalBloq });
+          continue;
+        }
+        for (const b of bloqueados) {
+          if (disponivel + EPS >= n.quantidade) break;
+          const q = Number(b.qtd) || 0;
+          await tx.execute(sql`UPDATE inventory_lots SET stock_type = 'in_use', updated_at = now() WHERE id = ${b.id}`);
+          await tx.execute(sql`
+            INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, quantity, previous_quantity, new_quantity, source_type, source_id, lot_number, notes, created_by, created_at)
+            VALUES (gen_random_uuid()::varchar, ${b.id}, ${n.productId}, ${opts.instanceId}, 'transfer',
+                    ${q.toFixed(4)}, ${q.toFixed(4)}, ${q.toFixed(4)}, ${opts.sourceType || 'invoice'}, ${opts.sourceId}, ${b.lot_number},
+                    ${`Lote bloqueado ${b.lot_number} liberado para estoque em uso (estoque em uso esgotado) - ${opts.rotulo}`},
+                    ${opts.createdBy}, now())`);
+          console.log(`🔓 [ESTOQUE-EM-USO] ${opts.rotulo}: lote ${b.lot_number} (${fmtQtd(q)} un) promovido de bloqueado para em uso`);
+          lotes.push(b);
+          disponivel += q;
+        }
       }
       const fl = faltasPorLote(n, lotes);
       if (fl.length) { faltas.push(...fl); continue; }
