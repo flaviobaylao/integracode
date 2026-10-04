@@ -171,7 +171,7 @@ export default function LeadsManagement() {
   // 🔎 Coleta da ficha básica do Google (Places) em lote, sob demanda
   const coletarGoogleMutation = useMutation({
     mutationFn: async () => {
-      const res: any = await apiRequest('POST', '/api/admin/leads/preencher-google', { limite: 60 });
+      const res: any = await apiRequest('POST', '/api/admin/leads/preencher-google', { limite: 60, ids: selectedLeadIds.size > 0 ? Array.from(selectedLeadIds) : undefined });
       return (res && typeof res.json === 'function') ? await res.json() : res;
     },
     onSuccess: (data: any) => {
@@ -1049,7 +1049,7 @@ export default function LeadsManagement() {
                 data-testid="button-coletar-google"
               >
                 <MapPin className="h-4 w-4 mr-1" />
-                {coletarGoogleMutation.isPending ? 'Coletando…' : `Coletar ficha Google${leadsSemGoogle ? ` (${leadsSemGoogle})` : ''}`}
+                {coletarGoogleMutation.isPending ? 'Coletando…' : `Coletar ficha Google${selectedLeadIds.size > 0 ? ` (${selectedLeadIds.size} selec.)` : (leadsSemGoogle ? ` (${leadsSemGoogle})` : '')}`}
               </Button>
               <Button
                 size="sm"
