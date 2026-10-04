@@ -2818,12 +2818,15 @@ async function validateStockForBilling(item: any): Promise<{ valid: boolean; sho
   for (const product of products) {
     if (!product.id) continue;
 
-    const lots = await storage.getInventoryLots({
+    // Em uso + bloqueado: o bloqueado e a fila de reposicao (entrada por
+    // transferencia) e e promovido a "em uso" automaticamente na baixa, quando o
+    // lote em uso acaba. Contar so o em uso travaria o faturamento da filial logo
+    // depois de receber mercadoria.
+    const lots = (await storage.getInventoryLots({
       productId: product.id,
       instanceId,
-      stockType: 'in_use',
       isActive: true,
-    });
+    })).filter((l: any) => l.stockType === 'in_use' || l.stockType === 'blocked');
 
     let totalAvailable = 0;
     for (const lot of lots) {
@@ -2903,10 +2906,15 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
       continue;
     }
 
+    // ENTRADA EM ESTOQUE BLOQUEADO (Flavio, 04/out/2026): o que chega por NF de
+    // transferencia entra na filial como BLOQUEADO, atras do estoque em uso. Ele so
+    // vira "em uso" quando o lote em uso daquele produto acaba (promocao FIFO em
+    // deductStockForBilling / consumeStock). Por isso a soma no mesmo lote so
+    // acontece com um lote BLOQUEADO de mesmo numero — nunca com o que ja esta em uso.
     const existentes = await storage.getInventoryLots({
       productId: p.id,
       instanceId: destinoId,
-      stockType: 'in_use',
+      stockType: 'blocked',
       isActive: true,
     });
     const mesmoLote = existentes.find((l: any) => String(l.lotNumber).trim() === lotNumber);
@@ -2968,7 +2976,7 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
     const novoLote = await storage.createInventoryLot({
       productId: p.id,
       instanceId: destinoId,
-      stockType: 'in_use',
+      stockType: 'blocked',
       lotNumber,
       quantity: qty.toFixed(4),
       minQuantity: '0',
@@ -2991,8 +2999,59 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
       notes: `Entrada por transferencia ${item.orderNumber || item.id} (${item.omieInstanceName || 'origem'} -> ${p.transferToInstanceName || 'destino'})`,
       createdBy: quem,
     } as any);
-    console.log(`🔁 [TRANSFER] ${lotNumber}: lote criado em ${p.transferToInstanceName || destinoId} com ${qty} un. a CMV ${unitCost || 'n/d'}`);
+    console.log(`🔁 [TRANSFER] ${lotNumber}: lote BLOQUEADO criado em ${p.transferToInstanceName || destinoId} com ${qty} un. a CMV ${unitCost || 'n/d'}`);
   }
+}
+
+// ===========================================================================
+// PROMOCAO DE LOTE BLOQUEADO -> EM USO (Flavio, 04/out/2026)
+// O estoque bloqueado e a fila de reposicao da filial (entrada por NF de
+// transferencia). Quando o saldo em uso de um produto nao cobre uma saida, o
+// lote bloqueado mais antigo vira "em uso" — mantendo o PROPRIO numero de lote e
+// o PROPRIO CMV (nao funde com outro lote). Repete ate cobrir ou acabar a fila.
+// Exportada para consumeStock (inventory-routes) usar a mesma regra.
+// ===========================================================================
+export async function promoteBlockedLotsIfNeeded(
+  productId: string,
+  instanceId: string,
+  required: number,
+  inUseLots: any[],
+  by: string | null,
+  item?: any,
+): Promise<any[]> {
+  const saldo = (ls: any[]) => ls.reduce((s2, l) => s2 + Math.max(0, parseFloat(l.quantity?.toString() || '0')), 0);
+  let disponivel = saldo(inUseLots);
+  if (disponivel >= required) return inUseLots;
+
+  const bloqueados = (await storage.getInventoryLots({ productId, instanceId, stockType: 'blocked', isActive: true }))
+    .filter((l: any) => parseFloat(l.quantity?.toString() || '0') > 0);
+  if (!bloqueados.length) return inUseLots;
+
+  const promovidos: any[] = [];
+  for (const b of bloqueados) {
+    if (disponivel >= required) break;
+    const q = parseFloat(b.quantity?.toString() || '0');
+    const up = await storage.updateInventoryLot(b.id, { stockType: 'in_use' } as any);
+    await storage.createInventoryMovement({
+      lotId: b.id,
+      productId,
+      instanceId,
+      movementType: 'transfer',
+      quantity: q.toFixed(4),
+      previousQuantity: q.toFixed(4),
+      newQuantity: q.toFixed(4),
+      sourceType: item ? 'invoice' : 'manual',
+      sourceId: item?.id || null,
+      lotNumber: b.lotNumber,
+      notes: `Lote bloqueado ${b.lotNumber} liberado para estoque em uso (estoque em uso esgotado)`,
+      createdBy: by,
+    } as any);
+    console.log(`🔓 [STOCK] Lote ${b.lotNumber} (${q} un) promovido de bloqueado para em uso — instancia ${instanceId}`);
+    promovidos.push(up || { ...b, stockType: 'in_use' });
+    disponivel += q;
+  }
+  // Ordem de consumo: primeiro o que ja estava em uso, depois os recem-promovidos (FIFO).
+  return [...inUseLots, ...promovidos];
 }
 
 // exportada para o harness server/__tests__/harness-lotexato.ts
@@ -3040,6 +3099,10 @@ export async function deductStockForBilling(item: any, user: any): Promise<Recor
       stockType: 'in_use',
       isActive: true,
     });
+
+    // PROMOCAO DO BLOQUEADO (Flavio, 04/out/2026): quando o estoque em uso nao
+    // cobre a quantidade, o lote bloqueado mais antigo (FIFO) passa a ser em uso.
+    lots = await promoteBlockedLotsIfNeeded(product.id, instanceId, Number(product.quantity) || 0, lots, user?.email || null, item);
 
     // LOTE EXATO (pedido de transferencia entre filiais): a linha foi precificada
     // pelo CMV de UM lote especifico, entao a baixa tem de sair desse lote. Deixar o

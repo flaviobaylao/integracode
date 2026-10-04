@@ -521,12 +521,20 @@ export async function consumeStock(
   sourceId: string | null,
   createdBy: string | null,
 ): Promise<{ success: boolean; lotNumber: string; consumed: number; transferred: boolean; message?: string }> {
-  const inUseLots = await storage.getInventoryLots({
+  let inUseLots = await storage.getInventoryLots({
     productId,
     instanceId,
     stockType: 'in_use',
     isActive: true,
   });
+
+  // Sem lote em uso (ex.: filial que so recebeu transferencia, que entra como
+  // BLOQUEADO): o bloqueado mais antigo passa a ser em uso antes do consumo.
+  if (!inUseLots.some((l) => parseFloat(l.quantity) > 0)) {
+    const { promoteBlockedLotsIfNeeded } = await import('./billing-pipeline-routes');
+    const promovidos = await promoteBlockedLotsIfNeeded(productId, instanceId, 1, [], createdBy);
+    if (promovidos.length) inUseLots = [...promovidos, ...inUseLots];
+  }
 
   const inUseLot = inUseLots[0];
   if (!inUseLot) {
