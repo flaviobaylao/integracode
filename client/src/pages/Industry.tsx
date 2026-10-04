@@ -988,7 +988,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{isNew ? 'Nova Ordem de Produção' : `Editar Ordem ${order.order_number}`}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 space-y-1.5">
@@ -1050,7 +1050,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
             {f.items.length === 0 && <p className="text-sm text-gray-400">Nenhum material adicionado. Use uma receita ou adicione manualmente.</p>}
             {f.items.length > 0 && (
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-400 -mb-1">
-                <span className="flex-1">Material</span><span className="w-24">Consumido</span><span className="w-24 text-amber-600">Perda/Avaria</span><span className="w-28">Lote MP</span>
+                <span className="flex-1 min-w-0">Material</span><span className="w-24 shrink-0">Consumido</span><span className="w-24 shrink-0 text-amber-600">Perda/Avaria</span><span className="w-28 shrink-0">Lote MP</span><span className="w-32 shrink-0" /><span className="w-9 shrink-0" />
               </div>
             )}
             {f.items.map((it: any, idx: number) => {
@@ -1072,15 +1072,13 @@ function OrderDialog({ order, onClose, onDone }: any) {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Input className="w-24 h-8 text-xs" inputMode="decimal" placeholder="Qtd Total" value={it.quantity_used} onChange={(e) => setItem(idx, { quantity_used: e.target.value })} />
-                  <Input className="w-24 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda/Avaria" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={it.quantity_lost || ''} onChange={(e) => setItem(idx, { quantity_lost: e.target.value })} />
-                  <Input className="w-28 h-8 text-xs" placeholder="Lote MP" title="Lote da matéria-prima" value={it.lot_number || ''} onChange={(e) => setItem(idx, { lot_number: e.target.value })} />
-                  {mat && (
-                    <span className={`text-xs whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>
-                      (estoque: {fmtQty(mat.quantity)})
-                    </span>
-                  )}
-                  <Button type="button" variant="ghost" size="sm" className="text-red-500" onClick={() => rmItem(idx)}><X className="h-4 w-4" /></Button>
+                  <Input className="w-24 shrink-0 h-8 text-xs" inputMode="decimal" placeholder="Qtd Total" value={it.quantity_used} onChange={(e) => setItem(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-24 shrink-0 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda/Avaria" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={it.quantity_lost || ''} onChange={(e) => setItem(idx, { quantity_lost: e.target.value })} />
+                  <Input className="w-28 shrink-0 h-8 text-xs" placeholder="Lote MP" title="Lote da matéria-prima" value={it.lot_number || ''} onChange={(e) => setItem(idx, { lot_number: e.target.value })} />
+                  <span className={`w-32 shrink-0 truncate text-xs whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {mat ? `(estoque: ${fmtQty(mat.quantity)})` : ''}
+                  </span>
+                  <Button type="button" variant="ghost" size="sm" className="w-9 shrink-0 px-0 text-red-500" onClick={() => rmItem(idx)}><X className="h-4 w-4" /></Button>
                 </div>
               );
             })}
@@ -1255,7 +1253,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Finalizar Ordem {order.order_number}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-gray-500">{order.product_name} · Quantidade planejada: <b>{fmtQty(order.quantity)}</b></p>
@@ -1276,7 +1274,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
             </div>
             {f.materials.length > 0 && (
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-400 -mb-1">
-                <span className="flex-1">Material</span><span className="w-20">Consumido</span><span className="w-20 text-amber-600">Perda/Avaria</span><span className="w-28">Lote insumo</span>
+                <span className="flex-1 min-w-0">Material</span><span className="w-20 shrink-0">Consumido</span><span className="w-20 shrink-0 text-amber-600">Perda</span><span className="w-28 shrink-0">Lote insumo</span><span className="w-16 shrink-0">Estoque</span><span className="w-20 shrink-0 text-right">Custo</span><span className="w-9 shrink-0" />
               </div>
             )}
             <p className="text-[11px] text-gray-500">Perdas/avarias somam ao consumido no CMV e também saem do estoque (lançadas como movimento "Perda").</p>
@@ -1303,12 +1301,12 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Input className="w-20 h-8 text-xs" inputMode="decimal" placeholder="Qtd Real" value={m.quantity_used} onChange={(e) => setMat(idx, { quantity_used: e.target.value })} />
-                  <Input className="w-20 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={m.quantity_lost || ''} onChange={(e) => setMat(idx, { quantity_lost: e.target.value })} />
-                  <Input className="w-28 h-8 text-xs" placeholder="Lote insumo" value={m.lot_number} onChange={(e) => setMat(idx, { lot_number: e.target.value })} />
-                  <span className={`text-[10px] whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>est: {mat ? fmtQty(mat.quantity) : '?'}</span>
-                  <span className="text-[10px] text-gray-500 whitespace-nowrap w-16 text-right">{fmtBRL(sub)}</span>
-                  <Button type="button" variant="ghost" size="sm" className="text-red-500" onClick={() => rmMat(idx)}><X className="h-4 w-4" /></Button>
+                  <Input className="w-20 shrink-0 h-8 text-xs" inputMode="decimal" placeholder="Qtd Real" value={m.quantity_used} onChange={(e) => setMat(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-20 shrink-0 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={m.quantity_lost || ''} onChange={(e) => setMat(idx, { quantity_lost: e.target.value })} />
+                  <Input className="w-28 shrink-0 h-8 text-xs" placeholder="Lote insumo" value={m.lot_number} onChange={(e) => setMat(idx, { lot_number: e.target.value })} />
+                  <span className={`w-16 shrink-0 truncate text-[10px] whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>{mat ? fmtQty(mat.quantity) : '?'}</span>
+                  <span className="w-20 shrink-0 text-[10px] text-gray-500 whitespace-nowrap text-right">{fmtBRL(sub)}</span>
+                  <Button type="button" variant="ghost" size="sm" className="w-9 shrink-0 px-0 text-red-500" onClick={() => rmMat(idx)}><X className="h-4 w-4" /></Button>
                 </div>
               );
             })}
