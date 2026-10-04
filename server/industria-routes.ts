@@ -53,7 +53,7 @@ async function reverseFinalization(id: string, order: any, by: string) {
   const movs: any = await db.execute(sql`
     SELECT * FROM raw_material_movements
     WHERE production_order_id = ${id}
-      AND movement_type IN ('saida_producao', 'entrada')
+      AND movement_type IN ('saida_producao', 'perda', 'entrada')
       AND COALESCE(notes, '') NOT LIKE ${'%' + EST_MARK + '%'}
     ORDER BY created_at ASC`);
   for (const mv of (movs.rows || [])) {
@@ -62,7 +62,8 @@ async function reverseFinalization(id: string, order: any, by: string) {
     if (!mat) { warnings.push(`material ${mv.raw_material_id} nao existe mais — movimento nao estornado`); continue; }
     const qty = Number(mv.quantity) || 0;
     const prevQty = Number(mat.quantity) || 0;
-    const isOut = String(mv.movement_type) === 'saida_producao';
+    // saida_producao (consumo) e perda (perdido/avariado na OP) sao saidas
+    const isOut = ['saida_producao', 'perda'].includes(String(mv.movement_type));
     const newQty = isOut ? prevQty + qty : prevQty - qty;
     await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${mat.id}`);
     await db.execute(sql`
@@ -113,6 +114,10 @@ export function registerIndustriaRoutes(app: Express) {
   // Ordem reaberta precisa lembrar o lote que gerou (para o estorno e para
   // reexibir no formulário). A tabela vem do 1.0 e pode não ter a coluna.
   db.execute(sql`ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS lot_number varchar`).catch(() => {});
+  // Perdas/avarias por insumo da OP (Flavio 04/out/2026): quantidade perdida ou
+  // avariada do insumo durante a producao. Soma ao consumido no CMV e na baixa
+  // de estoque (movimento 'perda' separado do 'saida_producao').
+  db.execute(sql`ALTER TABLE production_order_items ADD COLUMN IF NOT EXISTS quantity_lost numeric(14,3) NOT NULL DEFAULT 0`).catch(() => {});
 
   // ========================== MATÉRIA-PRIMA ==========================
 
@@ -287,19 +292,20 @@ export function registerIndustriaRoutes(app: Express) {
     const clean = (Array.isArray(itemsIn) ? itemsIn : [])
       .map((it: any) => ({
         raw_material_id: str(it?.raw_material_id, 60),
-        quantity_used: num(it?.quantity_used ?? it?.quantity),
+        quantity_used: Math.max(0, num(it?.quantity_used ?? it?.quantity) ?? 0),
+        quantity_lost: Math.max(0, num(it?.quantity_lost) ?? 0),
         unit: str(it?.unit, 30),
         lot_number: str(it?.lot_number, 60),
       }))
-      .filter((it) => it.raw_material_id && it.quantity_used != null && it.quantity_used > 0);
+      .filter((it) => it.raw_material_id && (it.quantity_used > 0 || it.quantity_lost > 0));
     await db.execute(sql`DELETE FROM production_order_items WHERE production_order_id = ${orderId}`);
     const out: any[] = [];
     for (const it of clean) {
       const rm: any = await db.execute(sql`SELECT name, unit FROM raw_materials WHERE id = ${it.raw_material_id} LIMIT 1`);
       const mat = (rm.rows || [])[0];
       const ins: any = await db.execute(sql`
-        INSERT INTO production_order_items (id, production_order_id, raw_material_id, raw_material_name, quantity_used, unit, lot_number, lot_expiry_date)
-        VALUES (gen_random_uuid()::varchar, ${orderId}, ${it.raw_material_id}, ${mat?.name || null}, ${it.quantity_used}, ${it.unit || mat?.unit || null}, ${it.lot_number}, NULL)
+        INSERT INTO production_order_items (id, production_order_id, raw_material_id, raw_material_name, quantity_used, quantity_lost, unit, lot_number, lot_expiry_date)
+        VALUES (gen_random_uuid()::varchar, ${orderId}, ${it.raw_material_id}, ${mat?.name || null}, ${it.quantity_used}, ${it.quantity_lost}, ${it.unit || mat?.unit || null}, ${it.lot_number}, NULL)
         RETURNING *`);
       out.push((ins.rows || [])[0]);
     }
@@ -525,20 +531,23 @@ export function registerIndustriaRoutes(app: Express) {
   // OP servem de fallback; (2) material inexistente e ERRO (400), nao aviso;
   // (3) tudo roda numa unica transacao — ou baixa tudo e finaliza, ou nada.
   // ==========================================================================
-  type Insumo = { raw_material_id: string; quantity_used: number; lot_number: string | null; unit: string | null };
+  // quantity_used = consumido no produto; quantity_lost = perdido/avariado na OP.
+  // Os dois saem do estoque e os dois entram no CMV do lote.
+  type Insumo = { raw_material_id: string; quantity_used: number; quantity_lost: number; lot_number: string | null; unit: string | null };
 
   const parseInsumos = (arr: any): Insumo[] => (Array.isArray(arr) ? arr : [])
     .map((m: any) => ({
       raw_material_id: str(m?.raw_material_id, 60) || '',
-      quantity_used: num(m?.quantity_used ?? m?.quantity) ?? 0,
+      quantity_used: Math.max(0, num(m?.quantity_used ?? m?.quantity) ?? 0),
+      quantity_lost: Math.max(0, num(m?.quantity_lost) ?? 0),
       lot_number: str(m?.lot_number, 60),
       unit: str(m?.unit, 30),
     }))
-    .filter((m: Insumo) => m.raw_material_id && m.quantity_used > 0);
+    .filter((m: Insumo) => m.raw_material_id && (m.quantity_used > 0 || m.quantity_lost > 0));
 
   // Insumos da OP a partir dos itens gravados nela (quando o cliente nao manda).
   const insumosDosItens = async (ex: any, orderId: string): Promise<Insumo[]> => {
-    const r: any = await ex.execute(sql`SELECT raw_material_id, quantity_used, lot_number, unit FROM production_order_items WHERE production_order_id = ${orderId}`);
+    const r: any = await ex.execute(sql`SELECT * FROM production_order_items WHERE production_order_id = ${orderId}`);
     return parseInsumos(r.rows || []);
   };
 
@@ -556,6 +565,7 @@ export function registerIndustriaRoutes(app: Express) {
     const insumos = (its.rows || []).map((it: any) => ({
       raw_material_id: String(it.raw_material_id || ''),
       quantity_used: +(((num(it.quantity) ?? 0) * produced).toFixed(4)),
+      quantity_lost: 0,
       lot_number: null,
       unit: str(it.unit, 30),
     })).filter((m: Insumo) => m.raw_material_id && m.quantity_used > 0);
@@ -581,23 +591,39 @@ export function registerIndustriaRoutes(app: Express) {
     let totalCost = 0;
     const consumed: any[] = [];
     for (const { req: m, mat } of matRows) {
-      const prevQty = Number(mat.quantity) || 0;
-      const newQty = prevQty - m.quantity_used;
       const unitCost = Number(mat.unit_cost) || 0;
-      totalCost += m.quantity_used * unitCost;
-      await ex.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, updated_at = now() WHERE id = ${mat.id}`);
-      await ex.execute(sql`
-        INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
-        VALUES (gen_random_uuid()::varchar, ${mat.id}, 'saida_producao', ${m.quantity_used}, ${prevQty}, ${newQty}, ${String(order.id)}, ${rotulo + ' ' + order.order_number + (m.lot_number ? ' (lote insumo ' + m.lot_number + ')' : '')}, ${by}, now(), ${mat.unit_cost})`);
-      if (newQty < 0) warnings.push(`estoque de ${mat.name} ficou negativo (${newQty})`);
-      consumed.push({ raw_material_id: mat.id, name: mat.name, quantity_used: m.quantity_used, previous: prevQty, new: newQty, unit_cost: unitCost });
+      const used = m.quantity_used || 0;
+      const lost = m.quantity_lost || 0;
+      const prevQty = Number(mat.quantity) || 0;
+      let cur = prevQty;
+      totalCost += (used + lost) * unitCost;
+      const loteTxt = m.lot_number ? ' (lote insumo ' + m.lot_number + ')' : '';
+      // Consumo no produto
+      if (used > 0) {
+        const next = cur - used;
+        await ex.execute(sql`
+          INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
+          VALUES (gen_random_uuid()::varchar, ${mat.id}, 'saida_producao', ${used}, ${cur}, ${next}, ${String(order.id)}, ${rotulo + ' ' + order.order_number + loteTxt}, ${by}, now(), ${mat.unit_cost})`);
+        cur = next;
+      }
+      // Perda/avaria na OP — movimento proprio para aparecer como Perda no historico
+      if (lost > 0) {
+        const next = cur - lost;
+        await ex.execute(sql`
+          INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
+          VALUES (gen_random_uuid()::varchar, ${mat.id}, 'perda', ${lost}, ${cur}, ${next}, ${String(order.id)}, ${'Perda/avaria na ordem ' + order.order_number + loteTxt}, ${by}, now(), ${mat.unit_cost})`);
+        cur = next;
+      }
+      await ex.execute(sql`UPDATE raw_materials SET quantity = ${cur}, updated_at = now() WHERE id = ${mat.id}`);
+      if (cur < 0) warnings.push(`estoque de ${mat.name} ficou negativo (${cur})`);
+      consumed.push({ raw_material_id: mat.id, name: mat.name, quantity_used: used, quantity_lost: lost, total_baixa: used + lost, previous: prevQty, new: cur, unit_cost: unitCost });
     }
-    // Itens da ordem passam a refletir o consumo REAL (com lote do insumo)
+    // Itens da ordem passam a refletir o consumo REAL (com lote do insumo e perdas)
     await ex.execute(sql`DELETE FROM production_order_items WHERE production_order_id = ${String(order.id)}`);
     for (const { req: m, mat } of matRows) {
       await ex.execute(sql`
-        INSERT INTO production_order_items (id, production_order_id, raw_material_id, raw_material_name, quantity_used, unit, lot_number, lot_expiry_date)
-        VALUES (gen_random_uuid()::varchar, ${String(order.id)}, ${m.raw_material_id}, ${mat?.name || null}, ${m.quantity_used}, ${m.unit || mat?.unit || null}, ${m.lot_number}, NULL)`);
+        INSERT INTO production_order_items (id, production_order_id, raw_material_id, raw_material_name, quantity_used, quantity_lost, unit, lot_number, lot_expiry_date)
+        VALUES (gen_random_uuid()::varchar, ${String(order.id)}, ${m.raw_material_id}, ${mat?.name || null}, ${m.quantity_used || 0}, ${m.quantity_lost || 0}, ${m.unit || mat?.unit || null}, ${m.lot_number}, NULL)`);
     }
     return { totalCost, warnings, consumed };
   };
@@ -606,7 +632,7 @@ export function registerIndustriaRoutes(app: Express) {
   const temBaixa = async (ex: any, orderId: string): Promise<number> => {
     const r: any = await ex.execute(sql`
       SELECT COUNT(*)::int AS n FROM raw_material_movements
-      WHERE production_order_id = ${orderId} AND movement_type = 'saida_producao'
+      WHERE production_order_id = ${orderId} AND movement_type IN ('saida_producao', 'perda')
         AND COALESCE(notes, '') NOT LIKE ${'%' + EST_MARK + '%'}`);
     return Number((r.rows || [])[0]?.n || 0);
   };
@@ -666,7 +692,9 @@ export function registerIndustriaRoutes(app: Express) {
         const warnings = [...baixa.warnings];
         const totalCost = baixa.totalCost;
         const cmvUnit = produced > 0 ? totalCost / produced : 0;
-        const cmvNote = `CMV: R$ ${totalCost.toFixed(2)} (unit. R$ ${cmvUnit.toFixed(4)}) — lote ${lotNumber}, validade ${lotExpiryBR}`;
+        const comPerda = baixa.consumed.filter((c: any) => c.quantity_lost > 0);
+        const custoPerda = comPerda.reduce((acc: number, c: any) => acc + c.quantity_lost * c.unit_cost, 0);
+        const cmvNote = `CMV: R$ ${totalCost.toFixed(2)} (unit. R$ ${cmvUnit.toFixed(4)})${comPerda.length ? ` incl. perdas R$ ${custoPerda.toFixed(2)}` : ''} — lote ${lotNumber}, validade ${lotExpiryBR}`;
         const baixaNote = insumos.length
           ? `Baixa de insumos: ${baixa.consumed.length} item(ns)${origemInsumos === 'itens_da_op' ? ' (itens da OP)' : ''}`
           : `SEM BAIXA DE INSUMOS (confirmado por ${by})`;
@@ -753,7 +781,7 @@ export function registerIndustriaRoutes(app: Express) {
           }
         }
 
-        return { order: (up.rows || [])[0], cmv: { total: totalCost, unit: cmvUnit }, finished, warnings, consumed: baixa.consumed, origemInsumos };
+        return { order: (up.rows || [])[0], cmv: { total: totalCost, unit: cmvUnit, perdas: custoPerda }, finished, warnings, consumed: baixa.consumed, origemInsumos };
       });
 
       console.log('🏭 [OP] FINALIZADA', order.order_number, 'produzido', produced, 'lote', lotNumber, 'insumos', result.consumed.length, `(${result.origemInsumos})`, 'CMV', result.cmv.total.toFixed(2), 'por', by);
@@ -775,7 +803,7 @@ export function registerIndustriaRoutes(app: Express) {
       const r: any = await db.execute(sql`
         SELECT po.*,
                (SELECT COUNT(*)::int FROM production_order_items i WHERE i.production_order_id = po.id) AS itens,
-               (SELECT COUNT(*)::int FROM raw_material_movements m WHERE m.production_order_id = po.id AND m.movement_type = 'saida_producao'
+               (SELECT COUNT(*)::int FROM raw_material_movements m WHERE m.production_order_id = po.id AND m.movement_type IN ('saida_producao', 'perda')
                   AND COALESCE(m.notes, '') NOT LIKE ${'%' + EST_MARK + '%'}) AS baixas
         FROM production_orders po
         WHERE po.status = 'finalizada'
