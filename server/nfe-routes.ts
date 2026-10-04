@@ -1118,34 +1118,42 @@ export function registerNfeRoutes(app: Express) {
 
   app.post('/api/fiscal-invoices/:id/emit', authenticateUser, requireRole(['admin', 'industria']), async (req: any, res) => {
     try {
+      // 📦 ESTOQUE EM USO (Flavio, 04/out/2026) — a baixa sai SO de lotes em uso,
+      // ANTES da transmissao, para a NF ja sair com os lotes; sem estoque em uso
+      // suficiente a NF nao e transmitida. Antes a baixa era feita DEPOIS da
+      // autorizacao, puxava lote bloqueado e se repetia a cada transmissao (NF do
+      // pipeline retransmitida por aqui baixava o estoque de novo).
+      const preparo = await prepararEstoqueParaEmissao(req.params.id, req.currentUser?.email || req.user?.email || null);
+      if (preparo.bloqueio) {
+        return res.status(400).json({
+          success: false,
+          stockError: true,
+          errorMessage: preparo.bloqueio.message,
+          message: preparo.bloqueio.message,
+          details: preparo.bloqueio.details,
+          shortages: preparo.bloqueio.faltas,
+        });
+      }
+
       const result = await sefazService.emitNfe(req.params.id);
+
+      // Recusada com certeza (erro local antes do envio, ou rejeicao/denegacao da
+      // SEFAZ): devolve a baixa feita agora, lote a lote. Falha AMBIGUA (rede, sem
+      // protocolo, duplicidade 539/204, erro interno) NAO estorna — a nota pode ter
+      // sido autorizada do outro lado; a baixa fica com o rascunho.
+      if (!result.success && preparo.baixouAgora && falhaSemSaidaDeMercadoria((result as any)?.errorCode)) {
+        try {
+          const { estornarBaixa } = await import('./estoque-em-uso.js');
+          await estornarBaixa(req.params.id, 'NF-e nao autorizada pela SEFAZ', req.currentUser?.email || req.user?.email || null);
+        } catch (e: any) {
+          console.error('❌ [EMIT] estorno da baixa apos rejeicao falhou:', e?.message || e);
+        }
+      }
 
       if (result.success) {
         const invoice = await storage.getFiscalInvoice(req.params.id);
         const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
-
-        // Consume stock for each item in the invoice
-        try {
-          const { consumeStock } = await import('./inventory-routes.js');
-          const userId = req.user?.id || req.userId || null;
-          for (const item of items) {
-            if (item.productId) {
-              const product = await storage.getProduct(item.productId);
-              const instanceId = product?.omieInstanceId || 'default';
-              await consumeStock(
-                item.productId,
-                instanceId,
-                parseFloat(item.quantity),
-                'invoice',
-                req.params.id,
-                userId,
-              );
-            }
-          }
-        } catch (stockErr: any) {
-          console.warn('⚠️ Erro ao consumir estoque após emissão NF-e:', stockErr.message);
-        }
 
         // Venda de balcao acaba aqui: com a NFC-e autorizada, o card vai para
         // "Entregue" — o cliente ja saiu da loja com o produto. Ver a funcao para
@@ -1807,4 +1815,113 @@ export function registerNfeRoutes(app: Express) {
       res.status(500).json({ message: 'Erro ao buscar dashboard fiscal', error: error.message });
     }
   });
+}
+
+
+// ============================================================================
+// Estoque da NF transmitida pela tela de Notas Fiscais (/emit).
+//  - NF de saida (nao devolucao) com produtos do cadastro: baixa SO de lotes em
+//    uso, tudo-ou-nada, e grava os lotes nos itens antes da transmissao.
+//  - Ja houve baixa para esta NF (ou para o pedido do pipeline que a gerou):
+//    nao baixa de novo; so garante que os itens estao com os lotes.
+//  - Entrada, devolucao e instancia sem controle de estoque (SERV): nada a fazer.
+// ============================================================================
+const ERROS_LOCAIS_ANTES_DO_ENVIO = new Set(['NOT_FOUND', 'INVALID_STATUS', 'NO_ITEMS', 'ZERO_QTY_ITEM', 'NO_CERTIFICATE', 'MISSING_CUSTOMER_DOC', 'MISSING_CSC']);
+export function falhaSemSaidaDeMercadoria(errorCode: any): boolean {
+  const c = String(errorCode || '');
+  if (ERROS_LOCAIS_ANTES_DO_ENVIO.has(c)) return true;
+  // cStat numerico de rejeicao/denegacao; 539/204 = duplicidade (pode ja estar autorizada)
+  return /^\d{3}$/.test(c) && c !== '539' && c !== '204' && c !== '100' && c !== '150';
+}
+
+export async function prepararEstoqueParaEmissao(
+  invoiceId: string,
+  by: string | null,
+  opts?: { pipelineItem?: any },
+): Promise<{ baixouAgora: boolean; bloqueio?: { message: string; details: string; faltas: any[] } }> {
+  const ee = await import('./estoque-em-uso.js');
+  const invoice: any = await storage.getFiscalInvoice(invoiceId);
+  if (!invoice) return { baixouAgora: false };
+  if (String(invoice.status) === 'authorized') return { baixouAgora: false };
+  const ehSaida = String(invoice.operationType || 'saida') === 'saida';
+  const ehDevolucao = String(invoice.finNFe || '') === '4';
+  if (!ehSaida || ehDevolucao) return { baixouAgora: false };
+
+  const items: any[] = await storage.getFiscalInvoiceItems(invoiceId);
+  const comProduto = items.filter((it) => it.productId && Number(it.quantity) > 0);
+  if (!comProduto.length) return { baixouAgora: false };
+
+  const instanceId = invoice.omieInstanceId || null;
+  if (instanceId) {
+    const inst: any = await storage.getOmieInstance(instanceId);
+    // a sigla (GYN/IND/SERV) pode estar no name ou no display_name
+    if (ee.instanciaSemControleDeEstoque(inst?.name) || ee.instanciaSemControleDeEstoque(inst?.displayName)) return { baixouAgora: false };
+  }
+
+  // Baixa ja existente: da propria NF, ou do pedido do pipeline que a gerou
+  // (achado por sales_card_id ou, no pedido interno sem card, pela referencia
+  // "Pedido pipeline interno - <n>" gravada em notes).
+  let mapa: any = await ee.lotesJaBaixados([invoiceId]);
+  if (!mapa) {
+    const cards: any[] = [];
+    if (opts?.pipelineItem) cards.push(opts.pipelineItem);
+    else {
+      const ref = /^Pedido pipeline interno - (.+)$/.exec(String(invoice.notes || ''))?.[1] || null;
+      if (invoice.salesCardId || ref) {
+        const r: any = await db.execute(sql`
+          SELECT id, sales_card_id AS "salesCardId", order_number AS "orderNumber" FROM billing_pipeline
+          WHERE (${invoice.salesCardId || null}::varchar IS NOT NULL AND sales_card_id = ${invoice.salesCardId || null})
+             OR (${ref}::varchar IS NOT NULL AND order_number = ${ref})
+          ORDER BY created_at DESC`);
+        cards.push(...((r?.rows ?? r ?? []) as any[]));
+      }
+    }
+    for (const card of cards) {
+      mapa = await ee.baixaVigenteDoPedido({ id: String(card.id), salesCardId: card.salesCardId || null, orderNumber: card.orderNumber || null });
+      if (mapa) break;
+    }
+  }
+
+  let baixouAgora = false;
+  if (!mapa) {
+    if (!instanceId) {
+      const e = new ee.SemInstanciaEstoqueError();
+      return { baixouAgora: false, bloqueio: { message: e.message, details: e.details, faltas: [] } };
+    }
+    try {
+      mapa = await ee.baixarEstoqueEmUso({
+        instanceId,
+        // lote digitado na NF manual nao e obrigatorio: so lotes em uso, FIFO
+        products: comProduto.map((it) => ({ id: it.productId, name: ee.nomeSemLote(it.productName), quantity: Number(it.quantity) })),
+        sourceId: invoiceId,
+        rotulo: `NF ${invoice.invoiceNumber || invoiceId}`,
+        createdBy: by,
+        impedirDuplicadaDesde: null,
+      });
+      baixouAgora = true;
+    } catch (e: any) {
+      if ((e as any)?.baixaJaFeita) {
+        mapa = await ee.lotesJaBaixados([invoiceId]);
+      } else if (ee.ehBloqueioEstoque(e)) {
+        return { baixouAgora: false, bloqueio: { message: e.message, details: e.details, faltas: e.faltas || [] } };
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  // Grava os lotes nos itens (nome "... - Lote: X" + lot_number) para a NF sair com eles.
+  const linhas = comProduto.map((it) => ({ productId: it.productId, quantity: Number(it.quantity), lotId: it.lotId || null }));
+  const lotes = ee.distribuirLotes(mapa, linhas);
+  for (let i = 0; i < comProduto.length; i++) {
+    const txt = ee.textoLotes(lotes[i]);
+    if (!txt) continue;
+    const it = comProduto[i];
+    await storage.updateFiscalInvoiceItem(it.id, {
+      productName: `${ee.nomeSemLote(it.productName)} - ${txt}`,
+      lotNumber: txt.replace(/^Lote:\s*/, '').slice(0, 250),
+      lotId: lotes[i].length === 1 ? lotes[i][0].lotId : null,
+    } as any);
+  }
+  return { baixouAgora };
 }

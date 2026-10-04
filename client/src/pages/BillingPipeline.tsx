@@ -596,6 +596,16 @@ export default function BillingPipeline() {
       }
     },
     onError: (error: any) => {
+      // Bloqueio por estoque em uso: mostra produto a produto o que falta.
+      if (error?.stockError) {
+        toast({
+          title: error.message || 'Faturamento bloqueado: estoque em uso insuficiente',
+          description: <div className="whitespace-pre-line text-xs">{String(error.details || '')}</div>,
+          variant: 'destructive',
+          duration: 15000,
+        });
+        return;
+      }
       toast({ title: 'Erro ao mover item', description: error.message, variant: 'destructive' });
     }
   });
@@ -609,7 +619,7 @@ export default function BillingPipeline() {
       toast({ title: data?.already ? 'NF-e já autorizada' : 'Faturamento reprocessado', description: 'NF-e transmitida com sucesso.' });
     },
     onError: (error: any) => {
-      toast({ title: 'Falha ao re-tentar faturamento', description: error?.message || 'Erro ao transmitir a NF-e.', variant: 'destructive' });
+      toast({ title: 'Falha ao re-tentar faturamento', description: error?.stockError && error?.details ? <div className="whitespace-pre-line text-xs">{String(error.details)}</div> : (error?.message || 'Erro ao transmitir a NF-e.'), variant: 'destructive', ...(error?.stockError ? { duration: 15000 } : {}) });
     },
     onSettled: () => setRetryingId(null),
   });
@@ -794,6 +804,20 @@ export default function BillingPipeline() {
       const nfeCount = data.results?.filter((r: any) => r.fiscalInvoiceId).length || 0;
       let desc = `${data.successCount}/${data.totalCount} pedidos movidos com sucesso`;
       if (nfeCount > 0) desc += ` (${nfeCount} NF-e criadas)`;
+      // Pedidos barrados por falta de estoque em uso ficam onde estavam — avisa quais.
+      const semEstoque = (data.results || []).filter((r: any) => !r.success && r.stockError);
+      if (semEstoque.length > 0) {
+        const nomes = semEstoque.map((r: any) => {
+          const it: any = items.find((i: any) => i.id === r.id);
+          return `• ${it?.customerName || it?.orderNumber || r.id}: ${r.error || ''}`;
+        }).join('\n');
+        toast({
+          title: `${semEstoque.length} pedido(s) não faturado(s): estoque em uso insuficiente`,
+          description: <div className="whitespace-pre-line text-xs">{nomes}</div>,
+          variant: 'destructive',
+          duration: 20000,
+        });
+      }
       toast({ title: 'Ação em lote concluída', description: desc });
     },
     onError: (error: any) => {

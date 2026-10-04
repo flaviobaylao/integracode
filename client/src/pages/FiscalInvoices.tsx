@@ -690,6 +690,15 @@ export default function FiscalInvoices() {
       toast({ title: 'NF-e emitida', description: 'Nota fiscal enviada para a SEFAZ.' });
     },
     onError: (err: any) => {
+      if (err?.stockError) {
+        toast({
+          title: 'NF-e bloqueada: estoque em uso insuficiente',
+          description: <div className="whitespace-pre-line text-xs">{String(err.details || err.message || '')}</div>,
+          variant: 'destructive',
+          duration: 15000,
+        });
+        return;
+      }
       toast({ title: 'Erro ao emitir NF-e', description: err.message, variant: 'destructive' });
     },
   });

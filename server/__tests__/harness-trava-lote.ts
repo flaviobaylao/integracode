@@ -139,7 +139,7 @@ async function main() {
       status: 'authorized', operationType: 'saida', invoiceNumber: 104500, series: '1', salesCardId: card.salesCardId,
       customerId: 'h-cli-gyn', customerName: 'HONEST FILIAL GYN', omieInstanceId: 'h-ind', totalInvoice: '246.78', finNFe: '1',
     } as any);
-    t('baixa saiu do lote exato', (lotMap['h-prod'] || [])[0] === 'H050926', lotMap);
+    t('baixa saiu do lote exato', (lotMap['h-prod'] || [])[0]?.lotNumber === 'H050926', lotMap);
     t('origem ficou com 400', Number((await storage.getInventoryLot(lot.id))?.quantity) === 400);
     const espelho = (await storage.getInventoryLots({ productId: 'h-prod', instanceId: 'h-gyn', isActive: true }))[0];
     t('espelho GYN criado com 600 e CMV', espelho && Number(espelho.quantity) === 600 && Number((espelho as any).unitCost) === 0.4113, espelho);
