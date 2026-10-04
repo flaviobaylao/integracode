@@ -14,7 +14,9 @@
 //
 // Fontes (somente leitura, exceto a criação de OP e os parâmetros):
 //   inventory_movements (consume / cancel_reversal, source_type='invoice')
-//       → saída real de estoque por instância; a OPERAÇÃO vem do
+//       → saída real de estoque por instância (IND, GYN, BSB);
+//   billing_pipeline (cards faturados/entregues sem movimento) → histórico da
+//       SERV anterior ao controle de estoque dela (04/out/2026); a OPERAÇÃO vem do
 //         billing_pipeline (operation_type) via source_id; transferências
 //         IND→filial NÃO são demanda (são movimentação interna).
 //         created_at é gravado em UTC (now() do banco) → convertido p/ BRT.
@@ -29,6 +31,7 @@
 import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { ehDiaUtilBR } from "../shared/tempo";
 
 const CHAVE_PARAMS = "programacao_producao";
 
@@ -41,7 +44,7 @@ export type ParametrosProgramacao = {
   segurancaDias: number;
   /** Quantos dias de venda a produção sugerida deve cobrir ALÉM do mínimo. */
   horizonteDias: number;
-  /** Janela (dias corridos) usada para a média de saídas. */
+  /** Janela (dias corridos, contados para trás a partir de hoje) usada para a média de saídas; a média divide pelos DIAS ÚTEIS da janela. */
   janelaMediaDias: number;
   /** Lote mínimo de produção, em unidades (0 = sem mínimo). */
   loteMinimoUnidades: number;
@@ -54,7 +57,7 @@ const PADRAO: ParametrosProgramacao = {
   leadTransferenciaDias: 1,
   segurancaDias: 7,
   horizonteDias: 14,
-  janelaMediaDias: 28,
+  janelaMediaDias: 30,
   loteMinimoUnidades: 0,
   arredondarFardo: true,
 };
@@ -113,6 +116,19 @@ const somarDias = (ymd: string, dias: number): string => {
   const d = new Date(ymd + "T12:00:00Z");
   d.setUTCDate(d.getUTCDate() + Math.round(dias));
   return d.toISOString().slice(0, 10);
+};
+
+/** Dias úteis (seg–sex, sem feriado nacional) entre duas datas, inclusive. */
+const diasUteisNaJanela = (de: string, ate: string): number => {
+  let n = 0; let cur = de; let guarda = 0;
+  while (cur <= ate && guarda++ < 400) { if (ehDiaUtilBR(cur)) n++; cur = somarDias(cur, 1); }
+  return n;
+};
+/** Soma N dias úteis a uma data (N pode ser negativo). N = 0 devolve a própria data. */
+const somarDiasUteis = (ymd: string, n: number): string => {
+  let cur = ymd; let falta = Math.abs(Math.round(n)); const passo = n < 0 ? -1 : 1; let guarda = 0;
+  while (falta > 0 && guarda++ < 2000) { cur = somarDias(cur, passo); if (ehDiaUtilBR(cur)) falta--; }
+  return cur;
 };
 
 // Sabor/tamanho a partir do nome (mesma regra do dashboard Produção & Faturamento).
@@ -174,13 +190,18 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
       const de = isoDate(req.query.de) || somarDias(ate, -89);
       const janela = Math.max(7, Math.min(365, nz(req.query.janela, params.janelaMediaDias)));
       const inicioJanela = somarDias(hoje, -(janela - 1));
+      // Média de saída por DIA ÚTIL (Flavio 04/out): total da janela ÷ dias úteis da janela.
+      const diasUteisJanela = Math.max(1, diasUteisNaJanela(inicioJanela, hoje));
       const inicioConsulta = inicioJanela < de ? inicioJanela : de;
 
       const instR: any = await db.execute(sql`SELECT id, name, display_name FROM omie_instances WHERE COALESCE(is_active, true) ORDER BY name`);
       const instancias = (instR.rows || []).map((r: any) => ({ id: String(r.id), name: String(r.name || "").toUpperCase(), displayName: r.display_name || r.name }));
       const nomePorId: Record<string, string> = {};
       for (const i of instancias) nomePorId[i.id] = i.name;
-      const todasComEstoque: string[] = instancias.map((i: any) => String(i.name)).filter((n: string) => n !== "SERV");
+      // Todas as instâncias contam como demanda e estoque, inclusive a SERV
+      // (Flavio 04/out: SERV se comporta igual às demais; abastecida por NF de
+      // venda da GYN a CMV).
+      const todasComEstoque: string[] = instancias.map((i: any) => String(i.name));
       const selecionadas: string[] = String(req.query.instancias || "")
         .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
         .filter((n) => todasComEstoque.includes(n));
@@ -205,6 +226,31 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
           -- estorno/cancelamento de NF de TRANSFERÊNCIA (source = fiscal_invoices, sem card) também não é demanda
           AND NOT (fi.id IS NOT NULL AND (UPPER(COALESCE(fi.nature_of_operation, '')) LIKE '%TRANSFER%' OR fi.cfop IN ('5152', '6152', '5409', '6409')))
         GROUP BY 1, 2, 3, 4, 5, 6`);
+
+      // 1b) HISTÓRICO da SERV antes do controle de estoque (até 04/out/2026 a SERV
+      //     faturava sem lote, então não há inventory_movements desses pedidos):
+      //     cards do pipeline a partir de 'faturado' (fora lixeira) SEM movimento de
+      //     estoque associado; produtos do jsonb; data = NF autorizada, senão criação
+      //     do card. Cards novos da SERV já baixam lote e entram pela consulta 1.
+      const movServR: any = await db.execute(sql`
+        SELECT (p->>'id') AS product_id, bp.omie_instance_id AS instance_id,
+               (COALESCE(fi.d, bp.created_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
+               LOWER(COALESCE(NULLIF(bp.operation_type, ''), 'venda')) AS operacao,
+               false AS tem_nf, '' AS nf_natureza,
+               SUM(COALESCE((p->>'quantity')::numeric, 0)) AS qtd
+        FROM billing_pipeline bp
+        JOIN omie_instances oi ON oi.id::text = bp.omie_instance_id::text
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(bp.products::jsonb) = 'array' THEN bp.products::jsonb ELSE '[]'::jsonb END) p
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(emission_date, authorization_date, created_at) AS d
+          FROM fiscal_invoices WHERE sales_card_id = bp.sales_card_id AND status IN ('authorized', 'autorizada')
+          ORDER BY created_at DESC LIMIT 1) fi ON true
+        WHERE UPPER(oi.name) IN ('SERV')
+          AND NOT EXISTS (SELECT 1 FROM inventory_movements im WHERE im.source_type = 'invoice' AND im.source_id::text = bp.id::text)
+          AND bp.stage::text NOT IN ('agendado', 'pedido', 'a_faturar') AND bp.stage::text NOT LIKE '%lixeira%'
+          AND LOWER(COALESCE(bp.operation_type, '')) <> 'transferencia'
+          AND COALESCE(fi.d, bp.created_at) >= (${inicioConsulta}::date::timestamp + INTERVAL '3 hours')
+        GROUP BY 1, 2, 3, 4`);
 
       // 2) ESTOQUE por produto × instância. Conta EM USO + BLOQUEADO: desde
       //    04/out a NF de transferência entra na filial como 'blocked' e é
@@ -240,7 +286,7 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
       const janelaPorProduto: Record<string, Agg & { diasComSaida: Set<string>; porSemana: Record<string, number> }> = {};
       const totalPorInstancia: Record<string, Agg> = {};
 
-      for (const r of (movR.rows || [])) {
+      for (const r of [...(movR.rows || []), ...(movServR.rows || [])]) {
         const q = Number(r.qtd) || 0; if (!q) continue;
         const inst = nomePorId[String(r.instance_id)] || "?";
         const tipo = tipoDe(r.operacao, !!r.tem_nf, r.nf_natureza);
@@ -315,7 +361,7 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
         const estoqueTotal = Object.values(porInstancia).reduce((s, v) => s + v, 0);
 
         const totalJanela = jan ? jan.venda + jan.troca + jan.amostra + jan.bonificacao + jan.outros : 0;
-        const mediaDia = totalJanela / janela;
+        const mediaDia = totalJanela / diasUteisJanela; // por dia útil
         const semanas = jan ? Object.values(jan.porSemana) : [];
         const picoSemana = semanas.length ? Math.max(...semanas) : 0;
 
@@ -328,9 +374,10 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
         if (sugestao > 0 && params.loteMinimoUnidades > 0) sugestao = Math.max(sugestao, params.loteMinimoUnidades);
         if (sugestao > 0 && params.arredondarFardo && fardoUn > 0) sugestao = Math.ceil(sugestao / fardoUn) * fardoUn;
         sugestao = Math.round(sugestao);
-        const dataRuptura = coberturaDias == null ? null : somarDias(hoje, Math.floor(coberturaDias));
+        // Cobertura, lead e segurança são em DIAS ÚTEIS → datas pulam fim de semana e feriado.
+        const dataRuptura = coberturaDias == null ? null : somarDiasUteis(hoje, Math.floor(coberturaDias));
         // Para o lote chegar antes da ruptura descontando a segurança:
-        const dataLimiteProducao = dataRuptura ? somarDias(dataRuptura, -diasMinimo) : null;
+        const dataLimiteProducao = dataRuptura ? somarDiasUteis(dataRuptura, -diasMinimo) : null;
         let status: "ruptura" | "critico" | "atencao" | "ok" | "sem_giro";
         if (mediaDia <= 0) status = "sem_giro";
         else if (estoqueCobertura <= 0) status = "ruptura";
@@ -346,10 +393,10 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
             lotesFabrica: est["IND"]?.lotes || 0, custoFabrica: Math.round((est["IND"]?.custo || 0) * 100) / 100,
           },
           saidas: {
-            janelaDias: janela,
+            janelaDias: janela, diasUteisJanela,
             total: Math.round(totalJanela), venda: Math.round(jan?.venda || 0), troca: Math.round(jan?.troca || 0),
             amostra: Math.round(jan?.amostra || 0), bonificacao: Math.round(jan?.bonificacao || 0), outros: Math.round(jan?.outros || 0),
-            mediaDia: Math.round(mediaDia * 100) / 100, mediaSemana: Math.round(mediaDia * 7 * 10) / 10, mediaMes: Math.round(mediaDia * 30),
+            mediaDia: Math.round(mediaDia * 100) / 100, mediaSemana: Math.round(mediaDia * 5 * 10) / 10, mediaMes: Math.round(mediaDia * 22),
             picoSemana: Math.round(picoSemana), diasComSaida: jan ? jan.diasComSaida.size : 0,
           },
           programado: { aberto: Math.round(programado), ops },
@@ -381,7 +428,7 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
 
       res.json({
         geradoEm: new Date().toISOString(), hoje,
-        periodo: { de, ate }, janelaMediaDias: janela,
+        periodo: { de, ate }, janelaMediaDias: janela, diasUteisJanela, inicioJanela,
         instancias: instancias.filter((i: any) => todasComEstoque.includes(i.name)),
         instanciasDemanda: Array.from(instDemanda),
         parametros: params,

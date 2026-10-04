@@ -2059,7 +2059,7 @@ function AssinarRe15Dialog({ orders, assinaturas, me, onClose, onDone }: any) {
 // ===========================================================================
 // ABA 4 — ESTOQUE PRODUTO ACABADO (lotes — mesmo sistema consumido pela NF-e)
 // ===========================================================================
-function TransferenciaDialog({ lotes, onClose, onDone }: { lotes: any[]; onClose: () => void; onDone: () => void }) {
+function TransferenciaDialog({ lotes, origem = 'IND', onClose, onDone }: { lotes: any[]; origem?: string; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast();
   const [enviando, setEnviando] = useState(false);
   const [destinoId, setDestinoId] = useState<string>('');
@@ -2077,12 +2077,16 @@ function TransferenciaDialog({ lotes, onClose, onDone }: { lotes: any[]; onClose
   const destinos: any[] = dest?.destinations || [];
   const destinoSel = destinos.find((d) => d.instanceId === destinoId) || null;
 
-  // Pre-seleciona GYN se ele aparecer na lista — e o destino de 99% das transferencias.
+  // Pre-seleciona o destino usual: da IND vai para GYN (99% das transferencias);
+  // da GYN vai para SERV (abastecimento da Puro Servicos por NF de venda a CMV).
+  const lista = destinos.filter((d) => String(d.instanceName).toUpperCase() !== String(origem).toUpperCase());
   useMemo(() => {
-    if (destinoId || !destinos.length) return;
-    const gyn = destinos.find((d) => String(d.instanceName).toUpperCase() === 'GYN') || destinos[0];
-    if (gyn) { setDestinoId(gyn.instanceId); setCustomerId(gyn.customerId || ''); }
-  }, [destinos.length]);
+    if (destinoId || !lista.length) return;
+    const alvo = String(origem).toUpperCase() === 'GYN' ? 'SERV' : 'GYN';
+    const pre = lista.find((d) => String(d.instanceName).toUpperCase() === alvo) || lista[0];
+    if (pre) { setDestinoId(pre.instanceId); setCustomerId(pre.customerId || ''); }
+  }, [lista.length]);
+  const destinoIntercompany = destinoSel && String(destinoSel.instanceName).toUpperCase() === 'SERV';
 
   const linhas = lotes.map((l) => {
     const q = n(qtds[l.id]);
@@ -2135,7 +2139,7 @@ function TransferenciaDialog({ lotes, onClose, onDone }: { lotes: any[]; onClose
               }}>
                 <SelectTrigger><SelectValue placeholder="Selecione a filial" /></SelectTrigger>
                 <SelectContent>
-                  {destinos.map((d) => (
+                  {lista.map((d) => (
                     <SelectItem key={d.instanceId} value={d.instanceId}>{d.instanceDisplayName || d.instanceName}</SelectItem>
                   ))}
                 </SelectContent>
@@ -2220,6 +2224,11 @@ function TransferenciaDialog({ lotes, onClose, onDone }: { lotes: any[]; onClose
             Total do pedido (a CMV): <b className="text-emerald-700">{fmtBRL(total)}</b>
             <span className="text-gray-500"> — o estoque só é baixado no faturamento.</span>
           </p>
+          {destinoIntercompany && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+              SERV é outra empresa (Puro Serviços): a NF sai como <b>venda</b> (CFOP 5101/6101) a preço de CMV, e os lotes entram no estoque da SERV com o mesmo CMV. Não conta como faturamento nem como demanda nos relatórios.
+            </p>
+          )}
         </div>
 
         <DialogFooter>
@@ -2280,7 +2289,11 @@ function EstoqueTab() {
   // na "Gestao completa de Estoque" (/estoque). Os cards sao recalculados aqui, so
   // sobre os lotes da IND, para nao mostrar a valorizacao das filiais como se
   // fosse da fabrica.
-  const lots: any[] = (data?.lots || []).filter((l: any) => String(l.instance?.name || '').toUpperCase() === 'IND');
+  // 04/out/2026 (Flavio): a SERV passa a controlar estoque e e abastecida por NF de
+  // VENDA da GYN a CMV. Para isso o pedido de transferencia precisa sair de lotes da
+  // GYN — a aba ganha um seletor de ORIGEM (IND por padrao, como sempre foi).
+  const [origem, setOrigem] = useState<'IND' | 'GYN' | 'BSB'>('IND');
+  const lots: any[] = (data?.lots || []).filter((l: any) => String(l.instance?.name || '').toUpperCase() === origem);
   const negativos = lots.filter((l) => n(l.quantity) < 0).length;
   const resumo = useMemo(() => ({
     totalProducts: new Set(lots.map((l) => l.productId)).size,
@@ -2366,6 +2379,14 @@ function EstoqueTab() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex rounded-md border overflow-hidden" data-testid="estoque-origem">
+          {(['IND', 'GYN', 'BSB'] as const).map((o) => (
+            <button key={o} type="button" onClick={() => { setOrigem(o); setSel(new Set()); }}
+              className={`px-2.5 py-1.5 text-xs font-medium ${origem === o ? 'bg-emerald-600 text-white' : 'bg-white text-gray-600 dark:bg-gray-800'}`}>
+              {o === 'IND' ? 'Fábrica (IND)' : o === 'GYN' ? 'Escritório (GYN)' : 'BSB'}
+            </button>
+          ))}
+        </div>
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
           <Input placeholder="Buscar produto ou lote..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 w-[260px]" />
@@ -2509,6 +2530,7 @@ function EstoqueTab() {
       {transferindo && (
         <TransferenciaDialog
           lotes={selecionados}
+          origem={origem}
           onClose={() => setTransferindo(false)}
           onDone={() => {
             setTransferindo(false);
