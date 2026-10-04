@@ -1,6 +1,6 @@
 // ============================================================================
 // MÓDULO INDÚSTRIA 2.0 — formato 1.0 completo + melhorias (18/ago/2026)
-// Abas: Matéria-Prima · Receitas · Ordens de Produção · Estoque Produto Acabado · Documentos (05/set/2026)
+// Abas: Matéria-Prima · Receitas · Ordens de Produção · Estoque Produto Acabado · Programação (04/out/2026) · Documentos (05/set/2026)
 // Backend: /api/industria/* (industria-routes.ts) + /api/inventory/* (lotes).
 // Melhorias sobre o 1.0: finalização integrada ao estoque de produto acabado
 // (inventory_lots, consumido pela NF-e), polpa produzida entra no estoque de
@@ -31,6 +31,7 @@ import ChecklistProducao from '@/components/ChecklistProducao';
 import ManutencaoMaquinas from '@/components/ManutencaoMaquinas';
 import TrocasIndustria from '@/components/TrocasIndustria';
 import RelatorioInsumosDialog from '@/components/RelatorioInsumos';
+import ProgramacaoProducao from '@/components/ProgramacaoProducao';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import { gerarRe15Pdf, RE15_EMPRESA } from '@/lib/re15-pdf';
@@ -39,7 +40,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye, ClipboardCheck, Users,
-  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat,
+  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat, CalendarClock,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -2335,6 +2336,9 @@ export default function Industry() {
             <TabsTrigger value="estoque" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <Factory className="h-4 w-4" /> Estoque Produto Acabado
             </TabsTrigger>
+            <TabsTrigger value="programacao" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700" data-testid="tab-industria-programacao">
+              <CalendarClock className="h-4 w-4" /> Programação
+            </TabsTrigger>
             <TabsTrigger value="checklist" className="flex items-center gap-1.5 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700">
               <ListChecks className="h-4 w-4" /> Checklist diário
             </TabsTrigger>
@@ -2361,6 +2365,7 @@ export default function Industry() {
           <TabsContent value="receitas"><RecipesEditor /></TabsContent>
           <TabsContent value="ordens"><OrdensTab /></TabsContent>
           <TabsContent value="estoque"><EstoqueTab /></TabsContent>
+          <TabsContent value="programacao"><ProgramacaoProducao /></TabsContent>
           <TabsContent value="checklist"><ChecklistProducao /></TabsContent>
           <TabsContent value="manutencao"><ManutencaoMaquinas /></TabsContent>
           <TabsContent value="documentos"><DocumentosEmpresa /></TabsContent>
