@@ -24,8 +24,9 @@ import { queryClient } from "@/lib/queryClient";
 import { exportToExcel } from "@/lib/excelExport";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText, FileX2,
+  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText, FileX2, FileCheck2, X,
 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const SIGNATARIO_PURO_PADRAO = "Flavio Evangelista Baylão Neto";
 
@@ -120,6 +121,8 @@ export default function Comodatos() {
   const [buscaCli, setBuscaCli] = useState("");
   const [consultandoCnpj, setConsultandoCnpj] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
+  const [pendentes, setPendentes] = useState<File[]>([]); // arquivos escolhidos antes de salvar um contrato novo
+  const [enviando, setEnviando] = useState(0);
   const [distrato, setDistrato] = useState<{ contrato: any; dataDistrato: string; dataDevolucao: string; condicao: string; motivo: string; pendencias: string; encerrar: boolean } | null>(null);
   const [gerandoDistrato, setGerandoDistrato] = useState(false);
   const [cliOpcoes, setCliOpcoes] = useState<any[]>([]);
@@ -170,10 +173,10 @@ export default function Comodatos() {
   const recarregar = () => queryClient.invalidateQueries({ queryKey: ["/api/comodatos"] });
 
   const abrirNovo = () => {
-    setEditId(null); setForm({ ...VAZIO }); setAnexos([]); setBuscaCli(""); setCliOpcoes([]); setAberto(true);
+    setEditId(null); setForm({ ...VAZIO }); setAnexos([]); setPendentes([]); setBuscaCli(""); setCliOpcoes([]); setAberto(true);
   };
   const abrirEdicao = async (c: any) => {
-    setEditId(c.id); setForm(paraForm(c)); setAnexos([]); setBuscaCli(""); setCliOpcoes([]); setAberto(true);
+    setEditId(c.id); setForm(paraForm(c)); setAnexos(c.anexos_lista || []); setPendentes([]); setBuscaCli(""); setCliOpcoes([]); setAberto(true);
     try { const det = await api(`/api/comodatos/${c.id}`); setAnexos(det.anexosLista || []); } catch { /* lista vazia */ }
   };
 
@@ -272,13 +275,25 @@ export default function Comodatos() {
       body.valorBem = form.valorBem === "" ? null : Number(String(form.valorBem).replace(",", "."));
       body.nfAquisicaoValor = form.nfAquisicaoValor === "" ? null : Number(String(form.nfAquisicaoValor).replace(",", "."));
       const url = editId ? `/api/comodatos/${editId}` : "/api/comodatos";
-      await api(url, {
+      const salvo = await api(url, {
         method: editId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      // contrato novo: sobe os arquivos escolhidos antes de salvar
+      let falhas = 0;
+      if (!editId && salvo?.id && pendentes.length) {
+        for (const f of pendentes) {
+          const fd = new FormData(); fd.append("arquivo", f);
+          await api(`/api/comodatos/${salvo.id}/anexos`, { method: "POST", body: fd }).catch(() => { falhas++; });
+        }
+      }
       await recarregar();
-      toast({ title: editId ? "Contrato atualizado" : "Contrato cadastrado" });
+      toast({
+        title: editId ? "Contrato atualizado" : "Contrato cadastrado",
+        description: falhas ? `${falhas} arquivo(s) não subiram — anexe de novo editando o contrato.` : (pendentes.length && !editId ? `${pendentes.length} arquivo(s) anexado(s).` : undefined),
+        variant: falhas ? "destructive" : "default",
+      });
       setAberto(false);
     } catch (e: any) {
       toast({ title: "Erro ao salvar", description: e?.message, variant: "destructive" });
@@ -295,15 +310,19 @@ export default function Comodatos() {
   };
 
   const enviarAnexo = async (file: File) => {
-    if (!editId) return;
+    if (file.size > 15 * 1024 * 1024) { toast({ title: `${file.name}: acima de 15MB`, variant: "destructive" }); return; }
+    if (!editId) { setPendentes((l) => [...l, file]); return; } // contrato novo: sobe ao salvar
     const fd = new FormData();
     fd.append("arquivo", file);
+    setEnviando((n) => n + 1);
     try {
       const a = await api(`/api/comodatos/${editId}/anexos`, { method: "POST", body: fd });
       setAnexos((l) => [...l, a]);
       recarregar();
     } catch (e: any) {
       toast({ title: "Falha no anexo", description: e?.message, variant: "destructive" });
+    } finally {
+      setEnviando((n) => n - 1);
     }
   };
   const removerAnexo = async (id: string) => {
@@ -466,9 +485,32 @@ export default function Comodatos() {
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1">
-                      <Button variant="outline" size="sm" title="Contrato em PDF" onClick={() => window.open(`/api/comodatos/${c.id}/contrato.pdf`, "_blank")}>
-                        <FileText className="w-3.5 h-3.5" />
-                      </Button>
+                      {(c.anexos_lista || []).length === 0 ? (
+                        <Button variant="outline" size="sm" className="whitespace-nowrap" title="Sem contrato assinado anexado — gerar o contrato para assinatura"
+                          onClick={() => window.open(`/api/comodatos/${c.id}/contrato.pdf`, "_blank")}>
+                          <FileText className="w-3.5 h-3.5 mr-1" />Gerar contrato
+                        </Button>
+                      ) : c.anexos_lista.length === 1 ? (
+                        <Button variant="outline" size="sm" className="whitespace-nowrap border-emerald-300 text-emerald-700 hover:bg-emerald-50" title={c.anexos_lista[0].file_name}
+                          onClick={() => window.open(`/api/comodatos/anexos/${c.anexos_lista[0].id}`, "_blank")}>
+                          <FileCheck2 className="w-3.5 h-3.5 mr-1" />Contrato assinado
+                        </Button>
+                      ) : (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" className="whitespace-nowrap border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                              <FileCheck2 className="w-3.5 h-3.5 mr-1" />Contrato assinado ({c.anexos_lista.length})
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {c.anexos_lista.map((a: any, i: number) => (
+                              <DropdownMenuItem key={a.id} onClick={() => window.open(`/api/comodatos/anexos/${a.id}`, "_blank")}>
+                                <Paperclip className="w-3.5 h-3.5 mr-2" />{a.file_name || `Arquivo ${i + 1}`}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                       <Button variant={c.distrato_data ? "secondary" : "outline"} size="sm" className="whitespace-nowrap" title={c.distrato_data ? `Distrato de ${dt(c.distrato_data)}` : "Gerar distrato"} onClick={() => abrirDistrato(c)}>
                         <FileX2 className="w-3.5 h-3.5 mr-1" />Distrato
                       </Button>
@@ -595,36 +637,64 @@ export default function Comodatos() {
             </section>
 
             <section className="space-y-2">
-              <h3 className="font-semibold text-sm text-muted-foreground uppercase flex items-center gap-2"><Paperclip className="w-4 h-4" />Contrato digitalizado</h3>
-              {!editId ? (
-                <p className="text-xs text-muted-foreground">Salve o contrato para anexar as fotos/PDF.</p>
+              <h3 className="font-semibold text-sm text-muted-foreground uppercase flex items-center gap-2"><Paperclip className="w-4 h-4" />Contrato assinado (imagens/PDF)</h3>
+              <p className="text-xs text-muted-foreground">Fotos ou PDF do contrato assinado (até 15MB cada). Com o contrato assinado anexado, a lista mostra o link para ele em vez de "Gerar contrato".</p>
+              <div
+                className="border-2 border-dashed rounded-md p-4 text-center text-sm text-muted-foreground cursor-pointer hover:bg-muted/40"
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); Array.from(e.dataTransfer.files || []).forEach(enviarAnexo); }}
+              >
+                <Upload className="w-5 h-5 mx-auto mb-1" />
+                Clique para escolher ou arraste aqui as imagens/PDF do contrato assinado
+                {enviando > 0 && <div className="mt-1 text-xs flex items-center justify-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Enviando {enviando} arquivo(s)…</div>}
+              </div>
+              <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple className="hidden"
+                onChange={(e) => { Array.from(e.target.files || []).forEach(enviarAnexo); e.target.value = ""; }} />
+              {(anexos.length > 0 || pendentes.length > 0) ? (
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
+                  {anexos.map((a) => (
+                    <div key={a.id} className="relative border rounded-md overflow-hidden group">
+                      <a href={`/api/comodatos/anexos/${a.id}`} target="_blank" rel="noreferrer" title={a.file_name}>
+                        {String(a.mimetype || "").startsWith("image/")
+                          ? <img src={`/api/comodatos/anexos/${a.id}`} alt={a.file_name} className="h-24 w-full object-cover" loading="lazy" />
+                          : <div className="h-24 flex items-center justify-center bg-muted"><FileText className="w-8 h-8 text-muted-foreground" /></div>}
+                        <div className="text-[10px] px-1 py-0.5 truncate">{a.file_name}</div>
+                      </a>
+                      <button type="button" className="absolute top-1 right-1 bg-white/90 rounded p-0.5 opacity-0 group-hover:opacity-100" title="Remover" onClick={() => removerAnexo(a.id)}>
+                        <Trash2 className="w-3 h-3 text-red-600" />
+                      </button>
+                    </div>
+                  ))}
+                  {pendentes.map((f, i) => (
+                    <div key={`p${i}`} className="relative border border-dashed rounded-md overflow-hidden">
+                      {f.type.startsWith("image/")
+                        ? <img src={URL.createObjectURL(f)} alt={f.name} className="h-24 w-full object-cover opacity-80" />
+                        : <div className="h-24 flex items-center justify-center bg-muted"><FileText className="w-8 h-8 text-muted-foreground" /></div>}
+                      <div className="text-[10px] px-1 py-0.5 truncate">{f.name} · sobe ao salvar</div>
+                      <button type="button" className="absolute top-1 right-1 bg-white/90 rounded p-0.5" title="Tirar" onClick={() => setPendentes((l) => l.filter((_, j) => j !== i))}>
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <>
-                  {anexos.length === 0 && (
-                    <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Nenhuma cópia anexada.</p>
-                  )}
-                  <ul className="space-y-1">
-                    {anexos.map((a) => (
-                      <li key={a.id} className="flex items-center gap-2 text-sm">
-                        <a className="text-blue-600 hover:underline" href={`/api/comodatos/anexos/${a.id}`} target="_blank" rel="noreferrer">{a.file_name}</a>
-                        <span className="text-xs text-muted-foreground">{Math.round((a.file_size || 0) / 1024)} KB</span>
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removerAnexo(a.id)}><Trash2 className="w-3 h-3" /></Button>
-                      </li>
-                    ))}
-                  </ul>
-                  <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple className="hidden"
-                    onChange={(e) => { Array.from(e.target.files || []).forEach(enviarAnexo); e.target.value = ""; }} />
-                  <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}><Upload className="w-4 h-4 mr-2" />Anexar fotos/PDF</Button>
-                </>
+                <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Nenhum contrato assinado anexado.</p>
               )}
             </section>
           </div>
 
           <DialogFooter className="gap-2">
             {editId && <Button variant="ghost" className="text-red-600" onClick={excluir}><Trash2 className="w-4 h-4 mr-2" />Excluir</Button>}
-            <Button variant="secondary" className="mr-auto" onClick={gerarPdf} disabled={gerandoPdf}>
-              {gerandoPdf ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}Gerar contrato (PDF)
-            </Button>
+            {anexos.length === 0 && pendentes.length === 0 ? (
+              <Button variant="secondary" className="mr-auto" onClick={gerarPdf} disabled={gerandoPdf}>
+                {gerandoPdf ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}Gerar contrato (PDF)
+              </Button>
+            ) : anexos.length > 0 ? (
+              <Button variant="outline" className="mr-auto border-emerald-300 text-emerald-700" onClick={() => window.open(`/api/comodatos/anexos/${anexos[0].id}`, "_blank")}>
+                <FileCheck2 className="w-4 h-4 mr-2" />Ver contrato assinado
+              </Button>
+            ) : <span className="mr-auto" />}
             <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando}>{salvando && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Salvar</Button>
           </DialogFooter>

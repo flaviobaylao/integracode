@@ -398,7 +398,9 @@ async function carregar(id?: string) {
            cu.company_name AS cliente_razao, coalesce(cu.cnpj, cu.cpf) AS cliente_cnpj,
            cu.seller_id AS vendedor_id,
            NULLIF(TRIM(coalesce(u.first_name,'') || ' ' || coalesce(u.last_name,'')), '') AS vendedor_nome,
-           (SELECT COUNT(*)::int FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos
+           (SELECT COUNT(*)::int FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos,
+           (SELECT coalesce(json_agg(json_build_object('id', a.id, 'file_name', a.file_name, 'mimetype', a.mimetype) ORDER BY a.created_at), '[]'::json)
+              FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos_lista
       FROM comodato_contracts c
       LEFT JOIN customers cu ON cu.id = c.customer_id
       LEFT JOIN users u ON u.id = cu.seller_id
