@@ -57,6 +57,7 @@ const VAZIO: any = {
   dataContrato: "", prazo: "Indeterminado", status: "ativo",
   assinadoComodante: false, assinadoComodatario: false, testemunhasAssinadas: false,
   signatarioComodatario: "", dataDevolucao: "", condicaoDevolucao: "", observacoes: "",
+  nfAquisicaoNumero: "", nfAquisicaoData: "", nfAquisicaoFornecedor: "", nfAquisicaoValor: "",
 };
 
 function paraForm(c: any) {
@@ -74,6 +75,8 @@ function paraForm(c: any) {
     testemunhasAssinadas: !!c.testemunhas_assinadas, signatarioComodatario: c.signatario_comodatario || "",
     dataDevolucao: c.data_devolucao || "", condicaoDevolucao: c.condicao_devolucao || "",
     observacoes: c.observacoes || "",
+    nfAquisicaoNumero: c.nf_aquisicao_numero || "", nfAquisicaoData: c.nf_aquisicao_data || "",
+    nfAquisicaoFornecedor: c.nf_aquisicao_fornecedor || "", nfAquisicaoValor: c.nf_aquisicao_valor ?? "",
   };
 }
 
@@ -142,6 +145,7 @@ export default function Comodatos() {
       const body: any = { ...form };
       delete body.clienteNome;
       body.valorBem = form.valorBem === "" ? null : Number(String(form.valorBem).replace(",", "."));
+      body.nfAquisicaoValor = form.nfAquisicaoValor === "" ? null : Number(String(form.nfAquisicaoValor).replace(",", "."));
       const url = editId ? `/api/comodatos/${editId}` : "/api/comodatos";
       await api(url, {
         method: editId ? "PATCH" : "POST",
@@ -207,6 +211,10 @@ export default function Comodatos() {
       "Signatário": c.signatario_comodatario || "",
       "Devolução": dt(c.data_devolucao),
       "Pendências": (c.pendencias || []).map((p: any) => p.texto).join("; "),
+      "NF de aquisição": c.nf_aquisicao_numero || "",
+      "Data NF": dt(c.nf_aquisicao_data),
+      "Fornecedor NF": c.nf_aquisicao_fornecedor || "",
+      "Valor NF": c.nf_aquisicao_valor ?? "",
       "Anexos": c.anexos || 0,
       "Observações": c.observacoes || "",
     })), `Contratos_Comodato_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -389,6 +397,12 @@ export default function Comodatos() {
                 <div><Label>Volume (L)</Label><Input type="number" value={form.volumeLitros} onChange={(e) => set("volumeLitros", e.target.value)} /></div>
                 <div><Label>Volume bruto (L)</Label><Input type="number" value={form.volumeBrutoLitros} onChange={(e) => set("volumeBrutoLitros", e.target.value)} /></div>
                 <div><Label>Valor do bem (R$)</Label><Input type="number" step="0.01" value={form.valorBem} onChange={(e) => set("valorBem", e.target.value)} /></div>
+              </div>
+              <div className="grid md:grid-cols-4 gap-3">
+                <div><Label>NF de aquisição</Label><Input value={form.nfAquisicaoNumero} onChange={(e) => set("nfAquisicaoNumero", e.target.value)} /></div>
+                <div><Label>Data da NF</Label><Input type="date" value={form.nfAquisicaoData} onChange={(e) => set("nfAquisicaoData", e.target.value)} /></div>
+                <div><Label>Valor da NF (R$)</Label><Input type="number" step="0.01" value={form.nfAquisicaoValor} onChange={(e) => set("nfAquisicaoValor", e.target.value)} /></div>
+                <div className="md:col-span-4"><Label>Fornecedor da NF</Label><Input value={form.nfAquisicaoFornecedor} onChange={(e) => set("nfAquisicaoFornecedor", e.target.value)} /></div>
               </div>
             </section>
 

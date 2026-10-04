@@ -18,7 +18,7 @@
 // sem nº de série, sem testemunhas, sem vínculo com cliente…) para a tela
 // mostrar o que falta regularizar.
 //
-// Carga inicial: os 8 contratos físicos fotografados em 04/out/2026 entram
+// Carga inicial: os 11 contratos físicos fotografados em 04/out/2026 entram
 // sozinhos no boot (seed idempotente por seed_ref). Depois disso o cadastro é
 // do usuário — editar/excluir pela tela não é desfeito no próximo boot.
 //
@@ -45,6 +45,7 @@ const COMODANTE_PADRAO = {
 // ---------------------------------------------------------------------------
 // Carga inicial — transcrição dos contratos físicos (fotos de 04/out/2026).
 // Campos em branco no papel ficam null; o que não deu para ler vai em observações.
+// Nomes de signatários NÃO ficam aqui (repositório público): entram pela tela.
 // ---------------------------------------------------------------------------
 const SEED: any[] = [
   {
@@ -56,7 +57,6 @@ const SEED: any[] = [
     tensao: null, volume: null, volume_bruto: null,
     valor: 4000.0, data: "2025-03-19", status: "ativo",
     ass_comodante: true, ass_comodatario: true, testemunhas: false,
-    signatario: "José Isaac (assinatura)",
     obs: "Anotação manuscrita no topo: \"Externato 3 unidades\". Marca \"X\" à margem da cláusula 5ª. Testemunhas em branco.",
   },
   {
@@ -68,7 +68,6 @@ const SEED: any[] = [
     tensao: "220V", volume: null, volume_bruto: null,
     valor: 4000.0, data: "2025-03-27", status: "pendente_assinatura",
     ass_comodante: false, ass_comodatario: true, testemunhas: false,
-    signatario: "Bárbara Eugênia Bandeira (assinatura)",
     obs: "Anotação manuscrita no topo: \"Colégio Marista\". Falta a assinatura da PURO (comodante). Testemunhas em branco.",
   },
   {
@@ -80,20 +79,18 @@ const SEED: any[] = [
     tensao: "220V", volume: null, volume_bruto: null,
     valor: 4000.0, data: "2025-03-28", status: "pendente_assinatura",
     ass_comodante: false, ass_comodatario: true, testemunhas: false,
-    signatario: "Andreia Aparecida Santos Schmidt (assinatura)",
     obs: "Anotação manuscrita no topo: \"Inter America\". Falta a assinatura da PURO (comodante). Testemunhas em branco.",
   },
   {
     seed_ref: "foto-2026-10-04-tidbit",
     apelido: null,
     razao: "TIDBIT LANCHONETE ESCOLARES LTDA", cnpj: "02.978.166/0001-02",
-    endereco: null, cidade: "Goiânia", uf: "GO", cep: null,
-    tipo: "freezer", marca: null, modelo: null, serie: null, codigo: null,
-    tensao: null, volume: null, volume_bruto: null,
+    endereco: "Pç. Comendador Germando Roriz, 275", cidade: "Goiânia", uf: "GO", cep: "74.093-320",
+    tipo: "geladeira", marca: "Gelopar", modelo: "80677042", serie: "2025034347", codigo: "80677042",
+    tensao: "220V", volume: null, volume_bruto: null,
     valor: 4000.0, data: "2025-03-28", status: "ativo",
     ass_comodante: true, ass_comodatario: true, testemunhas: false,
-    signatario: "Juliana Lopes (assinatura)",
-    obs: "Só a página de assinaturas foi fotografada — falta a 1ª página (endereço de instalação e dados do equipamento). Testemunhas em branco.",
+    obs: "Rubrica na 1ª página. Testemunhas em branco.",
   },
   {
     seed_ref: "foto-2026-10-04-cl-dias",
@@ -104,7 +101,6 @@ const SEED: any[] = [
     tensao: "220V", volume: null, volume_bruto: null,
     valor: 4000.0, data: "2025-04-15", status: "ativo",
     ass_comodante: true, ass_comodatario: true, testemunhas: false,
-    signatario: "Leonardo (assinatura)",
     obs: "Anotação manuscrita no topo de leitura incerta (\"Copa\"?). Rubrica na 1ª página. Testemunhas em branco.",
   },
   {
@@ -116,7 +112,6 @@ const SEED: any[] = [
     tensao: null, volume: null, volume_bruto: null,
     valor: 4500.0, data: "2025-04-24", status: "ativo",
     ass_comodante: true, ass_comodatario: true, testemunhas: false,
-    signatario: null,
     obs: "Anotação manuscrita no topo de leitura incerta. No papel só a marca (Fricon) foi preenchida — modelo, série, código, tensão e volumes em branco. Testemunhas em branco.",
   },
   {
@@ -128,7 +123,6 @@ const SEED: any[] = [
     tensao: "220V", volume: 296, volume_bruto: 296,
     valor: 3550.33, data: null, status: "ativo",
     ass_comodante: true, ass_comodatario: true, testemunhas: false,
-    signatario: "Aluzelene Ribeiro dos Santos (assinatura)",
     obs: "Anotação manuscrita no topo: \"Pão e Cia\". Data do contrato em branco no papel. Testemunhas em branco.",
   },
   {
@@ -140,8 +134,41 @@ const SEED: any[] = [
     tensao: null, volume: null, volume_bruto: null,
     valor: 3550.33, data: null, status: "ativo",
     ass_comodante: true, ass_comodatario: true, testemunhas: false,
-    signatario: null,
     obs: "Anotação manuscrita no topo: \"Della\". Data do contrato em branco. No papel só a marca (Fricon) foi preenchida. Testemunhas em branco.",
+  },
+  {
+    seed_ref: "foto-2026-10-04-emporio-dolcci",
+    apelido: "Dolcci (leitura incerta)",
+    razao: "EMPORIO DOLCCI COMERCIAL DE ALIMENTOS LTDA", cnpj: "08.898.559/0001-92",
+    endereco: "Av. C-4, nº 40, Qd 489, Lt 5, 6, 7 e 8, Jardim América", cidade: "Goiânia", uf: "GO", cep: null,
+    tipo: "geladeira", marca: "Metalfrio", modelo: "VB28RH", serie: null, codigo: null,
+    tensao: null, volume: null, volume_bruto: null,
+    valor: 2000.0, data: "2020-07-09", status: "ativo",
+    ass_comodante: true, ass_comodatario: true, testemunhas: false,
+    obs: "Modelo antigo de contrato (2020). Geladeira entregue USADA. Cláusula 1ª traz o texto-modelo \"rua TAL, nº 000000\" antes do endereço. Sem multa por produto de terceiros (cláusula 4ª). Rubricas na 1ª página. Testemunhas em branco.",
+  },
+  {
+    seed_ref: "foto-2026-10-04-moreira",
+    apelido: "Moreira Av. E",
+    razao: "SUPERMERCADO MOREIRA LTDA", cnpj: "00.148.007/0009-02",
+    endereco: "Av. E, s/n, Qd B5, Lt 01E", cidade: "Goiânia", uf: "GO", cep: "74.810-030",
+    tipo: "freezer", marca: "Metalfrio", modelo: "VB28RB", serie: null, codigo: null,
+    tensao: "220V", volume: 296, volume_bruto: 296,
+    valor: 3550.33, data: "2024-11-01", status: "ativo",
+    ass_comodante: true, ass_comodatario: true, testemunhas: false,
+    nf_numero: "219.082", nf_data: "2024-10-16", nf_fornecedor: "SALVADOR COMERCIAL DE MAQ E EQUIP DE REFRIG LTDA (CNPJ 03.249.735/0001-41)", nf_valor: 3550.33,
+    obs: "Contrato impresso com \"SUPERMECADO\" e tensão \"200V\"; a NF de compra diz 220V. Aquisição: NF-e 219.082 de 16/10/2024 (refrigerador porta de vidro 296 L VB28RB Metalfrio 220V), emitida em nome de pessoa física e não da PURO. Testemunhas em branco.",
+  },
+  {
+    seed_ref: "foto-2026-10-04-dallago",
+    apelido: "Rio Verde",
+    razao: "DALLAGO DISTRIBUICAO LTDA", cnpj: "46.706.596/0001-40",
+    endereco: "Rua Honório (nome completo ilegível na foto), s/n, Qd 81, Lt 12", cidade: "Rio Verde", uf: "GO", cep: "75.909-070",
+    tipo: "freezer", marca: "Metalfrio", modelo: "VN44R", serie: null, codigo: "VN44RLDE15",
+    tensao: "220V", volume: 387, volume_bruto: null,
+    valor: 4500.0, data: null, status: "ativo",
+    ass_comodante: true, ass_comodatario: true, testemunhas: false,
+    obs: "Foto desfocada: nº de série e o dia da data ilegíveis — contrato de agosto/2024. Impresso com tensão \"200V\". Rubricas na 1ª página. Testemunhas em branco.",
   },
 ];
 
@@ -186,10 +213,14 @@ export function ensureComodatosSchema(): Promise<void> {
         "data_devolucao date, " +
         "condicao_devolucao text, " +
         "observacoes text, " +
+        "nf_aquisicao_numero varchar, nf_aquisicao_data date, nf_aquisicao_fornecedor text, nf_aquisicao_valor numeric(12,2), " +
         "created_by varchar, updated_by varchar, " +
         "created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), " +
         "deleted_at timestamptz)"
       ));
+      for (const c of ["nf_aquisicao_numero varchar", "nf_aquisicao_data date", "nf_aquisicao_fornecedor text", "nf_aquisicao_valor numeric(12,2)"]) {
+        await db.execute(sql.raw("ALTER TABLE comodato_contracts ADD COLUMN IF NOT EXISTS " + c)).catch(() => {});
+      }
       await db.execute(sql.raw(
         "CREATE INDEX IF NOT EXISTS idx_comodato_cnpj ON comodato_contracts (regexp_replace(coalesce(comodatario_cnpj,''),'[^0-9]','','g'))"
       )).catch(() => {});
@@ -217,13 +248,15 @@ export function ensureComodatosSchema(): Promise<void> {
             cidade, uf, cep, equipamento_tipo, marca, modelo, numero_serie, codigo_produto,
             tensao, volume_litros, volume_bruto_litros, valor_bem, data_contrato, status,
             assinado_comodante, assinado_comodatario, testemunhas_assinadas,
-            signatario_comodatario, observacoes, created_by)
+            nf_aquisicao_numero, nf_aquisicao_data, nf_aquisicao_fornecedor, nf_aquisicao_valor,
+            observacoes, created_by)
           VALUES (
             ${s.seed_ref}, ${s.razao}, ${s.cnpj}, ${s.apelido}, ${s.endereco},
             ${s.cidade}, ${s.uf}, ${s.cep}, ${s.tipo}, ${s.marca}, ${s.modelo}, ${s.serie}, ${s.codigo},
             ${s.tensao}, ${s.volume}, ${s.volume_bruto}, ${s.valor}, ${s.data}, ${s.status},
             ${s.ass_comodante}, ${s.ass_comodatario}, ${s.testemunhas},
-            ${s.signatario}, ${s.obs}, 'carga-inicial')
+            ${s.nf_numero ?? null}, ${s.nf_data ?? null}, ${s.nf_fornecedor ?? null}, ${s.nf_valor ?? null},
+            ${s.obs}, 'carga-inicial')
           ON CONFLICT (seed_ref) DO NOTHING`).catch((e: any) => console.error("[comodatos] seed", s.seed_ref, e?.message));
       }
       await vincularClientesPorCnpj();
@@ -327,6 +360,10 @@ const CAMPOS: Record<string, { col: string; conv: (v: any) => any }> = {
   dataDevolucao: { col: "data_devolucao", conv: dateOrNull },
   condicaoDevolucao: { col: "condicao_devolucao", conv: txt },
   observacoes: { col: "observacoes", conv: txt },
+  nfAquisicaoNumero: { col: "nf_aquisicao_numero", conv: txt },
+  nfAquisicaoData: { col: "nf_aquisicao_data", conv: dateOrNull },
+  nfAquisicaoFornecedor: { col: "nf_aquisicao_fornecedor", conv: txt },
+  nfAquisicaoValor: { col: "nf_aquisicao_valor", conv: (v) => (typeof v === "number" ? v : numOrNull(v)) },
 };
 
 function montarCampos(body: any): Record<string, any> {
@@ -346,6 +383,7 @@ async function carregar(id?: string) {
     SELECT c.*,
            to_char(c.data_contrato, 'YYYY-MM-DD') AS data_contrato,
            to_char(c.data_devolucao, 'YYYY-MM-DD') AS data_devolucao,
+           to_char(c.nf_aquisicao_data, 'YYYY-MM-DD') AS nf_aquisicao_data,
            cu.name AS cliente_nome, cu.fantasy_name AS cliente_fantasia,
            (SELECT COUNT(*)::int FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos
       FROM comodato_contracts c
@@ -358,6 +396,7 @@ async function carregar(id?: string) {
     valor_bem: row.valor_bem == null ? null : Number(row.valor_bem),
     volume_litros: row.volume_litros == null ? null : Number(row.volume_litros),
     volume_bruto_litros: row.volume_bruto_litros == null ? null : Number(row.volume_bruto_litros),
+    nf_aquisicao_valor: row.nf_aquisicao_valor == null ? null : Number(row.nf_aquisicao_valor),
     codigo: "COM-" + String(row.numero).padStart(4, "0"),
     pendencias: pendencias(row),
   }));
