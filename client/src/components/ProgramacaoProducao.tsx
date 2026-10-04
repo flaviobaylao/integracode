@@ -33,13 +33,13 @@ type Saida = { productId: string; instancia: string; dia: string; tipo: Tipo; qt
 type Produto = {
   productId: string; nome: string; codigo: string | null; sabor: string; tam: string | null; ativo: boolean; fardoUnidades: number;
   estoque: { fabrica: number; escritorio: number; porInstancia: Record<string, number>; bloqueadoPorInstancia: Record<string, number>; total: number; cobertura: number; lotesFabrica: number; custoFabrica: number };
-  saidas: { janelaDias: number; total: number; venda: number; troca: number; amostra: number; bonificacao: number; outros: number; mediaDia: number; mediaSemana: number; mediaMes: number; picoSemana: number; diasComSaida: number };
+  saidas: { janelaDias: number; diasUteisJanela: number; total: number; venda: number; troca: number; amostra: number; bonificacao: number; outros: number; mediaDia: number; mediaSemana: number; mediaMes: number; picoSemana: number; diasComSaida: number };
   programado: { aberto: number; ops: { id: string; orderNumber: string; status: string; quantidade: number; productionDate: string | null }[] };
   calculo: { leadTotal: number; diasMinimo: number; diasAlvo: number; coberturaDias: number | null; coberturaComProgramado: number | null; estoqueMinimo: number; estoqueAlvo: number; sugestaoProduzir: number; sugestaoFardos: number | null; dataRuptura: string | null; dataLimiteProducao: string | null; status: 'ruptura' | 'critico' | 'atencao' | 'ok' | 'sem_giro' };
 };
 type Parametros = { leadProducaoDias: number; leadTransferenciaDias: number; segurancaDias: number; horizonteDias: number; janelaMediaDias: number; loteMinimoUnidades: number; arredondarFardo: boolean };
 type Payload = {
-  geradoEm: string; hoje: string; periodo: { de: string; ate: string }; janelaMediaDias: number;
+  geradoEm: string; hoje: string; periodo: { de: string; ate: string }; janelaMediaDias: number; diasUteisJanela: number; inicioJanela: string;
   instancias: { id: string; name: string; displayName: string }[]; instanciasDemanda: string[];
   parametros: Parametros; produtos: Produto[]; saidas: Saida[];
   totais: { estoqueFabrica: number; estoqueEscritorio: number; estoquePorInstancia: Record<string, number>; saidasJanela: number; mediaDia: number; sugestaoProduzir: number; programado: number; porStatus: Record<string, number>; saidasPorInstancia: Record<string, Record<string, number>> };
@@ -61,8 +61,8 @@ const addDias = (ymd: string, n: number) => { const d = new Date(ymd + 'T12:00:0
 const inicioSemana = (ymd: string) => { const d = new Date(ymd + 'T12:00:00Z'); const dow = (d.getUTCDay() + 6) % 7; return addDias(ymd, -dow); };
 const chaveDe = (dia: string, g: Gran) => (g === 'dia' ? dia : g === 'semana' ? inicioSemana(dia) : dia.slice(0, 7));
 const rotuloDe = (k: string, g: Gran) => (g === 'mes' ? k.slice(5, 7) + '/' + k.slice(0, 4) : g === 'semana' ? 'sem ' + fmtDataCurta(k) : fmtDataCurta(k));
-const NOME_INST: Record<string, string> = { IND: 'Fábrica (IND)', GYN: 'Escritório (GYN)', BSB: 'Brasília (BSB)' };
-const COR_INST: Record<string, string> = { GYN: '#0d9488', BSB: '#f59e0b', IND: '#64748b' };
+const NOME_INST: Record<string, string> = { IND: 'Fábrica (IND)', GYN: 'Escritório (GYN)', BSB: 'Brasília (BSB)', SERV: 'Serviços (SERV)' };
+const COR_INST: Record<string, string> = { GYN: '#0d9488', BSB: '#f59e0b', SERV: '#6366f1', IND: '#64748b' };
 const TIPOS: { k: Tipo; label: string }[] = [
   { k: 'venda', label: 'Venda' }, { k: 'troca', label: 'Troca' }, { k: 'amostra', label: 'Amostra' }, { k: 'bonificacao', label: 'Bonificação' }, { k: 'outros', label: 'Outros' },
 ];
@@ -81,8 +81,8 @@ export default function ProgramacaoProducao() {
   const hoje = hojeIso();
   const [de, setDe] = useState(addDias(hoje, -89));
   const [ate, setAte] = useState(hoje);
-  const [janela, setJanela] = useState<number>(28);
-  const [inst, setInst] = useState<string[]>(['GYN', 'BSB']);
+  const [janela, setJanela] = useState<number>(30);
+  const [inst, setInst] = useState<string[]>(['GYN', 'BSB', 'SERV']);
   const [gran, setGran] = useState<Gran>('semana');
   const [busca, setBusca] = useState('');
   const [soAtencao, setSoAtencao] = useState(false);
@@ -113,7 +113,7 @@ export default function ProgramacaoProducao() {
     setQtd(q); setDataProd(d); setSel({});
   }, [data?.geradoEm]);
 
-  const instDisponiveis = data?.instancias.map((i) => i.name) || ['IND', 'GYN', 'BSB'];
+  const instDisponiveis = data?.instancias.map((i) => i.name) || ['IND', 'GYN', 'BSB', 'SERV'];
   const toggleInst = (n: string) => setInst((p) => (p.includes(n) ? p.filter((x) => x !== n) : [...p, n]));
 
   // --- séries (pivot no cliente: dia / semana / mês) ----------------------
@@ -225,7 +225,7 @@ export default function ProgramacaoProducao() {
         <div>
           <Label className="text-xs">Média sobre</Label>
           <select value={janela} onChange={(e) => setJanela(Number(e.target.value))} className="block h-8 mt-1 rounded-md border border-gray-300 bg-white px-2 text-sm dark:bg-gray-800">
-            {[14, 28, 56, 90].map((d) => <option key={d} value={d}>{d} dias</option>)}
+            {[15, 30, 60, 90].map((d) => <option key={d} value={d}>{d} dias</option>)}
           </select>
         </div>
         <div className="flex-1" />
@@ -242,8 +242,8 @@ export default function ProgramacaoProducao() {
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <Kpi icone={<Factory className="h-4 w-4" />} rotulo="Estoque na fábrica (IND)" valor={fmtInt(t!.estoqueFabrica)} sub="garrafas em lotes in_use" />
             <Kpi icone={<Building2 className="h-4 w-4" />} rotulo="Estoque no escritório (GYN)" valor={fmtInt(t!.estoqueEscritorio)} sub="garrafas (em uso + bloqueadas)" />
-            <Kpi icone={<Warehouse className="h-4 w-4" />} rotulo="Estoque BSB" valor={fmtInt(t!.estoquePorInstancia.BSB || 0)} sub="garrafas" />
-            <Kpi icone={<TrendingDown className="h-4 w-4" />} rotulo={`Saídas últimos ${data.janelaMediaDias} dias`} valor={fmtInt(t!.saidasJanela)} sub={`${fmt1(t!.mediaDia)} garrafas/dia · ${data.instanciasDemanda.join(' + ')}`} />
+            <Kpi icone={<Warehouse className="h-4 w-4" />} rotulo="Estoque BSB" valor={fmtInt(t!.estoquePorInstancia.BSB || 0)} sub="garrafas · SERV sem controle de estoque" />
+            <Kpi icone={<TrendingDown className="h-4 w-4" />} rotulo={`Saídas últimos ${data.janelaMediaDias} dias`} valor={fmtInt(t!.saidasJanela)} sub={`${fmt1(t!.mediaDia)} garrafas/dia útil (${data.diasUteisJanela} dias úteis) · ${data.instanciasDemanda.join(' + ')}`} />
             <Kpi icone={<AlertTriangle className="h-4 w-4" />} rotulo="Produtos em alerta" valor={String(alerta)} sub={`${t!.porStatus.ruptura || 0} ruptura · ${t!.porStatus.critico || 0} crítico · ${t!.porStatus.atencao || 0} atenção`} destaque={alerta > 0} />
             <Kpi icone={<PlayCircle className="h-4 w-4" />} rotulo="Sugestão de produção" valor={fmtInt(t!.sugestaoProduzir)} sub={`garrafas · ${fmtInt(t!.programado)} já programadas em OP`} />
           </div>
@@ -252,7 +252,7 @@ export default function ProgramacaoProducao() {
           <Card><CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
               <div className="font-semibold text-sm flex items-center gap-2"><TrendingDown className="h-4 w-4 text-emerald-600" /> Saídas de produto acabado por {gran === 'mes' ? 'mês' : gran} <span className="text-gray-400 font-normal">({fmtData(data.periodo.de)} a {fmtData(data.periodo.ate)})</span></div>
-              <div className="text-xs text-gray-500">venda + troca + amostra + bonificação · transferências IND→filial não contam</div>
+              <div className="text-xs text-gray-500">venda + troca + amostra + bonificação · transferências IND→filial não contam · SERV pelos pedidos faturados (sem estoque)</div>
             </div>
             <div className="h-64 w-full">
               {serieGeral.length === 0 ? <div className="flex h-full items-center justify-center text-sm text-gray-500">Sem saídas no período.</div> : (
@@ -292,9 +292,9 @@ export default function ProgramacaoProducao() {
                   <TableHead className="text-right">Fábrica</TableHead>
                   <TableHead className="text-right">Escritório</TableHead>
                   <TableHead className="text-right">BSB</TableHead>
-                  <TableHead className="text-right">Média/dia</TableHead>
+                  <TableHead className="text-right">Média/dia útil</TableHead>
                   <TableHead className="text-right">Média/sem</TableHead>
-                  <TableHead className="text-right">Cobertura</TableHead>
+                  <TableHead className="text-right">Cobertura (d.u.)</TableHead>
                   <TableHead>Ruptura prev.</TableHead>
                   <TableHead className="text-right">Est. mínimo</TableHead>
                   <TableHead className="text-right">Programado</TableHead>
@@ -324,7 +324,7 @@ export default function ProgramacaoProducao() {
                           {fmtInt(pr.estoque.porInstancia.BSB || 0)}{pr.estoque.bloqueadoPorInstancia?.BSB ? <span className="text-[10px] text-gray-400 ml-0.5">*</span> : null}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{fmt1(pr.saidas.mediaDia)}</TableCell>
-                        <TableCell className="text-right tabular-nums" title={`pico semanal ${fmtInt(pr.saidas.picoSemana)} · ${pr.saidas.diasComSaida} dias com saída`}>{fmt1(pr.saidas.mediaSemana)}</TableCell>
+                        <TableCell className="text-right tabular-nums" title={`média/dia útil × 5 · pico semanal ${fmtInt(pr.saidas.picoSemana)} · ${pr.saidas.diasComSaida} dias com saída`}>{fmt1(pr.saidas.mediaSemana)}</TableCell>
                         <TableCell className="text-right tabular-nums font-semibold" title={pr.calculo.coberturaComProgramado != null ? `com OPs abertas: ${fmt1(pr.calculo.coberturaComProgramado)} d` : ''}>
                           {cob == null ? '∞' : `${fmt1(cob)} d`}
                         </TableCell>
@@ -349,7 +349,8 @@ export default function ProgramacaoProducao() {
             <div className="mt-3 text-[11px] text-gray-500 flex items-start gap-1.5">
               <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               <div>
-                <b>Cobertura</b> = (estoque fábrica + estoque das instâncias selecionadas) ÷ média diária de saída dos últimos {data.janelaMediaDias} dias.
+                <b>Média/dia útil</b> = saídas dos últimos {data.janelaMediaDias} dias ÷ {data.diasUteisJanela} dias úteis (seg–sex, sem feriado nacional).
+                {' '}<b>Cobertura</b> = (estoque fábrica + estoque das instâncias selecionadas) ÷ média/dia útil, em dias úteis — ruptura e "produzir até" pulam fins de semana e feriados.
                 {' '}<b>Estoque mínimo</b> = média/dia × (lead {p!.leadProducaoDias + p!.leadTransferenciaDias}d + segurança {p!.segurancaDias}d).
                 {' '}<b>Sugestão</b> = média/dia × (lead + segurança + horizonte {p!.horizonteDias}d) − estoque − OPs abertas, arredondada em fardos.
                 {' '}<b>Produzir até</b> = data da ruptura − lead − segurança. Status: crítico quando a cobertura (com OPs abertas) é menor que o lead; atenção quando é menor que lead + segurança.
@@ -455,13 +456,13 @@ function ParametrosDialog({ open, onClose, atual, onSaved }: { open: boolean; on
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Lead time e cobertura</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Lead time e cobertura (em dias úteis)</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          {campo('leadProducaoDias', 'Lead de produção (dias)', 'da abertura da OP até o lote disponível na IND')}
-          {campo('leadTransferenciaDias', 'Lead de transferência (dias)', 'da IND até a filial (NF + transporte)')}
-          {campo('segurancaDias', 'Estoque de segurança (dias)', 'dias de venda mantidos como colchão')}
-          {campo('horizonteDias', 'Horizonte de produção (dias)', 'dias de venda que cada programação deve cobrir')}
-          {campo('janelaMediaDias', 'Janela da média (dias)', 'dias corridos usados na média de saída')}
+          {campo('leadProducaoDias', 'Lead de produção (dias úteis)', 'da abertura da OP até o lote disponível na IND')}
+          {campo('leadTransferenciaDias', 'Lead de transferência (dias úteis)', 'da IND até a filial (NF + transporte)')}
+          {campo('segurancaDias', 'Estoque de segurança (dias úteis)', 'dias de venda mantidos como colchão')}
+          {campo('horizonteDias', 'Horizonte de produção (dias úteis)', 'dias de venda que cada programação deve cobrir')}
+          {campo('janelaMediaDias', 'Janela da média (dias corridos)', 'a média divide pelos dias úteis da janela')}
           {campo('loteMinimoUnidades', 'Lote mínimo (unidades)', '0 = sem lote mínimo')}
         </div>
         <label className="flex items-center gap-2 text-sm mt-2"><Checkbox checked={f.arredondarFardo} onCheckedChange={(v) => setF({ ...f, arredondarFardo: !!v })} /> Arredondar a sugestão para fardos fechados</label>
