@@ -32,6 +32,7 @@ import ManutencaoMaquinas from '@/components/ManutencaoMaquinas';
 import TrocasIndustria from '@/components/TrocasIndustria';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
+import { gerarRe15Pdf, RE15_EMPRESA } from '@/lib/re15-pdf';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
@@ -1640,6 +1641,58 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
     exportToExcel(rows, `${semCusto ? 're-15-relatorio-producao' : 'relatorio-op'}-${new Date().toISOString().slice(0, 10)}`);
   };
 
+  // RE-15: PDF pronto para envio externo (logo, dados da empresa, sem custos)
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const doPdf = async () => {
+    setPdfBusy(true);
+    try {
+      const hoje = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const temAnalise = (o: any) => o.brix_degree != null || o.ph != null || o.sensory_analysis || o.pasteurization_start_time || o.pasteurization_end_time;
+      await gerarRe15Pdf({
+        emitidoEm: hoje,
+        resumo: [
+          { rotulo: 'Ordens', valor: String(data.tot.ordens) },
+          { rotulo: 'Planejadas', valor: String(data.tot.planejadas) },
+          { rotulo: 'Em produção', valor: String(data.tot.emProducao) },
+          { rotulo: 'Finalizadas', valor: String(data.tot.finalizadas) },
+          { rotulo: 'Qtd planejada', valor: fmtQty(data.tot.planejada) },
+          { rotulo: 'Qtd produzida', valor: fmtQty(data.tot.produzida) },
+        ],
+        ordens: data.list.map((r: any) => {
+          const o = r.o;
+          return {
+            titulo: `${o.order_number} — ${o.product_name}`,
+            status: stLabel(o.status),
+            dados: [
+              ['Instância', String(o.instance_name || '-')],
+              ['Data de produção', fmtDate(o.production_date || o.created_at)],
+              ['Criada por', String(o.created_by || '-')],
+              ['Início', fmtDateTime(o.start_date)],
+              ['Fim', fmtDateTime(o.end_date)],
+              ['Lote produzido', `${o.lot_number || '-'} (val. ${fmtDate(o.lot_expiry_date)})`],
+              ['Qtd planejada', fmtQty(r.planejada)],
+              ['Qtd produzida', r.produzida ? fmtQty(r.produzida) : '-'],
+              ['Rendimento', r.rendimento == null ? '-' : r.rendimento.toFixed(1).replace('.', ',') + '%'],
+            ] as [string, string][],
+            analise: temAnalise(o) ? [
+              ['Grau Brix', String(o.brix_degree ?? '-')],
+              ['pH', String(o.ph ?? '-')],
+              ['Análise sensorial', sensLabel(o.sensory_analysis)],
+              ['Pasteurização', `${o.pasteurization_start_time || '-'} até ${o.pasteurization_end_time || '-'}`],
+              ['Temperatura', `${o.pasteurization_start_temp ?? '-'} °C a ${o.pasteurization_end_temp ?? '-'} °C`],
+            ] as [string, string][] : null,
+            insumos: r.items.map((it: any) => ({ material: String(it.name), unidade: String(it.unit || ''), qtd: fmtQty(it.qty), lote: String(it.lot || '') })),
+            observacoes: o.notes || undefined,
+          };
+        }),
+      }, `RE-15-relatorio-producao-${new Date().toISOString().slice(0, 10)}`);
+    } catch (e: any) {
+      alert('Não foi possível gerar o PDF: ' + String(e?.message || e));
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   const doPrint = () => {
     const hoje = new Date().toLocaleDateString('pt-BR') + ' ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const fichas = data.list.map((r: any) => {
@@ -1681,7 +1734,9 @@ table.kv th{width:12%;background:#f7f7f7}table.kv td{width:21%}
 .assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
 <div class="cab"><img src="${window.location.origin}/honest-logo.png" alt="Honest"><div>
 <h1>${titulo}</h1>
-<h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
+${semCusto
+  ? `<h2>${esc(RE15_EMPRESA.razao)} · CNPJ ${esc(RE15_EMPRESA.cnpj)}</h2><h2>${esc(RE15_EMPRESA.endereco)}</h2><h2>${esc(RE15_EMPRESA.contato)} · emitido em ${hoje}</h2>`
+  : `<h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>`}
 </div></div>
 <table class="resumo"><thead><tr><th>Ordens</th><th>Planejadas</th><th>Em produção</th><th>Finalizadas</th><th class="num">Qtd planejada</th><th class="num">Qtd produzida</th>${semCusto ? '' : '<th class="num">CMV total</th>'}</tr></thead>
 <tbody><tr><td>${data.tot.ordens}</td><td>${data.tot.planejadas}</td><td>${data.tot.emProducao}</td><td>${data.tot.finalizadas}</td><td class="num">${fmtQty(data.tot.planejada)}</td><td class="num">${fmtQty(data.tot.produzida)}</td>${semCusto ? '' : `<td class="num">${fmtBRL(data.tot.cmv)}</td>`}</tr></tbody></table>
@@ -1752,6 +1807,12 @@ ${fichas}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Fechar</Button>
           <Button variant="outline" onClick={doExcel}><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel</Button>
+          {semCusto && (
+            <Button variant="outline" onClick={doPdf} disabled={pdfBusy || data.list.length === 0}
+              title="Baixa o RE-15 em PDF com a logo e os dados da empresa, pronto para enviar a clientes e fiscalização">
+              {pdfBusy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />} Baixar PDF
+            </Button>
+          )}
           <Button onClick={doPrint} className="bg-emerald-600 hover:bg-emerald-700 text-white">
             <Printer className="h-4 w-4 mr-1" /> Imprimir
           </Button>
