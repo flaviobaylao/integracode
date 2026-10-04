@@ -220,17 +220,32 @@ export function registerIndustriaRoutes(app: Express) {
       const cur: any = await db.execute(sql`SELECT * FROM raw_materials WHERE id = ${id} LIMIT 1`);
       const mat = (cur.rows || [])[0];
       if (!mat) return res.status(404).json({ error: 'material nao encontrado', id });
+      // Consumo de producao so pela ordem de producao: a saida avulsa "para a OP"
+      // nao entra no CMV do lote nem na conferencia da receita (caso do limao das
+      // OP-00076/77, auditoria 04/out). Para incluir um insumo esquecido, reabra e
+      // refinalize a OP.
+      if (type === 'saida_producao') {
+        return res.status(400).json({ error: 'consumo de producao so pela ordem de producao — reabra a OP e inclua o insumo', code: 'SAIDA_PRODUCAO_AVULSA' });
+      }
       const prevQty = Number(mat.quantity) || 0;
       let newQty: number; let delta: number;
+      // delta COM SINAL: o ajuste para baixo gravava a quantidade sem sinal
+      // (pera -476 aparecia como 476 no historico).
       if (type === 'ajuste') { newQty = q; delta = q - prevQty; }
       else if (MOV_IN.has(type)) { delta = q; newQty = prevQty + q; }
-      else { delta = q; newQty = prevQty - q; }
+      else { delta = -q; newQty = prevQty - q; }
+      if (!MOV_IN.has(type) && type !== 'ajuste' && newQty < -1e-9) {
+        return res.status(400).json({ error: `saldo insuficiente de ${mat.name}: tem ${prevQty}, saida de ${q}`, code: 'SALDO_INSUFICIENTE' });
+      }
+      if ((type === 'ajuste' || MOV_OUT.has(type)) && !(str(b.notes, 500) || '').trim()) {
+        return res.status(400).json({ error: 'informe o motivo (observacao) do ajuste/saida', code: 'MOTIVO_OBRIGATORIO' });
+      }
       const unitCost = num(b.unit_cost);
       const by = userOf(req);
       await db.execute(sql`UPDATE raw_materials SET quantity = ${newQty}, unit_cost = ${unitCost != null ? unitCost : mat.unit_cost}, updated_at = now() WHERE id = ${id}`);
       const mov: any = await db.execute(sql`
         INSERT INTO raw_material_movements (id, raw_material_id, movement_type, quantity, previous_quantity, new_quantity, production_order_id, notes, created_by, created_at, unit_cost)
-        VALUES (gen_random_uuid()::varchar, ${id}, ${type}, ${Math.abs(delta)}, ${prevQty}, ${newQty}, NULL, ${str(b.notes, 500)}, ${by}, now(), ${unitCost != null ? unitCost : mat.unit_cost})
+        VALUES (gen_random_uuid()::varchar, ${id}, ${type}, ${type === 'ajuste' ? delta : Math.abs(delta)}, ${prevQty}, ${newQty}, NULL, ${str(b.notes, 500)}, ${by}, now(), ${unitCost != null ? unitCost : mat.unit_cost})
         RETURNING *`);
       console.log('🏭 [MP] movimentacao', mat.name, type, q, 'por', by);
       res.json({ ok: true, movement: (mov.rows || [])[0], material: { ...mat, quantity: newQty, unit_cost: unitCost != null ? unitCost : mat.unit_cost }, negativo: newQty < 0 });
@@ -578,7 +593,7 @@ export function registerIndustriaRoutes(app: Express) {
     const matRows: any[] = [];
     const faltando: string[] = [];
     for (const m of insumos) {
-      const rm: any = await ex.execute(sql`SELECT * FROM raw_materials WHERE id = ${m.raw_material_id} LIMIT 1`);
+      const rm: any = await ex.execute(sql`SELECT * FROM raw_materials WHERE id = ${m.raw_material_id} LIMIT 1 FOR UPDATE`);
       const mat = (rm.rows || [])[0];
       if (!mat) { faltando.push(m.raw_material_id); continue; }
       matRows.push({ req: m, mat });
@@ -587,6 +602,24 @@ export function registerIndustriaRoutes(app: Express) {
       const e: any = new Error(`materia-prima nao encontrada no cadastro: ${faltando.join(', ')} — corrija a lista de insumos antes de finalizar`);
       e.code = 'MATERIAL_INEXISTENTE'; e.faltando = faltando; throw e;
     }
+    // Saldo insuficiente de insumo BLOQUEIA (Flavio 04/out/2026): baixar para
+    // negativo significa que o estoque de insumo do sistema ja nao bate com o
+    // fisico. Consumo + perda, e o mesmo insumo em duas linhas soma antes.
+    const necessidade = new Map<string, { mat: any; q: number }>();
+    for (const { req: m, mat } of matRows) {
+      const q = (m.quantity_used || 0) + (m.quantity_lost || 0);
+      const cur = necessidade.get(String(mat.id));
+      if (cur) cur.q += q; else necessidade.set(String(mat.id), { mat, q });
+    }
+    const semSaldo = Array.from(necessidade.values()).filter((n) => (Number(n.mat.quantity) || 0) + 1e-9 < n.q);
+    if (semSaldo.length) {
+      const e: any = new Error('saldo insuficiente de insumo: ' + semSaldo.map((n) => `${n.mat.name} (precisa ${+n.q.toFixed(4)}, tem ${Number(n.mat.quantity) || 0})`).join('; ') + ' — ajuste o estoque do insumo (com motivo) antes de finalizar');
+      e.code = 'INSUMO_SEM_SALDO'; e.status = 400;
+      e.semSaldo = semSaldo.map((n) => ({ raw_material_id: n.mat.id, name: n.mat.name, required: n.q, available: Number(n.mat.quantity) || 0 }));
+      throw e;
+    }
+    // saldo corrente por insumo (linha repetida encadeia anterior/novo)
+    const saldoCorrente = new Map<string, number>(Array.from(necessidade.values()).map((n) => [String(n.mat.id), Number(n.mat.quantity) || 0]));
     const warnings: string[] = [];
     let totalCost = 0;
     const consumed: any[] = [];
@@ -594,7 +627,7 @@ export function registerIndustriaRoutes(app: Express) {
       const unitCost = Number(mat.unit_cost) || 0;
       const used = m.quantity_used || 0;
       const lost = m.quantity_lost || 0;
-      const prevQty = Number(mat.quantity) || 0;
+      const prevQty = saldoCorrente.get(String(mat.id)) ?? (Number(mat.quantity) || 0);
       let cur = prevQty;
       totalCost += (used + lost) * unitCost;
       const loteTxt = m.lot_number ? ' (lote insumo ' + m.lot_number + ')' : '';
@@ -614,6 +647,7 @@ export function registerIndustriaRoutes(app: Express) {
           VALUES (gen_random_uuid()::varchar, ${mat.id}, 'perda', ${lost}, ${cur}, ${next}, ${String(order.id)}, ${'Perda/avaria na ordem ' + order.order_number + loteTxt}, ${by}, now(), ${mat.unit_cost})`);
         cur = next;
       }
+      saldoCorrente.set(String(mat.id), cur);
       await ex.execute(sql`UPDATE raw_materials SET quantity = ${cur}, updated_at = now() WHERE id = ${mat.id}`);
       if (cur < 0) warnings.push(`estoque de ${mat.name} ficou negativo (${cur})`);
       consumed.push({ raw_material_id: mat.id, name: mat.name, quantity_used: used, quantity_lost: lost, total_baixa: used + lost, previous: prevQty, new: cur, unit_cost: unitCost });
@@ -635,6 +669,55 @@ export function registerIndustriaRoutes(app: Express) {
       WHERE production_order_id = ${orderId} AND movement_type IN ('saida_producao', 'perda')
         AND COALESCE(notes, '') NOT LIKE ${'%' + EST_MARK + '%'}`);
     return Number((r.rows || [])[0]?.n || 0);
+  };
+
+  // Conferencia do consumo informado contra a receita do produto.
+  const conferirComReceita = async (order: any, produced: number, insumos: Insumo[]) => {
+    let tolerancia = 15;
+    try {
+      const t: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'op_tolerancia_receita_pct' LIMIT 1`);
+      const v = Number(String((t.rows || [])[0]?.value ?? '').replace(/"/g, ''));
+      if (Number.isFinite(v) && v > 0 && v <= 100) tolerancia = v;
+    } catch { /* padrao 15 */ }
+    const real = new Map<string, number>();
+    for (const m of insumos) real.set(m.raw_material_id, (real.get(m.raw_material_id) || 0) + (m.quantity_used || 0));
+    const todosIds = Array.from(new Set(insumos.map((m) => m.raw_material_id)));
+    const { insumos: esperado, recipe } = await insumosDaReceita(db, order, produced);
+    const esp = new Map<string, number>();
+    for (const m of esperado) esp.set(m.raw_material_id, (esp.get(m.raw_material_id) || 0) + m.quantity_used);
+    const ids = Array.from(new Set([...todosIds, ...Array.from(esp.keys())]));
+    const nomes: any = ids.length ? await db.execute(sql`SELECT id, name FROM raw_materials WHERE id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`) : { rows: [] };
+    const nome = new Map<string, string>((nomes.rows || []).map((r: any) => [String(r.id), String(r.name)]));
+    const inexistentes = todosIds.filter((id) => !nome.has(id));
+    if (inexistentes.length) {
+      return { ok: false, code: 'MATERIAL_INEXISTENTE', tolerancia, divergencias: inexistentes.map((id) => ({ raw_material_id: id, tipo: 'inexistente' })),
+        faltando: inexistentes,
+        mensagem: `materia-prima nao encontrada no cadastro: ${inexistentes.join(', ')} — corrija a lista de insumos antes de finalizar` };
+    }
+    if (!recipe || !esperado.length) {
+      return { ok: false, code: 'OP_SEM_RECEITA', tolerancia, divergencias: [] as any[],
+        mensagem: `O produto ${order.product_name || ''} nao tem receita ativa com ingredientes — cadastre a receita antes de finalizar a ordem.` };
+    }
+    const divergencias: any[] = [];
+    for (const id of ids) {
+      const e = esp.get(id) || 0;
+      const r = real.get(id) || 0;
+      const n = nome.get(id) || id;
+      if (e > 0 && r <= 0) divergencias.push({ raw_material_id: id, name: n, esperado: +e.toFixed(4), informado: 0, tipo: 'faltando' });
+      else if (e <= 0 && r > 0) divergencias.push({ raw_material_id: id, name: n, esperado: 0, informado: +r.toFixed(4), tipo: 'fora_da_receita' });
+      else if (e > 0) {
+        const desvio = ((r - e) / e) * 100;
+        if (Math.abs(desvio) > tolerancia + 1e-9) divergencias.push({ raw_material_id: id, name: n, esperado: +e.toFixed(4), informado: +r.toFixed(4), desvio_pct: +desvio.toFixed(1), tipo: 'desvio' });
+      }
+    }
+    if (!divergencias.length) return { ok: true, code: 'OK', tolerancia, divergencias, mensagem: '' };
+    const linhas = divergencias.map((d) => d.tipo === 'faltando'
+      ? `• ${d.name}: faltando (receita pede ${d.esperado})`
+      : d.tipo === 'fora_da_receita'
+        ? `• ${d.name}: nao faz parte da receita (${d.informado} informado)`
+        : `• ${d.name}: ${d.informado} informado x ${d.esperado} da receita (${d.desvio_pct > 0 ? '+' : ''}${d.desvio_pct}%)`);
+    return { ok: false, code: 'FORA_DA_RECEITA', tolerancia, divergencias,
+      mensagem: `Consumo fora da receita (tolerancia ${tolerancia}%) — corrija os insumos ou a receita antes de finalizar:\n${linhas.join('\n')}` };
   };
 
   // Finalização: baixa insumos (saida_producao), grava qualidade/pasteurização,
@@ -668,11 +751,33 @@ export function registerIndustriaRoutes(app: Express) {
         insumos = await insumosDosItens(db, id);
         if (insumos.length) origemInsumos = 'itens_da_op';
       }
-      if (!insumos.length && b.confirm_sem_insumos !== true) {
+      if (!insumos.length) {
+        // A confirmacao "finalizar sem baixa" foi removida (auditoria 04/out/2026):
+        // OP sem insumo nao finaliza — era assim que nascia lote sem CMV.
         return res.status(400).json({
-          error: 'Nenhuma materia-prima informada: a finalizacao NAO daria baixa em insumo nenhum. Informe os insumos consumidos (ou confirme explicitamente a finalizacao sem baixa).',
+          error: 'Nenhuma materia-prima informada: a finalizacao NAO daria baixa em insumo nenhum. Informe os insumos consumidos.',
           code: 'SEM_INSUMOS',
         });
+      }
+
+      // CONFERENCIA COM A RECEITA (Flavio 04/out/2026: BLOQUEIA). O consumo
+      // informado (sem contar perda/avaria, que tem coluna propria) tem de bater
+      // com a receita: nenhum insumo da receita faltando, nenhum fora dela e
+      // nenhum desvio acima da tolerancia (padrao 15%, system_settings
+      // op_tolerancia_receita_pct). Casos da auditoria: bobina nao baixada
+      // (OP-00076), concentrado lancado todo como maca (OP-00045/71), consumo 2x
+      // acima de uma receita errada (OP-00080).
+      {
+        const conf = await conferirComReceita(order, produced, insumos);
+        if (!conf.ok) {
+          return res.status(400).json({
+            error: conf.mensagem,
+            code: conf.code,
+            divergencias: conf.divergencias,
+            faltando: (conf as any).faltando,
+            tolerancia_pct: conf.tolerancia,
+          });
+        }
       }
 
       const lotExpiryBR = /^\d{4}-\d{2}-\d{2}$/.test(lotExpiry) ? lotExpiry.split('-').reverse().join('/') : lotExpiry;
@@ -788,7 +893,7 @@ export function registerIndustriaRoutes(app: Express) {
       res.json({ ok: true, ...result });
     } catch (e: any) {
       const status = e?.status || (e?.code === 'MATERIAL_INEXISTENTE' ? 400 : 500);
-      if (status !== 500) return res.status(status).json({ error: e?.message || String(e), code: e?.code, faltando: e?.faltando });
+      if (status !== 500) return res.status(status).json({ error: e?.message || String(e), code: e?.code, faltando: e?.faltando, sem_saldo: e?.semSaldo });
       console.error('❌ [OP] finalizacao falhou (nada foi gravado):', e?.message || e);
       res.status(500).json({ error: 'Finalizacao NAO concluida (nada foi gravado): ' + (e?.message || String(e)) });
     }

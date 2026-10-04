@@ -103,6 +103,8 @@ export default function Inventory() {
     minQuantity: '0',
     notes: '',
   });
+  // Motivo do ajuste de saldo: obrigatorio quando a quantidade muda (o servidor recusa sem ele).
+  const [motivoAjuste, setMotivoAjuste] = useState('');
 
   const summaryQuery = useQuery<InventorySummary>({
     queryKey: ['/api/inventory/summary'],
@@ -380,6 +382,7 @@ export default function Inventory() {
       minQuantity: lot.minQuantity || '0',
       notes: lot.notes || '',
     });
+    setMotivoAjuste('');
     setShowEditDialog(true);
   };
 
@@ -393,6 +396,7 @@ export default function Inventory() {
         minQuantity: formData.minQuantity,
         notes: formData.notes,
         isActive: editingLot.isActive,
+        motivo: motivoAjuste,
       },
     });
   };
@@ -805,6 +809,17 @@ export default function Inventory() {
                 />
               </div>
             </div>
+            {editingLot && Math.abs((parseFloat(formData.quantity) || 0) - (parseFloat(editingLot.quantity) || 0)) > 1e-9 && (
+              <div>
+                <Label>Motivo do ajuste de saldo *</Label>
+                <Textarea
+                  value={motivoAjuste}
+                  onChange={(e) => setMotivoAjuste(e.target.value)}
+                  placeholder="Ex.: contagem física de 30/09, avaria, quebra no transporte"
+                  rows={2}
+                />
+              </div>
+            )}
             <div>
               <Label>Observações</Label>
               <Textarea
@@ -816,7 +831,7 @@ export default function Inventory() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEditDialog(false)}>Cancelar</Button>
-            <Button onClick={handleUpdate} disabled={updateMutation.isPending}>
+            <Button onClick={handleUpdate} disabled={updateMutation.isPending || (!!editingLot && Math.abs((parseFloat(formData.quantity) || 0) - (parseFloat(editingLot.quantity) || 0)) > 1e-9 && motivoAjuste.trim().length < 3)}>
               {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               Salvar
             </Button>

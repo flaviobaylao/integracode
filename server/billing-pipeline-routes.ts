@@ -2515,7 +2515,14 @@ export function registerBillingPipelineRoutes(app: Express) {
       await ensureLixeiraStage();
       // Soft-delete: move para a Lixeira (nunca apaga a linha). Restauravel.
       await storage.deleteBillingPipelineItem(req.params.id);
-      res.json({ success: true, movedTo: 'lixeira' });
+      // Pedido que baixou estoque mas nao tem NF autorizada: a mercadoria nao saiu,
+      // o estoque volta (pelos movimentos reais). Com NF autorizada, nada muda aqui.
+      let estoque: any = null;
+      try {
+        const { estornarBaixaDeCardSemNf } = await import('./estoque-em-uso.js');
+        estoque = await estornarBaixaDeCardSemNf(req.params.id, (req.currentUser || req.user)?.email || null);
+      } catch (e: any) { console.error('[LIXEIRA] estorno da baixa falhou:', e?.message); estoque = { erro: e?.message }; }
+      res.json({ success: true, movedTo: 'lixeira', estoque });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -2849,6 +2856,10 @@ export function registerBillingPipelineRoutes(app: Express) {
       for (const id of ids) {
         try {
           await storage.deleteBillingPipelineItem(id);
+          try {
+            const { estornarBaixaDeCardSemNf } = await import('./estoque-em-uso.js');
+            await estornarBaixaDeCardSemNf(id, (req.currentUser || req.user)?.email || null);
+          } catch (e: any) { console.error(`[BATCH-DELETE] estorno da baixa de ${id} falhou:`, e?.message); }
           successCount++;
         } catch (err: any) {
           console.error(`❌ [BATCH-DELETE] Erro ao remover ${id}:`, err.message);
@@ -3018,119 +3029,14 @@ export async function isTransferenciaIntercompany(item: any, issuerCnpj: any): P
 
 // exportada para o harness server/__tests__/harness-mirror.ts
 export async function mirrorTransferToDestination(item: any, user: any): Promise<void> {
-  if (String(item?.operationType || '').toLowerCase() !== 'transferencia') return;
-
-  const products = (item.products as any[]) || [];
-  const quem = user?.email || 'system';
-
-  for (const p of products) {
-    const destinoId = p?.transferToInstanceId;
-    if (!destinoId || !p?.id) continue;
-
-    const qty = Number(p.quantity) || 0;
-    if (qty <= 0) continue;
-
-    const lotNumber = String(p.lotNumber || '').trim();
-    if (!lotNumber) {
-      console.warn(`⚠️ [TRANSFER] item ${item.id}: linha ${p.name} sem numero de lote — entrada no destino ignorada`);
-      continue;
-    }
-
-    // ENTRADA EM ESTOQUE BLOQUEADO (Flavio, 04/out/2026): o que chega por NF de
-    // transferencia entra na filial como BLOQUEADO, atras do estoque em uso. Ele so
-    // vira "em uso" quando o lote em uso daquele produto acaba (promocao FIFO em
-    // deductStockForBilling / consumeStock). Por isso a soma no mesmo lote so
-    // acontece com um lote BLOQUEADO de mesmo numero — nunca com o que ja esta em uso.
-    const existentes = await storage.getInventoryLots({
-      productId: p.id,
-      instanceId: destinoId,
-      stockType: 'blocked',
-      isActive: true,
-    });
-    const mesmoLote = existentes.find((l: any) => String(l.lotNumber).trim() === lotNumber);
-
-    // CMV DA FILIAL = CMV DA IND (regra do Flavio, 18/set/2026). O custo de
-    // producao nao muda ao atravessar a rua, entao o lote no destino nasce com
-    // exatamente o custo do lote de origem.
-    //
-    // O pedido de transferencia (tela TRF) ja manda `cmvUnit` na linha. Mas nem
-    // toda NF de transferencia nasce ali: quando a linha vem sem CMV, o destino
-    // ficava com custo nulo e a filial vendia sem saber a margem — era esse o
-    // buraco. Aqui, faltando `cmvUnit`, buscamos o custo no PROPRIO lote de origem
-    // (mesmo numero de lote, instancia de origem). Se nem isso existir, fica null
-    // mesmo: a tela mostra "—", que e honesto, em vez de um zero que parece custo.
-    let unitCost = p.cmvUnit != null ? Number(p.cmvUnit).toFixed(4) : null;
-    if (!unitCost) {
-      unitCost = await cmvDoLoteDeOrigem(p.id, item.omieInstanceId, lotNumber);
-      if (unitCost) {
-        console.log(`🔁 [TRANSFER] ${lotNumber}: CMV ${unitCost} herdado do lote de origem (linha veio sem cmvUnit)`);
-      } else {
-        console.warn(`⚠️ [TRANSFER] ${lotNumber}: sem CMV na linha e sem CMV no lote de origem — destino fica sem custo`);
-      }
-    }
-
-    if (mesmoLote) {
-      const prev = parseFloat(mesmoLote.quantity?.toString() || '0');
-      const novo = prev + qty;
-      await storage.updateInventoryLot(mesmoLote.id, {
-        quantity: novo.toFixed(4),
-        // Mesmo numero de lote = mesma mercadoria fisica, produzida na mesma OP,
-        // logo o mesmo custo: nao ha media a preservar aqui. Preenchemos quando
-        // falta e corrigimos quando diverge, para o lote no destino ficar igual ao
-        // da origem, que e a regra. O total acompanha o novo saldo.
-        ...(unitCost
-          ? {
-              unitCost,
-              totalCost: (Number(unitCost) * novo).toFixed(2),
-            }
-          : {}),
-      } as any);
-      await storage.createInventoryMovement({
-        lotId: mesmoLote.id,
-        productId: p.id,
-        instanceId: destinoId,
-        movementType: 'replenish',
-        quantity: qty.toFixed(4),
-        previousQuantity: prev.toFixed(4),
-        newQuantity: novo.toFixed(4),
-        sourceType: 'invoice',
-        sourceId: item.id,
-        lotNumber,
-        notes: `Entrada por transferencia ${item.orderNumber || item.id} (${item.omieInstanceName || 'origem'} -> ${p.transferToInstanceName || 'destino'})`,
-        createdBy: quem,
-      } as any);
-      console.log(`🔁 [TRANSFER] ${lotNumber}: +${qty} no lote existente de ${p.transferToInstanceName || destinoId}`);
-      continue;
-    }
-
-    const novoLote = await storage.createInventoryLot({
-      productId: p.id,
-      instanceId: destinoId,
-      stockType: 'blocked',
-      lotNumber,
-      quantity: qty.toFixed(4),
-      minQuantity: '0',
-      unitCost,
-      totalCost: unitCost ? (Number(unitCost) * qty).toFixed(2) : null,
-      productionOrderId: p.productionOrderId || null,
-      notes: `Recebido por transferencia ${item.orderNumber || item.id} de ${item.omieInstanceName || 'origem'}`,
-    } as any);
-    await storage.createInventoryMovement({
-      lotId: novoLote.id,
-      productId: p.id,
-      instanceId: destinoId,
-      movementType: 'replenish',
-      quantity: qty.toFixed(4),
-      previousQuantity: '0',
-      newQuantity: qty.toFixed(4),
-      sourceType: 'invoice',
-      sourceId: item.id,
-      lotNumber,
-      notes: `Entrada por transferencia ${item.orderNumber || item.id} (${item.omieInstanceName || 'origem'} -> ${p.transferToInstanceName || 'destino'})`,
-      createdBy: quem,
-    } as any);
-    console.log(`🔁 [TRANSFER] ${lotNumber}: lote BLOQUEADO criado em ${p.transferToInstanceName || destinoId} com ${qty} un. a CMV ${unitCost || 'n/d'}`);
-  }
+  // Auditoria 04/out/2026: o espelho credita no destino EXATAMENTE os lotes que a
+  // baixa tirou da origem (movimentos reais), com o mesmo numero e o mesmo CMV,
+  // entrando como BLOQUEADO (fila de reposicao). O destino vem da linha (pedido
+  // TRF) ou do CNPJ do destinatario — a transferencia GYN -> BSB feita como pedido
+  // comum nao tinha transferToInstanceId e nunca creditava a BSB. Idempotente.
+  const { espelharTransferenciaPelosMovimentos } = await import('./estoque-em-uso.js');
+  const r = await espelharTransferenciaPelosMovimentos(item, user);
+  for (const a of r.avisos) console.warn(`⚠️ [TRANSFER] ${item?.orderNumber || item?.id}: ${a}`);
 }
 
 // Baixa de estoque do faturamento — SOMENTE lotes em uso, tudo-ou-nada.
@@ -3575,8 +3481,11 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
       }
       let productCode = `PROD-${i + 1}`;
       let itemNcm = NCM_SUCO_MISTO;
-      if (p.id) {
-        const productData = await storage.getProduct(p.id);
+      // Pedido do hotsite/PDV grava o produto em `productId`: sem isto o item saia
+      // sem vinculo com o produto e com codigo "PROD-n" (NFs 107277, 107362...).
+      const __pid: string | null = (p as any).id || (p as any).productId || null;
+      if (__pid) {
+        const productData = await storage.getProduct(__pid);
         if (productData) {
           productCode = (productData as any).omieCode || (productData as any).omieCodigo || `PROD-${i + 1}`;
           itemNcm = ncmDoProduto((productData as any).ncm);
@@ -3594,7 +3503,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
         itemNumber: i + 1,
         productName,
         productCode,
-        productId: p.id || null,
+        productId: __pid,
         lotNumber: lotTxt ? lotTxt.replace(/^Lote:\s*/, '').slice(0, 250) : null,
         lotId: lotesDoItem.length === 1 ? lotesDoItem[0].lotId : null,
         ncm: itemNcm,

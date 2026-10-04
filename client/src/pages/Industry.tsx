@@ -63,7 +63,6 @@ const MOV_TYPES = [
   { value: 'entrada', label: 'Entrada' },
   { value: 'entrada_compra', label: 'Entrada (Compra)' },
   { value: 'saida', label: 'Saída' },
-  { value: 'saida_producao', label: 'Saída (Produção)' },
   { value: 'ajuste', label: 'Ajuste (informe o estoque final)' },
   { value: 'perda', label: 'Perda' },
   { value: 'devolucao', label: 'Devolução' },
@@ -554,7 +553,8 @@ function MovementDialog({ material, onClose, onDone }: any) {
             <Input inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} placeholder={String(material.unit_cost ?? '')} />
             <p className="text-xs text-gray-400">Se informado, atualiza o custo unitário do material.</p>
           </div>
-          <div className="space-y-1.5"><Label>Observações</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Observações{['ajuste', 'saida', 'perda'].includes(type) ? ' (motivo — obrigatório)' : ''}</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+          <p className="text-xs text-gray-400">Consumo de produção é lançado só pela ordem de produção.</p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
@@ -1217,23 +1217,17 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
     if (f.brix_degree !== '' && !(n(f.brix_degree) > 0)) { toast({ title: 'Grau Brix inválido', variant: 'destructive' }); return; }
     if (f.ph !== '' && !(n(f.ph) > 0)) { toast({ title: 'PH inválido', variant: 'destructive' }); return; }
     const materiais = f.materials.filter((m: any) => m.raw_material_id && (n(m.quantity_used) > 0 || n(m.quantity_lost) > 0));
-    // Sem insumo NAO passa em silencio (Flavio 05/set): ja houve OP finalizada
-    // sem baixa de materia-prima. O servidor tambem recusa (400 SEM_INSUMOS)
-    // a menos que a finalizacao sem baixa seja confirmada explicitamente.
-    let confirmSemInsumos = false;
+    // Sem insumo NAO finaliza (Flavio 05/set; sem a opcao "confirmar" desde
+    // 04/out/2026). O servidor tambem confere o consumo contra a receita.
     if (materiais.length === 0) {
-      if (!window.confirm(
-        `ATENÇÃO: nenhuma matéria-prima/insumo foi informado.\n\n` +
-        `Finalizar assim NÃO dá baixa em insumo nenhum e o CMV do lote fica zerado.\n\n` +
-        `Clique em Cancelar para informar os insumos consumidos. Clique em OK apenas se esta ordem realmente não consumiu nada.`
-      )) return;
-      confirmSemInsumos = true;
+      toast({ title: 'Informe os insumos consumidos', description: 'Ordem sem insumo não finaliza — o CMV do lote ficaria zerado e o estoque de insumos não baixaria.', variant: 'destructive' });
+      return;
     }
     setSaving(true);
     try {
       const j = await jfetch(`/api/industria/production-orders/${order.id}/finalize`, {
         method: 'POST',
-        body: JSON.stringify({ ...f, materials: materiais, confirm_sem_insumos: confirmSemInsumos }),
+        body: JSON.stringify({ ...f, materials: materiais }),
       });
       const nIns = (j.consumed || []).length;
       toast({
@@ -1246,7 +1240,11 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
       const msg = e?.code === 'MATERIAL_INEXISTENTE'
         ? `${e.message}. Nada foi gravado — a ordem continua aberta.`
         : String(e.message || e);
-      toast({ title: 'Erro ao finalizar — nada foi gravado', description: msg, variant: 'destructive' });
+      const titulo = e?.code === 'FORA_DA_RECEITA' ? 'Consumo fora da receita — ordem não finalizada'
+        : e?.code === 'INSUMO_SEM_SALDO' ? 'Insumo sem saldo — ordem não finalizada'
+        : e?.code === 'OP_SEM_RECEITA' ? 'Produto sem receita — ordem não finalizada'
+        : 'Erro ao finalizar — nada foi gravado';
+      toast({ title: titulo, description: <span className="whitespace-pre-line">{msg}</span>, variant: 'destructive' });
     }
     finally { setSaving(false); }
   };

@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { ensureCmvLoteColumns } from "./ensure-cmv-lote";
 import { attachTransferLocks, getLotTransferLock, getTransferLocks } from "./lot-lock";
+import { normalizarNumeroLote } from "./estoque-em-uso";
 
 // Custo de um lote: numero ou null. NUNCA 0 por omissao — um lote sem custo
 // conhecido (entrada manual, remanejamento entre filiais) precisa aparecer como
@@ -69,7 +70,19 @@ export function registerInventoryRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.flatten().fieldErrors });
       }
-      const lot = await storage.createInventoryLot(parsed.data);
+      // Numero de lote canonico (maiusculo, sem espacos): "h180626" e "H180626"
+      // viravam dois lotes do mesmo produto na mesma filial (auditoria 04/out).
+      const lotNumber = normalizarNumeroLote(parsed.data.lotNumber);
+      const dup: any = await db.execute(sql`
+        SELECT id FROM inventory_lots
+        WHERE product_id = ${parsed.data.productId} AND instance_id = ${parsed.data.instanceId}
+          AND stock_type = ${parsed.data.stockType} AND UPPER(REPLACE(TRIM(lot_number), ' ', '')) = ${lotNumber}
+        LIMIT 1`);
+      if ((dup.rows || []).length) {
+        return res.status(409).json({ message: `O lote ${lotNumber} já existe para este produto nesta filial — ajuste o saldo do lote existente em vez de criar outro.`, existingLotId: dup.rows[0].id });
+      }
+      if (parseFloat(parsed.data.quantity) < 0) return res.status(400).json({ message: 'Saldo do lote não pode ser negativo.' });
+      const lot = await storage.createInventoryLot({ ...parsed.data, lotNumber });
 
       await storage.createInventoryMovement({
         lotId: lot.id,
@@ -82,7 +95,7 @@ export function registerInventoryRoutes(app: Express) {
         sourceType: 'manual',
         lotNumber: lot.lotNumber,
         notes: `Lote criado com quantidade inicial: ${lot.quantity}`,
-        createdBy: req.user?.id || req.userId || null,
+        createdBy: req.currentUser?.email || req.currentUser?.id || null,
       });
 
       res.status(201).json(lot);
@@ -118,6 +131,28 @@ export function registerInventoryRoutes(app: Express) {
       }
 
       const prevQty = existing.quantity;
+      if (parsed.data.lotNumber !== undefined) {
+        parsed.data.lotNumber = normalizarNumeroLote(parsed.data.lotNumber);
+        const dup: any = await db.execute(sql`
+          SELECT id FROM inventory_lots
+          WHERE id <> ${existing.id} AND product_id = ${existing.productId} AND instance_id = ${existing.instanceId}
+            AND stock_type = ${existing.stockType} AND UPPER(REPLACE(TRIM(lot_number), ' ', '')) = ${parsed.data.lotNumber}
+          LIMIT 1`);
+        if ((dup.rows || []).length) {
+          return res.status(409).json({ message: `Já existe o lote ${parsed.data.lotNumber} deste produto nesta filial.` });
+        }
+      }
+      // Ajuste de saldo exige MOTIVO (auditoria 04/out: 49 ajustes da GYN em 30/09
+      // sem autor e sem motivo). O motivo vai no movimento — e o unico registro do
+      // porque o estoque mudou.
+      if (parsed.data.quantity !== undefined && Math.abs(parseFloat(parsed.data.quantity) - parseFloat(prevQty)) > 1e-9) {
+        if (!(req.body?.motivo && String(req.body.motivo).trim().length >= 3)) {
+          return res.status(400).json({ message: 'Informe o motivo do ajuste de saldo.' });
+        }
+        if (parseFloat(parsed.data.quantity) < 0) {
+          return res.status(400).json({ message: 'Saldo do lote não pode ser negativo.' });
+        }
+      }
       const lot = await storage.updateInventoryLot(req.params.id, parsed.data);
 
       if (parsed.data.quantity && parsed.data.quantity !== prevQty) {
@@ -131,8 +166,8 @@ export function registerInventoryRoutes(app: Express) {
           newQuantity: parsed.data.quantity,
           sourceType: 'manual',
           lotNumber: lot.lotNumber,
-          notes: `Ajuste manual de estoque: ${prevQty} → ${parsed.data.quantity}`,
-          createdBy: req.user?.id || req.userId || null,
+          notes: `Ajuste manual de estoque: ${prevQty} → ${parsed.data.quantity}${req.body?.motivo ? ' — ' + String(req.body.motivo).slice(0, 300) : ''}`,
+          createdBy: req.currentUser?.email || req.currentUser?.id || null,
         });
       }
 
@@ -164,7 +199,7 @@ export function registerInventoryRoutes(app: Express) {
           sourceType: 'manual',
           lotNumber: existing.lotNumber,
           notes: `Lote excluído manualmente (tinha ${existing.quantity} em estoque)`,
-          createdBy: req.user?.id || req.userId || null,
+          createdBy: req.currentUser?.email || req.currentUser?.id || null,
         });
       }
 

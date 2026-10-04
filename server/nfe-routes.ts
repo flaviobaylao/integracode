@@ -79,7 +79,7 @@ export function nfMovimentouEstoque(invoice: any): boolean {
 // ============================================================================
 export interface EstornoEstoqueResultado {
   executado: boolean;
-  metodo: 'transferencia-exata' | 'generico' | 'nenhum';
+  metodo: 'transferencia-exata' | 'movimentos' | 'generico' | 'nenhum';
   skipped?: 'nf-de-entrada';
   undone: string[];
   warnings: string[];
@@ -102,52 +102,25 @@ export async function estornarEstoqueDaNf(
     return out;
   }
 
-  let transferReversal: any = null;
+  // Estorno PELOS MOVIMENTOS REAIS (auditoria 04/out/2026): cada baixa ligada a
+  // esta NF (ou a qualquer card do mesmo pedido) volta ao MESMO lote, na MESMA
+  // quantidade; o espelho de transferencia no destino e retirado. Acabou o
+  // estorno "generico" pela quantidade da nota no primeiro lote em uso: ele
+  // devolvia o que nunca tinha saido (+64 un na semana de 28/set) e no lote
+  // errado (78% das unidades). Sem movimento de baixa, nada volta — e isso fica
+  // registrado como aviso no historico da nota.
   try {
-    const { reverseTransferStockExact } = await import('./lot-lock.js');
-    transferReversal = await reverseTransferStockExact(invoice, by);
-  } catch (trfErr: any) {
-    out.errors.push(`estorno exato da transferencia falhou: ${trfErr?.message || trfErr}`);
-    console.error(`❌ [ESTORNO ${contexto}] estorno exato da transferencia:`, trfErr?.message || trfErr);
+    const { estornarEstoqueDaNfPorMovimentos } = await import('./estoque-em-uso.js');
+    const r = await estornarEstoqueDaNfPorMovimentos(invoice, by);
+    out.executado = r.handled;
+    out.metodo = r.undone.length ? (r.undone.some((u) => u.startsWith('destino')) ? 'transferencia-exata' : 'movimentos') : 'nenhum';
+    out.undone = r.undone;
+    out.warnings.push(...r.warnings);
+  } catch (e: any) {
+    out.errors.push(`estorno de estoque falhou: ${e?.message || e}`);
+    console.error(`❌ [ESTORNO ${contexto}]`, e?.message || e);
   }
-
-  if (transferReversal?.handled) {
-    out.executado = true;
-    out.metodo = 'transferencia-exata';
-    out.undone = transferReversal.undone || [];
-    out.warnings.push(...(transferReversal.warnings || []));
-    return out;
-  }
-
-  try {
-    const { reverseStockConsumption } = await import('./inventory-routes.js');
-    for (const item of items || []) {
-      if (!item?.productId) continue;
-      const product = await storage.getProduct(item.productId);
-      const instanceId = (invoice as any)?.omieInstanceId || product?.omieInstanceId || 'default';
-      const r: any = await reverseStockConsumption(
-        item.productId,
-        instanceId,
-        parseFloat(item.quantity),
-        'invoice',
-        String(invoice?.id),
-        userId,
-      );
-      // reverseStockConsumption devolve {success:false} quando nao acha lote em uso.
-      // Ate aqui esse retorno era descartado e o estoque nao voltava em silencio.
-      if (r && r.success === false) {
-        out.warnings.push(`${item.productName || item.productId}: ${r.message || 'estorno nao aplicado'} (${item.quantity} un)`);
-      } else {
-        out.undone.push(`${item.productName || item.productId}: +${item.quantity}`);
-      }
-    }
-    out.executado = true;
-    out.metodo = 'generico';
-  } catch (stockErr: any) {
-    out.errors.push(`estorno generico falhou: ${stockErr?.message || stockErr}`);
-    console.error(`❌ [ESTORNO ${contexto}] estorno generico:`, stockErr?.message || stockErr);
-  }
-
+  void items; void userId;
   return out;
 }
 
