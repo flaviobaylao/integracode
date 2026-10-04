@@ -624,6 +624,8 @@ function OrdensTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reportOpen, setReportOpen] = useState(false);
   const [opReportOpen, setOpReportOpen] = useState(false);
+  // RE-15 (Flavio 04/out): mesmo relatório de OP, sem nenhuma informação de custo
+  const [re15Open, setRe15Open] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   // OPs finalizadas sem baixa de insumo (Flavio 05/set) — o botao fica ambar
   // enquanto existir alguma.
@@ -752,6 +754,10 @@ function OrdensTab() {
           title="Relatório produtivo completo das ordens selecionadas">
           <ClipboardList className="h-4 w-4 mr-1" /> Relatório de OP ({selected.size})
         </Button>
+        <Button variant="outline" size="sm" disabled={selected.size === 0} onClick={() => setRe15Open(true)}
+          title="RE-15 — relatório de produção das ordens selecionadas, sem custos (CMV)">
+          <ClipboardList className="h-4 w-4 mr-1" /> RE-15 Relatório de Produção ({selected.size})
+        </Button>
         <Button variant="outline" size="sm" onClick={() => setAuditOpen(true)}
           className={auditoria?.total ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100' : ''}
           title="Ordens finalizadas que NÃO deram baixa em matéria-prima">
@@ -877,6 +883,13 @@ function OrdensTab() {
         <OrdensReportDialog
           orders={orders.filter((o) => selected.has(o.id))}
           onClose={() => setOpReportOpen(false)}
+        />
+      )}
+      {re15Open && (
+        <OrdensReportDialog
+          semCusto
+          orders={orders.filter((o) => selected.has(o.id))}
+          onClose={() => setRe15Open(false)}
         />
       )}
     </div>
@@ -1523,9 +1536,12 @@ ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} mater
 // RELATÓRIO DE OP — relatório produtivo completo das ordens selecionadas
 // Traz ficha de produção de cada OP (dados, análise, pasteurização, insumos
 // com lote e custo, CMV) + consolidado. Versão impressa e Excel.
+// Com `semCusto` vira o RE-15 RELATÓRIO DE PRODUÇÃO: idêntico, mas sem
+// custo unitário/total dos insumos, sem CMV e sem o total de CMV.
 // ===========================================================================
-function OrdensReportDialog({ orders, onClose }: any) {
+function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
   const { materials } = useIndustriaAux();
+  const titulo = semCusto ? 'RE-15 RELATÓRIO DE PRODUÇÃO' : 'Relatório de Produção — Ordens de Produção';
 
   const data = useMemo(() => {
     const list = orders.map((o: any) => {
@@ -1596,12 +1612,15 @@ function OrdensReportDialog({ orders, onClose }: any) {
         'Pasteurização Fim': o.pasteurization_end_time || '',
         'Temp. Mín (°C)': o.pasteurization_start_temp ?? '',
         'Temp. Máx (°C)': o.pasteurization_end_temp ?? '',
-        'CMV Total (R$)': +r.cmvTotal.toFixed(2),
-        'CMV Unitário (R$)': +r.cmvUnit.toFixed(4),
+        ...(semCusto ? {} : {
+          'CMV Total (R$)': +r.cmvTotal.toFixed(2),
+          'CMV Unitário (R$)': +r.cmvUnit.toFixed(4),
+        }),
         'Observações': o.notes || '',
       };
       if (r.items.length === 0) {
-        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Lote MP': '', 'Custo Unit. (R$)': '', 'Custo Total (R$)': '' });
+        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Lote MP': '',
+          ...(semCusto ? {} : { 'Custo Unit. (R$)': '', 'Custo Total (R$)': '' }) });
       } else {
         for (const it of r.items) {
           rows.push({
@@ -1610,13 +1629,15 @@ function OrdensReportDialog({ orders, onClose }: any) {
             'Un.': it.unit,
             'Qtd Consumida': +it.qty.toFixed(3),
             'Lote MP': it.lot,
-            'Custo Unit. (R$)': +it.cost.toFixed(4),
-            'Custo Total (R$)': +it.total.toFixed(2),
+            ...(semCusto ? {} : {
+              'Custo Unit. (R$)': +it.cost.toFixed(4),
+              'Custo Total (R$)': +it.total.toFixed(2),
+            }),
           });
         }
       }
     }
-    exportToExcel(rows, `relatorio-op-${new Date().toISOString().slice(0, 10)}`);
+    exportToExcel(rows, `${semCusto ? 're-15-relatorio-producao' : 'relatorio-op'}-${new Date().toISOString().slice(0, 10)}`);
   };
 
   const doPrint = () => {
@@ -1639,14 +1660,14 @@ function OrdensReportDialog({ orders, onClose }: any) {
 <p class="sec">Análise do produto acabado</p>
 ${analise}
 <p class="sec">Matéria-prima consumida</p>
-<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Qtd</th><th>Lote MP</th><th class="num">Custo Unit.</th><th class="num">Custo Total</th></tr></thead>
-<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td>${esc(it.lot || '-')}</td><td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td></tr>`).join('') : '<tr><td colspan="6">Sem insumos cadastrados</td></tr>'}</tbody>
-<tfoot><tr><td colspan="5">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot></table>
+<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Qtd</th><th>Lote MP</th>${semCusto ? '' : '<th class="num">Custo Unit.</th><th class="num">Custo Total</th>'}</tr></thead>
+<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td>${esc(it.lot || '-')}</td>${semCusto ? '' : `<td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td>`}</tr>`).join('') : `<tr><td colspan="${semCusto ? 4 : 6}">Sem insumos cadastrados</td></tr>`}</tbody>
+${semCusto ? '' : `<tfoot><tr><td colspan="5">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot>`}</table>
 ${o.notes ? `<p class="obs"><b>Observações:</b> ${esc(o.notes)}</p>` : ''}
 </div>`;
     }).join('');
 
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Produção</title>
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${semCusto ? 'RE-15 Relatório de Produção' : 'Relatório de Produção'}</title>
 <style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:normal;margin:2px 0 0}
 h3{font-size:14px;margin:0 0 6px}.cab{display:flex;align-items:center;gap:16px;border-bottom:2px solid #16a34a;padding-bottom:10px;margin-bottom:12px}.cab img{height:58px}
 table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}th,td{border:1px solid #bbb;padding:5px 7px;text-align:left}th{background:#f0f0f0}
@@ -1659,11 +1680,11 @@ table.kv th{width:12%;background:#f7f7f7}table.kv td{width:21%}
 .resumo td,.resumo th{font-size:12px}
 .assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
 <div class="cab"><img src="${window.location.origin}/honest-logo.png" alt="Honest"><div>
-<h1>Relatório de Produção — Ordens de Produção</h1>
+<h1>${titulo}</h1>
 <h2>Sistema Integra · Honest Sucos · emitido em ${hoje}</h2>
 </div></div>
-<table class="resumo"><thead><tr><th>Ordens</th><th>Planejadas</th><th>Em produção</th><th>Finalizadas</th><th class="num">Qtd planejada</th><th class="num">Qtd produzida</th><th class="num">CMV total</th></tr></thead>
-<tbody><tr><td>${data.tot.ordens}</td><td>${data.tot.planejadas}</td><td>${data.tot.emProducao}</td><td>${data.tot.finalizadas}</td><td class="num">${fmtQty(data.tot.planejada)}</td><td class="num">${fmtQty(data.tot.produzida)}</td><td class="num">${fmtBRL(data.tot.cmv)}</td></tr></tbody></table>
+<table class="resumo"><thead><tr><th>Ordens</th><th>Planejadas</th><th>Em produção</th><th>Finalizadas</th><th class="num">Qtd planejada</th><th class="num">Qtd produzida</th>${semCusto ? '' : '<th class="num">CMV total</th>'}</tr></thead>
+<tbody><tr><td>${data.tot.ordens}</td><td>${data.tot.planejadas}</td><td>${data.tot.emProducao}</td><td>${data.tot.finalizadas}</td><td class="num">${fmtQty(data.tot.planejada)}</td><td class="num">${fmtQty(data.tot.produzida)}</td>${semCusto ? '' : `<td class="num">${fmtBRL(data.tot.cmv)}</td>`}</tr></tbody></table>
 ${fichas}
 <div class="assin"><div>Produção</div><div>Qualidade</div><div>Data / Hora</div></div>
 <script>window.onload=function(){window.print()}</script></body></html>`;
@@ -1677,13 +1698,15 @@ ${fichas}
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Relatório de Produção — {orders.length} ordem(ns)</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{semCusto ? 'RE-15 RELATÓRIO DE PRODUÇÃO' : 'Relatório de Produção'} — {orders.length} ordem(ns)</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+          <div className={`grid grid-cols-2 ${semCusto ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-2 text-sm`}>
             <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">Ordens</p><p className="font-bold">{data.tot.ordens}</p></div>
             <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">Qtd planejada</p><p className="font-bold">{fmtQty(data.tot.planejada)}</p></div>
             <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">Qtd produzida</p><p className="font-bold">{fmtQty(data.tot.produzida)}</p></div>
-            <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">CMV total</p><p className="font-bold">{fmtBRL(data.tot.cmv)}</p></div>
+            {!semCusto && (
+              <div className="rounded-lg border p-2"><p className="text-xs text-gray-500">CMV total</p><p className="font-bold">{fmtBRL(data.tot.cmv)}</p></div>
+            )}
           </div>
           <div className="border rounded-lg overflow-auto max-h-[55vh]">
             <Table>
@@ -1697,7 +1720,7 @@ ${fichas}
                   <TableHead className="text-right">Rend.</TableHead>
                   <TableHead>Lote</TableHead>
                   <TableHead>Brix / pH</TableHead>
-                  <TableHead className="text-right">CMV</TableHead>
+                  {!semCusto && <TableHead className="text-right">CMV</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1711,18 +1734,19 @@ ${fichas}
                     <TableCell className="text-right text-xs">{r.rendimento == null ? '-' : `${r.rendimento.toFixed(1)}%`}</TableCell>
                     <TableCell className="text-xs">{r.o.lot_number || '-'}</TableCell>
                     <TableCell className="text-xs">{(r.o.brix_degree ?? '-') + ' / ' + (r.o.ph ?? '-')}</TableCell>
-                    <TableCell className="text-right">{fmtBRL(r.cmvTotal)}</TableCell>
+                    {!semCusto && <TableCell className="text-right">{fmtBRL(r.cmvTotal)}</TableCell>}
                   </TableRow>
                 ))}
                 {data.list.length === 0 && (
-                  <TableRow><TableCell colSpan={9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={semCusto ? 8 : 9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
           </div>
           <p className="text-xs text-gray-500">
-            A versão impressa traz a ficha completa de cada ordem: datas, responsável, lote e validade, análise (Brix, pH, sensorial),
-            pasteurização, matéria-prima consumida com lote e custo, CMV total e unitário.
+            {semCusto
+              ? 'A versão impressa traz a ficha completa de cada ordem: datas, responsável, lote e validade, análise (Brix, pH, sensorial), pasteurização e matéria-prima consumida com lote — sem custos.'
+              : 'A versão impressa traz a ficha completa de cada ordem: datas, responsável, lote e validade, análise (Brix, pH, sensorial), pasteurização, matéria-prima consumida com lote e custo, CMV total e unitário.'}
           </p>
         </div>
         <DialogFooter>
