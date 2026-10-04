@@ -813,6 +813,10 @@ function buildDocumento(
 ): { documento: Record<string, any>; cNF: string; cUF: string; modelo: string } {
   const modelo = (invoice as any).invoiceModel || '55';
   const isNFCe = modelo === '65';
+  // DEVOLUÇÃO DE COMPRA (out/2026) — NF de SAÍDA (tpNF=1, finNFe=4) para o
+  // FORNECEDOR, referenciando a NF de entrada dele. Tudo que muda no XML por
+  // causa dela está amarrado a esta flag, para nenhuma outra nota mudar.
+  const isDevolucaoCompra = !isNFCe && String(invoice.operationType || '') === 'devolucao_compra';
   const emissionDate = invoice.emissionDate ? new Date(invoice.emissionDate) : new Date();
   const uf = (invoice.issuerUf || 'GO').toUpperCase();
   const cUF = UF_CODES[uf] || '52';
@@ -1239,6 +1243,24 @@ function buildDocumento(
           orig: icmsOrig,
           CSOSN: '900',
         };
+        // Devolução de compra a fornecedor NÃO optante: a ME/EPP informa a base e
+        // o ICMS destacados na NF de origem (proporcionais à quantidade devolvida),
+        // para o fornecedor estornar o débito (Res. CGSN 140/2018, art. 59).
+        const _vbc900 = parseFloat(item.baseIcms?.toString() || '0');
+        const _vicms900 = parseFloat(item.valorIcms?.toString() || '0');
+        const _picms900 = parseFloat(item.aliqIcms?.toString() || '0');
+        if (isDevolucaoCompra && _vbc900 > 0 && _vicms900 > 0) {
+          imposto.ICMS.ICMSSN900 = {
+            orig: icmsOrig,
+            CSOSN: '900',
+            modBC: '3',
+            vBC: _vbc900.toFixed(2),
+            pICMS: _picms900.toFixed(2),
+            vICMS: _vicms900.toFixed(2),
+          };
+          sumVbcIcms += _vbc900;
+          sumVicms += _vicms900;
+        }
       } else {
         imposto.ICMS.ICMSSN102 = { orig: icmsOrig, CSOSN: '102' };
       }
@@ -1543,8 +1565,18 @@ function buildDocumento(
         ...(item.cest ? { CEST: item.cest } : {}),
         ...(cBenef ? { cBenef } : {}),
         ...(descVal > 0 ? { vDesc: descVal.toFixed(2) } : {}),
+        ...(isDevolucaoCompra && parseFloat((item as any).valorFrete || '0') > 0 ? { vFrete: parseFloat((item as any).valorFrete).toFixed(2) } : {}),
+        ...(isDevolucaoCompra && parseFloat((item as any).valorSeguro || '0') > 0 ? { vSeg: parseFloat((item as any).valorSeguro).toFixed(2) } : {}),
+        ...(isDevolucaoCompra && parseFloat((item as any).valorOutras || '0') > 0 ? { vOutro: parseFloat((item as any).valorOutras).toFixed(2) } : {}),
       },
       imposto,
+      // IPI destacado pelo fornecedor, devolvido na proporção da quantidade.
+      ...(isDevolucaoCompra && parseFloat((item as any).ipiDevolValor || '0') > 0 ? {
+        impostoDevol: {
+          pDevol: Math.min(100, Math.max(0, parseFloat((item as any).ipiDevolPercent || '100'))).toFixed(2),
+          IPI: { vIPIDevol: parseFloat((item as any).ipiDevolValor).toFixed(2) },
+        },
+      } : {}),
       ...(lotInfo ? { infAdProd: lotInfo } : {}), ...(!isNFCe && invoice.finNFe === '4' && invoice.referencedAccessKey ? { DFeReferenciado: { chaveAcesso: String(invoice.referencedAccessKey).replace(/\D/g, ''), nItem: String((item as any).itemNumber || idx + 1) } } : {}),
     };
 
@@ -1613,7 +1645,8 @@ function buildDocumento(
       cDV: '0',
       tpAmb: ambiente,
       finNFe: isNFCe ? '1' : (invoice.finNFe || '1'),
-      indFinal: '1',
+      // Devolução de compra vai a um contribuinte (o fornecedor), não a consumidor final.
+      indFinal: isDevolucaoCompra ? '0' : '1',
       indPres: isNFCe ? '1' : '1',
       procEmi: '0',
       verProc: 'SistemaIntegra 1.0',
@@ -1659,7 +1692,7 @@ function buildDocumento(
         vDesc: totalDiscount.toFixed(2),
         vII: '0.00',
         vIPI: totalIpi.toFixed(2),
-        vIPIDevol: '0.00',
+        vIPIDevol: (isDevolucaoCompra ? parseFloat((invoice as any).totalIpiDevol?.toString() || '0') : 0).toFixed(2),
         vPIS: (sumVPis > 0 ? sumVPis : totalPis).toFixed(2),
         vCOFINS: (sumVCofins > 0 ? sumVCofins : totalCofins).toFixed(2),
         vOutro: totalOther.toFixed(2),

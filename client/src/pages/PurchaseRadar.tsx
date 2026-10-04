@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import NfEntradaProdutor from "@/components/NfEntradaProdutor";
+import DevolucaoCompraDialog from "@/components/DevolucaoCompraDialog";
 import {
   Radar, Upload, FileText, Package, DollarSign, Search,
   Filter, Eye, Tag, Truck, CheckCircle2, XCircle,
@@ -58,6 +59,7 @@ export default function PurchaseRadar() {
   const [showClassify, setShowClassify] = useState(false);
   const [showPayable, setShowPayable] = useState(false);
   const [showEntry, setShowEntry] = useState(false);
+  const [showDevolucao, setShowDevolucao] = useState(false);
   const [entryMappings, setEntryMappings] = useState<any[]>([]);
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm, setSupplierForm] = useState<any>({ name: "", cnpj: "", cpf: "", stateRegistration: "", defaultChartAccountId: "", defaultCategory: "", omieInstanceId: "" });
@@ -1119,6 +1121,16 @@ export default function PurchaseRadar() {
                     <RefreshCw className="h-4 w-4 mr-1" /> {revertStock.isPending ? "Revertendo..." : "Reverter entrada no estoque"}
                   </Button>
                 )}
+                {!["detected", "cancelled"].includes(selectedInvoice.status) && selectedInvoice.accessKey && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-purple-700 border-purple-300 hover:bg-purple-50"
+                    onClick={() => setShowDevolucao(true)}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-1" /> Devolver ao fornecedor
+                  </Button>
+                )}
                 {selectedInvoice.status === "detected" && selectedInvoice.accessKey && selectedInvoice.omieInstanceId && (
                   <Button
                     size="sm"
@@ -1162,6 +1174,8 @@ export default function PurchaseRadar() {
           )}
         </DialogContent>
       </Dialog>
+
+      <DevolucaoCompraDialog purchaseId={selectedInvoice?.id || null} open={showDevolucao} onOpenChange={setShowDevolucao} />
 
       <Dialog open={showClassify} onOpenChange={setShowClassify}>
         <DialogContent>

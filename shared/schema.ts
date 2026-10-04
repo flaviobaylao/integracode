@@ -2781,6 +2781,12 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   customerCityCode: varchar("customer_city_code"),
   customerUf: varchar("customer_uf"),
   customerPhone: varchar("customer_phone"),
+  // DEVOLUÇÃO DE COMPRA (out/2026): o destinatário é o FORNECEDOR, que não tem
+  // cadastro em customers — o código IBGE e o número vêm direto do <emit> do XML
+  // da NF de entrada. O montador do XML já lia estes dois campos; faltava a coluna.
+  // ⚠️ Colunas no schema drizzle → o ALTER precisa rodar no boot (server/index.ts).
+  customerCityCode: varchar("customer_city_code"),
+  customerAddressNumber: varchar("customer_address_number"),
   // ── LOCAL DE ENTREGA (grupo <entrega> da NF-e) ────────────────────────────
   // So' preenchido quando o pedido e' de um cliente marcado como LOCAL DE ENTREGA
   // de uma rede: ai o destinatario acima e' o CNPJ do integrante marcado como
@@ -2811,6 +2817,9 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   totalPis: decimal("total_pis", { precision: 12, scale: 2 }).default('0'),
   totalCofins: decimal("total_cofins", { precision: 12, scale: 2 }).default('0'),
   totalIpi: decimal("total_ipi", { precision: 12, scale: 2 }).default('0'),
+  // IPI devolvido ao fornecedor (grupo impostoDevol / ICMSTot.vIPIDevol) — só na
+  // devolução de compra. Entra no vNF.
+  totalIpiDevol: decimal("total_ipi_devol", { precision: 12, scale: 2 }).default('0'),
   totalInvoice: decimal("total_invoice", { precision: 12, scale: 2 }).default('0'),
   paymentMethod: varchar("payment_method").default('a_prazo'),
   notes: text("notes"),
@@ -2915,6 +2924,14 @@ export const fiscalInvoiceItems = pgTable("fiscal_invoice_items", {
   baseIpi: decimal("base_ipi", { precision: 12, scale: 2 }).default('0'),
   aliqIpi: decimal("aliq_ipi", { precision: 5, scale: 2 }).default('0'),
   valorIpi: decimal("valor_ipi", { precision: 12, scale: 2 }).default('0'),
+  // DEVOLUÇÃO DE COMPRA (out/2026): IPI devolvido (impostoDevol pDevol/vIPIDevol) e
+  // frete/seguro/outras despesas rateados do item da NF de entrada (vFrete/vSeg/vOutro
+  // por item — a SEFAZ confere o somatório com o total).
+  ipiDevolPercent: decimal("ipi_devol_percent", { precision: 5, scale: 2 }),
+  ipiDevolValor: decimal("ipi_devol_valor", { precision: 12, scale: 2 }),
+  valorFrete: decimal("valor_frete", { precision: 12, scale: 2 }),
+  valorSeguro: decimal("valor_seguro", { precision: 12, scale: 2 }),
+  valorOutras: decimal("valor_outras", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_fiscal_invoice_items_invoice").on(table.invoiceId),

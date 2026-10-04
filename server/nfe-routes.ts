@@ -1166,6 +1166,17 @@ export function registerNfeRoutes(app: Express) {
           } catch (e: any) { console.warn('⚠️ NF de entrada → compra:', e?.message); }
         }
 
+        // DEVOLUCAO DE COMPRA retransmitida por aqui (a 1a tentativa falhou na tela
+        // de Compras): com a autorizacao, baixa o estoque de materia-prima e abate as
+        // contas a pagar da compra. Idempotente; nota que nao e devolucao de compra sai em null.
+        let devolucaoCompra: any = null;
+        try {
+          const { aplicarEfeitosDevolucaoCompra } = await import('./devolucao-compra.js');
+          devolucaoCompra = await aplicarEfeitosDevolucaoCompra(req.params.id, req.currentUser?.email || req.user?.email || null);
+        } catch (dcErr: any) {
+          console.warn('⚠️ Erro ao aplicar efeitos da devolucao de compra:', dcErr?.message);
+        }
+
         // Venda de balcao acaba aqui: com a NFC-e autorizada, o card vai para
         // "Entregue" — o cliente ja saiu da loja com o produto. Ver a funcao para
         // o porque de so acontecer DEPOIS da autorizacao.
@@ -1176,7 +1187,7 @@ export function registerNfeRoutes(app: Express) {
           console.warn('⚠️ Erro ao concluir card de balcao apos a NFC-e:', balcaoErr?.message);
         }
 
-        res.json({ ...result, invoice: { ...invoice, items, events } });
+        res.json({ ...result, invoice: { ...invoice, items, events }, ...(devolucaoCompra ? { devolucaoCompra } : {}) });
       } else {
         res.status(400).json(result);
       }
@@ -1227,6 +1238,16 @@ export function registerNfeRoutes(app: Express) {
           'CANCEL',
         );
         await registrarEventoEstorno(req.params.id, estorno, req.currentUser?.email || req.user?.email || null);
+        // DEVOLUCAO DE COMPRA cancelada: devolve a materia-prima ao estoque e
+        // desfaz o abatimento das contas a pagar (null = nao era devolucao de compra).
+        let devolucaoCompraEstorno: string[] | null = null;
+        try {
+          const { estornarEfeitosDevolucaoCompra } = await import('./devolucao-compra.js');
+          devolucaoCompraEstorno = await estornarEfeitosDevolucaoCompra(req.params.id, req.currentUser?.email || req.user?.email || null);
+        } catch (dcErr: any) {
+          console.warn('⚠️ Erro ao estornar devolucao de compra:', dcErr?.message);
+          devolucaoCompraEstorno = [`Falha ao estornar estoque/financeiro da devolucao de compra: ${dcErr?.message}`];
+        }
         const transferReversal = { handled: estorno.metodo === 'transferencia-exata', ...estorno };
 
         // Cancel associated receivables
@@ -1293,6 +1314,7 @@ export function registerNfeRoutes(app: Express) {
           transferReversal,
           estornoEstoque: estorno,
           compraAviso,
+          ...(devolucaoCompraEstorno ? { devolucaoCompraEstorno } : {}),
           // A tela mostra este aviso: estoque que nao voltou nao pode passar batido.
           estoqueAviso: (estorno.errors.length || estorno.warnings.length)
             ? `Estorno de estoque com pendencia: ${[...estorno.errors, ...estorno.warnings].join('; ')}`

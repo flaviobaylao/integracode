@@ -427,6 +427,16 @@ run();
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS vol_especie varchar',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS peso_liquido_kg numeric(12,3)',
       'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS peso_bruto_kg numeric(12,3)',
+      // DEVOLUÇÃO DE COMPRA (out/2026): destinatário fornecedor (cMun/nro do XML),
+      // IPI devolvido e frete/seguro/outras por item.
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS customer_city_code varchar',
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS customer_address_number varchar',
+      'ALTER TABLE fiscal_invoices ADD COLUMN IF NOT EXISTS total_ipi_devol numeric(12,2) DEFAULT 0',
+      'ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS ipi_devol_percent numeric(5,2)',
+      'ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS ipi_devol_valor numeric(12,2)',
+      'ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS valor_frete numeric(12,2)',
+      'ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS valor_seguro numeric(12,2)',
+      'ALTER TABLE fiscal_invoice_items ADD COLUMN IF NOT EXISTS valor_outras numeric(12,2)',
     ];
     for (const _stmt of _critCols) {
       try { await db.execute(sql.raw(_stmt)); }
