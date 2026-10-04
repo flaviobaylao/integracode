@@ -24,8 +24,10 @@ import { queryClient } from "@/lib/queryClient";
 import { exportToExcel } from "@/lib/excelExport";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown,
+  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText,
 } from "lucide-react";
+
+const SIGNATARIO_PURO_PADRAO = "Flavio Evangelista Baylão Neto";
 
 // colunas ordenáveis → função que extrai a chave de ordenação
 const ORDENACOES: Record<string, (c: any) => string | number> = {
@@ -71,7 +73,8 @@ const VAZIO: any = {
   tensao: "220V", volumeLitros: "", volumeBrutoLitros: "", valorBem: "",
   dataContrato: "", prazo: "Indeterminado", status: "ativo",
   assinadoComodante: false, assinadoComodatario: false, testemunhasAssinadas: false,
-  signatarioComodatario: "", dataDevolucao: "", condicaoDevolucao: "", observacoes: "",
+  signatarioComodatario: "", signatarioComodante: SIGNATARIO_PURO_PADRAO, equipamentoUsado: false,
+  dataDevolucao: "", condicaoDevolucao: "", observacoes: "",
   nfAquisicaoNumero: "", nfAquisicaoData: "", nfAquisicaoFornecedor: "", nfAquisicaoValor: "",
 };
 
@@ -88,6 +91,7 @@ function paraForm(c: any) {
     status: c.status || "ativo",
     assinadoComodante: !!c.assinado_comodante, assinadoComodatario: !!c.assinado_comodatario,
     testemunhasAssinadas: !!c.testemunhas_assinadas, signatarioComodatario: c.signatario_comodatario || "",
+    signatarioComodante: c.signatario_comodante || SIGNATARIO_PURO_PADRAO, equipamentoUsado: !!c.equipamento_usado,
     dataDevolucao: c.data_devolucao || "", condicaoDevolucao: c.condicao_devolucao || "",
     observacoes: c.observacoes || "",
     nfAquisicaoNumero: c.nf_aquisicao_numero || "", nfAquisicaoData: c.nf_aquisicao_data || "",
@@ -106,7 +110,7 @@ export default function Comodatos() {
   const { toast } = useToast();
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState<string>("todos");
-  const [ordem, setOrdem] = useState<{ col: string; asc: boolean }>({ col: "cliente", asc: true });
+  const [ordem, setOrdem] = useState<{ col: string; asc: boolean }>({ col: "comodatario", asc: true });
   const [soPendentes, setSoPendentes] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [aberto, setAberto] = useState(false);
@@ -114,6 +118,8 @@ export default function Comodatos() {
   const [salvando, setSalvando] = useState(false);
   const [anexos, setAnexos] = useState<any[]>([]);
   const [buscaCli, setBuscaCli] = useState("");
+  const [consultandoCnpj, setConsultandoCnpj] = useState(false);
+  const [gerandoPdf, setGerandoPdf] = useState(false);
   const [cliOpcoes, setCliOpcoes] = useState<any[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -136,7 +142,7 @@ export default function Comodatos() {
         c.numero_serie, c.cliente_nome, c.cliente_fantasia, c.cliente_razao, c.vendedor_nome].join(" ").toLowerCase();
       return hay.includes(q) || (qd.length >= 4 && [c.comodatario_cnpj, c.cliente_cnpj].some((x) => String(x || "").replace(/\D/g, "").includes(qd)));
     }).sort((a, b) => {
-      const f = ORDENACOES[ordem.col] || ORDENACOES.cliente;
+      const f = ORDENACOES[ordem.col] || ORDENACOES.comodatario;
       const va = f(a), vb = f(b);
       // vazio sempre no fim, independente da direção
       if (va === "" && vb !== "") return 1;
@@ -173,6 +179,59 @@ export default function Comodatos() {
     setBuscaCli(q);
     if (q.trim().length < 2) { setCliOpcoes([]); return; }
     try { setCliOpcoes(await api(`/api/comodatos/clientes-busca?q=${encodeURIComponent(q)}`)); } catch { setCliOpcoes([]); }
+  };
+
+  // lupa do CNPJ: Receita Federal + cliente já cadastrado com o mesmo CNPJ
+  const consultarCnpj = async () => {
+    const dig = String(form.comodatarioCnpj || "").replace(/\D/g, "");
+    if (dig.length !== 14) { toast({ title: "Informe um CNPJ com 14 dígitos", variant: "destructive" }); return; }
+    setConsultandoCnpj(true);
+    try {
+      const r = await api(`/api/comodatos/cnpj/${dig}`);
+      const rc = r.receita;
+      setForm((f: any) => ({
+        ...f,
+        comodatarioCnpj: rc?.cnpj || f.comodatarioCnpj,
+        comodatarioRazao: rc?.razaoSocial || f.comodatarioRazao,
+        apelidoPonto: r.cliente ? (r.cliente.fantasy_name || r.cliente.name) : (f.apelidoPonto || rc?.nomeFantasia || ""),
+        enderecoInstalacao: f.enderecoInstalacao || rc?.endereco || "",
+        cidade: rc?.cidade || f.cidade,
+        uf: rc?.uf || f.uf,
+        cep: rc?.cep || f.cep,
+        customerId: f.customerId || r.cliente?.id || null,
+        clienteNome: f.customerId ? f.clienteNome : (r.cliente ? (r.cliente.fantasy_name || r.cliente.name) : f.clienteNome),
+      }));
+      if (rc) {
+        toast({ title: `Receita: ${rc.razaoSocial}`, description: `${rc.situacao || ""}${r.cliente ? " · cliente já cadastrado, vínculo feito" : " · não há cliente cadastrado com esse CNPJ"}` });
+      } else {
+        toast({ title: "Receita indisponível", description: `${r.erroReceita || ""}${r.cliente ? " — vínculo com o cliente cadastrado feito" : ""}`, variant: r.cliente ? "default" : "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Falha na consulta", description: e?.message, variant: "destructive" });
+    } finally {
+      setConsultandoCnpj(false);
+    }
+  };
+
+  // PDF do contrato para assinatura (do que está no formulário; não exige salvar)
+  const gerarPdf = async () => {
+    if (!form.comodatarioRazao.trim()) { toast({ title: "Informe a razão social do comodatário para gerar o contrato", variant: "destructive" }); return; }
+    setGerandoPdf(true);
+    try {
+      const body: any = { ...form, codigo: editId ? itens.find((i) => i.id === editId)?.codigo : undefined };
+      delete body.clienteNome;
+      const r = await fetch("/api/comodatos/contrato.pdf", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e: any) {
+      toast({ title: "Erro ao gerar o PDF", description: e?.message, variant: "destructive" });
+    } finally {
+      setGerandoPdf(false);
+    }
   };
 
   const salvar = async () => {
@@ -228,12 +287,12 @@ export default function Comodatos() {
   const exportar = () => {
     exportToExcel(filtrados.map((c) => ({
       "Código": c.codigo,
-      "Cliente - Nome fantasia": c.cliente_fantasia || c.cliente_nome || "",
-      "Cliente - Razão social": c.cliente_razao || "",
-      "Cliente - CNPJ": c.cliente_cnpj || "",
       "Comodatário - Nome fantasia (ponto)": c.apelido_ponto || "",
       "Comodatário - Razão social": c.comodatario_razao,
       "Comodatário - CNPJ": c.comodatario_cnpj || "",
+      "Cliente - Nome fantasia": c.cliente_fantasia || c.cliente_nome || "",
+      "Cliente - Razão social": c.cliente_razao || "",
+      "Cliente - CNPJ": c.cliente_cnpj || "",
       "Vendedor": c.vendedor_nome || "",
       "Endereço de instalação": c.endereco_instalacao || "",
       "Cidade/UF": [c.cidade, c.uf].filter(Boolean).join("/"),
@@ -323,8 +382,8 @@ export default function Comodatos() {
             <TableHeader className="sticky top-0 z-10 shadow-sm">
               <TableRow>
                 <Th col="codigo">Código</Th>
-                <Th col="cliente">Cliente</Th>
                 <Th col="comodatario">Comodatário</Th>
+                <Th col="cliente">Cliente vinculado</Th>
                 <Th col="vendedor">Vendedor</Th>
                 <Th col="instalacao">Instalação</Th>
                 <Th col="equipamento">Equipamento</Th>
@@ -339,6 +398,11 @@ export default function Comodatos() {
                 <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => abrirEdicao(c)}>
                   <TableCell className="font-mono text-xs whitespace-nowrap">{c.codigo}</TableCell>
                   <TableCell className="min-w-[200px]">
+                    <div className="font-medium">{c.apelido_ponto || c.comodatario_razao}</div>
+                    {c.apelido_ponto && <div className="text-xs text-muted-foreground">{c.comodatario_razao}</div>}
+                    <div className="text-xs text-muted-foreground font-mono">{c.comodatario_cnpj}</div>
+                  </TableCell>
+                  <TableCell className="min-w-[200px]">
                     {c.customer_id ? (
                       <>
                         <div className="font-medium flex items-center gap-1"><Link2 className="w-3 h-3 text-emerald-600" />{c.cliente_fantasia || c.cliente_nome}</div>
@@ -346,11 +410,6 @@ export default function Comodatos() {
                         <div className="text-xs text-muted-foreground font-mono">{c.cliente_cnpj}</div>
                       </>
                     ) : <span className="text-xs text-amber-700">Não vinculado</span>}
-                  </TableCell>
-                  <TableCell className="min-w-[200px]">
-                    <div className="font-medium">{c.apelido_ponto || c.comodatario_razao}</div>
-                    {c.apelido_ponto && <div className="text-xs text-muted-foreground">{c.comodatario_razao}</div>}
-                    <div className="text-xs text-muted-foreground font-mono">{c.comodatario_cnpj}</div>
                   </TableCell>
                   <TableCell className="text-sm whitespace-nowrap">{c.vendedor_nome || <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell className="text-xs max-w-[240px]">
@@ -396,9 +455,18 @@ export default function Comodatos() {
             <section className="space-y-3">
               <h3 className="font-semibold text-sm text-muted-foreground uppercase">Comodatário</h3>
               <div className="grid md:grid-cols-2 gap-3">
-                <div className="md:col-span-2"><Label>Razão social *</Label><Input value={form.comodatarioRazao} onChange={(e) => set("comodatarioRazao", e.target.value)} /></div>
-                <div><Label>CNPJ/CPF</Label><Input value={form.comodatarioCnpj} onChange={(e) => set("comodatarioCnpj", e.target.value)} /></div>
-                <div><Label>Apelido do ponto</Label><Input placeholder="Ex.: Colégio Marista" value={form.apelidoPonto} onChange={(e) => set("apelidoPonto", e.target.value)} /></div>
+                <div>
+                  <Label>CNPJ do comodatário</Label>
+                  <div className="flex gap-1">
+                    <Input value={form.comodatarioCnpj} onChange={(e) => set("comodatarioCnpj", e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); consultarCnpj(); } }} />
+                    <Button type="button" variant="outline" size="icon" title="Buscar dados na Receita Federal" onClick={consultarCnpj} disabled={consultandoCnpj}>
+                      {consultandoCnpj ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <div><Label>Razão social (conforme CNPJ) *</Label><Input value={form.comodatarioRazao} onChange={(e) => set("comodatarioRazao", e.target.value)} /></div>
+                <div className="md:col-span-2"><Label>Apelido do ponto</Label><Input placeholder="Preenchido com o nome fantasia do cliente vinculado" value={form.apelidoPonto} onChange={(e) => set("apelidoPonto", e.target.value)} /></div>
                 <div className="md:col-span-2">
                   <Label>Cliente vinculado</Label>
                   {form.customerId ? (
@@ -413,7 +481,7 @@ export default function Comodatos() {
                         <div className="absolute z-20 bg-background border rounded-md mt-1 w-full max-h-48 overflow-auto shadow">
                           {cliOpcoes.map((o) => (
                             <button key={o.id} type="button" className="block w-full text-left px-3 py-1.5 text-sm hover:bg-muted"
-                              onClick={() => { setForm((f: any) => ({ ...f, customerId: o.id, clienteNome: o.fantasy_name || o.name })); setCliOpcoes([]); setBuscaCli(""); }}>
+                              onClick={() => { setForm((f: any) => ({ ...f, customerId: o.id, clienteNome: o.fantasy_name || o.name, apelidoPonto: o.fantasy_name || o.name || f.apelidoPonto })); setCliOpcoes([]); setBuscaCli(""); }}>
                               {o.fantasy_name || o.name} <span className="text-xs text-muted-foreground">{o.cnpj || o.cpf} {o.city ? `· ${o.city}` : ""}</span>
                             </button>
                           ))}
@@ -448,6 +516,7 @@ export default function Comodatos() {
                 <div><Label>Volume bruto (L)</Label><Input type="number" value={form.volumeBrutoLitros} onChange={(e) => set("volumeBrutoLitros", e.target.value)} /></div>
                 <div><Label>Valor do bem (R$)</Label><Input type="number" step="0.01" value={form.valorBem} onChange={(e) => set("valorBem", e.target.value)} /></div>
               </div>
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.equipamentoUsado} onCheckedChange={(v) => set("equipamentoUsado", !!v)} />Equipamento usado (o contrato sai "usado" em vez de "sem uso")</label>
               <div className="grid md:grid-cols-4 gap-3">
                 <div><Label>NF de aquisição</Label><Input value={form.nfAquisicaoNumero} onChange={(e) => set("nfAquisicaoNumero", e.target.value)} /></div>
                 <div><Label>Data da NF</Label><Input type="date" value={form.nfAquisicaoData} onChange={(e) => set("nfAquisicaoData", e.target.value)} /></div>
@@ -472,7 +541,10 @@ export default function Comodatos() {
                 <label className="flex items-center gap-2"><Checkbox checked={form.assinadoComodatario} onCheckedChange={(v) => set("assinadoComodatario", !!v)} />Assinado pelo comodatário</label>
                 <label className="flex items-center gap-2"><Checkbox checked={form.testemunhasAssinadas} onCheckedChange={(v) => set("testemunhasAssinadas", !!v)} />2 testemunhas assinaram</label>
               </div>
-              <div><Label>Signatário do comodatário</Label><Input value={form.signatarioComodatario} onChange={(e) => set("signatarioComodatario", e.target.value)} /></div>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div><Label>Assina pela PURO (comodante)</Label><Input value={form.signatarioComodante} onChange={(e) => set("signatarioComodante", e.target.value)} /></div>
+                <div><Label>Assina pelo comodatário</Label><Input value={form.signatarioComodatario} onChange={(e) => set("signatarioComodatario", e.target.value)} /></div>
+              </div>
               {["encerrado", "devolvido"].includes(form.status) && (
                 <div className="grid md:grid-cols-3 gap-3">
                   <div><Label>Data da devolução</Label><Input type="date" value={form.dataDevolucao} onChange={(e) => set("dataDevolucao", e.target.value)} /></div>
@@ -509,7 +581,10 @@ export default function Comodatos() {
           </div>
 
           <DialogFooter className="gap-2">
-            {editId && <Button variant="ghost" className="text-red-600 mr-auto" onClick={excluir}><Trash2 className="w-4 h-4 mr-2" />Excluir</Button>}
+            {editId && <Button variant="ghost" className="text-red-600" onClick={excluir}><Trash2 className="w-4 h-4 mr-2" />Excluir</Button>}
+            <Button variant="secondary" className="mr-auto" onClick={gerarPdf} disabled={gerandoPdf}>
+              {gerandoPdf ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}Gerar contrato (PDF)
+            </Button>
             <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando}>{salvando && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Salvar</Button>
           </DialogFooter>
