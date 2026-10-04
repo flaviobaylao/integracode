@@ -2774,6 +2774,11 @@ export const fiscalInvoices = pgTable("fiscal_invoices", {
   customerBairro: varchar("customer_bairro"),
   customerCep: varchar("customer_cep"),
   customerCity: varchar("customer_city"),
+  // Código IBGE do município do destinatário (cMun do <enderDest>). Usado pela
+  // NF-e de entrada própria (remetente produtor rural em cidade pequena, fora do
+  // dicionário de cidades). Nulo = resolvido pelo nome da cidade, como sempre.
+  // ⚠️ Coluna no schema drizzle → ALTER no boot (server/index.ts).
+  customerCityCode: varchar("customer_city_code"),
   customerUf: varchar("customer_uf"),
   customerPhone: varchar("customer_phone"),
   // ── LOCAL DE ENTREGA (grupo <entrega> da NF-e) ────────────────────────────

@@ -875,7 +875,11 @@ function buildDocumento(
     ieValid = false;
   }
 
-  const hasIe = !isCpf && ieValid;
+  // NF-e de ENTRADA própria (compra de produtor rural, finNFe=1): o remetente vai
+  // no <dest> e pode ser PESSOA FÍSICA COM Inscrição Estadual (produtor rural).
+  // Só nesse caso o CPF leva IE/indIEDest=1; venda a CPF segue sempre como 9.
+  const isEntradaPropria = invoice.operationType === 'entrada' && String((invoice as any).finNFe || '1') === '1';
+  const hasIe = (!isCpf || isEntradaPropria) && ieValid;
   console.log(`📋 [NFE-XML] dest: doc=${custDoc} (${isCpf ? 'CPF' : 'CNPJ'}), rawIe="${rawIe}", ieClean="${ieClean}", hasIe=${hasIe}, indIEDest=${hasIe ? '1' : '9'}`);
 
   let dest: Record<string, any> | undefined;
@@ -912,7 +916,8 @@ function buildDocumento(
       dest = { CNPJ: custDoc, xNome: destName, indIEDest: hasIe ? '1' : '9' };
       if (hasIe) dest.IE = ieDigits;
     } else if (docIsValid && isCpf) {
-      dest = { CPF: custDoc, xNome: destName, indIEDest: '9' };
+      dest = { CPF: custDoc, xNome: destName, indIEDest: hasIe ? '1' : '9' };
+      if (hasIe) dest.IE = ieDigits;
     } else {
       dest = { idEstrangeiro: '', xNome: destName, indIEDest: '9' };
     }

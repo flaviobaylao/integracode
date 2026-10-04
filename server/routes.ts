@@ -17,6 +17,7 @@ import { evolutionAPIService } from "./evolution-api-service";
 import { registerObjectStorageRoutes } from "./object-storage";
 import { getDataSources, getDataSourceFields, executeReport, getSavedReports, getSavedReport, createSavedReport, updateSavedReport, deleteSavedReport, type ReportConfig } from "./reportEngine";
 import { registerPurchaseRoutes } from "./purchase-routes";
+import { registerNfEntradaProdutorRoutes } from "./nf-entrada-produtor";
 import { registerCustomerStatementRoutes } from "./customer-statement-routes";
 import { registerPhoneVerification, triggerPhoneConfirmation } from "./phoneVerification";
 import { registerOrderJournal } from "./order-journal";
@@ -769,6 +770,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   console.log('✅ Report engine routes registered');
 
   registerPurchaseRoutes(app);
+  // NF-e de entrada própria — compra de insumos de fornecedor sem nota (out/2026)
+  registerNfEntradaProdutorRoutes(app);
 
   // Extrato do Cliente (Vendas) - historico de notas faturadas + pagamentos
   registerCustomerStatementRoutes(app);

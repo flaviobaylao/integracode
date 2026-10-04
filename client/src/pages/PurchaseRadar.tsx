@@ -13,10 +13,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import NfEntradaProdutor from "@/components/NfEntradaProdutor";
 import {
   Radar, Upload, FileText, Package, DollarSign, Search,
   Filter, Eye, Tag, Truck, CheckCircle2, XCircle,
-  ArrowRight, BarChart3, AlertCircle, RefreshCw, Trash2, Plus, Download, Paperclip
+  ArrowRight, BarChart3, AlertCircle, RefreshCw, Trash2, Plus, Download, Paperclip, Sprout
 } from "lucide-react";
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -152,7 +153,7 @@ export default function PurchaseRadar() {
       // unidade da NF e o fator de conversao para a unidade do item de estoque.
       if (variables?.isStockPurchase && selectedInvoice && !selectedInvoice.stockProcessed) {
         const its = Array.isArray(selectedInvoice.items) ? selectedInvoice.items : [];
-        setEntryMappings(its.map((it: any) => ({ rawMaterialId: "", label: it.xProd || "", nfUnit: it.uCom || "", nfQty: it.qCom || "", nfUnitCost: it.vUnCom || "", factor: "1" })));
+        setEntryMappings(its.map((it: any) => ({ rawMaterialId: it.rawMaterialId || "", label: it.xProd || "", nfUnit: it.uCom || "", nfQty: it.qCom || "", nfUnitCost: it.vUnCom || "", factor: "1" })));
         setShowEntry(true);
       }
     },
@@ -478,7 +479,20 @@ export default function PurchaseRadar() {
           <TabsTrigger value="radar">
             <Radar className="h-4 w-4 mr-1" /> Radar SEFAZ
           </TabsTrigger>
+          <TabsTrigger value="entrada-propria">
+            <Sprout className="h-4 w-4 mr-1" /> NF de Entrada (sem nota)
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="entrada-propria" className="space-y-4">
+          <NfEntradaProdutor
+            onCompraCriada={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/purchases/stats/summary"] });
+            }}
+            onAbrirCompras={() => setActiveTab("list")}
+          />
+        </TabsContent>
 
         <TabsContent value="list" className="space-y-4">
           <div className="flex flex-col md:flex-row gap-3">
@@ -1077,7 +1091,7 @@ export default function PurchaseRadar() {
                     className="bg-amber-600 hover:bg-amber-700"
                     onClick={() => {
                       const its = Array.isArray(selectedInvoice.items) ? selectedInvoice.items : [];
-                      setEntryMappings(its.map((it: any) => ({ rawMaterialId: "", label: it.xProd || "", nfUnit: it.uCom || "", nfQty: it.qCom || "", nfUnitCost: it.vUnCom || "", factor: "1" })));
+                      setEntryMappings(its.map((it: any) => ({ rawMaterialId: it.rawMaterialId || "", label: it.xProd || "", nfUnit: it.uCom || "", nfQty: it.qCom || "", nfUnitCost: it.vUnCom || "", factor: "1" })));
                       setShowEntry(true);
                     }}
                   >

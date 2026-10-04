@@ -1125,8 +1125,19 @@ export function registerNfeRoutes(app: Express) {
         const items = await storage.getFiscalInvoiceItems(req.params.id);
         const events = await storage.getFiscalInvoiceEvents(req.params.id);
 
+        // NF-e de ENTRADA própria (compra de fornecedor sem nota): não baixa
+        // estoque de produto — vira NF de compra na aba Compras, de onde se dá a
+        // entrada da matéria-prima. Retransmissão feita por esta tela também cai aqui.
+        const __ehEntrada = String((invoice as any)?.operationType || '').toLowerCase() === 'entrada';
+        if (__ehEntrada) {
+          try {
+            const { sincronizarCompraDaNfEntrada } = await import('./nf-entrada-produtor.js');
+            await sincronizarCompraDaNfEntrada(req.params.id, req.currentUser?.email || null);
+          } catch (e: any) { console.warn('⚠️ NF de entrada → compra:', e?.message); }
+        }
+
         // Consume stock for each item in the invoice
-        try {
+        if (!__ehEntrada) try {
           const { consumeStock } = await import('./inventory-routes.js');
           const userId = req.user?.id || req.userId || null;
           for (const item of items) {
@@ -1239,10 +1250,23 @@ export function registerNfeRoutes(app: Express) {
 
         const updatedInvoice = await storage.getFiscalInvoice(req.params.id);
 
+        // NF-e de ENTRADA própria cancelada: a compra gerada por ela (aba Compras)
+        // é cancelada junto — ou recebe um aviso, se já tiver estoque/conta a pagar.
+        let compraAviso: string | null = null;
+        const __entradaCancel = String((invoice as any)?.operationType || '').toLowerCase() === 'entrada';
+        if (__entradaCancel) {
+          try {
+            const { aoCancelarNfEntrada } = await import('./nf-entrada-produtor.js');
+            compraAviso = await aoCancelarNfEntrada(req.params.id, justification, req.currentUser?.email || req.user?.email || null);
+          } catch (e: any) { console.warn('⚠️ cancelamento NF de entrada → compra:', e?.message); }
+        }
+
         // REGRA: nenhum pedido que entra no pipeline pode deixar o pipeline. Ao cancelar a NF,
         // o card NAO some das colunas ativas nem e apagado: vai para a LIXEIRA (restauravel).
         try { await db.execute(sql`ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'lixeira'`); } catch {}
-        try {
+        // NF de entrada não tem card no pipeline — e o número dela pode coincidir
+        // com o de uma venda (mesma sequência por CNPJ), então não procura por número.
+        if (!__entradaCancel) try {
           const scId = (updatedInvoice as any)?.salesCardId || null;
           const invNum = (updatedInvoice as any)?.invoiceNumber ? String((updatedInvoice as any).invoiceNumber) : null;
           // So muda o stage (parametro comparado a coluna varchar tem tipo definido; sem jsonb param).
@@ -1260,6 +1284,7 @@ export function registerNfeRoutes(app: Express) {
           receivablesComPagamento,
           transferReversal,
           estornoEstoque: estorno,
+          compraAviso,
           // A tela mostra este aviso: estoque que nao voltou nao pode passar batido.
           estoqueAviso: (estorno.errors.length || estorno.warnings.length)
             ? `Estorno de estoque com pendencia: ${[...estorno.errors, ...estorno.warnings].join('; ')}`
