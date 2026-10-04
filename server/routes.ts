@@ -23716,7 +23716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (_e) { /* colunas complementares */ }
       const limit = Math.min(Math.max(Number(req.body?.limite) || 25, 1), 60);
       const _selIds = Array.isArray(req.body?.ids) ? (req.body.ids as any[]).filter((x) => typeof x === 'string' && x) : [];
-      const _selFilter = _selIds.length > 0 ? sql`AND id = ANY(${_selIds}::text[])` : sql``;
+      const _selFilter = _selIds.length > 0 ? sql`AND id IN (${sql.join(_selIds.map((x) => sql`${x}`), sql`, `)})` : sql``;
       const pend: any = await db.execute(sql`
         SELECT id, fantasy_name AS nome, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
         FROM leads
