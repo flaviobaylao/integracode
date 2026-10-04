@@ -6,7 +6,7 @@
 // (inventory_lots, consumido pela NF-e), polpa produzida entra no estoque de
 // matéria-prima automaticamente, CMV calculado ao vivo na finalização.
 // ============================================================================
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -2294,18 +2294,31 @@ function EstoqueTab() {
     lotesTravados: lots.filter((l) => l.transferLock).length,
   }), [lots]);
 
-  const filtered = useMemo(() => {
+  // FINALIZADO (Flavio, 04/out/2026): lote sem saldo (zerado ou negativo) tem
+  // status "Finalizado" e sai da lista principal — fica na secao "Estoques
+  // finalizados", igual a Gestao de Estoque (/estoque). Estado derivado do saldo:
+  // se a NF de transferencia for cancelada e o saldo voltar, o lote volta sozinho.
+  const [verFinalizados, setVerFinalizados] = useState(false);
+  const isFinalizado = (l: any) => n(l.quantity) <= 0;
+  const filteredAll = useMemo(() => {
     if (!search.trim()) return lots;
     const s = search.toLowerCase();
     return lots.filter((l) => [l.product?.name, l.lotNumber].some((v) => String(v ?? '').toLowerCase().includes(s)));
   }, [lots, search]);
+  const finalizados = useMemo(() => filteredAll.filter(isFinalizado), [filteredAll]);
+  // Lista principal: em uso primeiro, bloqueados (fila de reposicao) no fim.
+  const filtered = useMemo(() => {
+    const ativos = filteredAll.filter((l) => !isFinalizado(l));
+    return [...ativos.filter((l) => l.stockType === 'in_use'), ...ativos.filter((l) => l.stockType !== 'in_use')];
+  }, [filteredAll]);
+  const linhas = verFinalizados ? [...filtered, ...finalizados] : filtered;
 
   // Só lote com saldo e com CMV pode virar transferência: sem saldo não há o que
   // mandar, sem CMV não há por quanto mandar.
   const transferivel = (l: any) => n(l.quantity) > 0 && l.cmvUnit != null;
   // Lotes com NF de transferencia (para o botao de DANFE): os selecionados que tem
   // NF ganham prioridade; sem selecao, todas as NF distintas da lista filtrada.
-  const lotesComNf = filtered.filter((l) => l.transferLock?.invoiceNumber);
+  const lotesComNf = filteredAll.filter((l) => l.transferLock?.invoiceNumber);
   const nfsAbertas = Array.from(new Set(lotesComNf.map((l) => String(l.transferLock.invoiceNumber))));
   const selComNf = lotesComNf.filter((l) => sel.has(l.id));
   const selecionaveis = filtered.filter(transferivel);
@@ -2363,7 +2376,13 @@ function EstoqueTab() {
           <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
         </Button>
         <span className="text-sm text-gray-500">
-          {isLoading ? 'Carregando...' : `${filtered.length} lote(s)`}
+          {isLoading ? 'Carregando...' : `${filtered.length} lote(s) com saldo`}
+          {!isLoading && finalizados.length > 0 && (
+            <button type="button" onClick={() => setVerFinalizados((v) => !v)} className="ml-2 underline text-gray-600 hover:text-gray-900"
+              title="Lotes sem saldo (zerados) — status Finalizado">
+              {verFinalizados ? 'ocultar' : 'ver'} {finalizados.length} finalizado(s)
+            </button>
+          )}
           {!isLoading && resumo.lotesTravados ? (
             <span className="ml-2 inline-flex items-center gap-1 text-amber-700" title="Lotes em pedido/NF de transferência: não podem ser editados nem ter a OP reaberta até a nota ser cancelada ou devolvida.">
               <Lock className="h-3.5 w-3.5" /> {resumo.lotesTravados} em transferência{resumo.transferidos ? ` (${resumo.transferidos} transferido(s) por completo)` : ''}
@@ -2409,8 +2428,14 @@ function EstoqueTab() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((l) => (
-              <TableRow key={l.id} className={sel.has(l.id) ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
+            {linhas.map((l, idx) => (
+              <Fragment key={l.id}>
+              {verFinalizados && idx === filtered.length && (
+                <TableRow className="bg-gray-50 dark:bg-gray-900/40">
+                  <TableCell colSpan={10} className="text-xs font-semibold uppercase text-gray-500 py-2">Estoques finalizados (sem saldo) — {finalizados.length}</TableCell>
+                </TableRow>
+              )}
+              <TableRow className={sel.has(l.id) ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : (isFinalizado(l) ? 'opacity-70' : '')}>
                 <TableCell>
                   <Checkbox checked={sel.has(l.id)} onCheckedChange={() => toggle(l.id)}
                     disabled={!transferivel(l) && !l.transferLock?.invoiceNumber}
@@ -2438,12 +2463,13 @@ function EstoqueTab() {
                 </TableCell>
                 <TableCell>{l.instance?.name || '-'}</TableCell>
                 <TableCell>
-                  {l.transferLock && n(l.quantity) <= 0
-                    // Saiu inteiro na NF de transferencia (Flavio 05/set): nao e mais
-                    // "Em Uso" na fabrica. Estado derivado (saldo 0 + trava da NF),
-                    // sem coluna nova — se a NF for cancelada, o estorno devolve o saldo
-                    // e o lote volta sozinho para "Em Uso".
-                    ? <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100" title={l.transferLock.reason}>Transferido</Badge>
+                  {isFinalizado(l)
+                    // Sem saldo = Finalizado (Flavio 04/out). Se saiu na NF de
+                    // transferencia, o badge diz isso tambem; cancelada a NF, o estorno
+                    // devolve o saldo e o lote volta sozinho para "Em Uso".
+                    ? <Badge className={n(l.quantity) < 0 ? 'bg-red-100 text-red-800 hover:bg-red-100' : 'bg-gray-200 text-gray-700 hover:bg-gray-200'} title={l.transferLock?.reason || undefined}>
+                        {n(l.quantity) < 0 ? 'Finalizado (saldo negativo)' : (l.transferLock ? 'Finalizado · transferido' : 'Finalizado')}
+                      </Badge>
                     : l.stockType === 'in_use'
                     ? <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">Em Uso</Badge>
                     : <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">Bloqueado</Badge>}
@@ -2473,6 +2499,7 @@ function EstoqueTab() {
                 <TableCell className="text-right">{fmtQty(l.minQuantity)}</TableCell>
                 <TableCell className="max-w-[220px] truncate text-xs" title={l.notes || ''}>{l.notes || '-'}</TableCell>
               </TableRow>
+              </Fragment>
             ))}
             {!isLoading && filtered.length === 0 && (
               <TableRow><TableCell colSpan={10} className="text-center text-gray-400 py-8">Nenhum lote na instância IND — finalize uma ordem de produção para gerar o primeiro lote</TableCell></TableRow>
