@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -38,6 +39,7 @@ export default function FeriadosAdmin() {
   const thisMonth = new Date().toISOString().slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
   const [preview, setPreview] = useState<PreviewItem[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data: hdata, isLoading } = useQuery<{ holidays: Holiday[] }>({
     queryKey: ["/api/holidays", ano],
@@ -74,7 +76,7 @@ export default function FeriadosAdmin() {
   });
   const previewMut = useMutation({
     mutationFn: () => apiRequest("GET", `/api/holidays/preview?month=${month}`),
-    onSuccess: (r: any) => setPreview(r?.items || []),
+    onSuccess: (r: any) => { setPreview(r?.items || []); setSelected(new Set()); },
     onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha na prévia." }),
   });
   const applyMut = useMutation({
@@ -90,6 +92,16 @@ export default function FeriadosAdmin() {
       previewMut.mutate();
     },
     onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao reverter." }),
+  });
+  // Alterna postergação/antecipação (pontual ou em massa) sem mover visitas; recarrega a prévia.
+  const setDirMut = useMutation({
+    mutationFn: (p: { ids: string[]; rule: string }) => apiRequest("POST", "/api/holidays/customer-rule", p),
+    onSuccess: (_r: any, p: { ids: string[]; rule: string }) => {
+      const label = p.rule === "post" ? "Postergação" : p.rule === "ant" ? "Antecipação" : p.rule === "none" ? "Sem deslocamento" : "Regra padrão";
+      toast({ title: "Regra atualizada", description: `${p.ids.length} cliente(s) → ${label}.` });
+      previewMut.mutate();
+    },
+    onError: (e: any) => toast({ variant: "destructive", title: "Erro", description: e?.message || "Falha ao alterar a regra." }),
   });
 
   // Regras de deslocamento (editáveis).
@@ -334,30 +346,68 @@ export default function FeriadosAdmin() {
 
         {/* PRÉVIA */}
         <TabsContent value="previa" className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setPreview(null); }} className="w-44" />
-            <Button variant="outline" onClick={() => previewMut.mutate()} disabled={previewMut.isPending}>{previewMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Ver prévia"}</Button>
-            <div className="flex-1" />
-            <Button variant="ghost" onClick={() => { if (window.confirm("Reverter as realocações deste mês? As visitas voltam à data original.")) revertMut.mutate(); }} disabled={revertMut.isPending}>Reverter mês</Button>
-            <Button onClick={() => { if (window.confirm("Aplicar a realocação de feriados deste mês na agenda?")) applyMut.mutate(); }} disabled={applyMut.isPending}><CalendarClock className="w-4 h-4 mr-1.5" /> Aplicar realocação</Button>
-          </div>
-
-          {preview === null ? (
-            <Card><CardContent className="p-8 text-center text-muted-foreground">Clique em "Ver prévia" para ver quais visitas mudam de dia neste mês.</CardContent></Card>
-          ) : preview.length === 0 ? (
-            <Card><CardContent className="p-8 text-center text-muted-foreground">Nenhuma visita cai em feriado neste mês (ou já foram realocadas).</CardContent></Card>
-          ) : (
-            <Card><CardContent className="p-0 divide-y">
-              {preview.map((it, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 flex-wrap">
-                  <div className="flex-1 min-w-[180px]"><span className="font-medium">{it.customerName}</span><span className="text-muted-foreground text-xs"> · {it.periodicidade} · feriado {it.feriadoData} ({it.feriado})</span></div>
-                  <div className="font-mono text-xs whitespace-nowrap">{it.de} → <b>{it.para} ({it.paraDow})</b></div>
-                  <Badge className={`border-transparent ${it.tipo === "post" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"}`}>{it.tipo === "post" ? "Postergação" : "Antecipação"}</Badge>
+          {(() => {
+            const allIds = preview ? Array.from(new Set(preview.map((it) => it.customerId).filter(Boolean))) : [];
+            const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+            const someSelected = selected.size > 0;
+            const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+            const toggleAll = () => setSelected(allSelected ? new Set() : new Set(allIds));
+            const busy = setDirMut.isPending || previewMut.isPending;
+            return (
+              <>
+                {/* Painel congelado (fica fixo ao rolar a lista) */}
+                <div className="sticky top-0 z-20 bg-background border-b -mx-1 px-1 pt-1 pb-2 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setPreview(null); setSelected(new Set()); }} className="w-44" />
+                    <Button variant="outline" onClick={() => previewMut.mutate()} disabled={previewMut.isPending}>{previewMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Ver prévia"}</Button>
+                    <div className="flex-1" />
+                    <Button variant="ghost" onClick={() => { if (window.confirm("Reverter as realocações deste mês? As visitas voltam à data original.")) revertMut.mutate(); }} disabled={revertMut.isPending}>Reverter mês</Button>
+                    <Button onClick={() => { if (window.confirm("Aplicar a realocação de feriados deste mês na agenda?")) applyMut.mutate(); }} disabled={applyMut.isPending}><CalendarClock className="w-4 h-4 mr-1.5" /> Aplicar realocação</Button>
+                  </div>
+                  {/* Barra de seleção múltipla / ações em massa */}
+                  {preview && preview.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap rounded-md bg-muted/50 px-2.5 py-1.5">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                        <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
+                        Selecionar todos
+                      </label>
+                      <span className="text-xs text-muted-foreground">{selected.size} selecionado(s)</span>
+                      <div className="flex-1" />
+                      {someSelected && (
+                        <>
+                          <Button size="sm" variant="outline" disabled={busy} onClick={() => setDirMut.mutate({ ids: Array.from(selected), rule: "post" })} className="text-emerald-700 dark:text-emerald-300">Postergar selecionados</Button>
+                          <Button size="sm" variant="outline" disabled={busy} onClick={() => setDirMut.mutate({ ids: Array.from(selected), rule: "ant" })} className="text-amber-700 dark:text-amber-300">Antecipar selecionados</Button>
+                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSelected(new Set())}>Limpar</Button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </CardContent></Card>
-          )}
-          <p className="text-xs text-muted-foreground">A prévia não altera nada. "Aplicar" desloca as visitas do mês e marca o card da Rota do Dia; "Reverter" desfaz.</p>
+
+                {preview === null ? (
+                  <Card><CardContent className="p-8 text-center text-muted-foreground">Clique em "Ver prévia" para ver quais visitas mudam de dia neste mês.</CardContent></Card>
+                ) : preview.length === 0 ? (
+                  <Card><CardContent className="p-8 text-center text-muted-foreground">Nenhuma visita cai em feriado neste mês (ou já foram realocadas).</CardContent></Card>
+                ) : (
+                  <Card><CardContent className="p-0 divide-y">
+                    {preview.map((it, i) => (
+                      <div key={i} className="flex items-center gap-3 p-3 flex-wrap">
+                        <Checkbox checked={selected.has(it.customerId)} onCheckedChange={() => toggleOne(it.customerId)} />
+                        <div className="flex-1 min-w-[180px]"><span className="font-medium">{it.customerName}</span><span className="text-muted-foreground text-xs"> · {it.periodicidade} · feriado {it.feriadoData} ({it.feriado})</span></div>
+                        <div className="font-mono text-xs whitespace-nowrap">{it.de} → <b>{it.para} ({it.paraDow})</b></div>
+                        {/* Alternar pontualmente postergação ↔ antecipação */}
+                        <div className="inline-flex rounded-md border overflow-hidden text-xs">
+                          <button type="button" disabled={busy} onClick={() => setDirMut.mutate({ ids: [it.customerId], rule: "post" })} className={`px-2.5 py-1 transition-colors disabled:opacity-50 ${it.tipo === "post" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 font-medium" : "hover:bg-muted text-muted-foreground"}`}>Postergar</button>
+                          <button type="button" disabled={busy} onClick={() => setDirMut.mutate({ ids: [it.customerId], rule: "ant" })} className={`px-2.5 py-1 border-l transition-colors disabled:opacity-50 ${it.tipo === "ant" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 font-medium" : "hover:bg-muted text-muted-foreground"}`}>Antecipar</button>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent></Card>
+                )}
+              </>
+            );
+          })()}
+          <p className="text-xs text-muted-foreground">A prévia não altera nada — inclusive alternar Postergar/Antecipar só muda a direção, sem mover visitas. "Aplicar" desloca as visitas do mês e marca o card da Rota do Dia; "Reverter" desfaz.</p>
         </TabsContent>
       </Tabs>
     </div>
