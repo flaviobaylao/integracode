@@ -229,6 +229,7 @@ function DocumentoDialog({ doc, instancias, categorias, onGerenciarCategorias, o
     validFrom: doc?.validFrom || '',
     validUntil: doc?.validUntil || '',
     status: doc?.status || 'vigente',
+    revision: doc?.revision || '',
     notes: doc?.notes || '',
   });
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -329,6 +330,11 @@ function DocumentoDialog({ doc, instancias, categorias, onGerenciarCategorias, o
               <Input type="date" value={f.validUntil} onChange={(e) => set('validUntil', e.target.value)} />
               <p className="text-[11px] text-gray-400">Deixe em branco se o documento não expira.</p>
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Versão / revisão</Label>
+            <Input value={f.revision} onChange={(e) => set('revision', e.target.value)} maxLength={60} placeholder="Ex.: Rev. 03, v2.1, 2ª edição…" />
+            <p className="text-[11px] text-gray-400">Identifica a versão vigente do documento{isNew ? '' : ' — atualize ao substituir o arquivo por uma nova revisão'}.</p>
           </div>
 
           <div className="space-y-1.5 rounded-md border p-3">
@@ -438,7 +444,7 @@ export default function DocumentosEmpresa() {
       else if (statusFilter === 'vencido' && !(d.situacao === 'vencido' || d.status === 'vencido')) return false;
       else if (!['todos', 'a_vencer', 'vencido'].includes(statusFilter) && d.status !== statusFilter) return false;
       if (!s) return true;
-      return [d.name, d.instanceName, d.notes, d.fileName].some((v) => String(v ?? '').toLowerCase().includes(s));
+      return [d.name, d.revision, d.instanceName, d.notes, d.fileName].some((v) => String(v ?? '').toLowerCase().includes(s));
     });
   }, [docs, search, instFilter, statusFilter, catFilter]);
 
@@ -456,6 +462,7 @@ export default function DocumentosEmpresa() {
   const exportar = () => {
     exportToExcel(filtered.map((d) => ({
       'Documento': d.name,
+      'Versão/Revisão': d.revision || '',
       'Categoria': d.categoryName || '',
       'Instância': d.instanceName,
       'Vigência início': fmtDate(d.validFrom),
@@ -578,7 +585,10 @@ export default function DocumentosEmpresa() {
               </TableCell></TableRow>
             ) : filtered.map((d) => (
               <TableRow key={d.id} className={d.situacao === 'vencido' ? 'bg-red-50/40' : d.situacao === 'a_vencer' ? 'bg-amber-50/40' : ''}>
-                <TableCell className="font-medium">{d.name}</TableCell>
+                <TableCell className="font-medium">
+                  {d.name}
+                  {d.revision && <span className="ml-1.5 text-[11px] font-normal text-gray-500 whitespace-nowrap" title="Versão / revisão">{d.revision}</span>}
+                </TableCell>
                 <TableCell>
                   {d.categoryName
                     ? <Badge variant="outline" className={corClass(d.categoryColor)}>{d.categoryName}</Badge>
