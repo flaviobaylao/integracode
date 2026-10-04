@@ -15,8 +15,10 @@
 // Fontes (somente leitura, exceto a criação de OP e os parâmetros):
 //   inventory_movements (consume / cancel_reversal, source_type='invoice')
 //       → saída real de estoque por instância (IND, GYN, BSB);
-//   billing_pipeline (cards faturados/entregues sem movimento) → histórico da
-//       SERV anterior ao controle de estoque dela (04/out/2026); a OPERAÇÃO vem do
+//   fiscal_invoices/_items (NF de saída autorizada SEM baixa de lote, qualquer
+//       instância/natureza) → saídas que não passaram pelo estoque (histórico da
+//       SERV antes do controle, NF fora do pipeline). Regra 04/out: tudo que sai,
+//       por qualquer instância e propósito, conta nas saídas e nos estoques. a OPERAÇÃO vem do
 //         billing_pipeline (operation_type) via source_id; transferências
 //         IND→filial NÃO são demanda (são movimentação interna).
 //         created_at é gravado em UTC (now() do banco) → convertido p/ BRT.
@@ -32,6 +34,7 @@ import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { ehDiaUtilBR } from "../shared/tempo";
+import { nfData } from "./faturamento-oficial";
 
 const CHAVE_PARAMS = "programacao_producao";
 
@@ -227,30 +230,42 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
           AND NOT (fi.id IS NOT NULL AND (UPPER(COALESCE(fi.nature_of_operation, '')) LIKE '%TRANSFER%' OR fi.cfop IN ('5152', '6152', '5409', '6409')))
         GROUP BY 1, 2, 3, 4, 5, 6`);
 
-      // 1b) HISTÓRICO da SERV antes do controle de estoque (até 04/out/2026 a SERV
-      //     faturava sem lote, então não há inventory_movements desses pedidos):
-      //     cards do pipeline a partir de 'faturado' (fora lixeira) SEM movimento de
-      //     estoque associado; produtos do jsonb; data = NF autorizada, senão criação
-      //     do card. Cards novos da SERV já baixam lote e entram pela consulta 1.
-      const movServR: any = await db.execute(sql`
-        SELECT (p->>'id') AS product_id, bp.omie_instance_id AS instance_id,
-               (COALESCE(fi.d, bp.created_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
-               LOWER(COALESCE(NULLIF(bp.operation_type, ''), 'venda')) AS operacao,
-               false AS tem_nf, '' AS nf_natureza,
-               SUM(COALESCE((p->>'quantity')::numeric, 0)) AS qtd
-        FROM billing_pipeline bp
-        JOIN omie_instances oi ON oi.id::text = bp.omie_instance_id::text
-        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(bp.products::jsonb) = 'array' THEN bp.products::jsonb ELSE '[]'::jsonb END) p
-        LEFT JOIN LATERAL (
-          SELECT COALESCE(emission_date, authorization_date, created_at) AS d
-          FROM fiscal_invoices WHERE sales_card_id = bp.sales_card_id AND status IN ('authorized', 'autorizada')
-          ORDER BY created_at DESC LIMIT 1) fi ON true
-        WHERE UPPER(oi.name) IN ('SERV')
-          AND NOT EXISTS (SELECT 1 FROM inventory_movements im WHERE im.source_type = 'invoice' AND im.source_id::text = bp.id::text)
-          AND bp.stage::text NOT IN ('agendado', 'pedido', 'a_faturar') AND bp.stage::text NOT LIKE '%lixeira%'
-          AND LOWER(COALESCE(bp.operation_type, '')) <> 'transferencia'
-          AND COALESCE(fi.d, bp.created_at) >= (${inicioConsulta}::date::timestamp + INTERVAL '3 hours')
-        GROUP BY 1, 2, 3, 4`);
+      // 1b) SAÍDAS POR NF SEM MOVIMENTO DE ESTOQUE (qualquer instância, qualquer
+      //     natureza de saída — venda, troca, amostra, bonificação...). Regra do
+      //     Flavio 04/out: tudo que sai, por qualquer instância e propósito, conta.
+      //     Cobre o histórico da SERV antes do controle de estoque dela e qualquer
+      //     NF emitida fora do pipeline. Só entra NF autorizada de produção, saída,
+      //     não devolução, não transferência/remessa, deduplicada por nº, e que NÃO
+      //     tenha baixa de lote (nem pela NF, nem pelo card do mesmo pedido).
+      const nfSemMovR: any = await db.execute(sql.raw(`
+        SELECT it.product_id,
+               COALESCE(fi.omie_instance_id, oi_emit.id) AS instance_id,
+               ${nfData('fi')}::date::text AS dia,
+               '' AS operacao, true AS tem_nf, UPPER(COALESCE(fi.nature_of_operation, '')) AS nf_natureza,
+               SUM(it.quantity) AS qtd
+        FROM (
+          SELECT DISTINCT ON (COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text, 'id:' || id::text)) *
+          FROM fiscal_invoices
+          WHERE status = 'authorized' AND environment = 'producao'
+            AND COALESCE(operation_type, 'saida') <> 'entrada' AND COALESCE(fin_nfe, '1') <> '4'
+          ORDER BY COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text, 'id:' || id::text), created_at DESC
+        ) fi
+        JOIN fiscal_invoice_items it ON it.invoice_id = fi.id
+        -- NF sem instância gravada (muito comum nos cards sem filial): a instância é a do CNPJ emitente
+        LEFT JOIN omie_instances oi_emit ON regexp_replace(COALESCE(oi_emit.cnpj, ''), '\\D', '', 'g') = regexp_replace(COALESCE(fi.issuer_cnpj, ''), '\\D', '', 'g')
+        WHERE it.product_id IS NOT NULL
+          AND COALESCE(fi.cfop, '') NOT LIKE '1%' AND COALESCE(fi.cfop, '') NOT LIKE '2%' AND COALESCE(fi.cfop, '') NOT LIKE '3%'
+          AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%TRANSFER%'
+          AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%DEVOL%'
+          AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%REMESSA%'
+          AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%SUCATA%'
+          AND COALESCE(fi.cfop, '') NOT IN ('5152', '6152', '5409', '6409')
+          AND NOT EXISTS (SELECT 1 FROM inventory_movements m WHERE m.source_type = 'invoice' AND m.source_id::text = fi.id::text)
+          AND NOT EXISTS (SELECT 1 FROM inventory_movements m JOIN billing_pipeline bp ON bp.id::text = m.source_id::text
+                          WHERE m.source_type = 'invoice' AND fi.sales_card_id IS NOT NULL AND bp.sales_card_id = fi.sales_card_id)
+          AND ${nfData('fi')}::date >= '${inicioConsulta}'
+        GROUP BY 1, 2, 3, 4, 5, 6`));
+      const movServR = nfSemMovR; // nome mantido: entra no mesmo laço das movimentações
 
       // 2) ESTOQUE por produto × instância. Conta EM USO + BLOQUEADO: desde
       //    04/out a NF de transferência entra na filial como 'blocked' e é
