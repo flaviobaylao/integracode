@@ -30,7 +30,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { receitaService } from "./receitaIntegration";
-import { montarContratoComodatoPdf, dadosDoContrato, SIGNATARIO_COMODANTE_PADRAO } from "./comodato-pdf";
+import { montarContratoComodatoPdf, montarDistratoComodatoPdf, dadosDoContrato, SIGNATARIO_COMODANTE_PADRAO } from "./comodato-pdf";
 
 const ROLES = ["admin", "coordinator", "administrative"];
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -221,7 +221,8 @@ export function ensureComodatosSchema(): Promise<void> {
         "deleted_at timestamptz)"
       ));
       for (const c of ["nf_aquisicao_numero varchar", "nf_aquisicao_data date", "nf_aquisicao_fornecedor text", "nf_aquisicao_valor numeric(12,2)",
-                       "signatario_comodante text", "equipamento_usado boolean NOT NULL DEFAULT false"]) {
+                       "signatario_comodante text", "equipamento_usado boolean NOT NULL DEFAULT false",
+                       "distrato_data date", "distrato_motivo text", "distrato_pendencias text"]) {
         await db.execute(sql.raw("ALTER TABLE comodato_contracts ADD COLUMN IF NOT EXISTS " + c)).catch(() => {});
       }
       await db.execute(sql.raw(
@@ -362,6 +363,9 @@ const CAMPOS: Record<string, { col: string; conv: (v: any) => any }> = {
   signatarioComodatario: { col: "signatario_comodatario", conv: txt },
   signatarioComodante: { col: "signatario_comodante", conv: txt },
   equipamentoUsado: { col: "equipamento_usado", conv: boolOr },
+  distratoData: { col: "distrato_data", conv: dateOrNull },
+  distratoMotivo: { col: "distrato_motivo", conv: txt },
+  distratoPendencias: { col: "distrato_pendencias", conv: txt },
   dataDevolucao: { col: "data_devolucao", conv: dateOrNull },
   condicaoDevolucao: { col: "condicao_devolucao", conv: txt },
   observacoes: { col: "observacoes", conv: txt },
@@ -389,6 +393,7 @@ async function carregar(id?: string) {
            to_char(c.data_contrato, 'YYYY-MM-DD') AS data_contrato,
            to_char(c.data_devolucao, 'YYYY-MM-DD') AS data_devolucao,
            to_char(c.nf_aquisicao_data, 'YYYY-MM-DD') AS nf_aquisicao_data,
+           to_char(c.distrato_data, 'YYYY-MM-DD') AS distrato_data,
            cu.name AS cliente_nome, cu.fantasy_name AS cliente_fantasia,
            cu.company_name AS cliente_razao, coalesce(cu.cnpj, cu.cpf) AS cliente_cnpj,
            cu.seller_id AS vendedor_id,
@@ -520,6 +525,39 @@ export function registerComodatosRoutes(app: Express) {
     } catch (e: any) {
       console.error("[comodatos] pdf", e);
       res.status(500).json({ message: e?.message || "Erro ao gerar PDF" });
+    }
+  });
+
+  // DISTRATO: gera o PDF e, se `encerrar`, registra devolução e encerra o contrato
+  app.post("/api/comodatos/:id/distrato", ...guard, async (req: Request, res: Response) => {
+    try {
+      await ensureComodatosSchema();
+      const [item] = await carregar(req.params.id);
+      if (!item) return res.status(404).json({ message: "Contrato não encontrado" });
+      const b = req.body || {};
+      const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const dist = {
+        dataDistrato: dateOrNull(b.dataDistrato) || hoje,
+        dataDevolucao: dateOrNull(b.dataDevolucao) || dateOrNull(b.dataDistrato) || hoje,
+        condicao: txt(b.condicao) ?? null,
+        motivo: txt(b.motivo) ?? null,
+        pendencias: txt(b.pendencias) ?? null,
+      };
+      if (b.encerrar === true || b.encerrar === "true") {
+        await db.execute(sql`
+          UPDATE comodato_contracts
+             SET status = 'encerrado', data_devolucao = ${dist.dataDevolucao}, condicao_devolucao = ${dist.condicao},
+                 distrato_data = ${dist.dataDistrato}, distrato_motivo = ${dist.motivo}, distrato_pendencias = ${dist.pendencias},
+                 updated_by = ${userId(req)}, updated_at = now()
+           WHERE id = ${req.params.id} AND deleted_at IS NULL`);
+      }
+      const pdf = montarDistratoComodatoPdf(dadosDoContrato(item), dist);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="distrato-comodato-${item.codigo}.pdf"`);
+      res.send(pdf);
+    } catch (e: any) {
+      console.error("[comodatos] distrato", e);
+      res.status(500).json({ message: e?.message || "Erro ao gerar distrato" });
     }
   });
 

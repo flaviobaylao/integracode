@@ -92,19 +92,14 @@ function dataExtenso(iso?: string | null): string {
   return `${String(d).padStart(2, "0")} de ${MESES[m - 1]} de ${y}`;
 }
 
-export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
+// Ajudantes de layout compartilhados pelo contrato e pelo distrato.
+function novoDoc() {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const ML = 22, MR = 22, MT = 22, MB = 20;
   const LW = W - ML - MR;
   let y = MT;
-
-  const tipo = (v(dados.equipamentoTipo) || "freezer").toLowerCase();
-  const tipoTitulo = tipo === "geladeira" ? "GELADEIRA" : tipo === "visa_cooler" ? "VISA COOLER" : "FREEZER";
-  const artigo = tipo === "geladeira" ? "uma" : "um";
-  const nomeEquip = tipo === "geladeira" ? "Geladeira" : tipo === "visa_cooler" ? "Visa Cooler" : "Freezer";
-  const pronome = tipo === "geladeira" ? "a" : "o";
 
   const garantir = (h: number) => {
     if (y + h > H - MB) { doc.addPage(); y = MT; }
@@ -117,6 +112,7 @@ export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
     for (const l of linhas) {
       garantir(lh);
       if (opts.align === "center") doc.text(l, W / 2, y, { align: "center" });
+      else if (opts.align === "right") doc.text(l, W - MR, y, { align: "right" });
       else if (opts.align === "justify") doc.text(l, ML, y, { align: "justify", maxWidth: LW } as any);
       else doc.text(l, ML, y);
       y += lh;
@@ -139,16 +135,89 @@ export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
     for (const l of resto) { garantir(lh); doc.text(l, ML, y); y += lh; }
     y += 5;
   };
+  const linhaAssinatura = (titulo: string, sub: string[], nomeSig?: string) => {
+    garantir(30);
+    y += 10;
+    doc.setLineWidth(0.3);
+    doc.line(ML, y, ML + LW * 0.78, y);
+    y += 4.5;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text(titulo, ML, y); y += 4.5;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    for (const s of sub) { doc.text(s, ML, y); y += 4.2; }
+    if (v(nomeSig)) { doc.text(`Representante: ${v(nomeSig)}`, ML, y); y += 4.2; }
+    y += 2;
+  };
+  const testemunhas = () => {
+    garantir(50);
+    y += 6;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+    doc.text("TESTEMUNHAS", ML, y); y += 12;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    for (const n of ["1", "2"]) {
+      garantir(22);
+      doc.line(ML + 6, y, ML + LW * 0.6, y);
+      doc.text(n, ML, y);
+      y += 4.5;
+      doc.text("Nome:", ML + 6, y);
+      doc.text("CPF: ____________________", ML + LW * 0.6 - 48, y);
+      y += 12;
+    }
+  };
+  const finalizar = (rodape: string): Buffer => {
+    const total = doc.getNumberOfPages();
+    for (let p = 1; p <= total; p++) {
+      doc.setPage(p);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+      doc.setTextColor(120);
+      doc.text(`${rodape} · página ${p}/${total}`, W / 2, H - 9, { align: "center" });
+      doc.setTextColor(0);
+    }
+    return Buffer.from(doc.output("arraybuffer"));
+  };
+  const espaco = (h: number) => { y += h; };
+  return { garantir, paragrafo, clausula, linhaAssinatura, testemunhas, finalizar, espaco };
+}
+
+function nomesEquip(dados: DadosContrato) {
+  const tipo = (v(dados.equipamentoTipo) || "freezer").toLowerCase();
+  return {
+    tipoTitulo: tipo === "geladeira" ? "GELADEIRA" : tipo === "visa_cooler" ? "VISA COOLER" : "FREEZER",
+    artigo: tipo === "geladeira" ? "uma" : "um",
+    nomeEquip: tipo === "geladeira" ? "Geladeira" : tipo === "visa_cooler" ? "Visa Cooler" : "Freezer",
+    pronome: tipo === "geladeira" ? "a" : "o",
+  };
+}
+
+function descricaoEquip(dados: DadosContrato): string {
+  const specs: string[] = [];
+  if (v(dados.marca)) specs.push(`da marca ${v(dados.marca)}`);
+  if (v(dados.modelo)) specs.push(`modelo: ${v(dados.modelo)}`);
+  if (v(dados.numeroSerie)) specs.push(`número de série: ${v(dados.numeroSerie)}`);
+  if (v(dados.codigoProduto)) specs.push(`Cód.: ${v(dados.codigoProduto)}`);
+  if (v(dados.tensao)) specs.push(`Tensão: ${v(dados.tensao)}`);
+  if (v(dados.volumeLitros)) specs.push(`Volume: ${v(dados.volumeLitros)}Lts`);
+  if (v(dados.volumeBrutoLitros)) specs.push(`Volume Bruto: ${v(dados.volumeBrutoLitros)}Lts`);
+  return specs.join(", ");
+}
+
+function enderecoInstalacao(dados: DadosContrato): string {
+  return [v(dados.enderecoInstalacao), [v(dados.cidade), v(dados.uf)].filter(Boolean).join("-"), v(dados.cep) ? `CEP: ${v(dados.cep)}` : ""]
+    .filter(Boolean).join(", ");
+}
+
+export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
+  const { garantir, paragrafo, clausula, linhaAssinatura, testemunhas, finalizar, espaco } = novoDoc();
+  const { tipoTitulo, artigo, nomeEquip, pronome } = nomesEquip(dados);
 
   // --- cabeçalho ---
   paragrafo(`COMODATO DE BEM DURÁVEL - ${tipoTitulo}`, { bold: true, size: 13, align: "center", gap: 2 });
   if (v(dados.codigo)) paragrafo(`Contrato ${v(dados.codigo)}`, { size: 8.5, align: "center", gap: 6 });
-  else y += 4;
+  else espaco(4);
 
   const comodatarioRazao = ou(dados.comodatarioRazao, "____________________________________________");
   const comodatarioCnpj = ou(dados.comodatarioCnpj, "____.____.____/______-____");
-  const endInst = [v(dados.enderecoInstalacao), [v(dados.cidade), v(dados.uf)].filter(Boolean).join("-"), v(dados.cep) ? `CEP: ${v(dados.cep)}` : ""]
-    .filter(Boolean).join(", ") || "________________________________________________";
+  const endInst = enderecoInstalacao(dados) || "________________________________________________";
 
   paragrafo(
     `Pelo presente instrumento particular de COMODATO, de um lado, ${ou(dados.comodanteRazao, COMODANTE.razao)}, ` +
@@ -159,16 +228,9 @@ export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
   );
 
   // --- cláusula 1: objeto ---
-  const specs: string[] = [];
-  if (v(dados.marca)) specs.push(`da marca ${v(dados.marca)}`);
-  if (v(dados.modelo)) specs.push(`modelo: ${v(dados.modelo)}`);
-  if (v(dados.numeroSerie)) specs.push(`número de série: ${v(dados.numeroSerie)}`);
-  if (v(dados.codigoProduto)) specs.push(`Cód.: ${v(dados.codigoProduto)}`);
-  if (v(dados.tensao)) specs.push(`Tensão: ${v(dados.tensao)}`);
-  if (v(dados.volumeLitros)) specs.push(`Volume: ${v(dados.volumeLitros)}Lts`);
-  if (v(dados.volumeBrutoLitros)) specs.push(`Volume Bruto: ${v(dados.volumeBrutoLitros)}Lts`);
-  const descr = specs.length
-    ? specs.join(", ")
+  const specsTxt = descricaoEquip(dados);
+  const descr = specsTxt
+    ? specsTxt
     : "da marca ____________________, modelo: ______________, número de série: ______________________, Tensão: ______, Volume: ________, Volume Bruto: ________";
   clausula("CLÁUSULA 1º.",
     `O COMODANTE dá em comodato ao COMODATÁRIO ${artigo} ${nomeEquip.toUpperCase()} ${descr}, ${dados.usado ? "usado" : "sem uso"}, ` +
@@ -186,26 +248,13 @@ export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
   clausula("CLÁUSULA 7º.", `Para efeito deste contrato ${pronome} referid${pronome} ${nomeEquip} tem o valor de ${valorTxt}.`);
   clausula("CLÁUSULA 8º.", "Fica eleito o foro desta cidade Goiânia - Goiás para dirimir qualquer dúvida referente a este contrato.");
 
-  y += 2;
+  espaco(2);
   paragrafo("Para firmeza e prova de assim haverem contratado, firmam o presente instrumento em duas vias de igual teor, na presença de testemunhas que a tudo assistiram e que de tudo conhecimento tiveram.", { align: "justify", gap: 8 });
 
   garantir(78); // data + assinaturas das partes juntas na mesma página
   paragrafo(`Goiânia, ${dataExtenso(dados.dataContrato)}.`, { align: "right", gap: 14 });
 
   // --- assinaturas ---
-  const linhaAssinatura = (titulo: string, sub: string[], nomeSig?: string) => {
-    garantir(30);
-    y += 10;
-    doc.setLineWidth(0.3);
-    doc.line(ML, y, ML + LW * 0.78, y);
-    y += 4.5;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-    doc.text(titulo, ML, y); y += 4.5;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    for (const s of sub) { doc.text(s, ML, y); y += 4.2; }
-    if (v(nomeSig)) { doc.text(`Representante: ${v(nomeSig)}`, ML, y); y += 4.2; }
-    y += 2;
-  };
   linhaAssinatura(
     ou(dados.comodanteRazao, COMODANTE.razao),
     [`CNPJ ${ou(dados.comodanteCnpj, COMODANTE.cnpj)} - COMODANTE`],
@@ -217,34 +266,77 @@ export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
     v(dados.signatarioComodatario),
   );
 
-  garantir(50);
-  y += 6;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
-  doc.text("TESTEMUNHAS", ML, y); y += 12;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-  for (const n of ["1", "2"]) {
-    garantir(22);
-    doc.line(ML + 6, y, ML + LW * 0.6, y);
-    doc.text(n, ML, y);
-    y += 4.5;
-    doc.text("Nome:", ML + 6, y);
-    doc.text("CPF: ____________________", ML + LW * 0.6 - 48, y);
-    y += 12;
-  }
-
-  // rodapé com nº de página
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
-    doc.setTextColor(120);
-    doc.text(`Contrato de comodato${v(dados.codigo) ? " " + v(dados.codigo) : ""} · ${ou(dados.comodanteRazao, COMODANTE.razao)} · página ${p}/${total}`, W / 2, H - 9, { align: "center" });
-    doc.setTextColor(0);
-  }
-  return Buffer.from(doc.output("arraybuffer"));
+  testemunhas();
+  return finalizar(`Contrato de comodato${v(dados.codigo) ? " " + v(dados.codigo) : ""} · ${ou(dados.comodanteRazao, COMODANTE.razao)}`);
 }
 
-/** Converte a linha do banco (snake_case) para DadosContrato. */
+// -----------------------------------------------------------------------------
+// DISTRATO — rescisão amigável do comodato, com devolução do bem e quitação.
+// -----------------------------------------------------------------------------
+export type DadosDistrato = {
+  dataDistrato?: string | null;   // YYYY-MM-DD (data do instrumento)
+  dataDevolucao?: string | null;  // YYYY-MM-DD (quando o bem foi/será devolvido)
+  condicao?: string | null;       // estado do equipamento na devolução
+  motivo?: string | null;
+  pendencias?: string | null;     // valores/avarias a cobrar, se houver
+};
+
+export function montarDistratoComodatoPdf(dados: DadosContrato, d: DadosDistrato): Buffer {
+  const { garantir, paragrafo, clausula, linhaAssinatura, testemunhas, finalizar } = novoDoc();
+  const { tipoTitulo, artigo, nomeEquip, pronome } = nomesEquip(dados);
+  const comodatarioRazao = ou(dados.comodatarioRazao, "____________________________________________");
+  const comodatarioCnpj = ou(dados.comodatarioCnpj, "____.____.____/______-____");
+  const endInst = enderecoInstalacao(dados) || "________________________________________________";
+  const specsTxt = descricaoEquip(dados);
+  const descr = `${artigo} ${nomeEquip.toUpperCase()}${specsTxt ? " " + specsTxt : ""}`;
+  const refContrato = `o Contrato de Comodato de Bem Durável${v(dados.codigo) ? " nº " + v(dados.codigo) : ""}` +
+    (v(dados.dataContrato) ? `, firmado em ${dataExtenso(dados.dataContrato)}` : "");
+  const valorNum = Number(dados.valorBem);
+  const valorTxt = isFinite(valorNum) && valorNum > 0 ? `${brl(valorNum)} (${extenso(valorNum)})` : "";
+  const condicao = v(d.condicao) || "perfeito estado de conservação e funcionamento";
+  const temPend = !!v(d.pendencias);
+
+  paragrafo(`DISTRATO DE COMODATO DE BEM DURÁVEL - ${tipoTitulo}`, { bold: true, size: 13, align: "center", gap: 2 });
+  if (v(dados.codigo)) paragrafo(`Referente ao contrato ${v(dados.codigo)}`, { size: 8.5, align: "center", gap: 6 });
+
+  paragrafo(
+    `Pelo presente instrumento particular de DISTRATO, de um lado, ${ou(dados.comodanteRazao, COMODANTE.razao)}, ` +
+    `CNPJ ${ou(dados.comodanteCnpj, COMODANTE.cnpj)}, localizado na ${COMODANTE.endereco}, de ora em diante denominado ` +
+    `simplesmente COMODANTE, e, de outro lado o ${comodatarioRazao}, CNPJ: ${comodatarioCnpj}, localizado na ${endInst}, ` +
+    `de ora em diante denominado simplesmente de COMODATÁRIO, têm justo e contratado o seguinte:`,
+    { align: "justify", gap: 6 },
+  );
+
+  clausula("CLÁUSULA 1º.",
+    `As partes resolvem, de comum acordo, DISTRATAR ${refContrato}, pelo qual o COMODANTE cedeu em comodato ao COMODATÁRIO ${descr}, ` +
+    `instalad${pronome} no estabelecimento situado no Endereço: ${endInst}, para conservação de Sucos Naturais da Marca HONEST.` +
+    (v(d.motivo) ? ` Motivo: ${v(d.motivo)}.` : ""));
+  clausula("CLÁUSULA 2º.",
+    `O COMODATÁRIO restitui ao COMODANTE ${pronome} referid${pronome} ${nomeEquip}${v(d.dataDevolucao) ? ` em ${dataExtenso(d.dataDevolucao)}` : " nesta data"}, ` +
+    `em ${condicao}, autorizando desde já a sua retirada do estabelecimento pelo COMODANTE ou por quem este indicar.`);
+  clausula("CLÁUSULA 3º.",
+    temPend
+      ? `Ficam a cargo do COMODATÁRIO as seguintes pendências, apuradas na devolução: ${v(d.pendencias)}. ` +
+        `Enquanto não quitadas, o COMODANTE ressalva o direito de cobrá-las${valorTxt ? `, até o limite do valor do bem fixado no contrato, ${valorTxt}` : ""}.`
+      : `Com a restituição d${pronome} ${nomeEquip} nas condições acima, o COMODANTE dá ao COMODATÁRIO plena e geral quitação quanto à obrigação de devolução do bem${valorTxt ? `, avaliado no contrato em ${valorTxt}` : ""}, nada mais tendo a reclamar a esse título.`);
+  clausula("CLÁUSULA 4º.",
+    `Correm por conta do COMODATÁRIO as despesas de eletricidade, manutenção e limpeza vencidas até a data da devolução, conforme a cláusula 5ª do contrato ora distratado.`);
+  clausula("CLÁUSULA 5º.",
+    `Com o presente distrato, cessam todas as obrigações decorrentes do contrato de comodato, dando as partes uma à outra plena, rasa e geral quitação${temPend ? ", ressalvadas as pendências da cláusula 3ª" : ""}, para nada mais reclamarem, a qualquer tempo e a qualquer título.`);
+  clausula("CLÁUSULA 6º.",
+    `O presente distrato não prejudica as relações comerciais de fornecimento de produtos entre as partes, que seguem regidas pelos pedidos e notas fiscais respectivos.`);
+  clausula("CLÁUSULA 7º.", "Fica eleito o foro desta cidade Goiânia - Goiás para dirimir qualquer dúvida referente a este distrato.");
+
+  paragrafo("E por estarem assim justas e contratadas, firmam o presente instrumento em duas vias de igual teor, na presença de testemunhas que a tudo assistiram e que de tudo conhecimento tiveram.", { align: "justify", gap: 8 });
+
+  garantir(78);
+  paragrafo(`Goiânia, ${dataExtenso(d.dataDistrato)}.`, { align: "right", gap: 14 });
+  linhaAssinatura(ou(dados.comodanteRazao, COMODANTE.razao), [`CNPJ ${ou(dados.comodanteCnpj, COMODANTE.cnpj)} - COMODANTE`], ou(dados.signatarioComodante, SIGNATARIO_COMODANTE_PADRAO));
+  linhaAssinatura(comodatarioRazao, [`CNPJ ${comodatarioCnpj} - COMODATÁRIO`], v(dados.signatarioComodatario));
+  testemunhas();
+  return finalizar(`Distrato de comodato${v(dados.codigo) ? " " + v(dados.codigo) : ""} · ${ou(dados.comodanteRazao, COMODANTE.razao)}`);
+}
+
 export function dadosDoContrato(row: any): DadosContrato {
   return {
     codigo: row.codigo,
