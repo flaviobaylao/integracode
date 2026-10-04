@@ -921,7 +921,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
     status: order.status || 'planejada',
     production_date: order.production_date ? String(order.production_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
     notes: order.notes || '',
-    items: (order.items || []).map((it: any) => ({ raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), unit: it.unit || '', lot_number: it.lot_number || '' })),
+    items: (order.items || []).map((it: any) => ({ raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), quantity_lost: n(it.quantity_lost) > 0 ? String(it.quantity_lost) : '', unit: it.unit || '', lot_number: it.lot_number || '' })),
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const [saving, setSaving] = useState(false);
@@ -940,6 +940,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
         return {
           raw_material_id: it.raw_material_id,
           quantity_used: String(+(n(it.quantity) * mult).toFixed(4)),
+          quantity_lost: prev?.quantity_lost || '',
           unit: it.unit || '',
           lot_number: prev?.lot_number || '',
         };
@@ -952,7 +953,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
   const setItem = (idx: number, patch: any) => setF((p: any) => {
     const items = p.items.slice(); items[idx] = { ...items[idx], ...patch }; return { ...p, items };
   });
-  const addItem = () => setF((p: any) => ({ ...p, items: [...p.items, { raw_material_id: '', quantity_used: '', unit: '', lot_number: '' }] }));
+  const addItem = () => setF((p: any) => ({ ...p, items: [...p.items, { raw_material_id: '', quantity_used: '', quantity_lost: '', unit: '', lot_number: '' }] }));
   const rmItem = (idx: number) => setF((p: any) => ({ ...p, items: p.items.filter((_: any, i: number) => i !== idx) }));
 
   const save = async () => {
@@ -960,7 +961,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
     if (!(n(f.quantity) > 0)) { toast({ title: 'Quantidade inválida', variant: 'destructive' }); return; }
     setSaving(true);
     try {
-      const body = { ...f, items: f.items.filter((it: any) => it.raw_material_id && n(it.quantity_used) > 0) };
+      const body = { ...f, items: f.items.filter((it: any) => it.raw_material_id && (n(it.quantity_used) > 0 || n(it.quantity_lost) > 0)) };
       if (isNew) {
         const j = await jfetch('/api/industria/production-orders', { method: 'POST', body: JSON.stringify(body) });
         toast({ title: 'Ordem criada', description: j.order?.order_number });
@@ -1035,9 +1036,14 @@ function OrderDialog({ order, onClose, onDone }: any) {
               <Button type="button" variant="outline" size="sm" onClick={addItem}><Plus className="h-4 w-4 mr-1" /> Adicionar Material</Button>
             </div>
             {f.items.length === 0 && <p className="text-sm text-gray-400">Nenhum material adicionado. Use uma receita ou adicione manualmente.</p>}
+            {f.items.length > 0 && (
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-400 -mb-1">
+                <span className="flex-1">Material</span><span className="w-24">Consumido</span><span className="w-24 text-amber-600">Perda/Avaria</span><span className="w-28">Lote MP</span>
+              </div>
+            )}
             {f.items.map((it: any, idx: number) => {
               const mat = materials.find((m) => String(m.id) === String(it.raw_material_id));
-              const enough = mat ? n(mat.quantity) >= n(it.quantity_used) : true;
+              const enough = mat ? n(mat.quantity) >= n(it.quantity_used) + n(it.quantity_lost) : true;
               return (
                 <div key={idx} className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
@@ -1055,6 +1061,7 @@ function OrderDialog({ order, onClose, onDone }: any) {
                     </Select>
                   </div>
                   <Input className="w-24 h-8 text-xs" inputMode="decimal" placeholder="Qtd Total" value={it.quantity_used} onChange={(e) => setItem(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-24 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda/Avaria" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={it.quantity_lost || ''} onChange={(e) => setItem(idx, { quantity_lost: e.target.value })} />
                   <Input className="w-28 h-8 text-xs" placeholder="Lote MP" title="Lote da matéria-prima" value={it.lot_number || ''} onChange={(e) => setItem(idx, { lot_number: e.target.value })} />
                   {mat && (
                     <span className={`text-xs whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -1169,24 +1176,28 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
     pasteurization_end_temp: order.pasteurization_end_temp != null ? String(order.pasteurization_end_temp) : '',
     notes: '',
     materials: (order.items || []).map((it: any) => ({
-      raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), lot_number: it.lot_number || '', unit: it.unit || '',
+      raw_material_id: it.raw_material_id, quantity_used: String(it.quantity_used ?? ''), quantity_lost: n(it.quantity_lost) > 0 ? String(it.quantity_lost) : '', lot_number: it.lot_number || '', unit: it.unit || '',
     })),
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
   const setMat = (idx: number, patch: any) => setF((p: any) => {
     const ms = p.materials.slice(); ms[idx] = { ...ms[idx], ...patch }; return { ...p, materials: ms };
   });
-  const addMat = () => setF((p: any) => ({ ...p, materials: [...p.materials, { raw_material_id: '', quantity_used: '', lot_number: '', unit: '' }] }));
+  const addMat = () => setF((p: any) => ({ ...p, materials: [...p.materials, { raw_material_id: '', quantity_used: '', quantity_lost: '', lot_number: '', unit: '' }] }));
   const rmMat = (idx: number) => setF((p: any) => ({ ...p, materials: p.materials.filter((_: any, i: number) => i !== idx) }));
   const [saving, setSaving] = useState(false);
 
+  // CMV = (consumido + perdido/avariado) x custo unitario do insumo
   const cmv = useMemo(() => {
-    const total = f.materials.reduce((s: number, m: any) => {
+    let total = 0, perdas = 0;
+    for (const m of f.materials) {
       const mat = materials.find((x) => String(x.id) === String(m.raw_material_id));
-      return s + n(m.quantity_used) * n(mat?.unit_cost);
-    }, 0);
+      const c = n(mat?.unit_cost);
+      total += (n(m.quantity_used) + n(m.quantity_lost)) * c;
+      perdas += n(m.quantity_lost) * c;
+    }
     const qty = n(f.quantity_produced);
-    return { total, unit: qty > 0 ? total / qty : 0 };
+    return { total, perdas, unit: qty > 0 ? total / qty : 0 };
   }, [f.materials, f.quantity_produced, materials]);
 
   const save = async () => {
@@ -1195,7 +1206,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
     if (!f.lot_expiry_date) { toast({ title: 'Validade do lote produzido é obrigatória', variant: 'destructive' }); return; }
     if (f.brix_degree !== '' && !(n(f.brix_degree) > 0)) { toast({ title: 'Grau Brix inválido', variant: 'destructive' }); return; }
     if (f.ph !== '' && !(n(f.ph) > 0)) { toast({ title: 'PH inválido', variant: 'destructive' }); return; }
-    const materiais = f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0);
+    const materiais = f.materials.filter((m: any) => m.raw_material_id && (n(m.quantity_used) > 0 || n(m.quantity_lost) > 0));
     // Sem insumo NAO passa em silencio (Flavio 05/set): ja houve OP finalizada
     // sem baixa de materia-prima. O servidor tambem recusa (400 SEM_INSUMOS)
     // a menos que a finalizacao sem baixa seja confirmada explicitamente.
@@ -1217,7 +1228,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
       const nIns = (j.consumed || []).length;
       toast({
         title: `Ordem ${order.order_number} finalizada`,
-        description: `${nIns ? `Baixa de ${nIns} insumo(s)` : 'SEM baixa de insumos'} · CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})`,
+        description: `${nIns ? `Baixa de ${nIns} insumo(s)` : 'SEM baixa de insumos'} · CMV ${fmtBRL(j.cmv?.total)} (unit. ${fmtBRL(j.cmv?.unit)})${n(j.cmv?.perdas) > 0 ? ` · perdas ${fmtBRL(j.cmv?.perdas)}` : ''}`,
       });
       (j.warnings || []).forEach((w: string) => toast({ title: 'Atenção', description: w, variant: 'destructive' }));
       onDone();
@@ -1251,7 +1262,13 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
               <Label className="text-sm font-semibold">Matéria-Prima Consumida (real)</Label>
               <Button type="button" variant="outline" size="sm" onClick={addMat}><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
             </div>
-            {f.materials.filter((m: any) => m.raw_material_id && n(m.quantity_used) > 0).length === 0 && (
+            {f.materials.length > 0 && (
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-400 -mb-1">
+                <span className="flex-1">Material</span><span className="w-20">Consumido</span><span className="w-20 text-amber-600">Perda/Avaria</span><span className="w-28">Lote insumo</span>
+              </div>
+            )}
+            <p className="text-[11px] text-gray-500">Perdas/avarias somam ao consumido no CMV e também saem do estoque (lançadas como movimento "Perda").</p>
+            {f.materials.filter((m: any) => m.raw_material_id && (n(m.quantity_used) > 0 || n(m.quantity_lost) > 0)).length === 0 && (
               <div className="rounded-md border border-amber-300 bg-amber-50 text-amber-800 text-xs p-2 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <span><b>Nenhum insumo informado.</b> A finalização não vai dar baixa em matéria-prima nenhuma e o CMV ficará zerado. Adicione os materiais consumidos (a ordem foi criada sem itens ou a lista está vazia).</span>
@@ -1259,8 +1276,8 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
             )}
             {f.materials.map((m: any, idx: number) => {
               const mat = materials.find((x) => String(x.id) === String(m.raw_material_id));
-              const enough = mat ? n(mat.quantity) >= n(m.quantity_used) : true;
-              const sub = n(m.quantity_used) * n(mat?.unit_cost);
+              const enough = mat ? n(mat.quantity) >= n(m.quantity_used) + n(m.quantity_lost) : true;
+              const sub = (n(m.quantity_used) + n(m.quantity_lost)) * n(mat?.unit_cost);
               return (
                 <div key={idx} className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
@@ -1275,6 +1292,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
                     </Select>
                   </div>
                   <Input className="w-20 h-8 text-xs" inputMode="decimal" placeholder="Qtd Real" value={m.quantity_used} onChange={(e) => setMat(idx, { quantity_used: e.target.value })} />
+                  <Input className="w-20 h-8 text-xs border-amber-300" inputMode="decimal" placeholder="Perda" title="Quantidade perdida ou avariada (soma no CMV e na baixa de estoque)" value={m.quantity_lost || ''} onChange={(e) => setMat(idx, { quantity_lost: e.target.value })} />
                   <Input className="w-28 h-8 text-xs" placeholder="Lote insumo" value={m.lot_number} onChange={(e) => setMat(idx, { lot_number: e.target.value })} />
                   <span className={`text-[10px] whitespace-nowrap ${enough ? 'text-emerald-600' : 'text-red-600'}`}>est: {mat ? fmtQty(mat.quantity) : '?'}</span>
                   <span className="text-[10px] text-gray-500 whitespace-nowrap w-16 text-right">{fmtBRL(sub)}</span>
@@ -1311,7 +1329,7 @@ function FinalizeDialog({ order, onClose, onDone }: any) {
           <div className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3">
             <p className="text-sm font-semibold mb-1">CMV — Custo de Mercadoria Vendida</p>
             <div className="grid grid-cols-3 gap-2 text-sm">
-              <div><p className="text-xs text-gray-500">Custo Total MP</p><p className="font-bold">{fmtBRL(cmv.total)}</p></div>
+              <div><p className="text-xs text-gray-500">Custo Total MP</p><p className="font-bold">{fmtBRL(cmv.total)}</p>{cmv.perdas > 0 && <p className="text-[10px] text-amber-700">incl. perdas {fmtBRL(cmv.perdas)}</p>}</div>
               <div><p className="text-xs text-gray-500">Qtd Produzida</p><p className="font-bold">{fmtQty(f.quantity_produced)}</p></div>
               <div><p className="text-xs text-gray-500">CMV Unitário</p><p className="font-bold">{fmtBRL(cmv.unit)}</p></div>
             </div>
@@ -1361,17 +1379,18 @@ function OrderDetailsDialog({ order, onClose }: any) {
           <div>
             <p className="font-semibold mb-1">Insumos</p>
             <Table>
-              <TableHeader><TableRow><TableHead>Material</TableHead><TableHead className="text-right">Qtd</TableHead><TableHead>Un.</TableHead><TableHead>Lote</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Material</TableHead><TableHead className="text-right">Consumido</TableHead><TableHead className="text-right">Perda/Avaria</TableHead><TableHead>Un.</TableHead><TableHead>Lote</TableHead></TableRow></TableHeader>
               <TableBody>
                 {(order.items || []).map((it: any) => (
                   <TableRow key={it.id}>
                     <TableCell>{it.raw_material_name}</TableCell>
                     <TableCell className="text-right">{fmtQty(it.quantity_used)}</TableCell>
+                    <TableCell className={`text-right ${n(it.quantity_lost) > 0 ? 'text-amber-700 font-medium' : 'text-gray-400'}`}>{n(it.quantity_lost) > 0 ? fmtQty(it.quantity_lost) : '-'}</TableCell>
                     <TableCell>{it.unit || '-'}</TableCell>
                     <TableCell>{it.lot_number || '-'}</TableCell>
                   </TableRow>
                 ))}
-                {(order.items || []).length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-gray-400">Sem insumos</TableCell></TableRow>}
+                {(order.items || []).length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-gray-400">Sem insumos</TableCell></TableRow>}
               </TableBody>
             </Table>
           </div>
@@ -1398,7 +1417,7 @@ function MateriaisReportDialog({ orders, onClose }: any) {
       for (const it of (o.items || [])) {
         const k = String(it.raw_material_id || it.raw_material_name || '');
         const cur = agg.get(k) || { id: it.raw_material_id, name: it.raw_material_name || '?', unit: it.unit || '', total: 0, ords: new Set<string>() };
-        cur.total += n(it.quantity_used);
+        cur.total += n(it.quantity_used) + n(it.quantity_lost);
         if (it.raw_material_name) cur.name = it.raw_material_name;
         if (it.unit) cur.unit = it.unit;
         cur.ords.add(o.order_number);
@@ -1548,14 +1567,16 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
       const items = (o.items || []).map((it: any) => {
         const mat = materials.find((m: any) => String(m.id) === String(it.raw_material_id));
         const qty = n(it.quantity_used);
+        const lost = n(it.quantity_lost);
         const cost = mat ? n(mat.unit_cost) : 0;
         return {
           name: mat?.name || it.raw_material_name || '?',
           unit: it.unit || mat?.unit || '',
           qty,
+          lost,
           lot: it.lot_number || '',
           cost,
-          total: qty * cost,
+          total: (qty + lost) * cost,
         };
       }).sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
       const cmvTotal = items.reduce((s: number, i: any) => s + i.total, 0);
@@ -1619,7 +1640,7 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
         'Observações': o.notes || '',
       };
       if (r.items.length === 0) {
-        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Lote MP': '',
+        rows.push({ ...baseCols, 'Material': '', 'Un.': '', 'Qtd Consumida': '', 'Perda/Avaria': '', 'Lote MP': '',
           ...(semCusto ? {} : { 'Custo Unit. (R$)': '', 'Custo Total (R$)': '' }) });
       } else {
         for (const it of r.items) {
@@ -1628,6 +1649,7 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
             'Material': it.name,
             'Un.': it.unit,
             'Qtd Consumida': +it.qty.toFixed(3),
+            'Perda/Avaria': +it.lost.toFixed(3),
             'Lote MP': it.lot,
             ...(semCusto ? {} : {
               'Custo Unit. (R$)': +it.cost.toFixed(4),
@@ -1660,9 +1682,9 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
 <p class="sec">Análise do produto acabado</p>
 ${analise}
 <p class="sec">Matéria-prima consumida</p>
-<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Qtd</th><th>Lote MP</th>${semCusto ? '' : '<th class="num">Custo Unit.</th><th class="num">Custo Total</th>'}</tr></thead>
-<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td>${esc(it.lot || '-')}</td>${semCusto ? '' : `<td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td>`}</tr>`).join('') : `<tr><td colspan="${semCusto ? 4 : 6}">Sem insumos cadastrados</td></tr>`}</tbody>
-${semCusto ? '' : `<tfoot><tr><td colspan="5">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot>`}</table>
+<table><thead><tr><th>Material</th><th>Un.</th><th class="num">Consumido</th><th class="num">Perda/Avaria</th><th>Lote MP</th>${semCusto ? '' : '<th class="num">Custo Unit.</th><th class="num">Custo Total</th>'}</tr></thead>
+<tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td class="num">${it.lost ? fmtQty(it.lost) : '-'}</td><td>${esc(it.lot || '-')}</td>${semCusto ? '' : `<td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td>`}</tr>`).join('') : `<tr><td colspan="${semCusto ? 5 : 7}">Sem insumos cadastrados</td></tr>`}</tbody>
+${semCusto ? '' : `<tfoot><tr><td colspan="6">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot>`}</table>
 ${o.notes ? `<p class="obs"><b>Observações:</b> ${esc(o.notes)}</p>` : ''}
 </div>`;
     }).join('');
