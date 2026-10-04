@@ -21,7 +21,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 import { escalaEixo, picoDaSerie } from "@/lib/escalaEixo";
 import { tendenciaDaSerie } from "@/lib/tendencia";
-import AgendaCarteira from "@/pages/AgendaCarteira";
 import RedeClientes from "@/pages/RedeClientes";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
@@ -294,7 +293,7 @@ export default function GestaoCarteiras() {
   const [visiveis, setVisiveis] = useState(50);
   // Aba da tela: a carteira (faturamento, classe, situacao) ou a agenda de
   // atendimentos do mes. Sao dois assuntos com recortes de tempo diferentes.
-  const [aba, setAba] = useState<"carteira" | "agenda" | "rede">("carteira");
+  const [aba, setAba] = useState<"carteira" | "rede">("carteira");
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/reports/gestao-carteiras", inicio, fim],
@@ -1049,11 +1048,11 @@ export default function GestaoCarteiras() {
       </div>
 
       {/* Abas da tela — cada assunto com a sua cor, para nao se confundirem:
-          azul = dinheiro da carteira, âmbar = agenda de atendimento. */}
+          azul = dinheiro da carteira, verde = rede de cliente.
+          A aba "Agenda da carteira" saiu em 04/10/2026, a pedido do Flavio. */}
       <div className="flex gap-2 border-b">
         {([
           { k: "carteira", rotulo: "Carteira", ativa: "border-blue-600 text-blue-700 bg-blue-50", parada: "text-blue-700/60 hover:text-blue-700 hover:bg-blue-50/50" },
-          { k: "agenda", rotulo: "Agenda da carteira", ativa: "border-amber-500 text-amber-700 bg-amber-50", parada: "text-amber-700/60 hover:text-amber-700 hover:bg-amber-50/50" },
           { k: "rede", rotulo: "Rede de Cliente", ativa: "border-emerald-600 text-emerald-700 bg-emerald-50", parada: "text-emerald-700/60 hover:text-emerald-700 hover:bg-emerald-50/50" },
         ] as const).map((t) => (
           <button
@@ -1070,7 +1069,7 @@ export default function GestaoCarteiras() {
         ))}
       </div>
 
-      {aba === "rede" ? <RedeClientes /> : aba === "agenda" ? <AgendaCarteira /> : (
+      {aba === "rede" ? <RedeClientes /> : (
       <>
       {/* Filtros — uma linha acima dos gráficos */}
       <Card>
