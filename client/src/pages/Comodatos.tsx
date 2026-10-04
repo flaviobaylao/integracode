@@ -24,7 +24,7 @@ import { queryClient } from "@/lib/queryClient";
 import { exportToExcel } from "@/lib/excelExport";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText,
+  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText, FileX2,
 } from "lucide-react";
 
 const SIGNATARIO_PURO_PADRAO = "Flavio Evangelista Baylão Neto";
@@ -120,6 +120,8 @@ export default function Comodatos() {
   const [buscaCli, setBuscaCli] = useState("");
   const [consultandoCnpj, setConsultandoCnpj] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
+  const [distrato, setDistrato] = useState<{ contrato: any; dataDistrato: string; dataDevolucao: string; condicao: string; motivo: string; pendencias: string; encerrar: boolean } | null>(null);
+  const [gerandoDistrato, setGerandoDistrato] = useState(false);
   const [cliOpcoes, setCliOpcoes] = useState<any[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -231,6 +233,33 @@ export default function Comodatos() {
       toast({ title: "Erro ao gerar o PDF", description: e?.message, variant: "destructive" });
     } finally {
       setGerandoPdf(false);
+    }
+  };
+
+  const abrirDistrato = (c: any) => {
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    setDistrato({ contrato: c, dataDistrato: hoje, dataDevolucao: c.data_devolucao || hoje, condicao: c.condicao_devolucao || "",
+      motivo: c.distrato_motivo || "", pendencias: c.distrato_pendencias || "", encerrar: !["encerrado", "devolvido", "cancelado"].includes(c.status) });
+  };
+  const gerarDistrato = async () => {
+    if (!distrato) return;
+    setGerandoDistrato(true);
+    try {
+      const { contrato, ...campos } = distrato;
+      const r = await fetch(`/api/comodatos/${contrato.id}/distrato`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(campos),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      if (campos.encerrar) { await recarregar(); toast({ title: `Contrato ${contrato.codigo} encerrado`, description: "Distrato gerado e devolução registrada." }); }
+      else toast({ title: "Distrato gerado", description: "O contrato continua com o status atual." });
+      setDistrato(null);
+    } catch (e: any) {
+      toast({ title: "Erro ao gerar o distrato", description: e?.message, variant: "destructive" });
+    } finally {
+      setGerandoDistrato(false);
     }
   };
 
@@ -391,6 +420,7 @@ export default function Comodatos() {
                 <Th col="data">Data</Th>
                 <Th col="status">Status</Th>
                 <Th>Pendências</Th>
+                <Th>Ações</Th>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -434,10 +464,20 @@ export default function Comodatos() {
                       </div>
                     ) : <span className="text-emerald-600 text-xs flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />OK</span>}
                   </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" title="Contrato em PDF" onClick={() => window.open(`/api/comodatos/${c.id}/contrato.pdf`, "_blank")}>
+                        <FileText className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button variant={c.distrato_data ? "secondary" : "outline"} size="sm" className="whitespace-nowrap" title={c.distrato_data ? `Distrato de ${dt(c.distrato_data)}` : "Gerar distrato"} onClick={() => abrirDistrato(c)}>
+                        <FileX2 className="w-3.5 h-3.5 mr-1" />Distrato
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
               {!filtrados.length && (
-                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Nenhum contrato encontrado.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Nenhum contrato encontrado.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -587,6 +627,31 @@ export default function Comodatos() {
             </Button>
             <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando}>{salvando && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!distrato} onOpenChange={(o) => { if (!o) setDistrato(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Distrato do contrato {distrato?.contrato?.codigo}</DialogTitle>
+            <DialogDescription>{distrato?.contrato?.apelido_ponto || distrato?.contrato?.comodatario_razao} — {TIPOS[distrato?.contrato?.equipamento_tipo] || ""} {distrato?.contrato?.marca || ""} {distrato?.contrato?.numero_serie ? `série ${distrato?.contrato?.numero_serie}` : ""}</DialogDescription>
+          </DialogHeader>
+          {distrato && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div><Label>Data do distrato</Label><Input type="date" value={distrato.dataDistrato} onChange={(e) => setDistrato({ ...distrato, dataDistrato: e.target.value })} /></div>
+                <div><Label>Data da devolução</Label><Input type="date" value={distrato.dataDevolucao} onChange={(e) => setDistrato({ ...distrato, dataDevolucao: e.target.value })} /></div>
+              </div>
+              <div><Label>Condição do equipamento na devolução</Label><Input placeholder="perfeito estado de conservação e funcionamento" value={distrato.condicao} onChange={(e) => setDistrato({ ...distrato, condicao: e.target.value })} /></div>
+              <div><Label>Motivo (opcional)</Label><Input placeholder="Ex.: encerramento das atividades do ponto" value={distrato.motivo} onChange={(e) => setDistrato({ ...distrato, motivo: e.target.value })} /></div>
+              <div><Label>Pendências a cobrar (opcional)</Label><Textarea rows={2} placeholder="Avarias ou valores devidos; em branco = quitação plena" value={distrato.pendencias} onChange={(e) => setDistrato({ ...distrato, pendencias: e.target.value })} /></div>
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={distrato.encerrar} onCheckedChange={(v) => setDistrato({ ...distrato, encerrar: !!v })} />Encerrar o contrato e registrar a devolução ao gerar</label>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDistrato(null)}>Cancelar</Button>
+            <Button onClick={gerarDistrato} disabled={gerandoDistrato}>{gerandoDistrato ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileX2 className="w-4 h-4 mr-2" />}Gerar distrato (PDF)</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
