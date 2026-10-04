@@ -22,12 +22,16 @@ export interface Re15Ordem {
   analise: [string, string][] | null;
   insumos: { material: string; unidade: string; qtd: string; lote: string }[];
   observacoes?: string;
+  // Assinaturas eletrônicas VÁLIDAS da ordem (feitas no Integra)
+  assinaturas?: { papel: string; nome: string; funcao?: string; dataHora: string; codigo: string; url: string; qr?: string }[];
 }
 
 export interface Re15Dados {
   emitidoEm: string;
   resumo: { rotulo: string; valor: string }[];
   ordens: Re15Ordem[];
+  // Linhas de assinatura à caneta no fim (quando alguma ordem não tem assinatura eletrônica)
+  assinaturasManuais?: boolean;
 }
 
 const VERDE: [number, number, number] = [22, 163, 74];
@@ -180,10 +184,56 @@ export async function gerarRe15Pdf(dados: Re15Dados, nomeArquivo: string) {
       doc.text(linhas, M, y + 3);
       y += linhas.length * 3.6 + 2;
     }
+
+    if (op.assinaturas) {
+      secao('Assinaturas eletrônicas');
+      if (!op.assinaturas.length) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(119, 119, 119);
+        doc.text('Ordem ainda não assinada eletronicamente.', M, y + 3);
+        y += 6;
+      } else {
+        const boxW = (pageW - 2 * M - 4) / 2;
+        const boxH = 26;
+        for (let i = 0; i < op.assinaturas.length; i += 2) {
+          garantirEspaco(boxH + 2);
+          for (let j = 0; j < 2 && i + j < op.assinaturas.length; j++) {
+            const a = op.assinaturas[i + j];
+            const x = M + j * (boxW + 4);
+            doc.setDrawColor(...VERDE);
+            doc.setLineWidth(0.4);
+            doc.roundedRect(x, y, boxW, boxH, 1.5, 1.5);
+            let tx = x + 3;
+            if (a.qr) { doc.addImage(a.qr, 'PNG', x + 2.5, y + 2.5, 21, 21); tx = x + 26.5; }
+            const tw = boxW - (tx - x) - 2;
+            doc.setTextColor(17, 17, 17);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(8.2);
+            doc.text(doc.splitTextToSize(a.nome, tw)[0], tx, y + 5);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.2);
+            const linhas = [
+              a.funcao ? doc.splitTextToSize(a.funcao, tw)[0] : null,
+              `Responsável — ${a.papel}`,
+              `Assinado via Integra em ${a.dataHora}`,
+              `Código: ${a.codigo}`,
+            ].filter(Boolean) as string[];
+            linhas.forEach((l, k) => doc.text(l, tx, y + 8.6 + k * 3.2));
+            doc.setFontSize(6);
+            doc.setTextColor(90, 90, 90);
+            const urlLinhas = (doc.splitTextToSize(a.url, tw) as string[]).slice(0, 2);
+            urlLinhas.forEach((l, k) => doc.text(l, tx, y + boxH - 2.2 - (urlLinhas.length - 1 - k) * 2.4));
+          }
+          y += boxH + 2;
+        }
+      }
+    }
     y += 5;
   }
 
-  // ---- Assinaturas ------------------------------------------------------
+  // ---- Assinaturas à caneta (só se alguma ordem não tem assinatura eletrônica)
+  if (dados.assinaturasManuais !== false) {
   garantirEspaco(26);
   y += 14;
   const col = (pageW - 2 * M - 20) / 3;
@@ -197,6 +247,7 @@ export async function gerarRe15Pdf(dados: Re15Dados, nomeArquivo: string) {
     doc.line(x, y, x + col, y);
     doc.text(t, x + col / 2, y + 4, { align: 'center' });
   });
+  }
 
   // ---- Rodapé em todas as páginas --------------------------------------
   const total = doc.getNumberOfPages();

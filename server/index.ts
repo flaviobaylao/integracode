@@ -67,6 +67,7 @@ import { registerRepescagemRoutes } from './repescagem-routes';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole, gone } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
+import { registerRe15AssinaturaRoutes } from './re15-assinatura-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
@@ -3128,6 +3129,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   try { registerIndustriaRoutes(app); } catch (e) { console.error('[industria routes]', e); }
   // RELATORIO PRD/PP/INSUMO — movimentacao de insumos no periodo (04/out/2026)
   try { registerRelatorioInsumosRoutes(app); } catch (e) { console.error('[relatorio-insumos]', e); }
+
+  // RE-15: assinatura eletronica das ordens de producao pelo responsavel
+  // (senha do Integra + hash do conteudo) e verificacao publica por codigo/QR
+  // em /verificar/re15/:codigo — 04/out/2026.
+  try { registerRe15AssinaturaRoutes(app); } catch (e) { console.error('[re15 assinatura]', e); }
 
   // Anexos de especificacao tecnica da materia-prima (laudos, fichas do
   // fornecedor, certificados) — 01/set/2026. Registrado DEPOIS do modulo

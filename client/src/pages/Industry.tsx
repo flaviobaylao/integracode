@@ -6,7 +6,7 @@
 // (inventory_lots, consumido pela NF-e), polpa produzida entra no estoque de
 // matéria-prima automaticamente, CMV calculado ao vivo na finalização.
 // ============================================================================
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -35,12 +35,14 @@ import ProgramacaoProducao from '@/components/ProgramacaoProducao';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import { gerarRe15Pdf, RE15_EMPRESA } from '@/lib/re15-pdf';
+import QRCode from 'qrcode';
+import { useAuth } from '@/hooks/useAuth';
 import {
   Factory, ClipboardList, FileText, History, Search, Plus, Package,
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye, ClipboardCheck, Users,
-  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat, CalendarClock,
+  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat, CalendarClock, PenLine,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -1568,9 +1570,56 @@ ${faltando.length ? `<p class="aviso"><b>Atenção:</b> ${faltando.length} mater
 // Com `semCusto` vira o RE-15 RELATÓRIO DE PRODUÇÃO: idêntico, mas sem
 // custo unitário/total dos insumos, sem CMV e sem o total de CMV.
 // ===========================================================================
+const data_semAssinatura = (orders: any[], validasDe: (id: any) => any[]) =>
+  orders.length === 0 || orders.some((o: any) => validasDe(o.id).length === 0);
+
 function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
   const { materials } = useIndustriaAux();
   const titulo = semCusto ? 'RE-15 RELATÓRIO DE PRODUÇÃO' : 'Relatório de Produção — Ordens de Produção';
+
+  // ---- Assinatura eletrônica (só no RE-15) --------------------------------
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user: me } = useAuth() as any;
+  const orderIds = useMemo(() => orders.map((o: any) => String(o.id)).sort(), [orders]);
+  const assinKey = ['/api/industria/re15/assinaturas', orderIds.join(',')];
+  const { data: assinData } = useQuery({
+    queryKey: assinKey,
+    queryFn: () => jfetch(`/api/industria/re15/assinaturas?ids=${encodeURIComponent(orderIds.join(','))}`),
+    enabled: semCusto && orderIds.length > 0,
+  });
+  const assinaturas: Record<string, any[]> = assinData?.porOrdem || {};
+  const validasDe = (id: any) => (assinaturas[String(id)] || []).filter((a: any) => a.situacao === 'valida');
+  const verifUrl = (codigo: string) => `${window.location.origin}/verificar/re15/${encodeURIComponent(codigo)}`;
+  const [qrs, setQrs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!semCusto) return;
+    let vivo = true;
+    (async () => {
+      const out: Record<string, string> = {};
+      for (const lista of Object.values(assinaturas)) {
+        for (const a of lista) {
+          if (a.situacao !== 'valida') continue;
+          try { out[a.codigo] = await QRCode.toDataURL(verifUrl(a.codigo), { margin: 0, width: 240, errorCorrectionLevel: 'M' }); } catch { /* sem QR, fica o código */ }
+        }
+      }
+      if (vivo) setQrs(out);
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assinData, semCusto]);
+  const [assinarOpen, setAssinarOpen] = useState(false);
+  const recarregarAssinaturas = () => qc.invalidateQueries({ queryKey: assinKey });
+  const revogar = async (a: any) => {
+    const motivo = window.prompt(`Revogar a assinatura de ${a.signer_name} (${a.papel_label}) na ordem? Informe o motivo:`, '');
+    if (motivo == null) return;
+    try {
+      await jfetch(`/api/industria/re15/assinaturas/${a.id}/revogar`, { method: 'POST', body: JSON.stringify({ motivo }) });
+      toast({ title: 'Assinatura revogada', description: a.codigo });
+      recarregarAssinaturas();
+    } catch (e: any) { toast({ title: 'Não foi possível revogar', description: String(e.message || e), variant: 'destructive' }); }
+  };
+  const semAssinaturaAlguma = data_semAssinatura(orders, validasDe);
 
   const data = useMemo(() => {
     const list = orders.map((o: any) => {
@@ -1714,14 +1763,33 @@ function OrdensReportDialog({ orders, onClose, semCusto = false }: any) {
             ] as [string, string][] : null,
             insumos: r.items.map((it: any) => ({ material: String(it.name), unidade: String(it.unit || ''), qtd: fmtQty(it.qty), lote: String(it.lot || '') })),
             observacoes: o.notes || undefined,
+            assinaturas: validasDe(o.id).map((a: any) => ({
+              papel: String(a.papel_label),
+              nome: String(a.signer_name || ''),
+              funcao: a.signer_funcao ? String(a.signer_funcao) : '',
+              dataHora: fmtDateTime(a.signed_at),
+              codigo: String(a.codigo),
+              url: verifUrl(a.codigo),
+              qr: qrs[a.codigo],
+            })),
           };
         }),
+        assinaturasManuais: semAssinaturaAlguma,
       }, `RE-15-relatorio-producao-${new Date().toISOString().slice(0, 10)}`);
     } catch (e: any) {
       alert('Não foi possível gerar o PDF: ' + String(e?.message || e));
     } finally {
       setPdfBusy(false);
     }
+  };
+
+  const assinHtml = (o: any) => {
+    const v = validasDe(o.id);
+    if (!v.length) return '<p class="sec">Assinaturas eletrônicas</p><p class="vazio">Ordem ainda não assinada eletronicamente.</p>';
+    return `<p class="sec">Assinaturas eletrônicas</p><div class="assel">${v.map((a: any) => `<div class="ass">${qrs[a.codigo] ? `<img src="${qrs[a.codigo]}" alt="QR">` : ''}<div>
+<b>${esc(a.signer_name)}</b>${a.signer_funcao ? ' — ' + esc(a.signer_funcao) : ''}<br>Responsável — ${esc(a.papel_label)}<br>
+Assinado eletronicamente via Integra em ${fmtDateTime(a.signed_at)}<br>Código de verificação: <b>${esc(a.codigo)}</b><br>
+<span class="url">${esc(verifUrl(a.codigo))}</span></div></div>`).join('')}</div>`;
   };
 
   const doPrint = () => {
@@ -1748,6 +1816,7 @@ ${analise}
 <tbody>${r.items.length ? r.items.map((it: any) => `<tr><td>${esc(it.name)}</td><td>${esc(it.unit)}</td><td class="num">${fmtQty(it.qty)}</td><td class="num">${it.lost ? fmtQty(it.lost) : '-'}</td><td>${esc(it.lot || '-')}</td>${semCusto ? '' : `<td class="num">${fmtBRL(it.cost)}</td><td class="num">${fmtBRL(it.total)}</td>`}</tr>`).join('') : `<tr><td colspan="${semCusto ? 5 : 7}">Sem insumos cadastrados</td></tr>`}</tbody>
 ${semCusto ? '' : `<tfoot><tr><td colspan="6">CMV total da ordem (unitário ${fmtBRL(r.cmvUnit)})</td><td class="num">${fmtBRL(r.cmvTotal)}</td></tr></tfoot>`}</table>
 ${o.notes ? `<p class="obs"><b>Observações:</b> ${esc(o.notes)}</p>` : ''}
+${semCusto ? assinHtml(o) : ''}
 </div>`;
     }).join('');
 
@@ -1762,7 +1831,9 @@ table.kv th{width:12%;background:#f7f7f7}table.kv td{width:21%}
 .sec{font-size:12px;font-weight:bold;margin:10px 0 2px}.vazio{font-size:12px;color:#777;margin:2px 0}
 .obs{font-size:12px;margin-top:6px;white-space:pre-wrap}
 .resumo td,.resumo th{font-size:12px}
-.assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}</style></head><body>
+.assin{margin-top:36px;display:flex;gap:40px;font-size:12px}.assin div{flex:1;border-top:1px solid #333;padding-top:4px;text-align:center}
+.assel{display:flex;flex-wrap:wrap;gap:10px}.ass{display:flex;gap:8px;align-items:center;border:1px solid #16a34a;border-radius:6px;padding:6px 8px;font-size:11px;flex:1;min-width:280px}
+.ass img{width:72px;height:72px}.url{color:#555;font-size:10px;word-break:break-all}</style></head><body>
 <div class="cab"><img src="${window.location.origin}/honest-logo.png" alt="Honest"><div>
 <h1>${titulo}</h1>
 ${semCusto
@@ -1772,7 +1843,7 @@ ${semCusto
 <table class="resumo"><thead><tr><th>Ordens</th><th>Planejadas</th><th>Em produção</th><th>Finalizadas</th><th class="num">Qtd planejada</th><th class="num">Qtd produzida</th>${semCusto ? '' : '<th class="num">CMV total</th>'}</tr></thead>
 <tbody><tr><td>${data.tot.ordens}</td><td>${data.tot.planejadas}</td><td>${data.tot.emProducao}</td><td>${data.tot.finalizadas}</td><td class="num">${fmtQty(data.tot.planejada)}</td><td class="num">${fmtQty(data.tot.produzida)}</td>${semCusto ? '' : `<td class="num">${fmtBRL(data.tot.cmv)}</td>`}</tr></tbody></table>
 ${fichas}
-<div class="assin"><div>Produção</div><div>Qualidade</div><div>Data / Hora</div></div>
+${!semCusto || semAssinaturaAlguma ? '<div class="assin"><div>Produção</div><div>Qualidade</div><div>Data / Hora</div></div>' : ''}
 <script>window.onload=function(){window.print()}</script></body></html>`;
     const w = window.open('', '_blank');
     if (!w) { alert('Libere pop-ups para imprimir o relatório.'); return; }
@@ -1806,6 +1877,7 @@ ${fichas}
                   <TableHead className="text-right">Rend.</TableHead>
                   <TableHead>Lote</TableHead>
                   <TableHead>Brix / pH</TableHead>
+                  {semCusto && <TableHead>Assinaturas</TableHead>}
                   {!semCusto && <TableHead className="text-right">CMV</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -1820,11 +1892,28 @@ ${fichas}
                     <TableCell className="text-right text-xs">{r.rendimento == null ? '-' : `${r.rendimento.toFixed(1)}%`}</TableCell>
                     <TableCell className="text-xs">{r.o.lot_number || '-'}</TableCell>
                     <TableCell className="text-xs">{(r.o.brix_degree ?? '-') + ' / ' + (r.o.ph ?? '-')}</TableCell>
+                    {semCusto && (
+                      <TableCell className="text-xs">
+                        <div className="flex flex-col gap-1">
+                          {(assinaturas[String(r.o.id)] || []).map((a: any) => (
+                            <span key={a.id}
+                              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 border ${a.situacao === 'valida' ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-amber-50 border-amber-300 text-amber-800'}`}
+                              title={`${a.codigo} · ${fmtDateTime(a.signed_at)}${a.situacao === 'valida' ? '' : ' — a ordem foi alterada depois da assinatura; assine de novo'}`}>
+                              {a.situacao === 'valida' ? '✓' : '⚠'} {a.papel_label}: {a.signer_name}{a.situacao === 'valida' ? '' : ' (alterada)'}
+                              <button type="button" className="ml-1 text-gray-400 hover:text-red-600" onClick={() => revogar(a)} title="Revogar assinatura">×</button>
+                            </span>
+                          ))}
+                          {(assinaturas[String(r.o.id)] || []).length === 0 && (
+                            <span className="text-gray-400">{r.o.status === 'finalizada' ? 'não assinada' : 'só após finalizar'}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
                     {!semCusto && <TableCell className="text-right">{fmtBRL(r.cmvTotal)}</TableCell>}
                   </TableRow>
                 ))}
                 {data.list.length === 0 && (
-                  <TableRow><TableCell colSpan={semCusto ? 8 : 9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center text-gray-400 py-6">Nenhuma ordem selecionada</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -1839,6 +1928,14 @@ ${fichas}
           <Button variant="outline" onClick={onClose}>Fechar</Button>
           <Button variant="outline" onClick={doExcel}><FileSpreadsheet className="h-4 w-4 mr-1" /> Excel</Button>
           {semCusto && (
+            <Button variant="outline" onClick={() => setAssinarOpen(true)}
+              disabled={!data.list.some((r: any) => r.o.status === 'finalizada')}
+              className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+              title="Assinar eletronicamente as ordens finalizadas deste relatório com sua senha do Integra">
+              <PenLine className="h-4 w-4 mr-1" /> Assinar
+            </Button>
+          )}
+          {semCusto && (
             <Button variant="outline" onClick={doPdf} disabled={pdfBusy || data.list.length === 0}
               title="Baixa o RE-15 em PDF com a logo e os dados da empresa, pronto para enviar a clientes e fiscalização">
               {pdfBusy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />} Baixar PDF
@@ -1846,6 +1943,114 @@ ${fichas}
           )}
           <Button onClick={doPrint} className="bg-emerald-600 hover:bg-emerald-700 text-white">
             <Printer className="h-4 w-4 mr-1" /> Imprimir
+          </Button>
+        </DialogFooter>
+        {assinarOpen && (
+          <AssinarRe15Dialog
+            orders={data.list.map((r: any) => r.o)}
+            assinaturas={assinaturas}
+            me={me}
+            onClose={() => setAssinarOpen(false)}
+            onDone={() => { setAssinarOpen(false); recarregarAssinaturas(); }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// RE-15 — ASSINATURA ELETRÔNICA pelo responsável (senha do Integra)
+// O servidor grava o hash do conteúdo de cada ordem; se a ordem mudar depois,
+// a assinatura deixa de valer. Só ordens finalizadas.
+// ===========================================================================
+function AssinarRe15Dialog({ orders, assinaturas, me, onClose, onDone }: any) {
+  const { toast } = useToast();
+  const [papel, setPapel] = useState<'producao' | 'qualidade'>('producao');
+  const [funcao, setFuncao] = useState<string>(() => { try { return localStorage.getItem('re15-funcao') || ''; } catch { return ''; } });
+  const [senha, setSenha] = useState('');
+  const [declaro, setDeclaro] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const papelLabel = papel === 'producao' ? 'Produção' : 'Qualidade';
+  const finalizadas = orders.filter((o: any) => o.status === 'finalizada');
+  const pendentes = finalizadas.filter((o: any) =>
+    !(assinaturas[String(o.id)] || []).some((a: any) => a.papel === papel && a.situacao === 'valida'));
+  const nome = [me?.firstName, me?.lastName].filter(Boolean).join(' ') || me?.email || '';
+  const impersonando = !!me?._impersonatingRole;
+
+  const assinar = async () => {
+    setEnviando(true);
+    try {
+      try { localStorage.setItem('re15-funcao', funcao); } catch { /* sem storage */ }
+      const j = await jfetch('/api/industria/re15/assinar', {
+        method: 'POST',
+        body: JSON.stringify({ orderIds: pendentes.map((o: any) => o.id), papel, senha, funcao }),
+      });
+      const falhas = (j.resultado || []).filter((r: any) => !r.ok);
+      toast({ title: `${j.assinadas} ordem(ns) assinada(s) como ${papelLabel}` });
+      for (const f of falhas) toast({ title: `${f.ordem || f.id}: não assinada`, description: f.motivo, variant: 'destructive' });
+      onDone();
+    } catch (e: any) {
+      toast({ title: 'Assinatura não realizada', description: String(e.message || e), variant: 'destructive' });
+      setSenha('');
+    } finally { setEnviando(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Assinar RE-15 eletronicamente</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          {impersonando && (
+            <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-800">
+              Você está no modo "Entrar como". Saia dele para assinar — a assinatura é sempre de quem está logado de verdade.
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Assinar como responsável</Label>
+              <Select value={papel} onValueChange={(v: any) => setPapel(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="producao">Produção</SelectItem>
+                  <SelectItem value="qualidade">Qualidade</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Signatário</Label>
+              <Input value={nome} disabled />
+            </div>
+          </div>
+          <div>
+            <Label>Função / registro profissional (opcional)</Label>
+            <Input value={funcao} onChange={(e) => setFuncao(e.target.value)} maxLength={120}
+              placeholder="Ex.: Responsável Técnico — CRQ 12345" />
+          </div>
+          <div className="rounded border p-2 max-h-40 overflow-auto">
+            <p className="text-xs text-gray-500 mb-1">Ordens que serão assinadas como {papelLabel} ({pendentes.length}):</p>
+            {pendentes.map((o: any) => <p key={o.id} className="text-xs">{o.order_number} — {o.product_name} · lote {o.lot_number || '-'}</p>)}
+            {pendentes.length === 0 && <p className="text-xs text-gray-400">Nenhuma — todas as finalizadas já estão assinadas como {papelLabel}.</p>}
+            {orders.length > finalizadas.length && (
+              <p className="text-xs text-amber-700 mt-1">{orders.length - finalizadas.length} ordem(ns) não finalizada(s) ficam de fora.</p>
+            )}
+          </div>
+          <label className="flex items-start gap-2 text-xs">
+            <Checkbox checked={declaro} onCheckedChange={(v) => setDeclaro(!!v)} className="mt-0.5" />
+            <span>Declaro que conferi os dados das ordens acima (lote, quantidades, análises, pasteurização e matérias-primas) e
+              que os assino como responsável pela {papelLabel}. Se a ordem for alterada depois, esta assinatura perde o efeito.</span>
+          </label>
+          <div>
+            <Label>Sua senha do Integra</Label>
+            <Input type="password" autoComplete="current-password" value={senha} onChange={(e) => setSenha(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && declaro && senha && pendentes.length && !enviando && !impersonando) assinar(); }} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={assinar} disabled={!declaro || !senha || pendentes.length === 0 || enviando || impersonando}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            {enviando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <PenLine className="h-4 w-4 mr-1" />} Assinar {pendentes.length} ordem(ns)
           </Button>
         </DialogFooter>
       </DialogContent>
