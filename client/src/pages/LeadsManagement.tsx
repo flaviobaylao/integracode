@@ -719,7 +719,7 @@ export default function LeadsManagement() {
   const displayLeads = [...sortedLeads].sort((a: any, b: any) => (a.status === 'discarded' ? 1 : 0) - (b.status === 'discarded' ? 1 : 0));
 
   // Seleção em massa (admin): utilitários sobre os leads exibidos.
-  const selectableLeadIds = displayLeads.map((l: any) => l.id);
+  const selectableLeadIds = displayLeads.filter((l: any) => l.status !== 'discarded').map((l: any) => l.id);
   const allLeadsSelected = selectableLeadIds.length > 0 && selectableLeadIds.every((id: string) => selectedLeadIds.has(id));
   const toggleLeadSel = (id: string) => setSelectedLeadIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleSelectAllLeads = () => setSelectedLeadIds(prev => (selectableLeadIds.length > 0 && selectableLeadIds.every((id: string) => prev.has(id))) ? new Set() : new Set(selectableLeadIds));
@@ -1115,6 +1115,7 @@ export default function LeadsManagement() {
                           <Checkbox
                             checked={selectedLeadIds.has(lead.id)}
                             onCheckedChange={() => toggleLeadSel(lead.id)}
+                            disabled={lead.status === 'discarded'}
                             aria-label="Selecionar lead"
                           />
                         </td>
