@@ -71,6 +71,7 @@ import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
+import { registerRelatorioInsumosRoutes } from './relatorio-insumos';
 import { registerFabricaRoutes } from './fabrica-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
@@ -3122,6 +3123,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Modulo Industria completo (materia-prima, movimentacoes, ordens de producao,
   // finalizacao com qualidade/CMV e integracao com inventory_lots) — 18/ago/2026
   try { registerIndustriaRoutes(app); } catch (e) { console.error('[industria routes]', e); }
+  // RELATORIO PRD/PP/INSUMO — movimentacao de insumos no periodo (04/out/2026)
+  try { registerRelatorioInsumosRoutes(app); } catch (e) { console.error('[relatorio-insumos]', e); }
 
   // Anexos de especificacao tecnica da materia-prima (laudos, fichas do
   // fornecedor, certificados) — 01/set/2026. Registrado DEPOIS do modulo

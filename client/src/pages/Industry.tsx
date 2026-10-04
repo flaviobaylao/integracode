@@ -30,6 +30,7 @@ import FuncionariosIndustria from '@/components/FuncionariosIndustria';
 import ChecklistProducao from '@/components/ChecklistProducao';
 import ManutencaoMaquinas from '@/components/ManutencaoMaquinas';
 import TrocasIndustria from '@/components/TrocasIndustria';
+import RelatorioInsumosDialog from '@/components/RelatorioInsumos';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import { gerarRe15Pdf, RE15_EMPRESA } from '@/lib/re15-pdf';
@@ -143,6 +144,8 @@ function MateriaPrimaTab() {
   const [matDialog, setMatDialog] = useState<any>(null);      // {} = novo, material = editar
   const [movDialog, setMovDialog] = useState<Material | null>(null);
   const [histDialog, setHistDialog] = useState<Material | 'all' | null>(null);
+  // RELATORIO PRD/PP/INSUMO (Flavio 04/out): entradas, saidas e consumo em OP no periodo
+  const [relInsumosOpen, setRelInsumosOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -249,6 +252,10 @@ function MateriaPrimaTab() {
         <Button variant="outline" size="sm" onClick={() => setHistDialog('all')}>
           <History className="h-4 w-4 mr-1" /> Ver Movimentações
         </Button>
+        <Button variant="outline" size="sm" onClick={() => setRelInsumosOpen(true)} data-testid="btn-relatorio-prd-pp-insumo"
+          title="RELATÓRIO PRD/PP/INSUMO — entradas, saídas, consumo em ordens de produção, perdas e ajustes no período">
+          <FileText className="h-4 w-4 mr-1" /> Relatório PRD/PP/INSUMO
+        </Button>
         <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setMatDialog({})}>
           <Plus className="h-4 w-4 mr-1" /> Novo Material
         </Button>
@@ -315,6 +322,7 @@ function MateriaPrimaTab() {
       {matDialog != null && <MaterialDialog material={matDialog} onClose={() => setMatDialog(null)} onSave={saveMaterial} saving={saving} />}
       {movDialog && <MovementDialog material={movDialog} onClose={() => setMovDialog(null)} onDone={() => { setMovDialog(null); invalidate(); }} />}
       {histDialog && <MovementsDialog target={histDialog} onClose={() => setHistDialog(null)} />}
+      {relInsumosOpen && <RelatorioInsumosDialog onClose={() => setRelInsumosOpen(false)} />}
     </div>
   );
 }
