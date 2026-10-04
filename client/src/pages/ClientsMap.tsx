@@ -12,6 +12,9 @@ import { useAuth } from "@/hooks/useAuth";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
 import ClientActionsModal from "@/components/ClientActionsModal";
+// ⚠️ Usado lá embaixo no histórico do lead. Sem este import a tela inteira cai em branco
+// (ReferenceError no render), não só o modal — o build passa porque o JSX não é checado aqui.
+import ActionHistoryModal from "@/components/ActionHistoryModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import GeocodeAllButton from "@/components/GeocodeAllButton";
