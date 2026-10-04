@@ -23715,6 +23715,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_tries integer DEFAULT 0`));
       } catch (_e) { /* colunas complementares */ }
       const limit = Math.min(Math.max(Number(req.body?.limite) || 25, 1), 60);
+      const _selIds = Array.isArray(req.body?.ids) ? (req.body.ids as any[]).filter((x) => typeof x === 'string' && x) : [];
+      const _selFilter = _selIds.length > 0 ? sql`AND id = ANY(${_selIds}::text[])` : sql``;
       const pend: any = await db.execute(sql`
         SELECT id, fantasy_name AS nome, CAST(latitude AS TEXT) AS lat, CAST(longitude AS TEXT) AS lng
         FROM leads
@@ -23722,6 +23724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           AND COALESCE(google_tries, 0) < 2
           AND latitude IS NOT NULL AND longitude IS NOT NULL
           AND latitude::float <> 0 AND longitude::float <> 0
+          ${_selFilter}
         ORDER BY created_at DESC
         LIMIT ${limit}
       `);
@@ -23798,6 +23801,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         WHERE google_place IS NULL AND COALESCE(google_tries, 0) < 2
           AND latitude IS NOT NULL AND longitude IS NOT NULL
           AND latitude::float <> 0 AND longitude::float <> 0
+          ${_selFilter}
       `);
       const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
       console.log(`🔎 [LEADS-GOOGLE] processados ${rows.length}, atualizados ${atualizados}, sem resultado ${semResultado}, restam ${restantes} por ${req.currentUser?.email}`);
