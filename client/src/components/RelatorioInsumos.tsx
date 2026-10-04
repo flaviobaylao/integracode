@@ -76,9 +76,9 @@ export default function RelatorioInsumosDialog({ onClose }: { onClose: () => voi
     const ids = new Set(linhas.map((l: any) => l.material_id));
     const extrato = (data?.extrato || []).filter((m: any) => ids.has(m.material_id));
     const ops = (data?.ops || [])
-      .map((o: any) => ({ ...o, insumos: o.insumos.filter((i: any) => ids.has(i.material_id)), gerados: o.gerados.filter((i: any) => ids.has(i.material_id)) }))
-      .filter((o: any) => o.insumos.length || o.gerados.length)
-      .map((o: any) => ({ ...o, custo_total: o.insumos.reduce((s: number, i: any) => s + n(i.valor), 0) }));
+      .map((o: any) => ({ ...o, insumos: o.insumos.filter((i: any) => ids.has(i.material_id)), perdas: (o.perdas || []).filter((i: any) => ids.has(i.material_id)), gerados: o.gerados.filter((i: any) => ids.has(i.material_id)) }))
+      .filter((o: any) => o.insumos.length || o.perdas.length || o.gerados.length)
+      .map((o: any) => ({ ...o, custo_total: [...o.insumos, ...o.perdas].reduce((s: number, i: any) => s + n(i.valor), 0) }));
     const soma = (k: string) => linhas.reduce((s: number, l: any) => s + n(l[k]), 0);
     return {
       linhas, extrato, ops,
@@ -119,6 +119,7 @@ export default function RelatorioInsumosDialog({ onClose }: { onClose: () => voi
     for (const o of filtrado.ops) {
       const base = { 'OP': o.op, 'Produto': o.produto, 'Lote': o.lote, 'Status': o.status, 'Data Produção': dBR(o.data_producao), 'Qtd OP': n(o.quantidade) };
       for (const i of o.insumos) porOp.push({ ...base, 'Movimento': 'Consumo', 'Insumo': i.material, 'Un.': i.unidade, 'Quantidade': i.quantidade, ...custo({ 'Custo Unit. (R$)': i.custo_unit, 'Valor (R$)': i.valor }) });
+      for (const i of o.perdas) porOp.push({ ...base, 'Movimento': 'Perda/Avaria', 'Insumo': i.material, 'Un.': i.unidade, 'Quantidade': i.quantidade, ...custo({ 'Custo Unit. (R$)': i.custo_unit, 'Valor (R$)': i.valor }) });
       for (const i of o.gerados) porOp.push({ ...base, 'Movimento': 'Gerado pela OP', 'Insumo': i.material, 'Un.': i.unidade, 'Quantidade': i.quantidade, ...custo({ 'Custo Unit. (R$)': i.custo_unit, 'Valor (R$)': i.valor }) });
     }
     const extrato = filtrado.extrato.map((m: any) => ({
@@ -153,8 +154,9 @@ ${comCusto ? `<td class="num">${brl(l.valor_consumo_op)}</td><td class="num">${b
 <p class="meta">Lote ${esc(o.lote || '-')} · produção ${dBR(o.data_producao)} · qtd ${fq(o.quantidade)}</p>
 <table><thead><tr><th>Movimento</th><th>Insumo</th><th>Un.</th><th class="num">Qtd</th>${comCusto ? '<th class="num">Custo unit.</th><th class="num">Valor</th>' : ''}</tr></thead><tbody>
 ${o.insumos.map((i: any) => `<tr><td>Consumo</td><td>${esc(i.material)}</td><td>${esc(i.unidade)}</td><td class="num">${fq(i.quantidade)}</td>${comCusto ? `<td class="num">${brl(i.custo_unit)}</td><td class="num">${brl(i.valor)}</td>` : ''}</tr>`).join('')}
+${o.perdas.map((i: any) => `<tr class="per"><td>Perda/Avaria</td><td>${esc(i.material)}</td><td>${esc(i.unidade)}</td><td class="num">${fq(i.quantidade)}</td>${comCusto ? `<td class="num">${brl(i.custo_unit)}</td><td class="num">${brl(i.valor)}</td>` : ''}</tr>`).join('')}
 ${o.gerados.map((i: any) => `<tr class="ger"><td>Gerado pela OP</td><td>${esc(i.material)}</td><td>${esc(i.unidade)}</td><td class="num">${fq(i.quantidade)}</td>${comCusto ? `<td class="num">${brl(i.custo_unit)}</td><td class="num">${brl(i.valor)}</td>` : ''}</tr>`).join('')}
-</tbody>${comCusto && o.insumos.length ? `<tfoot><tr><td colspan="5">Custo dos insumos consumidos</td><td class="num">${brl(o.custo_total)}</td></tr></tfoot>` : ''}</table></div>`).join('')
+</tbody>${comCusto && (o.insumos.length || o.perdas.length) ? `<tfoot><tr><td colspan="5">Custo dos insumos (consumo + perda)</td><td class="num">${brl(o.custo_total)}</td></tr></tfoot>` : ''}</table></div>`).join('')
       : '<p class="vazio">Nenhuma ordem de produção consumiu insumos no período.</p>';
 
     const extratoHtml = !imprimirExtrato ? '' : `<h3>3. Extrato de movimentações</h3>
@@ -168,7 +170,7 @@ h3{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:
 .cab{display:flex;align-items:center;gap:16px;border-bottom:2px solid #16a34a;padding-bottom:10px;margin-bottom:12px}.cab img{height:54px}
 table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}th,td{border:1px solid #bbb;padding:4px 6px;text-align:left;vertical-align:top}th{background:#f0f0f0}
 td.num,th.num{text-align:right;white-space:nowrap}td.b{font-weight:bold}tfoot td{font-weight:bold;background:#fafafa}
-tr.grp td{background:#e8f5e9;font-weight:bold}tr.div td{background:#fff7e0}tr.ger td{color:#166534}
+tr.grp td{background:#e8f5e9;font-weight:bold}tr.div td{background:#fff7e0}tr.ger td{color:#166534}tr.per td{color:#b45309}
 .kpi{display:flex;gap:8px;flex-wrap:wrap}.kpi div{border:1px solid #ccc;border-radius:6px;padding:6px 10px;font-size:11px}.kpi b{display:block;font-size:14px}
 .op{border:1px solid #ddd;border-radius:6px;padding:8px 10px;margin-bottom:10px;page-break-inside:avoid}.meta{font-size:11px;color:#555;margin:0 0 4px}
 .badge{font-size:10px;font-weight:normal;border:1px solid #999;border-radius:10px;padding:1px 7px;margin-left:6px}
@@ -330,12 +332,12 @@ ${extratoHtml}
                   </TableHeader>
                   <TableBody>
                     {filtrado.ops.flatMap((o: any) => {
-                      const itens = [...o.insumos.map((i: any) => ({ ...i, mov: 'Consumo' })), ...o.gerados.map((i: any) => ({ ...i, mov: 'Gerado' }))];
+                      const itens = [...o.insumos.map((i: any) => ({ ...i, mov: 'Consumo' })), ...o.perdas.map((i: any) => ({ ...i, mov: 'Perda/Avaria' })), ...o.gerados.map((i: any) => ({ ...i, mov: 'Gerado' }))];
                       return itens.map((i: any, idx: number) => (
                         <TableRow key={o.id + i.material_id + i.mov} className={idx === 0 ? 'border-t-2' : ''}>
                           <TableCell className="font-mono text-xs">{idx === 0 ? o.op : ''}</TableCell>
                           <TableCell className="text-xs">{idx === 0 ? <>{o.produto || '-'}<br /><span className="text-gray-400">lote {o.lote || '-'} · {dBR(o.data_producao)}</span></> : ''}</TableCell>
-                          <TableCell className={`text-xs ${i.mov === 'Gerado' ? 'text-emerald-700' : 'text-red-600'}`}>{i.mov}</TableCell>
+                          <TableCell className={`text-xs ${i.mov === 'Gerado' ? 'text-emerald-700' : i.mov === 'Perda/Avaria' ? 'text-amber-700' : 'text-red-600'}`}>{i.mov}</TableCell>
                           <TableCell>{i.material}</TableCell>
                           <TableCell className="text-right">{fq(i.quantidade)} <span className="text-xs text-gray-400">{i.unidade}</span></TableCell>
                           {comCusto && <TableCell className="text-right">{brl(i.valor)}</TableCell>}
