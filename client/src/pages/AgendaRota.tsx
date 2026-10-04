@@ -131,7 +131,7 @@ export default function AgendaRota() {
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse" data-testid={`quadro-semana-${semana}`}>
+        <table className="min-w-full w-max text-sm border-collapse" data-testid={`quadro-semana-${semana}`}>
           <thead>
             <tr className="bg-muted/40">
               <th className="text-left font-medium px-2 py-1 sticky left-0 bg-muted/40 z-10 w-24">&nbsp;</th>
@@ -336,10 +336,16 @@ export default function AgendaRota() {
 
               <Quadro semana={0} titulo={`Mês de ${labelMes(mes)}`} nota="soma das semanas acima" destaque />
 
-              <p className="text-xs text-muted-foreground">
-                Sem = semanal · Qui = quinzenal · Men = mensal · Rep = repescagem · Lea = leads.
-                {" "}Repescagem é sorteada no dia, então as semanas à frente ficam sem ela.
-              </p>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>Sem = semanal · Qui = quinzenal · Men = mensal · Rep = repescagem · Lea = leads.</p>
+                <p>
+                  <b>As últimas semanas do mês costumam aparecer mais vazias.</b> O sistema grava na
+                  agenda só as próximas visitas de cada cliente (4 por vez), então a parte do mês que
+                  ainda está longe pode não ter sido gerada — não é que o vendedor esteja livre, é que
+                  a agenda ainda não chegou lá. Repescagem reforça isso: é sorteada no dia, então nas
+                  semanas à frente a coluna fica sempre vazia.
+                </p>
+              </div>
             </>
           )}
         </CardContent>
