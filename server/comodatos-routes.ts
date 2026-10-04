@@ -385,9 +385,13 @@ async function carregar(id?: string) {
            to_char(c.data_devolucao, 'YYYY-MM-DD') AS data_devolucao,
            to_char(c.nf_aquisicao_data, 'YYYY-MM-DD') AS nf_aquisicao_data,
            cu.name AS cliente_nome, cu.fantasy_name AS cliente_fantasia,
+           cu.company_name AS cliente_razao, coalesce(cu.cnpj, cu.cpf) AS cliente_cnpj,
+           cu.seller_id AS vendedor_id,
+           NULLIF(TRIM(coalesce(u.first_name,'') || ' ' || coalesce(u.last_name,'')), '') AS vendedor_nome,
            (SELECT COUNT(*)::int FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos
       FROM comodato_contracts c
       LEFT JOIN customers cu ON cu.id = c.customer_id
+      LEFT JOIN users u ON u.id = cu.seller_id
      WHERE c.deleted_at IS NULL
        ${id ? sql`AND c.id = ${id}` : sql``}
      ORDER BY c.numero ASC`);

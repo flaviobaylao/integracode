@@ -8,6 +8,7 @@
 // Fonte: /api/comodatos (server/comodatos-routes.ts).
 // -----------------------------------------------------------------------------
 import { useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,8 +24,22 @@ import { queryClient } from "@/lib/queryClient";
 import { exportToExcel } from "@/lib/excelExport";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload,
+  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown,
 } from "lucide-react";
+
+// colunas ordenáveis → função que extrai a chave de ordenação
+const ORDENACOES: Record<string, (c: any) => string | number> = {
+  codigo: (c) => Number(c.numero) || 0,
+  cliente: (c) => (c.cliente_fantasia || c.cliente_nome || c.cliente_razao || "").toLowerCase(),
+  comodatario: (c) => (c.apelido_ponto || c.comodatario_razao || "").toLowerCase(),
+  vendedor: (c) => (c.vendedor_nome || "").toLowerCase(),
+  instalacao: (c) => (c.endereco_instalacao || "").toLowerCase(),
+  equipamento: (c) => [c.marca, c.modelo, c.numero_serie].join(" ").toLowerCase(),
+  valor: (c) => Number(c.valor_bem) || 0,
+  data: (c) => c.data_contrato || "",
+  status: (c) => c.status || "",
+};
+const colar = new Intl.Collator("pt-BR", { sensitivity: "base", numeric: true });
 
 const brl = (v: any) =>
   v == null || isNaN(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -91,6 +106,7 @@ export default function Comodatos() {
   const { toast } = useToast();
   const [busca, setBusca] = useState("");
   const [fStatus, setFStatus] = useState<string>("todos");
+  const [ordem, setOrdem] = useState<{ col: string; asc: boolean }>({ col: "cliente", asc: true });
   const [soPendentes, setSoPendentes] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [aberto, setAberto] = useState(false);
@@ -117,10 +133,31 @@ export default function Comodatos() {
       if (soPendentes && !c.pendencias?.some((p: any) => p.gravidade !== "baixa")) return false;
       if (!q) return true;
       const hay = [c.codigo, c.comodatario_razao, c.apelido_ponto, c.endereco_instalacao, c.marca, c.modelo,
-        c.numero_serie, c.cliente_nome, c.cliente_fantasia].join(" ").toLowerCase();
-      return hay.includes(q) || (qd.length >= 4 && String(c.comodatario_cnpj || "").replace(/\D/g, "").includes(qd));
+        c.numero_serie, c.cliente_nome, c.cliente_fantasia, c.cliente_razao, c.vendedor_nome].join(" ").toLowerCase();
+      return hay.includes(q) || (qd.length >= 4 && [c.comodatario_cnpj, c.cliente_cnpj].some((x) => String(x || "").replace(/\D/g, "").includes(qd)));
+    }).sort((a, b) => {
+      const f = ORDENACOES[ordem.col] || ORDENACOES.cliente;
+      const va = f(a), vb = f(b);
+      // vazio sempre no fim, independente da direção
+      if (va === "" && vb !== "") return 1;
+      if (vb === "" && va !== "") return -1;
+      const r = typeof va === "number" && typeof vb === "number" ? va - vb : colar.compare(String(va), String(vb));
+      return ordem.asc ? r : -r;
     });
-  }, [itens, busca, fStatus, soPendentes]);
+  }, [itens, busca, fStatus, soPendentes, ordem]);
+
+  const ordenarPor = (col: string) => setOrdem((o) => (o.col === col ? { col, asc: !o.asc } : { col, asc: true }));
+  const Th = ({ col, children, className = "" }: { col?: string; children: ReactNode; className?: string }) => (
+    <TableHead className={`bg-slate-100 whitespace-nowrap ${col ? "cursor-pointer select-none hover:bg-slate-200" : ""} ${className}`}
+      onClick={col ? () => ordenarPor(col) : undefined}>
+      <span className="inline-flex items-center gap-1">
+        {children}
+        {col && (ordem.col === col
+          ? (ordem.asc ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
+          : <ArrowUpDown className="w-3 h-3 opacity-30" />)}
+      </span>
+    </TableHead>
+  );
 
   const recarregar = () => queryClient.invalidateQueries({ queryKey: ["/api/comodatos"] });
 
@@ -191,10 +228,13 @@ export default function Comodatos() {
   const exportar = () => {
     exportToExcel(filtrados.map((c) => ({
       "Código": c.codigo,
-      "Ponto (apelido)": c.apelido_ponto || "",
-      "Comodatário": c.comodatario_razao,
-      "CNPJ": c.comodatario_cnpj || "",
-      "Cliente vinculado": c.cliente_fantasia || c.cliente_nome || "",
+      "Cliente - Nome fantasia": c.cliente_fantasia || c.cliente_nome || "",
+      "Cliente - Razão social": c.cliente_razao || "",
+      "Cliente - CNPJ": c.cliente_cnpj || "",
+      "Comodatário - Nome fantasia (ponto)": c.apelido_ponto || "",
+      "Comodatário - Razão social": c.comodatario_razao,
+      "Comodatário - CNPJ": c.comodatario_cnpj || "",
+      "Vendedor": c.vendedor_nome || "",
       "Endereço de instalação": c.endereco_instalacao || "",
       "Cidade/UF": [c.cidade, c.uf].filter(Boolean).join("/"),
       "CEP": c.cep || "",
@@ -262,7 +302,7 @@ export default function Comodatos() {
       <div className="flex gap-2 flex-wrap items-center">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-4 h-4 absolute left-2 top-2.5 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Buscar por ponto, razão social, CNPJ, série, marca…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+          <Input className="pl-8" placeholder="Buscar por cliente, ponto, razão social, CNPJ, vendedor, série, marca…" value={busca} onChange={(e) => setBusca(e.target.value)} />
         </div>
         <select className="border rounded-md h-9 px-2 text-sm bg-background" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
           <option value="todos">Todos os status</option>
@@ -280,29 +320,39 @@ export default function Comodatos() {
       ) : (
         <div className="border rounded-md overflow-auto max-h-[70vh]">
           <Table>
-            <TableHeader className="sticky top-0 bg-background z-10">
+            <TableHeader className="sticky top-0 z-10 shadow-sm">
               <TableRow>
-                <TableHead>Código</TableHead>
-                <TableHead>Ponto / Comodatário</TableHead>
-                <TableHead>Instalação</TableHead>
-                <TableHead>Equipamento</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-                <TableHead>Data</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Pendências</TableHead>
+                <Th col="codigo">Código</Th>
+                <Th col="cliente">Cliente</Th>
+                <Th col="comodatario">Comodatário</Th>
+                <Th col="vendedor">Vendedor</Th>
+                <Th col="instalacao">Instalação</Th>
+                <Th col="equipamento">Equipamento</Th>
+                <Th col="valor" className="text-right">Valor</Th>
+                <Th col="data">Data</Th>
+                <Th col="status">Status</Th>
+                <Th>Pendências</Th>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtrados.map((c) => (
                 <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => abrirEdicao(c)}>
                   <TableCell className="font-mono text-xs whitespace-nowrap">{c.codigo}</TableCell>
-                  <TableCell>
-                    <div className="font-medium">{c.apelido_ponto || c.cliente_fantasia || c.comodatario_razao}</div>
-                    <div className="text-xs text-muted-foreground">{c.comodatario_razao}</div>
-                    <div className="text-xs text-muted-foreground font-mono">{c.comodatario_cnpj}
-                      {c.customer_id && <Link2 className="inline w-3 h-3 ml-1 text-emerald-600" />}
-                    </div>
+                  <TableCell className="min-w-[200px]">
+                    {c.customer_id ? (
+                      <>
+                        <div className="font-medium flex items-center gap-1"><Link2 className="w-3 h-3 text-emerald-600" />{c.cliente_fantasia || c.cliente_nome}</div>
+                        <div className="text-xs text-muted-foreground">{c.cliente_razao || c.cliente_nome}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{c.cliente_cnpj}</div>
+                      </>
+                    ) : <span className="text-xs text-amber-700">Não vinculado</span>}
                   </TableCell>
+                  <TableCell className="min-w-[200px]">
+                    <div className="font-medium">{c.apelido_ponto || c.comodatario_razao}</div>
+                    {c.apelido_ponto && <div className="text-xs text-muted-foreground">{c.comodatario_razao}</div>}
+                    <div className="text-xs text-muted-foreground font-mono">{c.comodatario_cnpj}</div>
+                  </TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">{c.vendedor_nome || <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell className="text-xs max-w-[240px]">
                     {c.endereco_instalacao || <span className="text-muted-foreground">—</span>}
                     {c.cep && <div className="text-muted-foreground">CEP {c.cep}</div>}
@@ -328,7 +378,7 @@ export default function Comodatos() {
                 </TableRow>
               ))}
               {!filtrados.length && (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Nenhum contrato encontrado.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Nenhum contrato encontrado.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
