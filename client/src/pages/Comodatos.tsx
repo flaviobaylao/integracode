@@ -24,8 +24,10 @@ import { queryClient } from "@/lib/queryClient";
 import { exportToExcel } from "@/lib/excelExport";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown,
+  Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText,
 } from "lucide-react";
+
+const SIGNATARIO_PURO_PADRAO = "Flavio Evangelista Baylão Neto";
 
 // colunas ordenáveis → função que extrai a chave de ordenação
 const ORDENACOES: Record<string, (c: any) => string | number> = {
@@ -71,7 +73,8 @@ const VAZIO: any = {
   tensao: "220V", volumeLitros: "", volumeBrutoLitros: "", valorBem: "",
   dataContrato: "", prazo: "Indeterminado", status: "ativo",
   assinadoComodante: false, assinadoComodatario: false, testemunhasAssinadas: false,
-  signatarioComodatario: "", dataDevolucao: "", condicaoDevolucao: "", observacoes: "",
+  signatarioComodatario: "", signatarioComodante: SIGNATARIO_PURO_PADRAO, equipamentoUsado: false,
+  dataDevolucao: "", condicaoDevolucao: "", observacoes: "",
   nfAquisicaoNumero: "", nfAquisicaoData: "", nfAquisicaoFornecedor: "", nfAquisicaoValor: "",
 };
 
@@ -88,6 +91,7 @@ function paraForm(c: any) {
     status: c.status || "ativo",
     assinadoComodante: !!c.assinado_comodante, assinadoComodatario: !!c.assinado_comodatario,
     testemunhasAssinadas: !!c.testemunhas_assinadas, signatarioComodatario: c.signatario_comodatario || "",
+    signatarioComodante: c.signatario_comodante || SIGNATARIO_PURO_PADRAO, equipamentoUsado: !!c.equipamento_usado,
     dataDevolucao: c.data_devolucao || "", condicaoDevolucao: c.condicao_devolucao || "",
     observacoes: c.observacoes || "",
     nfAquisicaoNumero: c.nf_aquisicao_numero || "", nfAquisicaoData: c.nf_aquisicao_data || "",
@@ -114,6 +118,8 @@ export default function Comodatos() {
   const [salvando, setSalvando] = useState(false);
   const [anexos, setAnexos] = useState<any[]>([]);
   const [buscaCli, setBuscaCli] = useState("");
+  const [consultandoCnpj, setConsultandoCnpj] = useState(false);
+  const [gerandoPdf, setGerandoPdf] = useState(false);
   const [cliOpcoes, setCliOpcoes] = useState<any[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -173,6 +179,59 @@ export default function Comodatos() {
     setBuscaCli(q);
     if (q.trim().length < 2) { setCliOpcoes([]); return; }
     try { setCliOpcoes(await api(`/api/comodatos/clientes-busca?q=${encodeURIComponent(q)}`)); } catch { setCliOpcoes([]); }
+  };
+
+  // lupa do CNPJ: Receita Federal + cliente já cadastrado com o mesmo CNPJ
+  const consultarCnpj = async () => {
+    const dig = String(form.comodatarioCnpj || "").replace(/\D/g, "");
+    if (dig.length !== 14) { toast({ title: "Informe um CNPJ com 14 dígitos", variant: "destructive" }); return; }
+    setConsultandoCnpj(true);
+    try {
+      const r = await api(`/api/comodatos/cnpj/${dig}`);
+      const rc = r.receita;
+      setForm((f: any) => ({
+        ...f,
+        comodatarioCnpj: rc?.cnpj || f.comodatarioCnpj,
+        comodatarioRazao: rc?.razaoSocial || f.comodatarioRazao,
+        apelidoPonto: f.apelidoPonto || rc?.nomeFantasia || r.cliente?.fantasy_name || "",
+        enderecoInstalacao: f.enderecoInstalacao || rc?.endereco || "",
+        cidade: rc?.cidade || f.cidade,
+        uf: rc?.uf || f.uf,
+        cep: rc?.cep || f.cep,
+        customerId: f.customerId || r.cliente?.id || null,
+        clienteNome: f.customerId ? f.clienteNome : (r.cliente ? (r.cliente.fantasy_name || r.cliente.name) : f.clienteNome),
+      }));
+      if (rc) {
+        toast({ title: `Receita: ${rc.razaoSocial}`, description: `${rc.situacao || ""}${r.cliente ? " · cliente já cadastrado, vínculo feito" : " · não há cliente cadastrado com esse CNPJ"}` });
+      } else {
+        toast({ title: "Receita indisponível", description: `${r.erroReceita || ""}${r.cliente ? " — vínculo com o cliente cadastrado feito" : ""}`, variant: r.cliente ? "default" : "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Falha na consulta", description: e?.message, variant: "destructive" });
+    } finally {
+      setConsultandoCnpj(false);
+    }
+  };
+
+  // PDF do contrato para assinatura (do que está no formulário; não exige salvar)
+  const gerarPdf = async () => {
+    if (!form.comodatarioRazao.trim()) { toast({ title: "Informe a razão social do comodatário para gerar o contrato", variant: "destructive" }); return; }
+    setGerandoPdf(true);
+    try {
+      const body: any = { ...form, codigo: editId ? itens.find((i) => i.id === editId)?.codigo : undefined };
+      delete body.clienteNome;
+      const r = await fetch("/api/comodatos/contrato.pdf", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e: any) {
+      toast({ title: "Erro ao gerar o PDF", description: e?.message, variant: "destructive" });
+    } finally {
+      setGerandoPdf(false);
+    }
   };
 
   const salvar = async () => {
@@ -397,7 +456,16 @@ export default function Comodatos() {
               <h3 className="font-semibold text-sm text-muted-foreground uppercase">Comodatário</h3>
               <div className="grid md:grid-cols-2 gap-3">
                 <div className="md:col-span-2"><Label>Razão social *</Label><Input value={form.comodatarioRazao} onChange={(e) => set("comodatarioRazao", e.target.value)} /></div>
-                <div><Label>CNPJ/CPF</Label><Input value={form.comodatarioCnpj} onChange={(e) => set("comodatarioCnpj", e.target.value)} /></div>
+                <div>
+                  <Label>CNPJ/CPF</Label>
+                  <div className="flex gap-1">
+                    <Input value={form.comodatarioCnpj} onChange={(e) => set("comodatarioCnpj", e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); consultarCnpj(); } }} />
+                    <Button type="button" variant="outline" size="icon" title="Buscar dados na Receita Federal" onClick={consultarCnpj} disabled={consultandoCnpj}>
+                      {consultandoCnpj ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
                 <div><Label>Apelido do ponto</Label><Input placeholder="Ex.: Colégio Marista" value={form.apelidoPonto} onChange={(e) => set("apelidoPonto", e.target.value)} /></div>
                 <div className="md:col-span-2">
                   <Label>Cliente vinculado</Label>
@@ -448,6 +516,7 @@ export default function Comodatos() {
                 <div><Label>Volume bruto (L)</Label><Input type="number" value={form.volumeBrutoLitros} onChange={(e) => set("volumeBrutoLitros", e.target.value)} /></div>
                 <div><Label>Valor do bem (R$)</Label><Input type="number" step="0.01" value={form.valorBem} onChange={(e) => set("valorBem", e.target.value)} /></div>
               </div>
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.equipamentoUsado} onCheckedChange={(v) => set("equipamentoUsado", !!v)} />Equipamento usado (o contrato sai "usado" em vez de "sem uso")</label>
               <div className="grid md:grid-cols-4 gap-3">
                 <div><Label>NF de aquisição</Label><Input value={form.nfAquisicaoNumero} onChange={(e) => set("nfAquisicaoNumero", e.target.value)} /></div>
                 <div><Label>Data da NF</Label><Input type="date" value={form.nfAquisicaoData} onChange={(e) => set("nfAquisicaoData", e.target.value)} /></div>
@@ -472,7 +541,10 @@ export default function Comodatos() {
                 <label className="flex items-center gap-2"><Checkbox checked={form.assinadoComodatario} onCheckedChange={(v) => set("assinadoComodatario", !!v)} />Assinado pelo comodatário</label>
                 <label className="flex items-center gap-2"><Checkbox checked={form.testemunhasAssinadas} onCheckedChange={(v) => set("testemunhasAssinadas", !!v)} />2 testemunhas assinaram</label>
               </div>
-              <div><Label>Signatário do comodatário</Label><Input value={form.signatarioComodatario} onChange={(e) => set("signatarioComodatario", e.target.value)} /></div>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div><Label>Assina pela PURO (comodante)</Label><Input value={form.signatarioComodante} onChange={(e) => set("signatarioComodante", e.target.value)} /></div>
+                <div><Label>Assina pelo comodatário</Label><Input value={form.signatarioComodatario} onChange={(e) => set("signatarioComodatario", e.target.value)} /></div>
+              </div>
               {["encerrado", "devolvido"].includes(form.status) && (
                 <div className="grid md:grid-cols-3 gap-3">
                   <div><Label>Data da devolução</Label><Input type="date" value={form.dataDevolucao} onChange={(e) => set("dataDevolucao", e.target.value)} /></div>
@@ -509,7 +581,10 @@ export default function Comodatos() {
           </div>
 
           <DialogFooter className="gap-2">
-            {editId && <Button variant="ghost" className="text-red-600 mr-auto" onClick={excluir}><Trash2 className="w-4 h-4 mr-2" />Excluir</Button>}
+            {editId && <Button variant="ghost" className="text-red-600" onClick={excluir}><Trash2 className="w-4 h-4 mr-2" />Excluir</Button>}
+            <Button variant="secondary" className="mr-auto" onClick={gerarPdf} disabled={gerandoPdf}>
+              {gerandoPdf ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}Gerar contrato (PDF)
+            </Button>
             <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando}>{salvando && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Salvar</Button>
           </DialogFooter>

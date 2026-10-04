@@ -29,6 +29,8 @@ import multer from "multer";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
+import { receitaService } from "./receitaIntegration";
+import { montarContratoComodatoPdf, dadosDoContrato, SIGNATARIO_COMODANTE_PADRAO } from "./comodato-pdf";
 
 const ROLES = ["admin", "coordinator", "administrative"];
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -218,7 +220,8 @@ export function ensureComodatosSchema(): Promise<void> {
         "created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), " +
         "deleted_at timestamptz)"
       ));
-      for (const c of ["nf_aquisicao_numero varchar", "nf_aquisicao_data date", "nf_aquisicao_fornecedor text", "nf_aquisicao_valor numeric(12,2)"]) {
+      for (const c of ["nf_aquisicao_numero varchar", "nf_aquisicao_data date", "nf_aquisicao_fornecedor text", "nf_aquisicao_valor numeric(12,2)",
+                       "signatario_comodante text", "equipamento_usado boolean NOT NULL DEFAULT false"]) {
         await db.execute(sql.raw("ALTER TABLE comodato_contracts ADD COLUMN IF NOT EXISTS " + c)).catch(() => {});
       }
       await db.execute(sql.raw(
@@ -357,6 +360,8 @@ const CAMPOS: Record<string, { col: string; conv: (v: any) => any }> = {
   assinadoComodatario: { col: "assinado_comodatario", conv: boolOr },
   testemunhasAssinadas: { col: "testemunhas_assinadas", conv: boolOr },
   signatarioComodatario: { col: "signatario_comodatario", conv: txt },
+  signatarioComodante: { col: "signatario_comodante", conv: txt },
+  equipamentoUsado: { col: "equipamento_usado", conv: boolOr },
   dataDevolucao: { col: "data_devolucao", conv: dateOrNull },
   condicaoDevolucao: { col: "condicao_devolucao", conv: txt },
   observacoes: { col: "observacoes", conv: txt },
@@ -468,6 +473,70 @@ export function registerComodatosRoutes(app: Express) {
       res.json(r.rows || []);
     } catch (e: any) {
       res.status(500).json({ message: e?.message });
+    }
+  });
+
+  // consulta do CNPJ na Receita (lupa do formulário) + cliente já cadastrado com esse CNPJ
+  app.get("/api/comodatos/cnpj/:cnpj", ...guard, async (req: Request, res: Response) => {
+    try {
+      const dig = String(req.params.cnpj || "").replace(/\D/g, "");
+      if (dig.length !== 14) return res.status(400).json({ message: "Informe um CNPJ com 14 dígitos" });
+      if (!receitaService.validarCNPJ(dig)) return res.status(400).json({ message: "CNPJ inválido" });
+      const cli: any = await db.execute(sql`
+        SELECT id, name, fantasy_name, company_name, cnpj, city FROM customers
+         WHERE regexp_replace(coalesce(cnpj,''), '[^0-9]', '', 'g') = ${dig}
+         ORDER BY is_active DESC NULLS LAST LIMIT 1`);
+      const cliente = cli.rows?.[0] || null;
+      let receita: any = null, erroReceita: string | null = null;
+      try {
+        const d = await receitaService.consultarCNPJ(dig);
+        if (d) receita = {
+          cnpj: receitaService.formatarCNPJ(d.cnpj),
+          razaoSocial: d.nome, nomeFantasia: d.fantasia || "",
+          endereco: receitaService.formatarEndereco(d),
+          cidade: d.municipio, uf: d.uf, cep: d.cep, situacao: d.situacao,
+        };
+      } catch (e: any) { erroReceita = e?.message || "Falha na consulta"; }
+      res.json({ receita, erroReceita, cliente });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message });
+    }
+  });
+
+  // PDF do contrato a partir do formulário (antes de salvar)
+  app.post("/api/comodatos/contrato.pdf", ...guard, async (req: Request, res: Response) => {
+    try {
+      const b = req.body || {};
+      const pdf = montarContratoComodatoPdf({
+        ...b,
+        comodanteRazao: b.comodanteRazao || COMODANTE_PADRAO.razao,
+        comodanteCnpj: b.comodanteCnpj || COMODANTE_PADRAO.cnpj,
+        signatarioComodante: b.signatarioComodante || SIGNATARIO_COMODANTE_PADRAO,
+        usado: b.equipamentoUsado === true || b.equipamentoUsado === "true",
+      });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="contrato-comodato.pdf"`);
+      res.send(pdf);
+    } catch (e: any) {
+      console.error("[comodatos] pdf", e);
+      res.status(500).json({ message: e?.message || "Erro ao gerar PDF" });
+    }
+  });
+
+  // PDF de um contrato salvo
+  app.get("/api/comodatos/:id/contrato.pdf", ...guard, async (req: Request, res: Response) => {
+    try {
+      await ensureComodatosSchema();
+      const [item] = await carregar(req.params.id);
+      if (!item) return res.status(404).json({ message: "Contrato não encontrado" });
+      const pdf = montarContratoComodatoPdf(dadosDoContrato(item));
+      const nome = `contrato-comodato-${item.codigo}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename="${nome}"`);
+      res.send(pdf);
+    } catch (e: any) {
+      console.error("[comodatos] pdf", e);
+      res.status(500).json({ message: e?.message || "Erro ao gerar PDF" });
     }
   });
 
