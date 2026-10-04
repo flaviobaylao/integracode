@@ -17,6 +17,11 @@ import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
 import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
 import { runSnapshotClasses } from './carteira-routes';
+import {
+  instanciaSemControleDeEstoque, verificarEstoqueEmUso, baixarEstoqueEmUso, baixaVigenteDoPedido, lotesJaBaixados, ultimoEstornoDoPedido,
+  descreverFaltas, textoLotes, distribuirLotes, ehBloqueioEstoque, SemInstanciaEstoqueError,
+  type FaltaEstoque, type MapaLotes,
+} from './estoque-em-uso';
 
 // Faturamento exige UF resolvível do destinatário (estado cadastrado OU CEP). Sem isso a NF-e
 // sai com CFOP incorreto e é REJEITADA pela SEFAZ. Barramos ANTES da trava/baixa de estoque/criação
@@ -1850,6 +1855,32 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 
   // Get all billing pipeline items (optionally filter by stage)
+  // Situacao do ESTOQUE EM USO dos pedidos ainda nao faturados (pedido, a faturar,
+  // agendado): o card mostra antes do clique se o faturamento vai travar.
+  // Somente leitura — a filial resolvida (pedido -> cliente -> GYN) NAO e gravada.
+  app.get('/api/billing-pipeline/stock-status', authenticateUser, isPipelineViewer, async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT id FROM billing_pipeline WHERE stage::text IN ('pedido','a_faturar','agendado')`);
+      const ids: string[] = ((r?.rows ?? r ?? []) as any[]).map((x: any) => String(x.id));
+      const out: Record<string, { ok: boolean; details: string; filial: string | null }> = {};
+      for (const id of ids) {
+        try {
+          const item: any = await storage.getBillingPipelineItem(id);
+          if (!item) continue;
+          const copia = { ...item };
+          await garantirInstanciaEstoque(copia, { persist: false });
+          const v = await validateStockForBilling(copia);
+          out[id] = { ok: v.valid, details: v.details, filial: copia.omieInstanceName || null };
+        } catch (e: any) {
+          out[id] = { ok: true, details: '', filial: null };
+        }
+      }
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get('/api/billing-pipeline', authenticateUser, isPipelineViewer, async (req: any, res) => {
     try {
       // Promove pedidos agendados vencidos antes de listar (throttle 60s para não custar a cada request).
@@ -2041,17 +2072,16 @@ export function registerBillingPipelineRoutes(app: Express) {
       let balcaoConcluido = false;
 
       if (stage === 'faturado' && item.stage !== 'faturado') {
+        // 📦 ESTOQUE EM USO: so lotes em uso podem ser faturados; faltou para qualquer
+        // produto → o pedido inteiro fica parado ate entrar estoque em uso / correcao.
         const stockCheck = await validateStockForBilling(item);
         if (!stockCheck.valid) {
-          const shortageDetails = stockCheck.shortages.map(s =>
-            `• ${s.productName}: necessário ${s.required}, disponível ${s.available}`
-          ).join('\n');
-          console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} - estoque insuficiente`);
+          console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} - estoque em uso insuficiente`);
           return res.status(400).json({
-            message: 'Faturamento bloqueado: estoque insuficiente',
+            message: 'Faturamento bloqueado: estoque em uso insuficiente',
             stockError: true,
             shortages: stockCheck.shortages,
-            details: `Os seguintes produtos não possuem estoque suficiente para faturamento:\n${shortageDetails}`,
+            details: `Este pedido só pode ser faturado quando houver estoque suficiente (em uso + bloqueado, que é liberado automaticamente quando o em uso acaba).\n${stockCheck.details}`,
           });
         }
 
@@ -2080,12 +2110,25 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
 
         let invoiceDraft: any = null;
-        let lotMap: Record<string, string[]> = {};
+        let lotMap: MapaLotes = {};
         try {
           lotMap = await deductStockForBilling(item, user);
-          console.log(`📦 [BILLING-PIPELINE] Baixa de estoque realizada para item ${req.params.id}`);
+          console.log(`📦 [BILLING-PIPELINE] Baixa de estoque (em uso) realizada para item ${req.params.id}`);
         } catch (stockError: any) {
-          console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque:`, stockError.message);
+          // Baixa e tudo-ou-nada: nada saiu do estoque. Devolve o card para a etapa
+          // em que estava e NAO cria NF — nota sem baixa/sem lote nao pode sair.
+          await db.execute(sql`UPDATE billing_pipeline SET stage = ${item.stage}::billing_pipeline_stage, updated_at = now() WHERE id = ${req.params.id}`);
+          if (ehBloqueioEstoque(stockError)) {
+            console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado na baixa para item ${req.params.id}: ${stockError.message}`);
+            return res.status(400).json({
+              message: 'Faturamento bloqueado: estoque em uso insuficiente',
+              stockError: true,
+              shortages: stockError.faltas,
+              details: `Este pedido só pode ser faturado quando houver estoque suficiente (em uso + bloqueado, que é liberado automaticamente quando o em uso acaba).\n${stockError.details}`,
+            });
+          }
+          console.error(`❌ [BILLING-PIPELINE] Erro ao dar baixa no estoque (faturamento abortado):`, stockError.message);
+          return res.status(500).json({ message: `Erro ao dar baixa no estoque — faturamento não realizado: ${stockError.message}` });
         }
 
         // TRANSFERENCIA ENTRE FILIAIS: fechar o ciclo dando ENTRADA na filial de
@@ -2517,7 +2560,7 @@ export function registerBillingPipelineRoutes(app: Express) {
       }
 
       const user = req.currentUser || req.user;
-      const results: Array<{ id: string; success: boolean; fiscalInvoiceId?: string; error?: string }> = [];
+      const results: Array<{ id: string; success: boolean; fiscalInvoiceId?: string; error?: string; stockError?: boolean }> = [];
 
       for (const id of ids) {
         try {
@@ -2551,6 +2594,13 @@ export function registerBillingPipelineRoutes(app: Express) {
               results.push({ id, success: false, error: fiscalCheck.message });
               continue;
             }
+            // 📦 ESTOQUE EM USO — faltava AQUI: o faturamento em lote nao conferia
+            // estoque nenhum e a NF saia mesmo com o produto zerado.
+            const stockCheck = await validateStockForBilling(item);
+            if (!stockCheck.valid) {
+              results.push({ id, success: false, stockError: true, error: `Faturamento bloqueado: estoque em uso insuficiente. ${stockCheck.details.replace(/\n/g, ' ')}` });
+              continue;
+            }
             // 🔒 TRAVA DE IDEMPOTÊNCIA (claim atômico) — evita NF-e/estoque duplicados em faturamento concorrente.
             const __claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now() WHERE id = ${id} AND stage <> 'faturado'`);
             if (((__claim?.rowCount ?? __claim?.rowsAffected ?? 0) as number) !== 1) {
@@ -2559,11 +2609,15 @@ export function registerBillingPipelineRoutes(app: Express) {
               continue;
             }
             let invoiceDraft: any = null;
-            let lotMap: Record<string, string[]> = {};
+            let lotMap: MapaLotes = {};
             try {
               lotMap = await deductStockForBilling(item, user);
             } catch (stockError: any) {
-              console.error(`❌ [BATCH] Erro baixa estoque para ${id}:`, stockError.message);
+              // Nada foi baixado (tudo-ou-nada): devolve o card e nao cria NF.
+              await db.execute(sql`UPDATE billing_pipeline SET stage = ${item.stage}::billing_pipeline_stage, updated_at = now() WHERE id = ${id}`);
+              console.error(`❌ [BATCH] Baixa de estoque recusada para ${id} (faturamento abortado):`, stockError.message);
+              results.push({ id, success: false, stockError: ehBloqueioEstoque(stockError), error: stockError.message });
+              continue;
             }
 
             // ENTRADA ESPELHO NA FILIAL DE DESTINO — faltava AQUI (Flavio 20/set).
@@ -2720,6 +2774,19 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       } catch (e: any) { console.warn('[RETRY-NFE][DESC] falha ao recalcular totais (segue):', e?.message); }
 
+      // 📦 ESTOQUE EM USO antes de re-transmitir: NF criada quando a baixa falhava
+      // em silencio (antes da regra de 04/out) sairia sem baixa e sem lote. Garante
+      // a baixa do PEDIDO (ou reaproveita a que existe) e grava os lotes nos itens.
+      try {
+        await deductStockForBilling(item, user);
+        const { prepararEstoqueParaEmissao } = await import('./nfe-routes.js');
+        const prep = await prepararEstoqueParaEmissao(nf.id, user?.email || null, { pipelineItem: item });
+        if (prep.bloqueio) return res.status(400).json({ success: false, stockError: true, message: prep.bloqueio.message, details: prep.bloqueio.details });
+      } catch (e: any) {
+        if (ehBloqueioEstoque(e)) return res.status(400).json({ success: false, stockError: true, message: e.message, details: e.details });
+        throw e;
+      }
+
       // Re-transmite a MESMA NF (draft/rejected).
       const emitRes: any = await sefazService.emitNfe(nf.id);
       if (emitRes?.success) return res.json({ success: true });
@@ -2764,6 +2831,9 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (err instanceof ZeroQuantityLineError || err?.code === 'ZERO_QTY_LINE') {
         return res.status(400).json({ success: false, message: err.message, zeroQuantityError: true });
       }
+      if (ehBloqueioEstoque(err)) {
+        return res.status(400).json({ success: false, message: err.message, stockError: true, details: err.details });
+      }
       res.status(500).json({ success: false, message: err.message });
     }
   });
@@ -2794,57 +2864,99 @@ export function registerBillingPipelineRoutes(app: Express) {
   });
 }
 
-// Instancias que NAO controlam estoque por lote no Integra: o faturamento por elas nao e
-// bloqueado por falta de saldo e nao gera baixa de lote. Hoje so a SERV (PURO SERVICOS),
-// que fatura mercadoria sem manter inventario proprio no modulo de estoque.
-// ATENCAO: incluir uma instancia aqui DESLIGA a trava de estoque para TODAS as notas dela.
-const INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE = new Set(['SERV']);
-
-async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: Array<{ productId: string; productName: string; required: number; available: number }> }> {
-  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
-  if (!products || products.length === 0) return { valid: true, shortages: [] };
-
-  const instanceId = item.omieInstanceId;
-  if (!instanceId) return { valid: true, shortages: [] };
-
-  const _instSemEstoque = String(item.omieInstanceName || '').toUpperCase().trim();
-  if (INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE.has(_instSemEstoque)) {
-    console.log(`📦 [STOCK] Instancia ${_instSemEstoque} nao controla estoque - validacao dispensada (item ${item.id})`);
-    return { valid: true, shortages: [] };
-  }
-
-  const shortages: Array<{ productId: string; productName: string; required: number; available: number }> = [];
-
-  for (const product of products) {
-    if (!product.id) continue;
-
-    // Em uso + bloqueado: o bloqueado e a fila de reposicao (entrada por
-    // transferencia) e e promovido a "em uso" automaticamente na baixa, quando o
-    // lote em uso acaba. Contar so o em uso travaria o faturamento da filial logo
-    // depois de receber mercadoria.
-    const lots = (await storage.getInventoryLots({
-      productId: product.id,
-      instanceId,
-      isActive: true,
-    })).filter((l: any) => l.stockType === 'in_use' || l.stockType === 'blocked');
-
-    let totalAvailable = 0;
-    for (const lot of lots) {
-      const qty = parseFloat(lot.quantity?.toString() || '0');
-      if (qty > 0) totalAvailable += qty;
+// FILIAL DO ESTOQUE do pedido. Regra geral: a filial do pedido (= emitente).
+// VENDA DE BALCAO (NFC-e): o produto sai SEMPRE do estoque da GYN — a mesma
+// filial que emite a NFC-e (CSC/serie 65), seja qual for a filial do pedido.
+// Pedido de balcao = sales_cards.source = 'balcao' (mesmo criterio do modelo 65).
+export const INSTANCIA_ESTOQUE_BALCAO = 'GYN';
+export async function instanciaDeEstoque(item: any): Promise<string | null> {
+  try {
+    if (item?.salesCardId) {
+      const r: any = await db.execute(sql`SELECT source FROM sales_cards WHERE id = ${item.salesCardId} LIMIT 1`);
+      const src = String(((r?.rows ?? r ?? []) as any[])[0]?.source || '').toLowerCase();
+      if (src === 'balcao') {
+        const inst: any = (await storage.getOmieInstances()).find((i: any) => String(i?.name || '').toUpperCase().trim() === INSTANCIA_ESTOQUE_BALCAO);
+        if (inst) return inst.id;
+        console.warn('[STOCK] instancia GYN nao encontrada para o estoque do balcao; usando a do pedido.');
+      }
     }
-
-    if (totalAvailable < product.quantity) {
-      shortages.push({
-        productId: product.id,
-        productName: product.name,
-        required: product.quantity,
-        available: totalAvailable,
-      });
-    }
+  } catch (e: any) {
+    console.warn('[STOCK] nao foi possivel ler a origem do card (usa a filial do pedido):', e?.message);
   }
+  return item?.omieInstanceId || null;
+}
 
-  return { valid: shortages.length === 0, shortages };
+// Deixa o bloqueio por estoque VISIVEL no proprio pedido (observacao + historico),
+// para quem abrir o card saber por que a nota nao saiu e fatura-lo apos corrigir
+// o estoque em uso. Nao repete a mesma anotacao no mesmo dia.
+export async function registrarBloqueioEstoqueNoPedido(item: any, details: string, oQue: string): Promise<void> {
+  try {
+    if (!item?.id) return;
+    const hoje = hojeBR();
+    const marca = `[BLOQUEIO ESTOQUE ${hoje}]`;
+    const notas = String(item.notes || '');
+    if (notas.includes(marca)) return;
+    const linha = `${marca} ${oQue}: estoque em uso insuficiente. ${String(details || '').replace(/\s*\n\s*/g, '; ')} — faturar pelo pipeline após corrigir o estoque.`;
+    const historico = Array.isArray(item.stageHistory) ? [...item.stageHistory] : [];
+    historico.push({ stage: item.stage, changedAt: paredeBR(agora()), changedBy: 'bloqueio-estoque', note: linha.slice(0, 500) });
+    const novasNotas = notas ? `${notas}\n${linha}` : linha;
+    await storage.updateBillingPipelineItem(item.id, { notes: novasNotas, stageHistory: historico } as any);
+    item.notes = novasNotas; item.stageHistory = historico;
+  } catch (e: any) {
+    console.warn('[STOCK] nao registrou o bloqueio no pedido:', e?.message);
+  }
+}
+
+// INSTANCIA DE ESTOQUE do pedido — a MESMA que vai emitir a NF.
+// Ordem: instancia do pedido -> instancia do cadastro do cliente -> GYN.
+// A GYN e o fallback do emitente (createInvoiceFromPipelineItem); sem isto,
+// os pedidos sem filial (metade dos faturados de set/26) ficariam bloqueados
+// por "pedido sem filial" ou sairiam da GYN sem baixar estoque. A instancia
+// resolvida e GRAVADA no item, para baixa, emitente e ambiente fiscal
+// sairem todos da mesma filial. Muta o objeto recebido.
+export async function garantirInstanciaEstoque(item: any, opts?: { persist?: boolean }): Promise<void> {
+  if (!item || item.omieInstanceId) return;
+  const persist = opts?.persist !== false;
+  try {
+    const instancias: any[] = await storage.getOmieInstances();
+    let alvo: any = null;
+    if (item.customerId) {
+      const cli: any = await storage.getCustomer(item.customerId).catch(() => null);
+      const cid = cli?.omieInstanceId;
+      if (cid) alvo = instancias.find((i: any) => i.id === cid) || null;
+    }
+    if (!alvo) alvo = instancias.find((i: any) => String(i?.name || '').toUpperCase().trim() === 'GYN') || null;
+    if (!alvo) return;
+    const patch = { omieInstanceId: alvo.id, omieInstanceName: alvo.displayName || alvo.name };
+    if (persist && item.id) await storage.updateBillingPipelineItem(item.id, patch).catch((e: any) => console.warn('[STOCK] nao gravou instancia no pedido:', e?.message));
+    Object.assign(item, patch);
+    if (persist) console.log(`📦 [STOCK] pedido ${item.orderNumber || item.id} sem filial -> ${patch.omieInstanceName} (fallback do emitente)`);
+  } catch (e: any) {
+    console.warn('[STOCK] falha ao resolver instancia do pedido:', e?.message);
+  }
+}
+
+// Trava de estoque do faturamento: so lotes EM USO contam (ver server/estoque-em-uso.ts).
+// Linha sem produto do cadastro tambem bloqueia — sem produto nao ha lote para a NF.
+async function validateStockForBilling(item: any): Promise<{ valid: boolean; shortages: FaltaEstoque[]; semProduto: string[]; details: string }> {
+  const products = item.products as any[] | null;
+  if (!products || products.length === 0) return { valid: true, shortages: [], semProduto: [], details: '' };
+  await garantirInstanciaEstoque(item);
+  if (instanciaSemControleDeEstoque(item.omieInstanceName)) {
+    console.log(`📦 [STOCK] Instancia ${item.omieInstanceName} nao controla estoque - validacao dispensada (item ${item.id})`);
+    return { valid: true, shortages: [], semProduto: [], details: '' };
+  }
+  // Refaturamento de pedido que ja teve baixa (e nao foi estornada): o estoque ja saiu.
+  if (await baixaVigenteDoPedido(item)) return { valid: true, shortages: [], semProduto: [], details: '' };
+  const instanceId = await instanciaDeEstoque(item);
+  if (!instanceId) {
+    return { valid: false, shortages: [], semProduto: [], details: 'Pedido sem filial/instância de estoque definida — não há de onde baixar o estoque em uso.' };
+  }
+  const r = await verificarEstoqueEmUso(instanceId, products);
+  const partes: string[] = [];
+  if (r.shortages.length) partes.push(`Produtos sem estoque em uso suficiente:\n${descreverFaltas(r.shortages)}`);
+  if (r.semProduto.length) partes.push(`Itens sem vínculo com produto do cadastro: ${r.semProduto.join(', ')}`);
+  return { valid: r.valid, shortages: r.shortages, semProduto: r.semProduto, details: partes.join('\n') };
 }
 
 // ===========================================================================
@@ -3003,175 +3115,50 @@ export async function mirrorTransferToDestination(item: any, user: any): Promise
   }
 }
 
-// ===========================================================================
-// PROMOCAO DE LOTE BLOQUEADO -> EM USO (Flavio, 04/out/2026)
-// O estoque bloqueado e a fila de reposicao da filial (entrada por NF de
-// transferencia). Quando o saldo em uso de um produto nao cobre uma saida, o
-// lote bloqueado mais antigo vira "em uso" — mantendo o PROPRIO numero de lote e
-// o PROPRIO CMV (nao funde com outro lote). Repete ate cobrir ou acabar a fila.
-// Exportada para consumeStock (inventory-routes) usar a mesma regra.
-// ===========================================================================
-export async function promoteBlockedLotsIfNeeded(
-  productId: string,
-  instanceId: string,
-  required: number,
-  inUseLots: any[],
-  by: string | null,
-  item?: any,
-): Promise<any[]> {
-  const saldo = (ls: any[]) => ls.reduce((s2, l) => s2 + Math.max(0, parseFloat(l.quantity?.toString() || '0')), 0);
-  let disponivel = saldo(inUseLots);
-  if (disponivel >= required) return inUseLots;
+// Baixa de estoque do faturamento — SOMENTE lotes em uso, tudo-ou-nada.
+// Lanca EstoqueInsuficienteError / LinhaSemProdutoError (nada e baixado) quando
+// o pedido nao cabe no estoque em uso; o chamador DEVE abortar o faturamento.
+// Retorna, por produto, os lotes consumidos e quanto saiu de cada um.
+export async function deductStockForBilling(item: any, user: any): Promise<MapaLotes> {
+  const products = item.products as any[] | null;
+  if (!products || products.length === 0) return {};
 
-  const bloqueados = (await storage.getInventoryLots({ productId, instanceId, stockType: 'blocked', isActive: true }))
-    .filter((l: any) => parseFloat(l.quantity?.toString() || '0') > 0);
-  if (!bloqueados.length) return inUseLots;
-
-  const promovidos: any[] = [];
-  for (const b of bloqueados) {
-    if (disponivel >= required) break;
-    const q = parseFloat(b.quantity?.toString() || '0');
-    const up = await storage.updateInventoryLot(b.id, { stockType: 'in_use' } as any);
-    await storage.createInventoryMovement({
-      lotId: b.id,
-      productId,
-      instanceId,
-      movementType: 'transfer',
-      quantity: q.toFixed(4),
-      previousQuantity: q.toFixed(4),
-      newQuantity: q.toFixed(4),
-      sourceType: item ? 'invoice' : 'manual',
-      sourceId: item?.id || null,
-      lotNumber: b.lotNumber,
-      notes: `Lote bloqueado ${b.lotNumber} liberado para estoque em uso (estoque em uso esgotado)`,
-      createdBy: by,
-    } as any);
-    console.log(`🔓 [STOCK] Lote ${b.lotNumber} (${q} un) promovido de bloqueado para em uso — instancia ${instanceId}`);
-    promovidos.push(up || { ...b, stockType: 'in_use' });
-    disponivel += q;
+  await garantirInstanciaEstoque(item);
+  if (instanciaSemControleDeEstoque(item.omieInstanceName)) {
+    console.log(`📦 [STOCK] Instancia ${item.omieInstanceName} nao controla estoque - baixa dispensada (item ${item.id})`);
+    return {};
   }
-  // Ordem de consumo: primeiro o que ja estava em uso, depois os recem-promovidos (FIFO).
-  return [...inUseLots, ...promovidos];
-}
 
-// exportada para o harness server/__tests__/harness-lotexato.ts
-export async function deductStockForBilling(item: any, user: any): Promise<Record<string, string[]>> {
-  const lotMap: Record<string, string[]> = {};
-  const products = item.products as Array<{ id?: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
-  if (!products || products.length === 0) return lotMap;
+  // ── 🔁 UMA BAIXA POR PEDIDO ─────────────────────────────────────────────────
+  // O card que volta para "Faturado" refazia todo o faturamento e consumia o lote
+  // outra vez. Se ja existe baixa VIGENTE (nao estornada) para este pedido, ela nao
+  // se repete — e os lotes dela continuam indo para a NF.
+  const desde = await ultimoEstornoDoPedido(item);
+  const vigente = await lotesJaBaixados([item.id], desde);
+  if (vigente) {
+    console.warn(`[STOCK-DEDUP] pedido ${item.orderNumber || item.salesCardId || item.id} ja teve baixa de estoque — reaproveitando os lotes dela.`);
+    return vigente;
+  }
 
-  const instanceId = item.omieInstanceId;
+  const instanceId = await instanciaDeEstoque(item);
   if (!instanceId) {
-    console.log(`⚠️ [STOCK] Item ${item.id} sem omieInstanceId, não é possível dar baixa no estoque`);
-    return lotMap;
+    throw new SemInstanciaEstoqueError();
   }
 
-  const _instSemEstoqueBaixa = String(item.omieInstanceName || '').toUpperCase().trim();
-  if (INSTANCIAS_SEM_CONTROLE_DE_ESTOQUE.has(_instSemEstoqueBaixa)) {
-    console.log(`📦 [STOCK] Instancia ${_instSemEstoqueBaixa} nao controla estoque - baixa dispensada (item ${item.id})`);
-    return lotMap;
-  }
-
-  // ── 🔁 UMA BAIXA POR PEDIDO (mesma trava do título) ─────────────────────────
-  // O card que volta para "Faturado" refazia TODO o faturamento, e a baixa de
-  // estoque não tinha trava nenhuma: cada volta consumia o lote outra vez, e a
-  // mercadoria sumia do estoque sem ter saído do galpão. Se já existe consumo
-  // registrado para ESTE pedido, a baixa não se repete.
   try {
-    const jaBaixou: any = await db.execute(sql`
-      SELECT 1 FROM inventory_movements
-       WHERE source_type = 'invoice' AND source_id = ${item.id} AND movement_type = 'consume'
-       LIMIT 1`);
-    if (((jaBaixou?.rows ?? jaBaixou ?? []) as any[]).length) {
-      console.warn(`[STOCK-DEDUP] pedido ${item.orderNumber || item.salesCardId || item.id} ja teve baixa de estoque — baixa duplicada evitada.`);
-      return lotMap;
-    }
-  } catch (e: any) {
-    console.warn('[STOCK-DEDUP] falha ao checar baixa anterior (segue):', e?.message || e);
-  }
-
-  for (const product of products as any[]) {
-    if (!product.id) continue;
-
-    let lots = await storage.getInventoryLots({
-      productId: product.id,
+    return await baixarEstoqueEmUso({
       instanceId,
-      stockType: 'in_use',
-      isActive: true,
+      products,
+      sourceId: item.id,
+      rotulo: `Faturamento ${item.orderNumber || item.salesCardId || item.id}`,
+      createdBy: user?.email || null,
+      impedirDuplicadaDesde: desde,
     });
-
-    // PROMOCAO DO BLOQUEADO (Flavio, 04/out/2026): quando o estoque em uso nao
-    // cobre a quantidade, o lote bloqueado mais antigo (FIFO) passa a ser em uso.
-    lots = await promoteBlockedLotsIfNeeded(product.id, instanceId, Number(product.quantity) || 0, lots, user?.email || null, item);
-
-    // LOTE EXATO (pedido de transferencia entre filiais): a linha foi precificada
-    // pelo CMV de UM lote especifico, entao a baixa tem de sair desse lote. Deixar o
-    // FIFO escolher outro faria a NF sair com um lote diferente do cobrado — e o CMV
-    // da filial de destino nasceria errado. O lote pedido vai para a frente da fila;
-    // o resto da fila continua atras, como rede de seguranca se o saldo nao bastar.
-    if (product.lotId) {
-      const escolhido = lots.find((l: any) => l.id === product.lotId);
-      if (escolhido) {
-        lots = [escolhido, ...lots.filter((l: any) => l.id !== product.lotId)];
-      } else {
-        console.warn(`⚠️ [STOCK] Lote ${product.lotNumber || product.lotId} pedido na transferencia nao esta mais disponivel — caindo no FIFO`);
-      }
-    }
-
-    if (lots.length === 0) {
-      console.log(`⚠️ [STOCK] Produto ${product.name} (${product.id}) sem lotes disponíveis na instância ${instanceId}`);
-      continue;
-    }
-
-    let remaining = product.quantity;
-    const consumedLots: string[] = [];
-
-    for (const lot of lots) {
-      if (remaining <= 0) break;
-
-      const currentQty = parseFloat(lot.quantity?.toString() || '0');
-      if (currentQty <= 0) continue;
-
-      const deductQty = Math.min(remaining, currentQty);
-      const newQty = currentQty - deductQty;
-
-      await storage.updateInventoryLot(lot.id, {
-        quantity: newQty.toFixed(4),
-      });
-
-      await storage.createInventoryMovement({
-        lotId: lot.id,
-        productId: product.id,
-        instanceId,
-        movementType: 'consume',
-        quantity: deductQty.toFixed(4),
-        previousQuantity: currentQty.toFixed(4),
-        newQuantity: newQty.toFixed(4),
-        sourceType: 'invoice',
-        sourceId: item.id,
-        lotNumber: lot.lotNumber,
-        notes: `Baixa automática - Faturamento ${item.orderNumber || item.salesCardId} - ${product.name}`,
-        createdBy: user?.email || null,
-      });
-
-      if (lot.lotNumber) {
-        consumedLots.push(lot.lotNumber);
-      }
-
-      remaining -= deductQty;
-      console.log(`📦 [STOCK] Baixa: ${deductQty} un de "${product.name}" do lote ${lot.lotNumber} (${currentQty} → ${newQty})`);
-    }
-
-    if (consumedLots.length > 0) {
-      lotMap[product.id] = consumedLots;
-    }
-
-    if (remaining > 0) {
-      console.log(`⚠️ [STOCK] Estoque insuficiente: faltam ${remaining} un de "${product.name}" na instância ${instanceId}`);
-    }
+  } catch (e: any) {
+    // Chamada concorrente (duplo clique, retentativa) baixou primeiro: usa a baixa dela.
+    if (e?.baixaJaFeita) return (await lotesJaBaixados([item.id], desde)) || {};
+    throw e;
   }
-
-  return lotMap;
 }
 
 // CONDICAO DE PAGAMENTO efetiva do faturamento — UNICA fonte para a NF-e (pag/cobr) e para os
@@ -3196,10 +3183,12 @@ async function resolveCondicaoPagamento(item: any): Promise<{ effForma: string; 
   return { effForma, prazoDays, hasCadastro, custCond };
 }
 
-async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Record<string, string[]>, opts?: { skipEmit?: boolean }) {
+async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: MapaLotes | null, opts?: { skipEmit?: boolean }) {
   // 🚫 REDE FINAL: nenhuma NF nasce com item de quantidade zero, venha o pedido
   //    de onde vier (retentativa, balcao, reconciliacao, dado legado).
   assertNoZeroQuantityLines((item as any)?.products, `pedido ${item?.orderNumber || item?.salesCardId || item?.id}`);
+  // Emitente e estoque saem da MESMA filial (pedido -> cliente -> GYN), gravada no item.
+  await garantirInstanciaEstoque(item);
   // 🔁 IDEMPOTÊNCIA: se já existe NF-e (não cancelada) para o MESMO pedido do pipeline, não cria outra.
   // ⚠️ CHAVE À PROVA DE COLISÃO: casa pelo sales_card_id COMPLETO. O ref textual do pedido
   //    (orderNumber = 'INT-<8 hex>') TRUNCA o UUID em 8 caracteres e COLIDE entre cartões distintos
@@ -3219,6 +3208,14 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
       return { id: __row.id, invoiceNumber: __row.invoice_number };
     }
   } catch (e: any) { console.warn('[NFE-DEDUP] falha ao checar duplicata (segue):', e?.message); }
+
+  // 📦 LOTES DA NF. Nenhuma NF de pedido sai sem a baixa do estoque em uso e sem
+  // os lotes: quem chamou sem o mapa (retentativa/reemissao) reaproveita a baixa
+  // vigente do pedido; se nao houve baixa nenhuma, ela e feita AGORA — e se faltar
+  // estoque em uso, deductStockForBilling lanca e a NF nao e criada.
+  if (!lotMap || Object.keys(lotMap).length === 0) {
+    lotMap = (await baixaVigenteDoPedido(item)) || (await deductStockForBilling(item, user));
+  }
   const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
 
   // ── REDE DE CLIENTES: destinatario x local de entrega ──────────────────────
@@ -3536,6 +3533,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
   // [DESCONTO NA NF] rateio proporcional do desconto entre os itens; o residuo de centavos vai
   // no ultimo item para que a soma dos vDesc feche exatamente com o vDesc do <ICMSTot>.
   let _descAcum = 0;
+  const __lotesDasLinhas = distribuirLotes(lotMap, (products || []) as any[]);
   if (products && products.length > 0) {
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
@@ -3556,17 +3554,21 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Reco
           itemNcm = ncmDoProduto((productData as any).ncm);
         }
       }
+      // LOTE NA NF: cada produto sai com o(s) lote(s) EM USO de onde a baixa saiu
+      // (e a quantidade de cada um quando foi mais de um). O sefaz-service leva o
+      // lot_number do item para o infAdProd da NF-e e a DANFE imprime.
       let productName = p.name;
-      if (lotMap && p.id && lotMap[p.id] && lotMap[p.id].length > 0) {
-        const lotNumbers = lotMap[p.id].join(', ');
-        productName = `${p.name} - Lote: ${lotNumbers}`;
-      }
+      const lotesDoItem = __lotesDasLinhas[i] || [];
+      const lotTxt = textoLotes(lotesDoItem);
+      if (lotTxt) productName = `${p.name} - ${lotTxt}`;
       await storage.createFiscalInvoiceItem({
         invoiceId: invoice.id,
         itemNumber: i + 1,
         productName,
         productCode,
         productId: p.id || null,
+        lotNumber: lotTxt ? lotTxt.replace(/^Lote:\s*/, '').slice(0, 250) : null,
+        lotId: lotesDoItem.length === 1 ? lotesDoItem[0].lotId : null,
         ncm: itemNcm,
         cfop,
         unit: 'UN',
@@ -3680,7 +3682,8 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       return await danfeNfceDoCard(salesCardId); // idempotente: ja faturado
     }
 
-    // 1b) ESTOQUE DA GYN. A venda de balcao sai do estoque fisico de Goiania.
+    // 1b) GYN. A NFC-e sai pelo CNPJ da GYN (CSC/serie 65) e o estoque
+    //     baixado tambem e o da GYN — ver instanciaDeEstoque().
     //     O CONSUMIDOR BALCAO e sintetico e nao tem instancia, entao o item
     //     nascia sem omieInstanceId e deductStockForBilling pulava a baixa
     //     inteira ("sem omieInstanceId"). Alem disso o card do PDV grava o
@@ -3705,6 +3708,17 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       console.warn('[BALCAO] nao foi possivel fixar a instancia GYN (segue):', e?.message);
     }
 
+    // 1c) ESTOQUE EM USO — mesma regra de todo faturamento: sem saldo em lote em
+    //     uso na GYN para todos os itens, a NFC-e NAO sai. A venda continua paga e
+    //     registrada; o pedido fica no pipeline (a faturar) e e faturado pela tela
+    //     assim que o estoque em uso for corrigido.
+    const stockCheckBalcao = await validateStockForBilling(item);
+    if (!stockCheckBalcao.valid) {
+      console.warn(`🚫 [BALCAO] NFC-e da venda ${salesCardId} bloqueada — estoque em uso insuficiente: ${stockCheckBalcao.details.replace(/\n/g, ' ')}`);
+      await registrarBloqueioEstoqueNoPedido(item, stockCheckBalcao.details, 'NFC-e do balcão não emitida');
+      return null;
+    }
+
     // 2) Claim atomico — mesma trava do faturamento manual. Duas chamadas
     //    concorrentes (reenvio do app, dedo duplo) nao emitem duas notas.
     const claim: any = await db.execute(sql`UPDATE billing_pipeline SET stage = 'faturado', updated_at = now()
@@ -3713,9 +3727,15 @@ export async function faturarVendaBalcao(salesCardId: string, quem = 'balcao (ma
       return await danfeNfceDoCard(salesCardId);
     }
 
-    let lotMap: Record<string, string[]> = {};
+    let lotMap: MapaLotes = {};
     try { lotMap = await deductStockForBilling(item, { email: quem }); }
-    catch (e: any) { console.warn('[BALCAO] baixa de estoque falhou (segue):', e?.message); }
+    catch (e: any) {
+      // tudo-ou-nada: nada baixou. Devolve o card e nao emite a NFC-e.
+      await db.execute(sql`UPDATE billing_pipeline SET stage = ${item.stage}::billing_pipeline_stage, updated_at = now() WHERE id = ${item.id}`);
+      console.warn(`🚫 [BALCAO] baixa de estoque recusada — NFC-e da venda ${salesCardId} nao emitida:`, e?.message);
+      if (ehBloqueioEstoque(e)) await registrarBloqueioEstoqueNoPedido(item, e.details || e.message, 'NFC-e do balcão não emitida');
+      return null;
+    }
 
     // No-op para venda de balcao (so age em operationType='transferencia'), mas fica
     // aqui para a regra valer sem excecao: toda baixa de estoque tem o seu espelho.

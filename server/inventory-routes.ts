@@ -513,6 +513,10 @@ export function registerInventoryRoutes(app: Express) {
 // STOCK CONSUMPTION LOGIC (exported for use by NF-e flows)
 // ============================================================================
 
+// Baixa avulsa (rota /api/inventory/consume). Mesma regra do faturamento:
+// SOMENTE lotes em uso, tudo-ou-nada. Nao existe mais a "transferencia
+// automatica" de lote bloqueado para em uso — lote bloqueado nao e faturado
+// (Flavio, 04/out/2026); liberar um lote bloqueado e decisao manual no estoque.
 export async function consumeStock(
   productId: string,
   instanceId: string,
@@ -521,152 +525,24 @@ export async function consumeStock(
   sourceId: string | null,
   createdBy: string | null,
 ): Promise<{ success: boolean; lotNumber: string; consumed: number; transferred: boolean; message?: string }> {
-  let inUseLots = await storage.getInventoryLots({
-    productId,
-    instanceId,
-    stockType: 'in_use',
-    isActive: true,
-  });
-
-  // Sem lote em uso (ex.: filial que so recebeu transferencia, que entra como
-  // BLOQUEADO): o bloqueado mais antigo passa a ser em uso antes do consumo.
-  if (!inUseLots.some((l) => parseFloat(l.quantity) > 0)) {
-    const { promoteBlockedLotsIfNeeded } = await import('./billing-pipeline-routes');
-    const promovidos = await promoteBlockedLotsIfNeeded(productId, instanceId, 1, [], createdBy);
-    if (promovidos.length) inUseLots = [...promovidos, ...inUseLots];
-  }
-
-  const inUseLot = inUseLots[0];
-  if (!inUseLot) {
-    return { success: false, lotNumber: '', consumed: 0, transferred: false, message: 'Nenhum lote em uso encontrado para este produto/instância' };
-  }
-
-  let currentQty = parseFloat(inUseLot.quantity);
-  let remaining = quantity;
-  let usedLotNumber = inUseLot.lotNumber;
-  let transferred = false;
-
-  if (currentQty >= remaining) {
-    const newQty = currentQty - remaining;
-    await storage.updateInventoryLot(inUseLot.id, { quantity: newQty.toString() });
-    await storage.createInventoryMovement({
-      lotId: inUseLot.id,
-      productId,
+  const { baixarEstoqueEmUso, ehBloqueioEstoque } = await import('./estoque-em-uso.js');
+  try {
+    const mapa = await baixarEstoqueEmUso({
       instanceId,
-      movementType: 'consume',
-      quantity: (-remaining).toString(),
-      previousQuantity: currentQty.toString(),
-      newQuantity: newQty.toString(),
-      sourceType,
-      sourceId,
-      lotNumber: inUseLot.lotNumber,
-      notes: `Consumo de ${remaining} unidades`,
+      products: [{ id: productId, name: productId, quantity }],
+      sourceId: sourceId || `${sourceType}-avulso`,
+      rotulo: `Baixa ${sourceType}${sourceId ? ' ' + sourceId : ''}`,
       createdBy,
-    });
-    return { success: true, lotNumber: usedLotNumber, consumed: quantity, transferred: false };
-  }
-
-  if (currentQty > 0) {
-    await storage.updateInventoryLot(inUseLot.id, { quantity: '0' });
-    await storage.createInventoryMovement({
-      lotId: inUseLot.id,
-      productId,
-      instanceId,
-      movementType: 'consume',
-      quantity: (-currentQty).toString(),
-      previousQuantity: currentQty.toString(),
-      newQuantity: '0',
       sourceType,
-      sourceId,
-      lotNumber: inUseLot.lotNumber,
-      notes: `Consumo de ${currentQty} unidades (esgotou lote em uso)`,
-      createdBy,
     });
-    remaining -= currentQty;
+    const lotes = mapa[productId] || [];
+    return { success: true, lotNumber: lotes.map((l) => l.lotNumber).join(', '), consumed: quantity, transferred: false };
+  } catch (e: any) {
+    if (ehBloqueioEstoque(e)) {
+      return { success: false, lotNumber: '', consumed: 0, transferred: false, message: e.details || e.message };
+    }
+    throw e;
   }
-
-  const blockedLots = await storage.getInventoryLots({
-    productId,
-    instanceId,
-    stockType: 'blocked',
-    isActive: true,
-  });
-
-  const blockedLot = blockedLots.find(l => parseFloat(l.quantity) > 0);
-  if (!blockedLot) {
-    return {
-      success: false,
-      lotNumber: usedLotNumber,
-      consumed: quantity - remaining,
-      transferred: false,
-      message: `Estoque insuficiente. Consumido: ${quantity - remaining}, Faltam: ${remaining}`,
-    };
-  }
-
-  const blockedQty = parseFloat(blockedLot.quantity);
-  await storage.updateInventoryLot(inUseLot.id, {
-    lotNumber: blockedLot.lotNumber,
-    quantity: blockedQty.toString(),
-  });
-  await storage.createInventoryMovement({
-    lotId: inUseLot.id,
-    productId,
-    instanceId,
-    movementType: 'transfer',
-    quantity: blockedQty.toString(),
-    previousQuantity: '0',
-    newQuantity: blockedQty.toString(),
-    sourceType: 'manual',
-    lotNumber: blockedLot.lotNumber,
-    notes: `Transferência automática: lote bloqueado ${blockedLot.lotNumber} → lote em uso`,
-    createdBy,
-  });
-
-  await storage.updateInventoryLot(blockedLot.id, { quantity: '0', isActive: false });
-  await storage.createInventoryMovement({
-    lotId: blockedLot.id,
-    productId,
-    instanceId,
-    movementType: 'transfer',
-    quantity: (-blockedQty).toString(),
-    previousQuantity: blockedQty.toString(),
-    newQuantity: '0',
-    sourceType: 'manual',
-    lotNumber: blockedLot.lotNumber,
-    notes: `Lote bloqueado ${blockedLot.lotNumber} transferido para estoque em uso`,
-    createdBy,
-  });
-
-  transferred = true;
-  usedLotNumber = blockedLot.lotNumber;
-
-  if (blockedQty >= remaining) {
-    const newQty = blockedQty - remaining;
-    await storage.updateInventoryLot(inUseLot.id, { quantity: newQty.toString() });
-    await storage.createInventoryMovement({
-      lotId: inUseLot.id,
-      productId,
-      instanceId,
-      movementType: 'consume',
-      quantity: (-remaining).toString(),
-      previousQuantity: blockedQty.toString(),
-      newQuantity: newQty.toString(),
-      sourceType,
-      sourceId,
-      lotNumber: usedLotNumber,
-      notes: `Consumo de ${remaining} unidades (após transferência de lote)`,
-      createdBy,
-    });
-    return { success: true, lotNumber: usedLotNumber, consumed: quantity, transferred };
-  }
-
-  return {
-    success: false,
-    lotNumber: usedLotNumber,
-    consumed: quantity - remaining + blockedQty,
-    transferred,
-    message: `Estoque insuficiente mesmo após transferência. Consumido parcial.`,
-  };
 }
 
 export async function reverseStockConsumption(

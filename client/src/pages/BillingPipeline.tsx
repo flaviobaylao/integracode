@@ -446,6 +446,11 @@ export default function BillingPipeline() {
     staleTime: 15000,
   });
 
+  // Situacao do estoque EM USO dos pedidos ainda nao faturados (badge no card).
+  const { data: stockStatus = {} } = useQuery<Record<string, { ok: boolean; details: string; filial: string | null }>>({
+    queryKey: ['/api/billing-pipeline/stock-status'],
+    refetchInterval: 60000,
+  });
   const { data: blockedOrders = [] } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
     refetchOnWindowFocus: true,
@@ -596,6 +601,16 @@ export default function BillingPipeline() {
       }
     },
     onError: (error: any) => {
+      // Bloqueio por estoque em uso: mostra produto a produto o que falta.
+      if (error?.stockError) {
+        toast({
+          title: error.message || 'Faturamento bloqueado: estoque em uso insuficiente',
+          description: <div className="whitespace-pre-line text-xs">{String(error.details || '')}</div>,
+          variant: 'destructive',
+          duration: 15000,
+        });
+        return;
+      }
       toast({ title: 'Erro ao mover item', description: error.message, variant: 'destructive' });
     }
   });
@@ -609,7 +624,7 @@ export default function BillingPipeline() {
       toast({ title: data?.already ? 'NF-e já autorizada' : 'Faturamento reprocessado', description: 'NF-e transmitida com sucesso.' });
     },
     onError: (error: any) => {
-      toast({ title: 'Falha ao re-tentar faturamento', description: error?.message || 'Erro ao transmitir a NF-e.', variant: 'destructive' });
+      toast({ title: 'Falha ao re-tentar faturamento', description: error?.stockError && error?.details ? <div className="whitespace-pre-line text-xs">{String(error.details)}</div> : (error?.message || 'Erro ao transmitir a NF-e.'), variant: 'destructive', ...(error?.stockError ? { duration: 15000 } : {}) });
     },
     onSettled: () => setRetryingId(null),
   });
@@ -794,6 +809,20 @@ export default function BillingPipeline() {
       const nfeCount = data.results?.filter((r: any) => r.fiscalInvoiceId).length || 0;
       let desc = `${data.successCount}/${data.totalCount} pedidos movidos com sucesso`;
       if (nfeCount > 0) desc += ` (${nfeCount} NF-e criadas)`;
+      // Pedidos barrados por falta de estoque em uso ficam onde estavam — avisa quais.
+      const semEstoque = (data.results || []).filter((r: any) => !r.success && r.stockError);
+      if (semEstoque.length > 0) {
+        const nomes = semEstoque.map((r: any) => {
+          const it: any = items.find((i: any) => i.id === r.id);
+          return `• ${it?.customerName || it?.orderNumber || r.id}: ${r.error || ''}`;
+        }).join('\n');
+        toast({
+          title: `${semEstoque.length} pedido(s) não faturado(s): estoque em uso insuficiente`,
+          description: <div className="whitespace-pre-line text-xs">{nomes}</div>,
+          variant: 'destructive',
+          duration: 20000,
+        });
+      }
       toast({ title: 'Ação em lote concluída', description: desc });
     },
     onError: (error: any) => {
@@ -1684,6 +1713,7 @@ export default function BillingPipeline() {
                               : null)
                           : (STAGES_ALERTA_BLOQUEIO.has(String(item.stage)) ? (blockedCustomerReason.get(String(item.customerId || '')) || null) : null)
                       }
+                      stockIssue={stockStatus[item.id] && !stockStatus[item.id].ok ? (stockStatus[item.id].details || 'Estoque em uso insuficiente') : null}
                     />
                     </div>
                   ))}
@@ -2434,6 +2464,7 @@ function KanbanCard({
   canPriority = false,
   onTogglePriority,
   blockedReason,
+  stockIssue,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -2455,6 +2486,7 @@ function KanbanCard({
   canPriority?: boolean;
   onTogglePriority?: () => void;
   blockedReason?: string | null;
+  stockIssue?: string | null;
 }) {
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
@@ -2490,6 +2522,11 @@ function KanbanCard({
           )}
           <div className="flex-1 min-w-0">
             <p className={`font-semibold text-sm truncate ${blockedReason ? 'text-red-600 dark:text-red-400 cursor-help' : ''}`} title={blockedReason || undefined}>{item.customerName}</p>
+            {stockIssue && (
+              <span className="inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 cursor-help whitespace-pre-line" title={stockIssue}>
+                Sem estoque em uso — faturamento bloqueado
+              </span>
+            )}
             {(item.sellerName || item.customerCity) && (
               <p className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                 {item.sellerName && (
