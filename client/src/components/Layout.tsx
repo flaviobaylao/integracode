@@ -9,6 +9,7 @@ import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import UserProfileModal from "./UserProfileModal";
 import { VersionDisplay } from "./VersionDisplay";
+import CheckinsPendentes from "./CheckinsPendentes";
 import { normalizeFavorites } from "@/lib/menuItems";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 import { useToast } from "@/hooks/use-toast";
@@ -1197,6 +1198,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
           )}
         </main>
       </div>
+      <CheckinsPendentes />
 
       {showProfileModal && user && (
         <UserProfileModal
