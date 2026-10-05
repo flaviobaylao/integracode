@@ -220,7 +220,7 @@ async function ensureAnotacoes(): Promise<void> {
 // ── CALCULO DA CARTEIRA (fonte unica) ───────────────────────────────────────
 // Extraido do handler GET /api/reports/gestao-carteiras para ser reusado pelo
 // snapshot diario de CLASSE (ver runSnapshotClasses). Mesma logica -> mesmos numeros.
-export async function computeCarteiraClientes(opts: { inicio: string; fim: string; restrito?: boolean; idsCarteira?: string[] }): Promise<{ clientes: any[]; meses: string[]; serieRec: any[]; serieTit: any[]; debitoTotal: number }> {
+export async function computeCarteiraClientes(opts: { inicio: string; fim: string; restrito?: boolean; idsCarteira?: string[] }): Promise<{ clientes: any[]; meses: string[]; serieRec: any[]; serieTit: any[]; debitoTotal: number; foraRows: any[]; repescagemDesde: string | null }> {
       const inicio = opts.inicio;
       const fim = opts.fim;
       const restrito = !!opts.restrito;
@@ -802,7 +802,11 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
           porMes: Object.fromEntries(Object.entries(porMes).map(([m, v]) => [m, Number(v) || 0])),
         };
       });
-      return { clientes, meses, serieRec, serieTit, debitoTotal };
+      // `foraRows` e `repescagemDesde` tem que sair junto: quem monta o bloco
+      // `excluidos` e o aviso de repescagem e a rota /api/reports/gestao-carteiras,
+      // do lado de fora desta funcao. Ficando so' aqui dentro, a rota estourava
+      // "foraRows is not defined" e derrubava a aba Carteira inteira.
+      return { clientes, meses, serieRec, serieTit, debitoTotal, foraRows, repescagemDesde };
 }
 
 // ── SNAPSHOT DIARIO DA CLASSE (A+..D-) ──────────────────────────────────────
@@ -936,7 +940,7 @@ export function registerCarteira(app: Express) {
         if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
       }
       const nomeUsuario = [usuario?.firstName, usuario?.lastName].filter(Boolean).join(" ").trim() || usuario?.email || "";
-      const { clientes, meses, serieRec, serieTit, debitoTotal } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
+      const { clientes, meses, serieRec, serieTit, debitoTotal, foraRows, repescagemDesde } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
 
       const totalGeral = clientes.reduce((s, c) => s + c.total, 0);
 
