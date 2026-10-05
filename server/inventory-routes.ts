@@ -132,12 +132,15 @@ export function registerInventoryRoutes(app: Express) {
         return res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.flatten().fieldErrors });
       }
 
-      // TRAVA (Flavio 05/set): lote em pedido/NF de transferencia nao se edita.
-      // Libera so com o cancelamento/devolucao da NF (que estorna o estoque) ou,
-      // antes da nota, mandando o pedido para a Lixeira.
+      // TRAVA (Flavio 05/set, afrouxada em 05/out/2026): lote em pedido/NF de
+      // transferencia continua sem RENOMEAR (o numero esta na NF) e sem EXCLUIR,
+      // mas quantidade, qtd. minima e observacoes podem ser ajustadas (com motivo).
       const lock = await getLotTransferLock(req.params.id);
-      if (lock) {
-        return res.status(409).json({ message: `Lote ${existing.lotNumber} travado: ${lock.reason}`, transferLock: lock });
+      if (lock && parsed.data.lotNumber !== undefined && normalizarNumeroLote(parsed.data.lotNumber) !== normalizarNumeroLote(existing.lotNumber)) {
+        return res.status(409).json({ message: `Lote ${existing.lotNumber} não pode ser renomeado: ${lock.reason}`, transferLock: lock });
+      }
+      if (lock && parsed.data.isActive === false) {
+        return res.status(409).json({ message: `Lote ${existing.lotNumber} não pode ser inativado: ${lock.reason}`, transferLock: lock });
       }
 
       const prevQty = existing.quantity;
@@ -216,11 +219,8 @@ export function registerInventoryRoutes(app: Express) {
       const motivo = String(parsed.data.motivo || '').trim();
       if (motivo.length < 3) return res.status(400).json({ message: 'Informe o motivo do bloqueio/desbloqueio.' });
 
-      const lock = await getLotTransferLock(req.params.id);
-      if (lock) {
-        return res.status(409).json({ message: `Lote ${existing.lotNumber} travado: ${lock.reason}`, transferLock: lock });
-      }
-
+      // Bloquear/desbloquear e permitido mesmo com pedido/NF de transferencia no
+      // lote (Flavio, 05/out/2026) — a trava segue valendo so para renomear/excluir.
       const saldo = parseFloat(existing.quantity) || 0;
       const qty = parsed.data.quantity !== undefined && String(parsed.data.quantity).trim() !== '' ? parseFloat(parsed.data.quantity) : saldo;
       if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ message: 'Quantidade a mover deve ser maior que zero.' });

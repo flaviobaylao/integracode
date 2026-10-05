@@ -105,9 +105,12 @@ async function main() {
     t('lotesTravados = 1', r.json?.lotesTravados === 1);
     r = await call('GET', '/api/inventory/lots');
     t('GET /lots tambem traz transferLock', !!(r.json || []).find((l: any) => l.id === lot.id)?.transferLock);
-    r = await call('PUT', `/api/inventory/lots/${lot.id}`, { quantity: '5' });
-    t('PUT do lote travado -> 409', r.status === 409, r.json);
-    t('409 explica o motivo', /travado/.test(r.json?.message || '') && !!r.json?.transferLock);
+    r = await call('PUT', `/api/inventory/lots/${lot.id}`, { lotNumber: 'RENOMEADO-X' });
+    t('PUT renomeando lote travado -> 409', r.status === 409, r.json);
+    t('409 explica o motivo', /renomeado/.test(r.json?.message || '') && !!r.json?.transferLock);
+    // 05/out/2026: quantidade pode ser ajustada mesmo com pedido/NF de transferencia (com motivo).
+    r = await call('PUT', `/api/inventory/lots/${lot.id}`, { quantity: '5', motivo: 'contagem fisica' });
+    t('PUT da quantidade no lote travado passa (200)', r.status === 200, r.json);
     r = await call('DELETE', `/api/inventory/lots/${lot.id}`);
     t('DELETE do lote travado -> 409', r.status === 409, r.json);
     t('quantidade do lote intacta (1000)', Number((await storage.getInventoryLot(lot.id))?.quantity) === 1000);
