@@ -23,11 +23,11 @@
 // -----------------------------------------------------------------------------
 import { Fragment, useMemo, useState } from "react";
 import type React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Info, Users } from "lucide-react";
+import { CalendarDays, Info, RefreshCw, Users } from "lucide-react";
 
 type Semana = { n: number; ini: string; fim: string; rotulo: string; ultima: boolean; atual: boolean };
 type Celula = {
@@ -74,6 +74,48 @@ export default function AgendaRota() {
   const mesHoje = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const [mes, setMes] = useState(mesHoje);
   const [vendedorSel, setVendedorSel] = useState("");
+
+  const qc = useQueryClient();
+  const [atualizando, setAtualizando] = useState(false);
+  const [aviso, setAviso] = useState<{ tom: "ok" | "parcial" | "erro"; texto: string } | null>(null);
+
+  // ── ATUALIZAR ───────────────────────────────────────────────────────────────
+  // Regrava a agenda de visitas de cada cliente ativo do vendedor pelo cadastro
+  // de agora, e so' entao recarrega o quadro. Nao e' um F5: sem regravar, a
+  // agenda envelhece (importacao, mudanca por fora) e o fim do mes aparece vazio,
+  // porque cada cliente so' tem as 4 proximas visitas gravadas.
+  // Visita ja concluida e a de HOJE nao sao tocadas — a Rota do Dia nao encolhe.
+  const atualizar = async () => {
+    if (!vendedorSel && !restrito) return;
+    setAtualizando(true);
+    setAviso(null);
+    try {
+      const r = await fetch("/api/carteira/agenda-rota/atualizar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ sellerId: vendedorSel }),
+      });
+      const j = await r.json();
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || "Falha ao atualizar.");
+      await qc.invalidateQueries({ queryKey: ["/api/carteira/agenda-rota"] });
+      const partes = [
+        `${j.clientes} de ${j.total} cliente(s) em ${String(j.segundos).replace(".", ",")}s`,
+        `${j.visitas} visita(s) regravada(s)`,
+      ];
+      if (j.semData) partes.push(`${j.semData} sem dia de rota no cadastro`);
+      if (j.erros) partes.push(`${j.erros} com erro`);
+      setAviso(
+        j.completo
+          ? { tom: "ok", texto: `Agenda atualizada: ${partes.join(" · ")}.` }
+          : { tom: "parcial", texto: `Atualizado em parte: ${partes.join(" · ")}. Faltam ${j.restantes} — clique de novo para terminar.` },
+      );
+    } catch (e: any) {
+      setAviso({ tom: "erro", texto: e?.message || "Falha ao atualizar a agenda." });
+    } finally {
+      setAtualizando(false);
+    }
+  };
 
   const { data, isLoading, error } = useQuery<Resposta>({
     queryKey: ["/api/carteira/agenda-rota", vendedorSel, mes],
@@ -237,6 +279,16 @@ export default function AgendaRota() {
               data-testid="input-mes-agenda-rota"
             />
           </div>
+          <Button
+            variant="outline"
+            onClick={atualizar}
+            disabled={atualizando || (!vendedorSel && !restrito)}
+            title="Regrava a agenda de visitas deste vendedor pelo cadastro atual e recarrega o quadro"
+            data-testid="button-atualizar-agenda-rota"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${atualizando ? "animate-spin" : ""}`} />
+            {atualizando ? "Atualizando…" : "Atualizar"}
+          </Button>
           {data?.vendedor ? (
             <div className="ml-auto flex items-center gap-2 text-sm">
               <Users className="h-4 w-4 text-muted-foreground" />
@@ -248,6 +300,13 @@ export default function AgendaRota() {
             </div>
           ) : null}
         </CardContent>
+        {aviso ? (
+          <div className={`px-4 pb-3 -mt-1 text-sm ${
+            aviso.tom === "ok" ? "text-emerald-700" : aviso.tom === "parcial" ? "text-amber-700" : "text-destructive"
+          }`} data-testid="aviso-atualizar-agenda-rota">
+            {aviso.texto}
+          </div>
+        ) : null}
       </Card>
 
       <Card>
