@@ -1,7 +1,7 @@
 // Integra 2.0 Service Worker
 // Estratégia: Cache-first para assets, Network-first para API, offline fallback para navegação
 
-const CACHE_VERSION = 'v25';
+const CACHE_VERSION = 'v26';
 const SHELL_CACHE  = `integra-shell-${CACHE_VERSION}`;
 const API_CACHE    = `integra-api-${CACHE_VERSION}`;
 const ALL_CACHES   = [SHELL_CACHE, API_CACHE];
@@ -152,4 +152,67 @@ self.addEventListener('notificationclick', (event) => {
   if (event.notification.data?.url) {
     event.waitUntil(clients.openWindow(event.notification.data.url));
   }
+});
+
+// ── Background Sync: fila de check-in offline (out/2026) ─────────────────────
+// Android/Chrome envia a fila mesmo com o app FECHADO. iOS nao suporta: la o
+// envio acontece com o app aberto (ver client/src/lib/offlineCheckins.ts).
+const OFF_DB = 'integra-offline';
+const OFF_STORE = 'checkin_queue';
+
+function abrirFila() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(OFF_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(OFF_STORE)) db.createObjectStore(OFF_STORE, { keyPath: 'clientUuid' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function filaTodos(db) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(OFF_STORE, 'readonly').objectStore(OFF_STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function filaRemover(db, uuid) {
+  return new Promise((resolve) => {
+    const req = db.transaction(OFF_STORE, 'readwrite').objectStore(OFF_STORE).delete(uuid);
+    req.onsuccess = () => resolve(true);
+    req.onerror = () => resolve(false);
+  });
+}
+
+async function enviarFilaCheckins() {
+  const db = await abrirFila();
+  const itens = await filaTodos(db);
+  for (const item of itens) {
+    if (Date.now() - (item.criadoEm || 0) > 48 * 60 * 60 * 1000) continue; // expirado
+    const fd = new FormData();
+    if (item.photo) fd.append('photo', item.photo, 'checkin.jpg');
+    if (item.lat !== null && item.lat !== undefined) fd.append('latitude', String(item.lat));
+    if (item.lng !== null && item.lng !== undefined) fd.append('longitude', String(item.lng));
+    if (item.accuracyM !== null && item.accuracyM !== undefined) fd.append('accuracy', String(item.accuracyM));
+    if (item.notes) fd.append('notes', item.notes);
+    fd.append('clientUuid', item.clientUuid);
+    fd.append('deviceTime', item.deviceTime);
+    fd.append('source', 'offline');
+    const r = await fetch('/api/sales-cards/' + item.cardId + '/check-in', { method: 'POST', credentials: 'include', body: fd });
+    if (r.ok || r.status === 409 || r.status === 422) await filaRemover(db, item.clientUuid);
+    else if (r.status >= 500) throw new Error('servidor indisponivel'); // reagenda
+  }
+  db.close();
+}
+
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'checkin-sync') event.waitUntil(enviarFilaCheckins());
+});
+
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag === 'checkin-periodic') event.waitUntil(enviarFilaCheckins().catch(() => {}));
 });
