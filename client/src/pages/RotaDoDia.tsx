@@ -2832,6 +2832,9 @@ export default function RotaDoDia() {
                               sellerId={selectedSellerId}
                               date={selectedDate}
                               onDone={() => refetch()}
+                              checkinPrevio={checkInCheckpoint && checkInCheckpoint.photoUrl && checkInCheckpoint.latitude != null && checkInCheckpoint.longitude != null
+                                ? { lat: Number(checkInCheckpoint.latitude), lng: Number(checkInCheckpoint.longitude), photoUrl: checkInCheckpoint.photoUrl }
+                                : null}
                             />
                           )}
                           {/* 📋 Solicitar Alteração — SOMENTE clientes ativos (não leads). No mobile fica ABAIXO dos ícones. */}
