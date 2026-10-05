@@ -241,3 +241,36 @@ function calculateHaversineMatrix(
   
   return matrix;
 }
+
+/**
+ * Rota completa em UMA chamada ao OSRM: devolve a distancia e a duracao de CADA
+ * trecho (legs) na ordem dos pontos. Substitui N chamadas por 1 e e a base do
+ * relatorio de trechos do mes. Sem rota valida, cai para Haversine por trecho.
+ * (out/2026)
+ */
+export async function calculateRouteLegs(
+  coordinates: { lat: number; lon: number }[]
+): Promise<Array<{ distance: number; duration: number }>> {
+  if (coordinates.length < 2) return [];
+  const coordsString = coordinates.map((c) => `${c.lon},${c.lat}`).join(';');
+  try {
+    const url = `${OSRM_BASE_URL}/route/v1/driving/${coordsString}`;
+    const response = await axios.get(url, {
+      params: { overview: 'false', steps: 'false', annotations: 'false' },
+      timeout: 15000,
+    });
+    const route = response.data?.routes?.[0];
+    if (response.data?.code === 'Ok' && route?.legs?.length === coordinates.length - 1) {
+      return route.legs.map((l: any) => ({ distance: Math.round(l.distance), duration: Math.round(l.duration) }));
+    }
+    console.warn('OSRM nao devolveu legs completos, usando Haversine por trecho');
+  } catch (error: any) {
+    console.error('Erro no OSRM (legs):', error.message);
+  }
+  const out: Array<{ distance: number; duration: number }> = [];
+  for (let i = 0; i < coordinates.length - 1; i++) {
+    const d = calculateHaversineDistance(coordinates[i].lat, coordinates[i].lon, coordinates[i + 1].lat, coordinates[i + 1].lon);
+    out.push({ distance: Math.round(d), duration: Math.round(d / 11) }); // ~40 km/h
+  }
+  return out;
+}
