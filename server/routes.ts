@@ -14834,10 +14834,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // CHECK-IN OFFLINE (out/2026): colunas de proveniencia do check-in. A fila do
+  // aparelho reenvia o MESMO clientUuid ate confirmar, entao o servidor precisa
+  // reconhecer o repetido e nao duplicar. Ver ESPEC_Checkin_Offline_iOS_Android.md.
+  let __ckColsReady = false;
+  const __ensureCheckinCols = async (): Promise<void> => {
+    if (__ckColsReady) return;
+    try {
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS client_uuid varchar`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS source varchar DEFAULT 'online'`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS device_time timestamptz`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS received_at timestamptz`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS accuracy_m numeric`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS distance_to_customer_m numeric`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS clock_skew_s integer`);
+      await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_route_checkpoints_client_uuid ON route_checkpoints (client_uuid) WHERE client_uuid IS NOT NULL`);
+      __ckColsReady = true;
+    } catch (e: any) { console.warn('[CHECKIN-OFFLINE] ensure colunas:', e?.message); }
+  };
+
   app.post('/api/sales-cards/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
     try {
       const { id } = req.params;
       const { latitude, longitude } = req.body;
+      // Proveniencia do check-in (fila offline). clientUuid repetido = reenvio: responde
+      // 200 sem criar outro checkpoint, para a fila do aparelho poder insistir sem medo.
+      await __ensureCheckinCols();
+      const _clientUuid = String(req.body?.clientUuid || '').trim() || null;
+      const _source = ['online', 'offline'].includes(String(req.body?.source || '')) ? String(req.body.source) : 'online';
+      const _deviceTime = String(req.body?.deviceTime || '').trim() || null;
+      const _accuracy = req.body?.accuracy !== undefined && req.body?.accuracy !== '' ? Number(req.body.accuracy) : null;
+      if (_clientUuid) {
+        try {
+          const dup: any = await db.execute(sql`SELECT id FROM route_checkpoints WHERE client_uuid = ${_clientUuid} LIMIT 1`);
+          if (dup?.rows?.length) {
+            console.log(`♻️ [CHECKIN-OFFLINE] reenvio do mesmo check-in (${_clientUuid}) — ignorado`);
+            return res.json({ success: true, duplicado: true, message: 'Check-in já registrado' });
+          }
+        } catch (e: any) { console.warn('[CHECKIN-OFFLINE] checagem de duplicata:', e?.message); }
+      }
       // Localizacao e BEST-EFFORT: se o GPS falhar no aparelho (ambiente fechado, permissao
       // negada), o check-in ainda e aceito SEM coordenadas — a camera/foto nao pode ficar
       // bloqueada pelo GPS. Quando ha GPS, tudo segue igual (distancia + trava de coordenada).
@@ -14963,6 +14998,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
               _lng
             );
             console.log(`✅ Checkpoint de check-in registrado: ${JSON.stringify(routeProgress)}`);
+            // Criterios de aceite automatico do check-in offline: ate 150 m do cliente e
+            // relogio do aparelho coerente (ate 48 h de desvio). Fora disso fica 'pending'.
+            try {
+              const _skew = _deviceTime ? Math.round((Date.now() - new Date(_deviceTime).getTime()) / 1000) : null;
+              const _distOk = checkInDistance === null || checkInDistance === undefined || Number(checkInDistance) <= 150;
+              const _skewOk = _skew === null || Math.abs(_skew) <= 48 * 3600;
+              const _status = (_source === 'offline' && !(_distOk && _skewOk)) ? 'pending' : 'validated';
+              await db.execute(sql`
+                UPDATE route_checkpoints SET
+                  client_uuid = COALESCE(${_clientUuid}, client_uuid),
+                  source = ${_source},
+                  device_time = ${_deviceTime ? new Date(_deviceTime) : null},
+                  received_at = now(),
+                  accuracy_m = ${_accuracy !== null && isFinite(_accuracy as number) ? _accuracy : null},
+                  distance_to_customer_m = ${checkInDistance !== null && checkInDistance !== undefined ? Number(checkInDistance) : null},
+                  clock_skew_s = ${_skew},
+                  validation_status = ${_status}
+                WHERE daily_route_id = ${dailyRoute.id} AND customer_id = ${currentCard.customerId}
+                  AND checkpoint_type = 'check_in'
+                  AND created_at >= now() - interval '2 minutes'
+              `);
+              if (_status === 'pending') console.log(`⏳ [CHECKIN-OFFLINE] fora dos criterios — aguardando aprovacao (dist=${checkInDistance}, skew=${_skew}s)`);
+            } catch (e: any) { console.warn('[CHECKIN-OFFLINE] gravar proveniencia:', e?.message); }
           } else if (dailyRoute) {
             console.log(`ℹ️ Check-in sem GPS - checkpoint de rota não registrado (sales_card ${id})`);
           } else {
@@ -19587,6 +19645,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('Erro ao montar km de vendedores:', error);
       res.status(500).json({ message: 'Erro ao montar km de vendedores', error: error?.message });
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // TRECHOS DO MES (out/2026): o relatorio do mes inteiro, trecho a trecho, por
+  // vendedor — DE, PARA, SAIDA, CHEGADA, KM, MIN e TIPO. Mesma regra de km da
+  // Rota do Dia: comeca no 1o check-in, soma check-in a check-in e fecha na casa
+  // (a ida de casa ate o 1o cliente NAO entra). Uma chamada OSRM por rota.
+  // ──────────────────────────────────────────────────────────────────────────
+  app.get('/api/admin/km-vendedores/trechos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || '')) ? String(req.query.mes) : String(getBrazilDateString()).slice(0, 7);
+      const sellerFiltro = String(req.query.sellerId || '').trim();
+      const { calculateRouteLegs } = await import('./routingService');
+
+      const rr: any = await db.execute(sql`
+        SELECT dr.id, dr.seller_id, to_char(dr.route_date, 'YYYY-MM-DD') AS dia, dr.route_mode AS mode,
+               dr.start_latitude, dr.start_longitude,
+               COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email, dr.seller_id) AS seller_name,
+               u.home_latitude, u.home_longitude
+        FROM daily_routes dr
+        JOIN users u ON u.id = dr.seller_id
+        WHERE u.role = 'vendedor' AND u.is_active = true
+          AND to_char(dr.route_date, 'YYYY-MM') = ${mes}
+          ${sellerFiltro ? sql`AND dr.seller_id = ${sellerFiltro}` : sql``}
+          AND dr.route_date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        ORDER BY dr.seller_id, dr.route_date
+      `);
+      const rotas = (rr?.rows || []) as any[];
+      const _ok = (la: any, lo: any) => {
+        const a = Number(la), b = Number(lo);
+        return isFinite(a) && isFinite(b) && !(Math.abs(a) < 0.001 && Math.abs(b) < 0.001) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
+      };
+      const _hhmm = (t: any) => {
+        try { return new Date(t).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }); }
+        catch { return ''; }
+      };
+
+      const trechos: any[] = [];
+      for (const r of rotas) {
+        // Check-ins validos do dia, em ordem cronologica, com o nome do cliente.
+        const cr: any = await db.execute(sql`
+          SELECT rc.checkpoint_latitude AS lat, rc.checkpoint_longitude AS lon, rc.checkpoint_time AS t,
+                 COALESCE(NULLIF(c.fantasy_name, ''), c.name, 'Cliente') AS nome
+          FROM route_checkpoints rc
+          LEFT JOIN customers c ON c.id = rc.customer_id
+          WHERE rc.daily_route_id = ${r.id} AND rc.checkpoint_type = 'check_in'
+            AND COALESCE(rc.validation_status, 'validated') <> 'cancelled'
+          ORDER BY rc.checkpoint_time ASC
+        `);
+        const pts = ((cr?.rows || []) as any[]).filter((p) => _ok(p.lat, p.lon));
+        if (pts.length === 0) continue;
+        // Casa: coordenada da rota; se invalida, a do cadastro do vendedor.
+        let hLat = Number(r.start_latitude), hLon = Number(r.start_longitude);
+        if (!_ok(hLat, hLon)) { hLat = Number(r.home_latitude); hLon = Number(r.home_longitude); }
+        const temCasa = _ok(hLat, hLon);
+        const coords = pts.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) }));
+        if (temCasa) coords.push({ lat: hLat, lon: hLon });
+        const legs = coords.length >= 2 ? await calculateRouteLegs(coords) : [];
+        for (let i = 0; i < legs.length; i++) {
+          const km = Math.round((legs[i].distance / 1000) * 100) / 100;
+          const min = Math.round(legs[i].duration / 60);
+          const ehCasa = temCasa && i === legs.length - 1;
+          trechos.push({
+            sellerId: String(r.seller_id), sellerName: r.seller_name, dia: r.dia,
+            de: pts[i].nome, para: ehCasa ? 'Casa do vendedor' : pts[i + 1].nome,
+            saida: _hhmm(pts[i].t), chegada: ehCasa ? '' : _hhmm(pts[i + 1].t),
+            km, min,
+            tipo: String(r.mode) === 'prospeccao' ? 'prospecção' : (ehCasa ? 'retorno' : (km >= 10 ? 'intermunicipal' : (km === 0 ? 'mesmo ponto' : 'urbano'))),
+          });
+        }
+      }
+      res.json({ mes, trechos, geradoEm: getBrazilDateString() });
+    } catch (error: any) {
+      console.error('Erro no relatorio de trechos:', error);
+      res.status(500).json({ message: 'Erro no relatorio de trechos', error: error?.message });
     }
   });
 
