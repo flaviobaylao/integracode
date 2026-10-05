@@ -293,4 +293,75 @@ export function registerAgendaRota(app: Express) {
       res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/carteira/agenda-rota/atualizar   body: { sellerId }
+  //
+  // O botao "Atualizar" da aba. REGRAVA a agenda de visitas de cada cliente ativo
+  // do vendedor a partir do CADASTRO de agora (dia de rota, periodicidade, semana
+  // de atendimento, atendimento virtual), e so' entao a tela recarrega.
+  //
+  // POR QUE NAO BASTA RELER. Salvar o cliente pela tela de Clientes ja regrava a
+  // agenda dele — nesse caminho, reler bastaria. Mas a agenda tambem envelhece por
+  // fora: importacao, mudanca direta no banco, e principalmente o HORIZONTE — cada
+  // cliente so' tem as 4 proximas visitas gravadas, entao o fim do mes aparece
+  // vazio ate alguem regerar. Regravando, o quadro passa a refletir o cadastro.
+  //
+  // O QUE NAO E TOCADO: visita ja CONCLUIDA e a visita de HOJE ficam como estao —
+  // regenerateCustomerAgenda so' apaga pendente de amanha em diante. Logo, rodar
+  // este botao nao encolhe a Rota do Dia de ninguem no meio do expediente.
+  //
+  // ORCAMENTO DE TEMPO: uma carteira grande passa de 200 clientes e a requisicao
+  // nao pode ficar pendurada. Processa ate o orcamento acabar e devolve quantos
+  // faltaram, para a tela pedir outra rodada em vez de estourar o tempo limite.
+  // ---------------------------------------------------------------------------
+  app.post("/api/carteira/agenda-rota/atualizar", authenticateUser, async (req: Request, res: Response) => {
+    const ORCAMENTO_MS = 40_000;
+    try {
+      const usuario: any = (req as any)?.currentUser || (req as any)?.user || null;
+      const papel = String(usuario?.role || "");
+      const restrito = ["vendedor", "telemarketing"].includes(papel);
+      const pedido = String((req.body || {}).sellerId || "").replace(/[^A-Za-z0-9_-]/g, "");
+      const sellerId = restrito ? String(usuario?.id || "") : pedido;
+      if (!sellerId) return res.status(400).json({ ok: false, error: "Escolha um vendedor." });
+      if (restrito && pedido && pedido !== sellerId) {
+        return res.status(403).json({ ok: false, error: "Você só pode atualizar a sua própria carteira." });
+      }
+
+      const alvos = (await db.execute(sql`
+        SELECT id FROM customers
+        WHERE seller_id = ${sellerId}
+          AND is_active = true
+          AND COALESCE(is_supplier,false) = false
+          AND COALESCE(is_lead,false) = false
+        ORDER BY id`)).rows as any[];
+
+      const { regenerateCustomerAgenda } = await import("./visitScheduleService");
+      const comeco = Date.now();
+      let clientes = 0, visitas = 0, semData = 0, erros = 0, restantes = 0;
+
+      for (let i = 0; i < alvos.length; i++) {
+        if (Date.now() - comeco > ORCAMENTO_MS) { restantes = alvos.length - i; break; }
+        try {
+          const n = await regenerateCustomerAgenda(String(alvos[i].id));
+          clientes++;
+          if (n > 0) visitas += n; else semData++;
+        } catch (e: any) {
+          erros++;
+          if (erros <= 5) console.warn("[agenda-rota/atualizar]", alvos[i]?.id, e?.message || e);
+        }
+      }
+
+      console.log(`[agenda-rota/atualizar] vendedor ${sellerId}: ${clientes}/${alvos.length} cliente(s), ${visitas} visita(s), ${semData} sem data, ${erros} erro(s), ${restantes} restante(s) em ${Date.now() - comeco}ms`);
+      res.json({
+        ok: true, sellerId,
+        total: alvos.length, clientes, visitas, semData, erros, restantes,
+        completo: restantes === 0,
+        segundos: Math.round((Date.now() - comeco) / 100) / 10,
+      });
+    } catch (e: any) {
+      console.error("[agenda-rota/atualizar]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
 }
