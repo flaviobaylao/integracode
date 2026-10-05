@@ -35,9 +35,12 @@ interface LeadActionsProps {
   onDone?: () => void;
   // 'labeled' = botoes com texto (padrao); 'icons' = somente icones (linha do nome do lead na Rota do Dia)
   variant?: 'labeled' | 'icons';
+  // Check-in JÁ feito hoje nesta parada (ex.: lead incluído manualmente com foto + coordenada).
+  // Quando informado, o Registro de Atendimento abre com a localização e a foto já preenchidas.
+  checkinPrevio?: { lat: number; lng: number; photoUrl: string | null } | null;
 }
 
-export default function LeadActions({ leadId, leadName, sellerId, date, onDone, variant = 'labeled' }: LeadActionsProps) {
+export default function LeadActions({ leadId, leadName, sellerId, date, onDone, variant = 'labeled', checkinPrevio = null }: LeadActionsProps) {
   const { toast } = useToast();
   const [naoConverterOpen, setNaoConverterOpen] = useState(false);
   const [motivo, setMotivo] = useState<string>("");
@@ -69,6 +72,8 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
   const [atendCoords, setAtendCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [atendPhoto, setAtendPhoto] = useState<File | null>(null);
   const [atendPhotoUrl, setAtendPhotoUrl] = useState<string | null>(null);
+  // true = localização + foto vieram do check-in já realizado hoje (não precisa repetir o check-in)
+  const [atendUsaPrevio, setAtendUsaPrevio] = useState(false);
   const capturarLocalizacaoAtend = () => {
     if (!navigator.geolocation) { toast({ variant: "destructive", title: "Erro", description: "Seu dispositivo não suporta geolocalização" }); return; }
     const onOk = (pos: GeolocationPosition) => { setAtendCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); toast({ title: "Localização capturada", description: `Lat: ${pos.coords.latitude.toFixed(6)}, Lng: ${pos.coords.longitude.toFixed(6)}` }); };
@@ -193,11 +198,17 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
     } catch (_e) { setAtendGravando(false); }
   };
   const atendStop = () => { try { atendRecRef.current && atendRecRef.current.stop(); } catch (_e) {} setAtendGravando(false); };
-  const resetAtend = () => { atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendContato(""); setAtendTelefone(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); };
+  const resetAtend = () => { atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendContato(""); setAtendTelefone(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false); };
   // Abre o modal (Registro ou Check-in) ja buscando contato/telefone atuais do lead para pre-preencher.
   const abrirAtend = async (mode: 'registro' | 'checkin') => {
-    setAtendMode(mode); setAtendTexto(""); setAtendGravando(false); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null);
+    setAtendMode(mode); setAtendTexto(""); setAtendGravando(false); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false);
     setAtendContato(""); setAtendTelefone(""); setAtendOpen(true);
+    // 📍📷 Registro de Atendimento: se o check-in já foi feito (foto + coordenada), migra para o formulário.
+    if (mode === 'registro' && checkinPrevio && checkinPrevio.photoUrl && isFinite(Number(checkinPrevio.lat)) && isFinite(Number(checkinPrevio.lng))) {
+      setAtendCoords({ lat: Number(checkinPrevio.lat), lng: Number(checkinPrevio.lng) });
+      setAtendPhotoUrl(checkinPrevio.photoUrl);
+      setAtendUsaPrevio(true);
+    }
     if (mode !== 'registro') return;
     try {
       const res = await fetch(`/api/leads/${leadId}`, { credentials: "include" });
@@ -207,6 +218,16 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
   // Salvar / Fazer Check-in: check-in REAL (foto + GPS obrigatorios) + observacao + contato/telefone.
   const salvarAtendMut = useMutation({
     mutationFn: async () => {
+      // Check-in já realizado (foto + coordenada migradas): não repete o check-in — só grava
+      // contato/telefone e o registro do atendimento (histórico do lead + inbox do admin).
+      if (atendUsaPrevio && !atendPhoto) {
+        const upd: any = {};
+        if (atendContato.trim()) upd.contact = atendContato.trim();
+        if (atendTelefone.trim()) upd.phone = atendTelefone.trim();
+        if (Object.keys(upd).length) await apiRequest("PATCH", `/api/leads/${leadId}`, upd);
+        const txt = atendTexto.trim();
+        return apiRequest("POST", `/api/leads/${leadId}/visits`, { observation: txt ? `ATENDIMENTO — ${txt}` : "ATENDIMENTO finalizado (check-in com foto já registrado)" });
+      }
       if (!atendCoords) throw new Error("Capture a localização antes de salvar.");
       if (!atendPhoto) throw new Error("Anexe a foto do local antes de salvar.");
       const fd = new FormData();
@@ -221,7 +242,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
       }
       return apiRequestMultipart("POST", `/api/leads/${leadId}/check-in`, fd);
     },
-    onSuccess: () => { toast({ title: "✓ Check-in realizado", description: atendMode === 'registro' ? "Atendimento registrado, check-in feito e enviado ao inbox do admin." : "Check-in no lead realizado e enviado ao inbox do admin." }); resetAtend(); invalidate(); },
+    onSuccess: () => { if (atendUsaPrevio && !atendPhoto) { toast({ title: "Registro salvo", description: "Atendimento registrado (check-in com foto já existente) e enviado ao inbox do admin." }); resetAtend(); invalidate(); return; } toast({ title: "✓ Check-in realizado", description: atendMode === 'registro' ? "Atendimento registrado, check-in feito e enviado ao inbox do admin." : "Check-in no lead realizado e enviado ao inbox do admin." }); resetAtend(); invalidate(); },
     onError: (e: any) => toast({ title: "Erro ao registrar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
   const atendDesfecho = (tipo: 'conv' | 'nao' | 'pro') => {
@@ -484,7 +505,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
                 <Button type="button" size="sm" variant="outline" onClick={capturarLocalizacaoAtend} data-testid={`button-lead-atend-location-${leadId}`}>Capturar localização</Button>
               </div>
               {atendCoords ? (
-                <p className="text-xs text-green-700 dark:text-green-400">✓ Lat: {atendCoords.lat.toFixed(6)} · Lng: {atendCoords.lng.toFixed(6)}</p>
+                <p className="text-xs text-green-700 dark:text-green-400">✓ Lat: {atendCoords.lat.toFixed(6)} · Lng: {atendCoords.lng.toFixed(6)}{atendUsaPrevio && !atendPhoto ? ' — do check-in já realizado' : ''}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">Toque em “Capturar localização” para registrar o ponto do atendimento.</p>
               )}
@@ -495,7 +516,8 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               {atendPhotoUrl ? (
                 <div className="space-y-2">
                   <img src={atendPhotoUrl} alt="Foto do atendimento" className="w-full max-h-48 object-contain rounded border" />
-                  <Button type="button" size="sm" variant="outline" onClick={() => { setAtendPhoto(null); setAtendPhotoUrl(null); }} data-testid={`button-lead-atend-photo-remove-${leadId}`}>Trocar foto</Button>
+                  {atendUsaPrevio && !atendPhoto && <p className="text-xs text-green-700 dark:text-green-400">✓ Foto do check-in já realizado</p>}
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false); }} data-testid={`button-lead-atend-photo-remove-${leadId}`}>Trocar foto</Button>
                 </div>
               ) : (
                 <Input type="file" accept="image/*" capture="environment" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; setAtendPhoto(f); const rd = new FileReader(); rd.onload = (ev) => setAtendPhotoUrl(ev.target?.result as string); rd.readAsDataURL(f); }} data-testid={`input-lead-atend-photo-${leadId}`} />
@@ -523,13 +545,13 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
                 </Button>
               </div>
             </div>
-            {(!atendCoords || !atendPhoto) && (
+            {(!atendCoords || (!atendPhoto && !atendUsaPrevio)) && (
               <p className="text-xs text-amber-600 dark:text-amber-400">Para {atendMode === 'checkin' ? 'fazer o check-in' : 'salvar o registro'} é obrigatório capturar a localização e anexar a foto do local.</p>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={resetAtend}>Cancelar</Button>
-            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendCoords || !atendPhoto} data-testid={`button-lead-atend-save-${leadId}`}>
+            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => salvarAtendMut.mutate()} disabled={salvarAtendMut.isPending || !atendCoords || (!atendPhoto && !atendUsaPrevio)} data-testid={`button-lead-atend-save-${leadId}`}>
               {salvarAtendMut.isPending ? "Salvando…" : (atendMode === 'checkin' ? "✓ Fazer Check-in" : "Salvar/Fazer Check-in")}
             </Button>
           </DialogFooter>
