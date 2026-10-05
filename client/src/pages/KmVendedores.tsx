@@ -35,15 +35,25 @@ type SellerRow = {
   sellerRate?: number;
   region?: Region;
 };
+type Trecho = { sellerId: string; sellerName: string; dia: string; de: string; para: string; saida: string; chegada: string; km: number; min: number; tipo: string };
+type TrechosResp = { mes: string; trechos: Trecho[]; geradoEm?: string };
 type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; ratePerKmGO?: number; ratePerKmDF?: number; ratePerKmPSN?: number; mesAtual?: string; mesFechado?: boolean };
 
 const MES_LABEL: Record<string, string> = { "01": "jan", "02": "fev", "03": "mar", "04": "abr", "05": "mai", "06": "jun", "07": "jul", "08": "ago", "09": "set", "10": "out", "11": "nov", "12": "dez" };
 function fmtMes(iso: string): string { const [y, m] = iso.split("-"); return `${MES_LABEL[m] || m}/${(y || "").slice(2)}`; }
+function fmtDiaCurto(iso: string): string { const [, m, d] = (iso || "").split("-"); return d ? `${d}/${m}` : iso; }
 function fmtKm(n: number): string { return (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function fmtBRL(n: number): string { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 function ultimoDiaDoMes(iso: string): number { if (!iso) return 0; const [y, m] = iso.split("-").map(Number); return new Date(y, m, 0).getDate(); }
 function parseRate(s: string | number | undefined | null): number { const n = parseFloat(String(s ?? "").replace(",", ".")); return isFinite(n) && n >= 0 ? n : 0; }
 function normRegion(x: any): Region { const u = String(x || "").toUpperCase(); return u === "DF" || u === "PSN" ? (u as Region) : "GO"; }
+
+const TIPO_CHIP = `.chip-tipo{font-size:11px;padding:2px 8px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+.tipo-u{background:#eef2ff;color:#4338ca;border-color:#e0e7ff}
+.tipo-i{background:#fff7ed;color:#b45309;border-color:#fed7aa}
+.tipo-r{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+.tipo-p{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe}
+.tipo-z{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb}`;
 
 const ROLE_LABEL: Record<string, string> = { vendedor: "Vendedor", telemarketing: "Telemarketing", coordinator: "Coordenacao", administrative: "Administrativo", admin: "Admin", motorista: "Motorista", industria: "Industria" };
 const REGION_LABEL: Record<Region, string> = { GO: "GO", DF: "DF", PSN: "PSN" };
@@ -72,13 +82,24 @@ export default function KmVendedores() {
 
   // Abas: "mensal" (matriz vendedor x mes, padrao) e "pagamento" (uma linha por
   // vendedor e mes: km rodada, tarifa e valor a pagar).
-  const [aba, setAba] = useState<"mensal" | "pagamento">("mensal");
+  const [aba, setAba] = useState<"mensal" | "pagamento" | "trechos">("mensal");
+  // Relatorio do mes inteiro, trecho a trecho (DE, PARA, SAIDA, CHEGADA, KM, MIN, TIPO).
+  // Mesma regra da Rota do Dia: do 1o check-in ate a casa. (out/2026)
+  const [mesTrechos, setMesTrechos] = useState<string>("");
+  const [trechoSeller, setTrechoSeller] = useState<string>("");
+  const { data: trechosResp, isLoading: trechosLoading } = useQuery<TrechosResp>({
+    queryKey: ["/api/admin/km-vendedores/trechos", mesTrechos],
+    queryFn: () => apiRequest("GET", `/api/admin/km-vendedores/trechos?mes=${mesTrechos}`),
+    enabled: aba === "trechos" && !!mesTrechos,
+    staleTime: 300_000,
+  });
 
   const months = (data?.months || []).filter((m) => m >= "2026-01");
   const sellers = data?.sellers || [];
   const mesAtualCol = months.length ? months[months.length - 1] : "";
   const mesPagto = data?.mesAtual || mesAtualCol;
   const mesFechado = !!data?.mesFechado;
+  useEffect(() => { if (!mesTrechos && mesPagto) setMesTrechos(mesPagto); }, [mesPagto, mesTrechos]);
 
   const savedGO = Number(data?.ratePerKmGO ?? data?.ratePerKm ?? 0);
   const savedDF = Number(data?.ratePerKmDF ?? data?.ratePerKm ?? 0);
@@ -146,6 +167,26 @@ export default function KmVendedores() {
   // Aba "Km e pagamento por mes": HISTORICO FIXO, uma linha por vendedor e mes, com a
   // km calculada por check-in do mes, a
   // tarifa da referencia atual do vendedor e o valor pago. Mes mais recente primeiro.
+  // Trechos do mes: lista plana ja filtrada por vendedor (o filtro de busca do topo
+  // tambem vale aqui, pelo nome do vendedor).
+  const trechosFiltrados = useMemo(() => {
+    const todos = trechosResp?.trechos || [];
+    const q = busca.trim().toLowerCase();
+    return todos.filter((t) => (!trechoSeller || t.sellerId === trechoSeller) && (!q || (t.sellerName || "").toLowerCase().includes(q)));
+  }, [trechosResp, trechoSeller, busca]);
+  const totalTrechosKm = useMemo(() => Math.round(trechosFiltrados.reduce((a, t) => a + (t.km || 0), 0) * 10) / 10, [trechosFiltrados]);
+  const totalTrechosMin = useMemo(() => trechosFiltrados.reduce((a, t) => a + (t.min || 0), 0), [trechosFiltrados]);
+
+  function exportarTrechos() {
+    const headers = ["Dia", "Vendedor", "De", "Para", "Saida", "Chegada", "Km", "Min", "Tipo"];
+    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, t.saida, t.chegada, t.km, t.min, t.tipo]);
+    const totalRow: any[] = ["Total", "", "", "", "", "", Number(totalTrechosKm.toFixed(1)), totalTrechosMin, ""];
+    const linhas = [...dataRows, totalRow].map((linha) =>
+      Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
+    );
+    exportToExcel(linhas, `trechos-km-${mesTrechos || "mes"}`, { aba: "Trechos", negritoUltimaLinha: true });
+  }
+
   const linhasMes = useMemo(() => {
     const out: Array<{ mes: string; sellerId: string; sellerName: string; km: number; region: Region; rate: number; valor: number }> = [];
     for (const r of rows) {
@@ -195,6 +236,7 @@ export default function KmVendedores() {
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
+      <style>{TIPO_CHIP}</style>
       <BackToDashboardButton />
 
       <div className="flex items-center gap-3 mt-3 mb-4">
@@ -209,7 +251,7 @@ export default function KmVendedores() {
 
       {/* Abas: Histórico mensal | Histórico por dia */}
       <div className="flex items-center gap-1 mb-3 border-b">
-        {([["mensal", "Histórico mensal"], ["pagamento", "Km e pagamento por mês"]] as const).map(([id, label]) => (
+        {([["mensal", "Histórico mensal"], ["pagamento", "Km e pagamento por mês"], ["trechos", "Relatório de trechos"]] as const).map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -411,6 +453,87 @@ export default function KmVendedores() {
                   </table>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-2">"Km rodada" é a quilometragem calculada pelos check-ins da rota, pelas regras de KM. A tarifa é a referência atual do vendedor (GO, DF ou PSN), então trocar a referência recalcula todos os meses desta tela. A busca por nome do topo também filtra aqui.</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {aba === "trechos" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Relatório de trechos do mês</CardTitle>
+                <div className="text-xs text-muted-foreground mt-1">Cada deslocamento entre dois check-ins, do 1º check-in até a casa do vendedor. A ida de casa até o 1º cliente não entra na conta.</div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <select value={mesTrechos} onChange={(e) => setMesTrechos(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm font-semibold" title="Mês do relatório">
+                  {months.slice().reverse().map((mo) => <option key={mo} value={mo}>{fmtMes(mo)}</option>)}
+                </select>
+                <select value={trechoSeller} onChange={(e) => setTrechoSeller(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
+                  <option value="">Todos os vendedores</option>
+                  {sellers.map((sl) => <option key={sl.sellerId} value={sl.sellerId}>{sl.sellerName}</option>)}
+                </select>
+                <Button variant="outline" size="sm" onClick={exportarTrechos} disabled={trechosFiltrados.length === 0}>
+                  <Download className="w-4 h-4 mr-1" /> Excel
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {trechosLoading ? (
+              <div className="text-sm text-muted-foreground py-6">Calculando os trechos do mês...</div>
+            ) : trechosFiltrados.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6">Nenhum trecho com check-in neste mês.</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-3 mb-3">
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{trechosFiltrados.length}</b> trechos</div>
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{fmtKm(totalTrechosKm)}</b> km</div>
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{Math.floor(totalTrechosMin / 60)}h{String(totalTrechosMin % 60).padStart(2, "0")}</b> de deslocamento</div>
+                </div>
+                <div className="overflow-auto max-h-[65vh] rounded-lg border">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <th className="text-left font-bold py-2 px-3 bg-background border-b whitespace-nowrap">Dia</th>
+                        <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
+                        <th className="text-left font-bold py-2 px-3 bg-background border-b">De</th>
+                        <th className="text-left font-bold py-2 px-3 bg-background border-b">Para</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Saída</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Chegada</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Km</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Min</th>
+                        <th className="text-center font-bold py-2 px-3 bg-background border-b">Tipo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trechosFiltrados.map((t, i) => (
+                        <tr key={`${t.sellerId}-${t.dia}-${i}`} className="border-t hover:bg-muted/40">
+                          <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDiaCurto(t.dia)}</td>
+                          <td className="py-2 px-3 whitespace-nowrap">{t.sellerName}</td>
+                          <td className="py-2 px-3">{t.de}</td>
+                          <td className="py-2 px-3">{t.para}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{t.saida || "—"}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{t.chegada || "—"}</td>
+                          <td className="py-2 px-3 text-right tabular-nums font-semibold">{fmtKm(t.km)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.min}</td>
+                          <td className="py-2 px-3 text-center"><span className={`chip-tipo tipo-${t.tipo === "intermunicipal" ? "i" : t.tipo === "retorno" ? "r" : t.tipo === "prospecção" ? "p" : t.tipo === "mesmo ponto" ? "z" : "u"}`}>{t.tipo}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 bg-muted/30 font-bold">
+                        <td className="py-2 px-3" colSpan={6}>Total</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{fmtKm(totalTrechosKm)}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{totalTrechosMin}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
               </>
             )}
           </CardContent>
