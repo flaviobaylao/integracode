@@ -33,7 +33,8 @@ interface InventoryLot {
   createdAt: string;
   updatedAt: string;
   // Trava de transferencia (server/lot-lock.ts): lote em pedido/NF de
-  // transferencia entre filiais. Editar/Excluir ficam indisponiveis.
+  // transferencia entre filiais. Renomear/Excluir ficam indisponiveis;
+  // quantidade e bloquear/desbloquear continuam liberados (05/out/2026).
   transferLock?: { reason: string; orderNumber: string | null; invoiceNumber: number | null } | null;
 }
 
@@ -351,14 +352,14 @@ export default function Inventory() {
                                     )}
                                   </TableCell>
                                   <TableCell className="text-right">
-                                    {lot.transferLock ? (
-                                      <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1 font-normal cursor-help"
-                                        title={lot.transferLock.reason}>
-                                        <Lock className="h-3 w-3" />
-                                        {lot.transferLock.invoiceNumber ? `NF-e ${lot.transferLock.invoiceNumber}` : (lot.transferLock.orderNumber || 'transferência')}
-                                      </Badge>
-                                    ) : (
-                                    <div className="flex justify-end gap-1">
+                                    <div className="flex justify-end items-center gap-1">
+                                      {lot.transferLock && (
+                                        <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 gap-1 font-normal cursor-help mr-1"
+                                          title={lot.transferLock.reason}>
+                                          <Lock className="h-3 w-3" />
+                                          {lot.transferLock.invoiceNumber ? `NF-e ${lot.transferLock.invoiceNumber}` : (lot.transferLock.orderNumber || 'transferência')}
+                                        </Badge>
+                                      )}
                                       {!finalizados && qty > 0 && (
                                         <Button
                                           variant="ghost"
@@ -373,16 +374,17 @@ export default function Inventory() {
                                       <Button variant="ghost" size="sm" onClick={() => handleEdit(lot)}>
                                         <Edit className="h-4 w-4" />
                                       </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="text-red-500 hover:text-red-700"
-                                        onClick={() => handleDelete(lot)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
+                                      {!lot.transferLock && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="text-red-500 hover:text-red-700"
+                                          onClick={() => handleDelete(lot)}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      )}
                                     </div>
-                                    )}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -849,8 +851,13 @@ export default function Inventory() {
               <Label>Número do Lote</Label>
               <Input
                 value={formData.lotNumber}
+                disabled={!!editingLot?.transferLock}
+                title={editingLot?.transferLock ? editingLot.transferLock.reason : undefined}
                 onChange={(e) => setFormData({...formData, lotNumber: e.target.value})}
               />
+              {editingLot?.transferLock && (
+                <p className="text-xs text-amber-700 mt-1">Lote em pedido/NF de transferência: o número não pode ser alterado, mas a quantidade sim.</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
