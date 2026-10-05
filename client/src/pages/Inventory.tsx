@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import {
-  Package, Plus, Edit, Trash2, RefreshCw, ArrowRightLeft, Lock,
+  Package, Plus, Edit, Trash2, RefreshCw, ArrowRightLeft, Lock, Unlock,
   Loader2, Search, AlertTriangle, CheckCircle2, Archive,
   TrendingDown, TrendingUp, History
 } from 'lucide-react';
@@ -105,6 +105,11 @@ export default function Inventory() {
   });
   // Motivo do ajuste de saldo: obrigatorio quando a quantidade muda (o servidor recusa sem ele).
   const [motivoAjuste, setMotivoAjuste] = useState('');
+  // Bloquear / Desbloquear: move saldo (total ou parcial) para o lote de mesmo
+  // numero do outro tipo (POST /api/inventory/lots/:id/mover-tipo).
+  const [moverLot, setMoverLot] = useState<(InventoryLot & { product?: Product | null }) | null>(null);
+  const [moverQty, setMoverQty] = useState('');
+  const [moverMotivo, setMoverMotivo] = useState('');
 
   const summaryQuery = useQuery<InventorySummary>({
     queryKey: ['/api/inventory/summary'],
@@ -160,6 +165,23 @@ export default function Inventory() {
     },
     onError: (err: any) => {
       toast({ title: 'Erro ao atualizar lote', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  const moverTipoMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: { stockType: 'in_use' | 'blocked'; quantity: string; motivo: string } }) => {
+      const res = await apiRequest('POST', `/api/inventory/lots/${id}/mover-tipo`, data);
+      return res;
+    },
+    onSuccess: (_r: any, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/inventory/lots'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/inventory/summary'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/inventory/movements'] });
+      setMoverLot(null);
+      toast({ title: vars.data.stockType === 'in_use' ? 'Estoque desbloqueado' : 'Estoque bloqueado' });
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro ao mover estoque', description: err.message, variant: 'destructive' });
     },
   });
 
@@ -337,6 +359,17 @@ export default function Inventory() {
                                       </Badge>
                                     ) : (
                                     <div className="flex justify-end gap-1">
+                                      {!finalizados && qty > 0 && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className={lot.stockType === 'in_use' ? 'text-amber-700 hover:text-amber-900' : 'text-green-700 hover:text-green-900'}
+                                          title={lot.stockType === 'in_use' ? 'Bloquear estoque' : 'Desbloquear estoque'}
+                                          onClick={() => handleMoverTipo(lot)}
+                                        >
+                                          {lot.stockType === 'in_use' ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                                        </Button>
+                                      )}
                                       <Button variant="ghost" size="sm" onClick={() => handleEdit(lot)}>
                                         <Edit className="h-4 w-4" />
                                       </Button>
@@ -397,6 +430,28 @@ export default function Inventory() {
         notes: formData.notes,
         isActive: editingLot.isActive,
         motivo: motivoAjuste,
+      },
+    });
+  };
+
+  const handleMoverTipo = (lot: InventoryLot & { product?: Product | null }) => {
+    setMoverLot(lot);
+    setMoverQty(String(parseFloat(lot.quantity) || 0));
+    setMoverMotivo('');
+  };
+
+  const moverQtyNum = parseFloat(moverQty) || 0;
+  const moverSaldo = moverLot ? (parseFloat(moverLot.quantity) || 0) : 0;
+  const moverValido = !!moverLot && moverQtyNum > 0 && moverQtyNum - moverSaldo <= 1e-9 && moverMotivo.trim().length >= 3;
+
+  const handleConfirmMoverTipo = () => {
+    if (!moverLot || !moverValido) return;
+    moverTipoMutation.mutate({
+      id: moverLot.id,
+      data: {
+        stockType: moverLot.stockType === 'in_use' ? 'blocked' : 'in_use',
+        quantity: moverQty,
+        motivo: moverMotivo.trim(),
       },
     });
   };
@@ -780,7 +835,15 @@ export default function Inventory() {
             </div>
             <div>
               <Label>Tipo</Label>
-              <Input disabled value={editingLot?.stockType === 'in_use' ? 'Em Uso' : 'Bloqueado'} />
+              <div className="flex gap-2">
+                <Input disabled value={editingLot?.stockType === 'in_use' ? 'Em Uso' : 'Bloqueado'} />
+                {editingLot && (parseFloat(editingLot.quantity) || 0) > 0 && (
+                  <Button type="button" variant="outline" size="sm" className="shrink-0 h-10"
+                    onClick={() => { const l = editingLot; setShowEditDialog(false); setEditingLot(null); handleMoverTipo(l); }}>
+                    {editingLot.stockType === 'in_use' ? <><Lock className="h-4 w-4 mr-1" />Bloquear</> : <><Unlock className="h-4 w-4 mr-1" />Desbloquear</>}
+                  </Button>
+                )}
+              </div>
             </div>
             <div>
               <Label>Número do Lote</Label>
@@ -838,6 +901,84 @@ export default function Inventory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bloquear / Desbloquear Dialog */}
+      <Dialog open={!!moverLot} onOpenChange={(o) => { if (!o) setMoverLot(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {moverLot?.stockType === 'in_use' ? <Lock className="h-5 w-5 text-amber-600" /> : <Unlock className="h-5 w-5 text-green-600" />}
+              {moverLot?.stockType === 'in_use' ? 'Bloquear estoque' : 'Desbloquear estoque'}
+            </DialogTitle>
+            <DialogDescription>
+              {moverLot?.stockType === 'in_use'
+                ? 'O saldo informado sai de "Em Uso" e vai para "Bloqueado" (não é faturado).'
+                : 'O saldo informado sai de "Bloqueado" e passa a "Em Uso" (disponível para faturar).'}
+              {' '}Se já existir um lote de mesmo número no tipo de destino, o saldo é somado a ele.
+            </DialogDescription>
+          </DialogHeader>
+          {moverLot && (
+            <div className="space-y-4">
+              <div>
+                <Label>Produto</Label>
+                <Input disabled value={moverLot.product?.name || productMap.get(moverLot.productId)?.name || moverLot.productId} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Lote</Label>
+                  <Input disabled value={moverLot.lotNumber} />
+                </div>
+                <div>
+                  <Label>Saldo atual ({moverLot.stockType === 'in_use' ? 'Em Uso' : 'Bloqueado'})</Label>
+                  <Input disabled value={moverSaldo.toFixed(2)} />
+                </div>
+              </div>
+              <div>
+                <Label>Quantidade a {moverLot.stockType === 'in_use' ? 'bloquear' : 'desbloquear'} *</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max={moverSaldo}
+                    value={moverQty}
+                    onChange={(e) => setMoverQty(e.target.value)}
+                  />
+                  <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setMoverQty(String(moverSaldo))}>
+                    Tudo
+                  </Button>
+                </div>
+                {moverQtyNum - moverSaldo > 1e-9 && (
+                  <p className="text-xs text-red-600 mt-1">Maior que o saldo do lote ({moverSaldo.toFixed(2)}).</p>
+                )}
+                {moverQtyNum > 0 && moverQtyNum - moverSaldo <= 1e-9 && moverSaldo - moverQtyNum > 1e-9 && (
+                  <p className="text-xs text-gray-500 mt-1">Ficam {(moverSaldo - moverQtyNum).toFixed(2)} em {moverLot.stockType === 'in_use' ? 'Em Uso' : 'Bloqueado'}.</p>
+                )}
+              </div>
+              <div>
+                <Label>Motivo *</Label>
+                <Textarea
+                  value={moverMotivo}
+                  onChange={(e) => setMoverMotivo(e.target.value)}
+                  placeholder={moverLot.stockType === 'in_use' ? 'Ex.: avaria na embalagem, aguardando conferência' : 'Ex.: conferência de recebimento concluída'}
+                  rows={2}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMoverLot(null)}>Cancelar</Button>
+            <Button
+              onClick={handleConfirmMoverTipo}
+              disabled={!moverValido || moverTipoMutation.isPending}
+              className={moverLot?.stockType === 'in_use' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}
+            >
+              {moverTipoMutation.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              {moverLot?.stockType === 'in_use' ? 'Bloquear' : 'Desbloquear'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -849,6 +990,9 @@ function MovementTypeBadge({ type }: { type: string }) {
     'transfer': { label: 'Transferência', className: 'bg-purple-100 text-purple-800' },
     'cancel_reversal': { label: 'Cancelamento', className: 'bg-green-100 text-green-800' },
     'return': { label: 'Devolução', className: 'bg-amber-100 text-amber-800' },
+    'replenish': { label: 'Entrada', className: 'bg-emerald-100 text-emerald-800' },
+    'block': { label: 'Bloqueio', className: 'bg-amber-100 text-amber-800' },
+    'unblock': { label: 'Desbloqueio', className: 'bg-green-100 text-green-800' },
   };
   const c = config[type] || { label: type, className: 'bg-gray-100 text-gray-800' };
   return <Badge className={c.className}>{c.label}</Badge>;
