@@ -129,6 +129,23 @@ function SalesCycleDots({ cycles }: { cycles?: SalesCycle[] | null }) {
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
+  // 📋 Copiar nome do cliente/lead (cards da Rota do Dia). Usa a Clipboard API e, se indisponível
+  // (navegador antigo / webview), cai no método de seleção de texto.
+  const copiarNomeCliente = (nome: string) => {
+    const n = (nome || '').trim();
+    if (!n) return;
+    const ok = () => toast({ title: 'Nome copiado', description: n });
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = n; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        ok();
+      } catch (_e) { toast({ title: 'Não foi possível copiar', description: n, variant: 'destructive' }); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(n).then(ok, fallback);
+    else fallback();
+  };
   const delegMarks = useCustomerMarks();
   const navigate = useLocation()[1];
   
@@ -2540,6 +2557,18 @@ export default function RotaDoDia() {
                           <p className={`font-semibold ${statusColor} flex items-center gap-1 min-w-0`}>
                             {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />}
                             <span className="truncate">{visit.customerName}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); copiarNomeCliente(visit.customerName || ''); }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              draggable={false}
+                              title="Copiar nome do cliente"
+                              aria-label="Copiar nome do cliente"
+                              className="shrink-0 text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                              data-testid={`copy-name-efetuada-${visit.customerId || visit.id}`}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
                           </p>
                           {/* Solicitar Alteração: SOMENTE clientes ativos (não leads). */}
                           {!isLead && (
@@ -2574,6 +2603,18 @@ export default function RotaDoDia() {
                               <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
                                 {visit.customerName}
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); copiarNomeCliente(visit.customerName || ''); }}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  draggable={false}
+                                  title="Copiar nome do cliente"
+                                  aria-label="Copiar nome do cliente"
+                                  className="shrink-0 text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                                  data-testid={`copy-name-presential-${visit.customerId || visit.id}`}
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </button>
                               </p>
                               {holidayNotes[String(visit.customerId)] && (
                                 <Badge variant="outline" className="text-[11px] border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title={holidayNotes[String(visit.customerId)]} data-testid={`badge-feriado-${visit.customerId}`}>
