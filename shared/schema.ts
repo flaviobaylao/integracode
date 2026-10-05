@@ -3016,7 +3016,7 @@ export type InsertFiscalBackup = z.infer<typeof insertFiscalBackupSchema>;
 // ============================================================================
 
 export const stockTypeEnum = pgEnum('stock_type', ['in_use', 'blocked']);
-export const movementTypeEnum = pgEnum('movement_type', ['consume', 'replenish', 'transfer', 'adjust', 'cancel_reversal']);
+export const movementTypeEnum = pgEnum('movement_type', ['consume', 'replenish', 'transfer', 'adjust', 'cancel_reversal', 'block', 'unblock']);
 export const movementSourceEnum = pgEnum('movement_source', ['invoice', 'order', 'manual']);
 
 export const inventoryLots = pgTable("inventory_lots", {
