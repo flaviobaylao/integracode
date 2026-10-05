@@ -6,6 +6,7 @@ import { Camera, MapPin, Loader2, Mic } from "lucide-react";
 import { useVoiceToText } from "@/components/VoiceDictateButton";
 import { useAuth } from "@/hooks/useAuth";
 import { getBrazilDateISO } from "@/lib/brazilTimezone";
+import { enfileirar, novoUuid, enviarPendentes } from "@/lib/offlineCheckins";
 
 interface CheckInModalProps {
   isOpen: boolean;
@@ -255,6 +256,11 @@ export default function CheckInModal({
 
     setStep('submitting');
 
+    // Identidade do check-in: a MESMA em todas as tentativas (online ou pela fila).
+    // O servidor usa isso para nao duplicar quando o envio e repetido. (out/2026)
+    const clientUuid = novoUuid();
+    const deviceTime = new Date().toISOString();
+
     try {
       // Converter base64 para blob
       const response = await fetch(photoData);
@@ -270,6 +276,23 @@ export default function CheckInModal({
       if (notes.trim()) {
         formData.append('notes', notes.trim());
       }
+      formData.append('clientUuid', clientUuid);
+      formData.append('deviceTime', deviceTime);
+      formData.append('source', 'online');
+
+      // SEM REDE: nao tenta o POST — guarda na fila e confirma para o vendedor.
+      if (!navigator.onLine) {
+        await enfileirar({ clientUuid, cardId, customerId: customerId || null, customerNome: null,
+          deviceTime, lat: location ? location.latitude : null, lng: location ? location.longitude : null,
+          accuracyM: null, notes: notes.trim(), photo: blob });
+        toast({
+          title: "Check-in salvo no aparelho",
+          description: "Sem internet agora. Ele sobe sozinho quando a conexão voltar — mantenha o app aberto.",
+        });
+        onSuccess();
+        handleClose();
+        return;
+      }
 
       // Enviar para o backend
       const checkInResponse = await fetch(`/api/sales-cards/${cardId}/check-in`, {
@@ -279,6 +302,19 @@ export default function CheckInModal({
       });
 
       if (!checkInResponse.ok) {
+        // Erro do servidor (5xx) ou indisponibilidade: tambem vai para a fila.
+        if (checkInResponse.status >= 500) {
+          await enfileirar({ clientUuid, cardId, customerId: customerId || null, customerNome: null,
+            deviceTime, lat: location ? location.latitude : null, lng: location ? location.longitude : null,
+            accuracyM: null, notes: notes.trim(), photo: blob });
+          toast({
+            title: "Check-in salvo no aparelho",
+            description: "O sistema não respondeu agora. Ele será enviado automaticamente.",
+          });
+          onSuccess();
+          handleClose();
+          return;
+        }
         throw new Error('Erro ao realizar check-in');
       }
 
@@ -304,6 +340,24 @@ export default function CheckInModal({
       onSuccess();
       handleClose();
     } catch (error) {
+      // Falha de REDE no meio do envio (sinal caiu, timeout): o check-in nao se perde,
+      // vai para a fila local e sobe no proximo gatilho. (out/2026)
+      const ehRede = error instanceof TypeError || !navigator.onLine;
+      if (ehRede) {
+        try {
+          const blob = await (await fetch(photoData)).blob();
+          await enfileirar({ clientUuid, cardId, customerId: customerId || null, customerNome: null,
+            deviceTime, lat: location ? location.latitude : null, lng: location ? location.longitude : null,
+            accuracyM: null, notes: notes.trim(), photo: blob });
+          toast({
+            title: "Check-in salvo no aparelho",
+            description: "A conexão falhou no envio. Ele sobe sozinho quando a internet voltar.",
+          });
+          onSuccess();
+          handleClose();
+          return;
+        } catch { /* se nem a fila funcionar, cai no erro normal abaixo */ }
+      }
       toast({
         title: "Erro ao realizar check-in",
         description: error instanceof Error ? error.message : "Erro desconhecido",
