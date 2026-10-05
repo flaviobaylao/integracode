@@ -431,6 +431,11 @@ export default function BillingPipeline() {
   // Edição (mover/excluir/selecionar em lote): admins. Telemarketing tem acesso
   // SOMENTE de leitura (consulta + filtros). As mutações também são bloqueadas no backend.
   const canEdit = ['admin', 'coordinator', 'administrative'].includes(String((currentUser as any)?.role || ''));
+  // INSTÂNCIA (empresa emissora da NF): administrativo e admins podem trocar em QUALQUER etapa,
+  // inclusive já faturado (correção de empresa/filial emitente). Coordenação continua só nas
+  // etapas pré-faturamento (STAGES_INSTANCIA_EDITAVEL). O backend já persiste a troca de
+  // instância de qualquer manager, sem trava de etapa.
+  const canEditInstance = ['admin', 'administrative'].includes(String((currentUser as any)?.role || ''));
   // EDICAO RESTRITA: vendedor externo / telemarketing edita SOMENTE o proprio pedido
   // (sellerId == seu id), nos status Agendado/Pedido, e so produtos/qtd, forma de pagamento
   // e 'Faturar em'. A trava real esta no backend; aqui apenas refletimos na tela.
@@ -1889,7 +1894,7 @@ export default function BillingPipeline() {
                   </div>
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Instância</label>
-                    {editMode && canEdit && STAGES_INSTANCIA_EDITAVEL.has(String(detailItem.stage)) ? (
+                    {editMode && (canEditInstance || (canEdit && STAGES_INSTANCIA_EDITAVEL.has(String(detailItem.stage)))) ? (
                       <select
                         value={editData?.omieInstanceId ?? ''}
                         onChange={(e) => {
