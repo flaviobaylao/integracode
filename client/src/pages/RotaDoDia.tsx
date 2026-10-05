@@ -2695,14 +2695,18 @@ export default function RotaDoDia() {
                                   R$ {customerInfo.debts[visit.customerId].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                 </Badge>
                               )}
-                              {checkInCheckpoint && checkInCheckpoint.photoUrl && (
-                                <Camera
-                                  className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors"
-                                  data-testid={`camera-icon-${visit.customerId}`}
-                                  onClick={(e) => handlePhotoClick(checkInCheckpoint.photoUrl!, e)}
-                                />
-                              )}
                               </>)}
+                              {/* 📷 Foto do check-in registrada — visível mesmo com o card recolhido (clientes e leads) */}
+                              {checkInCheckpoint && checkInCheckpoint.photoUrl && (
+                                <span title="Foto do check-in registrada (toque para ver)" className="inline-flex">
+                                  <Camera
+                                    className="h-4 w-4 text-purple-500 cursor-pointer hover:text-purple-700 transition-colors"
+                                    aria-label="Foto do check-in registrada"
+                                    data-testid={`camera-icon-${visit.customerId || visit.id}`}
+                                    onClick={(e) => handlePhotoClick(checkInCheckpoint.photoUrl!, e)}
+                                  />
+                                </span>
+                              )}
                             </div>
 
                             {isExpanded && (<>
@@ -2760,6 +2764,20 @@ export default function RotaDoDia() {
                                         {formatInTimeZone(checkInCheckpoint.checkpointTime, 'America/Sao_Paulo', 'HH:mm', { locale: ptBR })}
                                         {checkInOffsite && ` ⚠️ ${formatDistance(checkInDistance!)}`}
                                       </span>
+                                      {checkInCheckpoint.photoUrl ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => handlePhotoClick(checkInCheckpoint.photoUrl!, e)}
+                                          className="ml-2 inline-flex items-center gap-1 rounded-full bg-purple-100 dark:bg-purple-900/40 px-2 py-0.5 text-[11px] font-medium text-purple-700 dark:text-purple-300 hover:bg-purple-200"
+                                          data-testid={`checkin-photo-tag-${visit.customerId || visit.id}`}
+                                        >
+                                          <Camera className="h-3 w-3" /> Foto registrada
+                                        </button>
+                                      ) : isLead ? (
+                                        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300" data-testid={`checkin-nophoto-tag-${visit.customerId || visit.id}`}>
+                                          <Camera className="h-3 w-3" /> Sem foto
+                                        </span>
+                                      ) : null}
                                       {checkInCheckpoint.latitude && checkInCheckpoint.longitude && (
                                         <div className="text-gray-400 text-xs mt-1">
                                           <div>Lat: {parseFloat(checkInCheckpoint.latitude.toString()).toFixed(6)}</div>
