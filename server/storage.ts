@@ -178,6 +178,17 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { calculateNextVisitDate } from "@shared/visitSchedule";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo';
+
+// 📷 Coluna aditiva com a foto do check-in de LEAD na própria parada da rota (criada sob demanda).
+let __leadPhotoColReady: Promise<void> | null = null;
+export function ensureLeadPhotoColumn(): Promise<void> {
+  if (!__leadPhotoColReady) {
+    __leadPhotoColReady = db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS lead_photo text`)
+      .then(() => undefined)
+      .catch((e: any) => { __leadPhotoColReady = null; throw e; });
+  }
+  return __leadPhotoColReady;
+}
 import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
 
 export interface IStorage {
@@ -5743,7 +5754,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(routeCheckpoints.sequenceNumber);
     
     // Retornar com coordenadas do checkpoint (capturadas durante check-in/check-out)
-    return results.filter(row => row.route_checkpoints !== null && row.route_checkpoints !== undefined).map(row => ({
+    const mapped: any[] = results.filter(row => row.route_checkpoints !== null && row.route_checkpoints !== undefined).map(row => ({
       ...(row.route_checkpoints || {}),
       latitude: row.route_checkpoints?.checkpointLatitude ? parseFloat(row.route_checkpoints.checkpointLatitude.toString()) : null,
       longitude: row.route_checkpoints?.checkpointLongitude ? parseFloat(row.route_checkpoints.checkpointLongitude.toString()) : null,
@@ -5752,6 +5763,32 @@ export class DatabaseStorage implements IStorage {
       customerRegisteredLatitude: row.customers?.latitude || null,
       customerRegisteredLongitude: row.customers?.longitude || null
     }));
+
+    // 📷 Check-in de LEAD: não tem sales_card, então a foto vem da própria parada do lead
+    // (route_checkpoints.lead_photo, gravada no check-in) ou — para check-ins anteriores a essa
+    // coluna — da foto do lead quando o último check-in dele é deste mesmo checkpoint (±20h).
+    // A foto NÃO trafega aqui (base64 pesado): devolvemos a URL que serve a imagem sob demanda.
+    if (mapped.some((c: any) => c.checkpointType === 'check_in' && String(c.visitId || '').startsWith('lead:'))) {
+      try {
+        await ensureLeadPhotoColumn();
+        const r: any = await db.execute(sql`
+          SELECT rc.id,
+                 (rc.lead_photo IS NOT NULL) AS has_cp,
+                 (l.photo IS NOT NULL AND l.photo <> '' AND l.last_check_in_at IS NOT NULL
+                   AND ABS(EXTRACT(EPOCH FROM (l.last_check_in_at - rc.checkpoint_time))) < 72000) AS has_lead
+          FROM route_checkpoints rc
+          LEFT JOIN leads l ON l.id = rc.customer_id
+          WHERE rc.daily_route_id = ${dailyRouteId}
+            AND rc.checkpoint_type = 'check_in'
+            AND rc.visit_id LIKE 'lead:%'
+        `);
+        const comFoto = new Set<string>(((r?.rows || []) as any[]).filter((x: any) => x.has_cp || x.has_lead).map((x: any) => String(x.id)));
+        for (const c of mapped) {
+          if (!c.photoUrl && comFoto.has(String(c.id))) c.photoUrl = `/api/route-checkpoints/${c.id}/foto-lead`;
+        }
+      } catch (e: any) { console.warn('[CP-LEAD-FOTO] falha ao marcar foto do lead:', e?.message || e); }
+    }
+    return mapped;
   }
 
   async createRouteCheckpoint(data: any): Promise<any> {

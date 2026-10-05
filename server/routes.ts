@@ -24107,6 +24107,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { created: true, distance: Math.round(dist) };
   }
 
+  // 📷 Foto do check-in de LEAD de uma parada da rota (servida sob demanda para o card da Rota do Dia).
+  app.get('/api/route-checkpoints/:id/foto-lead', authenticateUser, async (req: any, res) => {
+    try {
+      const { ensureLeadPhotoColumn } = await import('./storage');
+      await ensureLeadPhotoColumn();
+      const q: any = await db.execute(sql`
+        SELECT rc.lead_photo, l.photo AS lead_photo_atual,
+               (l.last_check_in_at IS NOT NULL AND ABS(EXTRACT(EPOCH FROM (l.last_check_in_at - rc.checkpoint_time))) < 72000) AS mesmo_checkin
+        FROM route_checkpoints rc
+        LEFT JOIN leads l ON l.id = rc.customer_id
+        WHERE rc.id = ${req.params.id} AND rc.visit_id LIKE 'lead:%'
+        LIMIT 1
+      `);
+      const row: any = (q?.rows || [])[0];
+      const foto: string | null = row ? (row.lead_photo || (row.mesmo_checkin ? row.lead_photo_atual : null)) : null;
+      if (!foto) return res.status(404).json({ message: 'Foto não encontrada' });
+      const m = /^data:([^;]+);base64,(.*)$/s.exec(String(foto));
+      if (!m) return res.redirect(String(foto));
+      res.setHeader('Content-Type', m[1]);
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.send(Buffer.from(m[2], 'base64'));
+    } catch (e: any) {
+      console.error('❌ [LEAD-FOTO] erro ao servir foto:', e?.message || e);
+      return res.status(500).json({ message: 'Erro ao carregar a foto' });
+    }
+  });
+
   // Check-in em um lead (com foto obrigatória)
   app.post('/api/leads/:id/check-in', upload.single('photo'), async (req: any, res) => {
     console.log(`🚀 [CHECK-IN] POST /api/leads/${req.params.id}/check-in`);
@@ -24276,6 +24303,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const kmRes = await ensureLeadKmCheckpoint({ lead: leadForKm, sellerId, userLat, userLon, requireWithinRadius: false });
           routeProgress = kmRes.created ? { registered: true } : null;
           console.log(`📍 [LEAD-KM] check-in lead ${id}: ${JSON.stringify(kmRes)}`);
+          // 📷 Grava a foto deste check-in na parada do lead da rota de hoje (marca "foto tirada" no card).
+          try {
+            const { ensureLeadPhotoColumn } = await import('./storage');
+            await ensureLeadPhotoColumn();
+            const _rotaHoje = await storage.getDailyRouteBySellerAndDate(sellerId, dataCalendario(hojeBR()));
+            if (_rotaHoje) {
+              await db.execute(sql`UPDATE route_checkpoints SET lead_photo = ${photoUrl}
+                WHERE daily_route_id = ${_rotaHoje.id} AND customer_id = ${id}
+                  AND checkpoint_type = 'check_in' AND visit_id = ${'lead:' + id}`);
+            }
+          } catch (fotoErr: any) {
+            console.warn('⚠️ [LEAD-FOTO] não foi possível gravar a foto na parada da rota:', fotoErr?.message || fotoErr);
+          }
         } catch (checkpointError: any) {
           console.error('❌ Erro ao registrar checkpoint de check-in:', checkpointError);
           // Não falhar o check-in se o checkpoint falhar
