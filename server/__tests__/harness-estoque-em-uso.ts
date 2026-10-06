@@ -195,7 +195,7 @@ async function main() {
   t('nova transmissao baixa de novo, nome sem lote duplicado', p.baixouAgora && (await saldo('e-l2')) === l2Antes - 30
     && (await storage.getFiscalInvoiceItems('nf-m'))[0].productName === 'SUCO A 350ml - Lote: L2');
 
-  console.log('\n9) Transferencia: lote especifico e obrigatorio e sai EXATAMENTE dele');
+  console.log('\n9) Transferencia: lote especifico e preferencia (sai dele quando tem saldo)');
   await db.execute(sql`DELETE FROM inventory_lots WHERE product_id = 'e-c'`);
   await db.execute(sql`INSERT INTO products (id, name, price, omie_instance_id) VALUES ('e-c', 'SUCO C', 5, 'e-ind') ON CONFLICT DO NOTHING`);
   await lote('e-ca', 'e-c', 'e-ind', 'in_use', 'CA', 100, 9);
@@ -206,11 +206,20 @@ async function main() {
   t('CB saiu 10, CA saiu 15 (10 pedidos + 5 FIFO)', (await saldo('e-cb')) === 90 && (await saldo('e-ca')) === 85, m);
   const dt = distribuirLotes(m, trf);
   t('linha CB -> CB; linha sem lote -> CA 5; linha CA -> CA', textoLotes(dt[0]) === 'Lote: CB' && textoLotes(dt[1]) === 'Lote: CA' && textoLotes(dt[2]) === 'Lote: CA', dt.map(textoLotes));
-  err = null;
-  try { await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-c', name: 'SUCO C', quantity: 10, lotId: 'e-cx', lotNumber: 'CX' }], sourceId: 'trf-2', rotulo: 'TRF', createdBy: null }); } catch (e) { err = e; }
-  t('lote pedido BLOQUEADO -> recusa (nao cai no FIFO)', ehBloqueioEstoque(err) && /lote CX/.test(err?.details || ''), err?.details);
+  // 05/out/2026 (Flavio): lote fixado e PREFERENCIA, nao obrigacao. Se foi
+  // zerado/bloqueado depois do pedido, o que falta sai de um lote em uso de
+  // mesmo numero ou em FIFO dos demais — sem travar o faturamento.
+  const cb0 = await saldo('e-cb'); const ca0b = await saldo('e-ca');
+  m = await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-c', name: 'SUCO C', quantity: 10, lotId: 'e-cx', lotNumber: 'CX' }], sourceId: 'trf-2', rotulo: 'TRF', createdBy: null });
+  t('lote pedido BLOQUEADO -> sai em FIFO dos em uso (CA, mais antigo)', (await saldo('e-ca')) === ca0b - 10 && (await saldo('e-cb')) === cb0 && (await saldo('e-cx')) === 100, m);
   v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-c', name: 'SUCO C', quantity: 95, lotId: 'e-cb', lotNumber: 'CB' }]);
-  t('conferencia tambem barra lote especifico sem saldo', !v.valid && /lote CB/.test(v.shortages[0]?.productName || ''), v);
+  t('conferencia: lote fixado sem saldo suficiente NAO barra se o total cobre', v.valid, v);
+  // Lote fixado zerado, mas existe outro EM USO com o MESMO NUMERO: vai para ele.
+  await lote('e-cb2', 'e-c', 'e-ind', 'in_use', 'CB', 50, 6);
+  await db.execute(sql`UPDATE inventory_lots SET quantity = 0 WHERE id = 'e-cb'`);
+  m = await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-c', name: 'SUCO C', quantity: 10, lotId: 'e-cb', lotNumber: 'CB' }], sourceId: 'trf-3', rotulo: 'TRF', createdBy: null });
+  t('lote fixado zerado -> sai do lote em uso de mesmo numero', (await saldo('e-cb2')) === 40 && (m['e-c'] || []).some((c: any) => c.lotId === 'e-cb2' && c.quantidade === 10), m);
+  await db.execute(sql`UPDATE inventory_lots SET quantity = ${cb0} WHERE id = 'e-cb'`);
 
   console.log('\n10) Mesmo pedido, duas baixas simultaneas: so uma vale');
   const card2: any = { id: 'p-9', salesCardId: 'sc-9', orderNumber: 'PED-9', omieInstanceId: 'e-ind', omieInstanceName: 'IND', products: [{ id: 'e-c', name: 'SUCO C', quantity: 7 }] };
