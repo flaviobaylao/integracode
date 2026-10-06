@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
+import { generateOrcamentoPdf } from "@/lib/orcamento-generator";
 import { useLocation } from "wouter";
 import { Monitor, MapPin, Upload, FileSpreadsheet, Trash2, AlertCircle, Send, Clock, Loader2, FileText, PlayCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -386,6 +387,33 @@ export default function SalesCards() {
     }
   };
 
+  // Gera o PDF do orçamento a partir dos dados salvos no rascunho (produtos,
+  // forma de pagamento, operação, cliente, vendedor) — sem precisar "Retomar".
+  const handleGerarOrcamento = (card: any) => {
+    const prods = Array.isArray(card?.products) ? card.products : [];
+    if (!prods.length) {
+      toast({
+        title: "Rascunho sem produtos",
+        description: "Este rascunho não tem produtos para gerar o orçamento. Retome o pedido e adicione itens.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      generateOrcamentoPdf({
+        customer: card.customer,
+        seller: card.seller,
+        products: prods,
+        paymentMethod: card.paymentMethod,
+        boletoDays: card.boletoDays,
+        operationType: card.operationType,
+      });
+      toast({ title: "Orçamento gerado", description: "O PDF do orçamento foi baixado." });
+    } catch (e: any) {
+      toast({ title: "Erro ao gerar orçamento", description: String(e?.message || e), variant: "destructive" });
+    }
+  };
+
   // Rascunho parado há N dias (a partir de updatedAt)
   const draftIdleDays = (card: SalesCardWithRelations): number => {
     const ref = (card as any).updatedAt || (card as any).createdAt;
@@ -633,9 +661,9 @@ export default function SalesCards() {
                 
                 <div className="mt-6">
                   {card.status === 'draft' && (
-                    <div className="flex items-center space-x-3">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Button
-                        className="flex-1 bg-honest-blue hover:bg-blue-700"
+                        className="flex-1 min-w-[120px] bg-honest-blue hover:bg-blue-700"
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedCardForSale(card);
@@ -645,6 +673,19 @@ export default function SalesCards() {
                       >
                         <PlayCircle className="h-4 w-4 mr-2" />
                         Retomar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="text-honest-blue border-blue-300 hover:bg-blue-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleGerarOrcamento(card);
+                        }}
+                        title="Gerar PDF do orçamento com os itens deste rascunho"
+                        data-testid="button-orcamento-rascunho"
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Orçamento
                       </Button>
                       <Button
                         variant="outline"
