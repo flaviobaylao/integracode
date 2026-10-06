@@ -144,6 +144,13 @@ export function registerInventoryRoutes(app: Express) {
       }
 
       const prevQty = existing.quantity;
+      // Duplicidade so e conferida quando o numero REALMENTE muda. A tela manda
+      // lotNumber sempre; se ja existe outro lote com o mesmo numero (duplicata
+      // antiga), o ajuste de quantidade dava 409 "Ja existe o lote" sem o usuario
+      // ter renomeado nada (06/out/2026, H120626 na BSB).
+      if (parsed.data.lotNumber !== undefined && normalizarNumeroLote(parsed.data.lotNumber) === normalizarNumeroLote(existing.lotNumber)) {
+        delete parsed.data.lotNumber;
+      }
       if (parsed.data.lotNumber !== undefined) {
         parsed.data.lotNumber = normalizarNumeroLote(parsed.data.lotNumber);
         const dup: any = await db.execute(sql`
