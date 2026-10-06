@@ -28,7 +28,23 @@ import {
 // da nota (evita nota rejeitada órfã e deixa o card acionável após corrigir o cadastro).
 async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; message?: string }> {
   try {
-    const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
+    let customer: any = item.customerId ? await storage.getCustomer(item.customerId) : null;
+    // CLIENTE ORFAO (06/out/2026): o card apontava para um customer_id que nao
+    // existe mais (cadastro duplicado apagado/mesclado) e a validacao lia UF
+    // vazia — "Cadastro incompleto" com o cadastro certo. Quando o id nao
+    // resolve mas o CPF/CNPJ do card bate com um cadastro, religa o card a ele.
+    if (!customer && item.customerDocument) {
+      const doc = String(item.customerDocument).replace(/\D/g, '');
+      const porDoc = doc.length >= 11 ? await storage.getCustomerByDocument(doc) : undefined;
+      if (porDoc) {
+        customer = porDoc;
+        if (item.id && porDoc.id !== item.customerId) {
+          await storage.updateBillingPipelineItem(item.id, { customerId: porDoc.id } as any);
+          item.customerId = porDoc.id;
+          console.log(`🔗 [FATURAMENTO] card ${item.orderNumber || item.id}: cliente ${item.customerId} nao existia — religado por documento ao cadastro ${porDoc.id} (${porDoc.name})`);
+        }
+      }
+    }
     const destUf = resolveDestinationUf({ state: (customer as any)?.state, cep: (customer as any)?.zipCode });
     if (!destUf) {
       const nome = item.customerName || (customer as any)?.name || 'cliente';
