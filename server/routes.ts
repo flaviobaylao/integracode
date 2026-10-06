@@ -19665,74 +19665,188 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // vendedor — DE, PARA, SAIDA, CHEGADA, KM, MIN e TIPO. Mesma regra de km da
   // Rota do Dia: comeca no 1o check-in, soma check-in a check-in e fecha na casa
   // (a ida de casa ate o 1o cliente NAO entra). Uma chamada OSRM por rota.
+  //
+  // HISTORICO MENSAL: mes ja encerrado vira REPOSITORIO FIXO na tabela
+  // km_trechos_historico — gravado na primeira consulta depois de fechado e lido
+  // dali em diante (nao recalcula, nao muda se uma rota antiga for mexida).
+  // O mes vigente e sempre calculado ao vivo. Admin pode regravar um mes.
   // ──────────────────────────────────────────────────────────────────────────
+  let __kmHistReady = false;
+  const __ensureKmHist = async (): Promise<void> => {
+    if (__kmHistReady) return;
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS km_trechos_historico (
+        id serial PRIMARY KEY,
+        mes varchar(7) NOT NULL,
+        seller_id varchar NOT NULL,
+        seller_name varchar,
+        dia varchar(10) NOT NULL,
+        ordem integer NOT NULL,
+        de text, para text, saida varchar(5), chegada varchar(5),
+        km numeric, min integer, tipo varchar(20),
+        gravado_em timestamptz NOT NULL DEFAULT now(),
+        gravado_por varchar
+      )`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_km_trechos_hist_mes ON km_trechos_historico (mes, seller_id, dia, ordem)`);
+    __kmHistReady = true;
+  };
+
+  const __calcularTrechosMes = async (mes: string): Promise<any[]> => {
+    await __ensureCheckinCols(); // garante a coluna 'source' usada no filtro abaixo
+    const { calculateRouteLegs } = await import('./routingService');
+    const rr: any = await db.execute(sql`
+      SELECT dr.id, dr.seller_id, to_char(dr.route_date, 'YYYY-MM-DD') AS dia, dr.route_mode AS mode,
+             dr.start_latitude, dr.start_longitude,
+             COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email, dr.seller_id) AS seller_name,
+             u.home_latitude, u.home_longitude
+      FROM daily_routes dr
+      JOIN users u ON u.id = dr.seller_id
+      WHERE u.role = 'vendedor' AND u.is_active = true
+        AND to_char(dr.route_date, 'YYYY-MM') = ${mes}
+        AND dr.route_date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY dr.seller_id, dr.route_date
+    `);
+    const rotas = (rr?.rows || []) as any[];
+    const _ok = (la: any, lo: any) => {
+      const a = Number(la), b = Number(lo);
+      return isFinite(a) && isFinite(b) && !(Math.abs(a) < 0.001 && Math.abs(b) < 0.001) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
+    };
+    const _hhmm = (t: any) => {
+      try { return new Date(t).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }); }
+      catch { return ''; }
+    };
+    const trechos: any[] = [];
+    for (const r of rotas) {
+      // Check-ins validos do dia, em ordem cronologica, com o nome do cliente.
+      const cr: any = await db.execute(sql`
+        SELECT rc.checkpoint_latitude AS lat, rc.checkpoint_longitude AS lon, rc.checkpoint_time AS t,
+               COALESCE(NULLIF(c.fantasy_name, ''), c.name, 'Cliente') AS nome
+        FROM route_checkpoints rc
+        LEFT JOIN customers c ON c.id = rc.customer_id
+        WHERE rc.daily_route_id = ${r.id} AND rc.checkpoint_type = 'check_in'
+          AND COALESCE(rc.validation_status, 'validated') <> 'cancelled'
+          -- check-in offline fora dos criterios fica pendente de aprovacao e nao conta
+          AND NOT (COALESCE(rc.validation_status, '') = 'pending' AND COALESCE(rc.source, 'online') = 'offline')
+        ORDER BY rc.checkpoint_time ASC
+      `);
+      const pts = ((cr?.rows || []) as any[]).filter((p) => _ok(p.lat, p.lon));
+      if (pts.length === 0) continue;
+      // Casa: coordenada da rota; se invalida, a do cadastro do vendedor.
+      let hLat = Number(r.start_latitude), hLon = Number(r.start_longitude);
+      if (!_ok(hLat, hLon)) { hLat = Number(r.home_latitude); hLon = Number(r.home_longitude); }
+      const temCasa = _ok(hLat, hLon);
+      const coords = pts.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) }));
+      if (temCasa) coords.push({ lat: hLat, lon: hLon });
+      const legs = coords.length >= 2 ? await calculateRouteLegs(coords) : [];
+      for (let i = 0; i < legs.length; i++) {
+        const km = Math.round((legs[i].distance / 1000) * 100) / 100;
+        const min = Math.round(legs[i].duration / 60);
+        const ehCasa = temCasa && i === legs.length - 1;
+        trechos.push({
+          sellerId: String(r.seller_id), sellerName: r.seller_name, dia: r.dia, ordem: i + 1,
+          de: pts[i].nome, para: ehCasa ? 'Casa do vendedor' : pts[i + 1].nome,
+          saida: _hhmm(pts[i].t), chegada: ehCasa ? '' : _hhmm(pts[i + 1].t),
+          km, min,
+          tipo: String(r.mode) === 'prospeccao' ? 'prospecção' : (ehCasa ? 'retorno' : (km >= 10 ? 'intermunicipal' : (km === 0 ? 'mesmo ponto' : 'urbano'))),
+        });
+      }
+    }
+    return trechos;
+  };
+
+  const __gravarHistoricoTrechos = async (mes: string, trechos: any[], por: string | null): Promise<void> => {
+    await __ensureKmHist();
+    await db.execute(sql`DELETE FROM km_trechos_historico WHERE mes = ${mes}`);
+    for (const t of trechos) {
+      await db.execute(sql`
+        INSERT INTO km_trechos_historico (mes, seller_id, seller_name, dia, ordem, de, para, saida, chegada, km, min, tipo, gravado_por)
+        VALUES (${mes}, ${t.sellerId}, ${t.sellerName}, ${t.dia}, ${t.ordem}, ${t.de}, ${t.para}, ${t.saida}, ${t.chegada}, ${t.km}, ${t.min}, ${t.tipo}, ${por})
+      `);
+    }
+  };
+
+  const __lerHistoricoTrechos = async (mes: string): Promise<{ trechos: any[]; gravadoEm: string | null }> => {
+    await __ensureKmHist();
+    const r: any = await db.execute(sql`
+      SELECT seller_id, seller_name, dia, ordem, de, para, saida, chegada, km, min, tipo, gravado_em
+      FROM km_trechos_historico WHERE mes = ${mes}
+      ORDER BY seller_id, dia, ordem
+    `);
+    const rows = (r?.rows || []) as any[];
+    return {
+      trechos: rows.map((x) => ({
+        sellerId: String(x.seller_id), sellerName: x.seller_name, dia: x.dia, ordem: Number(x.ordem),
+        de: x.de, para: x.para, saida: x.saida || '', chegada: x.chegada || '',
+        km: Number(x.km), min: Number(x.min), tipo: x.tipo,
+      })),
+      gravadoEm: rows.length ? new Date(rows[0].gravado_em).toISOString() : null,
+    };
+  };
+
   app.get('/api/admin/km-vendedores/trechos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || '')) ? String(req.query.mes) : String(getBrazilDateString()).slice(0, 7);
+      const mesAtual = String(getBrazilDateString()).slice(0, 7);
+      const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || '')) ? String(req.query.mes) : mesAtual;
       const sellerFiltro = String(req.query.sellerId || '').trim();
-      const { calculateRouteLegs } = await import('./routingService');
+      const fechado = mes < mesAtual;
+      let trechos: any[] = [];
+      let fonte: 'historico' | 'ao-vivo' = 'ao-vivo';
+      let gravadoEm: string | null = null;
 
-      const rr: any = await db.execute(sql`
-        SELECT dr.id, dr.seller_id, to_char(dr.route_date, 'YYYY-MM-DD') AS dia, dr.route_mode AS mode,
-               dr.start_latitude, dr.start_longitude,
-               COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email, dr.seller_id) AS seller_name,
-               u.home_latitude, u.home_longitude
-        FROM daily_routes dr
-        JOIN users u ON u.id = dr.seller_id
-        WHERE u.role = 'vendedor' AND u.is_active = true
-          AND to_char(dr.route_date, 'YYYY-MM') = ${mes}
-          ${sellerFiltro ? sql`AND dr.seller_id = ${sellerFiltro}` : sql``}
-          AND dr.route_date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
-        ORDER BY dr.seller_id, dr.route_date
-      `);
-      const rotas = (rr?.rows || []) as any[];
-      const _ok = (la: any, lo: any) => {
-        const a = Number(la), b = Number(lo);
-        return isFinite(a) && isFinite(b) && !(Math.abs(a) < 0.001 && Math.abs(b) < 0.001) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
-      };
-      const _hhmm = (t: any) => {
-        try { return new Date(t).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }); }
-        catch { return ''; }
-      };
-
-      const trechos: any[] = [];
-      for (const r of rotas) {
-        // Check-ins validos do dia, em ordem cronologica, com o nome do cliente.
-        const cr: any = await db.execute(sql`
-          SELECT rc.checkpoint_latitude AS lat, rc.checkpoint_longitude AS lon, rc.checkpoint_time AS t,
-                 COALESCE(NULLIF(c.fantasy_name, ''), c.name, 'Cliente') AS nome
-          FROM route_checkpoints rc
-          LEFT JOIN customers c ON c.id = rc.customer_id
-          WHERE rc.daily_route_id = ${r.id} AND rc.checkpoint_type = 'check_in'
-            AND COALESCE(rc.validation_status, 'validated') <> 'cancelled'
-          ORDER BY rc.checkpoint_time ASC
-        `);
-        const pts = ((cr?.rows || []) as any[]).filter((p) => _ok(p.lat, p.lon));
-        if (pts.length === 0) continue;
-        // Casa: coordenada da rota; se invalida, a do cadastro do vendedor.
-        let hLat = Number(r.start_latitude), hLon = Number(r.start_longitude);
-        if (!_ok(hLat, hLon)) { hLat = Number(r.home_latitude); hLon = Number(r.home_longitude); }
-        const temCasa = _ok(hLat, hLon);
-        const coords = pts.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) }));
-        if (temCasa) coords.push({ lat: hLat, lon: hLon });
-        const legs = coords.length >= 2 ? await calculateRouteLegs(coords) : [];
-        for (let i = 0; i < legs.length; i++) {
-          const km = Math.round((legs[i].distance / 1000) * 100) / 100;
-          const min = Math.round(legs[i].duration / 60);
-          const ehCasa = temCasa && i === legs.length - 1;
-          trechos.push({
-            sellerId: String(r.seller_id), sellerName: r.seller_name, dia: r.dia,
-            de: pts[i].nome, para: ehCasa ? 'Casa do vendedor' : pts[i + 1].nome,
-            saida: _hhmm(pts[i].t), chegada: ehCasa ? '' : _hhmm(pts[i + 1].t),
-            km, min,
-            tipo: String(r.mode) === 'prospeccao' ? 'prospecção' : (ehCasa ? 'retorno' : (km >= 10 ? 'intermunicipal' : (km === 0 ? 'mesmo ponto' : 'urbano'))),
-          });
+      if (fechado) {
+        // Mes encerrado: le o repositorio; se ainda nao existe, calcula UMA vez e grava.
+        const h = await __lerHistoricoTrechos(mes);
+        if (h.trechos.length) {
+          trechos = h.trechos; fonte = 'historico'; gravadoEm = h.gravadoEm;
+        } else {
+          trechos = await __calcularTrechosMes(mes);
+          if (trechos.length) {
+            await __gravarHistoricoTrechos(mes, trechos, req.currentUser?.email || 'automatico');
+            fonte = 'historico'; gravadoEm = new Date().toISOString();
+          }
         }
+      } else {
+        trechos = await __calcularTrechosMes(mes);
       }
-      res.json({ mes, trechos, geradoEm: getBrazilDateString() });
+      if (sellerFiltro) trechos = trechos.filter((t) => t.sellerId === sellerFiltro);
+      res.json({ mes, trechos, fonte, fechado, gravadoEm, geradoEm: getBrazilDateString() });
     } catch (error: any) {
       console.error('Erro no relatorio de trechos:', error);
       res.status(500).json({ message: 'Erro no relatorio de trechos', error: error?.message });
+    }
+  });
+
+  // Meses com historico de trechos gravado (repositorio mensal).
+  app.get('/api/admin/km-vendedores/trechos/historico', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      await __ensureKmHist();
+      const r: any = await db.execute(sql`
+        SELECT mes, COUNT(*)::int AS trechos, ROUND(SUM(km)::numeric, 1) AS km,
+               COUNT(DISTINCT seller_id)::int AS vendedores, MAX(gravado_em) AS gravado_em, MAX(gravado_por) AS gravado_por
+        FROM km_trechos_historico GROUP BY mes ORDER BY mes DESC
+      `);
+      res.json({ meses: ((r?.rows || []) as any[]).map((x) => ({
+        mes: x.mes, trechos: Number(x.trechos), km: Number(x.km), vendedores: Number(x.vendedores),
+        gravadoEm: x.gravado_em ? new Date(x.gravado_em).toISOString() : null, gravadoPor: x.gravado_por || null,
+      })) });
+    } catch (error: any) {
+      res.status(500).json({ message: 'Erro ao listar historico de trechos', error: error?.message });
+    }
+  });
+
+  // Regrava o historico de um mes encerrado (ex.: depois de aprovar um ajuste). Admin.
+  app.post('/api/admin/km-vendedores/trechos/gravar', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const mesAtual = String(getBrazilDateString()).slice(0, 7);
+      const mes = String(req.body?.mes || req.query?.mes || '');
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ message: 'Informe o mes (YYYY-MM)' });
+      if (mes >= mesAtual) return res.status(400).json({ message: 'So da para gravar historico de mes encerrado' });
+      const trechos = await __calcularTrechosMes(mes);
+      await __gravarHistoricoTrechos(mes, trechos, req.currentUser?.email || null);
+      res.json({ success: true, mes, trechos: trechos.length, km: Math.round(trechos.reduce((a, t) => a + t.km, 0) * 10) / 10 });
+    } catch (error: any) {
+      console.error('Erro ao gravar historico de trechos:', error);
+      res.status(500).json({ message: 'Erro ao gravar historico de trechos', error: error?.message });
     }
   });
 
