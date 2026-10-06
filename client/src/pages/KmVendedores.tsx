@@ -37,7 +37,7 @@ type SellerRow = {
   region?: Region;
 };
 type Trecho = { sellerId: string; sellerName: string; dia: string; de: string; para: string; saida: string; chegada: string; km: number; min: number; tipo: string };
-type TrechosResp = { mes: string; trechos: Trecho[]; geradoEm?: string };
+type TrechosResp = { mes: string; trechos: Trecho[]; geradoEm?: string; fonte?: "historico" | "ao-vivo"; fechado?: boolean; gravadoEm?: string | null };
 type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePerKm?: number; ratePerKmGO?: number; ratePerKmDF?: number; ratePerKmPSN?: number; mesAtual?: string; mesFechado?: boolean };
 
 const MES_LABEL: Record<string, string> = { "01": "jan", "02": "fev", "03": "mar", "04": "abr", "05": "mai", "06": "jun", "07": "jul", "08": "ago", "09": "set", "10": "out", "11": "nov", "12": "dez" };
@@ -88,6 +88,9 @@ export default function KmVendedores() {
   // Mesma regra da Rota do Dia: do 1o check-in ate a casa. (out/2026)
   const [mesTrechos, setMesTrechos] = useState<string>("");
   const [trechoSeller, setTrechoSeller] = useState<string>("");
+  // Filtro por data dentro do mes ("" = todos os dias).
+  const [trechoDia, setTrechoDia] = useState<string>("");
+  useEffect(() => { setTrechoDia(""); }, [mesTrechos]);
   const { data: trechosResp, isLoading: trechosLoading } = useQuery<TrechosResp>({
     queryKey: ["/api/admin/km-vendedores/trechos", mesTrechos],
     queryFn: () => apiRequest("GET", `/api/admin/km-vendedores/trechos?mes=${mesTrechos}`),
@@ -173,8 +176,27 @@ export default function KmVendedores() {
   const trechosFiltrados = useMemo(() => {
     const todos = trechosResp?.trechos || [];
     const q = busca.trim().toLowerCase();
-    return todos.filter((t) => (!trechoSeller || t.sellerId === trechoSeller) && (!q || (t.sellerName || "").toLowerCase().includes(q)));
-  }, [trechosResp, trechoSeller, busca]);
+    return todos.filter((t) =>
+      (!trechoSeller || t.sellerId === trechoSeller) &&
+      (!trechoDia || t.dia === trechoDia) &&
+      (!q || (t.sellerName || "").toLowerCase().includes(q)));
+  }, [trechosResp, trechoSeller, trechoDia, busca]);
+  // Dias do mes que tem trecho (respeitando o vendedor escolhido) para o filtro de data.
+  const diasTrechos = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of trechosResp?.trechos || []) if (!trechoSeller || t.sellerId === trechoSeller) set.add(t.dia);
+    return Array.from(set).sort();
+  }, [trechosResp, trechoSeller]);
+
+  // Regravar o historico de um mes encerrado (admin): recalcula e substitui o repositorio.
+  const regravarMut = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/admin/km-vendedores/trechos/gravar", { mes: mesTrechos }),
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores/trechos", mesTrechos] });
+      toast({ title: "Histórico regravado", description: `${fmtMes(mesTrechos)}: ${r?.trechos ?? 0} trechos, ${fmtKm(Number(r?.km || 0))} km.` });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível regravar", description: String(e?.message || ""), variant: "destructive" }),
+  });
   const totalTrechosKm = useMemo(() => Math.round(trechosFiltrados.reduce((a, t) => a + (t.km || 0), 0) * 10) / 10, [trechosFiltrados]);
   const totalTrechosMin = useMemo(() => trechosFiltrados.reduce((a, t) => a + (t.min || 0), 0), [trechosFiltrados]);
 
@@ -185,7 +207,7 @@ export default function KmVendedores() {
     const linhas = [...dataRows, totalRow].map((linha) =>
       Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
     );
-    exportToExcel(linhas, `trechos-km-${mesTrechos || "mes"}`, { aba: "Trechos", negritoUltimaLinha: true });
+    exportToExcel(linhas, `trechos-km-${trechoDia || mesTrechos || "mes"}`, { aba: "Trechos", negritoUltimaLinha: true });
   }
 
   const linhasMes = useMemo(() => {
@@ -472,9 +494,13 @@ export default function KmVendedores() {
                 <select value={mesTrechos} onChange={(e) => setMesTrechos(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm font-semibold" title="Mês do relatório">
                   {months.slice().reverse().map((mo) => <option key={mo} value={mo}>{fmtMes(mo)}</option>)}
                 </select>
-                <select value={trechoSeller} onChange={(e) => setTrechoSeller(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
+                <select value={trechoSeller} onChange={(e) => { setTrechoSeller(e.target.value); setTrechoDia(""); }} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
                   <option value="">Todos os vendedores</option>
                   {sellers.map((sl) => <option key={sl.sellerId} value={sl.sellerId}>{sl.sellerName}</option>)}
+                </select>
+                <select value={trechoDia} onChange={(e) => setTrechoDia(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Data">
+                  <option value="">Todas as datas</option>
+                  {diasTrechos.map((d) => <option key={d} value={d}>{fmtDiaCurto(d)}</option>)}
                 </select>
                 <Button variant="outline" size="sm" onClick={exportarTrechos} disabled={trechosFiltrados.length === 0}>
                   <Download className="w-4 h-4 mr-1" /> Excel
@@ -489,7 +515,21 @@ export default function KmVendedores() {
               <div className="text-sm text-muted-foreground py-6">Nenhum trecho com check-in neste mês.</div>
             ) : (
               <>
-                <div className="flex flex-wrap gap-3 mb-3">
+                <div className="flex flex-wrap items-center gap-3 mb-3">
+                  {trechosResp?.fonte === "historico" ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" title="Mês encerrado: lido do repositório, não muda mais">
+                      Histórico gravado{trechosResp?.gravadoEm ? ` em ${new Date(trechosResp.gravadoEm).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}` : ""}
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300" title="Mês vigente: calculado agora, muda a cada novo check-in">
+                      Mês aberto · calculado agora
+                    </span>
+                  )}
+                  {isAdmin && trechosResp?.fechado ? (
+                    <Button variant="outline" size="sm" onClick={() => regravarMut.mutate()} disabled={regravarMut.isPending} title="Recalcula o mês e substitui o histórico gravado">
+                      {regravarMut.isPending ? "Regravando..." : "Regravar histórico"}
+                    </Button>
+                  ) : null}
                   <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{trechosFiltrados.length}</b> trechos</div>
                   <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{fmtKm(totalTrechosKm)}</b> km</div>
                   <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{Math.floor(totalTrechosMin / 60)}h{String(totalTrechosMin % 60).padStart(2, "0")}</b> de deslocamento</div>
@@ -534,7 +574,7 @@ export default function KmVendedores() {
                     </tfoot>
                   </table>
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
+                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. Mês encerrado fica gravado no histórico na primeira consulta e não muda mais; o mês vigente é calculado na hora. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
               </>
             )}
           </CardContent>
