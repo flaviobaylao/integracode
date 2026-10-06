@@ -54,7 +54,9 @@ const TIPO_CHIP = `.chip-tipo{font-size:11px;padding:2px 8px;border-radius:999px
 .tipo-i{background:#fff7ed;color:#b45309;border-color:#fed7aa}
 .tipo-r{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
 .tipo-p{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe}
-.tipo-z{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb}`;
+.tipo-z{background:#f3f4f6;color:#6b7280;border-color:#e5e7eb}
+.tipo-a{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+.tipo-x{background:#fefce8;color:#a16207;border-color:#fde68a}`;
 
 const ROLE_LABEL: Record<string, string> = { vendedor: "Vendedor", telemarketing: "Telemarketing", coordinator: "Coordenacao", administrative: "Administrativo", admin: "Admin", motorista: "Motorista", industria: "Industria" };
 const REGION_LABEL: Record<Region, string> = { GO: "GO", DF: "DF", PSN: "PSN" };
@@ -85,7 +87,7 @@ export default function KmVendedores() {
   // vendedor e mes: km rodada, tarifa e valor a pagar).
   const [aba, setAba] = useState<"mensal" | "pagamento" | "trechos">("mensal");
   // Relatorio do mes inteiro, trecho a trecho (DE, PARA, SAIDA, CHEGADA, KM, MIN, TIPO).
-  // Mesma regra da Rota do Dia: do 1o check-in ate a casa. (out/2026)
+  // Mesma regra da Rota do Dia: desde 01/10/2026 casa -> check-ins -> casa, +10%.
   const [mesTrechos, setMesTrechos] = useState<string>("");
   const [trechoSeller, setTrechoSeller] = useState<string>("");
   // Filtro por data dentro do mes ("" = todos os dias).
@@ -296,7 +298,7 @@ export default function KmVendedores() {
             <div className="font-semibold text-sm mb-1 flex items-center gap-1"><Info className="w-3.5 h-3.5 text-indigo-600" /> Como a quilometragem e calculada</div>
             <p className="text-muted-foreground mb-2">E a distancia executada, reconstruida a partir dos check-ins que o vendedor registra em cada visita.</p>
             <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
-              <li>Liga ponto a ponto na ordem cronologica: casa, check-in 1, check-in 2, ... e a volta para casa (a volta entra na soma).</li>
+              <li>Desde 01/10/2026: casa → check-in 1 → check-in 2 → ... → casa (ida e volta entram) e soma +10% sobre a km do dia. Até 30/09 a ida casa → 1º check-in não contava e não havia acréscimo.</li>
               <li>Cada trecho e medido por rota de ruas (OSRM); se o OSRM falhar, usa linha reta (Haversine) como reserva.</li>
               <li>So entram visitas validadas (check-in cancelado nao conta; "fora da rota" so apos o admin validar).</li>
               <li>O total e recalculado a cada check-in. Sem check-in, a rota fica 0 km.</li>
@@ -488,7 +490,7 @@ export default function KmVendedores() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-base flex items-center gap-2"><RouteIcon className="w-4 h-4" /> Relatório de trechos do mês</CardTitle>
-                <div className="text-xs text-muted-foreground mt-1">Cada deslocamento entre dois check-ins, do 1º check-in até a casa do vendedor. A ida de casa até o 1º cliente não entra na conta.</div>
+                <div className="text-xs text-muted-foreground mt-1">Desde 01/10/2026: da casa do vendedor → 1º check-in → … → último check-in → casa, e a linha “Acréscimo” soma +10% sobre a km do dia. Até 30/09 valia a regra antiga (do 1º check-in até a casa, sem acréscimo).</div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <select value={mesTrechos} onChange={(e) => setMesTrechos(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm font-semibold" title="Mês do relatório">
@@ -542,11 +544,11 @@ export default function KmVendedores() {
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">De</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Para</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no ponto de partida do trecho (De). No 1º trecho do dia é o 1º check-in.">Saída<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no ponto de partida do trecho (De). Na ida (saindo de casa) fica “—”.">Saída<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no destino (Para). No retorno fica “—” (não há check-in em casa).">Chegada<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b">Km</th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Minutos de deslocamento do trecho pela rota de ruas (OSRM), não o tempo entre check-ins.">Min<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
-                        <th className="text-center font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="urbano: trecho < 10 km · intermunicipal: ≥ 10 km · retorno: último check-in → casa · prospecção: visita a lead · mesmo ponto: 0 km.">Tipo<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-center font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="urbano: trecho < 10 km · intermunicipal: ≥ 10 km · ida: casa → 1º check-in · retorno: último check-in → casa · acréscimo: +10% da km do dia · prospecção: visita a lead · mesmo ponto: 0 km.">Tipo<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -560,7 +562,7 @@ export default function KmVendedores() {
                           <td className="py-2 px-3 text-right tabular-nums">{t.chegada || "—"}</td>
                           <td className="py-2 px-3 text-right tabular-nums font-semibold">{fmtKm(t.km)}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.min}</td>
-                          <td className="py-2 px-3 text-center"><span className={`chip-tipo tipo-${t.tipo === "intermunicipal" ? "i" : t.tipo === "retorno" ? "r" : t.tipo === "prospecção" ? "p" : t.tipo === "mesmo ponto" ? "z" : "u"}`}>{t.tipo}</span></td>
+                          <td className="py-2 px-3 text-center"><span className={`chip-tipo tipo-${t.tipo === "intermunicipal" ? "i" : t.tipo === "retorno" ? "r" : t.tipo === "prospecção" ? "p" : t.tipo === "mesmo ponto" ? "z" : t.tipo === "ida" ? "a" : t.tipo === "acréscimo" ? "x" : "u"}`}>{t.tipo}</span></td>
                         </tr>
                       ))}
                     </tbody>
