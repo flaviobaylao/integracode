@@ -15489,6 +15489,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveryPointId: deliveryPointId || null
       };
 
+      // ATRIBUIÇÃO DO IMPLANTADOR: o pedido é de QUEM registrou a venda quando esse usuário é
+      // vendedor/telemarketing (mesma regra já aplicada na CRIAÇÃO do card na Rota do Dia). Sem
+      // isto, um card pré-criado (agenda recorrente) mantinha o dono da carteira como sellerId e o
+      // pipeline creditava o dono da carteira em vez de quem realmente implantou o pedido.
+      // O "Vendedor" (dono da carteira) continua vindo do cadastro do cliente — aqui muda só o
+      // "Pedido feito por". Admin/coordenação/administrativo NÃO herdam (mantêm o vendedor do card).
+      const _fuUser = (req as any).currentUser || (req as any).user;
+      const _fuRole = String(_fuUser?.role || '');
+      if (_fuUser?.id && ['vendedor', 'telemarketing'].includes(_fuRole)) {
+        (updateData as any).sellerId = _fuUser.id;
+      }
+
       const salesCard = await storage.updateSalesCard(id, updateData);
 
       // Atualizar preferências do cliente após a venda (coordenadas, veículo, horários)
