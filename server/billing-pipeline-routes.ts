@@ -1824,7 +1824,10 @@ export function registerBillingPipelineRoutes(app: Express) {
   app.get('/api/billing-pipeline/drafts', authenticateUser, isPipelineViewer, async (req: any, res) => {
     try {
       const user = req.currentUser || req.user;
-      const seeAll = canEditPedidoSeller(user);
+      // Pipeline managers (admin/coordinator/administrative) see ALL drafts from
+      // every seller; sellers see only their own. Keeps admin-role + SELLER_EDIT
+      // emails (e.g. Lanucy) too, for backward compatibility.
+      const seeAll = ['admin', 'coordinator', 'administrative'].includes(String(user.role || '')) || canEditPedidoSeller(user);
       const cards = seeAll
         ? await storage.getSalesCards(undefined, { status: 'draft' })
         : await storage.getSalesCards(user.id, { status: 'draft' });
