@@ -542,11 +542,11 @@ export default function KmVendedores() {
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">De</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Para</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Saída</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Chegada</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no ponto de partida do trecho (De). No 1º trecho do dia é o 1º check-in.">Saída<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no destino (Para). No retorno fica “—” (não há check-in em casa).">Chegada<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b">Km</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b">Min</th>
-                        <th className="text-center font-bold py-2 px-3 bg-background border-b">Tipo</th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Minutos de deslocamento do trecho pela rota de ruas (OSRM), não o tempo entre check-ins.">Min<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-center font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="urbano: trecho < 10 km · intermunicipal: ≥ 10 km · retorno: último check-in → casa · prospecção: visita a lead · mesmo ponto: 0 km.">Tipo<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -574,7 +574,7 @@ export default function KmVendedores() {
                     </tfoot>
                   </table>
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. Mês encerrado fica gravado no histórico na primeira consulta e não muda mais; o mês vigente é calculado na hora. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
+                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. "Lead: nome" = check-in em lead (prospecção); "Cliente sem cadastro" = check-in cujo cliente foi excluído do cadastro. Passe o mouse no ⓘ das colunas para ver o que significam. Mês encerrado fica gravado no histórico na primeira consulta e não muda mais; o mês vigente é calculado na hora. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
               </>
             )}
           </CardContent>
