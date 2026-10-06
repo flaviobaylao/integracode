@@ -42,6 +42,17 @@ function nearestGate(lat: number, lon: number): [number, number] {
 // Ponto "fora do perimetro": mais longe da casa do que o portao mais proximo dele
 // (o vendedor passou por aquele portao pra chegar ate o ponto). Classificacao por
 // linha reta (barata); a distancia intermunicipal em si usa rota real (OSRM).
+// REGRA DE KM (out/2026): a partir de KM_REGRA_CASA_DESDE a km de TODA rota (dia,
+// intermunicipal e prospeccao) conta da CASA do vendedor -> 1o check-in -> ... ->
+// ultimo check-in -> CASA, e sobre esse total soma KM_ACRESCIMO (+10%). Rotas
+// anteriores mantem a regra antiga (do 1o check-in ate a casa, sem acrescimo).
+export const KM_REGRA_CASA_DESDE = '2026-10-01';
+export const KM_ACRESCIMO = 0.10;
+export function kmRegraCasa(dia: string): boolean { return String(dia || '').slice(0, 10) >= KM_REGRA_CASA_DESDE; }
+function _diaRota(route: any): string {
+  try { return new Date(route.routeDate).toISOString().slice(0, 10); } catch { return ''; }
+}
+
 function isForaPerimetro(lat: number, lon: number, homeLat: number, homeLon: number): boolean {
   if (!coordOk(lat, lon) || !coordOk(homeLat, homeLon)) return false;
   const g = nearestGate(lat, lon);
@@ -171,6 +182,12 @@ export async function calculateActualRouteDistance(
     const pInterPts = leadRows
       .map((r: any) => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon) }))
       .filter((p: any) => coordOk(p.lat, p.lon));
+    // +10% sobre a km do dia (regra out/2026).
+    if (kmRegraCasa(_dateStr) && pTotal > 0) {
+      const acr = pTotal * KM_ACRESCIMO;
+      pTotal += acr;
+      pSegments.push({ from: 'Acréscimo', to: '+10% sobre a km do dia', distance: Math.round(acr * 100) / 100, isOffRoute: false, validationStatus: 'validated' });
+    }
     const pInter = await computeIntermunicipalKm(pInterPts, pHomeLat, pHomeLon, { capKm: Math.round(pTotal * 100) / 100 });
     return {
       totalDistance: Math.round(pTotal * 100) / 100,
@@ -211,7 +228,7 @@ export async function calculateActualRouteDistance(
     } catch (e) { /* mantem o start da rota */ }
   }
 
-  // REGRA (set/2026): o km conta A PARTIR DO 1o CHECK-IN — NAO conta o trecho casa -> 1o
+  // REGRA ANTIGA (set/2026, rotas ate 30/09/2026): o km conta A PARTIR DO 1o CHECK-IN — NAO conta o trecho casa -> 1o
   // cliente (deslocamento de ida) — e fecha na CASA do vendedor (ultimo check-in -> casa).
   // Por isso a origem NAO comeca na casa: o 1o check-in valido vira a origem SEM gerar
   // perna; do 2o check-in em diante as pernas somam; no fim, soma a volta ate a casa.
@@ -219,6 +236,13 @@ export async function calculateActualRouteDistance(
   let previousLon: number | null = null;
   let previousName = 'Casa do Vendedor';
   let haveOrigin = false;
+  // Regra out/2026: a origem e a CASA — a ida casa -> 1o check-in passa a contar.
+  const regraCasa = kmRegraCasa(_diaRota(route));
+  if (regraCasa && coordOk(homeLat, homeLon)) {
+    previousLat = homeLat;
+    previousLon = homeLon;
+    haveOrigin = true;
+  }
   // Pontos validados (em ordem cronológica) p/ o recorte intermunicipal.
   const validPts: Array<{ lat: number; lon: number }> = [];
 
@@ -313,7 +337,19 @@ export async function calculateActualRouteDistance(
 
   // Recorte INTERMUNICIPAL do dia (portão → pontos fora → casa). É 0 quando o
   // vendedor não passou por nenhum portão. Informativo: não altera o total pago.
-  const intermunicipalDistance = await computeIntermunicipalKm(validPts, homeLat, homeLon, { skipGateIfFirstPoint: true, capKm: Math.round(totalDistance * 100) / 100 });
+  // +10% sobre a km do dia (regra out/2026), so quando houve visita valida.
+  if (regraCasa && validatedVisits > 0 && totalDistance > 0) {
+    const acr = totalDistance * KM_ACRESCIMO;
+    totalDistance += acr;
+    segments.push({
+      from: 'Acréscimo',
+      to: '+10% sobre a km do dia',
+      distance: Math.round(acr * 100) / 100,
+      isOffRoute: false,
+      validationStatus: 'validated'
+    });
+  }
+  const intermunicipalDistance = await computeIntermunicipalKm(validPts, homeLat, homeLon, { skipGateIfFirstPoint: !regraCasa, capKm: Math.round(totalDistance * 100) / 100 });
 
   return {
     totalDistance: Math.round(totalDistance * 100) / 100,
