@@ -19720,9 +19720,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check-ins validos do dia, em ordem cronologica, com o nome do cliente.
       const cr: any = await db.execute(sql`
         SELECT rc.checkpoint_latitude AS lat, rc.checkpoint_longitude AS lon, rc.checkpoint_time AS t,
-               COALESCE(NULLIF(c.fantasy_name, ''), c.name, 'Cliente') AS nome
+               COALESCE(NULLIF(c.fantasy_name, ''), c.name,
+                        'Lead: ' || NULLIF(l.fantasy_name, ''),
+                        CASE WHEN rc.visit_id LIKE 'lead:%' THEN 'Lead (prospecção)' ELSE 'Cliente sem cadastro' END) AS nome
         FROM route_checkpoints rc
         LEFT JOIN customers c ON c.id = rc.customer_id
+        LEFT JOIN leads l ON c.id IS NULL AND l.id = rc.customer_id
         WHERE rc.daily_route_id = ${r.id} AND rc.checkpoint_type = 'check_in'
           AND COALESCE(rc.validation_status, 'validated') <> 'cancelled'
           -- check-in offline fora dos criterios fica pendente de aprovacao e nao conta
