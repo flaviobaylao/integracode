@@ -94,16 +94,49 @@ export function nfVendaFrom(a = 'fi'): string {
   ) ${a}`;
 }
 
-/** Pedidos do pipeline, SEM lixeira, um por numero de NF (o mais recente). */
+/** Numero da NF (so digitos) gravado em billing_pipeline.invoice_number ("NF-104588" -> 104588).
+ *
+ *  PERFORMANCE (06/10/2026): esta expressao e INDEXADA em producao
+ *  (idx_billing_pipeline_nf_num, migrations/2026-10-06_perf_indices.sql). O texto aqui tem
+ *  de ser IDENTICO ao do indice, senao o planejador volta ao seq scan. O CASE com length
+ *  BETWEEN 1 AND 18 existe porque o indice precisa de uma expressao que nunca estoure o
+ *  bigint (uma chave de acesso de 44 digitos gravada por engano quebraria o INSERT). */
+export const BP_NF_NUM =
+  `(CASE WHEN length(regexp_replace(COALESCE(invoice_number,''),'[^0-9]','','g')) BETWEEN 1 AND 18`
+  + ` THEN regexp_replace(COALESCE(invoice_number,''),'[^0-9]','','g')::bigint END)`;
+
+/** Mesma expressao de BP_NF_NUM com alias de tabela (para subquery correlacionada). */
+export function bpNfNum(a: string): string {
+  return BP_NF_NUM.replace(/invoice_number/g, `${a}.invoice_number`);
+}
+
+/** Pedidos do pipeline, SEM lixeira, um por numero de NF (o mais recente).
+ *  Use em JOIN (hash join, roda UMA vez). Para subquery correlacionada por linha de NF,
+ *  use `vendedorImplantou()`, que e indexada. */
 export const PIPELINE_POR_NF = `(
   SELECT DISTINCT ON (num) num, seller_id FROM (
-    SELECT NULLIF(regexp_replace(COALESCE(invoice_number,''),'[^0-9]','','g'),'')::bigint AS num,
-           seller_id, created_at
+    SELECT ${BP_NF_NUM} AS num, seller_id, created_at
     FROM billing_pipeline
     WHERE stage <> 'lixeira'
       AND regexp_replace(COALESCE(invoice_number,''),'[^0-9]','','g') <> ''
-  ) t ORDER BY num, created_at DESC
+  ) t WHERE num IS NOT NULL ORDER BY num, created_at DESC
 )`;
+
+/** Quem IMPLANTOU o pedido da NF `a` (regra 4): seller_id do billing_pipeline casado pelo
+ *  numero da NF (o mais recente, fora lixeira) -> fallback sales_cards.seller_id.
+ *
+ *  INCIDENTE 06/10/2026: a versao anterior fazia `SELECT ... FROM ${PIPELINE_POR_NF} WHERE num = fi.invoice_number`
+ *  por linha — o DISTINCT ON impedia o planejador de empurrar o filtro, entao CADA uma das
+ *  ~60 mil NF-e varria billing_pipeline inteira com regexp (183 MILHOES de seq scans,
+ *  1,1 TRILHAO de linhas lidas). O Dashboard de vendedor levava >10 min e cada abertura
+ *  enfileirava mais uma consulta ate esgotar o pool. Esta forma usa idx_billing_pipeline_nf_num:
+ *  0,15 s para o mesmo resultado. */
+export function vendedorImplantou(a = 'fi'): string {
+  return `COALESCE(NULLIF((SELECT bp_s.seller_id FROM billing_pipeline bp_s`
+    + ` WHERE bp_s.stage <> 'lixeira' AND ${bpNfNum('bp_s')} = ${a}.invoice_number`
+    + ` ORDER BY bp_s.created_at DESC LIMIT 1),''),`
+    + `(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = ${a}.sales_card_id LIMIT 1))`;
+}
 
 /** Nome do vendedor = quem implantou o pedido -> fallback vendedor do sales_card.
  *  Requer os joins `bp` (PIPELINE_POR_NF) e `sc` (sales_cards) no escopo. */

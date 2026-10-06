@@ -30,10 +30,20 @@ if (!process.env.DATABASE_URL) {
 // Com o teto, o ALTER do boot desiste em 15s (o .catch dele ja engole o erro; a
 // coluna entra no proximo boot) e a aplicacao sobe. 15s e folgado: consulta sadia
 // nao espera nem 1s por lock; quem espera 15 ja e sintoma de fila.
+// statement_timeout (06/10/2026): teto de tempo para UMA consulta. Em 06/10 o escopo por
+// vendedor do Dashboard levava >10 min e cada abertura de tela enfileirava outra copia:
+// 16 conexoes presas na mesma consulta, pool esgotado, sistema inteiro lento. A causa foi
+// corrigida (indice + subquery), mas sem teto a PROXIMA consulta ruim derruba tudo de novo.
+// 120 s e folgado: nenhuma tela legitima espera 2 min por uma consulta; migracoes do boot
+// e exportacoes grandes rodam em segundos. Ajustavel por env (PG_STATEMENT_TIMEOUT_MS).
+// work_mem: 4 MB (padrao) mandava para disco a ordenacao da deduplicacao de NF-e
+// (temp_files somava 694 GB). 16 MB por operacao de sort/hash e seguro com pool de 10.
+const STATEMENT_TIMEOUT_MS = Number(process.env.PG_STATEMENT_TIMEOUT_MS || 120_000);
+const WORK_MEM = process.env.PG_WORK_MEM || '16MB';
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   application_name: 'integra-app',
-  options: '-c lock_timeout=15s',
+  options: `-c lock_timeout=15s -c statement_timeout=${STATEMENT_TIMEOUT_MS} -c work_mem=${WORK_MEM}`,
 });
 
 // O pg emite 'error' no POOL quando um cliente OCIOSO cai sozinho — a rede

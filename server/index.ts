@@ -1,4 +1,4 @@
-import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
+import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL, vendedorImplantou } from "./faturamento-oficial";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR } from '@shared/tempo';
 import { registerOfficialPanel } from "./official-panel";
@@ -525,6 +525,53 @@ run();
       await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('cfop_venda_5101_migrado', ${new Date().toISOString()}, 'cfop-migration') ON CONFLICT (key) DO NOTHING`);
       console.log(`[CFOP-5101] cenários fiscais migrados: 5102→5101 (${r1?.rowCount ?? '?'}), 6102→6101 (${r2?.rowCount ?? '?'})`);
     } catch (e: any) { console.warn('[CFOP-5101] migração de cenários falhou (ignorada):', e?.message); }
+  })();
+
+  // ── PERFORMANCE 06/10/2026: indices que faltavam (idempotente; espelho de
+  //    migrations/2026-10-06_perf_indices.sql, ja aplicados em producao em 06/10).
+  //    Sem CONCURRENTLY de proposito: no boot nao ha transacao longa segurando
+  //    snapshot, e o lock_timeout=15s do pool garante que o boot nao pendura.
+  (async () => {
+    const idx = [
+      "CREATE INDEX IF NOT EXISTS idx_billing_pipeline_nf_num ON billing_pipeline (((CASE WHEN length(regexp_replace(COALESCE(invoice_number,''),'[^0-9]','','g')) BETWEEN 1 AND 18 THEN regexp_replace(COALESCE(invoice_number,''),'[^0-9]','','g')::bigint END)), created_at DESC) WHERE stage <> 'lixeira'",
+      "CREATE INDEX IF NOT EXISTS idx_fiscal_invoices_dedup_venda ON fiscal_invoices ((COALESCE(issuer_cnpj,'')), (COALESCE(series,'')), (COALESCE(invoice_number::text, 'id:' || id::text)), created_at DESC) WHERE status = 'authorized' AND environment = 'producao'",
+      'CREATE INDEX IF NOT EXISTS idx_chat_messages_conv_created ON chat_messages (conversation_id, created_at DESC)',
+      "CREATE INDEX IF NOT EXISTS idx_chat_messages_unread ON chat_messages (conversation_id) WHERE sender_type = 'customer' AND is_read = false",
+      'CREATE INDEX IF NOT EXISTS idx_bsi_statement_date ON bank_statement_items (statement_id, transaction_date, id)',
+      'CREATE INDEX IF NOT EXISTS idx_bsi_mirror_of ON bank_statement_items (mirror_of) WHERE mirror_of IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_bsi_matched_recv ON bank_statement_items (matched_receivable_id) WHERE matched_receivable_id IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_bsi_pending_date ON bank_statement_items (transaction_date DESC) WHERE mirror_of IS NULL',
+      'CREATE INDEX IF NOT EXISTS idx_sales_cards_seller_sched ON sales_cards (seller_id, scheduled_date)',
+      'CREATE INDEX IF NOT EXISTS idx_sales_cards_customer_sched ON sales_cards (customer_id, scheduled_date DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_sales_cards_customer_status ON sales_cards (customer_id, status)',
+      'CREATE INDEX IF NOT EXISTS idx_customers_seller_active ON customers (seller_id) WHERE is_active = true',
+      'CREATE INDEX IF NOT EXISTS idx_billings_invoice_date ON billings (invoice_date DESC) WHERE is_cancelled = false',
+      'CREATE INDEX IF NOT EXISTS idx_billings_seller_invoice_date ON billings (seller_id, invoice_date DESC) WHERE is_cancelled = false',
+      'CREATE INDEX IF NOT EXISTS idx_billings_omie_customer_date ON billings (omie_customer_code, invoice_date DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_billings_invoice_number ON billings (invoice_number)',
+      'CREATE INDEX IF NOT EXISTS idx_repescagem_assign_customer_status ON repescagem_assignments (customer_id, status)',
+      'CREATE INDEX IF NOT EXISTS idx_repescagem_assign_user_draw ON repescagem_assignments (assigned_user_id, draw_date)',
+      'CREATE INDEX IF NOT EXISTS idx_vsl_customer_date ON virtual_service_logs (customer_id, attendance_date DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_vsl_attendance_date ON virtual_service_logs (attendance_date)',
+      'CREATE INDEX IF NOT EXISTS idx_drs_route_order ON delivery_route_stops (route_id, stop_order)',
+      'CREATE INDEX IF NOT EXISTS idx_drs_billing ON delivery_route_stops (billing_id) WHERE billing_id IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_drs_sales_card ON delivery_route_stops (sales_card_id) WHERE sales_card_id IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_route_checkpoints_seller_time ON route_checkpoints (seller_id, checkpoint_time)',
+      "CREATE INDEX IF NOT EXISTS idx_route_checkpoints_checkin_time ON route_checkpoints (checkpoint_time) WHERE checkpoint_type = 'check_in'",
+      'CREATE INDEX IF NOT EXISTS idx_billing_pipeline_created ON billing_pipeline (created_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_billing_pipeline_seller_created ON billing_pipeline (seller_id, created_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_billing_pipeline_invoice_number ON billing_pipeline (invoice_number) WHERE invoice_number IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_billing_pipeline_order_number ON billing_pipeline (order_number)',
+      'CREATE INDEX IF NOT EXISTS idx_chat_orders_conversation ON chat_orders (conversation_id)',
+      'CREATE INDEX IF NOT EXISTS idx_chat_orders_customer ON chat_orders (customer_id)',
+      'CREATE INDEX IF NOT EXISTS idx_order_history_sales_card ON order_history (sales_card_id)',
+      'CREATE INDEX IF NOT EXISTS idx_lead_visits_lead ON lead_visits (lead_id)',
+      'CREATE INDEX IF NOT EXISTS idx_wca_conversation ON whatsapp_conversation_analysis (conversation_id)',
+    ];
+    for (const ddl of idx) {
+      try { await db.execute(sql.raw(ddl)); }
+      catch (e: any) { console.warn('[PERF-IDX] ignorado:', ddl.slice(0, 70), '->', e?.message); }
+    }
   })();
 
   // ── Repescagem2: colunas do ciclo diário de sorteio/alocação (idempotente) ──
@@ -4860,7 +4907,12 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
 
 
   // ====== PARIDADE DASHBOARD 2.0=1.0 — endpoint novo (inserido) ======
+  const DASH2_CACHE_MS = Number(process.env.DASH2_CACHE_MS || 60_000);
+  const __dash2Cache = new Map<string, { at: number; payload: any }>();
+  const __dash2EmVoo = new Map<string, Promise<any>>();
   app.get("/api/dashboard2/full", async (req, res) => {
+    let __cacheKey = '';
+    let __resolveEmVoo: (v: any) => void = () => {}; let __rejectEmVoo: (e: any) => void = () => {};
     try {
       const tz = "America/Sao_Paulo";
       const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -4896,10 +4948,34 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       } catch (e) {}
       const __SID = __scopeSellerId.replace(/[^a-zA-Z0-9_-]/g, '');
       const __RESTRICT = __SID.length > 0;
+      // ── CACHE + SINGLE-FLIGHT (06/10/2026) ───────────────────────────────────────
+      // O payload depende so do escopo (admin ou vendedor X). Cada abertura do Dashboard
+      // (e cada volta de foco na aba) disparava ~15 consultas pesadas; com varios usuarios
+      // isso virava fila no banco. Agora: resposta cacheada por 60 s por escopo, e se ja ha
+      // um calculo em andamento para o mesmo escopo, a requisicao espera por ele em vez de
+      // disparar outro. `?nocache=1` forca o recalculo (uso de suporte).
+      __cacheKey = __RESTRICT ? `v:${__SID}` : 'admin';
+      const __isDiag = !!((((req as any).query)||{}).diag || (((req as any).query)||{}).diag2 || (((req as any).query)||{}).diag3);
+      const __noCache = __isDiag || String((((req as any).query)||{}).nocache || '') === '1';
+      if (!__noCache) {
+        const hit = __dash2Cache.get(__cacheKey);
+        if (hit && Date.now() - hit.at < DASH2_CACHE_MS) { res.setHeader('X-Cache', 'HIT'); return res.json(hit.payload); }
+        const emVoo = __dash2EmVoo.get(__cacheKey);
+        if (emVoo) {
+          try { const p = await emVoo; res.setHeader('X-Cache', 'WAIT'); return res.json(p); } catch (e) { /* cai para calcular */ }
+        }
+      }
+      if (!__noCache) {
+        const __pr = new Promise<any>((ok, ko) => { __resolveEmVoo = ok; __rejectEmVoo = ko; });
+        __pr.catch(() => {}); // sem isto, erro sem ninguem esperando vira unhandledRejection e derruba o processo
+        __dash2EmVoo.set(__cacheKey, __pr);
+      }
       try { if ((((req as any).query)||{}).diag === 'vday-6931') return res.json({ __hasSession: !!(req as any).session, __sessKeys: Object.keys((req as any).session||{}), __impU: ((req as any).session||{}).impersonateUserId || null, __claimsSub: (((req as any).session||{}).user||{})?.claims?.sub || null, __sessUserId: ((req as any).session||{}).userId || null, __scopeSellerId, __SID, __RESTRICT }); } catch (e) {}
       const __keySet = `(SELECT unnest(ARRAY[su.id, su.omie_vendor_code, 'omie-vendor-'||su.omie_vendor_code]) FROM users su WHERE su.id='${__SID}')`;
-      const __impl = `COALESCE(NULLIF((SELECT bp_s.seller_id FROM ${PIPELINE_POR_NF} bp_s WHERE bp_s.num = fi.invoice_number LIMIT 1),''),(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = fi.sales_card_id LIMIT 1))`;
-      const __implLeg = `COALESCE(NULLIF((SELECT bp_s.seller_id FROM ${PIPELINE_POR_NF} bp_s WHERE bp_s.num = fiscal_invoices.invoice_number LIMIT 1),''),(SELECT sc_s.seller_id FROM sales_cards sc_s WHERE sc_s.id = fiscal_invoices.sales_card_id LIMIT 1))`;
+      // PERFORMANCE 06/10/2026: subquery indexada (ver vendedorImplantou em faturamento-oficial.ts).
+      // A forma antiga (DISTINCT ON por linha) levava >10 min por vendedor e esgotava o pool.
+      const __impl = vendedorImplantou('fi');
+      const __implLeg = vendedorImplantou('fiscal_invoices');
       const SCOPE     = __RESTRICT ? ` AND (${__impl}) = ANY(${__keySet})` : '';
       const SCOPE_LEG = __RESTRICT ? ` AND (${__implLeg}) = ANY(${__keySet})` : '';
       const SCOPE_BLK = __RESTRICT ? ` AND bo.seller_id = ANY(${__keySet})` : '';
@@ -4973,8 +5049,12 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // REGRA (Flavio): faturamento por vendedor no comparativo = quem COLOCOU o pedido (billing_pipeline.seller_name),
       // e nao o dono atual do cliente. O cliente permanece na carteira de origem.
       const visitSummary = { start: startDate, end: endDate, dates, rows, sellerDaily: sellerDailyRows.map((r) => ({ seller: r.seller, d: r.d, v: Number(r.v) || 0 })) };
-      res.json({ stats, series, vendasEfetivasMes, efetivoMesAnterior, ordersOverview, visitSummary });
-    } catch (err: any) { res.status(500).json({ error: String(err?.message || err) }); }
+      const __payload = { stats, series, vendasEfetivasMes, efetivoMesAnterior, ordersOverview, visitSummary };
+      __dash2Cache.set(__cacheKey, { at: Date.now(), payload: __payload });
+      __resolveEmVoo(__payload);
+      res.json(__payload);
+    } catch (err: any) { __rejectEmVoo(err); res.status(500).json({ error: String(err?.message || err) }); }
+    finally { if (__cacheKey) __dash2EmVoo.delete(__cacheKey); }
   });
     app.get('/api/reports/clientes-sem-pedido', async (req: Request, res: Response) => {
     try {
