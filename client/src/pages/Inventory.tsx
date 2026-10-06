@@ -421,8 +421,16 @@ export default function Inventory() {
     setShowEditDialog(true);
   };
 
+  const quantidadeMudou = !!editingLot && Math.abs((parseFloat(formData.quantity) || 0) - (parseFloat(editingLot.quantity) || 0)) > 1e-9;
+  const faltaMotivo = quantidadeMudou && motivoAjuste.trim().length < 3;
+
   const handleUpdate = () => {
     if (!editingLot) return;
+    if (faltaMotivo) {
+      toast({ title: 'Informe o motivo do ajuste de saldo', description: 'A quantidade mudou — escreva o motivo (mínimo 3 caracteres) para salvar.', variant: 'destructive' });
+      document.getElementById('motivo-ajuste-lote')?.focus();
+      return;
+    }
     updateMutation.mutate({
       id: editingLot.id,
       data: {
@@ -881,13 +889,18 @@ export default function Inventory() {
             </div>
             {editingLot && Math.abs((parseFloat(formData.quantity) || 0) - (parseFloat(editingLot.quantity) || 0)) > 1e-9 && (
               <div>
-                <Label>Motivo do ajuste de saldo *</Label>
+                <Label className={faltaMotivo ? 'text-red-600' : ''}>Motivo do ajuste de saldo *</Label>
                 <Textarea
+                  id="motivo-ajuste-lote"
                   value={motivoAjuste}
                   onChange={(e) => setMotivoAjuste(e.target.value)}
                   placeholder="Ex.: contagem física de 30/09, avaria, quebra no transporte"
                   rows={2}
+                  className={faltaMotivo ? 'border-red-400 focus-visible:ring-red-400' : ''}
                 />
+                <p className={`text-xs mt-1 ${faltaMotivo ? 'text-red-600' : 'text-gray-500'}`}>
+                  Quantidade {parseFloat(editingLot.quantity).toFixed(2)} → {(parseFloat(formData.quantity) || 0).toFixed(2)}: o motivo é obrigatório para salvar.
+                </p>
               </div>
             )}
             <div>
@@ -901,7 +914,7 @@ export default function Inventory() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEditDialog(false)}>Cancelar</Button>
-            <Button onClick={handleUpdate} disabled={updateMutation.isPending || (!!editingLot && Math.abs((parseFloat(formData.quantity) || 0) - (parseFloat(editingLot.quantity) || 0)) > 1e-9 && motivoAjuste.trim().length < 3)}>
+            <Button onClick={handleUpdate} disabled={updateMutation.isPending}>
               {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               Salvar
             </Button>
