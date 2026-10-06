@@ -146,10 +146,13 @@ function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, l
 }
 
 export default function Dashboard() {
-  // Atualização quase imediata às mudanças da Rota do Dia (check-in / pedido): poll + on-focus.
-  const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
-  const { data: phoneCoverage } = useQuery<any[]>({ queryKey: ["/api/dashboard/phone-coverage"], refetchInterval: 60000, refetchOnWindowFocus: true, staleTime: 0 });
-  const { data: forecastData } = useQuery<any>({ queryKey: ["/api/dashboard2/forecast"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
+  // PERFORMANCE (06/10/2026): o servidor cacheia /api/dashboard2/full por 60 s por escopo, entao
+  // staleTime 0 + refetch a cada foco so gerava requisicoes repetidas (e, no incidente de 06/10,
+  // enfileirava consultas de 10 min no banco). Mantem o poll de 30 min; ao voltar o foco so
+  // rebusca se o dado tiver mais de 1 min.
+  const { data } = useQuery<any>({ queryKey: ["/api/dashboard2/full"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 60_000 });
+  const { data: phoneCoverage } = useQuery<any[]>({ queryKey: ["/api/dashboard/phone-coverage"], refetchInterval: 60000, refetchOnWindowFocus: true, staleTime: 30_000 });
+  const { data: forecastData } = useQuery<any>({ queryKey: ["/api/dashboard2/forecast"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 60_000 });
   const [showForecast, setShowForecast] = useState<boolean>(true);
   const phoneCov = useMemo(() => {
     const arr = Array.isArray(phoneCoverage) ? [...phoneCoverage] : [];
