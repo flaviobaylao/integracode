@@ -19738,19 +19738,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let hLat = Number(r.start_latitude), hLon = Number(r.start_longitude);
       if (!_ok(hLat, hLon)) { hLat = Number(r.home_latitude); hLon = Number(r.home_longitude); }
       const temCasa = _ok(hLat, hLon);
+      // Regra out/2026: comeca na CASA (ida casa -> 1o check-in conta) e soma +10%.
+      const { kmRegraCasa, KM_ACRESCIMO } = await import('./actualRouteService');
+      const regraCasa = kmRegraCasa(r.dia) && temCasa;
       const coords = pts.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) }));
+      if (regraCasa) coords.unshift({ lat: hLat, lon: hLon });
       if (temCasa) coords.push({ lat: hLat, lon: hLon });
+      const off = regraCasa ? 1 : 0; // legs[0] = casa -> 1o check-in na regra nova
       const legs = coords.length >= 2 ? await calculateRouteLegs(coords) : [];
+      let somaDia = 0, ordem = 0;
       for (let i = 0; i < legs.length; i++) {
         const km = Math.round((legs[i].distance / 1000) * 100) / 100;
         const min = Math.round(legs[i].duration / 60);
+        somaDia += km;
+        const ehIda = regraCasa && i === 0;
         const ehCasa = temCasa && i === legs.length - 1;
+        const a = i - off; // indice do check-in de partida
         trechos.push({
-          sellerId: String(r.seller_id), sellerName: r.seller_name, dia: r.dia, ordem: i + 1,
-          de: pts[i].nome, para: ehCasa ? 'Casa do vendedor' : pts[i + 1].nome,
-          saida: _hhmm(pts[i].t), chegada: ehCasa ? '' : _hhmm(pts[i + 1].t),
+          sellerId: String(r.seller_id), sellerName: r.seller_name, dia: r.dia, ordem: ++ordem,
+          de: ehIda ? 'Casa do vendedor' : pts[a].nome,
+          para: ehCasa ? 'Casa do vendedor' : pts[a + 1].nome,
+          saida: ehIda ? '' : _hhmm(pts[a].t), chegada: ehCasa ? '' : _hhmm(pts[a + 1].t),
           km, min,
-          tipo: String(r.mode) === 'prospeccao' ? 'prospecção' : (ehCasa ? 'retorno' : (km >= 10 ? 'intermunicipal' : (km === 0 ? 'mesmo ponto' : 'urbano'))),
+          tipo: String(r.mode) === 'prospeccao' ? 'prospecção' : (ehIda ? 'ida' : (ehCasa ? 'retorno' : (km >= 10 ? 'intermunicipal' : (km === 0 ? 'mesmo ponto' : 'urbano')))),
+        });
+      }
+      if (regraCasa && somaDia > 0) {
+        trechos.push({
+          sellerId: String(r.seller_id), sellerName: r.seller_name, dia: r.dia, ordem: ++ordem,
+          de: 'Acréscimo', para: '+10% sobre a km do dia', saida: '', chegada: '',
+          km: Math.round(somaDia * KM_ACRESCIMO * 100) / 100, min: 0, tipo: 'acréscimo',
         });
       }
     }
