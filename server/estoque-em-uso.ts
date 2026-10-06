@@ -161,18 +161,56 @@ export function agregarLinhas(products: LinhaPedido[] | null | undefined): { nec
 
 const rowsOf = (r: any): any[] => (r?.rows ?? r ?? []) as any[];
 
-// Linhas que pediram um lote especifico: o lote tem de estar EM USO e cobrir a
-// quantidade pedida dele. `lotesEmUso` = lotes em uso do produto (id, qtd).
-function faltasPorLote(n: NecessidadeProduto, lotesEmUso: Array<{ id: string; qtd: number }>): FaltaEstoque[] {
-  const out: FaltaEstoque[] = [];
+// Linhas que pediram um lote especifico (lotId gravado pelo pedido de
+// transferencia). Ate 05/out/2026 o lote fixado era OBRIGATORIO: se tivesse sido
+// zerado/bloqueado/ajustado depois do pedido, o faturamento travava com "lote X:
+// necessario 22, disponivel em uso 0" mesmo com saldo de sobra em outros lotes
+// (caso H170926 -> H051026 na GYN). Agora o lote fixado e PREFERENCIA:
+//   1. usa o proprio lote (id) ate o saldo que ele tiver;
+//   2. o que faltar vai para um lote EM USO de MESMO NUMERO (o bloquear/desbloquear
+//      cria uma linha nova com o mesmo numero);
+//   3. o resto sai em FIFO dos demais lotes em uso (ja garantido pelo total).
+// A NF sai com os lotes realmente consumidos (distribuirLotes tem 2a passada).
+// Retorna o porLote ajustado; nunca gera falta por lote (o total ja foi conferido).
+function ajustarLotesPedidos(
+  n: NecessidadeProduto,
+  lotesEmUso: Array<{ id: string; qtd: number; lot_number?: string | null }>,
+  rotulo?: string,
+): NecessidadeProduto['porLote'] {
+  const out: NecessidadeProduto['porLote'] = {};
+  const usado = new Map<string, number>(); // quanto ja reservamos de cada lote nesta conta
+  const sobraDe = (l: { id: string; qtd: number }) => (Number(l.qtd) || 0) - (usado.get(l.id) || 0);
   for (const [lotId, req] of Object.entries(n.porLote)) {
-    const l = lotesEmUso.find((x) => x.id === lotId);
-    const disp = l ? Number(l.qtd) || 0 : 0;
-    if (disp + EPS < req.quantidade) {
-      out.push({ productId: n.productId, productName: `${n.productName} (lote ${req.lotNumber})`, required: req.quantidade, available: disp, blocked: 0 });
+    let falta = req.quantidade;
+    const proprio = lotesEmUso.find((x) => x.id === lotId);
+    if (proprio && sobraDe(proprio) > EPS) {
+      const q = Math.min(falta, sobraDe(proprio));
+      out[proprio.id] = { quantidade: (out[proprio.id]?.quantidade || 0) + q, lotNumber: req.lotNumber };
+      usado.set(proprio.id, (usado.get(proprio.id) || 0) + q);
+      falta -= q;
+    }
+    if (falta > EPS) {
+      const num = normalizarNumeroLote(req.lotNumber);
+      for (const l of lotesEmUso) {
+        if (falta <= EPS) break;
+        if (l.id === lotId || normalizarNumeroLote(l.lot_number) !== num || sobraDe(l) <= EPS) continue;
+        const q = Math.min(falta, sobraDe(l));
+        out[l.id] = { quantidade: (out[l.id]?.quantidade || 0) + q, lotNumber: String(l.lot_number || req.lotNumber) };
+        usado.set(l.id, (usado.get(l.id) || 0) + q);
+        falta -= q;
+      }
+    }
+    if (falta > EPS) {
+      console.warn(`⚠️ [ESTOQUE-EM-USO] ${rotulo || ''} ${n.productName}: lote fixado ${req.lotNumber} nao cobre ${fmtQtd(falta)} un — saindo em FIFO dos demais lotes em uso`);
     }
   }
   return out;
+}
+
+// Compatibilidade: a conferencia por lote nunca acusa falta — o total ja cobre e
+// ajustarLotesPedidos redistribui o que o lote fixado nao tem.
+function faltasPorLote(_n: NecessidadeProduto, _lotesEmUso: Array<{ id: string; qtd: number }>): FaltaEstoque[] {
+  return [];
 }
 
 // Conferencia (sem travar). Usada para recusar cedo, com mensagem, antes de
@@ -285,8 +323,8 @@ export async function baixarEstoqueEmUso(opts: {
           disponivel += q;
         }
       }
-      const fl = faltasPorLote(n, lotes);
-      if (fl.length) { faltas.push(...fl); continue; }
+      // Lote fixado na linha = preferencia (ver ajustarLotesPedidos).
+      n.porLote = ajustarLotesPedidos(n, lotes, opts.rotulo);
       planos.push({ n, lotes });
     }
 
