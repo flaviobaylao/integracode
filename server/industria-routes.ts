@@ -760,24 +760,25 @@ export function registerIndustriaRoutes(app: Express) {
         });
       }
 
-      // CONFERENCIA COM A RECEITA (Flavio 04/out/2026: BLOQUEIA). O consumo
-      // informado (sem contar perda/avaria, que tem coluna propria) tem de bater
-      // com a receita: nenhum insumo da receita faltando, nenhum fora dela e
-      // nenhum desvio acima da tolerancia (padrao 15%, system_settings
-      // op_tolerancia_receita_pct). Casos da auditoria: bobina nao baixada
-      // (OP-00076), concentrado lancado todo como maca (OP-00045/71), consumo 2x
-      // acima de uma receita errada (OP-00080).
+      // CONFERENCIA COM A RECEITA — SO AVISA (Flavio 07/out/2026: a trava que
+      // impedia produzir com receita diferente da cadastrada foi retirada; a
+      // bateladas reais variam, ex. FV 900/350 na mesma pasteurizacao). O desvio
+      // acima da tolerancia (padrao 15%, system_settings op_tolerancia_receita_pct)
+      // e produto sem receita viram AVISO na resposta e na observacao da OP.
+      // Continua bloqueando so materia-prima inexistente no cadastro (nao ha o
+      // que baixar).
+      const avisosReceita: string[] = [];
       {
         const conf = await conferirComReceita(order, produced, insumos);
-        if (!conf.ok) {
+        if (!conf.ok && conf.code === 'MATERIAL_INEXISTENTE') {
           return res.status(400).json({
-            error: conf.mensagem,
-            code: conf.code,
-            divergencias: conf.divergencias,
-            faltando: (conf as any).faltando,
-            tolerancia_pct: conf.tolerancia,
+            error: conf.mensagem, code: conf.code, divergencias: conf.divergencias,
+            faltando: (conf as any).faltando, tolerancia_pct: conf.tolerancia,
           });
         }
+        if (!conf.ok) avisosReceita.push(conf.mensagem
+          .replace(/ — corrija os insumos ou a receita antes de finalizar:/, ' — ordem finalizada mesmo assim:')
+          .replace(/ — cadastre a receita antes de finalizar a ordem\./, ' — ordem finalizada mesmo assim.'));
       }
 
       const lotExpiryBR = /^\d{4}-\d{2}-\d{2}$/.test(lotExpiry) ? lotExpiry.split('-').reverse().join('/') : lotExpiry;
@@ -794,7 +795,7 @@ export function registerIndustriaRoutes(app: Express) {
         const baixa = insumos.length
           ? await baixarInsumos(tx, { ...order, id }, insumos, by, 'Consumo na ordem')
           : { totalCost: 0, warnings: [] as string[], consumed: [] as any[] };
-        const warnings = [...baixa.warnings];
+        const warnings = [...avisosReceita, ...baixa.warnings];
         const totalCost = baixa.totalCost;
         const cmvUnit = produced > 0 ? totalCost / produced : 0;
         const comPerda = baixa.consumed.filter((c: any) => c.quantity_lost > 0);
