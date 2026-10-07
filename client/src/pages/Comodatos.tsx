@@ -529,8 +529,16 @@ export default function Comodatos() {
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editId ? "Editar contrato de comodato" : "Novo contrato de comodato"}</DialogTitle>
-            <DialogDescription>Comodante: PURO INDÚSTRIA E COMÉRCIO DE PRODUTOS NATURAIS LTDA — CNPJ 28.295.493/0001-53</DialogDescription>
+            <div className="flex items-start justify-between gap-3 pr-6">
+              <div>
+                <DialogTitle>{editId ? "Editar contrato de comodato" : "Novo contrato de comodato"}</DialogTitle>
+                <DialogDescription>Comodante: PURO INDÚSTRIA E COMÉRCIO DE PRODUTOS NATURAIS LTDA — CNPJ 28.295.493/0001-53</DialogDescription>
+              </div>
+              <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={gerarPdf} disabled={gerandoPdf}
+                title="Gera o contrato em PDF com os dados preenchidos no formulário (não precisa salvar antes)">
+                {gerandoPdf ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}Gerar contrato de comodato
+              </Button>
+            </div>
           </DialogHeader>
 
           <div className="space-y-5">
@@ -684,7 +692,7 @@ export default function Comodatos() {
             </section>
           </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 sticky bottom-0 bg-background border-t pt-3 -mx-6 px-6 pb-1">
             {editId && <Button variant="ghost" className="text-red-600" onClick={excluir}><Trash2 className="w-4 h-4 mr-2" />Excluir</Button>}
             {anexos.length === 0 && pendentes.length === 0 ? (
               <Button variant="secondary" className="mr-auto" onClick={gerarPdf} disabled={gerandoPdf}>
