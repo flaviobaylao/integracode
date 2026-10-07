@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import CopyButton from "@/components/CopyButton";
 import { usePermissions } from "@/lib/permissions";
 
 const CARD_CLIENTES = "Clientes / Carteira";
@@ -778,6 +779,7 @@ export default function CustomerManagement() {
                           >
                             {(customer as any).fantasyName || customer.name}
                           </button>
+                          <CopyButton text={(customer as any).fantasyName || customer.name} className="ml-1.5" />
                           {(customer as any).isColaborador && (
                             <span
                               className="ml-1.5 text-[10px] font-normal italic text-slate-400 align-middle"
