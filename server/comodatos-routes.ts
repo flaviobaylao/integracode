@@ -34,7 +34,19 @@ import { montarContratoComodatoPdf, montarDistratoComodatoPdf, dadosDoContrato, 
 
 const ROLES = ["admin", "coordinator", "administrative"];
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
-const STATUS_VALIDOS = ["ativo", "pendente_assinatura", "encerrado", "devolvido", "cancelado"];
+const STATUS_VALIDOS = ["aguardando_contrato", "ativo", "pendente_assinatura", "encerrado", "devolvido", "cancelado"];
+const STATUS_FIM = ["encerrado", "devolvido", "cancelado"];
+// Onde fica o equipamento quando não está comodatado.
+const LOCAIS = ["cd_gyn", "cd_bsb", "fabrica", "manutencao"];
+
+// Campos do equipamento: coluna no contrato → coluna no inventário.
+const EQ_MAP: Record<string, string> = {
+  equipamento_tipo: "tipo", marca: "marca", modelo: "modelo", numero_serie: "numero_serie",
+  codigo_produto: "codigo_produto", tensao: "tensao", volume_litros: "volume_litros",
+  volume_bruto_litros: "volume_bruto_litros", valor_bem: "valor_referencia", equipamento_usado: "usado",
+  nf_aquisicao_numero: "nf_aquisicao_numero", nf_aquisicao_data: "nf_aquisicao_data",
+  nf_aquisicao_fornecedor: "nf_aquisicao_fornecedor", nf_aquisicao_valor: "nf_aquisicao_valor",
+};
 const TIPOS_EQUIP = ["freezer", "geladeira", "visa_cooler", "outro"];
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } });
@@ -222,7 +234,8 @@ export function ensureComodatosSchema(): Promise<void> {
       ));
       for (const c of ["nf_aquisicao_numero varchar", "nf_aquisicao_data date", "nf_aquisicao_fornecedor text", "nf_aquisicao_valor numeric(12,2)",
                        "signatario_comodante text", "equipamento_usado boolean NOT NULL DEFAULT false",
-                       "distrato_data date", "distrato_motivo text", "distrato_pendencias text"]) {
+                       "distrato_data date", "distrato_motivo text", "distrato_pendencias text",
+                       "equipamento_id varchar"]) {
         await db.execute(sql.raw("ALTER TABLE comodato_contracts ADD COLUMN IF NOT EXISTS " + c)).catch(() => {});
       }
       await db.execute(sql.raw(
@@ -264,6 +277,30 @@ export function ensureComodatosSchema(): Promise<void> {
           ON CONFLICT (seed_ref) DO NOTHING`).catch((e: any) => console.error("[comodatos] seed", s.seed_ref, e?.message));
       }
       await vincularClientesPorCnpj();
+
+      // --- inventário de equipamentos (07/out/2026) ---
+      await db.execute(sql.raw(
+        "CREATE TABLE IF NOT EXISTS comodato_equipamentos (" +
+        "id varchar PRIMARY KEY DEFAULT gen_random_uuid()::varchar, " +
+        "numero serial, " +
+        "tipo varchar NOT NULL DEFAULT 'freezer', " +
+        "marca varchar, modelo varchar, numero_serie varchar, codigo_produto varchar, tensao varchar, " +
+        "volume_litros numeric(10,2), volume_bruto_litros numeric(10,2), valor_referencia numeric(12,2), " +
+        "usado boolean NOT NULL DEFAULT false, " +
+        "local varchar, " +
+        "nf_aquisicao_numero varchar, nf_aquisicao_data date, nf_aquisicao_fornecedor text, nf_aquisicao_valor numeric(12,2), " +
+        "observacoes text, " +
+        "created_by varchar, updated_by varchar, " +
+        "created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), deleted_at timestamptz)"
+      ));
+      await db.execute(sql.raw(
+        "CREATE INDEX IF NOT EXISTS idx_comodato_contracts_equip ON comodato_contracts (equipamento_id)"
+      )).catch(() => {});
+      // Todo contrato aponta para um equipamento do inventário: os que ainda não
+      // apontam (os já cadastrados e os criados sem escolher equipamento) ganham um.
+      const semEquip: any = await db.execute(sql`
+        SELECT id FROM comodato_contracts WHERE equipamento_id IS NULL AND deleted_at IS NULL ORDER BY numero`);
+      for (const row of semEquip.rows || []) await criarEquipamentoDoContrato(row.id);
     })().catch((e: any) => {
       schemaReady = null;
       throw e;
@@ -285,6 +322,40 @@ async function vincularClientesPorCnpj(id?: string) {
        ${id ? sql`AND c.id = ${id}` : sql``}`).catch((e: any) => console.error("[comodatos] vínculo", e?.message));
 }
 
+/** Cria no inventário o equipamento descrito no contrato e liga os dois. */
+async function criarEquipamentoDoContrato(contratoId: string, by?: string | null) {
+  const cols = Object.keys(EQ_MAP);
+  const r: any = await db.execute(sql`
+    INSERT INTO comodato_equipamentos (${sql.raw(cols.map((c) => EQ_MAP[c]).join(", "))}, created_by)
+    SELECT ${sql.raw(cols.map((c) => c === "equipamento_tipo" ? "coalesce(equipamento_tipo, 'freezer')" : c === "equipamento_usado" ? "coalesce(equipamento_usado, false)" : c).join(", "))}, ${by ?? "contrato"}
+      FROM comodato_contracts WHERE id = ${contratoId} AND equipamento_id IS NULL
+    RETURNING id`);
+  const eqId = r.rows?.[0]?.id;
+  if (eqId) await db.execute(sql`UPDATE comodato_contracts SET equipamento_id = ${eqId} WHERE id = ${contratoId}`);
+  return eqId as string | undefined;
+}
+
+/** Contrato que hoje prende o equipamento (não encerrado), se houver. */
+async function contratoAtivoDoEquipamento(eqId: string, excetoContrato?: string) {
+  const r: any = await db.execute(sql`
+    SELECT id, numero FROM comodato_contracts
+     WHERE equipamento_id = ${eqId} AND deleted_at IS NULL
+       AND status NOT IN ('encerrado', 'devolvido', 'cancelado')
+       ${excetoContrato ? sql`AND id <> ${excetoContrato}` : sql``}
+     ORDER BY created_at DESC LIMIT 1`);
+  return r.rows?.[0] || null;
+}
+
+/** Copia para o equipamento os campos de equipamento alterados no contrato. */
+async function sincronizarEquipamento(contratoId: string, campos: Record<string, any>) {
+  const sets = Object.keys(campos).filter((c) => EQ_MAP[c]).map((c) => sql`${sql.raw(EQ_MAP[c])} = ${campos[c]}`);
+  if (!sets.length) return;
+  await db.execute(sql`
+    UPDATE comodato_equipamentos e SET ${sql.join(sets, sql`, `)}, updated_at = now()
+      FROM comodato_contracts c
+     WHERE c.id = ${contratoId} AND e.id = c.equipamento_id`);
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -292,8 +363,9 @@ type Pend = { codigo: string; texto: string; gravidade: "alta" | "media" | "baix
 
 function pendencias(r: any): Pend[] {
   const p: Pend[] = [];
-  const ativo = !["encerrado", "devolvido", "cancelado"].includes(r.status);
+  const ativo = !STATUS_FIM.includes(r.status);
   if (!ativo) return p;
+  if (r.status === "aguardando_contrato") p.push({ codigo: "aguardando_contrato", texto: "Gerar contrato para assinatura", gravidade: "alta" });
   if (!r.assinado_comodante) p.push({ codigo: "sem_ass_puro", texto: "Falta assinatura da PURO", gravidade: "alta" });
   if (!r.assinado_comodatario) p.push({ codigo: "sem_ass_cliente", texto: "Falta assinatura do comodatário", gravidade: "alta" });
   if (!r.data_contrato) p.push({ codigo: "sem_data", texto: "Contrato sem data", gravidade: "media" });
@@ -369,6 +441,7 @@ const CAMPOS: Record<string, { col: string; conv: (v: any) => any }> = {
   dataDevolucao: { col: "data_devolucao", conv: dateOrNull },
   condicaoDevolucao: { col: "condicao_devolucao", conv: txt },
   observacoes: { col: "observacoes", conv: txt },
+  equipamentoId: { col: "equipamento_id", conv: txt },
   nfAquisicaoNumero: { col: "nf_aquisicao_numero", conv: txt },
   nfAquisicaoData: { col: "nf_aquisicao_data", conv: dateOrNull },
   nfAquisicaoFornecedor: { col: "nf_aquisicao_fornecedor", conv: txt },
@@ -399,6 +472,7 @@ async function carregar(id?: string) {
            cu.seller_id AS vendedor_id,
            NULLIF(TRIM(coalesce(u.first_name,'') || ' ' || coalesce(u.last_name,'')), '') AS vendedor_nome,
            (SELECT COUNT(*)::int FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos,
+           (SELECT 'EQ-' || lpad(e.numero::text, 4, '0') FROM comodato_equipamentos e WHERE e.id = c.equipamento_id) AS equipamento_codigo,
            (SELECT coalesce(json_agg(json_build_object('id', a.id, 'file_name', a.file_name, 'mimetype', a.mimetype) ORDER BY a.created_at), '[]'::json)
               FROM comodato_attachments a WHERE a.contract_id = c.id) AS anexos_lista
       FROM comodato_contracts c
@@ -424,13 +498,14 @@ async function carregar(id?: string) {
 export function registerComodatosRoutes(app: Express) {
   const guard = [authenticateUser, requireRole(ROLES)];
   ensureComodatosSchema().catch((e) => console.error("[comodatos] schema", e?.message));
+  registrarRotasEquipamentos(app, guard);
 
   // lista + resumo
   app.get("/api/comodatos", ...guard, async (_req: Request, res: Response) => {
     try {
       await ensureComodatosSchema();
       const itens = await carregar();
-      const ativos = itens.filter((i: any) => !["encerrado", "devolvido", "cancelado"].includes(i.status));
+      const ativos = itens.filter((i: any) => !STATUS_FIM.includes(i.status));
       const resumo = {
         total: itens.length,
         ativos: ativos.length,
@@ -545,6 +620,7 @@ export function registerComodatosRoutes(app: Express) {
         motivo: txt(b.motivo) ?? null,
         pendencias: txt(b.pendencias) ?? null,
       };
+      const localRetorno = LOCAIS.includes(String(b.localRetorno || "")) ? String(b.localRetorno) : null;
       if (b.encerrar === true || b.encerrar === "true") {
         await db.execute(sql`
           UPDATE comodato_contracts
@@ -552,6 +628,9 @@ export function registerComodatosRoutes(app: Express) {
                  distrato_data = ${dist.dataDistrato}, distrato_motivo = ${dist.motivo}, distrato_pendencias = ${dist.pendencias},
                  updated_by = ${userId(req)}, updated_at = now()
            WHERE id = ${req.params.id} AND deleted_at IS NULL`);
+        if (item.equipamento_id && localRetorno) {
+          await db.execute(sql`UPDATE comodato_equipamentos SET local = ${localRetorno}, updated_at = now() WHERE id = ${item.equipamento_id}`);
+        }
       }
       const pdf = montarDistratoComodatoPdf(dadosDoContrato(item), dist);
       res.setHeader("Content-Type", "application/pdf");
@@ -599,6 +678,12 @@ export function registerComodatosRoutes(app: Express) {
       await ensureComodatosSchema();
       const campos = montarCampos(req.body);
       if (!campos.comodatario_razao) return res.status(400).json({ message: "Informe a razão social do comodatário" });
+      if (campos.equipamento_id) {
+        const eq: any = await db.execute(sql`SELECT id FROM comodato_equipamentos WHERE id = ${campos.equipamento_id} AND deleted_at IS NULL`);
+        if (!eq.rows?.length) return res.status(400).json({ message: "Equipamento não encontrado no inventário" });
+        const ocupado = await contratoAtivoDoEquipamento(campos.equipamento_id);
+        if (ocupado) return res.status(409).json({ message: `Equipamento já está comodatado (contrato COM-${String(ocupado.numero).padStart(4, "0")})` });
+      }
       campos.created_by = userId(req);
       campos.updated_by = userId(req);
       const cols = Object.keys(campos);
@@ -608,6 +693,8 @@ export function registerComodatosRoutes(app: Express) {
         RETURNING id`);
       const id = r.rows?.[0]?.id;
       if (!campos.customer_id) await vincularClientesPorCnpj(id);
+      if (campos.equipamento_id) await sincronizarEquipamento(id, campos);
+      else await criarEquipamentoDoContrato(id, userId(req));
       const [item] = await carregar(id);
       res.status(201).json(item);
     } catch (e: any) {
@@ -631,6 +718,7 @@ export function registerComodatosRoutes(app: Express) {
          WHERE id = ${req.params.id} AND deleted_at IS NULL RETURNING id`);
       if (!r.rows?.length) return res.status(404).json({ message: "Contrato não encontrado" });
       if (req.body?.comodatarioCnpj !== undefined && !req.body?.customerId) await vincularClientesPorCnpj(req.params.id);
+      await sincronizarEquipamento(req.params.id, campos);
       const [item] = await carregar(req.params.id);
       res.json(item);
     } catch (e: any) {
@@ -666,6 +754,9 @@ export function registerComodatosRoutes(app: Express) {
         VALUES (${req.params.id}, ${f.originalname}, ${f.mimetype}, ${f.size}, ${f.buffer.toString("base64")},
                 ${txt(req.body?.descricao) ?? null}, ${userId(req)})
         RETURNING id, file_name, mimetype, file_size, descricao, created_at`);
+      // contrato assinado anexado: sai de "aguardando contrato" e vira ativo
+      await db.execute(sql`UPDATE comodato_contracts SET status = 'ativo', updated_at = now()
+                            WHERE id = ${req.params.id} AND status = 'aguardando_contrato'`);
       res.status(201).json(r.rows?.[0]);
     } catch (e: any) {
       res.status(500).json({ message: e?.message });
@@ -692,6 +783,143 @@ export function registerComodatosRoutes(app: Express) {
   app.delete("/api/comodatos/anexos/:attId", ...guard, async (req: Request, res: Response) => {
     try {
       await db.execute(sql`DELETE FROM comodato_attachments WHERE id = ${req.params.attId}`);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// INVENTÁRIO DE EQUIPAMENTOS PARA COMODATO (07/out/2026)
+//
+// Status é calculado: COMODATADO quando há contrato não encerrado apontando
+// para o equipamento (inclusive "aguardando contrato"); senão DISPONÍVEL, com
+// o local onde está (CD GYN, CD BSB, Fábrica, Em manutenção).
+// ---------------------------------------------------------------------------
+const EQ_CAMPOS: Record<string, { col: string; conv: (v: any) => any }> = {
+  tipo: { col: "tipo", conv: (v) => { const s = txt(v); return s && TIPOS_EQUIP.includes(s) ? s : (s === undefined ? undefined : "outro"); } },
+  marca: { col: "marca", conv: txt },
+  modelo: { col: "modelo", conv: txt },
+  numeroSerie: { col: "numero_serie", conv: txt },
+  codigoProduto: { col: "codigo_produto", conv: txt },
+  tensao: { col: "tensao", conv: txt },
+  volumeLitros: { col: "volume_litros", conv: numPlain },
+  volumeBrutoLitros: { col: "volume_bruto_litros", conv: numPlain },
+  valorReferencia: { col: "valor_referencia", conv: (v) => (typeof v === "number" ? v : numOrNull(v)) },
+  usado: { col: "usado", conv: boolOr },
+  local: { col: "local", conv: (v) => { const s = txt(v); return s === undefined ? undefined : (s && LOCAIS.includes(s) ? s : null); } },
+  nfAquisicaoNumero: { col: "nf_aquisicao_numero", conv: txt },
+  nfAquisicaoData: { col: "nf_aquisicao_data", conv: dateOrNull },
+  nfAquisicaoFornecedor: { col: "nf_aquisicao_fornecedor", conv: txt },
+  nfAquisicaoValor: { col: "nf_aquisicao_valor", conv: (v) => (typeof v === "number" ? v : numOrNull(v)) },
+  observacoes: { col: "observacoes", conv: txt },
+};
+// coluna do inventário → coluna do contrato (inverso de EQ_MAP)
+const EQ_PARA_CONTRATO: Record<string, string> = Object.fromEntries(Object.entries(EQ_MAP).map(([c, e]) => [e, c]));
+
+async function carregarEquipamentos(id?: string) {
+  const r: any = await db.execute(sql`
+    SELECT e.*,
+           to_char(e.nf_aquisicao_data, 'YYYY-MM-DD') AS nf_aquisicao_data,
+           k.id AS contrato_id, k.numero AS contrato_numero, k.status AS contrato_status,
+           k.apelido_ponto AS contrato_apelido, k.comodatario_razao AS contrato_razao,
+           k.endereco_instalacao AS contrato_endereco,
+           cu.fantasy_name AS cliente_fantasia, cu.name AS cliente_nome
+      FROM comodato_equipamentos e
+      LEFT JOIN LATERAL (
+        SELECT c.* FROM comodato_contracts c
+         WHERE c.equipamento_id = e.id AND c.deleted_at IS NULL
+           AND c.status NOT IN ('encerrado', 'devolvido', 'cancelado')
+         ORDER BY c.created_at DESC LIMIT 1) k ON true
+      LEFT JOIN customers cu ON cu.id = k.customer_id
+     WHERE e.deleted_at IS NULL
+       ${id ? sql`AND e.id = ${id}` : sql``}
+     ORDER BY e.numero`);
+  return (r.rows || []).map((row: any) => ({
+    ...row,
+    codigo: "EQ-" + String(row.numero).padStart(4, "0"),
+    volume_litros: row.volume_litros == null ? null : Number(row.volume_litros),
+    volume_bruto_litros: row.volume_bruto_litros == null ? null : Number(row.volume_bruto_litros),
+    valor_referencia: row.valor_referencia == null ? null : Number(row.valor_referencia),
+    nf_aquisicao_valor: row.nf_aquisicao_valor == null ? null : Number(row.nf_aquisicao_valor),
+    status: row.contrato_id ? "comodatado" : "disponivel",
+    cliente: row.contrato_id ? (row.cliente_fantasia || row.cliente_nome || row.contrato_apelido || row.contrato_razao) : null,
+    contrato_codigo: row.contrato_id ? "COM-" + String(row.contrato_numero).padStart(4, "0") : null,
+  }));
+}
+
+function registrarRotasEquipamentos(app: Express, guard: any[]) {
+  app.get("/api/comodatos/equipamentos", ...guard, async (_req: Request, res: Response) => {
+    try {
+      await ensureComodatosSchema();
+      const itens = await carregarEquipamentos();
+      const disp = itens.filter((i: any) => i.status === "disponivel");
+      res.json({
+        itens,
+        resumo: {
+          total: itens.length,
+          comodatados: itens.length - disp.length,
+          disponiveis: disp.length,
+          porLocal: Object.fromEntries([...LOCAIS, "sem_local"].map((l) => [l, disp.filter((i: any) => (i.local || "sem_local") === l).length])),
+        },
+      });
+    } catch (e: any) {
+      console.error("[comodatos] equipamentos", e);
+      res.status(500).json({ message: e?.message || "Erro ao listar equipamentos" });
+    }
+  });
+
+  app.post("/api/comodatos/equipamentos", ...guard, async (req: Request, res: Response) => {
+    try {
+      await ensureComodatosSchema();
+      const campos: Record<string, any> = {};
+      for (const [k, d] of Object.entries(EQ_CAMPOS)) if (k in (req.body || {})) { const v = d.conv(req.body[k]); if (v !== undefined) campos[d.col] = v; }
+      if (!campos.marca && !campos.modelo && !campos.numero_serie) return res.status(400).json({ message: "Informe ao menos marca, modelo ou nº de série" });
+      campos.created_by = userId(req); campos.updated_by = userId(req);
+      const cols = Object.keys(campos);
+      const r: any = await db.execute(sql`
+        INSERT INTO comodato_equipamentos (${sql.raw(cols.join(", "))})
+        VALUES (${sql.join(cols.map((c) => sql`${campos[c]}`), sql`, `)}) RETURNING id`);
+      const [item] = await carregarEquipamentos(r.rows?.[0]?.id);
+      res.status(201).json(item);
+    } catch (e: any) {
+      console.error("[comodatos] equipamento create", e);
+      res.status(500).json({ message: e?.message || "Erro ao cadastrar equipamento" });
+    }
+  });
+
+  app.patch("/api/comodatos/equipamentos/:id", ...guard, async (req: Request, res: Response) => {
+    try {
+      await ensureComodatosSchema();
+      const campos: Record<string, any> = {};
+      for (const [k, d] of Object.entries(EQ_CAMPOS)) if (k in (req.body || {})) { const v = d.conv(req.body[k]); if (v !== undefined) campos[d.col] = v; }
+      if (!Object.keys(campos).length) return res.status(400).json({ message: "Nada para alterar" });
+      campos.updated_by = userId(req);
+      const sets = Object.keys(campos).map((c) => sql`${sql.raw(c)} = ${campos[c]}`);
+      const r: any = await db.execute(sql`
+        UPDATE comodato_equipamentos SET ${sql.join(sets, sql`, `)}, updated_at = now()
+         WHERE id = ${req.params.id} AND deleted_at IS NULL RETURNING id`);
+      if (!r.rows?.length) return res.status(404).json({ message: "Equipamento não encontrado" });
+      // o contrato em vigor carrega uma cópia dos dados do equipamento: mantém igual
+      const ativo = await contratoAtivoDoEquipamento(req.params.id);
+      const setsC = Object.keys(campos).filter((c) => EQ_PARA_CONTRATO[c]).map((c) => sql`${sql.raw(EQ_PARA_CONTRATO[c])} = ${campos[c]}`);
+      if (ativo && setsC.length) {
+        await db.execute(sql`UPDATE comodato_contracts SET ${sql.join(setsC, sql`, `)}, updated_at = now() WHERE id = ${ativo.id}`);
+      }
+      const [item] = await carregarEquipamentos(req.params.id);
+      res.json(item);
+    } catch (e: any) {
+      console.error("[comodatos] equipamento update", e);
+      res.status(500).json({ message: e?.message || "Erro ao salvar equipamento" });
+    }
+  });
+
+  app.delete("/api/comodatos/equipamentos/:id", ...guard, async (req: Request, res: Response) => {
+    try {
+      const ativo = await contratoAtivoDoEquipamento(req.params.id);
+      if (ativo) return res.status(409).json({ message: `Equipamento comodatado (COM-${String(ativo.numero).padStart(4, "0")}). Faça o distrato antes de excluir.` });
+      await db.execute(sql`UPDATE comodato_equipamentos SET deleted_at = now(), updated_by = ${userId(req)} WHERE id = ${req.params.id}`);
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ message: e?.message });
