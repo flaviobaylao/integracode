@@ -27,6 +27,7 @@ import {
   Plus, Loader2, Search, FileDown, Paperclip, Trash2, AlertTriangle, CheckCircle2, Snowflake, Link2, Upload, ArrowUp, ArrowDown, ArrowUpDown, FileText, FileX2, FileCheck2, X,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import ComodatoEquipamentos, { LOCAIS } from "@/components/ComodatoEquipamentos";
 
 const SIGNATARIO_PURO_PADRAO = "Flavio Evangelista Baylão Neto";
 
@@ -53,6 +54,7 @@ const dt = (v: any) => {
 };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
+  aguardando_contrato: { label: "Aguardando contrato", cls: "bg-violet-100 text-violet-800 border-violet-200" },
   ativo: { label: "Ativo", cls: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   pendente_assinatura: { label: "Pendente assinatura", cls: "bg-amber-100 text-amber-800 border-amber-200" },
   encerrado: { label: "Encerrado", cls: "bg-slate-100 text-slate-700 border-slate-200" },
@@ -67,7 +69,7 @@ const GRAV_CLS: Record<string, string> = {
 };
 
 const VAZIO: any = {
-  customerId: null, clienteNome: "",
+  customerId: null, clienteNome: "", equipamentoId: null, equipamentoCodigo: "",
   comodatarioRazao: "", comodatarioCnpj: "", apelidoPonto: "",
   enderecoInstalacao: "", cidade: "Goiânia", uf: "GO", cep: "",
   equipamentoTipo: "freezer", marca: "", modelo: "", numeroSerie: "", codigoProduto: "",
@@ -82,6 +84,7 @@ const VAZIO: any = {
 function paraForm(c: any) {
   return {
     customerId: c.customer_id, clienteNome: c.cliente_fantasia || c.cliente_nome || "",
+    equipamentoId: c.equipamento_id || null, equipamentoCodigo: c.equipamento_codigo || "",
     comodatarioRazao: c.comodatario_razao || "", comodatarioCnpj: c.comodatario_cnpj || "",
     apelidoPonto: c.apelido_ponto || "", enderecoInstalacao: c.endereco_instalacao || "",
     cidade: c.cidade || "", uf: c.uf || "", cep: c.cep || "",
@@ -113,6 +116,7 @@ export default function Comodatos() {
   const [fStatus, setFStatus] = useState<string>("todos");
   const [ordem, setOrdem] = useState<{ col: string; asc: boolean }>({ col: "comodatario", asc: true });
   const [soPendentes, setSoPendentes] = useState(false);
+  const [aba, setAba] = useState<"contratos" | "equipamentos">("contratos");
   const [editId, setEditId] = useState<string | null>(null);
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<any>({ ...VAZIO });
@@ -123,7 +127,7 @@ export default function Comodatos() {
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const [pendentes, setPendentes] = useState<File[]>([]); // arquivos escolhidos antes de salvar um contrato novo
   const [enviando, setEnviando] = useState(0);
-  const [distrato, setDistrato] = useState<{ contrato: any; dataDistrato: string; dataDevolucao: string; condicao: string; motivo: string; pendencias: string; encerrar: boolean } | null>(null);
+  const [distrato, setDistrato] = useState<{ contrato: any; dataDistrato: string; dataDevolucao: string; condicao: string; motivo: string; pendencias: string; encerrar: boolean; localRetorno: string } | null>(null);
   const [gerandoDistrato, setGerandoDistrato] = useState(false);
   const [cliOpcoes, setCliOpcoes] = useState<any[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -170,7 +174,31 @@ export default function Comodatos() {
     </TableHead>
   );
 
-  const recarregar = () => queryClient.invalidateQueries({ queryKey: ["/api/comodatos"] });
+  const recarregar = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["/api/comodatos"] }),
+    queryClient.invalidateQueries({ queryKey: ["/api/comodatos/equipamentos"] }),
+  ]);
+
+  // Inventário → "Vincular a cliente": novo contrato com os dados do equipamento
+  const vincularEquipamento = (eq: any) => {
+    setEditId(null);
+    setForm({
+      ...VAZIO,
+      equipamentoId: eq.id, equipamentoCodigo: eq.codigo,
+      equipamentoTipo: eq.tipo || "freezer", marca: eq.marca || "", modelo: eq.modelo || "",
+      numeroSerie: eq.numero_serie || "", codigoProduto: eq.codigo_produto || "", tensao: eq.tensao || "",
+      volumeLitros: eq.volume_litros ?? "", volumeBrutoLitros: eq.volume_bruto_litros ?? "",
+      valorBem: eq.valor_referencia ?? "", equipamentoUsado: !!eq.usado,
+      nfAquisicaoNumero: eq.nf_aquisicao_numero || "", nfAquisicaoData: eq.nf_aquisicao_data || "",
+      nfAquisicaoFornecedor: eq.nf_aquisicao_fornecedor || "", nfAquisicaoValor: eq.nf_aquisicao_valor ?? "",
+      status: "aguardando_contrato",
+    });
+    setAnexos([]); setPendentes([]); setBuscaCli(""); setCliOpcoes([]); setAberto(true);
+  };
+  const verContrato = (contratoId: string) => {
+    const c = itens.find((i) => i.id === contratoId);
+    if (c) { setAba("contratos"); abrirEdicao(c); }
+  };
 
   const abrirNovo = () => {
     setEditId(null); setForm({ ...VAZIO }); setAnexos([]); setPendentes([]); setBuscaCli(""); setCliOpcoes([]); setAberto(true);
@@ -242,7 +270,7 @@ export default function Comodatos() {
   const abrirDistrato = (c: any) => {
     const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     setDistrato({ contrato: c, dataDistrato: hoje, dataDevolucao: c.data_devolucao || hoje, condicao: c.condicao_devolucao || "",
-      motivo: c.distrato_motivo || "", pendencias: c.distrato_pendencias || "", encerrar: !["encerrado", "devolvido", "cancelado"].includes(c.status) });
+      motivo: c.distrato_motivo || "", pendencias: c.distrato_pendencias || "", encerrar: !["encerrado", "devolvido", "cancelado"].includes(c.status), localRetorno: "cd_gyn" });
   };
   const gerarDistrato = async () => {
     if (!distrato) return;
@@ -256,7 +284,7 @@ export default function Comodatos() {
       const url = URL.createObjectURL(await r.blob());
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-      if (campos.encerrar) { await recarregar(); toast({ title: `Contrato ${contrato.codigo} encerrado`, description: "Distrato gerado e devolução registrada." }); }
+      if (campos.encerrar) { await recarregar(); toast({ title: `Contrato ${contrato.codigo} encerrado`, description: `Distrato gerado; equipamento volta como disponível em ${LOCAIS[campos.localRetorno] || "local não informado"}.` }); }
       else toast({ title: "Distrato gerado", description: "O contrato continua com o status atual." });
       setDistrato(null);
     } catch (e: any) {
@@ -272,6 +300,8 @@ export default function Comodatos() {
     try {
       const body: any = { ...form };
       delete body.clienteNome;
+      delete body.equipamentoCodigo;
+      if (editId) delete body.equipamentoId; // o vínculo com o inventário só é definido na criação
       body.valorBem = form.valorBem === "" ? null : Number(String(form.valorBem).replace(",", "."));
       body.nfAquisicaoValor = form.nfAquisicaoValor === "" ? null : Number(String(form.nfAquisicaoValor).replace(",", "."));
       const url = editId ? `/api/comodatos/${editId}` : "/api/comodatos";
@@ -295,6 +325,7 @@ export default function Comodatos() {
         variant: falhas ? "destructive" : "default",
       });
       setAberto(false);
+      if (!editId && form.equipamentoId) setAba("contratos");
     } catch (e: any) {
       toast({ title: "Erro ao salvar", description: e?.message, variant: "destructive" });
     } finally {
@@ -375,12 +406,24 @@ export default function Comodatos() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><Snowflake className="w-6 h-6 text-sky-600" />Contratos de Comodato</h1>
           <p className="text-sm text-muted-foreground">Freezers e geladeiras da PURO em comodato nos pontos de venda Honest.</p>
         </div>
-        <div className="flex gap-2">
+        <div className={`flex gap-2 ${aba === "contratos" ? "" : "hidden"}`}>
           <Button variant="outline" onClick={exportar} disabled={!filtrados.length}><FileDown className="w-4 h-4 mr-2" />Excel</Button>
           <Button onClick={abrirNovo}><Plus className="w-4 h-4 mr-2" />Novo contrato</Button>
         </div>
       </div>
 
+      <div className="flex gap-1 border-b">
+        {([["contratos", "Contratos de Comodato"], ["equipamentos", "Equipamentos disponíveis para comodato (Inventário)"]] as const).map(([k, l]) => (
+          <button key={k} type="button" onClick={() => setAba(k)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${aba === k ? "border-sky-600 text-sky-700" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {aba === "equipamentos" && <ComodatoEquipamentos onVincular={vincularEquipamento} onVerContrato={verContrato} />}
+
+      {aba === "contratos" && (<>
       {resumo && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Card><CardContent className="p-4">
@@ -467,6 +510,7 @@ export default function Comodatos() {
                   </TableCell>
                   <TableCell className="text-xs">
                     <div className="font-medium">{TIPOS[c.equipamento_tipo] || c.equipamento_tipo} {c.marca || ""}</div>
+                    {c.equipamento_codigo && <div className="text-[10px] font-mono text-muted-foreground">{c.equipamento_codigo}</div>}
                     <div className="text-muted-foreground">
                       {[c.modelo && `Mod. ${c.modelo}`, c.numero_serie && `Série ${c.numero_serie}`, c.tensao, c.volume_litros && `${c.volume_litros} L`].filter(Boolean).join(" · ") || "—"}
                     </div>
@@ -525,6 +569,7 @@ export default function Comodatos() {
           </Table>
         </div>
       )}
+      </>)}
 
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -590,7 +635,9 @@ export default function Comodatos() {
             </section>
 
             <section className="space-y-3">
-              <h3 className="font-semibold text-sm text-muted-foreground uppercase">Equipamento</h3>
+              <h3 className="font-semibold text-sm text-muted-foreground uppercase flex items-center gap-2">Equipamento
+                {form.equipamentoCodigo && <Badge variant="outline" className="normal-case font-mono bg-sky-50 text-sky-800 border-sky-200">inventário {form.equipamentoCodigo}</Badge>}
+              </h3>
               <div className="grid md:grid-cols-3 gap-3">
                 <div><Label>Tipo</Label>
                   <select className="border rounded-md h-9 px-2 text-sm w-full bg-background" value={form.equipamentoTipo} onChange={(e) => set("equipamentoTipo", e.target.value)}>
@@ -725,6 +772,14 @@ export default function Comodatos() {
               <div><Label>Motivo (opcional)</Label><Input placeholder="Ex.: encerramento das atividades do ponto" value={distrato.motivo} onChange={(e) => setDistrato({ ...distrato, motivo: e.target.value })} /></div>
               <div><Label>Pendências a cobrar (opcional)</Label><Textarea rows={2} placeholder="Avarias ou valores devidos; em branco = quitação plena" value={distrato.pendencias} onChange={(e) => setDistrato({ ...distrato, pendencias: e.target.value })} /></div>
               <label className="flex items-center gap-2 text-sm"><Checkbox checked={distrato.encerrar} onCheckedChange={(v) => setDistrato({ ...distrato, encerrar: !!v })} />Encerrar o contrato e registrar a devolução ao gerar</label>
+              {distrato.encerrar && (
+                <div>
+                  <Label>Equipamento volta para</Label>
+                  <select className="border rounded-md h-9 px-2 text-sm w-full bg-background" value={distrato.localRetorno} onChange={(e) => setDistrato({ ...distrato, localRetorno: e.target.value })}>
+                    {Object.entries(LOCAIS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
           )}
           <DialogFooter className="gap-2">
