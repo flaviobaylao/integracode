@@ -7,6 +7,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
+import CopyButton from "@/components/CopyButton";
 import { usePermissions } from "@/lib/permissions";
 
 const CARD_ATIVOS = "Clientes Ativos";
@@ -1516,6 +1517,7 @@ export default function ActiveCustomers() {
                                   {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
                                   <QuarentenaTag customerId={ac.customer?.id} date={(ac.customer as any)?.serviceStartDate} />
                                 </div>
+                                <CopyButton text={ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || ""} />
                                 {(ac.customer as any)?.isColaborador && (
                                   <span className="text-[10px] font-normal italic text-slate-400 whitespace-nowrap" title="Colaborador — não entra em rota/agenda de visitas">colaborador</span>
                                 )}
