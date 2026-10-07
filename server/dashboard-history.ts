@@ -71,6 +71,71 @@ export async function captureDashboardSnapshot(dateStr?: string): Promise<{ date
   return { date: d, daySales, sellers: sellers.length };
 }
 
+/**
+ * RECAPTURA OS ULTIMOS `dias` DIAS (janela movel). Roda todo dia junto com o cron.
+ *
+ * POR QUE EXISTE (07/10/2026). O snapshot diario congelava o numero as 23h30 e
+ * nunca mais voltava nele. Nota que estava AUTORIZADA naquela hora e depois foi
+ * CANCELADA ou DEVOLVIDA continuava pesando no "Fechamento mensal" para sempre:
+ * set/26 ficou em R$ 310.184,01 contra R$ 285.673,31 de verdade — 58 notas,
+ * R$ 24.669,70 a mais, e o erro crescia mes a mes (jul R$ 3.076, ago R$ 8.465).
+ * O backfill conserta tudo, mas so' roda no boot quando a tabela esta vazia, ou
+ * seja, na pratica nunca. Esta janela e' o conserto permanente: devolucao
+ * registrada depois sai sozinha do historico.
+ *
+ * 30 dias cobre com folga o prazo em que uma devolucao costuma ser lancada.
+ * Fora da janela, so' o backfill manual mexe.
+ *
+ * APAGA o dia que ficou SEM nota valida, em vez de grava-lo zerado: a coluna
+ * "Dias com nota" conta linhas, entao um dia zerado inflaria a contagem.
+ */
+export async function recapturarUltimosDias(dias = 30): Promise<{ janela: string; diasGravados: number; diasApagados: number }> {
+  await ensureDashboardHistoryTable();
+  const fim = todayBrt();
+  const ini = (() => {
+    const d = new Date(fim + "T12:00:00");
+    d.setDate(d.getDate() - (dias - 1));
+    return d.toISOString().slice(0, 10);
+  })();
+
+  // A janela pode atravessar a vigencia da regra oficial — cada metade com a sua.
+  // O pedaco legado para na VESPERA da vigencia: `sqlDiaVendedor` e' fechado nas
+  // duas pontas (>= de AND < ate+1dia), entao terminar NA vigencia contaria o dia
+  // da virada duas vezes, uma por regra.
+  const vespera = (d: string) => { const x = new Date(d + "T12:00:00"); x.setDate(x.getDate() - 1); return x.toISOString().slice(0, 10); };
+  const pedacos: { de: string; ate: string; oficial: boolean }[] = [];
+  if (ini < VIGENCIA_REGRA_OFICIAL && fim >= VIGENCIA_REGRA_OFICIAL) {
+    pedacos.push({ de: ini, ate: vespera(VIGENCIA_REGRA_OFICIAL), oficial: false });
+    pedacos.push({ de: VIGENCIA_REGRA_OFICIAL, ate: fim, oficial: true });
+  } else {
+    pedacos.push({ de: ini, ate: fim, oficial: fim >= VIGENCIA_REGRA_OFICIAL });
+  }
+
+  // Consulta ANTES de apagar: se a query falhar, o historico fica intacto.
+  const porDia: Record<string, { seller: string; total: number }[]> = {};
+  for (const p of pedacos) {
+    const linhas = await rawq(sqlDiaVendedor("'" + p.de + "'::date", "('" + p.ate + "'::date + INTERVAL '1 day')", p.oficial));
+    for (const r of linhas) {
+      const d = String(r.d).slice(0, 10);
+      if (d < ini || d > fim) continue;
+      (porDia[d] = porDia[d] || []).push({ seller: r.seller, total: Number(r.total) || 0 });
+    }
+  }
+
+  const antes = await rawq("SELECT COUNT(*)::int AS n FROM dashboard_snapshots WHERE snapshot_date BETWEEN '" + ini + "'::date AND '" + fim + "'::date");
+  await db.execute(sql`DELETE FROM dashboard_snapshots WHERE snapshot_date BETWEEN ${ini}::date AND ${fim}::date`);
+
+  let gravados = 0;
+  for (const d of Object.keys(porDia)) {
+    const sellers = porDia[d].sort((a, b) => b.total - a.total);
+    await upsertSnapshot(d, sellers.reduce((a, s) => a + s.total, 0), sellers);
+    gravados++;
+  }
+  const apagados = Math.max(0, (Number(antes[0]?.n) || 0) - gravados);
+  console.log(`[DASH-HIST] recaptura ${ini}..${fim}: ${gravados} dia(s) regravado(s), ${apagados} dia(s) sem nota removido(s)`);
+  return { janela: ini + ".." + fim, diasGravados: gravados, diasApagados: apagados };
+}
+
 // Reconstroi todos os dias com NF-e desde 2026-01-01, mes a mes, respeitando a vigencia.
 export async function backfillDashboardHistory(): Promise<number> {
   await ensureDashboardHistoryTable();
@@ -404,10 +469,14 @@ export function registerDashboardHistoryRoutes(app: Express): void {
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
-  // Snapshot diario automatico as 23:30 (BRT).
+  // Snapshot diario as 23:30 (BRT) — e os 30 dias anteriores junto.
+  // Capturar so' o dia deixava o historico envelhecer: nota cancelada ou devolvida
+  // depois das 23h30 nunca mais saia do "Fechamento mensal" (ver recapturarUltimosDias).
   try {
     cron.schedule("30 23 * * *", () => {
-      captureDashboardSnapshot().then((r) => console.log("[DASH-HIST] snapshot " + r.date + " = " + r.daySales)).catch((e) => console.error("[DASH-HIST] cron:", e?.message));
+      recapturarUltimosDias(30)
+        .then((r) => console.log("[DASH-HIST] cron: " + r.janela + " -> " + r.diasGravados + " dia(s)"))
+        .catch((e) => console.error("[DASH-HIST] cron:", e?.message));
     }, { timezone: "America/Sao_Paulo" });
   } catch (e: any) { console.error("[DASH-HIST] cron setup:", e?.message); }
 
@@ -418,6 +487,11 @@ export function registerDashboardHistoryRoutes(app: Express): void {
       if (token !== "vday-6931") return res.json({ error: "forbidden" });
       const mode = (req.query as any).mode;
       if (mode === "backfill") { const k = await backfillDashboardHistory(); return res.json({ ok: true, backfill: k }); }
+      if (mode === "recaptura") {
+        const n = Math.min(365, Math.max(1, Number((req.query as any).dias) || 30));
+        const r = await recapturarUltimosDias(n);
+        return res.json({ ok: true, ...r });
+      }
       const r = await captureDashboardSnapshot((req.query as any).date);
       res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
