@@ -74,6 +74,9 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
   const [atendPhotoUrl, setAtendPhotoUrl] = useState<string | null>(null);
   // true = localização + foto vieram do check-in já realizado hoje (não precisa repetir o check-in)
   const [atendUsaPrevio, setAtendUsaPrevio] = useState(false);
+  // 📝 Registros já feitos neste lead (histórico: check-ins, atendimentos, desfechos) — exibidos ao abrir o Registro.
+  const [atendHistorico, setAtendHistorico] = useState<any[]>([]);
+  const [atendHistLoading, setAtendHistLoading] = useState(false);
   const capturarLocalizacaoAtend = () => {
     if (!navigator.geolocation) { toast({ variant: "destructive", title: "Erro", description: "Seu dispositivo não suporta geolocalização" }); return; }
     const onOk = (pos: GeolocationPosition) => { setAtendCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); toast({ title: "Localização capturada", description: `Lat: ${pos.coords.latitude.toFixed(6)}, Lng: ${pos.coords.longitude.toFixed(6)}` }); };
@@ -198,7 +201,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
     } catch (_e) { setAtendGravando(false); }
   };
   const atendStop = () => { try { atendRecRef.current && atendRecRef.current.stop(); } catch (_e) {} setAtendGravando(false); };
-  const resetAtend = () => { atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendContato(""); setAtendTelefone(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false); };
+  const resetAtend = () => { setAtendHistorico([]); atendStop(); setAtendOpen(false); setAtendTexto(""); setAtendContato(""); setAtendTelefone(""); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false); };
   // Abre o modal (Registro ou Check-in) ja buscando contato/telefone atuais do lead para pre-preencher.
   const abrirAtend = async (mode: 'registro' | 'checkin') => {
     setAtendMode(mode); setAtendTexto(""); setAtendGravando(false); setAtendCoords(null); setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false);
@@ -209,11 +212,18 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
       setAtendPhotoUrl(checkinPrevio.photoUrl);
       setAtendUsaPrevio(true);
     }
+    setAtendHistorico([]);
     if (mode !== 'registro') return;
+    setAtendHistLoading(true);
     try {
-      const res = await fetch(`/api/leads/${leadId}`, { credentials: "include" });
-      if (res.ok) { const l = await res.json(); setAtendContato(l?.contact || ""); setAtendTelefone(l?.phone || ""); }
+      const [resLead, resHist] = await Promise.all([
+        fetch(`/api/leads/${leadId}`, { credentials: "include" }),
+        fetch(`/api/leads/${leadId}/visits`, { credentials: "include" }),
+      ]);
+      if (resLead.ok) { const l = await resLead.json(); setAtendContato(l?.contact || ""); setAtendTelefone(l?.phone || ""); }
+      if (resHist.ok) { const h = await resHist.json(); setAtendHistorico(Array.isArray(h) ? h : []); }
     } catch (_e) { /* usuario preenche manualmente */ }
+    finally { setAtendHistLoading(false); }
   };
   // Salvar / Fazer Check-in: check-in REAL (foto + GPS obrigatorios) + observacao + contato/telefone.
   const salvarAtendMut = useMutation({
@@ -486,6 +496,29 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               <Label>Nome</Label>
               <Input value={leadName} readOnly className="bg-muted/50" data-testid={`input-lead-atend-nome-${leadId}`} />
             </div>
+            {atendMode === 'registro' && (
+              <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30 p-3" data-testid={`lead-atend-historico-${leadId}`}>
+                <p className="text-sm font-medium flex items-center gap-1 mb-2"><FileText className="w-4 h-4" /> Registros já feitos{atendHistorico.length ? ` (${atendHistorico.length})` : ''}</p>
+                {atendHistLoading ? (
+                  <p className="text-xs text-muted-foreground">Carregando registros…</p>
+                ) : atendHistorico.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nenhum registro feito neste lead ainda.</p>
+                ) : (
+                  <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {atendHistorico.map((h: any) => {
+                      const dt = h.visitDate || h.createdAt;
+                      const quando = dt ? new Date(dt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+                      return (
+                        <li key={h.id} className="rounded bg-white dark:bg-gray-900 border px-2 py-1.5">
+                          <p className="text-[11px] text-muted-foreground">{quando}{h.userName ? ` · ${h.userName}` : ''}</p>
+                          <p className="text-sm whitespace-pre-wrap break-words">{h.observation}</p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
             {atendMode === 'registro' && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
