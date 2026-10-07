@@ -39,6 +39,7 @@ export type DadosContrato = {
   valorBem?: number | string | null;
   dataContrato?: string | null; // YYYY-MM-DD
   usado?: boolean;
+  clausulasAdicionais?: string | null; // um parágrafo por cláusula; entram antes do foro
 };
 
 const COMODANTE = {
@@ -250,7 +251,13 @@ export function montarContratoComodatoPdf(dados: DadosContrato): Buffer {
     ? `${brl(valorNum)} (${extenso(valorNum)})`
     : "R$ ______________ (________________________________________)";
   clausula("CLÁUSULA 7º.", `Para efeito deste contrato ${pronome} referid${pronome} ${nomeEquip} tem o valor de ${valorTxt}.`);
-  clausula("CLÁUSULA 8º.", "Fica eleito o foro desta cidade Goiânia - Goiás para dirimir qualquer dúvida referente a este contrato.");
+  // condições especiais combinadas com o cliente: cada parágrafo vira uma cláusula numerada
+  let n = 8;
+  for (const extra of String(dados.clausulasAdicionais || "").split(/\n\s*\n|\r?\n/).map((t) => t.trim()).filter(Boolean)) {
+    clausula(`CLÁUSULA ${n}º.`, extra.replace(/^CL[ÁA]USULA\s+\d+[ºª°o]?\.?\s*/i, ""));
+    n++;
+  }
+  clausula(`CLÁUSULA ${n}º.`, "Fica eleito o foro desta cidade Goiânia - Goiás para dirimir qualquer dúvida referente a este contrato.");
 
   espaco(2);
   paragrafo("Para firmeza e prova de assim haverem contratado, firmam o presente instrumento em duas vias de igual teor, na presença de testemunhas que a tudo assistiram e que de tudo conhecimento tiveram.", { align: "justify", gap: 8 });
@@ -358,5 +365,6 @@ export function dadosDoContrato(row: any): DadosContrato {
     tensao: row.tensao, volumeLitros: row.volume_litros, volumeBrutoLitros: row.volume_bruto_litros,
     valorBem: row.valor_bem, dataContrato: row.data_contrato,
     usado: row.equipamento_usado === true,
+    clausulasAdicionais: row.clausulas_adicionais,
   };
 }
