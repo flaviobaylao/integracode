@@ -235,7 +235,7 @@ export function ensureComodatosSchema(): Promise<void> {
       for (const c of ["nf_aquisicao_numero varchar", "nf_aquisicao_data date", "nf_aquisicao_fornecedor text", "nf_aquisicao_valor numeric(12,2)",
                        "signatario_comodante text", "equipamento_usado boolean NOT NULL DEFAULT false",
                        "distrato_data date", "distrato_motivo text", "distrato_pendencias text",
-                       "equipamento_id varchar"]) {
+                       "equipamento_id varchar", "clausulas_adicionais text"]) {
         await db.execute(sql.raw("ALTER TABLE comodato_contracts ADD COLUMN IF NOT EXISTS " + c)).catch(() => {});
       }
       await db.execute(sql.raw(
@@ -441,6 +441,7 @@ const CAMPOS: Record<string, { col: string; conv: (v: any) => any }> = {
   dataDevolucao: { col: "data_devolucao", conv: dateOrNull },
   condicaoDevolucao: { col: "condicao_devolucao", conv: txt },
   observacoes: { col: "observacoes", conv: txt },
+  clausulasAdicionais: { col: "clausulas_adicionais", conv: txt },
   equipamentoId: { col: "equipamento_id", conv: txt },
   nfAquisicaoNumero: { col: "nf_aquisicao_numero", conv: txt },
   nfAquisicaoData: { col: "nf_aquisicao_data", conv: dateOrNull },

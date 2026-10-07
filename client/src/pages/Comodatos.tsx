@@ -31,6 +31,14 @@ import ComodatoEquipamentos, { LOCAIS } from "@/components/ComodatoEquipamentos"
 
 const SIGNATARIO_PURO_PADRAO = "Flavio Evangelista Baylão Neto";
 
+// Cláusulas prontas para inserir com um clique no campo "Cláusulas adicionais".
+const CLAUSULAS_MODELO = [
+  {
+    rotulo: "Coleta e transporte pelo cliente (CD Goiânia)",
+    texto: "A coleta e o transporte do equipamento, do Centro de Distribuição do COMODANTE em Goiânia-GO até o estabelecimento do COMODATÁRIO, no ato do comodato, são de responsabilidade do COMODATÁRIO, que arcará com todos os custos e riscos do transporte, inclusive por eventuais danos ao equipamento ocorridos nesse trajeto.",
+  },
+];
+
 // colunas ordenáveis → função que extrai a chave de ordenação
 const ORDENACOES: Record<string, (c: any) => string | number> = {
   codigo: (c) => Number(c.numero) || 0,
@@ -77,7 +85,7 @@ const VAZIO: any = {
   dataContrato: "", prazo: "Indeterminado", status: "ativo",
   assinadoComodante: false, assinadoComodatario: false, testemunhasAssinadas: false,
   signatarioComodatario: "", signatarioComodante: SIGNATARIO_PURO_PADRAO, equipamentoUsado: false,
-  dataDevolucao: "", condicaoDevolucao: "", observacoes: "",
+  dataDevolucao: "", condicaoDevolucao: "", observacoes: "", clausulasAdicionais: "",
   nfAquisicaoNumero: "", nfAquisicaoData: "", nfAquisicaoFornecedor: "", nfAquisicaoValor: "",
 };
 
@@ -97,7 +105,7 @@ function paraForm(c: any) {
     testemunhasAssinadas: !!c.testemunhas_assinadas, signatarioComodatario: c.signatario_comodatario || "",
     signatarioComodante: c.signatario_comodante || SIGNATARIO_PURO_PADRAO, equipamentoUsado: !!c.equipamento_usado,
     dataDevolucao: c.data_devolucao || "", condicaoDevolucao: c.condicao_devolucao || "",
-    observacoes: c.observacoes || "",
+    observacoes: c.observacoes || "", clausulasAdicionais: c.clausulas_adicionais || "",
     nfAquisicaoNumero: c.nf_aquisicao_numero || "", nfAquisicaoData: c.nf_aquisicao_data || "",
     nfAquisicaoFornecedor: c.nf_aquisicao_fornecedor || "", nfAquisicaoValor: c.nf_aquisicao_valor ?? "",
   };
@@ -688,7 +696,22 @@ export default function Comodatos() {
                   <div className="md:col-span-2"><Label>Condição na devolução</Label><Input value={form.condicaoDevolucao} onChange={(e) => set("condicaoDevolucao", e.target.value)} /></div>
                 </div>
               )}
-              <div><Label>Observações</Label><Textarea rows={3} value={form.observacoes} onChange={(e) => set("observacoes", e.target.value)} /></div>
+              <div>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <Label>Cláusulas adicionais (saem no contrato, antes do foro)</Label>
+                  <div className="flex gap-1 flex-wrap">
+                    {CLAUSULAS_MODELO.map((m) => (
+                      <Button key={m.rotulo} type="button" variant="outline" size="sm" className="h-7 text-xs"
+                        onClick={() => set("clausulasAdicionais", [String(form.clausulasAdicionais || "").trim(), m.texto].filter(Boolean).join("\n\n"))}>
+                        <Plus className="w-3 h-3 mr-1" />{m.rotulo}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <Textarea rows={3} value={form.clausulasAdicionais} onChange={(e) => set("clausulasAdicionais", e.target.value)}
+                  placeholder="Uma cláusula por parágrafo. Cada parágrafo vira uma cláusula numerada no PDF." />
+              </div>
+              <div><Label>Observações internas (não saem no contrato)</Label><Textarea rows={3} value={form.observacoes} onChange={(e) => set("observacoes", e.target.value)} /></div>
             </section>
 
             <section className="space-y-2">
