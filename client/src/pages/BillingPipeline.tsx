@@ -1726,11 +1726,11 @@ export default function BillingPipeline() {
                       onTogglePriority={() => priorityMutation.mutate({ id: item.id, isPriority: !item.isPriority })}
                       blockedReason={
                         stage.key === 'bloqueado'
-                          // TROCA em Bloqueados fica em vermelho quando o MESMO cliente já tem um
-                          // card na raia "Pedido". Volta ao preto ao liberar a troca (sai de
+                          // TROCA ou AMOSTRA em Bloqueados fica em vermelho quando o MESMO cliente já
+                          // tem um card na raia "Pedido". Volta ao preto ao liberar (sai de
                           // Bloqueados) ou quando o pedido muda de etapa.
-                          ? ((String(item.operationType) === 'troca' && customersComPedido.has(String(item.customerId || '')))
-                              ? 'Novo pedido deste cliente na etapa "Pedido" — avalie/libere a troca'
+                          ? ((['troca', 'amostra'].includes(String(item.operationType)) && customersComPedido.has(String(item.customerId || '')))
+                              ? 'Novo pedido deste cliente na etapa "Pedido" — avalie/libere a troca/amostra'
                               : null)
                           : (STAGES_ALERTA_BLOQUEIO.has(String(item.stage)) ? (blockedCustomerReason.get(String(item.customerId || '')) || null) : null)
                       }
@@ -2259,7 +2259,7 @@ export default function BillingPipeline() {
             <div>
               <p className="font-semibold mb-1">Nome do cliente em <span className="text-red-600">vermelho</span></p>
               <p className="text-xs text-gray-600 dark:text-gray-300">O cliente tem um card em <b>Bloqueados</b> e, ao mesmo tempo, um card em outra etapa do funil. Passe o cursor sobre o nome para ver o motivo do bloqueio. Resolvido o bloqueio, o nome volta ao preto.</p>
-              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">Também vale o inverso: uma <b>Troca em Bloqueados</b> fica em vermelho quando o mesmo cliente já tem um pedido na raia <b>Pedido</b> — sinal para avaliar/liberar a troca. Volta ao preto ao liberar a troca ou quando o pedido muda de etapa.</p>
+              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">Também vale o inverso: uma <b>Troca ou Amostra em Bloqueados</b> fica em vermelho quando o mesmo cliente já tem um pedido na raia <b>Pedido</b> — sinal para avaliar/liberar. Volta ao preto ao liberar ou quando o pedido muda de etapa.</p>
             </div>
             <div>
               <p className="font-semibold mb-1">Atraso na entrega (de Faturado até a entrega)</p>
