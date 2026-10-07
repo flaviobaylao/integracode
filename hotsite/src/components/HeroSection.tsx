@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react';
+import { garrafaUrl, type Tamanho } from '../utils/garrafas';
 
-const SOCIAL_PROOF = [
-  { value: '5.000+', label: 'clientes satisfeitos' },
-  { value: '4.9★', label: 'avaliação média' },
-  { value: '100%', label: 'fruta natural' },
-  { value: 'Diária', label: 'produção fresca' },
+// 🍾 Linha de garrafas do topo: alterna 900 ml e 350 ml para mostrar os dois tamanhos.
+const PRATELEIRA: { sabor: string; nome: string; tamanho: Tamanho }[] = [
+  { sabor: 'acerola', nome: 'Acerola', tamanho: '900' },
+  { sabor: 'maracuja', nome: 'Maracujá', tamanho: '350' },
+  { sabor: 'morango-limao', nome: 'Morango com limão', tamanho: '900' },
+  { sabor: 'frutas-vermelhas', nome: 'Frutas vermelhas', tamanho: '350' },
+  { sabor: 'pink-lemonade', nome: 'Pink lemonade', tamanho: '900' },
+  { sabor: 'limonada', nome: 'Limonada', tamanho: '350' },
+  { sabor: 'uva', nome: 'Uva', tamanho: '900' },
+  { sabor: 'morango-maracuja', nome: 'Morango com maracujá', tamanho: '350' },
 ];
 
 export default function HeroSection() {
@@ -13,11 +19,11 @@ export default function HeroSection() {
   useEffect(() => {
     const day = new Date().getDay(); // 0=Sun … 6=Sat
     if (day === 1 || day === 2) {
-      setUrgency('🔥 Produção fresca todo dia — peça agora, entrega em até 48h!');
+      setUrgency('Produção fresca todo dia. Peça agora e receba em até 48h.');
     } else if (day === 3 || day === 4) {
-      setUrgency('⚡ Sucos produzidos hoje — quantidade do dia é limitada!');
+      setUrgency('Sucos produzidos hoje. A quantidade do dia é limitada.');
     } else {
-      setUrgency('🌱 Produção diária, sempre fresco — direto da fazenda pra você!');
+      setUrgency('Produção diária, sempre fresco, direto da fábrica para você.');
     }
   }, []);
 
@@ -26,77 +32,83 @@ export default function HeroSection() {
   };
 
   return (
-    <section className="relative min-h-[95vh] flex flex-col items-center justify-center overflow-hidden">
-      {/* Background */}
-      <div className="absolute inset-0 z-0">
-        <img
-          src="/shop/images/hero-linha-produtos.jpg"
-          alt="Linha Honest de Sucos Naturais"
-          className="w-full h-full object-cover object-center"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/30 to-black/60" />
-      </div>
-
-      {/* Urgency bar */}
+    <section className="relative bg-honest-forest text-white overflow-hidden">
       {urgency && (
-        <div className="relative z-10 w-full bg-honest-orange/90 backdrop-blur-sm text-white text-center text-sm font-semibold py-2.5 px-4">
+        <div className="bg-honest-leaf text-honest-ink text-center text-sm font-semibold py-2 px-4">
           {urgency}
         </div>
       )}
 
-      {/* Hero content */}
-      <div className="relative z-10 text-center text-white px-4 max-w-4xl mx-auto flex-1 flex flex-col items-center justify-center py-12">
-        {/* Social proof stars */}
-        <div className="flex items-center gap-1 mb-6 bg-white/15 backdrop-blur-sm rounded-full px-4 py-2">
-          <span className="text-yellow-400 text-lg">★★★★★</span>
-          <span className="text-sm font-medium ml-1">+5.000 clientes felizes em Goiânia e região</span>
-        </div>
+      {/* folha da marca, enorme, como textura de fundo */}
+      <svg
+        viewBox="0 0 100 120"
+        className="absolute -right-24 -top-10 w-[520px] md:w-[760px] opacity-[0.07] pointer-events-none"
+        aria-hidden="true"
+      >
+        <path d="M50 0 C80 30 100 55 100 78 A50 42 0 0 1 0 78 C0 55 20 30 50 0Z" fill="#76B742" />
+        {[30, 45, 60, 75, 90].map(y => (
+          <g key={y} stroke="#174328" strokeWidth="2.5">
+            <line x1="50" y1={y} x2="20" y2={y + 14} />
+            <line x1="50" y1={y} x2="80" y2={y + 14} />
+          </g>
+        ))}
+        <line x1="50" y1="8" x2="50" y2="118" stroke="#174328" strokeWidth="2.5" />
+      </svg>
 
-        <h1 className="text-5xl md:text-7xl font-extrabold mb-5 drop-shadow-2xl leading-tight tracking-tight">
-          100% Fruta.
-          <br />
-          <span className="text-honest-orange">Zero Mentira.</span>
-        </h1>
-
-        <p className="text-lg md:text-xl mb-8 drop-shadow-lg max-w-xl mx-auto leading-relaxed opacity-95">
-          Sem açúcar adicionado. Sem adição de conservantes. Direto da fazenda para sua mesa em até 48h. 🍓
+      <div className="relative max-w-6xl mx-auto px-4 lg:grid lg:grid-cols-2 lg:gap-10 lg:items-end">
+        <div className="pt-12 md:pt-20 lg:pb-20">
+        <p className="text-sm text-white/80 mb-5">
+          <span className="text-[#F6C51E] tracking-wider mr-2" aria-hidden="true">★★★★★</span>
+          +5.000 clientes em Goiânia e região
         </p>
 
-        {/* Dual CTA */}
-        <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm mx-auto mb-10">
+        <h1 className="font-display font-extrabold text-[44px] leading-[0.95] sm:text-6xl md:text-[84px] lg:text-[76px] xl:text-[84px] max-w-3xl">
+          100% fruta.
+          <br />
+          Zero mentira.
+        </h1>
+
+        <p className="mt-6 text-lg md:text-xl text-white/85 max-w-xl lg:max-w-md leading-relaxed">
+          Oito sabores de suco misto, sem adição de açúcares e sem adição de conservantes.
+          Feitos em Bela Vista de Goiás, em garrafas de 350 ml e 900 ml.
+        </p>
+
+        <div className="mt-8 flex flex-col sm:flex-row gap-3 max-w-md">
           <button
             onClick={scrollToProducts}
-            className="flex-1 bg-honest-green hover:bg-green-700 text-white px-8 py-4 rounded-full text-lg font-bold transform hover:scale-105 transition-all shadow-2xl"
+            className="flex-1 bg-honest-leaf hover:bg-[#8BCB55] text-honest-ink px-7 py-4 rounded-full text-lg font-bold transition-colors"
             data-testid="btn-hero-cta"
           >
-            Comprar Agora 🛒
+            Escolher sabores
           </button>
           <a
             href="https://wa.me/5562995782812?text=Olá! Quero conhecer os sucos Honest"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 bg-white/20 backdrop-blur-sm hover:bg-white/30 border-2 border-white text-white px-8 py-4 rounded-full text-lg font-bold transform hover:scale-105 transition-all text-center"
+            className="flex-1 border-2 border-white/40 hover:border-white text-white px-7 py-4 rounded-full text-lg font-semibold transition-colors text-center"
           >
-            💬 WhatsApp
+            Falar no WhatsApp
           </a>
         </div>
+      </div>
 
-        {/* Social proof numbers */}
-        <div className="grid grid-cols-4 gap-3 w-full max-w-2xl">
-          {SOCIAL_PROOF.map((item, i) => (
-            <div key={i} className="bg-white/15 backdrop-blur-sm rounded-2xl p-3 text-center">
-              <div className="text-2xl md:text-3xl font-extrabold text-white">{item.value}</div>
-              <div className="text-xs text-white/80 leading-tight mt-0.5">{item.label}</div>
-            </div>
+        {/* Prateleira */}
+        <div className="mt-10 lg:mt-0 flex items-end justify-center lg:pr-2">
+          {PRATELEIRA.map((g, i) => (
+            <img
+              key={g.sabor}
+              src={garrafaUrl(g.sabor, g.tamanho, true)}
+              alt={`${g.nome} ${g.tamanho} ml`}
+              className={`garrafa-sobe garrafa-sombra relative w-auto shrink-0 -ml-[3vw] lg:-ml-8 first:ml-0 ${g.tamanho === '900' ? 'garrafa-900' : 'garrafa-350'}`}
+              style={{ animationDelay: `${120 + i * 70}ms`, zIndex: i }}
+            />
           ))}
         </div>
       </div>
 
-      {/* Scroll indicator */}
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 animate-bounce">
-        <svg className="w-7 h-7 text-white/70 drop-shadow-lg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-        </svg>
+      <div className="relative">
+        {/* tampo da prateleira */}
+        <div className="relative z-10 h-6 md:h-8 bg-[#0F2E1B] border-t-4 border-honest-leaf/40" />
       </div>
     </section>
   );

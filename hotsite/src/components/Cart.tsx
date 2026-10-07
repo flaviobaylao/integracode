@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CartItem } from '../types';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { TEXTO_AREA_ATENDIDA } from '../utils/entrega';
+import { identificar, imagemDoProduto, brl } from '../utils/garrafas';
 
 // 🔒 Pedido mínimo do consumidor — valores padrão iguais aos da configuração no
 // servidor (Canais > Hotsite). Se a consulta falhar, a loja usa estes mesmos números,
@@ -67,7 +68,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
 
   return (
     <div 
-      className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end md:items-center md:justify-center" 
+      className="fixed inset-0 bg-honest-ink/60 z-50 flex items-end md:items-center md:justify-center" 
       data-testid="cart-modal"
       onClick={onClose}
     >
@@ -76,8 +77,8 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-4 border-b flex items-center justify-between bg-honest-green text-white rounded-t-3xl">
-          <h2 className="text-xl font-bold">Carrinho</h2>
+        <div className="p-4 flex items-center justify-between bg-honest-forest text-white rounded-t-3xl">
+          <h2 className="font-display text-xl font-bold">Seu carrinho</h2>
           <button
             onClick={onClose}
             className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-2"
@@ -99,12 +100,17 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
           ) : (
             <div className="space-y-4">
               {items.map((item) => (
-                <div key={item.id} className="flex gap-3 bg-gray-50 p-3 rounded-lg" data-testid={`cart-item-${item.id}`}>
-                  <div className="w-20 h-20 bg-gray-200 rounded-lg flex-shrink-0">
-                    {item.imageUrl ? (
-                      <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover rounded-lg" />
+                <div key={item.id} className="flex gap-3 bg-honest-paper p-3 rounded-2xl" data-testid={`cart-item-${item.id}`}>
+                  <div
+                    className="w-20 h-20 rounded-xl flex-shrink-0 flex items-end justify-center overflow-hidden"
+                    style={{ backgroundColor: identificar(item.name).sabor?.cor || '#E6F0DC' }}
+                  >
+                    {imagemDoProduto(item) ? (
+                      identificar(item.name).sabor
+                        ? <img src={imagemDoProduto(item)!} alt={item.name} className="h-[88%] object-contain mb-0.5" />
+                        : <img src={imagemDoProduto(item)!} alt={item.name} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-rose-400 to-pink-500 rounded-lg">
+                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-honest-leaf to-honest-green rounded-lg">
                         <span className="text-white text-3xl">🍓</span>
                       </div>
                     )}
@@ -112,7 +118,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
                   
                   <div className="flex-1">
                     <h3 className="font-semibold text-sm">{item.name}</h3>
-                    <p className="text-honest-green font-bold">R$ {item.price.toFixed(2)}</p>
+                    <p className="text-honest-green font-bold">{brl(item.price)}</p>
                     
                     <div className="flex items-center gap-2 mt-2">
                       <button
@@ -165,18 +171,21 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
               <div className="mb-3 p-3 bg-amber-50 border-2 border-amber-400 rounded-lg">
                 <p className="text-sm font-bold text-amber-700 flex items-center gap-2">
                   <span>⚠️</span>
-                  Pedido mínimo: R$ {minimumOrder.toFixed(2)}
+                  Pedido mínimo: {brl(minimumOrder)}
                 </p>
                 <p className="text-xs text-amber-600 mt-1">
-                  Adicione mais R$ {missingAmount.toFixed(2)} para finalizar seu pedido
+                  Adicione mais {brl(missingAmount)} para finalizar seu pedido
                 </p>
+                <div className="mt-2 h-2 rounded-full bg-amber-100 overflow-hidden" aria-hidden="true">
+                  <div className="h-full bg-amber-500 rounded-full transition-all" style={{ width: `${Math.min(100, (subtotal / minimumOrder) * 100)}%` }} />
+                </div>
               </div>
             )}
             
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
-                <span>R$ {subtotal.toFixed(2)}</span>
+                <span>{brl(subtotal)}</span>
               </div>
               <div className="flex justify-between text-sm text-green-700">
                 <span>Frete:</span>
@@ -184,30 +193,30 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
               </div>
               <div className="flex justify-between text-lg font-bold border-t pt-2">
                 <span>Total:</span>
-                <span className="text-honest-green" data-testid="cart-total">R$ {total.toFixed(2)}</span>
+                <span className="text-honest-green" data-testid="cart-total">{brl(total)}</span>
               </div>
             </div>
 
             <div className="space-y-2">
               <button
                 onClick={onClose}
-                className="w-full py-3 rounded-xl font-bold border-2 border-honest-green text-honest-green hover:bg-honest-green hover:bg-opacity-10 transition-all"
+                className="w-full py-3 rounded-full font-bold border-2 border-honest-green text-honest-green hover:bg-honest-green hover:bg-opacity-10 transition-all"
                 data-testid="btn-continue-shopping"
               >
-                Continuar Comprando
+                Continuar comprando
               </button>
               
               <button
                 onClick={onCheckout}
                 disabled={!meetsMinimum}
-                className={`w-full py-3 rounded-xl font-bold transition-all ${
+                className={`w-full py-3 rounded-full font-bold transition-all ${
                   meetsMinimum
                     ? 'btn-primary'
                     : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 }`}
                 data-testid="btn-checkout"
               >
-                {meetsMinimum ? 'Finalizar Pedido' : `Pedido Mínimo: R$ ${minimumOrder.toFixed(2)}`}
+                {meetsMinimum ? 'Finalizar pedido' : `Pedido mínimo: ${brl(minimumOrder)}`}
               </button>
             </div>
           </div>

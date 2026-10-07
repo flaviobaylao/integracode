@@ -506,7 +506,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="bg-gradient-to-r from-rose-500 to-pink-400 text-white p-4 sticky top-0 z-10 shadow-lg">
+      <div className="bg-honest-forest text-white p-4 sticky top-0 z-10">
         <div className="flex items-center justify-between mb-3">
           <button onClick={onBack} className="flex items-center gap-2 hover:text-white/80 transition-all" data-testid="btn-back">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -532,14 +532,14 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               onChange={(e) => onCodeChange(e.target.value.toUpperCase())}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); aplicarCodigo(); } }}
               placeholder="Ex.: HONEST8 ou INDXXXXXX"
-              className="flex-1 min-w-0 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm uppercase focus:border-rose-400 focus:outline-none"
+              className="flex-1 min-w-0 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm uppercase focus:border-honest-leaf focus:outline-none"
               data-testid="input-cupom"
             />
             <button
               type="button"
               onClick={aplicarCodigo}
               disabled={codeChecking || !String(code || '').trim()}
-              className="shrink-0 bg-rose-500 hover:bg-rose-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold px-5 py-2 rounded-lg text-sm transition-all active:scale-95"
+              className="shrink-0 bg-honest-green hover:bg-honest-green disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold px-5 py-2 rounded-lg text-sm transition-all active:scale-95"
               data-testid="btn-aplicar-cupom"
             >
               {codeChecking ? 'Validando...' : 'Aplicar'}
@@ -585,13 +585,13 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 </div>
                 <div className="border-t pt-2 flex justify-between font-bold text-lg">
                   <span>Total:</span>
-                  <span className="text-rose-600">R$ {Number(codePreview.total ?? total).toFixed(2)}</span>
+                  <span className="text-honest-green">R$ {Number(codePreview.total ?? total).toFixed(2)}</span>
                 </div>
               </>
             ) : (
               <div className="border-t pt-2 flex justify-between font-bold text-lg">
                 <span>Total:</span>
-                <span className="text-rose-600">R$ {total.toFixed(2)}</span>
+                <span className="text-honest-green">R$ {total.toFixed(2)}</span>
               </div>
             )}
           </div>
@@ -601,7 +601,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Validação de Documento */}
           {!documentValidated ? (
-            <div className="bg-white rounded-xl p-6 shadow-sm border-2 border-rose-300">
+            <div className="bg-white rounded-xl p-6 shadow-sm border-2 border-honest-leaf">
               <h2 className="font-bold text-lg mb-4">
                 1. Informe seu {customerType === 'pessoa_juridica' ? 'CNPJ' : 'CPF'}
               </h2>
@@ -630,7 +630,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 ${
                       documentError 
                         ? 'border-red-300 focus:ring-red-500' 
-                        : 'border-gray-200 focus:ring-rose-500'
+                        : 'border-gray-200 focus:ring-honest-green'
                     }`}
                     placeholder={customerType === 'pessoa_juridica' ? '00.000.000/0000-00' : '000.000.000-00'}
                     maxLength={customerType === 'pessoa_juridica' ? 18 : 14}
@@ -649,7 +649,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   type="button"
                   onClick={handleValidateDocument}
                   disabled={isValidatingDocument || !documentInput}
-                  className="w-full bg-rose-600 text-white py-3 rounded-xl font-semibold hover:bg-rose-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full bg-honest-green text-white py-3 rounded-xl font-semibold hover:bg-honest-forest transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   data-testid="btn-validate-document"
                 >
                   {isValidatingDocument ? (
@@ -713,7 +713,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       type="text"
                       value={formData.name}
                       onChange={(e) => updateFormData({ name: e.target.value })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green ${
                         errors.name ? 'border-red-300' : 'border-gray-200'
                       }`}
                       placeholder={customerType === 'pessoa_juridica' ? 'Nome da Empresa' : 'João Silva'}
@@ -728,7 +728,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       type="tel"
                       value={formData.phone}
                       onChange={(e) => updateFormData({ phone: formatPhone(e.target.value) })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green ${
                         errors.phone ? 'border-red-300' : 'border-gray-200'
                       }`}
                       placeholder="(62) 99999-9999"
@@ -743,7 +743,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       type="email"
                       value={formData.email || ''}
                       onChange={(e) => updateFormData({ email: e.target.value })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green ${
                         errors.email ? 'border-red-300' : 'border-gray-200'
                       }`}
                       placeholder="seuemail@exemplo.com"
@@ -771,7 +771,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                             setCobertura(null);
                           }
                         }}
-                        className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                        className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green ${
                           cepError || errors.cep || foraDaArea ? 'border-red-300' : 'border-gray-200'
                         }`}
                         placeholder="00000-000"
@@ -779,7 +779,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                         data-testid="input-cep"
                       />
                       {buscandoCep && (
-                        <Loader2 className="w-5 h-5 animate-spin text-rose-500 absolute right-4 top-1/2 -translate-y-1/2" />
+                        <Loader2 className="w-5 h-5 animate-spin text-honest-green absolute right-4 top-1/2 -translate-y-1/2" />
                       )}
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
@@ -817,7 +817,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                             type="text"
                             value={numero}
                             onChange={(e) => setNumero(e.target.value)}
-                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green ${
                               errors.numero ? 'border-red-300' : 'border-gray-200'
                             }`}
                             placeholder="123"
@@ -831,7 +831,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                             type="text"
                             value={complemento}
                             onChange={(e) => setComplemento(e.target.value)}
-                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
+                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green"
                             placeholder="Apto 101, Bloco B, ponto de referência"
                             data-testid="input-complemento"
                           />
@@ -846,7 +846,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                             type="text"
                             value={logradouroManual}
                             onChange={(e) => setLogradouroManual(e.target.value)}
-                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-honest-green ${
                               errors.logradouro ? 'border-red-300' : 'border-gray-200'
                             }`}
                             placeholder="Rua, bairro"
@@ -956,7 +956,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 <h2 className="font-bold text-lg mb-4">4. Forma de Pagamento</h2>
                 
                 <div className="space-y-3">
-                  <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                  <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-honest-green transition-colors">
                     <input
                       type="radio"
                       name="payment"
@@ -974,7 +974,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   </label>
 
                   {customerType === 'pessoa_fisica' && cardEnabled && (
-                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-honest-green transition-colors">
                       <input
                         type="radio"
                         name="payment"
@@ -993,7 +993,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   )}
 
                   {customerType === 'pessoa_juridica' && (
-                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-honest-green transition-colors">
                       <input
                         type="radio"
                         name="payment"
@@ -1016,7 +1016,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               <button
                 type="submit"
                 disabled={isProcessing || foraDaArea}
-                className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-4 rounded-xl font-bold text-lg hover:from-rose-600 hover:to-pink-600 transition-all disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed shadow-lg"
+                className="w-full bg-honest-green text-white py-4 rounded-full font-bold text-lg hover:bg-honest-forest transition-all disabled:bg-gray-400 disabled:cursor-not-allowed"
                 data-testid="btn-submit-order"
               >
                 {isProcessing ? (

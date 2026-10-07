@@ -1,91 +1,63 @@
+import { Apple, CandyOff, FlaskConicalOff, Truck } from 'lucide-react';
+
 const STATS = [
-  { value: '5.000+', label: 'clientes em Goiânia', icon: '👥' },
-  { value: '6 anos', label: 'no mercado', icon: '🏆' },
-  { value: 'Diária', label: 'produção fresca', icon: '🌿' },
-  { value: '4.9★', label: 'avaliação média', icon: '⭐' },
+  { value: '5.000+', label: 'clientes em Goiânia' },
+  { value: '6 anos', label: 'no mercado' },
+  { value: 'Diária', label: 'produção fresca' },
+  { value: '4.9', label: 'avaliação média' },
 ];
 
 const TRUST = [
-  {
-    icon: '🍓',
-    title: '100% Fruta Natural',
-    desc: 'Sem concentrado, sem água adicionada. Só fruta mesmo.',
-    highlight: 'bg-green-50 border-green-200',
-    titleColor: 'text-green-800',
-  },
-  {
-    icon: '🚫🍬',
-    title: 'Zero Açúcar Adicionado',
-    desc: 'O doce vem da fruta. Nenhum grama de açúcar refinado.',
-    highlight: 'bg-orange-50 border-orange-200',
-    titleColor: 'text-orange-800',
-  },
-  {
-    icon: '🧪',
-    title: 'Sem Adição de Conservantes',
-    desc: 'Sem química, sem mistério. Validade curta = produto real.',
-    highlight: 'bg-blue-50 border-blue-200',
-    titleColor: 'text-blue-800',
-  },
-  {
-    icon: '🚚',
-    title: 'Entrega em Goiânia',
-    desc: 'Direto da nossa produção para a sua porta, sempre fresco.',
-    highlight: 'bg-purple-50 border-purple-200',
-    titleColor: 'text-purple-800',
-  },
+  { icon: Apple, title: '100% suco', desc: 'Sem concentrado, sem água adicionada. Só fruta mesmo.' },
+  { icon: CandyOff, title: 'Zero adição de açúcares', desc: 'O doce vem da fruta. Nenhum grama de açúcar refinado.' },
+  { icon: FlaskConicalOff, title: 'Sem adição de conservantes', desc: 'Validade curta, porque o produto é de verdade.' },
+  { icon: Truck, title: 'Entrega em Goiânia', desc: 'Direto da nossa produção para a sua porta, sempre fresco.' },
 ];
 
 export default function BadgesSection() {
   return (
-    <section className="py-16 bg-white">
-      <div className="container mx-auto px-4 max-w-5xl">
-
-        {/* Stats strip */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-14">
+    <section className="py-16 md:py-20 bg-white">
+      <div className="max-w-6xl mx-auto px-4">
+        <dl className="grid grid-cols-2 md:grid-cols-4 gap-y-8 mb-14 border-y border-black/10 py-8">
           {STATS.map((s) => (
-            <div key={s.value} className="text-center p-4 rounded-2xl bg-gray-50 border border-gray-100">
-              <div className="text-2xl mb-1">{s.icon}</div>
-              <div className="text-2xl font-extrabold text-gray-900">{s.value}</div>
-              <div className="text-sm text-gray-500 leading-tight mt-0.5">{s.label}</div>
+            <div key={s.label} className="px-2">
+              <dt className="sr-only">{s.label}</dt>
+              <dd className="font-display text-4xl md:text-5xl font-extrabold text-honest-forest">{s.value}</dd>
+              <dd className="text-sm text-gray-600 mt-1">{s.label}</dd>
             </div>
           ))}
-        </div>
+        </dl>
 
-        {/* Trust cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 mb-14">
           {TRUST.map((t) => (
-            <div
-              key={t.title}
-              className={`flex items-start gap-4 p-6 rounded-2xl border-2 ${t.highlight} transition-transform hover:scale-[1.02]`}
-            >
-              <span className="text-4xl leading-none">{t.icon}</span>
-              <div>
-                <h3 className={`text-lg font-bold mb-1 ${t.titleColor}`}>{t.title}</h3>
-                <p className="text-gray-700 text-sm leading-relaxed">{t.desc}</p>
+            <div key={t.title}>
+              <div className="w-12 h-12 rounded-full bg-honest-light text-honest-forest flex items-center justify-center mb-4">
+                <t.icon className="w-6 h-6" aria-hidden="true" />
               </div>
+              <h3 className="font-display text-xl font-bold text-honest-ink mb-1">{t.title}</h3>
+              <p className="text-gray-600 leading-relaxed">{t.desc}</p>
             </div>
           ))}
         </div>
 
-        {/* Bottom CTA strip */}
-        <div className="bg-gradient-to-r from-honest-green to-green-700 rounded-2xl p-6 md:p-8 text-white text-center">
-          <p className="text-xl md:text-2xl font-bold mb-2">
-            Pronto para tomar algo de verdade?
-          </p>
-          <p className="text-green-100 mb-5 text-sm md:text-base">
-            Junte-se a mais de 5.000 famílias que já trocaram o suco artificial pelo Honest.
-          </p>
+        <div className="bg-honest-leaf rounded-[28px] p-7 md:p-10 md:flex md:items-center md:justify-between gap-6">
+          <div>
+            <p className="font-display text-2xl md:text-3xl font-extrabold text-honest-ink">
+              Prefere pedir conversando?
+            </p>
+            <p className="text-honest-ink/80 mt-1">
+              A gente monta o pedido com você pelo WhatsApp.
+            </p>
+          </div>
           <a
-            href="https://wa.me/556299578281?text=Olá! Quero conhecer os sucos Honest"
+            href="https://wa.me/5562995782812?text=Olá! Quero conhecer os sucos Honest"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 bg-white text-honest-green font-bold px-8 py-3 rounded-full hover:bg-green-50 transition-colors shadow-md"
+            className="mt-5 md:mt-0 inline-flex items-center justify-center bg-honest-forest text-white font-bold px-8 py-4 rounded-full hover:bg-honest-ink transition-colors shrink-0"
           >
-            💬 Pedir pelo WhatsApp
+            Pedir pelo WhatsApp
           </a>
         </div>
-
       </div>
     </section>
   );

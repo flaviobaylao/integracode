@@ -98,7 +98,9 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
           <img
             src={images[currentIndex]}
             alt={`${productName} - Imagem ${currentIndex + 1}`}
-            className="w-full h-full object-cover"
+            className={images[currentIndex]?.includes('/images/garrafas/')
+              ? 'w-full h-full object-contain p-6 garrafa-sombra'
+              : 'w-full h-full object-cover'}
           />
           
           {/* Ícone de zoom */}

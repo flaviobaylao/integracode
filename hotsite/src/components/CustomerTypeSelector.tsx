@@ -1,5 +1,5 @@
 import { useCustomerType } from '../contexts/CustomerTypeContext';
-import { HonestLogo } from './HonestLogo';
+import { garrafaUrl } from '../utils/garrafas';
 import { ShoppingCart, Store, MapPin } from 'lucide-react';
 
 export function CustomerTypeSelector() {
@@ -16,16 +16,16 @@ export function CustomerTypeSelector() {
   // Tela inicial: Escolher entre Consumidor ou Revendedor
   if (category === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-honest-forest flex items-center justify-center p-4">
         <div className="max-w-2xl w-full">
-          <div className="text-center mb-12">
+          <div className="text-center mb-8 md:mb-12">
             <div className="flex justify-center mb-6">
-              <HonestLogo size="xl" className="text-white drop-shadow-lg" />
+              <img src="/shop/honest-logo-white.png" alt="Honest Sucos" className="h-24 w-auto" />
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-md">
-              Bem-vindo! 🍓
+            <h1 className="font-display text-4xl md:text-5xl font-extrabold text-white mb-3">
+              Bem-vindo à Honest
             </h1>
-            <p className="text-xl text-white/90 drop-shadow">
+            <p className="text-lg text-white/80">
               Como deseja comprar?
             </p>
           </div>
@@ -33,14 +33,14 @@ export function CustomerTypeSelector() {
           <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setCategory('consumer')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-rose-400"
+              className="bg-white rounded-[28px] p-6 md:p-8 transition-colors border-4 border-transparent hover:border-honest-leaf focus-visible:border-honest-leaf"
               data-testid="button-select-consumer"
             >
               <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-rose-100 to-pink-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <ShoppingCart className="w-12 h-12 text-rose-600" />
+                <div className="w-16 h-16 md:w-24 md:h-24 bg-honest-light rounded-full flex items-center justify-center mb-4">
+                  <ShoppingCart className="w-8 h-8 md:w-12 md:h-12 text-honest-forest" />
                 </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                <h2 className="font-display text-2xl font-bold text-honest-ink mb-2">
                   Consumidor
                 </h2>
                 <p className="text-gray-600">
@@ -51,14 +51,14 @@ export function CustomerTypeSelector() {
 
             <button
               onClick={() => setCategory('reseller')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-rose-400"
+              className="bg-white rounded-[28px] p-6 md:p-8 transition-colors border-4 border-transparent hover:border-honest-leaf focus-visible:border-honest-leaf"
               data-testid="button-select-reseller"
             >
               <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-emerald-100 to-green-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <Store className="w-12 h-12 text-emerald-600" />
+                <div className="w-16 h-16 md:w-24 md:h-24 bg-honest-light rounded-full flex items-center justify-center mb-4">
+                  <Store className="w-8 h-8 md:w-12 md:h-12 text-honest-forest" />
                 </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                <h2 className="font-display text-2xl font-bold text-honest-ink mb-2">
                   Revendedor
                 </h2>
                 <p className="text-gray-600">
@@ -66,6 +66,18 @@ export function CustomerTypeSelector() {
                 </p>
               </div>
             </button>
+          </div>
+
+          <div className="mt-12 flex items-end justify-center" aria-hidden="true">
+            {['acerola', 'maracuja', 'morango-limao', 'frutas-vermelhas', 'pink-lemonade', 'limonada', 'uva', 'morango-maracuja'].map((k, i) => (
+              <img
+                key={k}
+                src={garrafaUrl(k, '350')}
+                alt=""
+                className="garrafa-sobe garrafa-sombra h-28 md:h-36 w-auto -ml-3 first:ml-0"
+                style={{ animationDelay: `${100 + i * 60}ms` }}
+              />
+            ))}
           </div>
         </div>
       </div>
@@ -75,24 +87,24 @@ export function CustomerTypeSelector() {
   // Tela para Consumidores: Escolher Varejo ou Atacado
   if (category === 'consumer' && consumerTier === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-honest-forest flex items-center justify-center p-4">
         <div className="max-w-2xl w-full">
           <button
             onClick={reset}
-            className="mb-6 text-white hover:text-white/80 font-semibold flex items-center gap-2 transition-all"
+            className="mb-6 text-white/80 hover:text-white font-semibold flex items-center gap-2 transition-all"
             data-testid="button-back"
           >
             ← Voltar
           </button>
 
-          <div className="text-center mb-12">
+          <div className="text-center mb-8 md:mb-12">
             <div className="flex justify-center mb-6">
-              <HonestLogo size="xl" className="text-white drop-shadow-lg" />
+              <img src="/shop/honest-logo-white.png" alt="Honest Sucos" className="h-24 w-auto" />
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-md">
+            <h1 className="font-display text-4xl md:text-5xl font-extrabold text-white mb-3">
               Escolha sua opção
             </h1>
-            <p className="text-xl text-white/90 drop-shadow">
+            <p className="text-lg text-white/80">
               Selecione o tipo de compra
             </p>
           </div>
@@ -100,20 +112,20 @@ export function CustomerTypeSelector() {
           <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setConsumerTier('retail')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-blue-400"
+              className="bg-white rounded-[28px] p-6 md:p-8 transition-colors border-4 border-transparent hover:border-honest-leaf focus-visible:border-honest-leaf"
               data-testid="button-select-retail"
             >
               <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <ShoppingCart className="w-12 h-12 text-blue-600" />
+                <div className="w-16 h-16 md:w-24 md:h-24 bg-honest-light rounded-full flex items-center justify-center mb-4">
+                  <ShoppingCart className="w-8 h-8 md:w-12 md:h-12 text-honest-forest" />
                 </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                <h2 className="font-display text-2xl font-bold text-honest-ink mb-2">
                   Varejo
                 </h2>
                 <p className="text-gray-600 mb-3">
                   Compras até R$ 200
                 </p>
-                <div className="text-sm text-blue-600 font-semibold">
+                <div className="text-sm text-honest-forest font-semibold">
                   Preços regulares
                 </div>
               </div>
@@ -121,20 +133,20 @@ export function CustomerTypeSelector() {
 
             <button
               onClick={() => setConsumerTier('wholesale')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-purple-400"
+              className="bg-white rounded-[28px] p-6 md:p-8 transition-colors border-4 border-transparent hover:border-honest-leaf focus-visible:border-honest-leaf"
               data-testid="button-select-wholesale"
             >
               <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-purple-100 to-pink-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <ShoppingCart className="w-12 h-12 text-purple-600" />
+                <div className="w-16 h-16 md:w-24 md:h-24 bg-honest-light rounded-full flex items-center justify-center mb-4">
+                  <ShoppingCart className="w-8 h-8 md:w-12 md:h-12 text-honest-forest" />
                 </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                <h2 className="font-display text-2xl font-bold text-honest-ink mb-2">
                   Atacado
                 </h2>
                 <p className="text-gray-600 mb-3">
                   Compras acima de R$ 200
                 </p>
-                <div className="text-sm text-purple-600 font-semibold">
+                <div className="text-sm text-honest-forest font-semibold">
                   Preços especiais
                 </div>
               </div>
@@ -148,24 +160,24 @@ export function CustomerTypeSelector() {
   // Tela para Revendedores: Escolher Localização
   if (category === 'reseller' && resellerLocation === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-honest-forest flex items-center justify-center p-4">
         <div className="max-w-3xl w-full">
           <button
             onClick={reset}
-            className="mb-6 text-white hover:text-white/80 font-semibold flex items-center gap-2 transition-all"
+            className="mb-6 text-white/80 hover:text-white font-semibold flex items-center gap-2 transition-all"
             data-testid="button-back-reseller"
           >
             ← Voltar
           </button>
 
-          <div className="text-center mb-12">
+          <div className="text-center mb-8 md:mb-12">
             <div className="flex justify-center mb-6">
-              <HonestLogo size="xl" className="text-white drop-shadow-lg" />
+              <img src="/shop/honest-logo-white.png" alt="Honest Sucos" className="h-24 w-auto" />
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-md">
+            <h1 className="font-display text-4xl md:text-5xl font-extrabold text-white mb-3">
               Onde está seu negócio?
             </h1>
-            <p className="text-xl text-white/90 drop-shadow">
+            <p className="text-lg text-white/80">
               Selecione sua região para ver preços especiais
             </p>
           </div>
@@ -173,14 +185,14 @@ export function CustomerTypeSelector() {
           <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setResellerLocation('goiania')}
-              className="bg-white rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-emerald-400"
+              className="bg-white rounded-[28px] p-6 transition-colors border-4 border-transparent hover:border-honest-leaf focus-visible:border-honest-leaf"
               data-testid="button-select-goiania"
             >
               <div className="flex flex-col items-center text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-emerald-100 to-green-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <MapPin className="w-10 h-10 text-emerald-600" />
+                <div className="w-20 h-20 bg-honest-light rounded-full flex items-center justify-center mb-4">
+                  <MapPin className="w-10 h-10 text-honest-forest" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-800 mb-2">
+                <h2 className="font-display text-xl font-bold text-honest-ink mb-2">
                   Goiânia
                 </h2>
                 <p className="text-sm text-gray-600">
@@ -191,14 +203,14 @@ export function CustomerTypeSelector() {
 
             <button
               onClick={() => setResellerLocation('interior')}
-              className="bg-white rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-emerald-400"
+              className="bg-white rounded-[28px] p-6 transition-colors border-4 border-transparent hover:border-honest-leaf focus-visible:border-honest-leaf"
               data-testid="button-select-interior"
             >
               <div className="flex flex-col items-center text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-amber-100 to-yellow-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <MapPin className="w-10 h-10 text-amber-600" />
+                <div className="w-20 h-20 bg-honest-light rounded-full flex items-center justify-center mb-4">
+                  <MapPin className="w-10 h-10 text-honest-forest" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-800 mb-2">
+                <h2 className="font-display text-xl font-bold text-honest-ink mb-2">
                   Interior
                 </h2>
                 <p className="text-sm text-gray-600">

@@ -8,10 +8,11 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Figtree', system-ui, -apple-system, sans-serif;
+  color: #14261A;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f8f9fa;
+  background-color: #F4F6EE;
 }
 
 /* Smooth scroll */
@@ -29,12 +30,12 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4CAF50;
+  background: #2C7A3F;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #45a049;
+  background: #174328;
 }
 
 /* Loading animation */
@@ -58,14 +59,14 @@ html {
 
 /* Button hover effect */
 .btn-primary {
-  @apply bg-honest-green text-white font-semibold py-3 px-6 rounded-lg 
+  @apply bg-honest-green text-white font-semibold py-3 px-6 rounded-full 
          transition-all duration-200 active:scale-95 
-         hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed;
+         hover:bg-honest-forest disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .btn-secondary {
   @apply bg-white text-honest-green border-2 border-honest-green 
-         font-semibold py-3 px-6 rounded-lg transition-all duration-200 
+         font-semibold py-3 px-6 rounded-full transition-all duration-200 
          active:scale-95 hover:bg-honest-light;
 }
 
@@ -85,4 +86,41 @@ html {
 .badge {
   @apply absolute -top-2 -right-2 bg-honest-orange text-white 
          text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center;
+}
+
+/* Foco visível para teclado */
+:focus-visible {
+  outline: 3px solid #76B742;
+  outline-offset: 2px;
+}
+
+/* Garrafas — entrada única na abertura da página (hero) */
+@keyframes garrafa-sobe {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.garrafa-sobe {
+  animation: garrafa-sobe 700ms cubic-bezier(.2,.8,.2,1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .garrafa-sobe { animation: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* Sombra de chão sob a garrafa */
+.garrafa-sombra {
+  filter: drop-shadow(0 18px 18px rgba(0,0,0,.28));
+}
+
+.font-display { font-variation-settings: "opsz" 72; letter-spacing: -0.02em; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+/* Alturas das garrafas na prateleira do topo */
+.garrafa-900 { height: clamp(180px, 50vw, 420px); }
+.garrafa-350 { height: clamp(130px, 36vw, 302px); }
+@media (min-width: 1024px) {
+  .garrafa-900 { height: 330px; }
+  .garrafa-350 { height: 238px; }
 }
