@@ -189,16 +189,20 @@ function nomesEquip(dados: DadosContrato) {
   };
 }
 
+// Todos os campos do equipamento sempre aparecem; o que não foi informado no
+// formulário sai como linha em branco para preencher à mão na minuta impressa.
 function descricaoEquip(dados: DadosContrato): string {
-  const specs: string[] = [];
-  if (v(dados.marca)) specs.push(`da marca ${v(dados.marca)}`);
-  if (v(dados.modelo)) specs.push(`modelo: ${v(dados.modelo)}`);
-  if (v(dados.numeroSerie)) specs.push(`número de série: ${v(dados.numeroSerie)}`);
-  if (v(dados.codigoProduto)) specs.push(`Cód.: ${v(dados.codigoProduto)}`);
-  if (v(dados.tensao)) specs.push(`Tensão: ${v(dados.tensao)}`);
-  if (v(dados.volumeLitros)) specs.push(`Volume: ${v(dados.volumeLitros)}Lts`);
-  if (v(dados.volumeBrutoLitros)) specs.push(`Volume Bruto: ${v(dados.volumeBrutoLitros)}Lts`);
-  return specs.join(", ");
+  const campo = (x: any, branco: string) => (v(x) ? v(x) : branco);
+  const L = "_______________";
+  return [
+    `da marca ${campo(dados.marca, L)}`,
+    `modelo: ${campo(dados.modelo, L)}`,
+    `número de série: ${campo(dados.numeroSerie, "______________________")}`,
+    `Cód.: ${campo(dados.codigoProduto, L)}`,
+    `Tensão: ${campo(dados.tensao, "________")}`,
+    `Volume: ${v(dados.volumeLitros) ? v(dados.volumeLitros) + "Lts" : "________"}`,
+    `Volume Bruto: ${v(dados.volumeBrutoLitros) ? v(dados.volumeBrutoLitros) + "Lts" : "________"}`,
+  ].join(", ");
 }
 
 function enderecoInstalacao(dados: DadosContrato): string {
