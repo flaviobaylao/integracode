@@ -45,6 +45,7 @@ import HotsitePricing from "@/pages/HotsitePricing";
 import HotsiteOrders from "@/pages/HotsiteOrders";
 import Canais from "@/pages/Canais";
 import LeadsManagement from "@/pages/LeadsManagement";
+import ConsultaLocal from "@/pages/ConsultaLocal";
 import TelemarketingDashboard from "@/pages/TelemarketingDashboard";
 import WhatsAppSetup from "@/pages/WhatsAppSetup";
 import TelegramSetup from "@/pages/TelegramSetup";
@@ -295,6 +296,7 @@ function Router() {
           <Route path="/hotsite-orders" component={HotsiteOrders} />
           <Route path="/canais" component={Canais} />
           <Route path="/leads" component={LeadsManagement} />
+          <Route path="/consulta-local" component={ConsultaLocal} />
           <Route path="/vendas-digitais" component={VendasDigitais} />
           <Route path="/whatsapp" component={WhatsAppSetup} />
           <Route path="/telemarketing/dashboard" component={TelemarketingDashboard} />
