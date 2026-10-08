@@ -23985,6 +23985,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 📍 Consulta no local (mobile): cruza LEADS + CLIENTES por GPS num raio curto (padrão 100m),
+  // para o vendedor saber na hora, parado na porta do estabelecimento, se aquele ponto já é um
+  // lead (e em que estágio / quem prospecta) ou um cliente Honest (ativo ou inativado / quem atende).
+  // Qualquer usuário autenticado (vendedores inclusos). POST { lat, lng, raio? }.
+  app.post('/api/consulta-local', authenticateUser, async (req: any, res) => {
+    try {
+      const lat = parseFloat(String(req.body?.lat));
+      const lng = parseFloat(String(req.body?.lng));
+      if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) {
+        return res.status(400).json({ ok: false, message: 'Coordenadas inválidas.' });
+      }
+      const raio = Math.min(Math.max(Number(req.body?.raio) || 100, 20), 2000);
+      // Pré-filtro por bounding box no banco (margem de ~30% sobre o raio); precisão fina via Haversine em JS.
+      const latDelta = (raio * 1.3) / 111320;
+      const lngDelta = (raio * 1.3) / ((111320 * Math.cos((lat * Math.PI) / 180)) || 1);
+      const latMin = lat - latDelta, latMax = lat + latDelta;
+      const lngMin = lng - lngDelta, lngMax = lng + lngDelta;
+
+      const haversine = (aLat: number, aLng: number, bLat: number, bLng: number) => {
+        const R = 6371000;
+        const dLat = ((bLat - aLat) * Math.PI) / 180;
+        const dLng = ((bLng - aLng) * Math.PI) / 180;
+        const s = Math.sin(dLat / 2) ** 2 + Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+      };
+
+      const leadsRes: any = await db.execute(sql`
+        SELECT id, fantasy_name AS nome, status, assigned_to,
+               neighborhood, city, phone, contact,
+               latitude::float AS lat, longitude::float AS lng
+        FROM leads
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float BETWEEN ${latMin} AND ${latMax}
+          AND longitude::float BETWEEN ${lngMin} AND ${lngMax}
+      `);
+      const custRes: any = await db.execute(sql`
+        SELECT id, COALESCE(NULLIF(fantasy_name, ''), name) AS nome, name AS razao,
+               is_active, seller_id, neighborhood, city, phone, contact,
+               latitude::float AS lat, longitude::float AS lng
+        FROM customers
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float BETWEEN ${latMin} AND ${latMax}
+          AND longitude::float BETWEEN ${lngMin} AND ${lngMax}
+          AND COALESCE(is_lead, false) = false
+          AND COALESCE(is_supplier, false) = false
+          AND COALESCE(is_colaborador, false) = false
+      `);
+
+      const LEAD_STATUS: Record<string, string> = {
+        pending: 'Lead pendente', scheduled: 'Lead agendado', visited: 'Lead visitado',
+        converted: 'Lead convertido', discarded: 'Lead descartado',
+      };
+
+      // Resolve nomes de vendedores (assigned_to dos leads + seller_id dos clientes).
+      const sellerIds = new Set<string>();
+      for (const r of (leadsRes?.rows || []) as any[]) { if (r.assigned_to) sellerIds.add(String(r.assigned_to)); }
+      for (const r of (custRes?.rows || []) as any[]) { if (r.seller_id) sellerIds.add(String(r.seller_id)); }
+      const nameById: Record<string, string> = {};
+      if (sellerIds.size > 0) {
+        const us: any = await db.execute(sql`
+          SELECT id, first_name, last_name FROM users
+          WHERE id IN (${sql.join(Array.from(sellerIds).map((x) => sql`${x}`), sql`, `)})
+        `);
+        for (const u of (us?.rows || []) as any[]) {
+          nameById[String(u.id)] = [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || '—';
+        }
+      }
+
+      const out: any[] = [];
+      for (const r of (leadsRes?.rows || []) as any[]) {
+        const d = haversine(lat, lng, Number(r.lat), Number(r.lng));
+        if (d > raio) continue;
+        out.push({
+          tipo: 'lead',
+          id: r.id,
+          nome: r.nome || 'Lead sem nome',
+          distancia: Math.round(d),
+          status: r.status,
+          statusLabel: LEAD_STATUS[r.status as string] || 'Lead',
+          ativo: r.status !== 'discarded',
+          descartado: r.status === 'discarded',
+          responsavelLabel: 'Prospecção',
+          responsavel: r.assigned_to ? (nameById[String(r.assigned_to)] || '—') : null,
+          bairro: r.neighborhood || null,
+          cidade: r.city || null,
+          telefone: r.phone || null,
+          contato: r.contact || null,
+          lat: Number(r.lat), lng: Number(r.lng),
+        });
+      }
+      for (const r of (custRes?.rows || []) as any[]) {
+        const d = haversine(lat, lng, Number(r.lat), Number(r.lng));
+        if (d > raio) continue;
+        const ativo = r.is_active === true || r.is_active === 't' || r.is_active === 1;
+        out.push({
+          tipo: 'cliente',
+          id: r.id,
+          nome: r.nome || r.razao || 'Cliente',
+          distancia: Math.round(d),
+          status: ativo ? 'ativo' : 'inativo',
+          statusLabel: ativo ? 'Cliente ativo' : 'Cliente inativado',
+          ativo,
+          descartado: false,
+          responsavelLabel: 'Atendimento',
+          responsavel: r.seller_id ? (nameById[String(r.seller_id)] || '—') : null,
+          bairro: r.neighborhood || null,
+          cidade: r.city || null,
+          telefone: r.phone || null,
+          contato: r.contact || null,
+          lat: Number(r.lat), lng: Number(r.lng),
+        });
+      }
+      out.sort((a, b) => a.distancia - b.distancia);
+      return res.json({ ok: true, raio, total: out.length, resultados: out.slice(0, 20) });
+    } catch (e: any) {
+      console.error('[consulta-local] erro:', e);
+      return res.status(500).json({ ok: false, message: String((e && e.message) || e) });
+    }
+  });
+
   // 🔎 Ficha básica do Google (Places API New) para leads — coleta em lote sob demanda.
   // Admin. Processa leads COM coordenadas que ainda não têm ficha (google_place), consultando
   // o Google por nome + localização. Marca google_tries p/ não reprocessar eternamente.
