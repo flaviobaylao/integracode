@@ -1580,15 +1580,26 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
         assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
         action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
       });
-      // MIGRAÇÃO AUTOMÁTICA DE CARTEIRA (repescagem): se o cliente caiu em repescagem em
-      // 3+ CICLOS (last_red_date distintos) com o MESMO habilitado e este fez venda (pedido
-      // implantado) para o cliente, a carteira migra IMEDIATAMENTE para o habilitado e fica
-      // registrado no histórico do cliente. Sem fluxo de sugestão/aprovação.
+      // MIGRAÇÃO AUTOMÁTICA DE CARTEIRA (repescagem): se o cliente cair em repescagem em DOIS
+      // CICLOS CONSECUTIVOS e for atendido COM VENDA pelo MESMO atendente nos dois, a carteira
+      // migra IMEDIATAMENTE para esse atendente. O ciclo ATUAL acabou de fechar com venda por
+      // migSeller; basta o ciclo IMEDIATAMENTE ANTERIOR (maior last_red_date < o atual) também
+      // ter sido fechado COM VENDA (closed_by_order) pelo MESMO migSeller. Se o anterior foi de
+      // outro usuário (ex.: A e depois B) ou sem venda, NÃO migra.
       const migSeller = a.assignedUserId;
       if (migSeller && hadOrder && !REPESCAGEM_EXCLUDED_USER_IDS.has(migSeller)) {
-        const cyc: any = await db.execute(sql`SELECT COUNT(DISTINCT last_red_date)::int AS n FROM repescagem_assignments WHERE customer_id = ${a.customerId} AND assigned_user_id = ${migSeller}`);
-        const nCiclos = Number(((cyc.rows || cyc)[0] as any)?.n || 0);
-        if (nCiclos >= 3) {
+        const prev: any = await db.execute(sql`
+          SELECT 1 FROM repescagem_assignments
+          WHERE customer_id = ${a.customerId}
+            AND assigned_user_id = ${migSeller}
+            AND closed_by_order = true
+            AND last_red_date = (
+              SELECT MAX(last_red_date) FROM repescagem_assignments
+              WHERE customer_id = ${a.customerId} AND last_red_date < ${a.lastRedDate}
+            )
+          LIMIT 1`);
+        const consecutivoMesmoUsuario = ((prev.rows || prev) as any[]).length > 0;
+        if (consecutivoMesmoUsuario) {
           const cur: any = await db.execute(sql`SELECT seller_id FROM customers WHERE id = ${a.customerId} LIMIT 1`);
           const curSeller = ((cur.rows || cur)[0] as any)?.seller_id || null;
           if (curSeller !== migSeller) {
@@ -1603,9 +1614,9 @@ async function closeAndExpireRepescagem(date: string): Promise<any> {
               await storage.updateCustomer(a.customerId, { sellerId: migSeller } as any);
               await ensureCarteiraMigrations();
               await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia, status, decided_by, decided_at)
-                VALUES (${a.customerId}, ${curSeller}, ${migSeller}, ${`Migração automática: ${nCiclos} ciclos em repescagem + venda`}, 'aprovada', 'sistema', now())`);
-              await logCustomerNote({ customerId: a.customerId, label: 'Migração de carteira (repescagem)', text: `Cliente migrado automaticamente de ${fromName} para ${toName} após ${nCiclos} ciclos em repescagem com venda do atendente.`, actor: { id: 'system', name: 'Sistema (Repescagem)' } as any, source: 'repescagem' });
-              await db.insert(repescagemAssignmentHistory).values({ assignmentId: a.id, customerId: a.customerId, fromUserId: curSeller, toUserId: migSeller, action: 'reassigned', reason: `Migração automática de carteira (${nCiclos} ciclos + venda)` });
+                VALUES (${a.customerId}, ${curSeller}, ${migSeller}, ${'Migração automática: 2 ciclos consecutivos em repescagem com venda do mesmo atendente'}, 'aprovada', 'sistema', now())`);
+              await logCustomerNote({ customerId: a.customerId, label: 'Migração de carteira (repescagem)', text: `Cliente migrado automaticamente de ${fromName} para ${toName} após 2 ciclos consecutivos em repescagem com venda do mesmo atendente.`, actor: { id: 'system', name: 'Sistema (Repescagem)' } as any, source: 'repescagem' });
+              await db.insert(repescagemAssignmentHistory).values({ assignmentId: a.id, customerId: a.customerId, fromUserId: curSeller, toUserId: migSeller, action: 'reassigned', reason: 'Migração automática de carteira (2 ciclos consecutivos + venda do mesmo atendente)' });
             } catch (e) { console.error('[repescagem][migracao-auto]', (e as any)?.message); }
           }
         }
