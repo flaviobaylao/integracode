@@ -78,6 +78,14 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               </ul>
             </div>
             <div>
+              <p className="font-semibold mb-1">Migração de carteira (2 ciclos consecutivos com venda)</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Se o cliente cair em repescagem e for atendido <b>com venda</b> pelo <b>mesmo atendente</b> em <b>dois ciclos consecutivos</b>, a carteira do cliente <b>migra automaticamente</b> para esse atendente, na hora do 2º fechamento com venda.</li>
+                <li>Conta só <b>venda</b> (pedido implantado), não atendimento sem pedido. Precisa ser o <b>mesmo</b> usuário nas duas vezes <b>seguidas</b>: se foi A numa vez e B na outra (ex.: A depois B), <b>não migra</b>.</li>
+                <li>A migração fica registrada no <b>histórico do cliente</b> e no histórico de migrações de carteira.</li>
+              </ul>
+            </div>
+            <div>
               <p className="font-semibold mb-1">Travas</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li><b>Sem trava automática</b> (nem no sorteio/roteamento especial, nem ao trocar o atendente). O cadeado manual existe, mas só age se alguém clicar.</li>
