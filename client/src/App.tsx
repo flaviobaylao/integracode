@@ -46,6 +46,7 @@ import HotsiteOrders from "@/pages/HotsiteOrders";
 import Canais from "@/pages/Canais";
 import LeadsManagement from "@/pages/LeadsManagement";
 import ConsultaLocal from "@/pages/ConsultaLocal";
+import MobileConsultaFab from "@/components/MobileConsultaFab";
 import TelemarketingDashboard from "@/pages/TelemarketingDashboard";
 import WhatsAppSetup from "@/pages/WhatsAppSetup";
 import TelegramSetup from "@/pages/TelegramSetup";
@@ -254,6 +255,7 @@ function Router() {
     <AppShell isAuthenticated={isAuthenticated}>
     {isAuthenticated && <RepescagemAlert />}
     {isAuthenticated && <EntregaFalhaAlert />}
+    {isAuthenticated && <MobileConsultaFab />}
     <Switch>
       <Route path="/limpar-cache" component={ClearCache} />
       <Route path="/login" component={Login} />
