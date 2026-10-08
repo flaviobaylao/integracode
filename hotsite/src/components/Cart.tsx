@@ -170,8 +170,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
             {!meetsMinimum && (
               <div className="mb-3 p-3 bg-amber-50 rounded-2xl">
                 <p className="text-sm font-bold text-amber-700 flex items-center gap-2">
-                  <span>⚠️</span>
-                  Pedido mínimo: {brl(minimumOrder)}
+                                    Pedido mínimo: {brl(minimumOrder)}
                 </p>
                 <p className="text-xs text-amber-600 mt-1">
                   Adicione mais {brl(missingAmount)} para finalizar seu pedido

@@ -554,7 +554,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
           </div>
           {codePreview && (
             <p
-              className={`text-sm mt-2 flex items-start gap-1 ${codePreview.ok ? 'text-green-700' : 'text-red-600'}`}
+              className={`text-sm mt-2 flex items-start gap-1 ${codePreview.ok ? 'text-honest-green font-semibold' : 'text-red-600'}`}
               data-testid="msg-cupom"
             >
               <span>{codePreview.ok ? '✓' : '✕'}</span>
@@ -691,8 +691,8 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 </button>
 
                 {errors.document && (
-                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl">
-                    <p className="text-sm text-red-800">❌ {errors.document}</p>
+                  <div className="mt-2 p-3 bg-red-50 rounded-2xl">
+                    <p className="text-sm text-red-800">{errors.document}</p>
                   </div>
                 )}
               </div>
@@ -719,7 +719,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     setDocumentInput('');
                     updateFormData({ cpfCnpj: '', name: '', address: '', phone: '', email: '' });
                   }}
-                  className="text-sm text-green-700 hover:text-green-900 underline"
+                  className="text-sm text-honest-green font-semibold hover:text-honest-forest underline underline-offset-2"
                 >
                   Alterar
                 </button>
@@ -818,10 +818,10 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   {enderecoCep && cobertura?.atendido && (
                     <>
                       <div className="p-4 bg-honest-light rounded-2xl" data-testid="endereco-encontrado">
-                        <p className="text-sm font-semibold text-green-900">
-                          ✅ Entregamos no seu endereço — frete grátis!
+                        <p className="text-sm font-semibold text-honest-forest">
+                          Entregamos no seu endereço — frete grátis!
                         </p>
-                        <p className="text-sm text-green-800 mt-1">
+                        <p className="text-sm text-honest-forest/80 mt-1">
                           {enderecoCep.logradouro ? `${enderecoCep.logradouro}, ` : ''}
                           {enderecoCep.bairro ? `${enderecoCep.bairro} — ` : ''}
                           {enderecoCep.cidade}/{enderecoCep.uf}
@@ -829,7 +829,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                         <button
                           type="button"
                           onClick={limparEndereco}
-                          className="text-sm text-green-700 hover:text-green-900 underline mt-1"
+                          className="text-sm text-honest-green font-semibold hover:text-honest-forest underline underline-offset-2 mt-1"
                         >
                           Trocar CEP
                         </button>
@@ -884,7 +884,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   )}
 
                   {foraDaArea && enderecoCep && (
-                    <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl" data-testid="aviso-fora-area">
+                    <div className="p-4 bg-red-50 rounded-2xl" data-testid="aviso-fora-area">
                       <p className="text-sm font-bold text-red-800">
                         😔 Ainda não entregamos em {enderecoCep.cidade}/{enderecoCep.uf}
                       </p>
@@ -951,8 +951,8 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       )}
                     </button>
                     {locationError && (
-                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
-                        <p className="text-sm text-red-800">❌ {locationError}</p>
+                      <div className="mt-3 p-3 bg-red-50 rounded-2xl">
+                        <p className="text-sm text-red-800">{locationError}</p>
                       </div>
                     )}
                   </div>
@@ -1072,7 +1072,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-center">
-              <div className="text-5xl mb-3">🚚</div>
+              <div className="text-5xl mb-3" aria-hidden="true">🚚</div>
               <h3 className="font-display text-2xl font-bold text-honest-ink mb-2">
                 Ainda não entregamos nesse endereço
               </h3>

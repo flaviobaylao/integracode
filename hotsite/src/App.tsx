@@ -410,7 +410,7 @@ function HotsiteContent() {
           <h1 className="font-display text-2xl font-bold text-honest-ink text-center mt-4 mb-1">Pagar com cartão</h1>
           <p className="font-display text-4xl font-extrabold text-honest-ink text-center mb-1 tabular-nums" data-testid="card-amount">{brl(totalCard)}</p>
           {descontoCard > 0 && (
-            <p className="text-center text-sm text-green-700 mb-3" data-testid="card-discount">
+            <p className="text-center text-sm text-honest-green font-semibold mb-3" data-testid="card-discount">
               <span className="line-through text-gray-400 mr-2">R$ {subtotalCard.toFixed(2)}</span>
               {discountInfo?.tipo === 'cupom'
                 ? <>Cupom <strong>{discountInfo.code}</strong>: −R$ {descontoCard.toFixed(2)}</>
@@ -419,7 +419,7 @@ function HotsiteContent() {
           )}
           {descontoCard <= 0 && <div className="mb-3" />}
           {cardPendingMsg ? (
-            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800">✅ {cardPendingMsg}</div>
+            <div className="bg-honest-light rounded-2xl p-4 mb-4 text-sm text-honest-forest">{cardPendingMsg}</div>
           ) : (
             <>
               <GooglePayButton
@@ -453,10 +453,10 @@ function HotsiteContent() {
                 </div>
               </div>
               {cardError && (
-                <div className="bg-red-50 border border-red-300 rounded-xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">❌ {cardError}</div>
+                <div className="bg-red-50 rounded-2xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">{cardError}</div>
               )}
               <button onClick={doPay} disabled={!canPay} className={`w-full rounded-full py-3.5 font-bold text-white mb-2 ${canPay ? 'bg-honest-green hover:bg-honest-forest' : 'bg-gray-300'}`} data-testid="btn-card-pay">
-                {cardProcessing ? '⏳ Processando pagamento…' : `Pagar ${brl(totalCard)}`}
+                {cardProcessing ? 'Processando pagamento…' : `Pagar ${brl(totalCard)}`}
               </button>
               <p className="text-[11px] text-gray-400 text-center mb-2">Pagamento processado com segurança pela Cielo. Seu pedido só é registrado após a aprovação.</p>
             </>
@@ -484,19 +484,19 @@ function HotsiteContent() {
           <h1 className="font-display text-2xl font-bold text-honest-ink mt-4 mb-1">Pague com Pix</h1>
           <p className="font-display text-4xl font-extrabold text-honest-ink mb-3 tabular-nums" data-testid="pix-amount">{brl(Number(pixData.amount))}</p>
           {discountInfo && (
-            <div className="bg-green-50 border border-green-300 rounded-xl p-2 mb-3 text-xs text-green-800">
+            <div className="bg-honest-light rounded-2xl p-2 mb-3 text-xs text-honest-forest">
               {discountInfo.tipo === 'cupom'
                 ? <>Cupom <strong>{discountInfo.code}</strong> aplicado: −R$ {Number(discountInfo.amount).toFixed(2)}</>
                 : <>Desconto de indicação aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})</>}
             </div>
           )}
           {pixStatus === 'paid_order_error' ? (
-            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800 text-left">
-              ✅ <strong>Pagamento recebido!</strong> Estamos registrando seu pedido. Guarde este código e, se precisar, fale conosco no WhatsApp: <span className="font-mono break-all">{pixData.txid}</span>
+            <div className="bg-honest-light rounded-2xl p-4 mb-4 text-sm text-honest-forest text-left">
+              <strong>Pagamento recebido!</strong> Estamos registrando seu pedido. Guarde este código e, se precisar, fale conosco no WhatsApp: <span className="font-mono break-all">{pixData.txid}</span>
             </div>
           ) : isExpired ? (
-            <div className="bg-red-50 border border-red-300 rounded-xl p-4 mb-4 text-sm text-red-700">
-              ⏰ Este PIX expirou sem pagamento. Nenhum pedido foi criado — volte e gere um novo código.
+            <div className="bg-red-50 rounded-2xl p-4 mb-4 text-sm text-red-700">
+              Este PIX expirou sem pagamento. Nenhum pedido foi criado — volte e gere um novo código.
             </div>
           ) : (
             <>
@@ -543,7 +543,7 @@ function HotsiteContent() {
           <p className="text-sm text-gray-500 mb-1">Número do pedido</p>
           <p className="inline-block font-display text-2xl font-bold text-honest-ink bg-honest-paper rounded-full px-5 py-2 mb-6 tabular-nums" data-testid="order-number">{orderNumber}</p>
                 {discountInfo && (
-                  <div className="bg-green-50 border border-green-300 rounded-xl p-3 mb-4 text-sm text-green-800">
+                  <div className="bg-honest-light rounded-2xl p-3 mb-4 text-sm text-honest-forest">
                     {discountInfo.tipo === 'cupom'
                       ? <>Cupom <strong>{discountInfo.code}</strong>: −R$ {Number(discountInfo.amount).toFixed(2)}</>
                       : <>Desconto aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})</>} · Total: R$ {Number(discountInfo.total).toFixed(2)}
