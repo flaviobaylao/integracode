@@ -42,6 +42,9 @@ type Resp = { months: string[]; sellers: SellerRow[]; geradoEm?: string; ratePer
 
 const MES_LABEL: Record<string, string> = { "01": "jan", "02": "fev", "03": "mar", "04": "abr", "05": "mai", "06": "jun", "07": "jul", "08": "ago", "09": "set", "10": "out", "11": "nov", "12": "dez" };
 function fmtMes(iso: string): string { const [y, m] = iso.split("-"); return `${MES_LABEL[m] || m}/${(y || "").slice(2)}`; }
+function hhmmMin(h: string): number { const [a, b] = String(h || "").split(":").map(Number); return isFinite(a) && isFinite(b) ? a * 60 + b : NaN; }
+function fmtHM(m: number): string { const v = Math.max(0, Math.round(m)); return `${Math.floor(v / 60)}h${String(v % 60).padStart(2, "0")}`; }
+function fmtHora(m: number): string { const v = ((Math.round(m) % 1440) + 1440) % 1440; return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; }
 function fmtDiaCurto(iso: string): string { const [, m, d] = (iso || "").split("-"); return d ? `${d}/${m}` : iso; }
 function fmtKm(n: number): string { return (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function fmtBRL(n: number): string { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -201,11 +204,42 @@ export default function KmVendedores() {
   });
   const totalTrechosKm = useMemo(() => Math.round(trechosFiltrados.reduce((a, t) => a + (t.km || 0), 0) * 10) / 10, [trechosFiltrados]);
   const totalTrechosMin = useMemo(() => trechosFiltrados.reduce((a, t) => a + (t.min || 0), 0), [trechosFiltrados]);
+  // Tempo de ATENDIMENTO ESTIMADO no cliente de partida (De) do trecho: intervalo entre os
+  // dois check-ins menos o deslocamento (OSRM). O check-out esta desligado no app, entao e
+  // estimativa (inclui espera/estacionar). Ida, retorno e acrescimo nao tem atendimento.
+  const atendMin = (t: Trecho): number | null => {
+    if (!t.saida || !t.chegada || t.tipo === "ida" || t.tipo === "retorno" || t.tipo === "acréscimo") return null;
+    const iv = hhmmMin(t.chegada) - hhmmMin(t.saida);
+    if (!isFinite(iv) || iv < 0) return null;
+    return Math.max(0, iv - (t.min || 0));
+  };
+  const totalAtendMin = useMemo(() => trechosFiltrados.reduce((a, t) => a + (atendMin(t) || 0), 0), [trechosFiltrados]);
+  // Jornada estimada por vendedor/dia: saida de casa = chegada no 1o cliente − tempo da ida;
+  // fim = ultimo check-in + atendimento medio do dia (o ultimo cliente nao tem proximo
+  // check-in) + tempo do retorno ate a casa.
+  const jornadas = useMemo(() => {
+    const g = new Map<string, Trecho[]>();
+    for (const t of trechosFiltrados) { const k = `${t.sellerId}|${t.dia}`; if (!g.has(k)) g.set(k, []); g.get(k)!.push(t); }
+    const out: Array<{ seller: string; dia: string; ini: number; fim: number }> = [];
+    for (const [, ts] of Array.from(g)) {
+      const ida = ts.find((t) => t.tipo === "ida");
+      const ret = ts.find((t) => t.tipo === "retorno");
+      const primeiro = ts.find((t) => t.chegada);
+      const atends = ts.map(atendMin).filter((x): x is number => x != null);
+      const media = atends.length ? atends.reduce((a, b) => a + b, 0) / atends.length : 0;
+      const ini = ida && ida.chegada ? hhmmMin(ida.chegada) - (ida.min || 0) : (primeiro?.saida ? hhmmMin(primeiro.saida) : NaN);
+      const ultimoCheckin = ret?.saida ? hhmmMin(ret.saida) : NaN;
+      const fim = ultimoCheckin + Math.round(media) + (ret?.min || 0);
+      if (isFinite(ini) && isFinite(fim) && fim > ini) out.push({ seller: ts[0].sellerName, dia: ts[0].dia, ini, fim });
+    }
+    return out;
+  }, [trechosFiltrados]);
+  const totalJornadaMin = jornadas.reduce((a, j) => a + (j.fim - j.ini), 0);
 
   function exportarTrechos() {
-    const headers = ["Dia", "Vendedor", "De", "Para", "Saida", "Chegada", "Km", "Min", "Tipo"];
-    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, t.saida, t.chegada, t.km, t.min, t.tipo]);
-    const totalRow: any[] = ["Total", "", "", "", "", "", Number(totalTrechosKm.toFixed(1)), totalTrechosMin, ""];
+    const headers = ["Dia", "Vendedor", "De", "Para", "Saida", "Chegada", "Km", "Min deslocamento", "Min atendimento (estim.)", "Tipo"];
+    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, t.saida, t.chegada, t.km, t.min, atendMin(t) ?? "", t.tipo]);
+    const totalRow: any[] = ["Total", "", "", "", "", "", Number(totalTrechosKm.toFixed(1)), totalTrechosMin, totalAtendMin, ""];
     const linhas = [...dataRows, totalRow].map((linha) =>
       Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
     );
@@ -534,7 +568,17 @@ export default function KmVendedores() {
                   ) : null}
                   <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{trechosFiltrados.length}</b> trechos</div>
                   <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{fmtKm(totalTrechosKm)}</b> km</div>
-                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{Math.floor(totalTrechosMin / 60)}h{String(totalTrechosMin % 60).padStart(2, "0")}</b> de deslocamento</div>
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><b>{fmtHM(totalTrechosMin)}</b> de deslocamento</div>
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm" title="Estimado: intervalo entre check-ins menos o deslocamento"><b>{fmtHM(totalAtendMin)}</b> de atendimento (estim.)</div>
+                  {jornadas.length === 1 ? (
+                    <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200" title="Saída de casa = chegada no 1º cliente − tempo da ida; fim = último check-in + atendimento médio do dia + tempo do retorno">
+                      Jornada <b>~{fmtHora(jornadas[0].ini)} → ~{fmtHora(jornadas[0].fim)}</b> · <b>{fmtHM(jornadas[0].fim - jornadas[0].ini)}</b>
+                    </div>
+                  ) : jornadas.length > 1 ? (
+                    <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200" title="Soma das jornadas estimadas (casa a casa) dos dias filtrados. Filtre um dia para ver o horário de início e fim.">
+                      <b>{fmtHM(totalJornadaMin)}</b> de jornada em {jornadas.length} dia(s)
+                    </div>
+                  ) : null}
                 </div>
                 <div className="overflow-auto max-h-[65vh] rounded-lg border">
                   <table className="w-full text-sm">
@@ -548,6 +592,7 @@ export default function KmVendedores() {
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no destino (Para). No retorno fica “—” (não há check-in em casa).">Chegada<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b">Km</th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Minutos de deslocamento do trecho pela rota de ruas (OSRM), não o tempo entre check-ins.">Min<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Tempo de atendimento ESTIMADO no cliente de partida (De): intervalo entre os dois check-ins menos o deslocamento. Inclui espera e estacionar. Ida, retorno e acréscimo ficam “—”.">Atend.<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-center font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="urbano: trecho < 10 km · intermunicipal: ≥ 10 km · ida: casa → 1º check-in · retorno: último check-in → casa · acréscimo: +10% da km do dia · prospecção: visita a lead · mesmo ponto: 0 km.">Tipo<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                       </tr>
                     </thead>
@@ -562,6 +607,7 @@ export default function KmVendedores() {
                           <td className="py-2 px-3 text-right tabular-nums">{t.chegada || "—"}</td>
                           <td className="py-2 px-3 text-right tabular-nums font-semibold">{fmtKm(t.km)}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.min}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{atendMin(t) ?? "—"}</td>
                           <td className="py-2 px-3 text-center"><span className={`chip-tipo tipo-${t.tipo === "intermunicipal" ? "i" : t.tipo === "retorno" ? "r" : t.tipo === "prospecção" ? "p" : t.tipo === "mesmo ponto" ? "z" : t.tipo === "ida" ? "a" : t.tipo === "acréscimo" ? "x" : "u"}`}>{t.tipo}</span></td>
                         </tr>
                       ))}
@@ -571,12 +617,13 @@ export default function KmVendedores() {
                         <td className="py-2 px-3" colSpan={6}>Total</td>
                         <td className="py-2 px-3 text-right tabular-nums">{fmtKm(totalTrechosKm)}</td>
                         <td className="py-2 px-3 text-right tabular-nums">{totalTrechosMin}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{totalAtendMin}</td>
                         <td></td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. "Lead: nome" = check-in em lead (prospecção); "Cliente sem cadastro" = check-in cujo cliente foi excluído do cadastro. Passe o mouse no ⓘ das colunas para ver o que significam. Mês encerrado fica gravado no histórico na primeira consulta e não muda mais; o mês vigente é calculado na hora. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
+                <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. "Lead: nome" = check-in em lead (prospecção); "Cliente sem cadastro" = check-in cujo cliente foi excluído do cadastro. Passe o mouse no ⓘ das colunas para ver o que significam. Atendimento e jornada são estimados (check-out desligado): atendimento = intervalo entre check-ins − deslocamento. Mês encerrado fica gravado no histórico na primeira consulta e não muda mais; o mês vigente é calculado na hora. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
               </>
             )}
           </CardContent>
