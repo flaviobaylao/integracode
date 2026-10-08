@@ -56,7 +56,7 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
 
   if (!images || images.length === 0) {
     return (
-      <div className="bg-gray-200 rounded-xl aspect-square flex items-center justify-center">
+      <div className="bg-honest-light rounded-2xl aspect-square flex items-center justify-center">
         <span className="text-gray-400">Sem imagem</span>
       </div>
     );
@@ -88,7 +88,7 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
       <div className="relative">
         {/* Imagem atual */}
         <div 
-          className="relative bg-white rounded-xl overflow-hidden aspect-square cursor-zoom-in"
+          className="relative bg-white rounded-2xl overflow-hidden aspect-square cursor-zoom-in"
           onClick={openZoom}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
@@ -98,7 +98,9 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
           <img
             src={images[currentIndex]}
             alt={`${productName} - Imagem ${currentIndex + 1}`}
-            className="w-full h-full object-cover"
+            className={images[currentIndex]?.includes('/images/garrafas/')
+              ? 'w-full h-full object-contain p-6 garrafa-sombra'
+              : 'w-full h-full object-cover'}
           />
           
           {/* Ícone de zoom */}
@@ -119,7 +121,7 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
           <>
             <button
               onClick={goToPrevious}
-              className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg transition-all"
+              className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full ring-1 ring-black/10 transition-all"
               aria-label="Imagem anterior"
               data-testid="gallery-prev-button"
             >
@@ -128,7 +130,7 @@ export default function ImageGallery({ images, productName }: ImageGalleryProps)
             
             <button
               onClick={goToNext}
-              className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg transition-all"
+              className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full ring-1 ring-black/10 transition-all"
               aria-label="Próxima imagem"
               data-testid="gallery-next-button"
             >

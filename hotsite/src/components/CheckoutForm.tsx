@@ -3,7 +3,8 @@ import { HonestLogo } from './HonestLogo';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { api } from '../utils/api';
 import type { Customer, CartItem } from '../types';
-import { Loader2, AlertCircle, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Check, ChevronLeft, QrCode, CreditCard, FileText, MapPin, Tag } from 'lucide-react';
+import { identificar, imagemDoProduto, brl } from '../utils/garrafas';
 // 🚚 ÁREA DE ENTREGA (provisoriamente só Goiânia e Aparecida de Goiânia)
 import {
   buscarCep,
@@ -505,25 +506,31 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-gradient-to-r from-rose-500 to-pink-400 text-white p-4 sticky top-0 z-10 shadow-lg">
-        <div className="flex items-center justify-between mb-3">
-          <button onClick={onBack} className="flex items-center gap-2 hover:text-white/80 transition-all" data-testid="btn-back">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Voltar
+    <div className="min-h-screen bg-honest-paper">
+      <header className="bg-white/90 backdrop-blur border-b border-black/5 sticky top-0 z-20">
+        <div className="max-w-5xl mx-auto px-4 py-2 flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="-ml-2 inline-flex items-center gap-1 text-honest-forest font-semibold px-2 py-2 rounded-full hover:bg-honest-paper transition-colors"
+            data-testid="btn-back"
+          >
+            <ChevronLeft className="w-5 h-5" aria-hidden="true" /> Voltar
           </button>
-          <HonestLogo size="xl" className="text-white" />
+          <div className="flex-1 flex justify-center">
+            <HonestLogo size="sm" />
+          </div>
+          <span className="w-[84px]" aria-hidden="true" />
         </div>
-        <h1 className="text-2xl font-bold">Finalizar Pedido</h1>
-      </div>
+      </header>
 
-      <div className="p-4 max-w-2xl mx-auto">
+      <div className="max-w-5xl mx-auto px-4 pt-6 pb-16">
+        <h1 className="font-display text-3xl md:text-4xl font-extrabold text-honest-ink mb-6">Finalizar pedido</h1>
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-6 lg:items-start">
+        <aside className="lg:order-2 lg:sticky lg:top-20 space-y-4 mb-4 lg:mb-0">
         {/* VIGIA CUPOM: cupom/indicacao logo acima do resumo, com botao Aplicar */}
-        <div className="bg-white rounded-xl p-4 mb-4 shadow-sm">
-          <label htmlFor="campo-cupom" className="block text-sm font-semibold text-gray-700 mb-2">
-            Cupom ou código de indicação (opcional)
+        <div className="bg-white rounded-3xl p-5 ring-1 ring-black/5">
+          <label htmlFor="campo-cupom" className="flex items-center gap-2 text-sm font-semibold text-honest-ink mb-2">
+            <Tag className="w-4 h-4 text-honest-green" aria-hidden="true" /> Cupom ou código de indicação (opcional)
           </label>
           <div className="flex gap-2">
             <input
@@ -532,14 +539,14 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               onChange={(e) => onCodeChange(e.target.value.toUpperCase())}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); aplicarCodigo(); } }}
               placeholder="Ex.: HONEST8 ou INDXXXXXX"
-              className="flex-1 min-w-0 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm uppercase focus:border-rose-400 focus:outline-none"
+              className="flex-1 min-w-0 border border-gray-300 rounded-full px-4 py-2.5 text-sm uppercase focus:border-honest-green focus:ring-2 focus:ring-honest-green/20 focus:outline-none"
               data-testid="input-cupom"
             />
             <button
               type="button"
               onClick={aplicarCodigo}
               disabled={codeChecking || !String(code || '').trim()}
-              className="shrink-0 bg-rose-500 hover:bg-rose-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold px-5 py-2 rounded-lg text-sm transition-all active:scale-95"
+              className="shrink-0 bg-honest-forest hover:bg-honest-green disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-full text-sm transition-all active:scale-95"
               data-testid="btn-aplicar-cupom"
             >
               {codeChecking ? 'Validando...' : 'Aplicar'}
@@ -547,68 +554,86 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
           </div>
           {codePreview && (
             <p
-              className={`text-sm mt-2 flex items-start gap-1 ${codePreview.ok ? 'text-green-700' : 'text-red-600'}`}
+              className={`text-sm mt-2 flex items-start gap-1 ${codePreview.ok ? 'text-honest-green font-semibold' : 'text-red-600'}`}
               data-testid="msg-cupom"
             >
               <span>{codePreview.ok ? '✓' : '✕'}</span>
               <span>
                 {codePreview.msg}
-                {codePreview.ok && codePreview.discount ? ` Você economiza R$ ${codePreview.discount.toFixed(2)}.` : ''}
+                {codePreview.ok && codePreview.discount ? ` Você economiza ${brl(codePreview.discount)}.` : ''}
               </span>
             </p>
           )}
-          <p className="text-xs text-gray-400 mt-2">
+          <p className="text-xs text-gray-500 mt-2 leading-relaxed">
             Vale um desconto por pedido — o cupom tem prioridade sobre a indicação. Novo cliente ganha 15% no 1º pedido
             com o código de quem indicou; se você já indicou alguém, o desconto entra sozinho.
           </p>
         </div>
 
         {/* Resumo do Pedido */}
-        <div className="bg-white rounded-xl p-4 mb-4 shadow-sm">
-          <h2 className="font-bold text-lg mb-3">Resumo do Pedido</h2>
-          <div className="space-y-2 text-sm">
-            {cartItems.map((item) => (
-              <div key={item.id} className="flex justify-between">
-                <span>{item.quantity}x {item.name}</span>
-                <span className="font-semibold">R$ {(item.price * item.quantity).toFixed(2)}</span>
-              </div>
-            ))}
+        <div className="bg-white rounded-3xl p-5 ring-1 ring-black/5">
+          <h2 className="font-display text-xl font-bold text-honest-ink mb-4">Resumo do pedido</h2>
+          <ul className="space-y-3">
+            {cartItems.map((item) => {
+              const { sabor, tamanho } = identificar(item.name);
+              const img = imagemDoProduto(item);
+              return (
+                <li key={item.id} className="flex items-center gap-3">
+                  <span
+                    className="w-12 h-12 shrink-0 rounded-xl flex items-end justify-center overflow-hidden"
+                    style={{ backgroundColor: sabor?.cor || '#E6F0DC' }}
+                    aria-hidden="true"
+                  >
+                    {img && <img src={img} alt="" className={sabor ? 'h-[88%] object-contain' : 'w-full h-full object-cover'} />}
+                  </span>
+                  <span className="flex-1 min-w-0 text-sm">
+                    <span className="block font-semibold text-honest-ink truncate">
+                      {sabor && tamanho ? `${sabor.nome} ${tamanho} ml` : item.name}
+                    </span>
+                    <span className="block text-gray-500">{item.quantity} × {brl(item.price)}</span>
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums">{brl(item.price * item.quantity)}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-4 pt-4 border-t border-black/10 space-y-1.5 text-sm">
             {codePreview?.ok && codePreview.discount ? (
               <>
-                <div className="border-t pt-2 flex justify-between text-gray-600">
+                <div className="flex justify-between text-gray-600">
                   <span>Subtotal</span>
-                  <span>R$ {total.toFixed(2)}</span>
+                  <span className="tabular-nums">{brl(total)}</span>
                 </div>
-                <div className="flex justify-between text-green-700 font-semibold" data-testid="linha-desconto">
+                <div className="flex justify-between text-honest-green font-semibold" data-testid="linha-desconto">
                   <span>Desconto ({codePreview.code})</span>
-                  <span>− R$ {codePreview.discount.toFixed(2)}</span>
-                </div>
-                <div className="border-t pt-2 flex justify-between font-bold text-lg">
-                  <span>Total:</span>
-                  <span className="text-rose-600">R$ {Number(codePreview.total ?? total).toFixed(2)}</span>
+                  <span className="tabular-nums">− {brl(codePreview.discount)}</span>
                 </div>
               </>
-            ) : (
-              <div className="border-t pt-2 flex justify-between font-bold text-lg">
-                <span>Total:</span>
-                <span className="text-rose-600">R$ {total.toFixed(2)}</span>
-              </div>
-            )}
+            ) : null}
+            <div className="flex justify-between text-gray-600">
+              <span>Frete</span>
+              <span className="text-honest-green font-semibold">Grátis na área atendida</span>
+            </div>
+            <div className="flex justify-between items-baseline pt-2">
+              <span className="font-display text-lg font-bold text-honest-ink">Total</span>
+              <span className="font-display text-2xl font-extrabold text-honest-ink tabular-nums">
+                {brl(codePreview?.ok && codePreview.discount ? Number(codePreview.total ?? total) : total)}
+              </span>
+            </div>
           </div>
         </div>
+        </aside>
 
         {/* Formulário */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 lg:order-1">
           {/* Validação de Documento */}
           {!documentValidated ? (
-            <div className="bg-white rounded-xl p-6 shadow-sm border-2 border-rose-300">
-              <h2 className="font-bold text-lg mb-4">
-                1. Informe seu {customerType === 'pessoa_juridica' ? 'CNPJ' : 'CPF'}
-              </h2>
+            <div className="bg-white rounded-3xl p-5 sm:p-6 ring-2 ring-honest-green">
+              <h2 className="font-display text-xl font-bold text-honest-ink mb-4 flex items-center gap-3"><span className="w-8 h-8 rounded-full bg-honest-forest text-white text-sm flex items-center justify-center shrink-0">1</span><span>Informe seu {customerType === 'pessoa_juridica' ? 'CNPJ' : 'CPF'}</span></h2>
               
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">
+                  <label className="block text-sm font-semibold text-honest-ink mb-1.5">
                     {customerType === 'pessoa_juridica' ? 'CNPJ' : 'CPF'} *
                   </label>
                   <input
@@ -627,10 +652,10 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                         handleValidateDocument();
                       }
                     }}
-                    className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 ${
+                    className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green ${
                       documentError 
                         ? 'border-red-300 focus:ring-red-500' 
-                        : 'border-gray-200 focus:ring-rose-500'
+                        : 'border-gray-300'
                     }`}
                     placeholder={customerType === 'pessoa_juridica' ? '00.000.000/0000-00' : '000.000.000-00'}
                     maxLength={customerType === 'pessoa_juridica' ? 18 : 14}
@@ -649,7 +674,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   type="button"
                   onClick={handleValidateDocument}
                   disabled={isValidatingDocument || !documentInput}
-                  className="w-full bg-rose-600 text-white py-3 rounded-xl font-semibold hover:bg-rose-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full bg-honest-green text-white py-3 rounded-full font-semibold hover:bg-honest-forest transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   data-testid="btn-validate-document"
                 >
                   {isValidatingDocument ? (
@@ -666,8 +691,8 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 </button>
 
                 {errors.document && (
-                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl">
-                    <p className="text-sm text-red-800">❌ {errors.document}</p>
+                  <div className="mt-2 p-3 bg-red-50 rounded-2xl">
+                    <p className="text-sm text-red-800">{errors.document}</p>
                   </div>
                 )}
               </div>
@@ -675,17 +700,17 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
           ) : (
             <>
               {/* Documento Validado - Badge */}
-              <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4 flex items-center gap-3">
+              <div className="bg-white ring-1 ring-black/5 rounded-3xl p-4 flex items-center gap-3">
                 <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center">
-                    <Check className="w-6 h-6 text-white" />
+                  <div className="w-11 h-11 bg-honest-leaf rounded-full flex items-center justify-center">
+                    <Check className="w-6 h-6 text-honest-ink" />
                   </div>
                 </div>
                 <div className="flex-1">
-                  <p className="font-bold text-green-900">
-                    {customerType === 'pessoa_juridica' ? 'CNPJ' : 'CPF'} Validado!
+                  <p className="font-bold text-honest-ink">
+                    {customerType === 'pessoa_juridica' ? 'CNPJ' : 'CPF'} validado
                   </p>
-                  <p className="text-sm text-green-700">{formData.cpfCnpj}</p>
+                  <p className="text-sm text-gray-600">{formData.cpfCnpj}</p>
                 </div>
                 <button
                   type="button"
@@ -694,26 +719,26 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                     setDocumentInput('');
                     updateFormData({ cpfCnpj: '', name: '', address: '', phone: '', email: '' });
                   }}
-                  className="text-sm text-green-700 hover:text-green-900 underline"
+                  className="text-sm text-honest-green font-semibold hover:text-honest-forest underline underline-offset-2"
                 >
                   Alterar
                 </button>
               </div>
 
               {/* Dados do Cliente */}
-              <div className="bg-white rounded-xl p-4 shadow-sm">
-                <h2 className="font-bold text-lg mb-4">2. Seus Dados</h2>
+              <div className="bg-white rounded-3xl p-5 sm:p-6 ring-1 ring-black/5">
+                <h2 className="font-display text-xl font-bold text-honest-ink mb-4 flex items-center gap-3"><span className="w-8 h-8 rounded-full bg-honest-forest text-white text-sm flex items-center justify-center shrink-0">2</span><span>Seus dados e endereço</span></h2>
                 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-1">
+                    <label className="block text-sm font-semibold text-honest-ink mb-1.5">
                       {customerType === 'pessoa_juridica' ? 'Nome Fantasia / Razão Social' : 'Nome Completo'} *
                     </label>
                     <input
                       type="text"
                       value={formData.name}
                       onChange={(e) => updateFormData({ name: e.target.value })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                      className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green focus:ring-honest-green ${
                         errors.name ? 'border-red-300' : 'border-gray-200'
                       }`}
                       placeholder={customerType === 'pessoa_juridica' ? 'Nome da Empresa' : 'João Silva'}
@@ -723,12 +748,12 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-1">Telefone/WhatsApp *</label>
+                    <label className="block text-sm font-semibold text-honest-ink mb-1.5">Telefone/WhatsApp *</label>
                     <input
                       type="tel"
                       value={formData.phone}
                       onChange={(e) => updateFormData({ phone: formatPhone(e.target.value) })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                      className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green focus:ring-honest-green ${
                         errors.phone ? 'border-red-300' : 'border-gray-200'
                       }`}
                       placeholder="(62) 99999-9999"
@@ -738,12 +763,12 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-1">Email (opcional)</label>
+                    <label className="block text-sm font-semibold text-honest-ink mb-1.5">Email (opcional)</label>
                     <input
                       type="email"
                       value={formData.email || ''}
                       onChange={(e) => updateFormData({ email: e.target.value })}
-                      className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                      className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green focus:ring-honest-green ${
                         errors.email ? 'border-red-300' : 'border-gray-200'
                       }`}
                       placeholder="seuemail@exemplo.com"
@@ -754,7 +779,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
 
                   {/* 🚚 ENDEREÇO DE ENTREGA POR CEP */}
                   <div>
-                    <label className="block text-sm font-medium mb-1">CEP de Entrega *</label>
+                    <label className="block text-sm font-semibold text-honest-ink mb-1.5">CEP de entrega *</label>
                     <div className="relative">
                       <input
                         type="text"
@@ -771,7 +796,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                             setCobertura(null);
                           }
                         }}
-                        className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                        className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green focus:ring-honest-green ${
                           cepError || errors.cep || foraDaArea ? 'border-red-300' : 'border-gray-200'
                         }`}
                         placeholder="00000-000"
@@ -779,7 +804,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                         data-testid="input-cep"
                       />
                       {buscandoCep && (
-                        <Loader2 className="w-5 h-5 animate-spin text-rose-500 absolute right-4 top-1/2 -translate-y-1/2" />
+                        <Loader2 className="w-5 h-5 animate-spin text-honest-green absolute right-4 top-1/2 -translate-y-1/2" />
                       )}
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
@@ -792,11 +817,11 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   {/* Endereço encontrado + fora de área */}
                   {enderecoCep && cobertura?.atendido && (
                     <>
-                      <div className="p-3 bg-green-50 border-2 border-green-300 rounded-xl" data-testid="endereco-encontrado">
-                        <p className="text-sm font-semibold text-green-900">
-                          ✅ Entregamos no seu endereço — frete grátis!
+                      <div className="p-4 bg-honest-light rounded-2xl" data-testid="endereco-encontrado">
+                        <p className="text-sm font-semibold text-honest-forest">
+                          Entregamos no seu endereço — frete grátis!
                         </p>
-                        <p className="text-sm text-green-800 mt-1">
+                        <p className="text-sm text-honest-forest/80 mt-1">
                           {enderecoCep.logradouro ? `${enderecoCep.logradouro}, ` : ''}
                           {enderecoCep.bairro ? `${enderecoCep.bairro} — ` : ''}
                           {enderecoCep.cidade}/{enderecoCep.uf}
@@ -804,7 +829,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                         <button
                           type="button"
                           onClick={limparEndereco}
-                          className="text-sm text-green-700 hover:text-green-900 underline mt-1"
+                          className="text-sm text-honest-green font-semibold hover:text-honest-forest underline underline-offset-2 mt-1"
                         >
                           Trocar CEP
                         </button>
@@ -812,12 +837,12 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
 
                       <div className="grid grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-sm font-medium mb-1">Número *</label>
+                          <label className="block text-sm font-semibold text-honest-ink mb-1.5">Número *</label>
                           <input
                             type="text"
                             value={numero}
                             onChange={(e) => setNumero(e.target.value)}
-                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                            className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green focus:ring-honest-green ${
                               errors.numero ? 'border-red-300' : 'border-gray-200'
                             }`}
                             placeholder="123"
@@ -826,12 +851,12 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                           {errors.numero && <p className="text-red-500 text-sm mt-1">{errors.numero}</p>}
                         </div>
                         <div className="col-span-2">
-                          <label className="block text-sm font-medium mb-1">Complemento</label>
+                          <label className="block text-sm font-semibold text-honest-ink mb-1.5">Complemento</label>
                           <input
                             type="text"
                             value={complemento}
                             onChange={(e) => setComplemento(e.target.value)}
-                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500"
+                            className="w-full px-4 py-3 bg-white border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green"
                             placeholder="Apto 101, Bloco B, ponto de referência"
                             data-testid="input-complemento"
                           />
@@ -841,12 +866,12 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       {/* Rua não preenchida pelo ViaCEP (CEP geral de cidade) */}
                       {!enderecoCep.logradouro && (
                         <div>
-                          <label className="block text-sm font-medium mb-1">Rua / Bairro *</label>
+                          <label className="block text-sm font-semibold text-honest-ink mb-1.5">Rua / Bairro *</label>
                           <input
                             type="text"
                             value={logradouroManual}
                             onChange={(e) => setLogradouroManual(e.target.value)}
-                            className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+                            className={`w-full px-4 py-3 bg-white border rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green focus:ring-honest-green ${
                               errors.logradouro ? 'border-red-300' : 'border-gray-200'
                             }`}
                             placeholder="Rua, bairro"
@@ -859,7 +884,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   )}
 
                   {foraDaArea && enderecoCep && (
-                    <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl" data-testid="aviso-fora-area">
+                    <div className="p-4 bg-red-50 rounded-2xl" data-testid="aviso-fora-area">
                       <p className="text-sm font-bold text-red-800">
                         😔 Ainda não entregamos em {enderecoCep.cidade}/{enderecoCep.uf}
                       </p>
@@ -873,14 +898,14 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                           )}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700"
+                          className="px-4 py-2 bg-honest-green text-white rounded-full text-sm font-semibold hover:bg-honest-forest"
                         >
                           Falar no WhatsApp
                         </a>
                         <button
                           type="button"
                           onClick={limparEndereco}
-                          className="px-4 py-2 bg-white border-2 border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-100"
+                          className="px-4 py-2 bg-white border-2 border-red-300 text-red-700 rounded-full text-sm font-semibold hover:bg-red-100"
                         >
                           Informar outro CEP
                         </button>
@@ -892,16 +917,15 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               </div>
 
               {/* Localização (Opcional) */}
-              <div className="bg-white rounded-xl p-4 shadow-sm">
-                <h2 className="font-bold text-lg mb-4">3. Localização de Entrega (Opcional)</h2>
+              <div className="bg-white rounded-3xl p-5 sm:p-6 ring-1 ring-black/5">
+                <h2 className="font-display text-xl font-bold text-honest-ink mb-4 flex items-center gap-3"><span className="w-8 h-8 rounded-full bg-honest-forest text-white text-sm flex items-center justify-center shrink-0">3</span><span>Localização no mapa <span className="text-sm font-normal text-gray-500">(opcional)</span></span></h2>
                 
                 {/* Aviso Importante */}
-                <div className="mb-4 p-3 bg-amber-50 border-2 border-amber-400 rounded-lg">
-                  <p className="text-sm font-semibold text-amber-800 flex items-center gap-2">
-                    <span className="text-lg">⚠️</span>
-                    Importante: Capture a localização somente se você estiver no local da entrega!
+                <div className="mb-4">
+                  <p className="text-sm text-gray-700">
+                    Use somente se você estiver no local da entrega agora.
                   </p>
-                  <p className="text-xs text-amber-700 mt-1">
+                  <p className="text-sm text-gray-500 mt-1">
                     Isso ajuda nossa equipe a encontrar seu endereço com mais facilidade.
                   </p>
                 </div>
@@ -912,7 +936,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                       type="button"
                       onClick={handleCaptureLocation}
                       disabled={isCapturingLocation}
-                      className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      className="w-full bg-white border-2 border-honest-forest text-honest-forest py-3 rounded-full font-semibold hover:bg-honest-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       data-testid="button-capture-location"
                     >
                       {isCapturingLocation ? (
@@ -922,92 +946,92 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                         </>
                       ) : (
                         <>
-                          📍 Capturar Localização
+                          <MapPin className="w-5 h-5" aria-hidden="true" /> Usar minha localização atual
                         </>
                       )}
                     </button>
                     {locationError && (
-                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
-                        <p className="text-sm text-red-800">❌ {locationError}</p>
+                      <div className="mt-3 p-3 bg-red-50 rounded-2xl">
+                        <p className="text-sm text-red-800">{locationError}</p>
                       </div>
                     )}
                   </div>
                 ) : (
                   <div>
-                    <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4 mb-3">
-                      <p className="font-bold text-green-900 mb-2">✅ Localização Capturada!</p>
-                      <p className="text-sm text-green-800">
+                    <div className="bg-honest-light rounded-2xl p-4 mb-3">
+                      <p className="font-bold text-honest-ink mb-1">Localização registrada</p>
+                      <p className="text-sm text-gray-600">
                         Lat: {deliveryLocation.latitude.toFixed(6)} | Long: {deliveryLocation.longitude.toFixed(6)}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setDeliveryLocation(null)}
-                      className="w-full bg-gray-200 text-gray-800 py-2 rounded-xl font-medium hover:bg-gray-300 transition-colors"
+                      className="w-full text-honest-forest py-2 rounded-full font-semibold hover:bg-honest-paper transition-colors"
                     >
-                      Capturar Novamente
+                      Registrar de novo
                     </button>
                   </div>
                 )}
               </div>
 
               {/* Forma de Pagamento */}
-              <div className="bg-white rounded-xl p-4 shadow-sm">
-                <h2 className="font-bold text-lg mb-4">4. Forma de Pagamento</h2>
+              <div className="bg-white rounded-3xl p-5 sm:p-6 ring-1 ring-black/5">
+                <h2 className="font-display text-xl font-bold text-honest-ink mb-4 flex items-center gap-3"><span className="w-8 h-8 rounded-full bg-honest-forest text-white text-sm flex items-center justify-center shrink-0">4</span><span>Forma de pagamento</span></h2>
                 
                 <div className="space-y-3">
-                  <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                  <label className={`flex items-center gap-3 p-4 rounded-2xl cursor-pointer transition-colors ${paymentMethod === 'pix' ? 'ring-2 ring-honest-green bg-honest-light/50' : 'ring-1 ring-black/10 hover:ring-honest-green'}`}>
                     <input
                       type="radio"
                       name="payment"
                       value="pix"
                       checked={paymentMethod === 'pix'}
                       onChange={() => setPaymentMethod('pix')}
-                      className="w-5 h-5"
+                      className="w-5 h-5 accent-[#2C7A3F]"
                       data-testid="payment-pix"
                     />
                     <div className="flex-1">
-                      <div className="font-semibold">Pix</div>
-                      <div className="text-sm text-gray-600">Aprovação instantânea</div>
+                      <div className="font-semibold text-honest-ink">Pix</div>
+                      <div className="text-sm text-gray-600">Aprovação na hora</div>
                     </div>
-                    <span className="text-2xl">💳</span>
+                    <QrCode className="w-6 h-6 text-honest-forest" aria-hidden="true" />
                   </label>
 
                   {customerType === 'pessoa_fisica' && cardEnabled && (
-                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                    <label className={`flex items-center gap-3 p-4 rounded-2xl cursor-pointer transition-colors ${paymentMethod === 'card' ? 'ring-2 ring-honest-green bg-honest-light/50' : 'ring-1 ring-black/10 hover:ring-honest-green'}`}>
                       <input
                         type="radio"
                         name="payment"
                         value="card"
                         checked={paymentMethod === 'card'}
                         onChange={() => setPaymentMethod('card')}
-                        className="w-5 h-5"
+                        className="w-5 h-5 accent-[#2C7A3F]"
                         data-testid="payment-card"
                       />
                       <div className="flex-1">
-                        <div className="font-semibold">Cartão de Crédito/Débito</div>
+                        <div className="font-semibold text-honest-ink">Cartão de crédito ou débito</div>
                         <div className="text-sm text-gray-600">Pagamento à vista</div>
                       </div>
-                      <span className="text-2xl">💳</span>
+                      <CreditCard className="w-6 h-6 text-honest-forest" aria-hidden="true" />
                     </label>
                   )}
 
                   {customerType === 'pessoa_juridica' && (
-                    <label className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                    <label className={`flex items-center gap-3 p-4 rounded-2xl cursor-pointer transition-colors ${paymentMethod === 'boleto' ? 'ring-2 ring-honest-green bg-honest-light/50' : 'ring-1 ring-black/10 hover:ring-honest-green'}`}>
                       <input
                         type="radio"
                         name="payment"
                         value="boleto"
                         checked={paymentMethod === 'boleto'}
                         onChange={() => setPaymentMethod('boleto')}
-                        className="w-5 h-5"
+                        className="w-5 h-5 accent-[#2C7A3F]"
                         data-testid="payment-boleto"
                       />
                       <div className="flex-1">
-                        <div className="font-semibold">Boleto Bancário</div>
+                        <div className="font-semibold text-honest-ink">Boleto bancário</div>
                         <div className="text-sm text-gray-600">Sujeito à aprovação de crédito</div>
                       </div>
-                      <span className="text-2xl">📄</span>
+                      <FileText className="w-6 h-6 text-honest-forest" aria-hidden="true" />
                     </label>
                   )}
                 </div>
@@ -1016,7 +1040,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
               <button
                 type="submit"
                 disabled={isProcessing || foraDaArea}
-                className="w-full bg-gradient-to-r from-rose-500 to-pink-500 text-white py-4 rounded-xl font-bold text-lg hover:from-rose-600 hover:to-pink-600 transition-all disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed shadow-lg"
+                className="w-full bg-honest-green text-white py-4 rounded-full font-bold text-lg hover:bg-honest-forest transition-all disabled:bg-gray-400 disabled:cursor-not-allowed"
                 data-testid="btn-submit-order"
               >
                 {isProcessing ? (
@@ -1027,28 +1051,29 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 ) : foraDaArea ? (
                   'Endereço fora da área de entrega'
                 ) : (
-                  `Confirmar Pedido - R$ ${total.toFixed(2)}`
+                  `Confirmar pedido · ${brl(codePreview?.ok && codePreview.discount ? Number(codePreview.total ?? total) : total)}`
                 )}
               </button>
             </>
           )}
         </form>
+        </div>
       </div>
 
       {/* 🚚 POPUP — ENDEREÇO FORA DA ÁREA DE ENTREGA */}
       {modalForaArea && enderecoCep && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-honest-ink/60 z-50 flex items-center justify-center p-4"
           data-testid="modal-fora-area"
           onClick={() => setModalForaArea(false)}
         >
           <div
-            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl"
+            className="bg-white rounded-[28px] max-w-md w-full p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-center">
-              <div className="text-5xl mb-3">🚚</div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">
+              <div className="text-5xl mb-3" aria-hidden="true">🚚</div>
+              <h3 className="font-display text-2xl font-bold text-honest-ink mb-2">
                 Ainda não entregamos nesse endereço
               </h3>
               <p className="text-gray-700">
@@ -1072,7 +1097,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                 )}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block w-full text-center bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition-colors"
+                className="block w-full text-center bg-honest-green text-white py-3 rounded-full font-bold hover:bg-honest-forest transition-colors"
                 data-testid="btn-whatsapp-fora-area"
               >
                 Falar no WhatsApp
@@ -1083,7 +1108,7 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
                   setModalForaArea(false);
                   limparEndereco();
                 }}
-                className="w-full py-3 rounded-xl font-bold border-2 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                className="w-full py-3 rounded-full font-bold border-2 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
                 data-testid="btn-trocar-cep"
               >
                 Informar outro CEP

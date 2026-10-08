@@ -4,73 +4,55 @@ export default function BenefitsSection() {
   const benefits = [
     {
       icon: Heart,
-      title: 'Saúde de Verdade',
-      description: 'Sem açúcar adicionado, sem adição de conservantes químicos. Apenas o que a natureza oferece de melhor para seu corpo.'
+      title: 'Saúde de verdade',
+      description: 'Sem açúcar adicionado e sem adição de conservantes. Apenas o que a fruta oferece.'
     },
     {
       icon: Zap,
-      title: 'Energia Natural',
-      description: 'Vitaminas e nutrientes preservados pelo processo artesanal. Combustível limpo para seu dia.'
+      title: 'Energia natural',
+      description: 'Vitaminas e nutrientes da fruta, para acompanhar o seu dia.'
     },
     {
       icon: Smile,
-      title: 'Sabor Autêntico',
-      description: 'A diferença entre suco e "bebida de suco" está no primeiro gole. Prove você mesmo.'
+      title: 'Sabor autêntico',
+      description: 'A diferença entre suco e "bebida de suco" está no primeiro gole.'
     },
     {
       icon: Award,
-      title: 'Qualidade Garantida',
-      description: 'Seleção rigorosa de frutas, produção local e controle total do processo. Nada de industrialização em massa.'
+      title: 'Qualidade garantida',
+      description: 'Seleção de frutas, produção local e controle de todo o processo.'
     }
   ];
 
   return (
-    <section className="py-20 bg-gradient-to-br from-honest-green to-green-700 text-white relative overflow-hidden">
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-white rounded-full blur-3xl"></div>
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-white rounded-full blur-3xl"></div>
-      </div>
-
-      <div className="container mx-auto px-4 relative z-10">
-        <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold mb-4">
-            Por Que Escolher Honest?
+    <section className="py-16 md:py-24 bg-honest-paper">
+      <div className="max-w-6xl mx-auto px-4">
+        <div className="max-w-2xl mb-12">
+          <h2 className="font-display text-4xl md:text-5xl font-extrabold text-honest-ink">
+            Por que Honest?
           </h2>
-          <p className="text-xl opacity-90 max-w-2xl mx-auto">
-            Porque você merece mais do que rótulos enganosos e ingredientes que você não consegue pronunciar.
+          <p className="text-lg text-gray-600 mt-3">
+            Porque você merece mais do que rótulos enganosos e ingredientes que não consegue pronunciar.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {benefits.map((benefit, index) => (
-            <div
-              key={index}
-              className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 hover:bg-white/20 transition-all"
-              data-testid={`benefit-${index}`}
-            >
-              <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mb-6">
-                <benefit.icon className="w-8 h-8" />
-              </div>
-              <h3 className="text-2xl font-bold mb-4">
-                {benefit.title}
-              </h3>
-              <p className="opacity-90 leading-relaxed">
-                {benefit.description}
-              </p>
+            <div key={index} className="bg-white rounded-3xl p-6" data-testid={`benefit-${index}`}>
+              <benefit.icon className="w-7 h-7 text-honest-green mb-5" aria-hidden="true" />
+              <h3 className="font-display text-xl font-bold text-honest-ink mb-2">{benefit.title}</h3>
+              <p className="text-gray-600 leading-relaxed">{benefit.description}</p>
             </div>
           ))}
         </div>
 
-        <div className="mt-16 text-center">
+        <div className="mt-12">
           <button
-            onClick={() => {
-              const productsSection = document.getElementById('products');
-              productsSection?.scrollIntoView({ behavior: 'smooth' });
-            }}
-            className="bg-white text-honest-green px-10 py-5 rounded-full text-lg font-bold hover:bg-gray-100 transform hover:scale-105 transition-all shadow-xl"
+            onClick={() => document.getElementById('products')?.scrollIntoView({ behavior: 'smooth' })}
+            className="bg-honest-green text-white px-8 py-4 rounded-full text-lg font-bold hover:bg-honest-forest transition-colors"
             data-testid="btn-benefits-cta"
           >
-            Quero Experimentar 🍓
+            Escolher sabores
           </button>
         </div>
       </div>

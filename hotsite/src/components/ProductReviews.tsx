@@ -121,7 +121,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
             key={star}
             className={`${size} ${
               star <= rating 
-                ? 'fill-yellow-400 text-yellow-400' 
+                ? 'fill-[#F6C51E] text-[#F6C51E]' 
                 : 'fill-gray-200 text-gray-200'
             }`}
           />
@@ -143,7 +143,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
     <div className="space-y-6">
       {/* Estatísticas */}
       {stats && stats.totalReviews > 0 && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
+        <div className="bg-white rounded-2xl p-5">
           <div className="flex items-center gap-6 mb-4">
             <div className="text-center">
               <div className="text-4xl font-bold text-honest-green">
@@ -160,10 +160,10 @@ export default function ProductReviews({ productId, productName }: ProductReview
               {[5, 4, 3, 2, 1].map((star) => (
                 <div key={star} className="flex items-center gap-2 text-sm">
                   <span className="w-6">{star}</span>
-                  <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+                  <Star className="w-4 h-4 fill-[#F6C51E] text-[#F6C51E]" />
                   <div className="flex-1 bg-gray-200 rounded-full h-2">
                     <div
-                      className="bg-yellow-400 h-2 rounded-full transition-all"
+                      className="bg-[#F6C51E] h-2 rounded-full transition-all"
                       style={{
                         width: `${
                           stats.totalReviews > 0
@@ -187,16 +187,16 @@ export default function ProductReviews({ productId, productName }: ProductReview
       {!showForm && (
         <button
           onClick={() => setShowForm(true)}
-          className="w-full bg-honest-green text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors"
+          className="w-full border-2 border-honest-forest text-honest-forest py-3 rounded-full font-semibold hover:bg-white transition-colors"
           data-testid="button-show-review-form"
         >
-          ⭐ Avaliar este produto
+          Avaliar este produto
         </button>
       )}
 
       {/* Formulário de avaliação */}
       {showForm && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
+        <div className="bg-white rounded-2xl p-5">
           <h3 className="font-bold text-lg mb-4">Avalie {productName}</h3>
           
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -209,7 +209,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
                 type="text"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
-                className="w-full p-3 border rounded-lg"
+                className="w-full p-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green"
                 placeholder="Seu nome"
                 required
                 data-testid="input-review-name"
@@ -225,7 +225,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
                 type="email"
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
-                className="w-full p-3 border rounded-lg"
+                className="w-full p-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green"
                 placeholder="seu@email.com"
                 data-testid="input-review-email"
               />
@@ -250,7 +250,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
                     <Star
                       className={`w-10 h-10 ${
                         star <= (hoverRating || rating)
-                          ? 'fill-yellow-400 text-yellow-400'
+                          ? 'fill-[#F6C51E] text-[#F6C51E]'
                           : 'fill-gray-200 text-gray-200'
                       }`}
                     />
@@ -267,7 +267,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                className="w-full p-3 border rounded-lg resize-none"
+                className="w-full p-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green resize-none"
                 rows={4}
                 placeholder="Conte sua experiência com o produto..."
                 data-testid="input-review-comment"
@@ -279,7 +279,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
-                className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-50 transition-colors"
+                className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-full font-semibold hover:bg-honest-paper transition-colors"
                 data-testid="button-cancel-review"
               >
                 Cancelar
@@ -287,7 +287,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex-1 bg-honest-green text-white py-3 rounded-xl font-semibold hover:bg-green-700 transition-colors disabled:opacity-50"
+                className="flex-1 bg-honest-green text-white py-3 rounded-full font-semibold hover:bg-honest-forest transition-colors disabled:opacity-50"
                 data-testid="button-submit-review"
               >
                 {isSubmitting ? 'Enviando...' : 'Enviar Avaliação'}
@@ -308,7 +308,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
           {reviews.map((review) => (
             <div 
               key={review.id} 
-              className="bg-white rounded-xl p-4 shadow-sm"
+              className="bg-white rounded-2xl p-4"
               data-testid={`review-${review.id}`}
             >
               <div className="flex items-start justify-between mb-2">
@@ -325,7 +325,7 @@ export default function ProductReviews({ productId, productName }: ProductReview
           ))}
         </div>
       ) : (
-        <div className="text-center py-8 bg-gray-50 rounded-xl">
+        <div className="text-center py-8 bg-white rounded-2xl">
           <p className="text-gray-500">Nenhuma avaliação ainda.</p>
           <p className="text-gray-500 text-sm mt-1">Seja o primeiro a avaliar este produto!</p>
         </div>

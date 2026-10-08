@@ -1,6 +1,95 @@
+import type { ReactNode } from 'react';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
-import { HonestLogo } from './HonestLogo';
-import { ShoppingCart, Store, MapPin } from 'lucide-react';
+import { ShoppingCart, Store, MapPin, Package, ChevronRight, ChevronLeft } from 'lucide-react';
+
+// 🌿 Tela de entrada (out/2026): foto de produto de um lado, escolhas do outro.
+// As três etapas (tipo de cliente → varejo/atacado → região) usam a mesma moldura;
+// só a foto, o título e as opções mudam. A lógica de escolha é a mesma de antes.
+
+function Moldura({
+  foto, fotoAlt, titulo, subtitulo, voltar, voltarTestId, children,
+}: {
+  foto: string;
+  fotoAlt: string;
+  titulo: string;
+  subtitulo: string;
+  voltar?: () => void;
+  voltarTestId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-honest-paper lg:grid lg:grid-cols-2">
+      {/* Foto */}
+      <div className="relative h-[38vh] min-h-[260px] lg:h-auto lg:min-h-screen overflow-hidden bg-honest-forest">
+        <img
+          src={foto}
+          alt={fotoAlt}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-honest-forest/70 via-transparent to-honest-forest/40 lg:bg-gradient-to-r lg:from-honest-forest/50 lg:via-transparent lg:to-transparent" />
+        <img
+          src="/shop/honest-logo-white.png"
+          alt="Honest Sucos"
+          className="absolute top-5 left-5 lg:top-10 lg:left-10 h-16 lg:h-24 w-auto drop-shadow"
+        />
+      </div>
+
+      {/* Escolhas */}
+      <div className="relative -mt-8 lg:mt-0 rounded-t-[28px] lg:rounded-none bg-honest-paper flex items-start lg:items-center">
+        <div className="w-full max-w-lg mx-auto px-5 pt-8 pb-12 lg:px-12 lg:py-16">
+          {voltar && (
+            <button
+              onClick={voltar}
+              className="mb-6 -ml-2 inline-flex items-center gap-1 text-honest-forest font-semibold px-2 py-1 rounded-full hover:bg-white transition-colors"
+              data-testid={voltarTestId}
+            >
+              <ChevronLeft className="w-5 h-5" aria-hidden="true" /> Voltar
+            </button>
+          )}
+          <h1 className="font-display text-4xl md:text-5xl font-extrabold text-honest-ink leading-[1.02]">
+            {titulo}
+          </h1>
+          <p className="text-lg text-gray-600 mt-3">{subtitulo}</p>
+
+          <div className="mt-8 space-y-3">{children}</div>
+
+          <p className="mt-10 text-sm text-gray-500">
+            100% suco, sem adição de açúcares. Feito em Bela Vista de Goiás.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Opcao({
+  icone: Icone, titulo, descricao, detalhe, onClick, testId,
+}: {
+  icone: typeof ShoppingCart;
+  titulo: string;
+  descricao: string;
+  detalhe?: string;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="group w-full text-left bg-white rounded-3xl p-5 flex items-center gap-4 ring-1 ring-black/5 hover:ring-2 hover:ring-honest-green focus-visible:ring-2 focus-visible:ring-honest-green transition-shadow"
+      data-testid={testId}
+    >
+      <span className="w-14 h-14 shrink-0 rounded-2xl bg-honest-light text-honest-forest flex items-center justify-center">
+        <Icone className="w-7 h-7" aria-hidden="true" />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block font-display text-lg sm:text-xl font-bold text-honest-ink leading-tight">{titulo}</span>
+        <span className="block text-gray-600 text-sm mt-0.5">{descricao}</span>
+        {detalhe && <span className="block text-honest-green text-sm font-semibold mt-1">{detalhe}</span>}
+      </span>
+      <ChevronRight className="w-6 h-6 text-gray-400 group-hover:text-honest-green group-hover:translate-x-0.5 transition-all shrink-0" aria-hidden="true" />
+    </button>
+  );
+}
 
 export function CustomerTypeSelector() {
   const {
@@ -13,202 +102,90 @@ export function CustomerTypeSelector() {
     reset,
   } = useCustomerType();
 
-  // Tela inicial: Escolher entre Consumidor ou Revendedor
+  // Etapa 1: Consumidor ou Revendedor
   if (category === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
-        <div className="max-w-2xl w-full">
-          <div className="text-center mb-12">
-            <div className="flex justify-center mb-6">
-              <HonestLogo size="xl" className="text-white drop-shadow-lg" />
-            </div>
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-md">
-              Bem-vindo! 🍓
-            </h1>
-            <p className="text-xl text-white/90 drop-shadow">
-              Como deseja comprar?
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            <button
-              onClick={() => setCategory('consumer')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-rose-400"
-              data-testid="button-select-consumer"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-rose-100 to-pink-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <ShoppingCart className="w-12 h-12 text-rose-600" />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                  Consumidor
-                </h2>
-                <p className="text-gray-600">
-                  Compre para consumo próprio ou família
-                </p>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setCategory('reseller')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-rose-400"
-              data-testid="button-select-reseller"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-emerald-100 to-green-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <Store className="w-12 h-12 text-emerald-600" />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                  Revendedor
-                </h2>
-                <p className="text-gray-600">
-                  Compre para revender em seu estabelecimento
-                </p>
-              </div>
-            </button>
-          </div>
-        </div>
-      </div>
+      <Moldura
+        foto="/shop/images/cenas/acerola-pomar.webp"
+        fotoAlt="Suco Honest de acerola numa mesa de madeira, com aceroleira ao fundo"
+        titulo="Bem-vindo à Honest"
+        subtitulo="Como você quer comprar?"
+      >
+        <Opcao
+          icone={ShoppingCart}
+          titulo="Para mim ou minha família"
+          descricao="Compra de consumidor, entregue em casa"
+          onClick={() => setCategory('consumer')}
+          testId="button-select-consumer"
+        />
+        <Opcao
+          icone={Store}
+          titulo="Para revender"
+          descricao="Para o seu mercado, empório, academia ou lanchonete"
+          onClick={() => setCategory('reseller')}
+          testId="button-select-reseller"
+        />
+      </Moldura>
     );
   }
 
-  // Tela para Consumidores: Escolher Varejo ou Atacado
+  // Etapa 2 (consumidor): Varejo ou Atacado
   if (category === 'consumer' && consumerTier === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
-        <div className="max-w-2xl w-full">
-          <button
-            onClick={reset}
-            className="mb-6 text-white hover:text-white/80 font-semibold flex items-center gap-2 transition-all"
-            data-testid="button-back"
-          >
-            ← Voltar
-          </button>
-
-          <div className="text-center mb-12">
-            <div className="flex justify-center mb-6">
-              <HonestLogo size="xl" className="text-white drop-shadow-lg" />
-            </div>
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-md">
-              Escolha sua opção
-            </h1>
-            <p className="text-xl text-white/90 drop-shadow">
-              Selecione o tipo de compra
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            <button
-              onClick={() => setConsumerTier('retail')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-blue-400"
-              data-testid="button-select-retail"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <ShoppingCart className="w-12 h-12 text-blue-600" />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                  Varejo
-                </h2>
-                <p className="text-gray-600 mb-3">
-                  Compras até R$ 200
-                </p>
-                <div className="text-sm text-blue-600 font-semibold">
-                  Preços regulares
-                </div>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setConsumerTier('wholesale')}
-              className="bg-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-purple-400"
-              data-testid="button-select-wholesale"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-purple-100 to-pink-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <ShoppingCart className="w-12 h-12 text-purple-600" />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                  Atacado
-                </h2>
-                <p className="text-gray-600 mb-3">
-                  Compras acima de R$ 200
-                </p>
-                <div className="text-sm text-purple-600 font-semibold">
-                  Preços especiais
-                </div>
-              </div>
-            </button>
-          </div>
-        </div>
-      </div>
+      <Moldura
+        foto="/shop/images/cenas/morango-maracuja-cozinha.webp"
+        fotoAlt="Suco Honest de morango com maracujá na mesa da cozinha"
+        titulo="Qual o tamanho do pedido?"
+        subtitulo="O preço muda conforme o volume."
+        voltar={reset}
+        voltarTestId="button-back"
+      >
+        <Opcao
+          icone={ShoppingCart}
+          titulo="Varejo"
+          descricao="Compras até R$ 200"
+          detalhe="Preços regulares"
+          onClick={() => setConsumerTier('retail')}
+          testId="button-select-retail"
+        />
+        <Opcao
+          icone={Package}
+          titulo="Atacado"
+          descricao="Compras acima de R$ 200"
+          detalhe="Preços especiais"
+          onClick={() => setConsumerTier('wholesale')}
+          testId="button-select-wholesale"
+        />
+      </Moldura>
     );
   }
 
-  // Tela para Revendedores: Escolher Localização
+  // Etapa 2 (revendedor): Região
   if (category === 'reseller' && resellerLocation === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
-        <div className="max-w-3xl w-full">
-          <button
-            onClick={reset}
-            className="mb-6 text-white hover:text-white/80 font-semibold flex items-center gap-2 transition-all"
-            data-testid="button-back-reseller"
-          >
-            ← Voltar
-          </button>
-
-          <div className="text-center mb-12">
-            <div className="flex justify-center mb-6">
-              <HonestLogo size="xl" className="text-white drop-shadow-lg" />
-            </div>
-            <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-md">
-              Onde está seu negócio?
-            </h1>
-            <p className="text-xl text-white/90 drop-shadow">
-              Selecione sua região para ver preços especiais
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            <button
-              onClick={() => setResellerLocation('goiania')}
-              className="bg-white rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-emerald-400"
-              data-testid="button-select-goiania"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-emerald-100 to-green-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <MapPin className="w-10 h-10 text-emerald-600" />
-                </div>
-                <h2 className="text-xl font-bold text-gray-800 mb-2">
-                  Goiânia
-                </h2>
-                <p className="text-sm text-gray-600">
-                  Capital de Goiás
-                </p>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setResellerLocation('interior')}
-              className="bg-white rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all transform hover:scale-105 border-4 border-transparent hover:border-emerald-400"
-              data-testid="button-select-interior"
-            >
-              <div className="flex flex-col items-center text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-amber-100 to-yellow-100 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                  <MapPin className="w-10 h-10 text-amber-600" />
-                </div>
-                <h2 className="text-xl font-bold text-gray-800 mb-2">
-                  Interior
-                </h2>
-                <p className="text-sm text-gray-600">
-                  Cidades do interior de Goiás
-                </p>
-              </div>
-            </button>
-          </div>
-        </div>
-      </div>
+      <Moldura
+        foto="/shop/images/cenas/pink-lemonade-splash.webp"
+        fotoAlt="Suco Honest pink lemonade com framboesas e limão"
+        titulo="Onde está o seu negócio?"
+        subtitulo="Os preços de revenda variam por região."
+        voltar={reset}
+        voltarTestId="button-back-reseller"
+      >
+        <Opcao
+          icone={MapPin}
+          titulo="Goiânia"
+          descricao="Capital de Goiás"
+          onClick={() => setResellerLocation('goiania')}
+          testId="button-select-goiania"
+        />
+        <Opcao
+          icone={MapPin}
+          titulo="Interior"
+          descricao="Cidades do interior de Goiás"
+          onClick={() => setResellerLocation('interior')}
+          testId="button-select-interior"
+        />
+      </Moldura>
     );
   }
 

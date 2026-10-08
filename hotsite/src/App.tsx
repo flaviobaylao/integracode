@@ -9,6 +9,7 @@ import HeroSection from './components/HeroSection';
 import BadgesSection from './components/BadgesSection';
 import ProductShowcase from './components/ProductShowcase';
 import BenefitsSection from './components/BenefitsSection';
+import FlavorStories from './components/FlavorStories';
 import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
 import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
@@ -18,7 +19,8 @@ import { capturarOrigem, origemDoPedido } from './utils/origem';
 import { pixel, pixelUmaVez, conteudos } from './utils/pixel';
 // Aviso de cobertura de entrega (provisoria) — mostrado na vitrine, antes do carrinho.
 import { TITULO_AVISO_COBERTURA, TEXTO_AVISO_COBERTURA } from './utils/entrega';
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
+import { agruparPorSabor, brl } from './utils/garrafas';
 import type { Product, CartItem, Customer } from './types';
 
 type View = 'catalog' | 'checkout' | 'pix' | 'card' | 'success';
@@ -359,6 +361,8 @@ function HotsiteContent() {
   };
 
   const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  // 🍾 Vitrine por sabor (350 + 900 no mesmo cartão)
+  const grupos = useMemo(() => agruparPorSabor(products), [products]);
 
   // Se a seleção de tipo de cliente não estiver completa, mostrar seletor
   if (!isSelectionComplete) {
@@ -400,13 +404,13 @@ function HotsiteContent() {
       }
     };
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-600 to-blue-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl">
-          <div className="flex justify-center mb-3"><HonestLogo size="lg" className="text-honest-green" /></div>
-          <h1 className="text-2xl font-bold text-honest-green text-center mb-1">Pagar com Cartão</h1>
-          <p className="text-3xl font-bold text-honest-orange text-center mb-1" data-testid="card-amount">R$ {totalCard.toFixed(2)}</p>
+      <div className="min-h-screen bg-honest-paper flex items-center justify-center p-4">
+        <div className="bg-white rounded-[28px] p-6 sm:p-8 max-w-md w-full ring-1 ring-black/5">
+          <div className="flex justify-center mb-3"><HonestLogo size="sm" /></div>
+          <h1 className="font-display text-2xl font-bold text-honest-ink text-center mt-4 mb-1">Pagar com cartão</h1>
+          <p className="font-display text-4xl font-extrabold text-honest-ink text-center mb-1 tabular-nums" data-testid="card-amount">{brl(totalCard)}</p>
           {descontoCard > 0 && (
-            <p className="text-center text-sm text-green-700 mb-3" data-testid="card-discount">
+            <p className="text-center text-sm text-honest-green font-semibold mb-3" data-testid="card-discount">
               <span className="line-through text-gray-400 mr-2">R$ {subtotalCard.toFixed(2)}</span>
               {discountInfo?.tipo === 'cupom'
                 ? <>Cupom <strong>{discountInfo.code}</strong>: −R$ {descontoCard.toFixed(2)}</>
@@ -415,7 +419,7 @@ function HotsiteContent() {
           )}
           {descontoCard <= 0 && <div className="mb-3" />}
           {cardPendingMsg ? (
-            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800">✅ {cardPendingMsg}</div>
+            <div className="bg-honest-light rounded-2xl p-4 mb-4 text-sm text-honest-forest">{cardPendingMsg}</div>
           ) : (
             <>
               <GooglePayButton
@@ -435,26 +439,26 @@ function HotsiteContent() {
                 onError={(m) => setCardError(m)}
               />
               <label className="block text-xs font-semibold text-gray-600 mb-1">Número do cartão</label>
-              <input inputMode="numeric" autoComplete="cc-number" value={cardNumber} onChange={e => setCardNumber(fmtNum(e.target.value))} placeholder="0000 0000 0000 0000" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base tracking-wider" data-testid="card-number" />
+              <input inputMode="numeric" autoComplete="cc-number" value={cardNumber} onChange={e => setCardNumber(fmtNum(e.target.value))} placeholder="0000 0000 0000 0000" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green mb-3 text-base tracking-wider" data-testid="card-number" />
               <label className="block text-xs font-semibold text-gray-600 mb-1">Nome impresso no cartão</label>
-              <input autoComplete="cc-name" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase())} placeholder="COMO ESTÁ NO CARTÃO" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base" data-testid="card-holder" />
+              <input autoComplete="cc-name" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase())} placeholder="COMO ESTÁ NO CARTÃO" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green mb-3 text-base" data-testid="card-holder" />
               <div className="flex gap-3 mb-3">
                 <div className="flex-1">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Validade</label>
-                  <input inputMode="numeric" autoComplete="cc-exp" value={cardExpiry} onChange={e => setCardExpiry(fmtExp(e.target.value))} placeholder="MM/AA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-expiry" />
+                  <input inputMode="numeric" autoComplete="cc-exp" value={cardExpiry} onChange={e => setCardExpiry(fmtExp(e.target.value))} placeholder="MM/AA" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green text-base" data-testid="card-expiry" />
                 </div>
                 <div className="flex-1">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">CVV</label>
-                  <input inputMode="numeric" autoComplete="cc-csc" value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-cvv" />
+                  <input inputMode="numeric" autoComplete="cc-csc" value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green text-base" data-testid="card-cvv" />
                 </div>
               </div>
               {cardError && (
-                <div className="bg-red-50 border border-red-300 rounded-xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">❌ {cardError}</div>
+                <div className="bg-red-50 rounded-2xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">{cardError}</div>
               )}
-              <button onClick={doPay} disabled={!canPay} className={`w-full rounded-xl py-3 font-bold text-white mb-2 ${canPay ? 'bg-honest-green hover:opacity-90' : 'bg-gray-300'}`} data-testid="btn-card-pay">
-                {cardProcessing ? '⏳ Processando pagamento…' : `Pagar R$ ${totalCard.toFixed(2)}`}
+              <button onClick={doPay} disabled={!canPay} className={`w-full rounded-full py-3.5 font-bold text-white mb-2 ${canPay ? 'bg-honest-green hover:bg-honest-forest' : 'bg-gray-300'}`} data-testid="btn-card-pay">
+                {cardProcessing ? 'Processando pagamento…' : `Pagar ${brl(totalCard)}`}
               </button>
-              <p className="text-[11px] text-gray-400 text-center mb-2">🔒 Pagamento processado com segurança pela Cielo. Seu pedido só é registrado após a aprovação.</p>
+              <p className="text-[11px] text-gray-400 text-center mb-2">Pagamento processado com segurança pela Cielo. Seu pedido só é registrado após a aprovação.</p>
             </>
           )}
           <button onClick={() => { setView(cardPendingMsg ? 'catalog' : 'checkout'); setCardError(''); }} className="btn-secondary w-full" data-testid="btn-card-back">
@@ -472,45 +476,45 @@ function HotsiteContent() {
     const ss = String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, '0');
     const isExpired = pixStatus === 'expired' || remainingMs <= 0;
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-6 max-w-md w-full text-center shadow-2xl">
+      <div className="min-h-screen bg-honest-paper flex items-center justify-center p-4">
+        <div className="bg-white rounded-[28px] p-6 sm:p-8 max-w-md w-full text-center ring-1 ring-black/5">
           <div className="flex justify-center mb-4">
-            <HonestLogo size="lg" className="text-honest-green" />
+            <HonestLogo size="sm" />
           </div>
-          <h1 className="text-2xl font-bold text-honest-green mb-1">Pague com PIX</h1>
-          <p className="text-3xl font-bold text-honest-orange mb-3" data-testid="pix-amount">R$ {Number(pixData.amount).toFixed(2)}</p>
+          <h1 className="font-display text-2xl font-bold text-honest-ink mt-4 mb-1">Pague com Pix</h1>
+          <p className="font-display text-4xl font-extrabold text-honest-ink mb-3 tabular-nums" data-testid="pix-amount">{brl(Number(pixData.amount))}</p>
           {discountInfo && (
-            <div className="bg-green-50 border border-green-300 rounded-xl p-2 mb-3 text-xs text-green-800">
+            <div className="bg-honest-light rounded-2xl p-2 mb-3 text-xs text-honest-forest">
               {discountInfo.tipo === 'cupom'
                 ? <>Cupom <strong>{discountInfo.code}</strong> aplicado: −R$ {Number(discountInfo.amount).toFixed(2)}</>
                 : <>Desconto de indicação aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})</>}
             </div>
           )}
           {pixStatus === 'paid_order_error' ? (
-            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4 text-sm text-yellow-800 text-left">
-              ✅ <strong>Pagamento recebido!</strong> Estamos registrando seu pedido. Guarde este código e, se precisar, fale conosco no WhatsApp: <span className="font-mono break-all">{pixData.txid}</span>
+            <div className="bg-honest-light rounded-2xl p-4 mb-4 text-sm text-honest-forest text-left">
+              <strong>Pagamento recebido!</strong> Estamos registrando seu pedido. Guarde este código e, se precisar, fale conosco no WhatsApp: <span className="font-mono break-all">{pixData.txid}</span>
             </div>
           ) : isExpired ? (
-            <div className="bg-red-50 border border-red-300 rounded-xl p-4 mb-4 text-sm text-red-700">
-              ⏰ Este PIX expirou sem pagamento. Nenhum pedido foi criado — volte e gere um novo código.
+            <div className="bg-red-50 rounded-2xl p-4 mb-4 text-sm text-red-700">
+              Este PIX expirou sem pagamento. Nenhum pedido foi criado — volte e gere um novo código.
             </div>
           ) : (
             <>
               <p className="text-gray-600 mb-3 text-sm">Escaneie o QR Code ou copie o código abaixo</p>
-              <img src={pixData.qrCodeBase64} alt="QR Code PIX" className="mx-auto w-52 h-52 border-4 border-honest-green rounded-2xl mb-3" data-testid="pix-qrcode" />
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3">
+              <img src={pixData.qrCodeBase64} alt="QR Code PIX" className="mx-auto w-56 h-56 p-2 bg-white ring-1 ring-black/10 rounded-3xl mb-4" data-testid="pix-qrcode" />
+              <div className="bg-honest-paper rounded-2xl p-3 mb-4">
                 <p className="text-[10px] text-gray-400 break-all mb-2 max-h-16 overflow-hidden">{pixData.pixCopiaECola}</p>
                 <button
                   onClick={() => { try { navigator.clipboard.writeText(pixData.pixCopiaECola); setPixCopied(true); setTimeout(() => setPixCopied(false), 2500); } catch {} }}
                   className="btn-primary w-full text-sm"
                   data-testid="btn-copy-pix"
                 >
-                  {pixCopied ? '✅ Código copiado!' : '📋 Copiar código PIX'}
+                  {pixCopied ? 'Código copiado' : 'Copiar código Pix'}
                 </button>
               </div>
               <p className="text-sm text-gray-500 mb-1">Expira em <strong>{mm}:{ss}</strong></p>
-              <p className="text-sm text-emerald-700 mb-4">
-                {pixStatus === 'processing' ? '💫 Pagamento recebido, registrando seu pedido…' : '⏳ Aguardando pagamento… a confirmação é automática.'}
+              <p className="text-sm text-honest-green font-semibold mb-5"><span className="inline-block w-2 h-2 rounded-full bg-honest-leaf animate-pulse mr-2 align-middle" aria-hidden="true" />
+                {pixStatus === 'processing' ? 'Pagamento recebido. Registrando seu pedido…' : 'Aguardando o pagamento. A confirmação é automática.'}
               </p>
             </>
           )}
@@ -529,31 +533,35 @@ function HotsiteContent() {
   // View: Sucesso
   if (view === 'success') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+      <div className="min-h-screen bg-honest-paper flex items-center justify-center p-4">
+        <div className="bg-white rounded-[28px] p-6 sm:p-8 max-w-md w-full text-center ring-1 ring-black/5">
           <div className="flex justify-center mb-6">
-            <HonestLogo size="xl" className="text-honest-green" />
+            <HonestLogo size="md" />
           </div>
-          <div className="text-7xl mb-4">✅</div>
-          <h1 className="text-3xl font-bold text-honest-green mb-4">Pedido Confirmado!</h1>
-          <p className="text-gray-600 mb-2">Número do pedido:</p>
-          <p className="text-2xl font-mono font-bold text-honest-orange mb-6" data-testid="order-number">{orderNumber}</p>
+          <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-honest-leaf flex items-center justify-center text-3xl text-honest-ink" aria-hidden="true">✓</div>
+          <h1 className="font-display text-3xl font-extrabold text-honest-ink mb-4">Pedido confirmado</h1>
+          <p className="text-sm text-gray-500 mb-1">Número do pedido</p>
+          <p className="inline-block font-display text-2xl font-bold text-honest-ink bg-honest-paper rounded-full px-5 py-2 mb-6 tabular-nums" data-testid="order-number">{orderNumber}</p>
                 {discountInfo && (
-                  <div className="bg-green-50 border border-green-300 rounded-xl p-3 mb-4 text-sm text-green-800">
+                  <div className="bg-honest-light rounded-2xl p-3 mb-4 text-sm text-honest-forest">
                     {discountInfo.tipo === 'cupom'
                       ? <>Cupom <strong>{discountInfo.code}</strong>: −R$ {Number(discountInfo.amount).toFixed(2)}</>
                       : <>Desconto aplicado: {discountInfo.pct}% (R$ {Number(discountInfo.amount).toFixed(2)})</>} · Total: R$ {Number(discountInfo.total).toFixed(2)}
                   </div>
                 )}
           
-          <div className="bg-honest-light p-4 rounded-xl mb-6 text-left">
-            <p className="text-sm text-gray-700">
-              <strong>Próximos passos:</strong><br/>
-              • Você receberá a confirmação no WhatsApp<br/>
-              • Nossa equipe entrará em contato para agendar sua entrega<br/>
-              • Entregaremos seus sucos fresquinhos! 🍓
-            </p>
-          </div>
+          <ol className="text-left space-y-3 mb-6">
+            {[
+              'Você recebe a confirmação no WhatsApp.',
+              'Nossa equipe combina com você o dia da entrega.',
+              'Seus sucos chegam fresquinhos e gelados.',
+            ].map((t, i) => (
+              <li key={i} className="flex items-start gap-3 text-sm text-gray-700">
+                <span className="w-6 h-6 shrink-0 rounded-full bg-honest-light text-honest-forest text-xs font-bold flex items-center justify-center">{i + 1}</span>
+                <span className="pt-0.5">{t}</span>
+              </li>
+            ))}
+          </ol>
 
           <button
             onClick={() => {
@@ -563,14 +571,14 @@ function HotsiteContent() {
             className="btn-primary w-full"
             data-testid="btn-new-order"
           >
-            Fazer Novo Pedido
+            Fazer novo pedido
           </button>
 
           <a
             href={`https://wa.me/5562995782812?text=Olá! Meu pedido é ${orderNumber}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn-secondary w-full mt-3 inline-block"
+            className="btn-secondary w-full mt-3 inline-block text-center"
           >
             Falar no WhatsApp
           </a>
@@ -596,135 +604,155 @@ function HotsiteContent() {
 
   // View: Catálogo (Principal)
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-honest-paper">
       {/* Header fixo */}
-      <header className="bg-white/95 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-40 shadow-sm">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <HonestLogo size="lg" className="text-honest-green" />
-            </div>
-            
-            <button
-              onClick={reset}
-              className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg mr-3 transition-all"
-              data-testid="btn-change-customer-type"
-            >
-              Alterar Tipo
-            </button>
-            
-            <button
-              onClick={() => setIsCartOpen(true)}
-              className="relative bg-honest-green hover:bg-green-700 text-white rounded-full p-3 transition-all active:scale-95"
-              data-testid="btn-open-cart"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-              {cartItemsCount > 0 && (
-                <span className="badge animate-pulse" data-testid="cart-badge">
-                  {cartItemsCount}
-                </span>
-              )}
-            </button>
+      <header className="bg-white/90 backdrop-blur border-b border-black/5 sticky top-0 z-40">
+        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-3">
+          <div className="flex-1">
+            <HonestLogo size="sm" />
           </div>
+
+          <button
+            onClick={reset}
+            className="text-sm text-honest-forest font-semibold px-3 py-2 rounded-full hover:bg-honest-paper transition-colors"
+            data-testid="btn-change-customer-type"
+          >
+            Alterar tipo
+          </button>
+
+          <button
+            onClick={() => setIsCartOpen(true)}
+            className="relative bg-honest-forest hover:bg-honest-green text-white rounded-full pl-4 pr-5 py-2.5 transition-all active:scale-95 inline-flex items-center gap-2 font-semibold text-sm"
+            data-testid="btn-open-cart"
+            aria-label={`Abrir carrinho, ${cartItemsCount} ${cartItemsCount === 1 ? 'item' : 'itens'}`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            Carrinho
+            {cartItemsCount > 0 && (
+              <span className="badge" data-testid="cart-badge">
+                {cartItemsCount}
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
-      {/* Landing Page Sections */}
       <HeroSection />
-      <BadgesSection />
-      <ProductShowcase />
-      <BenefitsSection />
 
-      {/* Catálogo de Produtos */}
-      <section id="products" className="py-20 bg-gray-50">
-        <div className="container mx-auto px-4">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              Nossos Sucos
-            </h2>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Escolha seus sabores favoritos e receba em casa
-            </p>
+      {/* Catálogo de Produtos — logo depois do topo: é para isso que o cliente veio */}
+      <section id="products" className="py-14 md:py-20 scroll-mt-16">
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="md:flex md:items-end md:justify-between gap-8 mb-8">
+            <div>
+              <h2 className="font-display text-4xl md:text-5xl font-extrabold text-honest-ink">
+                Escolha seus sabores
+              </h2>
+              <p className="text-lg text-gray-600 mt-2 max-w-xl">
+                Cada sabor vem em 350 ml e 900 ml. Toque na garrafa para ver os detalhes.
+              </p>
+            </div>
           </div>
+
+          {/* atalhos por sabor */}
+          {grupos.some(g => g.sabor) && (
+            <nav aria-label="Sabores" className="-mx-4 px-4 mb-8 flex gap-2 overflow-x-auto no-scrollbar">
+              {grupos.filter(g => g.sabor).map(g => (
+                <a
+                  key={g.key}
+                  href={`#sabor-${g.key}`}
+                  className="shrink-0 inline-flex items-center gap-2 bg-white rounded-full pl-2 pr-4 py-1.5 text-sm font-semibold text-honest-ink ring-1 ring-black/5 hover:ring-honest-green transition-shadow"
+                >
+                  <span className="w-5 h-5 rounded-full" style={{ backgroundColor: g.sabor!.cor }} aria-hidden="true" />
+                  {g.sabor!.nome}
+                </a>
+              ))}
+            </nav>
+          )}
 
           {/* 🚚 COBERTURA DE ENTREGA (29/set/2026) — o cliente precisa saber ANTES de
               montar o carrinho que a entrega hoje só alcança Goiânia e Aparecida, e
               que isso é provisório. O bloqueio real é pelo CEP, no checkout. */}
           <div
-            className="max-w-3xl mx-auto -mt-8 mb-12 bg-amber-50 border border-amber-300 rounded-2xl px-5 py-4 flex items-start gap-3"
+            className="mb-8 bg-white border-l-4 border-honest-orange rounded-2xl px-5 py-4 flex items-start gap-3"
             data-testid="aviso-cobertura-vitrine"
           >
             <span className="text-2xl leading-none shrink-0" aria-hidden="true">🚚</span>
             <div className="text-left">
-              <p className="font-semibold text-amber-900">{TITULO_AVISO_COBERTURA}</p>
-              <p className="text-sm text-amber-800 mt-0.5">{TEXTO_AVISO_COBERTURA}</p>
+              <p className="font-semibold text-honest-ink">{TITULO_AVISO_COBERTURA}</p>
+              <p className="text-sm text-gray-600 mt-0.5">{TEXTO_AVISO_COBERTURA}</p>
             </div>
           </div>
 
-      {/* Conteúdo Principal */}
-      <main className="max-w-7xl mx-auto px-4">
-        {error && (
-          <div className="bg-red-100 border-2 border-red-500 text-red-700 px-4 py-3 rounded-lg mb-4 flex items-center justify-between">
-            <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-red-700 font-bold">✕</button>
-          </div>
-        )}
+          <main>
+            {error && (
+              <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-2xl mb-4 flex items-center justify-between">
+                <span>{error}</span>
+                <button onClick={() => { setError(null); loadProducts(); }} className="text-red-700 font-semibold underline">Tentar de novo</button>
+              </div>
+            )}
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="text-center">
-              <svg className="animate-spin h-12 w-12 text-honest-green mx-auto mb-4" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <p className="text-gray-600">Carregando produtos...</p>
-            </div>
-          </div>
-        ) : products.length === 0 ? (
-          <div className="text-center py-20">
-            <p className="text-xl text-gray-600">Nenhum produto disponível no momento</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="products-grid">
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onAddToCart={addToCart}
-              />
-            ))}
-          </div>
-        )}
-      </main>
+            {isLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5" aria-busy="true" aria-label="Carregando sabores">
+                {[0, 1, 2].map(i => (
+                  <div key={i} className="bg-white rounded-[28px] overflow-hidden ring-1 ring-black/5">
+                    <div className="h-72 sm:h-80 bg-honest-light animate-pulse" />
+                    <div className="p-5 space-y-3">
+                      <div className="h-6 w-2/3 bg-honest-paper rounded-full" />
+                      <div className="h-4 w-full bg-honest-paper rounded-full" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : products.length === 0 ? (
+              <div className="text-center py-20">
+                <p className="text-xl text-gray-600">Nenhum sabor disponível agora. Fale com a gente no WhatsApp.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="products-grid">
+                {grupos.map((grupo) => (
+                  <ProductCard
+                    key={grupo.key}
+                    grupo={grupo}
+                    onAddToCart={addToCart}
+                  />
+                ))}
+              </div>
+            )}
+          </main>
         </div>
       </section>
 
+      {/* Landing Page Sections */}
+      <FlavorStories />
+      <BadgesSection />
+      <ProductShowcase />
+      <BenefitsSection />
+
       {/* Footer */}
-      <footer className="bg-honest-green text-white py-12">
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+      <footer className="bg-honest-forest text-white pt-14 pb-10">
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-10 mb-10">
             <div>
-              <HonestLogo size="xl" className="text-white mb-4" />
-              <p className="text-sm opacity-90">
-                Suco natural, sem adição de açúcares, direto da fazenda para você.
-                Sem açúcar, sem adição de conservantes, sem enrolação.
+              <img src="/shop/honest-logo-white.png" alt="Honest Sucos" className="h-20 w-auto mb-4" />
+              <p className="text-sm text-white/80 max-w-xs">
+                Suco natural, sem adição de açúcares, direto da fábrica para você.
               </p>
             </div>
             <div>
-              <h3 className="font-bold text-lg mb-4">Contato</h3>
-              <p className="text-sm opacity-90 mb-2">📍 Bela Vista de Goiás, GO</p>
-              <p className="text-sm opacity-90 mb-2">📞 <a href="https://wa.me/5562995782812" className="underline">(62) 99578-2812</a></p>
-              <p className="text-sm opacity-90">Entregamos em Goiânia e região</p>
+              <h3 className="font-display font-bold text-lg mb-3">Contato</h3>
+              <p className="text-sm text-white/80 mb-2">Bela Vista de Goiás, GO</p>
+              <p className="text-sm text-white/80 mb-2">WhatsApp <a href="https://wa.me/5562995782812" className="underline underline-offset-2">(62) 99578-2812</a></p>
+              <p className="text-sm text-white/80">Entregamos em Goiânia e região</p>
             </div>
             <div>
-              <h3 className="font-bold text-lg mb-4">Horário de Atendimento</h3>
-              <p className="text-sm opacity-90">Segunda a Sexta: 8h às 18h</p>
-              <p className="text-sm opacity-90">Sábado: 8h às 12h</p>
+              <h3 className="font-display font-bold text-lg mb-3">Atendimento</h3>
+              <p className="text-sm text-white/80">Segunda a sexta: 8h às 18h</p>
+              <p className="text-sm text-white/80">Sábado: 8h às 12h</p>
             </div>
           </div>
-          <div className="border-t border-white/20 pt-6 text-center text-sm opacity-75">
+          <div className="border-t border-white/15 pt-6 text-sm text-white/60">
             <p>&copy; {new Date().getFullYear()} Honest Sucos. Todos os direitos reservados.</p>
           </div>
         </div>
