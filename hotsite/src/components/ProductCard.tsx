@@ -6,7 +6,7 @@ import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { getProductPrice } from '../utils/pricing';
 import { pixel } from '../utils/pixel';
 import { X, Plus } from 'lucide-react';
-import { type GrupoSabor, garrafaUrl, brl } from '../utils/garrafas';
+import { type GrupoSabor, garrafaUrl, brl, FOTOS } from '../utils/garrafas';
 
 interface ProductCardProps {
   grupo: GrupoSabor;
@@ -42,8 +42,9 @@ export default function ProductCard({ grupo, onAddToCart }: ProductCardProps) {
   const fotosCadastro = product.images && product.images.length > 0
     ? product.images
     : (product.imageUrl ? [product.imageUrl] : []);
+  const fotosCena = sabor ? (FOTOS[sabor.key] || []) : [];
   const galeria = imagemGrande && imagemGrande !== product.imageUrl
-    ? [imagemGrande, ...fotosCadastro]
+    ? [imagemGrande, ...fotosCena, ...fotosCadastro]
     : fotosCadastro;
 
   const abrirDetalhes = () => {

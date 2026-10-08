@@ -1,16 +1,12 @@
 import { useState, useEffect } from 'react';
 import { garrafaUrl, type Tamanho } from '../utils/garrafas';
 
-// 🍾 Linha de garrafas do topo: alterna 900 ml e 350 ml para mostrar os dois tamanhos.
+// 🍾 Garrafas do topo: poucas e espaçadas, alternando 900 ml e 350 ml.
 const PRATELEIRA: { sabor: string; nome: string; tamanho: Tamanho }[] = [
   { sabor: 'acerola', nome: 'Acerola', tamanho: '900' },
-  { sabor: 'maracuja', nome: 'Maracujá', tamanho: '350' },
-  { sabor: 'morango-limao', nome: 'Morango com limão', tamanho: '900' },
-  { sabor: 'frutas-vermelhas', nome: 'Frutas vermelhas', tamanho: '350' },
-  { sabor: 'pink-lemonade', nome: 'Pink lemonade', tamanho: '900' },
-  { sabor: 'limonada', nome: 'Limonada', tamanho: '350' },
+  { sabor: 'pink-lemonade', nome: 'Pink lemonade', tamanho: '350' },
   { sabor: 'uva', nome: 'Uva', tamanho: '900' },
-  { sabor: 'morango-maracuja', nome: 'Morango com maracujá', tamanho: '350' },
+  { sabor: 'maracuja', nome: 'Maracujá', tamanho: '350' },
 ];
 
 export default function HeroSection() {
@@ -93,14 +89,14 @@ export default function HeroSection() {
       </div>
 
         {/* Prateleira */}
-        <div className="mt-10 lg:mt-0 flex items-end justify-center lg:pr-2">
+        <div className="mt-10 lg:mt-0 flex items-end justify-center gap-[5vw] sm:gap-10 lg:gap-8 xl:gap-12">
           {PRATELEIRA.map((g, i) => (
             <img
               key={g.sabor}
               src={garrafaUrl(g.sabor, g.tamanho, true)}
               alt={`${g.nome} ${g.tamanho} ml`}
-              className={`garrafa-sobe garrafa-sombra relative w-auto shrink-0 -ml-[3vw] lg:-ml-8 first:ml-0 ${g.tamanho === '900' ? 'garrafa-900' : 'garrafa-350'}`}
-              style={{ animationDelay: `${120 + i * 70}ms`, zIndex: i }}
+              className={`garrafa-sobe garrafa-sombra relative w-auto shrink-0 ${g.tamanho === '900' ? 'garrafa-900' : 'garrafa-350'}`}
+              style={{ animationDelay: `${120 + i * 110}ms`, zIndex: i }}
             />
           ))}
         </div>

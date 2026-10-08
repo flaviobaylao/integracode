@@ -60,6 +60,16 @@ export function identificar(nome: string): { sabor: Sabor | null; tamanho: Taman
   return { sabor, tamanho };
 }
 
+// 📸 Fotos de cena por sabor (out/2026) — usadas na faixa "Sabores em cena" e na
+// galeria do detalhe, depois da garrafa. Só entram fotos com o rótulo legível e correto.
+export const FOTOS: Record<string, string[]> = {
+  'acerola': ['/shop/images/cenas/acerola-pomar.webp'],
+  'uva': ['/shop/images/cenas/uva-splash.webp'],
+  'limonada': ['/shop/images/cenas/limonada-splash.webp'],
+  'pink-lemonade': ['/shop/images/cenas/pink-lemonade-splash.webp', '/shop/images/cenas/pink-lemonade-splash-2.webp'],
+  'morango-maracuja': ['/shop/images/cenas/morango-maracuja-splash.webp', '/shop/images/cenas/morango-maracuja-cozinha.webp'],
+};
+
 export function garrafaUrl(saborKey: string, tamanho: Tamanho, grande = false): string {
   return `/shop/images/garrafas/${saborKey}-${tamanho}${grande ? '' : '-sm'}.webp`;
 }

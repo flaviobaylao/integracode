@@ -118,9 +118,9 @@ html {
 .no-scrollbar { scrollbar-width: none; }
 
 /* Alturas das garrafas na prateleira do topo */
-.garrafa-900 { height: clamp(180px, 50vw, 420px); }
-.garrafa-350 { height: clamp(130px, 36vw, 302px); }
+.garrafa-900 { height: clamp(200px, 56vw, 440px); }
+.garrafa-350 { height: clamp(144px, 40vw, 316px); }
 @media (min-width: 1024px) {
-  .garrafa-900 { height: 330px; }
-  .garrafa-350 { height: 238px; }
+  .garrafa-900 { height: 380px; }
+  .garrafa-350 { height: 274px; }
 }

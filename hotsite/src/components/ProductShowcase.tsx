@@ -1,19 +1,19 @@
 export default function ProductShowcase() {
   const showcaseItems = [
     {
-      image: '/shop/images/lifestyle-basket.jpg',
-      title: 'Feito para você',
-      description: 'Cada garrafa é fruta fresca, pensada para quem não abre mão de qualidade.'
+      image: '/shop/images/cenas/acerola-pomar.webp',
+      title: 'Começa no pé',
+      description: 'Fruta escolhida, espremida e envasada. Sem concentrado e sem água adicionada.'
     },
     {
-      image: '/shop/images/lifestyle-hand.jpg',
-      title: 'Leve aonde quiser',
-      description: 'A garrafa de 350 ml vai na bolsa, na lancheira e na mesa do trabalho.'
+      image: '/shop/images/cenas/morango-maracuja-cozinha.webp',
+      title: 'Na mesa de casa',
+      description: 'No café da manhã, no almoço ou no lanche da tarde.'
     },
     {
-      image: '/shop/images/lifestyle-serving.jpg',
-      title: 'Para a família',
-      description: 'A de 900 ml rende o café da manhã da casa toda.'
+      image: '/shop/images/cenas/pink-lemonade-splash-2.webp',
+      title: 'Gelado é melhor',
+      description: 'Mantenha refrigerado e sirva bem gelado.'
     }
   ];
 

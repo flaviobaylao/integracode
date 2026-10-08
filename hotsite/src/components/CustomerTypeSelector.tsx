@@ -68,14 +68,14 @@ export function CustomerTypeSelector() {
             </button>
           </div>
 
-          <div className="mt-12 flex items-end justify-center" aria-hidden="true">
-            {['acerola', 'maracuja', 'morango-limao', 'frutas-vermelhas', 'pink-lemonade', 'limonada', 'uva', 'morango-maracuja'].map((k, i) => (
+          <div className="mt-12 flex items-end justify-center gap-6 md:gap-10" aria-hidden="true">
+            {['acerola', 'pink-lemonade', 'uva', 'maracuja'].map((k, i) => (
               <img
                 key={k}
                 src={garrafaUrl(k, '350')}
                 alt=""
-                className="garrafa-sobe garrafa-sombra h-28 md:h-36 w-auto -ml-3 first:ml-0"
-                style={{ animationDelay: `${100 + i * 60}ms` }}
+                className="garrafa-sobe garrafa-sombra h-28 md:h-36 w-auto"
+                style={{ animationDelay: `${100 + i * 100}ms` }}
               />
             ))}
           </div>

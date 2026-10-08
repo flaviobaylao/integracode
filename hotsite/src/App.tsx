@@ -9,6 +9,7 @@ import HeroSection from './components/HeroSection';
 import BadgesSection from './components/BadgesSection';
 import ProductShowcase from './components/ProductShowcase';
 import BenefitsSection from './components/BenefitsSection';
+import FlavorStories from './components/FlavorStories';
 import { CustomerTypeProvider, useCustomerType } from './contexts/CustomerTypeContext';
 import { getProductPrice } from './utils/pricing';
 import { api } from './utils/api';
@@ -720,6 +721,7 @@ function HotsiteContent() {
       </section>
 
       {/* Landing Page Sections */}
+      <FlavorStories />
       <BadgesSection />
       <ProductShowcase />
       <BenefitsSection />
