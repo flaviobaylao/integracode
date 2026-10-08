@@ -20,7 +20,7 @@ import { pixel, pixelUmaVez, conteudos } from './utils/pixel';
 // Aviso de cobertura de entrega (provisoria) — mostrado na vitrine, antes do carrinho.
 import { TITULO_AVISO_COBERTURA, TEXTO_AVISO_COBERTURA } from './utils/entrega';
 import { useRef, useMemo } from 'react';
-import { agruparPorSabor } from './utils/garrafas';
+import { agruparPorSabor, brl } from './utils/garrafas';
 import type { Product, CartItem, Customer } from './types';
 
 type View = 'catalog' | 'checkout' | 'pix' | 'card' | 'success';
@@ -404,11 +404,11 @@ function HotsiteContent() {
       }
     };
     return (
-      <div className="min-h-screen bg-honest-forest flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl">
-          <div className="flex justify-center mb-3"><HonestLogo size="lg" className="text-honest-green" /></div>
-          <h1 className="font-display text-2xl font-bold text-honest-ink text-center mb-1">Pagar com cartão</h1>
-          <p className="text-3xl font-bold text-honest-orange text-center mb-1" data-testid="card-amount">R$ {totalCard.toFixed(2)}</p>
+      <div className="min-h-screen bg-honest-paper flex items-center justify-center p-4">
+        <div className="bg-white rounded-[28px] p-6 sm:p-8 max-w-md w-full ring-1 ring-black/5">
+          <div className="flex justify-center mb-3"><HonestLogo size="sm" /></div>
+          <h1 className="font-display text-2xl font-bold text-honest-ink text-center mt-4 mb-1">Pagar com cartão</h1>
+          <p className="font-display text-4xl font-extrabold text-honest-ink text-center mb-1 tabular-nums" data-testid="card-amount">{brl(totalCard)}</p>
           {descontoCard > 0 && (
             <p className="text-center text-sm text-green-700 mb-3" data-testid="card-discount">
               <span className="line-through text-gray-400 mr-2">R$ {subtotalCard.toFixed(2)}</span>
@@ -439,26 +439,26 @@ function HotsiteContent() {
                 onError={(m) => setCardError(m)}
               />
               <label className="block text-xs font-semibold text-gray-600 mb-1">Número do cartão</label>
-              <input inputMode="numeric" autoComplete="cc-number" value={cardNumber} onChange={e => setCardNumber(fmtNum(e.target.value))} placeholder="0000 0000 0000 0000" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base tracking-wider" data-testid="card-number" />
+              <input inputMode="numeric" autoComplete="cc-number" value={cardNumber} onChange={e => setCardNumber(fmtNum(e.target.value))} placeholder="0000 0000 0000 0000" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green mb-3 text-base tracking-wider" data-testid="card-number" />
               <label className="block text-xs font-semibold text-gray-600 mb-1">Nome impresso no cartão</label>
-              <input autoComplete="cc-name" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase())} placeholder="COMO ESTÁ NO CARTÃO" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 mb-3 text-base" data-testid="card-holder" />
+              <input autoComplete="cc-name" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase())} placeholder="COMO ESTÁ NO CARTÃO" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green mb-3 text-base" data-testid="card-holder" />
               <div className="flex gap-3 mb-3">
                 <div className="flex-1">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Validade</label>
-                  <input inputMode="numeric" autoComplete="cc-exp" value={cardExpiry} onChange={e => setCardExpiry(fmtExp(e.target.value))} placeholder="MM/AA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-expiry" />
+                  <input inputMode="numeric" autoComplete="cc-exp" value={cardExpiry} onChange={e => setCardExpiry(fmtExp(e.target.value))} placeholder="MM/AA" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green text-base" data-testid="card-expiry" />
                 </div>
                 <div className="flex-1">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">CVV</label>
-                  <input inputMode="numeric" autoComplete="cc-csc" value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" className="w-full border-2 border-gray-200 rounded-xl px-3 py-3 text-base" data-testid="card-cvv" />
+                  <input inputMode="numeric" autoComplete="cc-csc" value={cardCvv} onChange={e => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="123" className="w-full border border-gray-300 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-honest-green/30 focus:border-honest-green text-base" data-testid="card-cvv" />
                 </div>
               </div>
               {cardError && (
                 <div className="bg-red-50 border border-red-300 rounded-xl p-3 mb-3 text-sm text-red-700" data-testid="card-error">❌ {cardError}</div>
               )}
-              <button onClick={doPay} disabled={!canPay} className={`w-full rounded-xl py-3 font-bold text-white mb-2 ${canPay ? 'bg-honest-green hover:opacity-90' : 'bg-gray-300'}`} data-testid="btn-card-pay">
-                {cardProcessing ? '⏳ Processando pagamento…' : `Pagar R$ ${totalCard.toFixed(2)}`}
+              <button onClick={doPay} disabled={!canPay} className={`w-full rounded-full py-3.5 font-bold text-white mb-2 ${canPay ? 'bg-honest-green hover:bg-honest-forest' : 'bg-gray-300'}`} data-testid="btn-card-pay">
+                {cardProcessing ? '⏳ Processando pagamento…' : `Pagar ${brl(totalCard)}`}
               </button>
-              <p className="text-[11px] text-gray-400 text-center mb-2">🔒 Pagamento processado com segurança pela Cielo. Seu pedido só é registrado após a aprovação.</p>
+              <p className="text-[11px] text-gray-400 text-center mb-2">Pagamento processado com segurança pela Cielo. Seu pedido só é registrado após a aprovação.</p>
             </>
           )}
           <button onClick={() => { setView(cardPendingMsg ? 'catalog' : 'checkout'); setCardError(''); }} className="btn-secondary w-full" data-testid="btn-card-back">
@@ -476,13 +476,13 @@ function HotsiteContent() {
     const ss = String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, '0');
     const isExpired = pixStatus === 'expired' || remainingMs <= 0;
     return (
-      <div className="min-h-screen bg-honest-forest flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-6 max-w-md w-full text-center shadow-2xl">
+      <div className="min-h-screen bg-honest-paper flex items-center justify-center p-4">
+        <div className="bg-white rounded-[28px] p-6 sm:p-8 max-w-md w-full text-center ring-1 ring-black/5">
           <div className="flex justify-center mb-4">
-            <HonestLogo size="lg" className="text-honest-green" />
+            <HonestLogo size="sm" />
           </div>
-          <h1 className="font-display text-2xl font-bold text-honest-ink mb-1">Pague com PIX</h1>
-          <p className="text-3xl font-bold text-honest-orange mb-3" data-testid="pix-amount">R$ {Number(pixData.amount).toFixed(2)}</p>
+          <h1 className="font-display text-2xl font-bold text-honest-ink mt-4 mb-1">Pague com Pix</h1>
+          <p className="font-display text-4xl font-extrabold text-honest-ink mb-3 tabular-nums" data-testid="pix-amount">{brl(Number(pixData.amount))}</p>
           {discountInfo && (
             <div className="bg-green-50 border border-green-300 rounded-xl p-2 mb-3 text-xs text-green-800">
               {discountInfo.tipo === 'cupom'
@@ -501,20 +501,20 @@ function HotsiteContent() {
           ) : (
             <>
               <p className="text-gray-600 mb-3 text-sm">Escaneie o QR Code ou copie o código abaixo</p>
-              <img src={pixData.qrCodeBase64} alt="QR Code PIX" className="mx-auto w-52 h-52 border-4 border-honest-green rounded-2xl mb-3" data-testid="pix-qrcode" />
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3">
+              <img src={pixData.qrCodeBase64} alt="QR Code PIX" className="mx-auto w-56 h-56 p-2 bg-white ring-1 ring-black/10 rounded-3xl mb-4" data-testid="pix-qrcode" />
+              <div className="bg-honest-paper rounded-2xl p-3 mb-4">
                 <p className="text-[10px] text-gray-400 break-all mb-2 max-h-16 overflow-hidden">{pixData.pixCopiaECola}</p>
                 <button
                   onClick={() => { try { navigator.clipboard.writeText(pixData.pixCopiaECola); setPixCopied(true); setTimeout(() => setPixCopied(false), 2500); } catch {} }}
                   className="btn-primary w-full text-sm"
                   data-testid="btn-copy-pix"
                 >
-                  {pixCopied ? '✅ Código copiado!' : '📋 Copiar código PIX'}
+                  {pixCopied ? 'Código copiado' : 'Copiar código Pix'}
                 </button>
               </div>
               <p className="text-sm text-gray-500 mb-1">Expira em <strong>{mm}:{ss}</strong></p>
-              <p className="text-sm text-emerald-700 mb-4">
-                {pixStatus === 'processing' ? '💫 Pagamento recebido, registrando seu pedido…' : '⏳ Aguardando pagamento… a confirmação é automática.'}
+              <p className="text-sm text-honest-green font-semibold mb-5"><span className="inline-block w-2 h-2 rounded-full bg-honest-leaf animate-pulse mr-2 align-middle" aria-hidden="true" />
+                {pixStatus === 'processing' ? 'Pagamento recebido. Registrando seu pedido…' : 'Aguardando o pagamento. A confirmação é automática.'}
               </p>
             </>
           )}
@@ -533,15 +533,15 @@ function HotsiteContent() {
   // View: Sucesso
   if (view === 'success') {
     return (
-      <div className="min-h-screen bg-honest-forest flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+      <div className="min-h-screen bg-honest-paper flex items-center justify-center p-4">
+        <div className="bg-white rounded-[28px] p-6 sm:p-8 max-w-md w-full text-center ring-1 ring-black/5">
           <div className="flex justify-center mb-6">
-            <HonestLogo size="xl" className="text-honest-green" />
+            <HonestLogo size="md" />
           </div>
           <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-honest-leaf flex items-center justify-center text-3xl text-honest-ink" aria-hidden="true">✓</div>
           <h1 className="font-display text-3xl font-extrabold text-honest-ink mb-4">Pedido confirmado</h1>
-          <p className="text-gray-600 mb-2">Número do pedido:</p>
-          <p className="text-2xl font-mono font-bold text-honest-orange mb-6" data-testid="order-number">{orderNumber}</p>
+          <p className="text-sm text-gray-500 mb-1">Número do pedido</p>
+          <p className="inline-block font-display text-2xl font-bold text-honest-ink bg-honest-paper rounded-full px-5 py-2 mb-6 tabular-nums" data-testid="order-number">{orderNumber}</p>
                 {discountInfo && (
                   <div className="bg-green-50 border border-green-300 rounded-xl p-3 mb-4 text-sm text-green-800">
                     {discountInfo.tipo === 'cupom'
@@ -550,14 +550,18 @@ function HotsiteContent() {
                   </div>
                 )}
           
-          <div className="bg-honest-light p-4 rounded-xl mb-6 text-left">
-            <p className="text-sm text-gray-700">
-              <strong>Próximos passos:</strong><br/>
-              • Você receberá a confirmação no WhatsApp<br/>
-              • Nossa equipe entrará em contato para agendar sua entrega<br/>
-              • Entregaremos seus sucos fresquinhos! 🍓
-            </p>
-          </div>
+          <ol className="text-left space-y-3 mb-6">
+            {[
+              'Você recebe a confirmação no WhatsApp.',
+              'Nossa equipe combina com você o dia da entrega.',
+              'Seus sucos chegam fresquinhos e gelados.',
+            ].map((t, i) => (
+              <li key={i} className="flex items-start gap-3 text-sm text-gray-700">
+                <span className="w-6 h-6 shrink-0 rounded-full bg-honest-light text-honest-forest text-xs font-bold flex items-center justify-center">{i + 1}</span>
+                <span className="pt-0.5">{t}</span>
+              </li>
+            ))}
+          </ol>
 
           <button
             onClick={() => {
@@ -567,14 +571,14 @@ function HotsiteContent() {
             className="btn-primary w-full"
             data-testid="btn-new-order"
           >
-            Fazer Novo Pedido
+            Fazer novo pedido
           </button>
 
           <a
             href={`https://wa.me/5562995782812?text=Olá! Meu pedido é ${orderNumber}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn-secondary w-full mt-3 inline-block"
+            className="btn-secondary w-full mt-3 inline-block text-center"
           >
             Falar no WhatsApp
           </a>

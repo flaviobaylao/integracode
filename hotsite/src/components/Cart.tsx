@@ -94,8 +94,8 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
         <div className="flex-1 overflow-y-auto p-4">
           {items.length === 0 ? (
             <div className="text-center py-12">
-              <div className="text-6xl mb-4">🛒</div>
-              <p className="text-gray-500">Seu carrinho está vazio</p>
+              <p className="font-display text-xl font-bold text-honest-ink">Seu carrinho está vazio</p>
+              <p className="text-gray-500 mt-1">Escolha um sabor para começar.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -117,8 +117,8 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
                   </div>
                   
                   <div className="flex-1">
-                    <h3 className="font-semibold text-sm">{item.name}</h3>
-                    <p className="text-honest-green font-bold">{brl(item.price)}</p>
+                    <h3 className="font-semibold text-sm text-honest-ink">{(() => { const { sabor, tamanho } = identificar(item.name); return sabor && tamanho ? `${sabor.nome} ${tamanho} ml` : item.name; })()}</h3>
+                    <p className="text-gray-600 text-sm tabular-nums">{brl(item.price)}</p>
                     
                     <div className="flex items-center gap-2 mt-2">
                       <button
@@ -138,7 +138,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
                       </button>
                       <button
                         onClick={() => onRemoveItem(item.id)}
-                        className="ml-auto text-red-500 text-sm hover:underline"
+                        className="ml-auto text-gray-500 text-sm hover:text-red-600 underline-offset-2 hover:underline"
                         data-testid={`btn-remove-${item.id}`}
                       >
                         Remover
@@ -153,14 +153,14 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
 
         {/* Footer */}
         {items.length > 0 && (
-          <div className="border-t p-4 bg-gray-50">
+          <div className="border-t border-black/5 p-4 bg-white">
             {/* Frete Grátis — SOMENTE na área atendida (provisoriamente Goiânia e Aparecida) */}
-            <div className="mb-3 p-3 bg-green-50 border-2 border-green-400 rounded-lg">
-              <p className="text-sm font-bold text-green-700 flex items-center gap-2">
-                <span>🚚</span>
+            <div className="mb-3 p-3 bg-honest-light rounded-2xl">
+              <p className="text-sm font-bold text-honest-forest flex items-center gap-2">
+                <span aria-hidden="true">🚚</span>
                 Frete Grátis para {TEXTO_AREA_ATENDIDA}
               </p>
-              <p className="text-xs text-green-600 mt-1">
+              <p className="text-xs text-honest-forest/80 mt-1">
                 Confirmamos o seu CEP na próxima etapa. Ainda não entregamos fora dessa
                 região — estamos ampliando a cobertura aos poucos.
               </p>
@@ -168,7 +168,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
 
             {/* Aviso de Pedido Mínimo */}
             {!meetsMinimum && (
-              <div className="mb-3 p-3 bg-amber-50 border-2 border-amber-400 rounded-lg">
+              <div className="mb-3 p-3 bg-amber-50 rounded-2xl">
                 <p className="text-sm font-bold text-amber-700 flex items-center gap-2">
                   <span>⚠️</span>
                   Pedido mínimo: {brl(minimumOrder)}
@@ -184,20 +184,20 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
             
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
-                <span>Subtotal:</span>
+                <span>Subtotal</span>
                 <span>{brl(subtotal)}</span>
               </div>
-              <div className="flex justify-between text-sm text-green-700">
-                <span>Frete:</span>
-                <span className="font-semibold">GRÁTIS (área atendida)</span>
+              <div className="flex justify-between text-sm text-honest-green">
+                <span>Frete</span>
+                <span className="font-semibold">Grátis na área atendida</span>
               </div>
-              <div className="flex justify-between text-lg font-bold border-t pt-2">
-                <span>Total:</span>
-                <span className="text-honest-green" data-testid="cart-total">{brl(total)}</span>
+              <div className="flex justify-between items-baseline font-display text-xl font-bold text-honest-ink border-t border-black/10 pt-2">
+                <span>Total</span>
+                <span className="tabular-nums" data-testid="cart-total">{brl(total)}</span>
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="flex flex-col-reverse sm:flex-row gap-2">
               <button
                 onClick={onClose}
                 className="w-full py-3 rounded-full font-bold border-2 border-honest-green text-honest-green hover:bg-honest-green hover:bg-opacity-10 transition-all"
