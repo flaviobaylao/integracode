@@ -55,7 +55,7 @@ export default function HeroSection() {
         <div className="pt-12 md:pt-20 lg:pb-20">
         <p className="text-sm text-white/80 mb-5">
           <span className="text-[#F6C51E] tracking-wider mr-2" aria-hidden="true">★★★★★</span>
-          +5.000 clientes em Goiânia e região
+          +1.200 clientes em Goiânia e região
         </p>
 
         <h1 className="font-display font-extrabold text-[44px] leading-[0.95] sm:text-6xl md:text-[84px] lg:text-[76px] xl:text-[84px] max-w-3xl">

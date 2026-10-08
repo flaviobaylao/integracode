@@ -1,7 +1,7 @@
 import { Apple, CandyOff, FlaskConicalOff, Truck } from 'lucide-react';
 
 const STATS = [
-  { value: '5.000+', label: 'clientes em Goiânia' },
+  { value: '1.200+', label: 'clientes em Goiânia e região' },
   { value: '6 anos', label: 'no mercado' },
   { value: 'Diária', label: 'produção fresca' },
   { value: '4.9', label: 'avaliação média' },
