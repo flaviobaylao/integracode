@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2, GripVertical } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2, GripVertical, Crosshair } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -3895,6 +3895,18 @@ export default function RotaDoDia() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Botão flutuante: Consulta no local (atalho rápido em campo) */}
+      <button
+        type="button"
+        onClick={() => navigate('/consulta-local')}
+        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/30 px-4 py-3 transition active:scale-95"
+        aria-label="Consultar local"
+        data-testid="fab-consulta-local"
+      >
+        <Crosshair className="h-5 w-5" />
+        <span className="text-sm font-medium hidden sm:inline">Consultar local</span>
+      </button>
 
       {/* Modal de Atendimento Virtual */}
       {virtualServiceCustomer && (
