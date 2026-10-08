@@ -221,7 +221,7 @@ function ConfigHotsite() {
   // Trava de valor: mostra o rascunho enquanto edita, senão o valor salvo.
   const min = {
     varejo: rascunho?.minimoVarejo ?? cfg.minimoConsumidor?.varejo ?? 70,
-    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 200,
+    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 80,
   };
 
   return (

@@ -55,12 +55,12 @@ const PERIODICIDADES = ['semanal', 'quinzenal', 'mensal', 'bimestral'];
 // ------------------------------------------- pedido minimo do CONSUMIDOR
 // TRAVA DE VALOR (ago/2026): consumidor nao fecha pedido abaixo do minimo, nem no
 // Hotsite nem no Instagram (IA). Dois patamares, porque o consumidor escolhe a
-// tabela: VAREJO (default R$ 70) e ATACADO (default R$ 200 — o preco de atacado so
-// se justifica a partir desse volume). REVENDA nao entra aqui: seus minimos
+// tabela: VAREJO (default R$ 70) e ATACADO (default R$ 80 desde out/2026 — antes R$ 200; o preco de
+// atacado vale a partir desse volume). REVENDA nao entra aqui: seus minimos
 // continuam onde sempre estiveram (150 Goiania/Brasilia, 350 interior).
 // Editavel em Canais > Hotsite > Configuracoes; vale para os DOIS canais.
 export const MIN_CONSUMIDOR_VAREJO_PADRAO = 70;
-export const MIN_CONSUMIDOR_ATACADO_PADRAO = 200;
+export const MIN_CONSUMIDOR_ATACADO_PADRAO = 80;
 
 /** Le os minimos do consumidor (fail-safe: valor invalido cai no default). */
 export async function getMinimosConsumidor(): Promise<{ varejo: number; atacado: number }> {
