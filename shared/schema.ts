@@ -379,8 +379,8 @@ export const products = pgTable("products", {
   price: decimal("price", { precision: 10, scale: 2 }).notNull(), // Mantido para compatibilidade (equivalente ao retail_price)
   
   // Tabelas de preço para diferentes tipos de cliente
-  retailPrice: decimal("retail_price", { precision: 10, scale: 2 }), // Varejo (consumidor < R$200)
-  wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }), // Atacado (consumidor >= R$200)
+  retailPrice: decimal("retail_price", { precision: 10, scale: 2 }), // Varejo (consumidor < R$80)
+  wholesalePrice: decimal("wholesale_price", { precision: 10, scale: 2 }), // Atacado (consumidor >= R$80)
   resaleGoianiaPrice: decimal("resale_goiania_price", { precision: 10, scale: 2 }), // Revenda Goiânia
   resaleInteriorPrice: decimal("resale_interior_price", { precision: 10, scale: 2 }), // Revenda Interior Goiás
   resaleBrasiliaPrice: decimal("resale_brasilia_price", { precision: 10, scale: 2 }), // Revenda Brasília/Entorno
