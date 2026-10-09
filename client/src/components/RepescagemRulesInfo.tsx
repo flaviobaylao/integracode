@@ -91,6 +91,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li>Todo <b>report</b> (não-venda, justificativa, etc.) tem um botão <b>"Repescagem"</b> no Inbox do admin.</li>
                 <li>Ao acionar, o cliente é forçado a cair em repescagem <b>excepcionalmente no dia seguinte</b>, mesmo que pelas regras normais ele <b>não cairia</b> (ex.: foi atendido ou já comprou). É uma inclusão <b>manual, por decisão do Admin</b>.</li>
                 <li><b>Só vale para aquele dia.</b> Depois disso o cliente <b>volta a respeitar todas as regras normais</b> de repescagem — não é reinjetado nos dias seguintes (só volta a cair se a próxima visita ficar vermelha).</li>
+                <li>Ao acionar, o <b>report sai de pendentes e vai para Resolvidas</b> no Inbox.</li>
                 <li>Fica registrado no <b>histórico do cliente</b>.</li>
               </ul>
             </div>
