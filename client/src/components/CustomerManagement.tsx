@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { useDelegacaoMarks, TagDelegacao } from "@/components/SobDelegacaoBadge";
 import CopyButton from "@/components/CopyButton";
 import { usePermissions } from "@/lib/permissions";
 
@@ -82,7 +82,7 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
 }
 
 export default function CustomerManagement() {
-  const delegMarks = useCustomerMarks();
+  const delegMarks = useDelegacaoMarks();
   const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -769,6 +769,7 @@ export default function CustomerManagement() {
                               FORNECEDOR
                             </span>
                           )}
+                          <TagDelegacao customerId={customer.id} marks={delegMarks} />
                           <button
                             className="font-medium text-blue-600 hover:text-blue-800 hover:underline text-left"
                             onClick={() => {
@@ -788,7 +789,6 @@ export default function CustomerManagement() {
                               colaborador
                             </span>
                           )}
-                          <SobDelegacaoBadge show={delegMarks.has(customer.id)} />
                         </div>
                       </td>
                       <td className="px-6 py-4">
