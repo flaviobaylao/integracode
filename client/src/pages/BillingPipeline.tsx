@@ -23,6 +23,7 @@ import {
   Star, StarOff, Store, Network
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useDelegacaoMarks, TagDelegacao } from '@/components/SobDelegacaoBadge';
 import { hojeBR, diasUteisEntre } from '@shared/tempo';
 
 interface BillingPipelineItem {
@@ -2512,6 +2513,7 @@ function KanbanCard({
   blockedReason?: string | null;
   stockIssue?: string | null;
 }) {
+  const delegMarks = useDelegacaoMarks();
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
   // "Cancelado" é só status fiscal real — NÃO estar na coluna Bloqueados. Assim o card bloqueado
@@ -2545,7 +2547,7 @@ function KanbanCard({
           />
           )}
           <div className="flex-1 min-w-0">
-            <p className={`font-semibold text-sm truncate ${blockedReason ? 'text-red-600 dark:text-red-400 cursor-help' : ''}`} title={blockedReason || undefined}>{item.customerName}</p>
+            <p className={`font-semibold text-sm ${blockedReason ? 'text-red-600 dark:text-red-400 cursor-help' : ''}`} title={blockedReason || undefined}><TagDelegacao customerId={item.customerId} marks={delegMarks} /><span className="align-middle">{item.customerName}</span></p>
             {stockIssue && (
               <span className="inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 cursor-help whitespace-pre-line" title={stockIssue}>
                 Sem estoque em uso — faturamento bloqueado
