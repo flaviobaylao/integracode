@@ -406,7 +406,19 @@ export function isTransientNetworkError(err: any): boolean {
   const code = String(err?.code || '');
   const msg = String(err?.message || err || '');
   if (['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH', 'ERR_SOCKET_CONNECTION_TIMEOUT'].includes(code)) return true;
-  return /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|network timeout|Client network socket disconnected|Timeout consultando SEFAZ|failed, reason:|HTTP 5\d\d/i.test(msg);
+  return /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|network timeout|Client network socket disconnected|Timeout consultando SEFAZ|failed, reason:|HTTP 5\d\d|Status:\s*5\d\d|Service Unavailable|Bad Gateway|Gateway Time-?out/i.test(msg);
+}
+
+// Resumo legível de uma falha de comunicação: a SEFAZ às vezes devolve uma página HTML
+// inteira (ex.: "Error 503--Service Unavailable" do WebLogic) que ia parar crua no card
+// do pipeline. Extrai o status HTTP e corta o HTML.
+export function resumoFalhaComunicacao(err: any): string {
+  const raw = String(err?.message || err || '');
+  const st = raw.match(/Status:\s*(\d{3})|HTTP\s*(\d{3})|Error\s*(\d{3})/i);
+  const code = st ? (st[1] || st[2] || st[3]) : '';
+  const semHtml = raw.replace(/Retorno:[\s\S]*$/i, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const base = code ? `SEFAZ indisponível (HTTP ${code})` : `Falha de comunicação com a SEFAZ (${semHtml.slice(0, 120)})`;
+  return `${base}. A NF-e NÃO foi rejeitada — clique em "Re-tentar faturamento" em alguns minutos (reaproveita o mesmo número).`;
 }
 
 const IBGE_CITY_CODES: Record<string, string> = {
@@ -2832,8 +2844,8 @@ export class SefazService {
             eventType: 'falha_comunicacao',
             status: 'error',
             errorCode: NETWORK_ERROR_CODE,
-            errorMessage: errorMsg,
-            description: `Falha de comunicação com a SEFAZ (a nota NÃO foi rejeitada e o status não foi alterado): ${errorMsg}. Consulte a situação da NF-e na SEFAZ antes de reemitir.`,
+            errorMessage: resumoFalhaComunicacao(errorMsg),
+            description: `Falha de comunicação com a SEFAZ (a nota NÃO foi rejeitada e o status não foi alterado): ${String(errorMsg).slice(0, 600)}. Consulte a situação da NF-e na SEFAZ antes de reemitir.`,
             xmlRequest: result.xml_enviado,
             xmlResponse: result.xml_recebido,
             createdBy: invoice?.createdBy || undefined,
@@ -2841,7 +2853,7 @@ export class SefazService {
           return {
             success: false,
             errorCode: NETWORK_ERROR_CODE,
-            errorMessage: `SEFAZ fora do ar ou conexão interrompida (${errorMsg}). A NF-e NÃO foi rejeitada — tente novamente em alguns minutos.`,
+            errorMessage: resumoFalhaComunicacao(errorMsg),
             xmlEnvio: result.xml_enviado,
             xmlRetorno: result.xml_recebido,
           };
@@ -2968,13 +2980,13 @@ export class SefazService {
           eventType: 'falha_comunicacao',
           status: 'error',
           errorCode: NETWORK_ERROR_CODE,
-          errorMessage: error?.message,
-          description: `Falha de comunicação com a SEFAZ (a nota NÃO foi rejeitada e o status não foi alterado): ${error?.message}. Consulte a situação da NF-e na SEFAZ antes de reemitir.`,
+          errorMessage: resumoFalhaComunicacao(error),
+          description: `Falha de comunicação com a SEFAZ (a nota NÃO foi rejeitada e o status não foi alterado): ${String(error?.message || '').slice(0, 600)}. Consulte a situação da NF-e na SEFAZ antes de reemitir.`,
         }).catch(() => {});
         return {
           success: false,
           errorCode: NETWORK_ERROR_CODE,
-          errorMessage: `SEFAZ fora do ar ou conexão interrompida (${error?.message || 'erro de rede'}). A NF-e NÃO foi rejeitada — tente novamente em alguns minutos.`,
+          errorMessage: resumoFalhaComunicacao(error),
         };
       }
 
