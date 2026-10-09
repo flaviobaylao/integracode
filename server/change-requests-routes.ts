@@ -125,6 +125,18 @@ function summarizeRequest(types: string[], details: any): string {
   }
   return parts.join("; ");
 }
+// 🔎 Nome de exibição de um cadastro, por tabela. Usado como rede de segurança: cards cujo
+// entity_name ficou nulo (ex.: visita a lead gravada como 'customer') passam a mostrar o nome
+// fantasia em vez do UUID — tanto na criação quanto na listagem do Inbox.
+async function nomeDaEntidade(id: string, onde: "customer" | "lead"): Promise<string | null> {
+  try {
+    const r = onde === "lead"
+      ? rowsOf(await db.execute(sql`SELECT NULLIF(btrim(fantasy_name),'') AS nome FROM leads WHERE id::text = ${id} LIMIT 1`))
+      : rowsOf(await db.execute(sql`SELECT COALESCE(NULLIF(btrim(fantasy_name),''), NULLIF(btrim(name),'')) AS nome FROM customers WHERE id::text = ${id} LIMIT 1`));
+    return r[0]?.nome || null;
+  } catch { return null; }
+}
+
 function newMsgId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -198,6 +210,11 @@ export async function registrarReportInbox(p: {
         const lr = rowsOf(await db.execute(sql`SELECT fantasy_name FROM leads WHERE id = ${p.entityId} LIMIT 1`));
         entityName = lr[0]?.fantasy_name || null;
       }
+      // 09/out/2026 — A visita a um LEAD adicionado à mão na Rota do Dia chega aqui com
+      // entityType='customer' (o card de venda guarda o lead em sales_cards.customer_id).
+      // Procurando só em `customers`, o nome vinha nulo e o Inbox exibia o UUID cru.
+      // Então: não achou de um lado, procura do outro.
+      if (!entityName) entityName = await nomeDaEntidade(String(p.entityId), p.entityType === "customer" ? "lead" : "customer");
     } catch {}
     let sellerName: string | null = p.sellerName ? String(p.sellerName).slice(0, 200) : null;
     try {
@@ -259,6 +276,11 @@ export async function criarSolicitacaoInbox(p: {
         const lr = rowsOf(await db.execute(sql`SELECT fantasy_name FROM leads WHERE id = ${p.entityId} LIMIT 1`));
         entityName = lr[0]?.fantasy_name || null;
       }
+      // 09/out/2026 — A visita a um LEAD adicionado à mão na Rota do Dia chega aqui com
+      // entityType='customer' (o card de venda guarda o lead em sales_cards.customer_id).
+      // Procurando só em `customers`, o nome vinha nulo e o Inbox exibia o UUID cru.
+      // Então: não achou de um lado, procura do outro.
+      if (!entityName) entityName = await nomeDaEntidade(String(p.entityId), p.entityType === "customer" ? "lead" : "customer");
     } catch {}
     let sellerName: string | null = p.sellerName ? String(p.sellerName).slice(0, 200) : null;
     try {
@@ -622,6 +644,15 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.neighborhood = bairroByKey.get(key) || null;
         m.lastOrderAt = lastOrderByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
+      }
+      // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
+      // lugar do nome. Aqui o nome é resolvido na leitura (cliente e, se não achar, lead), sem
+      // precisar migrar nada: os cards novos já nascem com o nome certo.
+      const semNome = (mapped as any[]).filter((m) => !String(m.entityName || "").trim());
+      for (const m of semNome.slice(0, 80)) {
+        const id = String(m.customerId || m.entityId || "");
+        if (!id) continue;
+        m.entityName = (await nomeDaEntidade(id, "customer")) || (await nomeDaEntidade(id, "lead")) || null;
       }
     } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
     res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped });
