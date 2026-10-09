@@ -7,8 +7,8 @@ import { identificar, imagemDoProduto, brl } from '../utils/garrafas';
 // 🔒 Pedido mínimo do consumidor — valores padrão iguais aos da configuração no
 // servidor (Canais > Hotsite). Se a consulta falhar, a loja usa estes mesmos números,
 // nunca libera o pedido sem trava.
-const MIN_VAREJO_PADRAO = 70;
-const MIN_ATACADO_PADRAO = 80;
+const MIN_VAREJO_PADRAO = 80;
+const MIN_ATACADO_PADRAO = 200;
 
 interface CartProps {
   items: CartItem[];
@@ -26,7 +26,7 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
 
   // 🔒 TRAVA DE VALOR DO CONSUMIDOR (ago/2026) — o teste de pagamento online de
   // 18/jul, que liberava pedido mínimo zero para consumidores, foi encerrado.
-  // Os valores vêm de Canais > Hotsite > Configurações (default 70 varejo / 80
+  // Os valores vêm de Canais > Hotsite > Configurações (default 80 varejo / 200
   // atacado) e a mesma regra é reaplicada no servidor, que é a trava de verdade.
   const [minVarejo, setMinVarejo] = useState(MIN_VAREJO_PADRAO);
   const [minAtacado, setMinAtacado] = useState(MIN_ATACADO_PADRAO);

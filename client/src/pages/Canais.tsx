@@ -220,8 +220,8 @@ function ConfigHotsite() {
   const cartao = pag?.cartao || {};
   // Trava de valor: mostra o rascunho enquanto edita, senão o valor salvo.
   const min = {
-    varejo: rascunho?.minimoVarejo ?? cfg.minimoConsumidor?.varejo ?? 70,
-    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 80,
+    varejo: rascunho?.minimoVarejo ?? cfg.minimoConsumidor?.varejo ?? 80,
+    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 200,
   };
 
   return (
@@ -324,7 +324,7 @@ function ConfigHotsite() {
                 <Input
                   inputMode="decimal"
                   value={min.varejo ?? ""}
-                  placeholder="70"
+                  placeholder="80"
                   onChange={(e) => setRascunho({ ...(rascunho || {}), minimoVarejo: e.target.value })}
                 />
               </div>
@@ -333,7 +333,7 @@ function ConfigHotsite() {
                 <Input
                   inputMode="decimal"
                   value={min.atacado ?? ""}
-                  placeholder="80"
+                  placeholder="200"
                   onChange={(e) => setRascunho({ ...(rascunho || {}), minimoAtacado: e.target.value })}
                 />
               </div>

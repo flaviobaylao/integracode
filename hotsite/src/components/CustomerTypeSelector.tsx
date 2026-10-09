@@ -105,7 +105,8 @@ export function CustomerTypeSelector() {
   // 🔒 O limite entre varejo e atacado é o MESMO valor da trava do pedido mínimo do
   // atacado (Canais > Hotsite > Configurações). Lido do servidor para o texto nunca
   // divergir da trava; se a consulta falhar, usa o padrão.
-  const [limiteAtacado, setLimiteAtacado] = useState(80);
+  const [limiteAtacado, setLimiteAtacado] = useState(200);
+  const [minVarejo, setMinVarejo] = useState(80);
   useEffect(() => {
     let vivo = true;
     fetch('/api/public/canais/minimos')
@@ -113,11 +114,14 @@ export function CustomerTypeSelector() {
       .then((cfg) => {
         const a = Number(cfg?.consumidor?.atacado);
         if (vivo && Number.isFinite(a) && a > 0) setLimiteAtacado(a);
+        const v = Number(cfg?.consumidor?.varejo);
+        if (vivo && Number.isFinite(v) && v > 0) setMinVarejo(v);
       })
       .catch(() => {});
     return () => { vivo = false; };
   }, []);
-  const limiteTxt = limiteAtacado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: limiteAtacado % 1 ? 2 : 0 });
+  const reais = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: n % 1 ? 2 : 0 });
+  const limiteTxt = reais(limiteAtacado);
 
   // Etapa 1: Consumidor ou Revendedor
   if (category === null) {
@@ -160,7 +164,7 @@ export function CustomerTypeSelector() {
         <Opcao
           icone={ShoppingCart}
           titulo="Varejo"
-          descricao={`Compras até ${limiteTxt}`}
+          descricao={`Compras abaixo de ${limiteTxt} · pedido mínimo de ${reais(minVarejo)}`}
           detalhe="Preços regulares"
           onClick={() => setConsumerTier('retail')}
           testId="button-select-retail"
