@@ -657,10 +657,12 @@ export default function SolicitacoesAlteracao() {
   const [busca, setBusca] = useState("");
   // Filtro por vendedor (quem solicitou; aplica a Pendentes e Resolvidas).
   const [filtroVendedor, setFiltroVendedor] = useState("");
-  // 01/out/2026 — Filtro por MOTIVO (o rótulo que o vendedor escolheu no report:
-  // "Outro", "Sem verba", "Estoque cheio"…). A lista é montada a partir dos próprios
-  // cards, então acompanha sozinha qualquer motivo novo que o formulário passe a oferecer.
-  const [filtroMotivo, setFiltroMotivo] = useState("");
+  // 09/out/2026 — Filtro por HORIZONTE DE DATAS (de / até), pela data de abertura do card.
+  // Substituiu o filtro por motivo, que virou uma lista comprida demais para ser útil.
+  // Os dois campos são independentes: só "de" = daquele dia em diante; só "até" = até aquele
+  // dia. As datas são comparadas no fuso de Brasília, igual ao que o card mostra.
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
 
   // ✅ Seleção em lote + "Limpar caixa de pendentes": marca solicitações e as resolve
   // (status "lido") de uma vez — elas saem de Pendentes e vão para Resolvidas.
@@ -697,24 +699,28 @@ export default function SolicitacoesAlteracao() {
   for (const s of sugestoes) { if (s.from_name) vendedoresSet.add(s.from_name); if (s.to_name) vendedoresSet.add(s.to_name); }
   const vendedores = Array.from(vendedoresSet).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
-  // Motivos existentes nos cards (pendentes + resolvidos), para alimentar o filtro.
-  const motivosSet = new Set<string>();
-  for (const r of [...pending, ...resolved]) {
-    const m = String((r.details || {}).motivo || "").trim();
-    if (m) motivosSet.add(m);
-  }
-  const motivos = Array.from(motivosSet).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  // Dia (AAAA-MM-DD) no fuso de Brasília — mesma data que aparece no card.
+  const diaBRT = (iso: any) => {
+    if (!iso) return "";
+    try { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso)); } catch { return ""; }
+  };
+  const dentroDoPeriodo = (iso: any) => {
+    if (!dataDe && !dataAte) return true;
+    const d = diaBRT(iso);
+    if (!d) return false; // sem data não entra em um recorte por data
+    if (dataDe && d < dataDe) return false;
+    if (dataAte && d > dataAte) return false;
+    return true;
+  };
 
   // Filtro de busca por nome do cliente (case-insensitive) + filtro por vendedor.
   const q = busca.trim().toLowerCase();
   const matchNome = (nome) => !q || String(nome || "").toLowerCase().includes(q);
   const matchVend = (nome?: string) => !filtroVendedor || String(nome || "") === filtroVendedor;
   const matchVendSug = (s: any) => !filtroVendedor || s.from_name === filtroVendedor || s.to_name === filtroVendedor;
-  const matchMotivo = (r: any) => !filtroMotivo || String((r.details || {}).motivo || "").trim() === filtroMotivo;
-  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && matchMotivo(r));
-  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && matchMotivo(r));
-  // Sugestões de migração de carteira não têm motivo — somem quando o filtro está ativo.
-  const sugestoesF = filtroMotivo ? [] : sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s));
+  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && dentroDoPeriodo(r.createdAt));
+  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && dentroDoPeriodo(r.createdAt));
+  const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s) && dentroDoPeriodo(s.created_at || s.createdAt));
 
   // Seleção em lote (escopada à lista de pendentes já filtrada).
   const selectedIds = pendingF.filter((r) => selected.has(r.id)).map((r) => r.id);
@@ -761,19 +767,30 @@ export default function SolicitacoesAlteracao() {
           <option value="">Todos os vendedores</option>
           {vendedores.map((v) => <option key={v} value={v}>{v}</option>)}
         </select>
-        <select
-          value={filtroMotivo}
-          onChange={(e) => setFiltroMotivo(e.target.value)}
-          className="border rounded-lg px-3 py-2 text-sm bg-white max-w-[220px] disabled:opacity-50"
-          title="Filtrar por motivo do report"
-          disabled={motivos.length === 0}
-          data-testid="select-filtro-motivo"
-        >
-          <option value="">Todos os motivos</option>
-          {motivos.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        {(filtroVendedor || filtroMotivo) && (
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setFiltroMotivo(""); }}>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground shrink-0">De</span>
+          <input
+            type="date"
+            value={dataDe}
+            max={dataAte || undefined}
+            onChange={(e) => setDataDe(e.target.value)}
+            className="border rounded-lg px-2 py-2 text-sm bg-white"
+            title="Mostrar a partir desta data (abertura do card)"
+            data-testid="input-data-de"
+          />
+          <span className="text-xs text-muted-foreground shrink-0">até</span>
+          <input
+            type="date"
+            value={dataAte}
+            min={dataDe || undefined}
+            onChange={(e) => setDataAte(e.target.value)}
+            className="border rounded-lg px-2 py-2 text-sm bg-white"
+            title="Mostrar até esta data (abertura do card)"
+            data-testid="input-data-ate"
+          />
+        </div>
+        {(filtroVendedor || dataDe || dataAte) && (
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setDataDe(""); setDataAte(""); }}>
             Limpar filtros
           </Button>
         )}
