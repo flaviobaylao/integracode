@@ -1297,6 +1297,31 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   const startDate = (() => { const d = new Date(drawDate); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0]; })();
   const endDate = (() => { const d = new Date(drawDate); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; })();
   const candidates = await computeRedCandidates({ startDate, endDate });
+
+  // INJEÇÃO MANUAL (Admin): clientes forçados via botão "Repescagem" do report entram neste dia
+  // mesmo que NÃO estejam vermelhos pelas regras normais (decisão do Admin, só para forced_date).
+  // Depois deste dia não são reinjetados — voltam a respeitar todas as regras de repescagem.
+  try {
+    await ensureRepescagemForcedTable();
+    const forced: any = await db.execute(sql`
+      SELECT f.customer_id AS cid
+      FROM repescagem_forced f
+      JOIN customers c ON c.id = f.customer_id
+      WHERE f.forced_date = ${drawDate}
+        AND COALESCE(c.is_active, true) = true
+        AND COALESCE(c.situacao, '') NOT ILIKE 'inativo'
+        AND COALESCE(c.is_supplier, false) = false`);
+    const already = new Set(candidates.map((c: any) => c.customerId));
+    let injected = 0;
+    for (const r of ((forced.rows || forced) as any[])) {
+      if (!r.cid || already.has(r.cid)) continue;
+      already.add(r.cid);
+      candidates.push({ customerId: r.cid, lastRedDate: drawDate, daysSince: 0, forcedByAdmin: true });
+      injected++;
+    }
+    if (injected) console.log(`🎯 [REPESCAGEM-FORÇADO] ${drawDate}: ${injected} cliente(s) injetado(s) por decisão do Admin`);
+  } catch (e) { console.error('[runDailyDraw] forced injection:', (e as any)?.message); }
+
   const candIds = candidates.map((c: any) => c.customerId);
   const coordRows = candIds.length
     ? await db.select({ id: customers.id, lat: customers.latitude, lng: customers.longitude, sellerId: customers.sellerId })
@@ -1511,6 +1536,26 @@ async function ensureRepescagemLockCol(): Promise<void> {
   __ensuredLockCol = true;
 }
 
+// INJEÇÃO MANUAL (decisão do Admin). Todo report tem um botão "Repescagem": ao acionar, o
+// cliente é forçado a cair em repescagem EXCEPCIONALMENTE no dia seguinte (forced_date). O
+// sorteio daquele dia injeta o cliente mesmo que ele NÃO esteja vermelho pelas regras normais.
+// Depois disso, o cliente volta a respeitar todas as regras (não é reinjetado nos dias seguintes).
+let __ensuredForcedTable = false;
+async function ensureRepescagemForcedTable(): Promise<void> {
+  if (__ensuredForcedTable) return;
+  await db.execute(sql.raw(
+    "CREATE TABLE IF NOT EXISTS repescagem_forced (" +
+    "id varchar PRIMARY KEY DEFAULT gen_random_uuid(), " +
+    "customer_id varchar NOT NULL, " +
+    "forced_date varchar NOT NULL, " +
+    "source_report_id varchar, " +
+    "created_by varchar, " +
+    "created_at timestamptz DEFAULT now())"
+  ));
+  await db.execute(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS ux_repforced_cust_date ON repescagem_forced (customer_id, forced_date)"));
+  __ensuredForcedTable = true;
+}
+
 // Zera travas de dias anteriores (destrava automática na virada do dia). Idempotente.
 async function resetStaleLocks(today: string): Promise<void> {
   try {
@@ -1704,6 +1749,49 @@ export function registerRepescagemRoutes(app: Express, opts: {
       res.json({ ok: true, drawDate: today, draw });
     } catch (e: any) {
       console.error('POST /api/repescagem/redistribute', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // FORÇAR REPESCAGEM (Admin) — botão "Repescagem" de qualquer report. O cliente é forçado a
+  // cair em repescagem EXCEPCIONALMENTE no dia seguinte (forced_date = amanhã BR). O sorteio das
+  // 00:10 daquele dia injeta o cliente mesmo que ele NÃO esteja vermelho. Depois disso ele volta
+  // a respeitar todas as regras normais de repescagem (não é reinjetado nos dias seguintes).
+  app.post('/api/repescagem/forcar', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const customerId = String(req.body?.customerId || '').trim();
+      const sourceReportId = req.body?.reportId ? String(req.body.reportId) : null;
+      if (!customerId) return res.status(400).json({ message: 'customerId obrigatório' });
+
+      const cust = await db.select({ id: customers.id, name: customers.name, isActive: customers.isActive })
+        .from(customers).where(eq(customers.id, customerId)).limit(1);
+      if (cust.length === 0) return res.status(404).json({ message: 'Cliente não encontrado' });
+      if (cust[0].isActive === false) return res.status(400).json({ message: 'Cliente inativo não entra em repescagem' });
+
+      // Dia seguinte (horário de Brasília).
+      const forcedDate = (() => {
+        const d = new Date(brTodayStr() + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1);
+        return d.toISOString().split('T')[0];
+      })();
+
+      await ensureRepescagemForcedTable();
+      await db.execute(sql`
+        INSERT INTO repescagem_forced (customer_id, forced_date, source_report_id, created_by)
+        VALUES (${customerId}, ${forcedDate}, ${sourceReportId}, ${(req.currentUser?.id || null)})
+        ON CONFLICT (customer_id, forced_date) DO NOTHING`);
+
+      try {
+        await logCustomerNote({
+          customerId, label: 'Repescagem (decisão do Admin)',
+          text: `Cliente enviado manualmente para a repescagem de ${forcedDate.split('-').reverse().join('/')} (decisão do Admin a partir de um report). Depois desse dia volta a respeitar as regras normais.`,
+          actor: { id: req.currentUser?.id || 'admin', name: req.currentUser?.name || 'Admin' } as any,
+          source: 'repescagem',
+        });
+      } catch (_e: any) { console.warn('[REPESCAGEM-FORÇADO] nota:', _e?.message); }
+
+      res.json({ ok: true, customerId, forcedDate });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/forcar', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
