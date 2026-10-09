@@ -757,13 +757,31 @@ export function registerDelegationRoutes(app: Express) {
       lte(delegations.startsAt, now),
       gte(delegations.endsAt, now),
     ));
-    if (!active.length) return res.json({ ids: [] });
+    if (!active.length) return res.json({ ids: [], marks: {} });
     const dids = active.map((d) => d.id);
+    const porId: Record<string, any> = {};
+    active.forEach((d) => (porId[d.id] = d));
     const rows = await db.select().from(delegationCustomers).where(inArray(delegationCustomers.delegationId, dids));
     const isAdmin = viewer.role === "admin";
-    const set = new Set<string>();
-    for (const r of rows) { if (isAdmin || r.toUserId === viewer.id) set.add(r.customerId); }
-    res.json({ ids: [...set] });
+    const meus = rows.filter((r) => isAdmin || r.toUserId === viewer.id);
+    const set = new Set<string>(meus.map((r) => r.customerId));
+    // nome do delegado vai junto: a etiqueta na frente do nome do cliente mostra
+    // QUEM está atendendo, que é a informação que o vendedor precisa de relance.
+    const nomes = await nomesDeUsuarios(meus.map((r) => r.toUserId));
+    const marks: Record<string, { delegado: string; delegadoId: string; ate: string | null }> = {};
+    for (const r of meus) {
+      const d = porId[r.delegationId];
+      const id = String(r.toUserId || "");
+      // primeiro vínculo vence: um cliente não deveria estar em duas delegações vigentes
+      if (!marks[r.customerId]) {
+        marks[r.customerId] = {
+          delegado: nomes[id] || id,
+          delegadoId: id,
+          ate: d?.endsAt ? new Date(d.endsAt).toISOString() : null,
+        };
+      }
+    }
+    res.json({ ids: [...set], marks });
   }));
 
   // Lista detalhada de clientes sob delegação vigente (para a aba filtrável).
