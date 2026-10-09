@@ -166,8 +166,8 @@ export default function HotsitePricing() {
               <div>
                 <p className="font-semibold text-blue-900 mb-1">👤 Para Consumidores:</p>
                 <ul className="ml-4 space-y-1 text-blue-800">
-                  <li>• <strong>Varejo</strong> - Compras até R$ 200</li>
-                  <li>• <strong>Atacado</strong> - Compras acima de R$ 200</li>
+                  <li>• <strong>Varejo</strong> - Compras até R$ 80</li>
+                  <li>• <strong>Atacado</strong> - Compras a partir de R$ 80</li>
                 </ul>
               </div>
               <div>
@@ -243,7 +243,7 @@ export default function HotsitePricing() {
                       data-testid={`input-retail-${product.id}`}
                       className="text-right"
                     />
-                    <p className="text-xs text-gray-500">{'< R$ 200'}</p>
+                    <p className="text-xs text-gray-500">{'< R$ 80'}</p>
                   </div>
 
                   {/* Preço Atacado */}
@@ -261,7 +261,7 @@ export default function HotsitePricing() {
                       data-testid={`input-wholesale-${product.id}`}
                       className="text-right"
                     />
-                    <p className="text-xs text-gray-500">{'>= R$ 200'}</p>
+                    <p className="text-xs text-gray-500">{'>= R$ 80'}</p>
                   </div>
 
                   {/* Preço Goiânia */}

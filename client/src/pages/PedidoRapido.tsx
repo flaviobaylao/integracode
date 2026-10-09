@@ -73,7 +73,7 @@ function getPriceTable(category: CustomerCategory | null, consumerTier: Consumer
 
 function getMinimumOrder(category: CustomerCategory | null, consumerTier: ConsumerTier | null, resellerLocation: ResellerLocation | null): number {
   if (category === 'consumer') {
-    return consumerTier === 'wholesale' ? 200 : 70;
+    return consumerTier === 'wholesale' ? 80 : 70;
   }
   if (category === 'reseller') {
     if (resellerLocation === 'interior') return 350;
@@ -697,7 +697,7 @@ export default function PedidoRapido() {
                     <ShoppingCart className="w-8 h-8 text-blue-600" />
                   </div>
                   <h2 className="text-xl font-bold text-gray-800 mb-2">Varejo</h2>
-                  <p className="text-gray-600 text-sm">Compras até R$ 200</p>
+                  <p className="text-gray-600 text-sm">Compras até R$ 80</p>
                   <Badge className="mt-2 bg-blue-100 text-blue-700">Mínimo R$ 70</Badge>
                 </CardContent>
               </Card>
@@ -712,7 +712,7 @@ export default function PedidoRapido() {
                     <ShoppingCart className="w-8 h-8 text-purple-600" />
                   </div>
                   <h2 className="text-xl font-bold text-gray-800 mb-2">Atacado</h2>
-                  <p className="text-gray-600 text-sm">Compras acima de R$ 200</p>
+                  <p className="text-gray-600 text-sm">Compras a partir de R$ 80</p>
                   <Badge className="mt-2 bg-purple-100 text-purple-700">Preços especiais</Badge>
                 </CardContent>
               </Card>

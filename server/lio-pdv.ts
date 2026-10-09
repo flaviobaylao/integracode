@@ -89,7 +89,7 @@ async function contaFinanceira(): Promise<string | null> {
  * A partir de quanto a venda passa a ser atacado.
  *
  * NAO e numero inventado: o schema de products documenta retail_price como
- * "consumidor < R$200" e wholesale_price como "consumidor >= R$200". O PDV
+ * "consumidor < R$80" e wholesale_price como "consumidor >= R$80". O PDV
  * apenas SUGERE a tabela por esta regra — quem decide continua sendo o
  * operador, porque no balcao existe combinado que o sistema nao conhece.
  */

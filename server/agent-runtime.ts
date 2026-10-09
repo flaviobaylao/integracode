@@ -52,7 +52,7 @@ const TOOL_DEFS: any[] = [
 // Ferramenta EXTRA (só habilitada no canal Instagram): registra um pedido no pipeline de faturamento.
 const ORDER_TOOL: any = {
   name: 'registrar_pedido',
-  description: 'Registra um PEDIDO no pipeline de faturamento. O pedido entra como PENDENTE e NÃO é faturado automaticamente — a equipe confirma antes. Use SOMENTE quando o cliente confirmar que quer comprar E você já tiver coletado TODOS os dados do pedido completo. Você NÃO define o preço: o sistema calcula pela tabela oficial conforme o tipo de cliente (consumidor: varejo até R$200 / atacado acima; revenda: por região). Na triagem, descubra se o cliente é consumidor final ou revendedor; para revenda, pergunte a região (Goiânia, interior de Goiás ou Brasília/entorno). Se faltar qualquer dado, NÃO chame esta ferramenta: pergunte ao cliente primeiro.',
+  description: 'Registra um PEDIDO no pipeline de faturamento. O pedido entra como PENDENTE e NÃO é faturado automaticamente — a equipe confirma antes. Use SOMENTE quando o cliente confirmar que quer comprar E você já tiver coletado TODOS os dados do pedido completo. Você NÃO define o preço: o sistema calcula pela tabela oficial conforme o tipo de cliente (consumidor: varejo até R$80 / atacado a partir de R$80; revenda: por região). Na triagem, descubra se o cliente é consumidor final ou revendedor; para revenda, pergunte a região (Goiânia, interior de Goiás ou Brasília/entorno). Se faltar qualquer dado, NÃO chame esta ferramenta: pergunte ao cliente primeiro.',
   input_schema: {
     type: 'object',
     properties: {
@@ -119,7 +119,8 @@ function onlyDigits(s: any) { return String(s || '').replace(/\D/g, ''); }
 // ===== Helpers do registrar_pedido =====
 function rid() { return Math.random().toString(36).slice(2, 10); }
 function _num(v: any) { const n = Number(v); return isNaN(n) ? 0 : n; }
-// Consumidor: varejo (< R$200) ou atacado (>= R$200). Fallback para price padrão.
+// Consumidor: varejo (< limite) ou atacado (>= limite). Limite = mínimo do atacado em
+// Canais > Hotsite > Configurações (padrão R$ 80). Fallback para price padrão.
 function priceConsumer(p: any, table: 'retail' | 'wholesale') {
   if (table === 'wholesale') return _num(p.wholesale_price != null ? p.wholesale_price : p.price);
   return _num(p.retail_price != null ? p.retail_price : p.price);
@@ -546,9 +547,12 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
 
     // Tabela de preço.
     let table: string;
+    // Limite varejo/atacado = mesmo valor da trava do mínimo do atacado (padrão R$ 80).
+    let limiteAtacado = 80;
+    try { const { getMinimosConsumidor } = await import('./canais-routes'); const m = await getMinimosConsumidor(); if (m.atacado > 0) limiteAtacado = m.atacado; } catch { /* mantém 80 */ }
     if (tipo === 'revenda') table = regiao;
-    else { let sub = 0; for (const r of resolved) sub += priceConsumer(r.p, 'retail') * r.qtd; table = sub >= 200 ? 'wholesale' : 'retail'; }
-    const tabelaLabel: Record<string, string> = { retail: 'Varejo (consumidor)', wholesale: 'Atacado (consumidor a partir de R$200)', goiania: 'Revenda Goiânia', interior: 'Revenda Interior GO', brasilia: 'Revenda Brasília/Entorno' };
+    else { let sub = 0; for (const r of resolved) sub += priceConsumer(r.p, 'retail') * r.qtd; table = sub >= limiteAtacado ? 'wholesale' : 'retail'; }
+    const tabelaLabel: Record<string, string> = { retail: 'Varejo (consumidor)', wholesale: `Atacado (consumidor a partir de R$${limiteAtacado})`, goiania: 'Revenda Goiânia', interior: 'Revenda Interior GO', brasilia: 'Revenda Brasília/Entorno' };
 
     const products = resolved.map((r) => {
       const unit = tipo === 'revenda' ? priceRevenda(r.p, table) : priceConsumer(r.p, table as any);
