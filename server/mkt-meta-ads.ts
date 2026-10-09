@@ -11,7 +11,8 @@
 // ENV (Railway):
 //   META_AD_ACCOUNT_ID   act_123... (conta de anuncios no Gerenciador)
 //   META_ADS_TOKEN       token de usuario do sistema com ads_management (fallback: META_CAPI_TOKEN)
-//   META_PAGE_ID         pagina do Facebook ligada ao WhatsApp 1841 (ja existe para CTWA)
+//   META_PAGE_ID         pagina do Facebook ligada ao WhatsApp do anuncio
+//   META_ADS_WHATSAPP    (opcional) numero do botao; padrao 5562995782812
 //   META_IG_ACTOR_ID     (opcional) id da conta do Instagram no Business — para o anuncio sair tambem no IG
 //   META_ADS_LAT / META_ADS_LNG / META_ADS_RAIO_KM  (opcional) centro e raio padrao (default: Goiania, 40 km)
 //
@@ -23,7 +24,9 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 
 const GRAPH = () => 'https://graph.facebook.com/' + (process.env.GRAPH_VERSION || 'v21.0');
-const NUMERO_WHATSAPP = '5562994981841';
+// Numero do botao 'Enviar mensagem'. Decisao do Flavio (08/out/2026): WhatsApp comercial 2812.
+// Override por env META_ADS_WHATSAPP (so digitos, com 55).
+const NUMERO_WHATSAPP = String(process.env.META_ADS_WHATSAPP || '5562995782812').replace(/\D/g, '');
 export const AGENTE = 'mkt_publicador'; // custo de API vai para o mesmo balde do publicador (provedor meta)
 
 async function getSetting(k: string, d: string): Promise<string> {

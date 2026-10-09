@@ -4708,6 +4708,15 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   app.post("/api/mkt/ads/:id/ativar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
     try { const ads = await import('./mkt-meta-ads'); res.json(await ads.ativar(String(req.params.id))); } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  // Anuncio avulso pela Central (sem passar pelo Radar): peca/asset + legenda + orcamento/dia + dias.
+  app.post("/api/mkt/ads/criar", authenticateUser, requireRole(['admin']), async (req: any, res: any) => {
+    try {
+      const ads = await import('./mkt-meta-ads'); const b = req.body || {};
+      if (!b.assetId || !b.legenda) return res.status(400).json({ error: 'assetId e legenda obrigatorios' });
+      const r = await ads.criarAnuncioCTWA({ nome: String(b.nome || 'Integra · anuncio'), legenda: String(b.legenda), assetId: Number(b.assetId), orcamentoDia: Number(b.orcamentoDia) || 15, dias: Number(b.dias) || 6, pecaId: b.pecaId || null, raioKm: b.raioKm ? Number(b.raioKm) : undefined, ativar: b.ativar === true });
+      res.status(r.ok ? 200 : 400).json(r);
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   app.post("/api/mkt/ads/coletar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const ads = await import('./mkt-meta-ads'); res.json(await ads.coletarInsights()); } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
