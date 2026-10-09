@@ -5,7 +5,7 @@ import { useState, useRef, useEffect, Fragment } from "react";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { useDelegacaoMarks, TagDelegacao } from "@/components/SobDelegacaoBadge";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
 import CopyButton from "@/components/CopyButton";
 import { usePermissions } from "@/lib/permissions";
@@ -204,7 +204,7 @@ export default function ActiveCustomers() {
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
   // 🔒 Inativar cliente é EXCLUSIVO do Admin (o isAdmin acima é o grupo gestor e governa outros botões).
   const isStrictAdmin = user?.role === 'admin';
-  const delegMarks = useCustomerMarks();
+  const delegMarks = useDelegacaoMarks();
   const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
@@ -1514,6 +1514,7 @@ export default function ActiveCustomers() {
                                   <History className="h-4 w-4" />
                                 </button>
                                 <div className={`font-medium ${(ac.customer as any)?.isConsumerClient ? 'bg-green-100 text-green-800 px-2 py-1 rounded-md inline-block' : ''}`}>
+                                  <TagDelegacao customerId={((ac.customer as any)?.id ?? ac.customerId) as string} marks={delegMarks} />
                                   {ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "-"}
                                   <QuarentenaTag customerId={ac.customer?.id} date={(ac.customer as any)?.serviceStartDate} />
                                 </div>
@@ -1525,7 +1526,6 @@ export default function ActiveCustomers() {
                                 {ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude) && (
                                   <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap" title="Sem coordenadas no cadastro - nao entra na rota do dia">SEM COORDENADA</span>
                                 )}
-                                <SobDelegacaoBadge show={delegMarks.has(((ac.customer as any)?.id ?? ac.customerId) as string)} />
                               </div>
                               {(ac.customer as any)?.companyName && (
                                 <div className="text-xs text-muted-foreground truncate max-w-[220px]" title={(ac.customer as any).companyName}>
