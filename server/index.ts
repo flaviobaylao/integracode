@@ -4717,6 +4717,20 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.status(r.ok ? 200 : 400).json(r);
     } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
+  // Descobre conta de anuncios / paginas / permissoes a partir do token ja configurado (nao devolve o token)
+  app.get("/api/mkt/ads/descobrir", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
+    try {
+      const tok = String(process.env.META_ADS_TOKEN || process.env.META_CAPI_TOKEN || '').trim();
+      if (!tok) return res.json({ temToken: false });
+      const G = 'https://graph.facebook.com/' + (process.env.GRAPH_VERSION || 'v21.0') + '/';
+      const get = async (c: string, f: string) => { try { const r = await fetch(G + c + '?fields=' + encodeURIComponent(f) + '&limit=50&access_token=' + encodeURIComponent(tok)); return await r.json(); } catch (e: any) { return { error: String(e?.message || e) }; } };
+      res.json({ temToken: true, origem: process.env.META_ADS_TOKEN ? 'META_ADS_TOKEN' : 'META_CAPI_TOKEN',
+        me: await get('me', 'id,name'), permissoes: await get('me/permissions', 'permission,status'),
+        contas: await get('me/adaccounts', 'id,name,account_status,currency,business,funding_source_details'),
+        paginas: await get('me/accounts', 'id,name,instagram_business_account,whatsapp_number'),
+        env: { META_AD_ACCOUNT_ID: !!process.env.META_AD_ACCOUNT_ID, META_PAGE_ID: !!process.env.META_PAGE_ID, META_IG_ACTOR_ID: !!process.env.META_IG_ACTOR_ID, META_PIXEL_ID: !!process.env.META_PIXEL_ID } });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
+  });
   app.post("/api/mkt/ads/coletar", authenticateUser, requireRole(['admin']), async (_req: any, res: any) => {
     try { const ads = await import('./mkt-meta-ads'); res.json(await ads.coletarInsights()); } catch (e: any) { res.status(500).json({ error: (e && e.message) || String(e) }); }
   });
