@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { compareSellersByType } from "@/lib/sellerOrder";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@/lib/queryClient";
-import { useCustomerMarks, SobDelegacaoBadge } from "@/components/SobDelegacaoBadge";
+import { useDelegacaoMarks, TagDelegacao } from "@/components/SobDelegacaoBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -146,7 +146,7 @@ export default function RotaDoDia() {
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(n).then(ok, fallback);
     else fallback();
   };
-  const delegMarks = useCustomerMarks();
+  const delegMarks = useDelegacaoMarks();
   const navigate = useLocation()[1];
   
   const isAdmin = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'administrative';
@@ -2602,6 +2602,7 @@ export default function RotaDoDia() {
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <p className={`font-semibold ${statusColor} flex items-center gap-1`}>
                                 {isLead && <Target className="h-4 w-4 text-amber-600 dark:text-amber-400" />}
+                                <TagDelegacao customerId={visit.customerId} marks={delegMarks} />
                                 {visit.customerName}
                                 <button
                                   type="button"
@@ -2623,7 +2624,6 @@ export default function RotaDoDia() {
                               )}
                               {!isLead && <SalesCycleDots cycles={cyclesByCustomer.get(String(visit.customerId))} />}
                               {isExpanded && (<>
-                              <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                               {(() => {
                                 const dec = decisaoDoCliente(visit.customerId);
                                 if (!dec) return null;
@@ -3046,6 +3046,7 @@ export default function RotaDoDia() {
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <p className="font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-2">
                                       <Phone className="h-4 w-4" />
+                                      <TagDelegacao customerId={visit.customerId} marks={delegMarks} />
                                       {visit.customerName}
                                       <button
                                         type="button"
@@ -3067,7 +3068,6 @@ export default function RotaDoDia() {
                                     })()}
                                     <SalesCycleDots cycles={cyclesByCustomer.get(String(visit.customerId))} />
                                     {vExpanded && (<>
-                                    <SobDelegacaoBadge show={!!visit.customerId && delegMarks.has(visit.customerId)} />
                                     {/* Mostrar pedidos do dia */}
                                     {visit.customerId && customerInfo?.orders[visit.customerId]?.map((order: any, orderIdx: number) => (
                                       <Badge 
