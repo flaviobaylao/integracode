@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { ShoppingCart, Store, MapPin, Package, ChevronRight, ChevronLeft } from 'lucide-react';
 
@@ -102,6 +102,23 @@ export function CustomerTypeSelector() {
     reset,
   } = useCustomerType();
 
+  // 🔒 O limite entre varejo e atacado é o MESMO valor da trava do pedido mínimo do
+  // atacado (Canais > Hotsite > Configurações). Lido do servidor para o texto nunca
+  // divergir da trava; se a consulta falhar, usa o padrão.
+  const [limiteAtacado, setLimiteAtacado] = useState(80);
+  useEffect(() => {
+    let vivo = true;
+    fetch('/api/public/canais/minimos')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => {
+        const a = Number(cfg?.consumidor?.atacado);
+        if (vivo && Number.isFinite(a) && a > 0) setLimiteAtacado(a);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+  const limiteTxt = limiteAtacado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: limiteAtacado % 1 ? 2 : 0 });
+
   // Etapa 1: Consumidor ou Revendedor
   if (category === null) {
     return (
@@ -143,7 +160,7 @@ export function CustomerTypeSelector() {
         <Opcao
           icone={ShoppingCart}
           titulo="Varejo"
-          descricao="Compras até R$ 200"
+          descricao={`Compras até ${limiteTxt}`}
           detalhe="Preços regulares"
           onClick={() => setConsumerTier('retail')}
           testId="button-select-retail"
@@ -151,7 +168,7 @@ export function CustomerTypeSelector() {
         <Opcao
           icone={Package}
           titulo="Atacado"
-          descricao="Compras acima de R$ 200"
+          descricao={`Compras a partir de ${limiteTxt}`}
           detalhe="Preços especiais"
           onClick={() => setConsumerTier('wholesale')}
           testId="button-select-wholesale"

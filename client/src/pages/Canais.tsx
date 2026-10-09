@@ -221,7 +221,7 @@ function ConfigHotsite() {
   // Trava de valor: mostra o rascunho enquanto edita, senão o valor salvo.
   const min = {
     varejo: rascunho?.minimoVarejo ?? cfg.minimoConsumidor?.varejo ?? 70,
-    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 200,
+    atacado: rascunho?.minimoAtacado ?? cfg.minimoConsumidor?.atacado ?? 80,
   };
 
   return (
@@ -333,7 +333,7 @@ function ConfigHotsite() {
                 <Input
                   inputMode="decimal"
                   value={min.atacado ?? ""}
-                  placeholder="200"
+                  placeholder="80"
                   onChange={(e) => setRascunho({ ...(rascunho || {}), minimoAtacado: e.target.value })}
                 />
               </div>
