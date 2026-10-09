@@ -38,6 +38,7 @@ import {
 import { exportToExcel as exportPadraoExcel } from '@/lib/tableTools';
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
+import { useDelegacaoMarks, TagDelegacao } from "@/components/SobDelegacaoBadge";
 import { apiRequest } from "@/lib/queryClient";
 
 const DAYS_OF_WEEK = [
@@ -100,6 +101,7 @@ const getWeekdaysLabel = (weekdays: string) => {
 
 export default function SalesSchedule() {
   const { user } = useAuth();
+  const delegMarks = useDelegacaoMarks();
   const { toast } = useToast();
   const [selectedDay, setSelectedDay] = useState('Seg');
   const [selectedSeller, setSelectedSeller] = useState<string>('all');
@@ -655,6 +657,7 @@ export default function SalesSchedule() {
                         <div className="flex-1">
                           <div className="flex items-center space-x-2">
                             <h3 className="font-semibold text-lg" data-testid={`text-customer-${card.id}`}>
+                              <TagDelegacao customerId={(card.customer as any)?.id ?? (card as any).customerId} marks={delegMarks} />
                               {card.customer.fantasyName || card.customer.name}
                             </h3>
                             <OmieInstanceBadge instanceId={(card.customer as any).omieInstanceId} />
