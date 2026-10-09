@@ -34,10 +34,12 @@ import SalesCardDetailsModal from "./SalesCardDetailsModal";
 import SaleEditModal from "./SaleEditModal";
 import NoSaleModal from "./NoSaleModal";
 import WhatsAppButton from "./WhatsAppButton";
+import { useDelegacaoMarks, TagDelegacao } from "@/components/SobDelegacaoBadge";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 export default function SalesCards() {
   const [, navigate] = useLocation();
+  const delegMarks = useDelegacaoMarks();
   // Deep-link: /?status=draft abre a tela ja filtrada em rascunhos (vindo do pipeline).
   const [statusFilter, setStatusFilter] = useState(() => {
     try {
@@ -607,7 +609,7 @@ export default function SalesCards() {
                 
                 <div className="space-y-3">
                   <div>
-                    <h3 className="font-semibold text-gray-800">{card.customer?.fantasyName || card.customer?.name || 'Cliente não encontrado'}</h3>
+                    <h3 className="font-semibold text-gray-800"><TagDelegacao customerId={(card.customer as any)?.id ?? (card as any).customerId} marks={delegMarks} />{card.customer?.fantasyName || card.customer?.name || 'Cliente não encontrado'}</h3>
                     <p className="text-sm text-gray-600">{card.customer?.address || ''}</p>
                   </div>
                   
