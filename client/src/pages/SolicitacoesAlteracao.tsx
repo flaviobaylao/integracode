@@ -21,7 +21,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -193,6 +193,20 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
     },
     onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  // 🎯 Repescagem (decisão do Admin): força o cliente a cair em repescagem EXCEPCIONALMENTE no
+  // dia seguinte. Depois disso ele volta a respeitar todas as regras normais de repescagem.
+  const forcarRepescagemMut = useMutation({
+    mutationFn: async () => {
+      const cid = r.customerId || r.entityId;
+      return apiRequest("POST", "/api/repescagem/forcar", { customerId: cid, reportId: r.id });
+    },
+    onSuccess: (res: any) => {
+      const d = res?.forcedDate ? String(res.forcedDate).split("-").reverse().join("/") : "amanhã";
+      toast({ title: "Enviado para a repescagem", description: `O cliente cai na repescagem de ${d} por decisão do Admin.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao enviar para repescagem", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   // 🕒 Quarentena: atualiza a "Data de Início do Fornecimento" (serviceStartDate) do cliente —
   // mesmo caminho do formulário "Editar Dados do Cliente" (PATCH /api/customers/:id, regenera agenda) —
   // e fecha o report (status "lido").
@@ -281,7 +295,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
     },
     onError: (e: any) => toast({ title: "Erro ao agendar cobrança", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
-  const busy = resolveMut.isPending || inativarMut.isPending || inativarReportMut.isPending || quarentenaMut.isPending || whatsappMut.isPending;
+  const busy = resolveMut.isPending || inativarMut.isPending || inativarReportMut.isPending || quarentenaMut.isPending || whatsappMut.isPending || forcarRepescagemMut.isPending;
   // 🗂️ Report do vendedor (não-venda, justificativa, atendimento virtual, desfecho de lead):
   // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
   const isReport = r?.kind === "report";
@@ -381,6 +395,12 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             {whatsappMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><MessageCircle className="h-4 w-4 mr-1" /> Envio Whatsapp</>}
           </Button>
           {r.entityType === "customer" && (<>
+            <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50" disabled={busy}
+              title="Envia este cliente para a repescagem no dia seguinte (decisão do Admin). Depois ele volta a respeitar as regras normais."
+              data-testid={`cr-repescagem-${r.id}`}
+              onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE amanhã (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
+              {forcarRepescagemMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Repescagem</>}
+            </Button>
             <Button size="sm" variant="outline" className="border-red-400 text-red-700 hover:bg-red-50" disabled={busy}
               onClick={() => { if (window.confirm("Inativar este cliente? Ele sai dos Clientes Ativos (mesmas regras da inativação) e o report vai para Resolvidas.")) inativarReportMut.mutate(); }}>
               {inativarReportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar Cliente</>}
@@ -530,6 +550,16 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
     },
     onError: (e: any) => toast({ title: "Erro no envio por WhatsApp", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  // 🎯 Repescagem (decisão do Admin) — também disponível no report já resolvido.
+  const forcarRepescagemMut = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/repescagem/forcar", { customerId: r.customerId || r.entityId, reportId: r.id }),
+    onSuccess: (res: any) => {
+      const d = res?.forcedDate ? String(res.forcedDate).split("-").reverse().join("/") : "amanhã";
+      toast({ title: "Enviado para a repescagem", description: `O cliente cai na repescagem de ${d} por decisão do Admin.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao enviar para repescagem", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -586,12 +616,22 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-xs text-muted-foreground">Resolvido por {r.resolvedByName || "—"} • {fmtDate(r.resolvedAt)}</div>
         {isReport && (
-          <Button size="sm" variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs" disabled={whatsappMut.isPending}
-            title="Envia o recorte deste report para DÉBITOS - Inbox de Informações (+55 62 9451-1997)"
-            data-testid={`cr-whatsapp-resolved-${r.id}`}
-            onClick={() => whatsappMut.mutate()}>
-            {whatsappMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><MessageCircle className="h-3.5 w-3.5 mr-1" /> Envio Whatsapp</>}
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {r.entityType === "customer" && (
+              <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50 h-7 text-xs" disabled={forcarRepescagemMut.isPending}
+                title="Envia este cliente para a repescagem no dia seguinte (decisão do Admin). Depois ele volta a respeitar as regras normais."
+                data-testid={`cr-repescagem-resolved-${r.id}`}
+                onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE amanhã (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
+                {forcarRepescagemMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Target className="h-3.5 w-3.5 mr-1" /> Repescagem</>}
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs" disabled={whatsappMut.isPending}
+              title="Envia o recorte deste report para DÉBITOS - Inbox de Informações (+55 62 9451-1997)"
+              data-testid={`cr-whatsapp-resolved-${r.id}`}
+              onClick={() => whatsappMut.mutate()}>
+              {whatsappMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><MessageCircle className="h-3.5 w-3.5 mr-1" /> Envio Whatsapp</>}
+            </Button>
+          </div>
         )}
       </div>
     </Card>
