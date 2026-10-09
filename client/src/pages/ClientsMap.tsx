@@ -24,6 +24,7 @@ import type { Customer } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { sortSellerNamesByType } from "@/lib/sellerOrder";
 import { MultiSelect, SEM_VENDEDOR } from "@/lib/tableTools";
+import { useDelegacaoMarks, TagDelegacao } from "@/components/SobDelegacaoBadge";
 
 // Opção do filtro para cadastro sem bairro preenchido (dá para achar e corrigir).
 const SEM_BAIRRO = "Sem Bairro/Setor";
@@ -353,6 +354,7 @@ type PropsPonto = {
   aoAbrirHistoricoLead: (c: any) => void;
 };
 const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, salvandoDia, salvandoVendedor, vendedores, aoCopiar, aoEditar, aoMudarDia, aoMudarData, aoMudarVendedor, aoSalvarCliente, aoMudarProximaVisita, aoMudarDiaDeRota, aoAbrirAcoes, aoAbrirHistoricoLead }: PropsPonto) {
+  const delegMarks = useDelegacaoMarks();
   // Telefone é campo de texto: só grava ao sair do campo (ou Enter), não a cada tecla.
   const [tel, setTel] = useState<string>(customer.phone || '');
   useEffect(() => { setTel(customer.phone || ''); }, [customer.phone]);
@@ -373,6 +375,7 @@ const PontoDoMapa = memo(function PontoDoMapa({ customer, podeEditar, copiado, s
         <div className="space-y-3 min-w-[220px]">
           <div className="flex items-center gap-2">
             <h3 className="font-bold text-base">
+              {!ehLead && <TagDelegacao customerId={customer?.id ? String(customer.id) : null} marks={delegMarks} />}
               {!ehLead && !ehPonto && customer?.id ? (
                 <button type="button" className="text-left hover:underline decoration-dotted" onClick={() => aoAbrirAcoes(customer)} data-testid={`btn-acoes-${customer.id}`}>{nomePonto}</button>
               ) : ehLead && !ehPonto && customer?.id ? (
