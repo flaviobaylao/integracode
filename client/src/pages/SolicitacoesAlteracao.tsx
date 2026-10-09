@@ -194,16 +194,21 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
     onError: (e: any) => toast({ title: "Erro ao inativar", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
   // 🎯 Repescagem (decisão do Admin): força o cliente a cair em repescagem EXCEPCIONALMENTE no
-  // dia seguinte. Depois disso ele volta a respeitar todas as regras normais de repescagem.
+  // dia seguinte e, em seguida, FECHA o report (status "lido") — o card vai para Resolvidas.
+  // Depois disso o cliente volta a respeitar todas as regras normais de repescagem.
   const forcarRepescagemMut = useMutation({
     mutationFn: async () => {
       const cid = r.customerId || r.entityId;
-      return apiRequest("POST", "/api/repescagem/forcar", { customerId: cid, reportId: r.id });
+      const res = await apiRequest("POST", "/api/repescagem/forcar", { customerId: cid, reportId: r.id });
+      await apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
+      return res;
     },
     onSuccess: (res: any) => {
       const d = res?.forcedDate ? String(res.forcedDate).split("-").reverse().join("/") : "amanhã";
-      toast({ title: "Enviado para a repescagem", description: `O cliente cai na repescagem de ${d} por decisão do Admin.` });
+      toast({ title: "Enviado para a repescagem", description: `O cliente cai na repescagem de ${d} por decisão do Admin. O report foi para Resolvidas.` });
       queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
     },
     onError: (e: any) => toast({ title: "Erro ao enviar para repescagem", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
