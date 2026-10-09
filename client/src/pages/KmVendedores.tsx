@@ -260,6 +260,20 @@ export default function KmVendedores() {
     return out.sort((a, b) => (a.mes === b.mes ? b.valor - a.valor : b.mes.localeCompare(a.mes)));
   }, [rows, months, regions, rateGONum, rateDFNum, ratePSNNum]);
 
+  // Filtros da aba "Km e pagamento por mes" ("" = todos).
+  const [pagMes, setPagMes] = useState<string>("");
+  const [pagSeller, setPagSeller] = useState<string>("");
+  const linhasPag = useMemo(
+    () => linhasMes.filter((l) => (!pagMes || l.mes === pagMes) && (!pagSeller || l.sellerId === pagSeller)),
+    [linhasMes, pagMes, pagSeller],
+  );
+  const mesesPag = useMemo(() => Array.from(new Set(linhasMes.map((l) => l.mes))).sort().reverse(), [linhasMes]);
+  const sellersPag = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of linhasMes) if (!pagMes || l.mes === pagMes) m.set(l.sellerId, l.sellerName);
+    return Array.from(m).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [linhasMes, pagMes]);
+
   // Tarifa R$/km de um vendedor da aba diaria (mesma referencia escolhida na aba mensal).
   const rateDoVendedor = (sellerId: string): number => {
     const r = sellers.find((x) => x.sellerId === sellerId);
@@ -469,11 +483,22 @@ export default function KmVendedores() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2"><DollarSign className="w-4 h-4" /> Km e pagamento por mês</CardTitle>
             <div className="text-xs text-muted-foreground mt-1">Histórico fixo: uma linha por vendedor e mês, com a km rodada (calculada pelos check-ins da rota) e o valor a pagar.</div>
+            <div className="flex items-center gap-2 flex-wrap mt-2">
+              <select value={pagMes} onChange={(e) => setPagMes(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm font-semibold" title="Mês">
+                <option value="">Todos os meses</option>
+                {mesesPag.map((m) => <option key={m} value={m}>{fmtMes(m)}</option>)}
+              </select>
+              <select value={pagSeller} onChange={(e) => setPagSeller(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
+                <option value="">Todos os vendedores</option>
+                {sellersPag.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
+              </select>
+              {(pagMes || pagSeller) ? <button type="button" onClick={() => { setPagMes(""); setPagSeller(""); }} className="text-xs text-indigo-600 hover:underline">Limpar filtros</button> : null}
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <div className="text-sm text-muted-foreground py-6">Carregando...</div>
-            ) : linhasMes.length === 0 ? (
+            ) : linhasPag.length === 0 ? (
               <div className="text-sm text-muted-foreground py-6">Nenhuma rota com quilometragem registrada ainda.</div>
             ) : (
               <>
@@ -490,7 +515,7 @@ export default function KmVendedores() {
                       </tr>
                     </thead>
                     <tbody>
-                      {linhasMes.map((l) => (
+                      {linhasPag.map((l) => (
                         <tr key={l.mes + l.sellerId} className="border-t hover:bg-muted/40">
                           <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtMes(l.mes)}</td>
                           <td className="py-2 px-3 whitespace-nowrap">{l.sellerName}</td>
@@ -503,10 +528,10 @@ export default function KmVendedores() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 bg-muted/30 font-bold">
-                        <td className="py-2 px-3" colSpan={2}>Total ({linhasMes.length} linha(s))</td>
-                        <td className="py-2 px-3 text-right tabular-nums">{fmtKm(linhasMes.reduce((a, l) => a + l.km, 0))}</td>
+                        <td className="py-2 px-3" colSpan={2}>Total ({linhasPag.length} linha(s))</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{fmtKm(linhasPag.reduce((a, l) => a + l.km, 0))}</td>
                         <td className="py-2 px-3" colSpan={2}></td>
-                        <td className="py-2 px-3 text-right tabular-nums text-green-700">{fmtBRL(linhasMes.reduce((a, l) => a + l.valor, 0))}</td>
+                        <td className="py-2 px-3 text-right tabular-nums text-green-700">{fmtBRL(linhasPag.reduce((a, l) => a + l.valor, 0))}</td>
                       </tr>
                     </tfoot>
                   </table>
