@@ -24140,6 +24140,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     radar_preco_mil: '32',
     radar_cota_gratis: '5000',
     radar_cambio: '5.20',
+    foto_enabled: 'false',
+    foto_preco_mil: '1.50',
+    foto_cota_gratis: '1000',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
   };
   async function _getRecursos(): Promise<Record<string, string>> {
@@ -24165,7 +24168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'radar_segmentos'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'radar_segmentos'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
@@ -24180,10 +24183,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const preco = Number(cfg.radar_preco_mil) || 32;
       const cota = Number(cfg.radar_cota_gratis) || 5000;
       const cambio = Number(cfg.radar_cambio) || 5.2;
+      const fotoPreco = Number(cfg.foto_preco_mil) || 1.5;
+      const fotoCota = Number(cfg.foto_cota_gratis) || 1000;
       const porVend: any = await db.execute(sql`
         SELECT COALESCE(NULLIF(user_name, ''), '(desconhecido)') AS vendedor, user_id,
                COUNT(*) FILTER (WHERE feature = 'radar') AS radar_total,
                COUNT(*) FILTER (WHERE feature = 'radar' AND billable) AS radar_cobravel,
+               COUNT(*) FILTER (WHERE feature = 'foto') AS foto_total,
+               COUNT(*) FILTER (WHERE feature = 'foto' AND billable) AS foto_cobravel,
                COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total
         FROM places_usage
         WHERE date_trunc('month', created_at) = date_trunc('month', now())
@@ -24193,22 +24200,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tot: any = await db.execute(sql`
         SELECT COUNT(*) FILTER (WHERE feature = 'radar') AS radar_total,
                COUNT(*) FILTER (WHERE feature = 'radar' AND billable) AS radar_cobravel,
+               COUNT(*) FILTER (WHERE feature = 'foto') AS foto_total,
+               COUNT(*) FILTER (WHERE feature = 'foto' AND billable) AS foto_cobravel,
                COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total
         FROM places_usage WHERE date_trunc('month', created_at) = date_trunc('month', now())
       `);
       const t = ((tot?.rows || []) as any[])[0] || {};
       const totalCobravel = Number(t.radar_cobravel || 0);
       const cobravelPago = Math.max(0, totalCobravel - cota);
-      const custoUSD = (cobravelPago / 1000) * preco;
+      const custoRadarUSD = (cobravelPago / 1000) * preco;
+      const fotoTotal = Number(t.foto_total || 0);
+      const fotoCobravel = Number(t.foto_cobravel || 0);
+      const fotoPago = Math.max(0, fotoCobravel - fotoCota);
+      const custoFotoUSD = (fotoPago / 1000) * fotoPreco;
+      const custoUSD = custoRadarUSD + custoFotoUSD;
       const custoBRL = custoUSD * cambio;
       const precoBRL = preco * cambio;
+      const fotoPrecoBRL = fotoPreco * cambio;
       return res.json({
         ok: true, mes: new Date().toISOString().slice(0, 7), preco, cota, cambio, precoBRL,
         totalRadar: Number(t.radar_total || 0), totalCobravel, cobravelPago, custoUSD, custoBRL,
+        custoRadarUSD, custoFotoUSD,
+        fotoTotal, fotoCobravel, fotoCota, fotoPreco, fotoPrecoBRL, fotoPago,
         fichaTotal: Number(t.ficha_total || 0),
         porVendedor: ((porVend?.rows || []) as any[]).map((x) => ({
           vendedor: x.vendedor, userId: x.user_id,
-          radarTotal: Number(x.radar_total || 0), radarCobravel: Number(x.radar_cobravel || 0), fichaTotal: Number(x.ficha_total || 0),
+          radarTotal: Number(x.radar_total || 0), radarCobravel: Number(x.radar_cobravel || 0),
+          fotoTotal: Number(x.foto_total || 0), fichaTotal: Number(x.ficha_total || 0),
         })),
       });
     } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
@@ -24316,6 +24334,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       novos.sort((a, b) => (a.distancia ?? 9999) - (b.distancia ?? 9999));
       return res.json({ ok: true, total: novos.length, fromCache: !billable, raio, segmentos, resultados: novos });
     } catch (e: any) { console.error('[radar] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+
+  // 📷 Consulta por foto — OCR (Cloud Vision Text Detection) + busca no Integra (leads + clientes).
+  // Qualquer usuário autenticado. POST { imageBase64 }. Só verifica se já é cliente/lead.
+  // Requer GOOGLE_MAPS_API_KEY com "Cloud Vision API" habilitada no Google Cloud.
+  app.post('/api/consulta-local/foto', authenticateUser, async (req: any, res) => {
+    try {
+      await _ensureRecursosSchema;
+      const cfg = await _getRecursos();
+      if (String(cfg.foto_enabled) !== 'true') {
+        return res.json({ ok: false, disabled: true, message: 'Busca por foto desativada pelo administrador.' });
+      }
+      const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
+      if (!key) return res.status(400).json({ ok: false, message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.' });
+      let img = String(req.body?.imageBase64 || '');
+      const comma = img.indexOf(',');
+      if (img.startsWith('data:') && comma >= 0) img = img.slice(comma + 1);
+      img = img.trim();
+      if (!img || img.length < 100) return res.status(400).json({ ok: false, message: 'Imagem inválida ou vazia.' });
+      const uid = req.currentUser?.id || null;
+      const uname = req.currentUser?.name || req.currentUser?.email || null;
+
+      // OCR via Cloud Vision (Text Detection)
+      let texto = '';
+      const billable = true;
+      try {
+        const resp = await fetch('https://vision.googleapis.com/v1/images:annotate?key=' + encodeURIComponent(key), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: [{ image: { content: img }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }], imageContext: { languageHints: ['pt'] } }] }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const js: any = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          return res.status(502).json({ ok: false, message: js?.error?.message || ('Vision HTTP ' + resp.status), code: js?.error?.status || null });
+        }
+        const r0 = (js && js.responses && js.responses[0]) || {};
+        if (r0.error) return res.status(502).json({ ok: false, message: r0.error.message || 'Erro na leitura da imagem.', code: r0.error.status || null });
+        texto = (r0.fullTextAnnotation && r0.fullTextAnnotation.text) || (Array.isArray(r0.textAnnotations) && r0.textAnnotations[0] && r0.textAnnotations[0].description) || '';
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, message: 'Falha ao ler a imagem: ' + String(e?.message || e) });
+      }
+
+      // log de uso (feature = 'foto') para o módulo de uso/custo por vendedor
+      try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('foto', ${uid}, ${uname}, ${billable}, 0, NULL, NULL)`); } catch (_e) {}
+
+      const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+      const normTxt = norm(texto);
+      const linhas = String(texto || '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length >= 2).slice(0, 12);
+      if (!normTxt) return res.json({ ok: true, texto: '', linhas: [], total: 0, encontrados: [] });
+
+      // busca no Integra: nome de lead/cliente contido no texto lido da foto
+      const encontrados: any[] = [];
+      try {
+        const cu: any = await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, address, neighborhood, phone, is_active FROM customers WHERE (is_supplier IS NOT TRUE) AND COALESCE(NULLIF(fantasy_name,''), name) IS NOT NULL LIMIT 8000`);
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
+        const push = (r: any, tipo: string) => {
+          const nn = norm(r.nome);
+          if (nn.length < 4) return;
+          if (normTxt.includes(nn)) encontrados.push({ tipo, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, score: nn.length });
+        };
+        for (const r of (cu?.rows || []) as any[]) push(r, (r.is_active === false ? 'cliente_inativo' : 'cliente'));
+        for (const r of (le?.rows || []) as any[]) push(r, 'lead');
+      } catch (_e) {}
+      encontrados.sort((a, b) => b.score - a.score);
+      const top = encontrados.slice(0, 10);
+      return res.json({ ok: true, texto, linhas, total: top.length, encontrados: top });
+    } catch (e: any) { console.error('[foto] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
   // 🔎 Ficha básica do Google (Places API New) para leads — coleta em lote sob demanda.
