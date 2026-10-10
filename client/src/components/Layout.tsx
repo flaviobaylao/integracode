@@ -513,6 +513,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'km-vendedores', label: 'Kilometragem Vendedores', icon: 'fas fa-road', available: canAccessReports, badge: null },
         { id: 'customer-payments', label: 'Pagamento Clientes', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
         { id: 'admin-system', label: 'Administração do Sistema', icon: 'fas fa-cogs', available: canAccessUsers, badge: null },
+        { id: 'recursos-prospeccao', label: 'Recursos de Prospecção', icon: 'fas fa-satellite-dish', available: canAccessUsers, badge: null },
         { id: 'cenarios-fiscais', label: 'Cenários Fiscais', icon: 'fas fa-file-invoice', available: canAccessReports, badge: null },
         { id: 'cielo', label: 'Cielo (PIX/Cartão)', icon: 'fas fa-credit-card', available: canAccessReports, badge: null },
       { id: 'acessos-delegacoes', label: 'Acessos e Delegações', icon: 'fas fa-user-shield', available: canAccessUsers, badge: null },
@@ -662,6 +663,11 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
     if (itemId === 'admin-system') {
       navigate('/admin/system');
+      return;
+    }
+
+    if (itemId === 'recursos-prospeccao') {
+      navigate('/admin/recursos-prospeccao');
       return;
     }
 
