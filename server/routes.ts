@@ -24105,12 +24105,222 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // 📡 Recursos de Prospecção (Google) — flags on/off, radar de novos pontos, uso/custo
+  // ============================================================================
+  // Config persistida em system_settings (chaves recurso_*). Log de uso em places_usage.
+  // Cache por região em places_cache (evita cobranças repetidas no mesmo quarteirão).
+  const _ensureRecursosSchema = (async () => {
+    try {
+      await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS places_usage (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        feature varchar NOT NULL,
+        user_id varchar,
+        user_name varchar,
+        billable boolean NOT NULL DEFAULT true,
+        results integer DEFAULT 0,
+        lat double precision,
+        lng double precision,
+        created_at timestamp DEFAULT now()
+      )`));
+      await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS idx_places_usage_created ON places_usage(created_at)`));
+      await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS places_cache (
+        gridkey varchar PRIMARY KEY,
+        payload jsonb,
+        created_at timestamp DEFAULT now()
+      )`));
+    } catch (_e) { /* idempotente */ }
+  })();
+
+  const RECURSOS_DEFAULTS: Record<string, string> = {
+    radar_enabled: 'true',
+    ficha_google_enabled: 'true',
+    radar_raio: '100',
+    radar_cache_ttl_min: '360',
+    radar_preco_mil: '32',
+    radar_cota_gratis: '5000',
+    radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
+  };
+  async function _getRecursos(): Promise<Record<string, string>> {
+    const out: Record<string, string> = { ...RECURSOS_DEFAULTS };
+    try {
+      const r: any = await db.execute(sql`SELECT key, value FROM system_settings WHERE key LIKE 'recurso_%'`);
+      for (const row of (r?.rows || []) as any[]) {
+        out[String(row.key).replace(/^recurso_/, '')] = String(row.value);
+      }
+    } catch (_e) { /* usa defaults */ }
+    return out;
+  }
+  async function _setRecurso(key: string, value: string, who: string) {
+    await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${'recurso_' + key}, ${value}, ${who}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+  }
+
+  // Config (admin): ler
+  app.get('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try { await _ensureRecursosSchema; return res.json({ ok: true, config: await _getRecursos() }); }
+    catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+  // Config (admin): salvar
+  app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      await _ensureRecursosSchema;
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_segmentos'];
+      const who = req.currentUser?.email || req.currentUser?.id || 'admin';
+      const body = req.body || {};
+      for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
+      return res.json({ ok: true, config: await _getRecursos() });
+    } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+  // Uso e custo por vendedor (admin) — mês corrente
+  app.get('/api/admin/recursos/uso', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      await _ensureRecursosSchema;
+      const cfg = await _getRecursos();
+      const preco = Number(cfg.radar_preco_mil) || 32;
+      const cota = Number(cfg.radar_cota_gratis) || 5000;
+      const porVend: any = await db.execute(sql`
+        SELECT COALESCE(NULLIF(user_name, ''), '(desconhecido)') AS vendedor, user_id,
+               COUNT(*) FILTER (WHERE feature = 'radar') AS radar_total,
+               COUNT(*) FILTER (WHERE feature = 'radar' AND billable) AS radar_cobravel,
+               COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total
+        FROM places_usage
+        WHERE date_trunc('month', created_at) = date_trunc('month', now())
+        GROUP BY user_name, user_id
+        ORDER BY radar_cobravel DESC, radar_total DESC
+      `);
+      const tot: any = await db.execute(sql`
+        SELECT COUNT(*) FILTER (WHERE feature = 'radar') AS radar_total,
+               COUNT(*) FILTER (WHERE feature = 'radar' AND billable) AS radar_cobravel,
+               COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total
+        FROM places_usage WHERE date_trunc('month', created_at) = date_trunc('month', now())
+      `);
+      const t = ((tot?.rows || []) as any[])[0] || {};
+      const totalCobravel = Number(t.radar_cobravel || 0);
+      const cobravelPago = Math.max(0, totalCobravel - cota);
+      const custoUSD = (cobravelPago / 1000) * preco;
+      return res.json({
+        ok: true, mes: new Date().toISOString().slice(0, 7), preco, cota,
+        totalRadar: Number(t.radar_total || 0), totalCobravel, cobravelPago, custoUSD,
+        fichaTotal: Number(t.ficha_total || 0),
+        porVendedor: ((porVend?.rows || []) as any[]).map((x) => ({
+          vendedor: x.vendedor, userId: x.user_id,
+          radarTotal: Number(x.radar_total || 0), radarCobravel: Number(x.radar_cobravel || 0), fichaTotal: Number(x.ficha_total || 0),
+        })),
+      });
+    } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+
+  // 📡 Radar de novos pontos — Places Nearby (Pro), cache por região, dedup com o Integra.
+  // Qualquer usuário autenticado (vendedores inclusos). POST { lat, lng, raio?, segmentos? }.
+  app.post('/api/radar/nearby', authenticateUser, async (req: any, res) => {
+    try {
+      await _ensureRecursosSchema;
+      const cfg = await _getRecursos();
+      if (String(cfg.radar_enabled) !== 'true') {
+        return res.json({ ok: false, disabled: true, message: 'Recurso desativado pelo administrador.' });
+      }
+      const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
+      if (!key) return res.status(400).json({ ok: false, message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.' });
+      const lat = parseFloat(String(req.body?.lat)), lng = parseFloat(String(req.body?.lng));
+      if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return res.status(400).json({ ok: false, message: 'Coordenadas inválidas.' });
+      const raio = Math.min(Math.max(Number(req.body?.raio) || Number(cfg.radar_raio) || 100, 20), 1000);
+      const segRaw = (req.body?.segmentos != null ? req.body.segmentos : cfg.radar_segmentos);
+      const segmentos = String(segRaw || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 50);
+      const uid = req.currentUser?.id || null;
+      const uname = req.currentUser?.name || req.currentUser?.email || null;
+
+      // cache por região: grade ~50 m + segmentos + raio
+      const glat = Math.round(lat / 0.00045) * 0.00045, glng = Math.round(lng / 0.00045) * 0.00045;
+      const segHash = segmentos.slice().sort().join('|');
+      const ttlMin = Math.max(5, Number(cfg.radar_cache_ttl_min) || 360);
+      const gridkey = `${glat.toFixed(5)},${glng.toFixed(5)}|r${raio}|${segHash}`;
+      let cachedPayload: any = null;
+      try {
+        const cr: any = await db.execute(sql`SELECT payload FROM places_cache WHERE gridkey = ${gridkey} AND created_at > now() - (${ttlMin} * interval '1 minute') LIMIT 1`);
+        cachedPayload = ((cr?.rows || []) as any[])[0]?.payload || null;
+      } catch (_e) {}
+
+      let places: any[] = [];
+      let billable = false;
+      if (cachedPayload) {
+        places = Array.isArray(cachedPayload) ? cachedPayload : (cachedPayload.places || []);
+      } else {
+        billable = true;
+        const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.location,places.businessStatus,places.formattedAddress';
+        const body: any = {
+          maxResultCount: 20, rankPreference: 'DISTANCE', languageCode: 'pt-BR', regionCode: 'BR',
+          locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: raio } },
+        };
+        if (segmentos.length) body.includedTypes = segmentos;
+        const resp = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': FIELD_MASK },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        });
+        const js: any = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          return res.status(502).json({ ok: false, message: js?.error?.message || ('Google HTTP ' + resp.status), code: js?.error?.status || null });
+        }
+        places = (js && js.places) || [];
+        try { await db.execute(sql`INSERT INTO places_cache (gridkey, payload, created_at) VALUES (${gridkey}, ${JSON.stringify(places)}::jsonb, now()) ON CONFLICT (gridkey) DO UPDATE SET payload = EXCLUDED.payload, created_at = now()`); } catch (_e) {}
+      }
+
+      // log de uso (para o módulo de uso/custo por vendedor)
+      try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('radar', ${uid}, ${uname}, ${billable}, ${places.length}, ${lat}, ${lng})`); } catch (_e) {}
+
+      // dedup com o Integra (leads + clientes próximos) → mostra só o que ainda NÃO é cadastro
+      const latD = 0.0025, lngD = 0.0025 / (Math.cos((lat * Math.PI) / 180) || 1);
+      const exist: any[] = [];
+      try {
+        const le: any = await db.execute(sql`SELECT fantasy_name AS nome, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
+        const cu: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name, ''), name) AS nome, latitude::float AS la, longitude::float AS lo FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
+        for (const r of (le?.rows || []) as any[]) exist.push(r);
+        for (const r of (cu?.rows || []) as any[]) exist.push(r);
+      } catch (_e) {}
+      const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+      const hav = (aLa: number, aLo: number, bLa: number, bLo: number) => {
+        const R = 6371000, dLa = ((bLa - aLa) * Math.PI) / 180, dLo = ((bLo - aLo) * Math.PI) / 180;
+        const s = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+      };
+      const existNorm = exist.map((e) => ({ n: norm(e.nome), la: Number(e.la), lo: Number(e.lo) }));
+
+      const novos: any[] = [];
+      for (const p of places) {
+        const pLat = p.location?.latitude, pLng = p.location?.longitude;
+        const nome = (p.displayName && p.displayName.text) || '';
+        const nnome = norm(nome);
+        let jaTem = false;
+        for (const e of existNorm) {
+          const d = (isFinite(pLat) && isFinite(pLng) && isFinite(e.la) && isFinite(e.lo)) ? hav(pLat, pLng, e.la, e.lo) : 9999;
+          if (d < 45) { jaTem = true; break; }
+          if (nnome && e.n && (nnome === e.n || (nnome.length > 5 && (e.n.includes(nnome) || nnome.includes(e.n)))) && d < 120) { jaTem = true; break; }
+        }
+        if (jaTem) continue;
+        const dist = (isFinite(pLat) && isFinite(pLng)) ? Math.round(hav(lat, lng, pLat, pLng)) : null;
+        novos.push({
+          nome: nome || 'Estabelecimento',
+          categoria: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || p.primaryType || '',
+          tipo: p.primaryType || (Array.isArray(p.types) && p.types[0]) || '',
+          distancia: dist,
+          endereco: p.formattedAddress || '',
+          businessStatus: p.businessStatus || '',
+          lat: pLat, lng: pLng, placeId: p.id || '',
+        });
+      }
+      novos.sort((a, b) => (a.distancia ?? 9999) - (b.distancia ?? 9999));
+      return res.json({ ok: true, total: novos.length, fromCache: !billable, raio, segmentos, resultados: novos });
+    } catch (e: any) { console.error('[radar] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+
   // 🔎 Ficha básica do Google (Places API New) para leads — coleta em lote sob demanda.
   // Admin. Processa leads COM coordenadas que ainda não têm ficha (google_place), consultando
   // o Google por nome + localização. Marca google_tries p/ não reprocessar eternamente.
   // Requer GOOGLE_MAPS_API_KEY com "Places API (New)" habilitada no Google Cloud.
   app.post('/api/admin/leads/preencher-google', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
+      try { await _ensureRecursosSchema; const _cfgF = await _getRecursos(); if (String(_cfgF.ficha_google_enabled) !== 'true') return res.status(400).json({ ok: false, message: 'Ficha Google desativada pelo administrador.', code: 'DISABLED' }); } catch (_e) {}
       const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
       if (!key) {
         return res.status(400).json({ message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.', code: 'SEM_GOOGLE' });
