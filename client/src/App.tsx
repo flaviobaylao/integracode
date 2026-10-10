@@ -47,6 +47,7 @@ import Canais from "@/pages/Canais";
 import LeadsManagement from "@/pages/LeadsManagement";
 import ConsultaLocal from "@/pages/ConsultaLocal";
 import MobileConsultaFab from "@/components/MobileConsultaFab";
+import RecursosProspeccao from "@/pages/RecursosProspeccao";
 import TelemarketingDashboard from "@/pages/TelemarketingDashboard";
 import WhatsAppSetup from "@/pages/WhatsAppSetup";
 import TelegramSetup from "@/pages/TelegramSetup";
@@ -327,6 +328,7 @@ function Router() {
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/admin/solicitacoes-alteracao" component={SolicitacoesAlteracao} />
           <Route path="/admin/feriados" component={FeriadosAdmin} />
+          <Route path="/admin/recursos-prospeccao" component={RecursosProspeccao} />
           <Route path="/cenarios-fiscais" component={CenariosFiscais} />
           <Route path="/telefones-clientes" component={TelefonesClientes} />
           <Route path="/tabela-precos" component={TabelaPrecos} />
