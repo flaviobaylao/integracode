@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   MapPin, Navigation, Loader2, ArrowLeft, Phone, User, Crosshair,
-  Store, Target, XCircle, Ban, HelpCircle, RefreshCw, Plus, Check,
+  Store, Target, XCircle, Ban, HelpCircle, RefreshCw, Plus, Check, Camera,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -41,8 +41,19 @@ type NovoPonto = {
   placeId: string;
 };
 
+type FotoMatch = {
+  tipo: string;
+  nome: string;
+  endereco: string;
+  bairro: string;
+  telefone: string;
+  ativo: boolean;
+  score: number;
+};
+
 type Fase = "idle" | "localizando" | "buscando" | "pronto" | "erro";
 type NovosFase = "idle" | "buscando" | "pronto" | "erro" | "disabled";
+type FotoFase = "idle" | "lendo" | "pronto" | "erro" | "disabled";
 
 const RAIO_PADRAO = 100;
 
@@ -61,6 +72,41 @@ function estiloCenario(r: ResultadoConsulta) {
   return { barra: "border-l-amber-500", icone: <Target className="h-5 w-5 text-amber-600" />, tag: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" };
 }
 
+function estiloFoto(tipo: string) {
+  if (tipo === "cliente") return { barra: "border-l-emerald-500", icone: <Store className="h-5 w-5 text-emerald-600" />, rotulo: "Cliente ativo", tag: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" };
+  if (tipo === "cliente_inativo") return { barra: "border-l-slate-400", icone: <Store className="h-5 w-5 text-slate-500" />, rotulo: "Cliente inativado", tag: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200" };
+  return { barra: "border-l-blue-500", icone: <Target className="h-5 w-5 text-blue-600" />, rotulo: "Lead em prospecção", tag: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300" };
+}
+
+// Reduz a foto no próprio aparelho antes de enviar (OCR funciona bem com ~1600px).
+async function fileParaBase64Reduzido(file: File, maxDim = 1600, quality = 0.8): Promise<string> {
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(file);
+  });
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error("img"));
+      im.src = dataUrl;
+    });
+    const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+    if (scale >= 1) return dataUrl;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", quality);
+  } catch {
+    return dataUrl;
+  }
+}
+
 export default function ConsultaLocal() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -76,6 +122,13 @@ export default function ConsultaLocal() {
   const [novosFase, setNovosFase] = useState<NovosFase>("idle");
   const [novosMsg, setNovosMsg] = useState<string>("");
   const [cadastrados, setCadastrados] = useState<Record<string, "ok" | "loading">>({});
+
+  // ----- busca por foto -----
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fotoFase, setFotoFase] = useState<FotoFase>("idle");
+  const [fotoMsg, setFotoMsg] = useState<string>("");
+  const [fotoTexto, setFotoTexto] = useState<string>("");
+  const [fotoEncontrados, setFotoEncontrados] = useState<FotoMatch[]>([]);
 
   const buscar = useCallback(async (lat: number, lng: number, raio: number) => {
     setFase("buscando");
@@ -189,7 +242,35 @@ export default function ConsultaLocal() {
     }
   }, [toast]);
 
+  const onFotoEscolhida = useCallback(async (file: File | null) => {
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!file) return;
+    setFotoFase("lendo");
+    setFotoMsg("");
+    setFotoTexto("");
+    setFotoEncontrados([]);
+    try {
+      const b64 = await fileParaBase64Reduzido(file);
+      const data: any = await apiRequest("POST", "/api/consulta-local/foto", { imageBase64: b64 });
+      if (data && data.ok) {
+        setFotoTexto(String(data.texto || ""));
+        setFotoEncontrados(Array.isArray(data.encontrados) ? data.encontrados : []);
+        setFotoFase("pronto");
+      } else if (data && data.disabled) {
+        setFotoFase("disabled");
+        setFotoMsg(data.message || "Busca por foto desativada pelo administrador.");
+      } else {
+        setFotoFase("erro");
+        setFotoMsg((data && data.message) || "Não foi possível ler a foto.");
+      }
+    } catch (e: any) {
+      setFotoFase("erro");
+      setFotoMsg(String((e && e.message) || e));
+    }
+  }, []);
+
   const carregando = fase === "localizando" || fase === "buscando";
+  const primeiraLinha = (fotoTexto || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] || "";
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -220,12 +301,89 @@ export default function ConsultaLocal() {
           )}
         </Button>
 
+        {/* Busca por foto */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => onFotoEscolhida(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+          data-testid="input-foto"
+        />
+        <Button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={fotoFase === "lendo"}
+          variant="outline"
+          className="w-full h-12 border-emerald-300 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+          data-testid="button-foto"
+        >
+          {fotoFase === "lendo" ? (
+            <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Lendo a foto…</>
+          ) : (
+            <><Camera className="h-5 w-5 mr-2" /> Buscar por foto (fachada)</>
+          )}
+        </Button>
+
         {coords && fase !== "erro" && (
           <p className="text-center text-xs text-muted-foreground">
             <MapPin className="h-3 w-3 inline mr-1" />
             {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
             {coords.acc ? ` · precisão ~${coords.acc} m` : ""}
           </p>
+        )}
+
+        {/* ======== RESULTADO DA FOTO ======== */}
+        {fotoFase === "disabled" && (
+          <Card className="border-l-4 border-l-slate-400"><CardContent className="py-5 text-sm text-center text-muted-foreground"><Ban className="h-7 w-7 mx-auto mb-2 text-slate-400" />{fotoMsg}</CardContent></Card>
+        )}
+        {fotoFase === "erro" && (
+          <Card className="border-l-4 border-l-red-500"><CardContent className="py-5 text-sm space-y-3"><div className="flex items-start gap-2 text-red-600 dark:text-red-400"><XCircle className="h-5 w-5 shrink-0 mt-0.5" /><span>{fotoMsg}</span></div><Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} className="w-full"><Camera className="h-4 w-4 mr-2" /> Tentar outra foto</Button></CardContent></Card>
+        )}
+        {fotoFase === "pronto" && (
+          <div className="space-y-3">
+            {primeiraLinha && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Camera className="h-3.5 w-3.5" /> Lido da foto: <span className="font-medium text-foreground break-words">{primeiraLinha}</span></p>
+            )}
+            {fotoEncontrados.length === 0 ? (
+              <Card className="border-l-4 border-l-amber-500">
+                <CardContent className="py-6 text-center text-sm space-y-2">
+                  <HelpCircle className="h-9 w-9 mx-auto text-amber-500" />
+                  <p className="font-medium">Nenhum cadastro encontrado</p>
+                  <p className="text-muted-foreground">Não achei esse nome nos leads/clientes do Integra. Pode ser um ponto novo — confira pela aba <strong>Novos pontos</strong> ou cadastre como lead.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">{fotoEncontrados.length} cadastro{fotoEncontrados.length > 1 ? "s" : ""} com esse nome no Integra</p>
+                {fotoEncontrados.map((m, i) => {
+                  const est = estiloFoto(m.tipo);
+                  return (
+                    <Card key={`${m.tipo}-${i}-${m.nome}`} className={`border-l-4 ${est.barra}`} data-testid="card-foto-match">
+                      <CardContent className="py-4 space-y-2">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <div className="shrink-0 mt-0.5">{est.icone}</div>
+                          <div className="min-w-0">
+                            <div className="font-semibold leading-tight break-words">{m.nome}</div>
+                            <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{est.rotulo}</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground space-y-1 pl-7">
+                          {(m.bairro || m.endereco) && (
+                            <div className="flex items-start gap-1.5"><MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span>{[m.endereco, m.bairro].filter(Boolean).join(" · ")}</span></div>
+                          )}
+                          {m.telefone && (
+                            <a href={`tel:${m.telefone}`} className="flex items-center gap-1.5 text-blue-600 hover:underline w-fit"><Phone className="h-3.5 w-3.5" /><span>{m.telefone}</span></a>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+                <p className="text-[11px] text-center text-muted-foreground pt-1">Comparação pelo nome lido na fachada. Confirme o endereço antes de concluir.</p>
+              </>
+            )}
+          </div>
         )}
 
         {/* Estado inicial */}
@@ -235,6 +393,7 @@ export default function ConsultaLocal() {
               <Crosshair className="h-10 w-10 mx-auto text-emerald-500/70" />
               <p>Pare em frente ao estabelecimento e toque em <strong>Consultar este local</strong>.</p>
               <p>Buscamos leads e clientes num raio de {RAIO_PADRAO} m da sua posição.</p>
+              <p className="pt-1">Ou use <strong>Buscar por foto</strong> para conferir pelo nome da fachada.</p>
             </CardContent>
           </Card>
         )}

@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check } from "lucide-react";
+import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -17,7 +17,9 @@ type Cfg = Record<string, string>;
 type Uso = {
   mes: string; preco: number; cota: number; cambio?: number; precoBRL?: number;
   totalRadar: number; totalCobravel: number; cobravelPago: number; custoUSD: number; custoBRL?: number; fichaTotal: number;
-  porVendedor: { vendedor: string; userId: string | null; radarTotal: number; radarCobravel: number; fichaTotal: number }[];
+  custoRadarUSD?: number; custoFotoUSD?: number;
+  fotoTotal?: number; fotoCobravel?: number; fotoCota?: number; fotoPreco?: number; fotoPrecoBRL?: number; fotoPago?: number;
+  porVendedor: { vendedor: string; userId: string | null; radarTotal: number; radarCobravel: number; fotoTotal?: number; fichaTotal: number }[];
 };
 
 // Segmentos em português → tipos do Google Places (New). O que fica salvo são os códigos do Google;
@@ -103,6 +105,12 @@ export default function RecursosProspeccao() {
   const custoBRL = uso ? (uso.custoBRL ?? uso.custoUSD * cambio) : 0;
   const precoBRL = uso ? (uso.precoBRL ?? uso.preco * cambio) : 0;
   const cotaPct = uso && uso.cota > 0 ? Math.min(100, Math.round((uso.totalCobravel / uso.cota) * 100)) : 0;
+  const fotoAtivo = bool("foto_enabled");
+  const fotoCotaN = uso?.fotoCota ?? Number(cfg?.foto_cota_gratis) ?? 1000;
+  const fotoTotalN = uso?.fotoTotal ?? 0;
+  const fotoCobravelN = uso?.fotoCobravel ?? 0;
+  const fotoPct = uso && fotoCotaN > 0 ? Math.min(100, Math.round((fotoCobravelN / fotoCotaN) * 100)) : 0;
+  const custoFotoBRL = uso ? ((uso.custoFotoUSD ?? 0) * cambio) : 0;
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
@@ -147,6 +155,17 @@ export default function RecursosProspeccao() {
                 </div>
                 <Switch checked={bool("ficha_google_enabled")} onCheckedChange={(v) => set("ficha_google_enabled", v ? "true" : "false")} data-testid="switch-ficha" />
               </div>
+              <div className="flex items-center justify-between gap-4 border rounded-lg p-3">
+                <div className="flex items-start gap-3">
+                  <Camera className="h-5 w-5 text-emerald-600 mt-0.5" />
+                  <div>
+                    <div className="font-medium">Busca por foto (fachada)</div>
+                    <div className="text-xs text-muted-foreground">O vendedor fotografa a fachada e o sistema lê o nome (OCR do Google) e confere se já é cliente/lead. Cobra por foto.</div>
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">Requer a "Cloud Vision API" ativada no Google Cloud. Enquanto não estiver ativada, deixe desligado.</div>
+                  </div>
+                </div>
+                <Switch checked={bool("foto_enabled")} onCheckedChange={(v) => set("foto_enabled", v ? "true" : "false")} data-testid="switch-foto" />
+              </div>
             </CardContent>
           </Card>
 
@@ -165,9 +184,18 @@ export default function RecursosProspeccao() {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
-                  <Label className="text-xs">Preço US$ / 1.000 buscas</Label>
+                  <Label className="text-xs">Preço radar US$ / 1.000</Label>
                   <Input type="number" step="0.01" value={cfg.radar_preco_mil || ""} onChange={(e) => set("radar_preco_mil", e.target.value)} />
                   <p className="text-[11px] text-muted-foreground mt-1">≈ {brl((Number(cfg.radar_preco_mil) || 0) * (Number(cfg.radar_cambio) || 5.2))} / 1.000</p>
+                </div>
+                <div>
+                  <Label className="text-xs">Preço foto US$ / 1.000</Label>
+                  <Input type="number" step="0.01" value={cfg.foto_preco_mil || ""} onChange={(e) => set("foto_preco_mil", e.target.value)} />
+                  <p className="text-[11px] text-muted-foreground mt-1">≈ {brl((Number(cfg.foto_preco_mil) || 0) * (Number(cfg.radar_cambio) || 5.2))} / 1.000</p>
+                </div>
+                <div>
+                  <Label className="text-xs">Cota foto grátis / mês</Label>
+                  <Input type="number" value={cfg.foto_cota_gratis || ""} onChange={(e) => set("foto_cota_gratis", e.target.value)} />
                 </div>
               </div>
 
@@ -250,11 +278,19 @@ export default function RecursosProspeccao() {
 
                   <div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                      <span>Cota grátis do mês</span>
+                      <span>Cota grátis do radar</span>
                       <span>{uso.totalCobravel} / {uso.cota}</span>
                     </div>
                     <Progress value={cotaPct} className="h-2" />
-                    {custoBRL === 0 && <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1">Dentro da cota grátis — sem custo este mês. A cota zera todo dia 1º.</p>}
+                    {custoBRL === 0 && <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1">Dentro da cota grátis — sem custo este mês. As cotas zeram todo dia 1º.</p>}
+                  </div>
+
+                  <div className="border-t pt-3">
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-muted-foreground flex items-center gap-1.5"><Camera className="h-3.5 w-3.5" /> Busca por foto {fotoAtivo ? "" : "(desligada)"}</span>
+                      <span className="text-muted-foreground">{fotoTotalN} foto{fotoTotalN === 1 ? "" : "s"} · {fotoCobravelN} / {fotoCotaN} grátis · {custoFotoBRL > 0 ? brl(custoFotoBRL) : "R$ 0,00"}</span>
+                    </div>
+                    <Progress value={fotoPct} className="h-2" />
                   </div>
 
                   <div>
@@ -269,6 +305,7 @@ export default function RecursosProspeccao() {
                               <TableHead>Vendedor</TableHead>
                               <TableHead className="text-right">Buscas</TableHead>
                               <TableHead className="text-right">Cobráveis</TableHead>
+                              <TableHead className="text-right">Fotos</TableHead>
                               <TableHead className="text-right">Ficha Google</TableHead>
                             </TableRow>
                           </TableHeader>
@@ -280,6 +317,7 @@ export default function RecursosProspeccao() {
                                 <TableCell className="text-right">
                                   <Badge variant={v.radarCobravel > 0 ? "secondary" : "outline"}>{v.radarCobravel}</Badge>
                                 </TableCell>
+                                <TableCell className="text-right">{v.fotoTotal ?? 0}</TableCell>
                                 <TableCell className="text-right">{v.fichaTotal}</TableCell>
                               </TableRow>
                             ))}
