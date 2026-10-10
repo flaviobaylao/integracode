@@ -24139,6 +24139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     radar_cache_ttl_min: '360',
     radar_preco_mil: '32',
     radar_cota_gratis: '5000',
+    radar_cambio: '5.20',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
   };
   async function _getRecursos(): Promise<Record<string, string>> {
@@ -24164,7 +24165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_segmentos'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'radar_segmentos'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
@@ -24178,6 +24179,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cfg = await _getRecursos();
       const preco = Number(cfg.radar_preco_mil) || 32;
       const cota = Number(cfg.radar_cota_gratis) || 5000;
+      const cambio = Number(cfg.radar_cambio) || 5.2;
       const porVend: any = await db.execute(sql`
         SELECT COALESCE(NULLIF(user_name, ''), '(desconhecido)') AS vendedor, user_id,
                COUNT(*) FILTER (WHERE feature = 'radar') AS radar_total,
@@ -24198,9 +24200,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const totalCobravel = Number(t.radar_cobravel || 0);
       const cobravelPago = Math.max(0, totalCobravel - cota);
       const custoUSD = (cobravelPago / 1000) * preco;
+      const custoBRL = custoUSD * cambio;
+      const precoBRL = preco * cambio;
       return res.json({
-        ok: true, mes: new Date().toISOString().slice(0, 7), preco, cota,
-        totalRadar: Number(t.radar_total || 0), totalCobravel, cobravelPago, custoUSD,
+        ok: true, mes: new Date().toISOString().slice(0, 7), preco, cota, cambio, precoBRL,
+        totalRadar: Number(t.radar_total || 0), totalCobravel, cobravelPago, custoUSD, custoBRL,
         fichaTotal: Number(t.ficha_total || 0),
         porVendedor: ((porVend?.rows || []) as any[]).map((x) => ({
           vendedor: x.vendedor, userId: x.user_id,
