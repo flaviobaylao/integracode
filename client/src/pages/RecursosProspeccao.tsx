@@ -8,17 +8,37 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, DollarSign, Gauge, Users } from "lucide-react";
+import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
 type Cfg = Record<string, string>;
 type Uso = {
-  mes: string; preco: number; cota: number;
-  totalRadar: number; totalCobravel: number; cobravelPago: number; custoUSD: number; fichaTotal: number;
+  mes: string; preco: number; cota: number; cambio?: number; precoBRL?: number;
+  totalRadar: number; totalCobravel: number; cobravelPago: number; custoUSD: number; custoBRL?: number; fichaTotal: number;
   porVendedor: { vendedor: string; userId: string | null; radarTotal: number; radarCobravel: number; fichaTotal: number }[];
 };
+
+// Segmentos em português → tipos do Google Places (New). O que fica salvo são os códigos do Google;
+// aqui o admin escolhe pelo nome em português.
+const SEG_GROUPS: { label: string; codes: string[] }[] = [
+  { label: "Padaria / Confeitaria", codes: ["bakery"] },
+  { label: "Supermercado / Mercado", codes: ["supermarket", "grocery_store"] },
+  { label: "Mercearia / Conveniência", codes: ["convenience_store"] },
+  { label: "Restaurante", codes: ["restaurant"] },
+  { label: "Lanchonete / Fast-food", codes: ["meal_takeaway", "fast_food_restaurant", "sandwich_shop", "hamburger_restaurant"] },
+  { label: "Pizzaria", codes: ["pizza_restaurant"] },
+  { label: "Cafeteria", codes: ["cafe", "coffee_shop"] },
+  { label: "Sorveteria / Açaí", codes: ["ice_cream_shop"] },
+  { label: "Bar", codes: ["bar"] },
+  { label: "Escola / Educação", codes: ["school", "primary_school", "secondary_school", "university", "preschool"] },
+  { label: "Academia", codes: ["gym", "fitness_center"] },
+  { label: "Hotel / Pousada", codes: ["hotel"] },
+];
+
+const brl = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const usd = (n: number) => `US$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function RecursosProspeccao() {
   const { toast } = useToast();
@@ -27,6 +47,7 @@ export default function RecursosProspeccao() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [usoLoading, setUsoLoading] = useState(false);
+  const [avancado, setAvancado] = useState(false);
 
   const carregarCfg = useCallback(async () => {
     setLoading(true);
@@ -58,14 +79,29 @@ export default function RecursosProspeccao() {
     setSaving(true);
     try {
       const d: any = await apiRequest("POST", "/api/admin/recursos", cfg);
-      if (d && d.ok) { setCfg(d.config); toast({ title: "Configuração salva" }); }
+      if (d && d.ok) { setCfg(d.config); toast({ title: "Configuração salva" }); carregarUso(); }
       else toast({ title: "Não foi possível salvar", description: (d && d.message) || "", variant: "destructive" });
     } catch (e: any) {
       toast({ title: "Erro ao salvar", description: String(e?.message || e), variant: "destructive" });
     } finally { setSaving(false); }
-  }, [cfg, toast]);
+  }, [cfg, toast, carregarUso]);
 
-  const custoBRL = uso ? uso.custoUSD * 5 : 0; // referência ~R$5/US$ (editável na sua planilha)
+  // --- seletor de segmentos ---
+  const selectedCodes = new Set((cfg?.radar_segmentos || "").split(",").map((s) => s.trim()).filter(Boolean));
+  const grupoAtivo = (g: { codes: string[] }) => g.codes.every((c) => selectedCodes.has(c));
+  const toggleGrupo = (g: { codes: string[] }) => {
+    const next = new Set(selectedCodes);
+    if (grupoAtivo(g)) g.codes.forEach((c) => next.delete(c));
+    else g.codes.forEach((c) => next.add(c));
+    set("radar_segmentos", Array.from(next).join(","));
+  };
+  // códigos que o admin digitou manualmente e não pertencem a nenhum grupo conhecido
+  const codesConhecidos = new Set(SEG_GROUPS.flatMap((g) => g.codes));
+  const extras = Array.from(selectedCodes).filter((c) => !codesConhecidos.has(c));
+
+  const cambio = (uso?.cambio ?? Number(cfg?.radar_cambio)) || 5.2;
+  const custoBRL = uso ? (uso.custoBRL ?? uso.custoUSD * cambio) : 0;
+  const precoBRL = uso ? (uso.precoBRL ?? uso.preco * cambio) : 0;
   const cotaPct = uso && uso.cota > 0 ? Math.min(100, Math.round((uso.totalCobravel / uso.cota) * 100)) : 0;
 
   return (
@@ -117,18 +153,62 @@ export default function RecursosProspeccao() {
           {/* Configuração do radar */}
           <Card>
             <CardHeader><CardTitle className="text-base">Configuração do radar</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div><Label className="text-xs">Raio (m)</Label><Input type="number" value={cfg.radar_raio || ""} onChange={(e) => set("radar_raio", e.target.value)} /></div>
                 <div><Label className="text-xs">Cache por região (min)</Label><Input type="number" value={cfg.radar_cache_ttl_min || ""} onChange={(e) => set("radar_cache_ttl_min", e.target.value)} /></div>
                 <div><Label className="text-xs">Cota grátis / mês</Label><Input type="number" value={cfg.radar_cota_gratis || ""} onChange={(e) => set("radar_cota_gratis", e.target.value)} /></div>
-                <div><Label className="text-xs">Preço US$ / 1.000</Label><Input type="number" step="0.01" value={cfg.radar_preco_mil || ""} onChange={(e) => set("radar_preco_mil", e.target.value)} /></div>
+                <div>
+                  <Label className="text-xs">Câmbio US$ → R$</Label>
+                  <Input type="number" step="0.01" value={cfg.radar_cambio || ""} onChange={(e) => set("radar_cambio", e.target.value)} />
+                </div>
               </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <Label className="text-xs">Preço US$ / 1.000 buscas</Label>
+                  <Input type="number" step="0.01" value={cfg.radar_preco_mil || ""} onChange={(e) => set("radar_preco_mil", e.target.value)} />
+                  <p className="text-[11px] text-muted-foreground mt-1">≈ {brl((Number(cfg.radar_preco_mil) || 0) * (Number(cfg.radar_cambio) || 5.2))} / 1.000</p>
+                </div>
+              </div>
+
+              {/* Segmentos em português */}
               <div>
-                <Label className="text-xs">Segmentos buscados (tipos do Google, separados por vírgula)</Label>
-                <Textarea rows={3} value={cfg.radar_segmentos || ""} onChange={(e) => set("radar_segmentos", e.target.value)} className="font-mono text-xs" />
-                <p className="text-[11px] text-muted-foreground mt-1">Padrão: segmentos que já são clientes Honest (padaria, mercado, restaurante, lanchonete, cafeteria, escolas, academias).</p>
+                <Label className="text-xs">Segmentos buscados</Label>
+                <p className="text-[11px] text-muted-foreground mt-0.5 mb-2">Toque para ligar/desligar. Vêm marcados os segmentos que já são clientes Honest.</p>
+                <div className="flex flex-wrap gap-2">
+                  {SEG_GROUPS.map((g) => {
+                    const on = grupoAtivo(g);
+                    return (
+                      <button
+                        key={g.label}
+                        type="button"
+                        onClick={() => toggleGrupo(g)}
+                        data-testid={`seg-${g.label}`}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${on
+                          ? "bg-emerald-600 border-emerald-600 text-white"
+                          : "bg-background border-input text-muted-foreground hover:border-emerald-400"}`}
+                      >
+                        {on && <Check className="h-3.5 w-3.5" />}
+                        {g.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button type="button" onClick={() => setAvancado((v) => !v)} className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-3 underline">
+                  {avancado ? "Ocultar códigos do Google" : "Editar códigos do Google (avançado)"}
+                </button>
+                {avancado && (
+                  <div className="mt-2">
+                    <Textarea rows={3} value={cfg.radar_segmentos || ""} onChange={(e) => set("radar_segmentos", e.target.value)} className="font-mono text-xs" />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Estes são os tipos técnicos enviados ao Google (em inglês). O seletor acima edita este campo automaticamente.
+                      {extras.length > 0 && <> Códigos extras digitados por você: <span className="font-mono">{extras.join(", ")}</span>.</>}
+                    </p>
+                  </div>
+                )}
               </div>
+
               <Button onClick={salvar} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700">
                 {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</> : <><Save className="h-4 w-4 mr-2" /> Salvar configuração</>}
               </Button>
@@ -154,17 +234,17 @@ export default function RecursosProspeccao() {
                       <div className="text-2xl font-bold">{uso.totalRadar}</div>
                     </div>
                     <div className="border rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground flex items-center gap-1"><DollarSign className="h-3.5 w-3.5" /> Cobráveis (após cache)</div>
+                      <div className="text-xs text-muted-foreground">Cobráveis (após cache)</div>
                       <div className="text-2xl font-bold">{uso.totalCobravel}</div>
                     </div>
                     <div className="border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground">Acima da cota grátis</div>
                       <div className="text-2xl font-bold">{uso.cobravelPago}</div>
                     </div>
-                    <div className={`border rounded-lg p-3 ${uso.custoUSD > 0 ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"}`}>
+                    <div className={`border rounded-lg p-3 ${custoBRL > 0 ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"}`}>
                       <div className="text-xs text-muted-foreground">Custo estimado</div>
-                      <div className="text-2xl font-bold">{uso.custoUSD > 0 ? `US$ ${uso.custoUSD.toFixed(2)}` : "R$ 0,00"}</div>
-                      {uso.custoUSD > 0 && <div className="text-[11px] text-muted-foreground">≈ R$ {custoBRL.toFixed(2)}</div>}
+                      <div className="text-2xl font-bold">{brl(custoBRL)}</div>
+                      {custoBRL > 0 && <div className="text-[11px] text-muted-foreground">≈ {usd(uso.custoUSD)} · câmbio {cambio.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                     </div>
                   </div>
 
@@ -174,7 +254,7 @@ export default function RecursosProspeccao() {
                       <span>{uso.totalCobravel} / {uso.cota}</span>
                     </div>
                     <Progress value={cotaPct} className="h-2" />
-                    {uso.custoUSD === 0 && <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1">Dentro da cota grátis — sem custo este mês.</p>}
+                    {custoBRL === 0 && <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1">Dentro da cota grátis — sem custo este mês. A cota zera todo dia 1º.</p>}
                   </div>
 
                   <div>
