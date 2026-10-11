@@ -33,6 +33,7 @@ type NovoPonto = {
   nome: string;
   categoria: string;
   tipo: string;
+  match?: string;
   distancia: number | null;
   endereco: string;
   businessStatus: string;
@@ -121,6 +122,7 @@ export default function ConsultaLocal() {
   const [novos, setNovos] = useState<NovoPonto[]>([]);
   const [novosFase, setNovosFase] = useState<NovosFase>("idle");
   const [novosMsg, setNovosMsg] = useState<string>("");
+  const [novosRaio, setNovosRaio] = useState<number>(300);
   const [cadastrados, setCadastrados] = useState<Record<string, "ok" | "loading">>({});
 
   // ----- busca por foto -----
@@ -189,14 +191,17 @@ export default function ConsultaLocal() {
     [coords, buscar]
   );
 
-  const buscarNovos = useCallback(async () => {
+  const buscarNovos = useCallback(async (raio?: number) => {
     if (!coords) return;
     setNovosFase("buscando");
     setNovosMsg("");
     try {
-      const data: any = await apiRequest("POST", "/api/radar/nearby", { lat: coords.lat, lng: coords.lng });
+      const payload: any = { lat: coords.lat, lng: coords.lng };
+      if (raio) payload.raio = raio;
+      const data: any = await apiRequest("POST", "/api/radar/nearby", payload);
       if (data && data.ok) {
         setNovos(Array.isArray(data.resultados) ? data.resultados : []);
+        setNovosRaio(Number(data.raio) || raio || 300);
         setNovosFase("pronto");
       } else if (data && data.disabled) {
         setNovosFase("disabled");
@@ -505,14 +510,14 @@ export default function ConsultaLocal() {
               <Card className="border-l-4 border-l-slate-400"><CardContent className="py-6 text-sm text-center text-muted-foreground"><Ban className="h-8 w-8 mx-auto mb-2 text-slate-400" />{novosMsg}</CardContent></Card>
             )}
             {novosFase === "erro" && (
-              <Card className="border-l-4 border-l-red-500"><CardContent className="py-5 text-sm space-y-3"><div className="flex items-start gap-2 text-red-600 dark:text-red-400"><XCircle className="h-5 w-5 shrink-0 mt-0.5" /><span>{novosMsg}</span></div><Button variant="outline" size="sm" onClick={buscarNovos} className="w-full"><RefreshCw className="h-4 w-4 mr-2" /> Tentar de novo</Button></CardContent></Card>
+              <Card className="border-l-4 border-l-red-500"><CardContent className="py-5 text-sm space-y-3"><div className="flex items-start gap-2 text-red-600 dark:text-red-400"><XCircle className="h-5 w-5 shrink-0 mt-0.5" /><span>{novosMsg}</span></div><Button variant="outline" size="sm" onClick={() => buscarNovos()} className="w-full"><RefreshCw className="h-4 w-4 mr-2" /> Tentar de novo</Button></CardContent></Card>
             )}
             {novosFase === "pronto" && novos.length === 0 && (
-              <Card className="border-l-4 border-l-slate-400"><CardContent className="py-8 text-center text-sm space-y-1"><HelpCircle className="h-10 w-10 mx-auto text-slate-400" /><p className="font-medium">Nenhum ponto novo em {raioUsado} m</p><p className="text-muted-foreground">Tudo por perto já está no Integra, ou não há estabelecimentos dos segmentos buscados.</p></CardContent></Card>
+              <Card className="border-l-4 border-l-slate-400"><CardContent className="py-8 text-center text-sm space-y-3"><HelpCircle className="h-10 w-10 mx-auto text-slate-400" /><p className="font-medium">Nenhum ponto novo em {novosRaio} m</p><p className="text-muted-foreground">Tudo por perto já está no Integra, ou não há estabelecimentos dos segmentos buscados.</p>{novosRaio < 500 && <Button variant="outline" size="sm" onClick={() => buscarNovos(500)} className="mt-1"><Crosshair className="h-4 w-4 mr-2" /> Ampliar raio para 500 m</Button>}</CardContent></Card>
             )}
             {novosFase === "pronto" && novos.length > 0 && (
               <>
-                <p className="text-xs text-muted-foreground">{novos.length} estabelecimento{novos.length > 1 ? "s" : ""} ainda não cadastrado{novos.length > 1 ? "s" : ""}</p>
+                <p className="text-xs text-muted-foreground">{novos.length} estabelecimento{novos.length > 1 ? "s" : ""} em até {novosRaio} m · ainda não cadastrado{novos.length > 1 ? "s" : ""}</p>
                 {novos.map((p) => {
                   const st = cadastrados[p.placeId];
                   return (
@@ -526,6 +531,7 @@ export default function ConsultaLocal() {
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
                                 {p.categoria && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{p.categoria}</span>}
                                 <span className="text-[9px] font-bold tracking-wide text-white bg-amber-500 px-1.5 py-0.5 rounded-full">NOVO</span>
+                                {p.match === "secundario" && <span className="text-[9px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded-full">tipo secundário</span>}
                               </div>
                             </div>
                           </div>
@@ -546,7 +552,12 @@ export default function ConsultaLocal() {
                     </Card>
                   );
                 })}
-                <p className="text-[11px] text-center text-muted-foreground pt-1">Pontos do Google Places que ainda não estão no Integra. Nome e local são aproximados — edite depois se precisar.</p>
+                {novosRaio < 500 && (
+                  <div className="flex justify-center pt-1">
+                    <Button variant="outline" size="sm" onClick={() => buscarNovos(500)} data-testid="button-ampliar-raio"><Crosshair className="h-4 w-4 mr-2" /> Ampliar raio para 500 m</Button>
+                  </div>
+                )}
+                <p className="text-[11px] text-center text-muted-foreground pt-1">Pontos do Google Places que ainda não estão no Integra (tipo primário primeiro, depois secundário). Nome e local são aproximados — edite depois se precisar.</p>
               </>
             )}
           </div>
