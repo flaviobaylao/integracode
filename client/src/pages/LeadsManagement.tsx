@@ -39,6 +39,8 @@ export default function LeadsManagement() {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeadForService, setSelectedLeadForService] = useState<Lead | null>(null);
   const [selectedLeadForVisitHistory, setSelectedLeadForVisitHistory] = useState<Lead | null>(null);
+  // Menu de ações do lead (Registro, Converter, Não Convertido, Prorrogar) — usado por vendedor/telemarketing.
+  const [acoesLead, setAcoesLead] = useState<Lead | null>(null);
   // Seleção em massa de leads (admin): alteração de vendedor, status, próximo contato e alocação de rota.
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -419,6 +421,29 @@ export default function LeadsManagement() {
   // === Registro de Atendimento ===
   const atendSpeechSupported = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
   const abrirAtendimento = (lead: Lead) => { setAtendLead(lead); setAtendTexto(""); setAtendGravando(false); };
+
+  // Bloco reutilizável com as 4 ações do lead (Registro, Converter, Não Convertido, Prorrogar).
+  // Usado dentro do "Editar" (admin) e no menu "Ações" (vendedor/telemarketing). onDone fecha o contêiner.
+  const renderAcoesLead = (lead: Lead, onDone: () => void) => {
+    const run = (fn: (l: Lead) => void) => { onDone(); setTimeout(() => fn(lead), 60); };
+    const pp = Number((lead as any).postponementCount || 0) >= 1;
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 flex-1 min-w-[46%]" onClick={() => run(abrirAtendimento)} data-testid={`acao-registro-${lead.id}`}>
+          <FileText className="h-4 w-4 mr-1" /> Registro
+        </Button>
+        <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white flex-1 min-w-[46%]" onClick={() => run(openConverter)} data-testid={`acao-converter-${lead.id}`}>
+          <CheckCircle className="h-4 w-4 mr-1" /> Converter
+        </Button>
+        <Button size="sm" variant="destructive" className="flex-1 min-w-[46%]" onClick={() => run((l) => { setNaoConverterLead(l); setMotivoNao(""); setObsNao(""); })} data-testid={`acao-naoconvertido-${lead.id}`}>
+          <XCircle className="h-4 w-4 mr-1" /> Não Convertido
+        </Button>
+        <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 flex-1 min-w-[46%]" disabled={pp && !isAdmin} onClick={() => run(openProrrogar)} data-testid={`acao-prorrogar-${lead.id}`}>
+          <Clock className="h-4 w-4 mr-1" /> {pp ? "Prorrogado" : "Prorrogar"}
+        </Button>
+      </div>
+    );
+  };
   const atendStartRec = () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { toast({ title: "Ditado indisponível", description: "Use o Chrome no computador ou Android para gravar por voz.", variant: "destructive" }); return; }
@@ -1310,53 +1335,21 @@ export default function LeadsManagement() {
                               >
                                 <History className="h-4 w-4 mr-1" /> Resgatar
                               </Button>
-                            ) : (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-blue-400 text-blue-700 whitespace-nowrap"
-                                  onClick={() => abrirAtendimento(lead)}
-                                  title="Registro de Atendimento"
-                                  data-testid={`button-atendimento-lead-${lead.id}`}
-                                >
-                                  <FileText className="h-4 w-4 mr-1" /> Registro
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  className="bg-green-600 hover:bg-green-700 text-white whitespace-nowrap"
-                                  onClick={() => openConverter(lead)}
-                                  title="Converter em cliente (cadastro + 1º pedido)"
-                                  data-testid={`button-converter-lead-${lead.id}`}
-                                >
-                                  <CheckCircle className="h-4 w-4 mr-1" /> Converter
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  className="whitespace-nowrap"
-                                  onClick={() => { setNaoConverterLead(lead); setMotivoNao(""); setObsNao(""); }}
-                                  title="Não convertido (justificativa obrigatória)"
-                                  data-testid={`button-naoconvertido-lead-${lead.id}`}
-                                >
-                                  <XCircle className="h-4 w-4 mr-1" /> Não Convertido
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-amber-400 text-amber-700 whitespace-nowrap"
-                                  disabled={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin}
-                                  title={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin ? "Prorrogação já utilizada — somente admin pode reagendar" : "Prorrogar (revisita, máx. 15 dias)"}
-                                  onClick={() => openProrrogar(lead)}
-                                  data-testid={`button-prorrogar-lead-${lead.id}`}
-                                >
-                                  <Clock className="h-4 w-4 mr-1" /> {Number((lead as any).postponementCount || 0) >= 1 ? "Prorrogado" : "Prorrogar"}
-                                </Button>
-                              </>
-                            )}
+                            ) : (!isAdmin && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-emerald-400 text-emerald-700 whitespace-nowrap"
+                                onClick={() => setAcoesLead(lead)}
+                                title="Ações do lead (registro, converter, prorrogar…)"
+                                data-testid={`button-acoes-lead-${lead.id}`}
+                              >
+                                <FileText className="h-4 w-4 mr-1" /> Ações
+                              </Button>
+                            ))}
                             {isAdmin && (
                               <>
-                                <Button size="sm" variant="outline" className="whitespace-nowrap" onClick={() => handleEdit(lead)} title="Editar lead" data-testid={`button-edit-lead-${lead.id}`}>
+                                <Button size="sm" variant="outline" className="whitespace-nowrap" onClick={() => handleEdit(lead)} title="Editar lead (dados + ações)" data-testid={`button-edit-lead-${lead.id}`}>
                                   <Edit className="h-4 w-4 mr-1" /> Editar
                                 </Button>
                               <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(lead.id)} title="Excluir" data-testid={`button-delete-lead-${lead.id}`}>
@@ -1448,22 +1441,11 @@ export default function LeadsManagement() {
                           <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white flex-1" disabled={resgatarMut.isPending} onClick={() => { if (confirm('Resgatar este lead? Ele volta para a lista como novo, com os mesmos dados.')) resgatarMut.mutate(lead.id); }} data-testid={`button-resgatar-lead-m-${lead.id}`}>
                             <History className="h-4 w-4 mr-1" /> Resgatar
                           </Button>
-                        ) : (
-                          <>
-                            <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 flex-1 min-w-[46%]" onClick={() => abrirAtendimento(lead)} data-testid={`button-atendimento-lead-m-${lead.id}`}>
-                              <FileText className="h-4 w-4 mr-1" /> Registro
-                            </Button>
-                            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white flex-1 min-w-[46%]" onClick={() => openConverter(lead)} data-testid={`button-converter-lead-m-${lead.id}`}>
-                              <CheckCircle className="h-4 w-4 mr-1" /> Converter
-                            </Button>
-                            <Button size="sm" variant="destructive" className="flex-1 min-w-[46%]" onClick={() => { setNaoConverterLead(lead); setMotivoNao(""); setObsNao(""); }} data-testid={`button-naoconvertido-lead-m-${lead.id}`}>
-                              <XCircle className="h-4 w-4 mr-1" /> Não conv.
-                            </Button>
-                            <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 flex-1 min-w-[46%]" disabled={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin} onClick={() => openProrrogar(lead)} data-testid={`button-prorrogar-lead-m-${lead.id}`}>
-                              <Clock className="h-4 w-4 mr-1" /> {Number((lead as any).postponementCount || 0) >= 1 ? "Prorrogado" : "Prorrogar"}
-                            </Button>
-                          </>
-                        )}
+                        ) : (!isAdmin && (
+                          <Button size="sm" variant="outline" className="border-emerald-400 text-emerald-700 flex-1" onClick={() => setAcoesLead(lead)} data-testid={`button-acoes-lead-m-${lead.id}`}>
+                            <FileText className="h-4 w-4 mr-1" /> Ações
+                          </Button>
+                        ))}
                         {isAdmin && (
                           <>
                             <Button size="sm" variant="outline" className="flex-1 min-w-[46%]" onClick={() => handleEdit(lead)} data-testid={`button-edit-lead-m-${lead.id}`}>
@@ -1498,7 +1480,14 @@ export default function LeadsManagement() {
               {editingLead ? "Editar Lead" : "Novo Lead"}
             </DialogTitle>
           </DialogHeader>
-          
+
+          {editingLead && editingLead.status !== 'discarded' && (
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+              <div className="text-xs font-semibold text-muted-foreground">Ações do lead</div>
+              {renderAcoesLead(editingLead, () => { setEditingLead(null); setIsCreating(false); resetForm(); })}
+            </div>
+          )}
+
           <div className="space-y-4">
             <div>
               <Label htmlFor="fantasyName">Nome Fantasia *</Label>
@@ -1759,6 +1748,16 @@ export default function LeadsManagement() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Menu de ações do lead (vendedor/telemarketing) */}
+      <Dialog open={!!acoesLead} onOpenChange={(open) => { if (!open) setAcoesLead(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base truncate">{acoesLead?.fantasyName || 'Ações do lead'}</DialogTitle>
+          </DialogHeader>
+          {acoesLead && renderAcoesLead(acoesLead, () => setAcoesLead(null))}
         </DialogContent>
       </Dialog>
 
