@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera } from "lucide-react";
+import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera, ShieldCheck, Info } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -19,6 +19,11 @@ type Uso = {
   totalRadar: number; totalCobravel: number; cobravelPago: number; custoUSD: number; custoBRL?: number; fichaTotal: number;
   custoRadarUSD?: number; custoFotoUSD?: number;
   fotoTotal?: number; fotoCobravel?: number; fotoCota?: number; fotoPreco?: number; fotoPrecoBRL?: number; fotoPago?: number;
+  fichaCobravel?: number; fichaCota?: number;
+  blindagem?: boolean; margem?: number;
+  limites?: { radar: number; foto: number; ficha: number };
+  autoOff?: { radar: boolean; foto: boolean; ficha: boolean };
+  override?: { radar: boolean; foto: boolean; ficha: boolean };
   porVendedor: { vendedor: string; userId: string | null; radarTotal: number; radarCobravel: number; fotoTotal?: number; fichaTotal: number }[];
 };
 
@@ -50,6 +55,7 @@ export default function RecursosProspeccao() {
   const [saving, setSaving] = useState(false);
   const [usoLoading, setUsoLoading] = useState(false);
   const [avancado, setAvancado] = useState(false);
+  const [infoCobranca, setInfoCobranca] = useState(false);
 
   const carregarCfg = useCallback(async () => {
     setLoading(true);
@@ -111,6 +117,10 @@ export default function RecursosProspeccao() {
   const fotoCobravelN = uso?.fotoCobravel ?? 0;
   const fotoPct = uso && fotoCotaN > 0 ? Math.min(100, Math.round((fotoCobravelN / fotoCotaN) * 100)) : 0;
   const custoFotoBRL = uso ? ((uso.custoFotoUSD ?? 0) * cambio) : 0;
+  const fichaAtivo = bool("ficha_google_enabled");
+  const fichaCotaN = uso?.fichaCota ?? Number(cfg?.ficha_cota_gratis) ?? 1000;
+  const fichaCobravelN = uso?.fichaCobravel ?? uso?.fichaTotal ?? 0;
+  const fichaPct = uso && fichaCotaN > 0 ? Math.min(100, Math.round((fichaCobravelN / fichaCotaN) * 100)) : 0;
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
@@ -133,14 +143,32 @@ export default function RecursosProspeccao() {
         <>
           {/* Liga/Desliga */}
           <Card>
-            <CardHeader><CardTitle className="text-base">Ativar recursos</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                Ativar recursos
+                <button type="button" onClick={() => setInfoCobranca((v) => !v)} className="text-muted-foreground hover:text-emerald-600 transition" aria-label="Como é cobrado" data-testid="btn-info-cobranca">
+                  <Info className="h-4 w-4" />
+                </button>
+              </CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
+              {infoCobranca && (
+                <div className="text-[11px] leading-relaxed rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-1.5">
+                  <div className="font-semibold text-foreground text-xs">Como o Google cobra</div>
+                  <div><strong>Radar</strong> — por <strong>busca</strong>: cada vez que o vendedor consulta o GPS e a busca chama o Google conta 1 (e já traz até 20 locais de uma vez). Buscas repetidas na mesma região saem do cache e <strong>não</strong> contam. US$ 32 / 1.000 · 5.000 grátis/mês.</div>
+                  <div><strong>Busca por foto</strong> — por <strong>foto</strong>: cada imagem lida (OCR) conta 1. US$ 1,50 / 1.000 · 1.000 grátis/mês.</div>
+                  <div><strong>Ficha Google</strong> — por <strong>lead</strong>: cada lead que recebe os dados do Google conta 1. US$ 32 / 1.000 · 1.000 grátis/mês.</div>
+                  <div className="text-muted-foreground pt-1">Os valores em R$ usam o câmbio configurado abaixo. A <strong>blindagem de custo</strong> desliga cada recurso antes de passar da cota grátis, então no uso normal o custo fica em R$ 0,00.</div>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-4 border rounded-lg p-3">
                 <div className="flex items-start gap-3">
                   <SatelliteDish className="h-5 w-5 text-emerald-600 mt-0.5" />
                   <div>
                     <div className="font-medium">Radar de novos pontos</div>
                     <div className="text-xs text-muted-foreground">Mostra estabelecimentos por perto que ainda não estão no Integra (Google Places). Cobra por busca.</div>
+                    {uso?.autoOff?.radar && <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mt-1">⚠ Desligado automaticamente — limite do mês atingido. Religa dia 1º ou ligue aqui.</div>}
+                    {uso?.override?.radar && <div className="text-[11px] text-blue-700 dark:text-blue-400 mt-1">Ligado manualmente acima da cota — pode gerar custo este mês.</div>}
                   </div>
                 </div>
                 <Switch checked={bool("radar_enabled")} onCheckedChange={(v) => set("radar_enabled", v ? "true" : "false")} data-testid="switch-radar" />
@@ -151,6 +179,8 @@ export default function RecursosProspeccao() {
                   <div>
                     <div className="font-medium">Ficha Google dos leads</div>
                     <div className="text-xs text-muted-foreground">Coleta nota, categoria e horário do Google para os leads (em Gestão de Leads). Cobra por lead coletado.</div>
+                    {uso?.autoOff?.ficha && <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mt-1">⚠ Desligada automaticamente — limite do mês atingido. Religa dia 1º ou ligue aqui.</div>}
+                    {uso?.override?.ficha && <div className="text-[11px] text-blue-700 dark:text-blue-400 mt-1">Ligada manualmente acima da cota — pode gerar custo este mês.</div>}
                   </div>
                 </div>
                 <Switch checked={bool("ficha_google_enabled")} onCheckedChange={(v) => set("ficha_google_enabled", v ? "true" : "false")} data-testid="switch-ficha" />
@@ -162,6 +192,8 @@ export default function RecursosProspeccao() {
                     <div className="font-medium">Busca por foto (fachada)</div>
                     <div className="text-xs text-muted-foreground">O vendedor fotografa a fachada e o sistema lê o nome (OCR do Google) e confere se já é cliente/lead. Cobra por foto.</div>
                     <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">Requer a "Cloud Vision API" ativada no Google Cloud. Enquanto não estiver ativada, deixe desligado.</div>
+                    {uso?.autoOff?.foto && <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mt-1">⚠ Desligada automaticamente — limite do mês atingido. Religa dia 1º ou ligue aqui.</div>}
+                    {uso?.override?.foto && <div className="text-[11px] text-blue-700 dark:text-blue-400 mt-1">Ligada manualmente acima da cota — pode gerar custo este mês.</div>}
                   </div>
                 </div>
                 <Switch checked={bool("foto_enabled")} onCheckedChange={(v) => set("foto_enabled", v ? "true" : "false")} data-testid="switch-foto" />
@@ -243,6 +275,40 @@ export default function RecursosProspeccao() {
             </CardContent>
           </Card>
 
+          {/* Blindagem de custo */}
+          <Card>
+            <CardHeader><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-600" /> Blindagem de custo</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-4 border rounded-lg p-3">
+                <div>
+                  <div className="font-medium">Desligar sozinho perto da cota grátis</div>
+                  <div className="text-xs text-muted-foreground">Cada recurso fica ligado até a margem antes de esgotar a cota grátis do mês e <strong>desliga sozinho</strong>. Religa automaticamente no dia 1º (renovação) ou quando o admin reativar aqui.</div>
+                </div>
+                <Switch checked={bool("auto_off_enabled")} onCheckedChange={(v) => set("auto_off_enabled", v ? "true" : "false")} data-testid="switch-blindagem" />
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <Label className="text-xs">Margem de segurança</Label>
+                  <Input type="number" value={cfg.auto_off_margem || ""} onChange={(e) => set("auto_off_margem", e.target.value)} />
+                  <p className="text-[11px] text-muted-foreground mt-1">desliga N antes do fim da cota</p>
+                </div>
+                <div>
+                  <Label className="text-xs">Cota grátis ficha / mês</Label>
+                  <Input type="number" value={cfg.ficha_cota_gratis || ""} onChange={(e) => set("ficha_cota_gratis", e.target.value)} />
+                </div>
+              </div>
+              <div className="text-[11px] text-muted-foreground space-y-0.5 border rounded-lg p-3 bg-muted/30">
+                <div className="font-medium text-foreground mb-1">Desliga automaticamente ao atingir (cota − margem):</div>
+                <div>• Radar: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.radar_cota_gratis) || 5000) - (Number(cfg.auto_off_margem) || 0))}</span> buscas/mês</div>
+                <div>• Busca por foto: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.foto_cota_gratis) || 1000) - (Number(cfg.auto_off_margem) || 0))}</span> fotos/mês</div>
+                <div>• Ficha Google: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.ficha_cota_gratis) || 1000) - (Number(cfg.auto_off_margem) || 0))}</span> consultas/mês</div>
+              </div>
+              <Button onClick={salvar} disabled={saving} variant="outline">
+                {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</> : <><Save className="h-4 w-4 mr-2" /> Salvar</>}
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Uso e custo */}
           <Card>
             <CardHeader className="flex-row items-center justify-between">
@@ -291,6 +357,14 @@ export default function RecursosProspeccao() {
                       <span className="text-muted-foreground">{fotoTotalN} foto{fotoTotalN === 1 ? "" : "s"} · {fotoCobravelN} / {fotoCotaN} grátis · {custoFotoBRL > 0 ? brl(custoFotoBRL) : "R$ 0,00"}</span>
                     </div>
                     <Progress value={fotoPct} className="h-2" />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-muted-foreground flex items-center gap-1.5"><ImageIcon className="h-3.5 w-3.5" /> Ficha Google {fichaAtivo ? "" : "(desligada)"}</span>
+                      <span className="text-muted-foreground">{fichaCobravelN} / {fichaCotaN} grátis</span>
+                    </div>
+                    <Progress value={fichaPct} className="h-2" />
                   </div>
 
                   <div>
