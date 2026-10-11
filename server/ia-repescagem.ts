@@ -268,6 +268,8 @@ export function registerIaRepescagem(app: any) {
         if ((await getSetting('ia_repescagem_on', 'on')) !== 'on') return;
         const dow = diaSemanaBR();
         if (dow === 0) return;
+        // Feriado nacional/local: ninguem na operacao, cliente fechado -> nao contata (mesma fonte da fila humana).
+        try { const { ehDiaUtil } = await import('./ia-fila'); if (!(await ehDiaUtil())) return; } catch {}
         const hora = parseInt(await getSetting('ia_repescagem_hora', '11'), 10) || 11;
         if (horaBR() < hora || horaBR() > hora + 3) return; // janela de 3h para pegar reinicios
         if ((await getSetting('ia_repescagem_last_run', '')) === hojeBR()) return;
