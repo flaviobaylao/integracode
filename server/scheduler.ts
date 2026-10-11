@@ -49,6 +49,32 @@ cron.schedule('30 4 * * *', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// PERF/DISCO (11/out/2026): retencao dos logs de webhook. Em 11/out o volume do Postgres
+// no Railway (5 GB) bateu 93% — webhook_debug_log tinha 140 mil payloads crus (368 MB) e
+// umbler_webhook_events 741 MB de eventos que nada no codigo le. Quem usa o debug_log so'
+// olha os ultimos registros (diagnostico) e o max(created_at) do webhook de boleto, entao
+// 30 dias basta. VACUUM (sem FULL) devolve o espaco para reuso sem travar a tabela.
+export async function runRetencaoLogs(): Promise<{ debugLog: number; umbler: number }> {
+  const dias = Number(process.env.WEBHOOK_LOG_RETENTION_DAYS || 30) || 30;
+  const corte = sql`NOW() - (${dias} * INTERVAL '1 day')`;
+  const r1: any = await db.execute(sql`DELETE FROM webhook_debug_log WHERE created_at < ${corte}`);
+  let umbler = 0;
+  try {
+    const r2: any = await db.execute(sql`DELETE FROM umbler_webhook_events WHERE created_at < ${corte}`);
+    umbler = Number(r2?.rowCount ?? 0);
+  } catch { /* tabela pode nao existir */ }
+  try { await db.execute(sql`VACUUM webhook_debug_log`); } catch { /* vacuum e' best-effort */ }
+  return { debugLog: Number(r1?.rowCount ?? 0), umbler };
+}
+cron.schedule('40 3 * * *', async () => {
+  try {
+    const r = await runRetencaoLogs();
+    console.log(`🧹 [SCHEDULER] Retencao de logs de webhook: ${r.debugLog} debug + ${r.umbler} umbler apagados.`);
+  } catch (error: any) {
+    console.error('❌ [SCHEDULER] Retencao de logs falhou:', error?.message);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // Popular o snapshot no boot (async, não bloqueia a inicialização).
 (async () => {
   try {
