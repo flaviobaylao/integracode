@@ -20,8 +20,10 @@
 // COMO shouldRespondNow DECIDE o disparo imediato (chamado pelo chat-routes no inbound):
 //   - regra timeout OFF  -> true (comportamento atual: front-line imediato, inalterado)
 //   - regra timeout ON:
-//       * última msg não-cliente foi da IA ('agent:%')  -> true  (IA já assumiu, continua na hora)
-//       * senão (humano respondeu por último, ou ninguém) -> false (espera o humano; o sweep assume em X min)
+//       * ninguém respondeu ainda (1º contato)           -> ia_regra_responder_novas ('on' = responde na hora)
+//       * última resposta foi da IA ('agent:%')          -> true  (IA já assumiu, continua na hora)
+//       * humano respondeu por último                     -> false (espera o humano; o sweep assume em X min)
+//     (mensagens 'system' — alertas, avisos automáticos — não contam como resposta)
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
@@ -190,12 +192,20 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
     }
     if ((await getSetting('ia_front_line', 'off')) === 'on' && (await humanoFalouPorUltimo(conversationId))) return false;
     if ((await getSetting('ia_regra_timeout_on', 'off')) !== 'on') return true; // regra off -> comportamento atual
+    // Último que RESPONDEU o cliente (humano ou IA). Avisos do sistema (alertas ao gestor,
+    // "[IA · indisponível]", etc.) não contam como resposta.
     const r: any = await db.execute(sql`SELECT sender_id, sender_type FROM chat_messages
       WHERE conversation_id = ${conversationId} AND sender_type <> 'customer'
+        AND sender_type <> 'system' AND coalesce(sender_id, '') <> 'system'
       ORDER BY created_at DESC LIMIT 1`);
     const row = r.rows?.[0];
+    // Ninguém respondeu ainda (primeiro contato): com ia_regra_responder_novas = on a IA
+    // responde NA HORA — antes disso todo cliente novo esperava ia_timeout_min pela 1ª resposta
+    // (11/10: 15 min), porque o toggle do painel não era lido em lugar nenhum.
+    if (!row) return (await getSetting('ia_regra_responder_novas', 'on')) === 'on';
     // IA já falou por último entre os não-clientes -> ela assumiu, continua respondendo na hora.
-    return !!(row && typeof row.sender_id === 'string' && row.sender_id.startsWith('agent:'));
+    // Humano falou por último -> espera o humano; o sweep assume em ia_timeout_min.
+    return !!(typeof row.sender_id === 'string' && row.sender_id.startsWith('agent:'));
   } catch { return true; } // em qualquer erro, mantém o comportamento atual (não trava o atendimento)
 }
 
