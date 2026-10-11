@@ -1322,6 +1322,35 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     if (injected) console.log(`🎯 [REPESCAGEM-FORÇADO] ${drawDate}: ${injected} cliente(s) injetado(s) por decisão do Admin`);
   } catch (e) { console.error('[runDailyDraw] forced injection:', (e as any)?.message); }
 
+  // SEM REPETICAO (plano 11/10/2026): cliente contatado nos ultimos N dias (atendimento
+  // virtual, check-in de rota, alocacao concluida ou contato da IA) nao volta ao sorteio.
+  // Em julho 927 clientes geraram 8.974 alocacoes (~10 por cliente) e 92% voltaram sem
+  // contato. Gate: repescagem_sem_repeticao_dias (default 7; 0 desliga). Forcados passam.
+  try {
+    const _dias = Math.max(0, parseInt(String((await db.execute(sql`SELECT value FROM system_settings WHERE key = 'repescagem_sem_repeticao_dias' LIMIT 1`)).rows?.[0]?.value ?? '7').replace(/"/g, ''), 10) || 0);
+    if (_dias > 0 && candidates.length) {
+      const _ids = candidates.map((c: any) => c.customerId).join(',');
+      const _rec: any = await db.execute(sql`
+        SELECT DISTINCT customer_id FROM (
+          SELECT customer_id FROM virtual_service_logs
+            WHERE attendance_date > now() - make_interval(days => ${_dias}) AND customer_id = ANY(string_to_array(${_ids}, ','))
+          UNION ALL
+          SELECT customer_id FROM route_checkpoints
+            WHERE checkpoint_type = 'check_in' AND checkpoint_time > now() - make_interval(days => ${_dias}) AND customer_id = ANY(string_to_array(${_ids}, ','))
+          UNION ALL
+          SELECT customer_id FROM repescagem_assignments
+            WHERE completed_at > now() - make_interval(days => ${_dias}) AND customer_id = ANY(string_to_array(${_ids}, ','))
+        ) x`);
+      const _recentes = new Set(((_rec.rows || []) as any[]).map(r => String(r.customer_id)));
+      const _antes = candidates.length;
+      for (let i = candidates.length - 1; i >= 0; i--) {
+        const c: any = candidates[i];
+        if (!c.forcedByAdmin && _recentes.has(String(c.customerId))) candidates.splice(i, 1);
+      }
+      if (_antes !== candidates.length) console.log(`🔁 [REPESCAGEM] ${drawDate}: ${_antes - candidates.length} cliente(s) fora do sorteio (contato nos ultimos ${_dias} dias)`);
+    }
+  } catch (e) { console.error('[runDailyDraw] sem-repeticao:', (e as any)?.message); }
+
   const candIds = candidates.map((c: any) => c.customerId);
   const coordRows = candIds.length
     ? await db.select({ id: customers.id, lat: customers.latitude, lng: customers.longitude, sellerId: customers.sellerId })
@@ -1565,7 +1594,7 @@ async function resetStaleLocks(today: string): Promise<void> {
   } catch (e) { console.error('[resetStaleLocks]', (e as any)?.message); }
 }
 
-async function closeAndExpireRepescagem(date: string): Promise<any> {
+export async function closeAndExpireRepescagem(date: string): Promise<any> {
   await ensureRepescagemOrderCol();
   const inRoute = await db.select().from(repescagemAssignments)
     .where(and(eq(repescagemAssignments.drawDate, date), eq(repescagemAssignments.status, 'in_route')));
