@@ -138,9 +138,13 @@ async function conversaLivre(convId: string): Promise<boolean> {
 
 // Texto de abertura: ultimo pedido pronto para repetir, ou acerto de debito antes.
 async function montarAbertura(customerId: string, nome: string): Promise<{ tipo: string; texto: string }> {
-  const primeiro = (nome.split(/\s+/)[0] || '').replace(/[^\p{L}\p{N}&.-]/gu, '');
+  // Nome fantasia em Title Case ("COLEGIO CIMAN" -> "Colegio Ciman"); contato, se houver, vem antes.
+  let contato = '';
+  try { const c: any = await db.execute(sql`SELECT contact FROM customers WHERE id = ${customerId} LIMIT 1`); contato = String(c.rows?.[0]?.contact || '').trim().split(/[\s/,-]+/)[0] || ''; } catch {}
+  const title = (t: string) => t.toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').trim();
+  const quem = contato ? title(contato) : title(nome);
   const saud = horaBR() < 12 ? 'Bom dia' : (horaBR() < 18 ? 'Boa tarde' : 'Boa noite');
-  const abre = `${saud}${primeiro ? ', ' + primeiro : ''}! Aqui e a Honest Sucos 🧡`;
+  const abre = `${saud}${quem ? ', ' + quem : ''}! Aqui é a Honest Sucos 🧡`;
 
   // Debito vencido: combina pagamento antes de vender (regra do plano).
   try {
@@ -148,7 +152,7 @@ async function montarAbertura(customerId: string, nome: string): Promise<{ tipo:
       FROM receivables r WHERE r.customer_id = ${customerId} AND ${whereDebitoVivoSql('r')}`);
     const deb = d.rows?.[0];
     if (deb && Number(deb.n) > 0 && Number(deb.total) > 0) {
-      return { tipo: 'debito', texto: `${abre}\nVi aqui que ${Number(deb.n) > 1 ? 'ha ' + deb.n + ' titulos em aberto' : 'ha um titulo em aberto'} no total de ${brl(deb.total)}. Quer que eu te mande a 2a via com PIX para acertar? Depois ja deixo seu proximo pedido pronto. 😊` };
+      return { tipo: 'debito', texto: `${abre}\nVi aqui que ${Number(deb.n) > 1 ? 'há ' + deb.n + ' títulos em aberto' : 'há um título em aberto'} no total de ${brl(deb.total)}. Quer que eu te mande a 2ª via com PIX para acertar? Depois já deixo seu próximo pedido pronto. 😊` };
     }
   } catch {}
 
@@ -168,11 +172,11 @@ async function montarAbertura(customerId: string, nome: string): Promise<{ tipo:
     if (ped && itens.length) {
       const lista = itens.slice(0, 12).map((i: any) => `• ${i.quantity || 1}x ${String(i.name || '').replace(/^SUCO MISTO DE FRUTA - /i, '')}`).join('\n');
       const tot = Number(ped.sale_value || 0);
-      return { tipo: 'pedido', texto: `${abre}\nPassando para ver se precisa repor. Seu ultimo pedido (${ddmm(ped.dia)}) foi:\n${lista}${tot ? '\nTotal ' + brl(tot) : ''}\n\nQuer repetir para a proxima entrega? Responda *SIM* ou me diga o que mudar. 🍹` };
+      return { tipo: 'pedido', texto: `${abre}\nPassando para ver se precisa repor. Seu último pedido (${ddmm(ped.dia)}) foi:\n${lista}${tot ? '\nTotal ' + brl(tot) : ''}\n\nQuer repetir para a próxima entrega? Responda *SIM* ou me diga o que mudar. 🍹` };
     }
   } catch {}
 
-  return { tipo: 'generico', texto: `${abre}\nPassando para ver se precisa repor os sucos esta semana. Temos 8 sabores em 350ml e 900ml. Quer que eu monte um pedido para voce? 🍹` };
+  return { tipo: 'generico', texto: `${abre}\nPassando para ver se precisa repor os sucos esta semana. Temos 8 sabores em 350ml e 900ml. Quer que eu monte um pedido para você? 🍹` };
 }
 
 export async function iaRepescagemTick(opts: { force?: boolean; dry?: boolean; limit?: number; drawDate?: string } = {}): Promise<any> {
