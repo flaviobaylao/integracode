@@ -8868,6 +8868,9 @@ export class DatabaseStorage implements IStorage {
           lat: customers.latitude, lng: customers.longitude,
           addr: customers.address, city: customers.city, neigh: customers.neighborhood,
           uf: customers.state, zip: customers.zipCode, phone: customers.phone,
+          // PERF (11/out/2026): nome fantasia / razao social / vendedor da carteira vem daqui
+          // para a tela do pipeline nao precisar baixar o cadastro inteiro (/api/customers, 2,4 MB).
+          fantasy: customers.fantasyName, razao: customers.name, sellerId: customers.sellerId,
         }).from(customers).where(or(...conds));
         const byId = new Map<string, any>();
         const byDoc = new Map<string, any>();
@@ -8890,6 +8893,9 @@ export class DatabaseStorage implements IStorage {
           (r as any).customerState = c.uf || null;
           (r as any).customerZipCode = c.zip || null;
           (r as any).customerPhone = c.phone || null;
+          (r as any).customerFantasyName = c.fantasy || null;
+          (r as any).customerRazaoSocial = c.razao || null;
+          (r as any).customerSellerId = c.sellerId || null;
           // FIX 08/set/2026 — documento congelado na criacao do pedido. Se nasceu vazio
           // (cadastro sem CNPJ na epoca), cai no cadastro atual em vez de mostrar "-".
           if (!String((r as any).customerDocument || '').trim()) {

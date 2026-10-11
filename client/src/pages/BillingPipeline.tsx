@@ -347,6 +347,10 @@ export default function BillingPipeline() {
   const [search, setSearch] = useState('');
   // Classificação por data de criação em cada raia (asc = A-Z / mais antigos primeiro).
   const [stageSort, setStageSort] = useState<Record<string, 'asc' | 'desc'>>({});
+  // PERF (11/out/2026): cada coluna renderiza em janelas de cards (o resto entra pelo botao
+  // "Mostrar mais"). Entregue com 1 ano = ~10 mil cards; sem isto o DOM passava de 360 mil nos.
+  const CARDS_POR_JANELA = 60;
+  const [cardsVisiveis, setCardsVisiveis] = useState<Record<string, number>>({});
   const [showLegend, setShowLegend] = useState(false);
   const [showDrafts, setShowDrafts] = useState(false);
   const [showGynServ, setShowGynServ] = useState(false); // pedido de venda GYN -> SERV (04/out/2026)
@@ -376,7 +380,6 @@ export default function BillingPipeline() {
   // (role vendedor/telemarketing, ativos, sem nomes de sistema) — não todos os usuários.
   const { data: sellersList = [] } = useQuery<any[]>({ queryKey: ['/api/sellers/active'] });
   const { data: productCatalog = [] } = useQuery<any[]>({ queryKey: ['/api/products'] });
-  const { data: customersList = [] } = useQuery<any[]>({ queryKey: ['/api/customers'] });
   // Empresas do grupo (emissora) — pick-list da edição do pedido no modal de detalhes.
   const { data: omieInstancesList = [] } = useQuery<any[]>({ queryKey: ['/api/companies/public'], staleTime: 5 * 60 * 1000 });
 
@@ -490,6 +493,22 @@ export default function BillingPipeline() {
     refetchOnWindowFocus: true,
     staleTime: 15000,
   });
+
+  // PERF (11/out/2026): a tela NAO baixa mais /api/customers (5.786 cadastros, 2,4 MB). Nome
+  // fantasia, razao social, cidade e vendedor da carteira ja' vem em cada card, resolvidos
+  // pelo servidor (getBillingPipelineItems). `customersList` e' montada a partir dos cards.
+  const customersList = useMemo<any[]>(() => {
+    const seen = new Map<string, any>();
+    for (const i of (rawItems as any[])) {
+      const id = i?.customerId; if (!id || seen.has(id)) continue;
+      seen.set(id, { id, cnpj: i.customerDocument, cpf: null, fantasyName: i.customerFantasyName, name: i.customerRazaoSocial, city: i.customerCity, sellerId: i.customerSellerId });
+    }
+    for (const b of (blockedOrders as any[])) {
+      const id = b?.customerId; if (!id || seen.has(id) || !b.customer) continue;
+      seen.set(id, { id, cnpj: b.customer.cnpj, cpf: b.customer.cpf, fantasyName: b.customer.fantasyName, name: b.customer.name, city: b.customer.city, sellerId: b.customer.sellerId });
+    }
+    return Array.from(seen.values());
+  }, [rawItems, blockedOrders]);
 
   // Mapas para resolver SEMPRE o Nome Fantasia no card (independe do que veio gravado em customer_name —
   // ex.: itens reconciliados por NF trazem a razão social da nota). Resolve por id e, como reforço,
@@ -1649,6 +1668,8 @@ export default function BillingPipeline() {
               const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
               return sortDir === 'asc' ? ta - tb : tb - ta;
             });
+            const limiteVisivel = cardsVisiveis[stage.key] || CARDS_POR_JANELA;
+            const visibleStageItems = sortedStageItems.length > limiteVisivel ? sortedStageItems.slice(0, limiteVisivel) : sortedStageItems;
             const StageIcon = stage.icon;
             const stageIds = stageItems.map(i => i.id);
             const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedIds.has(id));
@@ -1723,7 +1744,7 @@ export default function BillingPipeline() {
                       Nenhum pedido
                     </div>
                   )}
-                  {sortedStageItems.map((item) => (
+                  {visibleStageItems.map((item) => (
                     <div
                       key={item.id}
                       draggable={canEdit}
@@ -1779,6 +1800,15 @@ export default function BillingPipeline() {
                     />
                     </div>
                   ))}
+                  {sortedStageItems.length > visibleStageItems.length && (
+                    <button
+                      onClick={() => setCardsVisiveis(prev => ({ ...prev, [stage.key]: (prev[stage.key] || CARDS_POR_JANELA) + 100 }))}
+                      className="w-full text-xs text-blue-700 dark:text-blue-300 border border-dashed border-blue-300 rounded py-1.5 bg-white dark:bg-gray-900 hover:bg-blue-50"
+                      data-testid={`mostrar-mais-${stage.key}`}
+                    >
+                      Mostrar mais ({sortedStageItems.length - visibleStageItems.length} restantes)
+                    </button>
+                  )}
                 </div>
               </div>
             );
