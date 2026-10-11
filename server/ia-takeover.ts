@@ -196,7 +196,10 @@ export async function shouldRespondNow(conversationId: string): Promise<boolean>
     // "[IA · indisponível]", etc.) não contam como resposta.
     const r: any = await db.execute(sql`SELECT sender_id, sender_type FROM chat_messages
       WHERE conversation_id = ${conversationId} AND sender_type <> 'customer'
-        AND sender_type <> 'system' AND coalesce(sender_id, '') <> 'system'
+        -- a IA grava sender_type='system' + sender_id='agent:<id>': ESSA conta como resposta;
+        -- so o sistema puro (sender_id 'system') fica de fora.
+        AND coalesce(sender_id, '') <> 'system'
+        AND NOT (sender_type = 'system' AND coalesce(sender_id, '') NOT LIKE 'agent:%')
       ORDER BY created_at DESC LIMIT 1`);
     const row = r.rows?.[0];
     // Ninguém respondeu ainda (primeiro contato): com ia_regra_responder_novas = on a IA
