@@ -80,7 +80,7 @@ async function selecionar(limit: number, soFaixa?: string): Promise<Alvo[]> {
   const r: any = await db.execute(sql`
     WITH nf AS (
       SELECT regexp_replace(COALESCE(customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, max(emission_date)::date AS ult
-      FROM fiscal_invoices WHERE status = 'authorized' AND cfop = ANY(${CFOPS}) GROUP BY 1
+      FROM fiscal_invoices WHERE status = 'authorized' AND cfop = ANY(string_to_array(${CFOPS.join(',')}, ',')) GROUP BY 1
     ), base AS (
       SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.phone, nf.ult,
              ((now() AT TIME ZONE 'America/Sao_Paulo')::date - nf.ult) AS dias
