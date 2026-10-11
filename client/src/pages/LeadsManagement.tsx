@@ -313,6 +313,30 @@ export default function LeadsManagement() {
     },
   });
 
+  // Exclusão em massa dos leads selecionados (somente admin).
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async () => {
+      const ids = Array.from(selectedLeadIds);
+      return await apiRequest('POST', '/api/leads/bulk-delete', { ids });
+    },
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      setSelectedLeadIds(new Set());
+      toast({ title: "Leads excluídos", description: `${res?.deleted ?? 0} lead(s) excluído(s) com sucesso.` });
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error.message || "Erro ao excluir os leads em massa", variant: "destructive" });
+    },
+  });
+
+  const handleBulkDelete = () => {
+    const n = selectedLeadIds.size;
+    if (n === 0) return;
+    if (window.confirm(`Excluir ${n} lead(s) selecionado(s)? Esta ação não pode ser desfeita.`)) {
+      bulkDeleteMutation.mutate();
+    }
+  };
+
   // === Desfecho do lead ===
   const invalidateLeads = () => queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
 
@@ -1059,6 +1083,15 @@ export default function LeadsManagement() {
                 data-testid="button-bulk-edit-leads"
               >
                 <Edit className="h-4 w-4 mr-1" /> Editar em massa
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={selectedLeadIds.size === 0 || bulkDeleteMutation.isPending}
+                onClick={handleBulkDelete}
+                data-testid="button-bulk-delete-leads"
+              >
+                <Trash2 className="h-4 w-4 mr-1" /> {bulkDeleteMutation.isPending ? 'Excluindo…' : `Excluir selecionados${selectedLeadIds.size > 0 ? ` (${selectedLeadIds.size})` : ''}`}
               </Button>
               {selectedLeadIds.size > 0 && (
                 <Button size="sm" variant="ghost" onClick={() => setSelectedLeadIds(new Set())} data-testid="button-bulk-clear">
