@@ -103,6 +103,21 @@ async function selectElegiveis(mins: number, limit: number, minsAtendente: numbe
         SELECT 1 FROM chat_messages m
         WHERE m.conversation_id = c.id
           AND m.created_at > now() - make_interval(mins => ${mins}))
+      -- Se a IA FALHOU na ultima mensagem do cliente (ia_trilha modelo_sem_resposta) e
+      -- ninguem — humano nem IA — respondeu depois, a conversa NAO e finalizada: fica
+      -- aberta para o atendente. Antes o cliente escrevia, a IA caia em silencio e 2 h
+      -- depois ele recebia "Atendimento finalizado" sem nunca ter sido atendido.
+      AND NOT EXISTS (
+        SELECT 1 FROM ia_trilha t
+        WHERE t.conversation_id = c.id
+          AND t.porta = 'agente:modelo_sem_resposta'
+          AND t.criado_at > COALESCE((SELECT max(m2.created_at) FROM chat_messages m2
+                                      WHERE m2.conversation_id = c.id AND m2.sender_type = 'customer'), to_timestamp(0))
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_messages m3
+            WHERE m3.conversation_id = c.id
+              AND m3.created_at > t.criado_at
+              AND (m3.sender_type = 'agent' OR m3.sender_id LIKE 'agent:%')))
       AND c.last_message_time IS NOT NULL
       AND c.last_message_time < ${AGORA_BR} - make_interval(mins => ${mins})
       AND (c.last_attended_at IS NULL OR c.last_attended_at < ${AGORA_BR} - make_interval(mins => ${mins}))

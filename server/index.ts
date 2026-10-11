@@ -6,6 +6,7 @@ import { registerIaAtendimento } from "./ia-atendimento-panel";
 import { registerIaFinalizar } from "./ia-finalizar";
 import { registerIaTakeover } from "./ia-takeover";
 import { registerIaFila } from "./ia-fila";
+import { registerIaSaude } from "./ia-saude";
 import { registerIaDiag } from "./ia-diag";
 import { registerCanaisGestao } from "./canais-gestao";
 import { registerRelatorioEntregas } from "./relatorio-entregas-whatsapp";
@@ -121,6 +122,7 @@ registerIaAtendimento(app);
 registerIaFinalizar(app);
 registerIaTakeover(app);
 registerIaFila(app);
+registerIaSaude(app);
 registerIaDiag(app);
 registerCanaisGestao(app);
 try { registerRelatorioEntregas(app); } catch (e) { console.error('[rel-entregas]', e); }
