@@ -1,4 +1,5 @@
 import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL, vendedorImplantou } from "./faturamento-oficial";
+import { compressJson } from "./compress-json";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR } from '@shared/tempo';
 import { registerOfficialPanel } from "./official-panel";
@@ -164,6 +165,9 @@ app.use((req, res, next) => {
     ? { limit: '25mb', verify: (r: any, _res: any, buf: Buffer) => { r.rawBody = buf.toString('utf8'); } }
     : { limit: '25mb' })(req, res, next);
 });
+
+// PERF (11/out/2026): gzip nas respostas JSON da API (ver server/compress-json.ts).
+app.use(compressJson());
 
 // Middleware condicional para urlencoded - NÃO processar requisições multipart/form-data
 app.use((req, res, next) => {

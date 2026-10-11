@@ -585,7 +585,7 @@ export interface IStorage {
   createInventoryMovement(data: InsertInventoryMovement): Promise<InventoryMovement>;
 
   // Billing Pipeline
-  getBillingPipelineItems(filters?: { stage?: string }): Promise<BillingPipeline[]>;
+  getBillingPipelineItems(filters?: { stage?: string; ativosApenas?: boolean; dias?: number }): Promise<BillingPipeline[]>;
   getBillingPipelineItem(id: string): Promise<BillingPipeline | undefined>;
   createBillingPipelineItem(data: InsertBillingPipeline): Promise<BillingPipeline>;
   updateBillingPipelineItem(id: string, data: Partial<InsertBillingPipeline>): Promise<BillingPipeline>;
@@ -1564,8 +1564,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Product operations
+  // PERF (11/out/2026): a lista de produtos NAO traz mais as imagens em base64 —
+  // `images` (51 MB) e `image_url` (27 MB) faziam o GET /api/products pesar 80 MB
+  // e levar ~50 s em toda tela que monta o catalogo (pipeline, SaleEditModal...).
+  // As imagens passam a ser servidas por rota propria (/api/products/:id/image e
+  // /images/:n) com cache; aqui vai so' a URL. Quem precisa do binario (upload,
+  // remocao, LIO) usa getProduct(id), que continua trazendo a linha inteira.
   async getProducts(): Promise<Product[]> {
-    return await db.select().from(products).where(eq(products.isActive, true));
+    const { images: _imgs, imageUrl: _url, ...cols } = getTableColumns(products);
+    const rows = await db.select({
+      ...cols,
+      _hasImage: sql<boolean>`(${products.imageUrl} IS NOT NULL AND ${products.imageUrl} <> '')`,
+      _imagesCount: sql<number>`COALESCE(array_length(${products.images}, 1), 0)`,
+    }).from(products).where(eq(products.isActive, true));
+    return (rows as any[]).map((r) => {
+      const { _hasImage, _imagesCount, ...rest } = r;
+      const n = Number(_imagesCount) || 0;
+      return {
+        ...rest,
+        imageUrl: _hasImage ? `/api/products/${r.id}/image` : null,
+        images: Array.from({ length: n }, (_, i) => `/api/products/${r.id}/images/${i}`),
+      } as Product;
+    });
   }
 
   async getProduct(id: string): Promise<Product | undefined> {
@@ -8704,9 +8724,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Billing Pipeline
-  async getBillingPipelineItems(filters?: { stage?: string }): Promise<BillingPipeline[]> {
+  // PERF (11/out/2026): opcoes novas, todas OPCIONAIS — sem elas o comportamento e' o de
+  // sempre (tabela inteira), porque varios caminhos do servidor dependem da lista completa
+  // (dedup de pedido, reconcile, relatorios). A tela do pipeline passa a pedir so' os
+  // ativos (`ativosApenas`) e, por estagio, uma janela de dias (`dias`, por updated_at).
+  async getBillingPipelineItems(filters?: { stage?: string; ativosApenas?: boolean; dias?: number }): Promise<BillingPipeline[]> {
     const conditions = [];
     if (filters?.stage) conditions.push(eq(billingPipeline.stage, filters.stage as any));
+    if (filters?.ativosApenas) conditions.push(sql`${billingPipeline.stage}::text NOT IN ('entregue', 'lixeira')`);
+    if (filters?.dias && Number.isFinite(filters.dias) && filters.dias > 0) {
+      conditions.push(sql`COALESCE(${billingPipeline.updatedAt}, ${billingPipeline.createdAt}) >= NOW() - (${Math.floor(filters.dias)} * INTERVAL '1 day')`);
+    }
     const rows = conditions.length > 0
       ? await db.select().from(billingPipeline).where(and(...conditions)).orderBy(desc(billingPipeline.createdAt))
       : await db.select().from(billingPipeline).orderBy(desc(billingPipeline.createdAt));
