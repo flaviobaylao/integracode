@@ -709,6 +709,15 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       if (walletSellerId) {
         const owner = await storage.getUser(walletSellerId).catch(() => null);
         if (owner && isTelemarketing(owner)) await notifyTelemarketingOrder(owner, info);
+        // 11/10: com a IA na frente (ia_front_line), o vendedor da carteira precisa saber que
+        // a IA fechou pedido do cliente DELE — para qualquer dono, nao so telemarketing.
+        else if (owner && (owner as any).phone && (await getSetting('ia_notifica_wa', 'on')) === 'on') {
+          try {
+            const { sendUmblerTalkText } = await import('./chat-routes');
+            const itens = products.slice(0, 8).map((p) => `${p.quantity}x ${String(p.name || '').replace(/^SUCO MISTO DE FRUTA - /i, '')}`).join(', ');
+            await sendUmblerTalkText(String((owner as any).phone), `🤖 *IA registrou um pedido na sua carteira*\nCliente: ${String(inp.nome || customer?.fantasy_name || customer?.name || '')}\nPedido ${_on} · ${brl(total)}\n${itens}\nEntrou como PENDENTE no pipeline — confira pagamento e entrega.`);
+          } catch (e: any) { console.error('[IG-ORDER] aviso vendedor', e?.message || e); }
+        }
       } else {
         await broadcastLeadCapture(info);
       }

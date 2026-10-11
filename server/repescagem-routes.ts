@@ -2633,6 +2633,24 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const actor = (req as any).currentUser;
       const isAdmin = actor?.role === 'admin';
       const assignedCustomerIds = new Set(pending.map(p => p.customerId));
+      // IA (plano 11/10): contato da IA no dia, se o cliente respondeu e se houve pedido depois.
+      const iaPorCliente = new Map<string, { contatoEm: string | null; respondeu: boolean; pedido: boolean }>();
+      try {
+        if (customerIds.length) {
+          const _ids = customerIds.join(',');
+          const ia: any = await db.execute(sql`
+            SELECT x.customer_id, x.criado_em,
+                   EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = x.conversation_id AND m.sender_type = 'customer' AND m.created_at > x.criado_em) AS respondeu,
+                   EXISTS (SELECT 1 FROM sales_cards sc WHERE sc.customer_id = x.customer_id AND sc.created_at > x.criado_em AND COALESCE(sc.status,'') <> 'cancelled') AS pedido
+            FROM ia_repescagem_contatos x
+            WHERE x.enviado_ok = true AND x.criado_em > now() - interval '7 days'
+              AND x.customer_id = ANY(string_to_array(${_ids}, ','))
+            ORDER BY x.criado_em DESC`);
+          for (const r of (ia.rows || []) as any[]) {
+            if (!iaPorCliente.has(String(r.customer_id))) iaPorCliente.set(String(r.customer_id), { contatoEm: r.criado_em ? new Date(r.criado_em).toISOString() : null, respondeu: !!r.respondeu, pedido: !!r.pedido });
+          }
+        }
+      } catch { /* tabela pode nao existir ainda */ }
       const result = pending.map(p => {
         const c = customerById.get(p.customerId);
         const days = Math.floor((new Date(today).getTime() - new Date(p.lastRedDate).getTime()) / 86400000);
@@ -2661,6 +2679,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           locked: isLocked,
           lockedBy,
           canUnlock,
+          ia: iaPorCliente.get(p.customerId) || null,
         };
       });
 
