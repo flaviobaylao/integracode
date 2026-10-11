@@ -23887,6 +23887,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🗑️ Exclusão em massa de leads (somente admin, como a exclusão individual).
+  app.post('/api/leads/bulk-delete', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'Informe os leads (ids).' });
+      }
+      let deleted = 0;
+      const errors: any[] = [];
+      for (const id of ids) {
+        try { await storage.deleteLead(String(id)); deleted++; }
+        catch (e: any) { errors.push({ id, motivo: e?.message }); }
+      }
+      console.log(`🗑️ [LEADS-BULK-DELETE] ${deleted}/${ids.length} leads excluídos por ${req.currentUser?.email}`);
+      return res.json({ ok: true, deleted, total: ids.length, errors });
+    } catch (error: any) {
+      console.error('Erro no bulk-delete de leads:', error);
+      return res.status(500).json({ message: 'Erro ao excluir leads em massa', error: error?.message });
+    }
+  });
+
   // 🗺️ Preenche o Município (city) dos leads via geocode reverso das coordenadas. Admin.
   // Processa em lote (respeitando o throttle do provedor) os leads SEM city e retorna quantos faltam.
   app.post('/api/admin/leads/preencher-municipio', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
