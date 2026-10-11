@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 
 type ResultadoConsulta = {
   tipo: "lead" | "cliente";
@@ -111,6 +112,7 @@ async function fileParaBase64Reduzido(file: File, maxDim = 1600, quality = 0.8):
 export default function ConsultaLocal() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [fase, setFase] = useState<Fase>("idle");
   const [resultados, setResultados] = useState<ResultadoConsulta[]>([]);
   const [raioUsado, setRaioUsado] = useState<number>(RAIO_PADRAO);
@@ -229,14 +231,16 @@ export default function ConsultaLocal() {
         latitude: String(p.lat),
         longitude: String(p.lng),
         temperature: "cold",
-        routeType: "prospeccao",
-        status: "pending",
+        // entra na Rota do Dia (não na rota de prospecção) e já agenda o retorno
+        routeType: "dia",
+        status: "scheduled", // servidor agenda o próximo contato para hoje + 7 dias
+        assignedTo: (user as any)?.id, // registrado no nome do vendedor logado
         observation: "Prospecção via radar" + (p.categoria ? ` · ${p.categoria}` : ""),
       };
       const res: any = await apiRequest("POST", "/api/leads", payload);
       if (res && (res.id || res.ok !== false)) {
         setCadastrados((m) => ({ ...m, [p.placeId]: "ok" }));
-        toast({ title: "Lead cadastrado", description: p.nome });
+        toast({ title: "Lead registrado", description: `${p.nome} · entra na sua rota daqui a 7 dias` });
       } else {
         setCadastrados((m) => { const n = { ...m }; delete n[p.placeId]; return n; });
         toast({ title: "Não foi possível cadastrar", description: (res && res.message) || "", variant: "destructive" });
@@ -245,7 +249,7 @@ export default function ConsultaLocal() {
       setCadastrados((m) => { const n = { ...m }; delete n[p.placeId]; return n; });
       toast({ title: "Erro ao cadastrar", description: String((e && e.message) || e), variant: "destructive" });
     }
-  }, [toast]);
+  }, [toast, user]);
 
   const onFotoEscolhida = useCallback(async (file: File | null) => {
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -540,10 +544,10 @@ export default function ConsultaLocal() {
                         {p.endereco && <div className="text-xs text-muted-foreground pl-7 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{p.endereco}</div>}
                         <div className="pl-7 pt-1 flex items-center gap-3">
                           {st === "ok" ? (
-                            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Cadastrado como lead</span>
+                            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Na sua rota (7 dias)</span>
                           ) : (
                             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={st === "loading"} onClick={() => cadastrarLead(p)} data-testid="button-cadastrar-lead">
-                              {st === "loading" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Cadastrando…</> : <><Plus className="h-4 w-4 mr-1.5" /> Cadastrar como lead</>}
+                              {st === "loading" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Registrando…</> : <><Plus className="h-4 w-4 mr-1.5" /> Registrar lead</>}
                             </Button>
                           )}
                           <a href={`https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`} target="_blank" rel="noreferrer" className="text-xs text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1"><Navigation className="h-3.5 w-3.5" /> Mapa</a>

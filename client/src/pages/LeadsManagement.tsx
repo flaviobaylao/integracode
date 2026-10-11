@@ -1067,7 +1067,7 @@ export default function LeadsManagement() {
               )}
             </div>
           )}
-          <div className="overflow-auto max-h-[70vh] rounded-md border">
+          <div className="hidden md:block overflow-auto max-h-[70vh] rounded-md border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
@@ -1340,6 +1340,113 @@ export default function LeadsManagement() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* ===== Mobile: cards (layout amigável no celular) ===== */}
+          <div className="md:hidden space-y-3 max-h-[72vh] overflow-y-auto pr-0.5">
+            {displayLeads.length === 0 ? (
+              <div className="text-center py-8 text-gray-500 text-sm">Nenhum lead encontrado com os filtros aplicados</div>
+            ) : (
+              displayLeads.map((lead) => {
+                const descartado = lead.status === 'discarded';
+                const temRegistroHoje = (((lead as any).registroCountToday) || 0) > 0;
+                const visitado = !!(lead as any).lastCheckInAt || lead.status === 'visited' || !!lastServiceLogs[lead.id];
+                const agendado = lead.status === 'scheduled';
+                const prorrogado = Number((lead as any).postponementCount || 0) >= 1 && lead.status !== 'discarded' && lead.status !== 'converted';
+                const dotColor = descartado ? 'bg-gray-300' : (visitado ? 'bg-green-500' : (prorrogado ? 'bg-blue-500' : (agendado ? 'bg-yellow-500' : 'bg-red-500')));
+                const venc = (lead as any).nextContactDate && diaCalendario((lead as any).nextContactDate) < hojeBR();
+                return (
+                  <div
+                    key={lead.id}
+                    className={`rounded-lg border p-3 ${descartado ? 'bg-gray-50/60 dark:bg-gray-900/40' : temRegistroHoje ? 'bg-green-50 dark:bg-green-950/40' : 'bg-white dark:bg-gray-950'}`}
+                    data-testid={`lead-card-${lead.id}`}
+                  >
+                    {/* topo: seleção (admin) + nome + status + histórico */}
+                    <div className="flex items-start gap-2">
+                      {isAdmin && (
+                        <Checkbox checked={selectedLeadIds.has(lead.id)} onCheckedChange={() => toggleLeadSel(lead.id)} disabled={descartado} aria-label="Selecionar lead" className="mt-1 shrink-0" />
+                      )}
+                      <button type="button" className="flex-1 min-w-0 text-left" onClick={() => descartado ? setJustificativaLead(lead) : setSelectedLeadForService(lead)}>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-3 h-3 rounded-full shrink-0 ${dotColor}`} />
+                          <span className={`font-semibold break-words leading-tight ${descartado ? 'text-gray-400' : ''}`}>{lead.fantasyName}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                          <Badge className={statusColors[lead.status]}>{statusLabels[lead.status]}</Badge>
+                          {prorrogado && <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Prorrogado</Badge>}
+                        </div>
+                      </button>
+                      {isAdmin && (
+                        <button type="button" onClick={() => setSelectedLeadForVisitHistory(lead)} title="Histórico de atendimentos" className="text-muted-foreground hover:text-foreground p-1 shrink-0" data-testid={`button-history-lead-m-${lead.id}`}>
+                          <History className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* infos resumidas */}
+                    <div className="mt-2 text-xs text-muted-foreground space-y-1 pl-0.5">
+                      {lead.phone && <a href={`tel:${lead.phone}`} className="flex items-center gap-1.5 text-blue-600 w-fit" onClick={(e) => e.stopPropagation()}><Phone className="h-3.5 w-3.5" />{lead.phone}{lead.contact ? ` · ${lead.contact}` : ''}</a>}
+                      {((lead as any).neighborhood || (lead as any).city) && <div className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0" /><span className="break-words">{[(lead as any).neighborhood, (lead as any).city].filter(Boolean).join(' · ')}</span></div>}
+                      <div>Vendedor: <span className="text-foreground font-medium">{sellerNameById(lead.assignedTo) || '—'}</span></div>
+                      {lead.googlePlace && <div>⭐ {lead.googlePlace.nota != null ? lead.googlePlace.nota : '—'} ({lead.googlePlace.avaliacoes || 0}){typeof lead.googlePlace.score === 'number' ? ` · score ${lead.googlePlace.score}` : ''}</div>}
+                    </div>
+
+                    {/* próximo contato */}
+                    <div className="mt-2 flex items-center gap-2 text-xs" onClick={(e) => e.stopPropagation()}>
+                      <span className="text-muted-foreground">Próx. contato:</span>
+                      {isAdmin ? (
+                        <input
+                          type="date"
+                          value={(lead as any).nextContactDate ? diaCalendario((lead as any).nextContactDate) : ''}
+                          onChange={(e) => nextContactInlineMut.mutate({ id: lead.id, date: e.target.value })}
+                          className={`text-xs border rounded px-1.5 py-1 bg-transparent ${descartado ? 'text-gray-400 border-gray-300' : (venc ? 'text-red-600 border-red-300' : 'text-green-700 border-green-300')}`}
+                          data-testid={`input-next-contact-m-${lead.id}`}
+                        />
+                      ) : (lead as any).nextContactDate ? (
+                        <span className={`font-medium ${venc ? 'text-red-600' : 'text-green-600'}`}>{formatInTimeZone(new Date((lead as any).nextContactDate), 'UTC', 'dd/MM/yyyy', { locale: ptBR })}</span>
+                      ) : <span>—</span>}
+                      {(lead as any).nextContactLocked && <span className="text-amber-600 dark:text-amber-400" title="Data travada manualmente">🔒</span>}
+                    </div>
+
+                    {/* ações */}
+                    {canAct && (
+                      <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                        {descartado ? (
+                          <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white flex-1" disabled={resgatarMut.isPending} onClick={() => { if (confirm('Resgatar este lead? Ele volta para a lista como novo, com os mesmos dados.')) resgatarMut.mutate(lead.id); }} data-testid={`button-resgatar-lead-m-${lead.id}`}>
+                            <History className="h-4 w-4 mr-1" /> Resgatar
+                          </Button>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 flex-1 min-w-[46%]" onClick={() => abrirAtendimento(lead)} data-testid={`button-atendimento-lead-m-${lead.id}`}>
+                              <FileText className="h-4 w-4 mr-1" /> Registro
+                            </Button>
+                            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white flex-1 min-w-[46%]" onClick={() => openConverter(lead)} data-testid={`button-converter-lead-m-${lead.id}`}>
+                              <CheckCircle className="h-4 w-4 mr-1" /> Converter
+                            </Button>
+                            <Button size="sm" variant="destructive" className="flex-1 min-w-[46%]" onClick={() => { setNaoConverterLead(lead); setMotivoNao(""); setObsNao(""); }} data-testid={`button-naoconvertido-lead-m-${lead.id}`}>
+                              <XCircle className="h-4 w-4 mr-1" /> Não conv.
+                            </Button>
+                            <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 flex-1 min-w-[46%]" disabled={Number((lead as any).postponementCount || 0) >= 1 && !isAdmin} onClick={() => openProrrogar(lead)} data-testid={`button-prorrogar-lead-m-${lead.id}`}>
+                              <Clock className="h-4 w-4 mr-1" /> {Number((lead as any).postponementCount || 0) >= 1 ? "Prorrogado" : "Prorrogar"}
+                            </Button>
+                          </>
+                        )}
+                        {isAdmin && (
+                          <>
+                            <Button size="sm" variant="outline" className="flex-1 min-w-[46%]" onClick={() => handleEdit(lead)} data-testid={`button-edit-lead-m-${lead.id}`}>
+                              <Edit className="h-4 w-4 mr-1" /> Editar
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-red-600 flex-1 min-w-[46%]" onClick={() => handleDelete(lead.id)} data-testid={`button-delete-lead-m-${lead.id}`}>
+                              <Trash2 className="h-4 w-4 mr-1" /> Excluir
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </CardContent>
       </Card>
