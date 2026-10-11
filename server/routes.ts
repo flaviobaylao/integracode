@@ -24143,6 +24143,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     foto_enabled: 'false',
     foto_preco_mil: '1.50',
     foto_cota_gratis: '1000',
+    ficha_cota_gratis: '1000',
+    auto_off_enabled: 'true',
+    auto_off_margem: '5',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
   };
   async function _getRecursos(): Promise<Record<string, string>> {
@@ -24158,20 +24161,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function _setRecurso(key: string, value: string, who: string) {
     await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES (${'recurso_' + key}, ${value}, ${who}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
   }
+  // ----- Blindagem de custo: auto-desligamento ao atingir o limite da cota grátis -----
+  // Mês de referência em horário de Brasília (para alinhar com o "dia 1º" do usuário).
+  function _mesAtual(): string {
+    try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(new Date()).slice(0, 7); }
+    catch { return new Date().toISOString().slice(0, 7); }
+  }
+  async function _billableMes(feature: string): Promise<number> {
+    try {
+      const r: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM places_usage WHERE feature = ${feature} AND billable AND date_trunc('month', (created_at AT TIME ZONE 'America/Sao_Paulo')) = date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))`);
+      return Number((r?.rows?.[0] as any)?.n || 0);
+    } catch { return 0; }
+  }
+  function _limiteFeature(cfg: Record<string, string>, feature: string): number {
+    const margem = Math.max(0, Number(cfg.auto_off_margem) || 0);
+    const cotaKey = feature === 'radar' ? 'radar_cota_gratis' : feature === 'foto' ? 'foto_cota_gratis' : 'ficha_cota_gratis';
+    const cotaDefault = feature === 'radar' ? 5000 : 1000;
+    const cota = Number(cfg[cotaKey]) || cotaDefault;
+    return Math.max(0, cota - margem);
+  }
+  // Religa automaticamente, no mês novo, o que foi desligado pela blindagem (não o que o admin desligou).
+  async function _autoResetRecursos(cfg: Record<string, string>): Promise<void> {
+    try {
+      const mes = _mesAtual();
+      for (const f of ['radar', 'foto', 'ficha'] as const) {
+        const flagKey = f === 'radar' ? 'radar_enabled' : f === 'foto' ? 'foto_enabled' : 'ficha_google_enabled';
+        const offKey = `${f}_auto_off_mes`;
+        if (cfg[offKey] && cfg[offKey] !== mes) {
+          await _setRecurso(flagKey, 'true', 'auto-reset');
+          await _setRecurso(offKey, '', 'auto-reset');
+          cfg[flagKey] = 'true'; cfg[offKey] = '';
+        }
+        const ovKey = `${f}_override_mes`;
+        if (cfg[ovKey] && cfg[ovKey] !== mes) { await _setRecurso(ovKey, '', 'auto-reset'); cfg[ovKey] = ''; }
+      }
+    } catch (_e) { /* best-effort */ }
+  }
+  // Verifica o limite antes de uma chamada cobrável. Se estourou, desliga o recurso e retorna bloqueado.
+  async function _guardAutoOff(cfg: Record<string, string>, feature: string): Promise<{ allowed: boolean; limite: number; usados: number }> {
+    const limite = _limiteFeature(cfg, feature);
+    if (String(cfg.auto_off_enabled) !== 'true') return { allowed: true, limite, usados: 0 };
+    const mes = _mesAtual();
+    if (cfg[`${feature}_override_mes`] === mes) return { allowed: true, limite, usados: 0 };
+    const usados = await _billableMes(feature);
+    if (usados >= limite) {
+      const flagKey = feature === 'radar' ? 'radar_enabled' : feature === 'foto' ? 'foto_enabled' : 'ficha_google_enabled';
+      await _setRecurso(flagKey, 'false', 'auto-off');
+      await _setRecurso(`${feature}_auto_off_mes`, mes, 'auto-off');
+      cfg[flagKey] = 'false';
+      return { allowed: false, limite, usados };
+    }
+    return { allowed: true, limite, usados };
+  }
 
   // Config (admin): ler
   app.get('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
-    try { await _ensureRecursosSchema; return res.json({ ok: true, config: await _getRecursos() }); }
+    try { await _ensureRecursosSchema; const cfg = await _getRecursos(); await _autoResetRecursos(cfg); return res.json({ ok: true, config: cfg }); }
     catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
   // Config (admin): salvar
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'radar_segmentos'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
+      // Ao religar um recurso manualmente, o admin pode estar forçando acima do limite do mês.
+      try {
+        const mes = _mesAtual();
+        const cfgNow = await _getRecursos();
+        for (const f of ['radar', 'foto', 'ficha'] as const) {
+          const flagKey = f === 'radar' ? 'radar_enabled' : f === 'foto' ? 'foto_enabled' : 'ficha_google_enabled';
+          if (body[flagKey] === undefined) continue;
+          if (String(body[flagKey]) === 'true') {
+            await _setRecurso(`${f}_auto_off_mes`, '', who);
+            if (String(cfgNow.auto_off_enabled) === 'true') {
+              const usados = await _billableMes(f);
+              if (usados >= _limiteFeature(cfgNow, f)) await _setRecurso(`${f}_override_mes`, mes, who);
+            }
+          } else {
+            await _setRecurso(`${f}_override_mes`, '', who);
+            await _setRecurso(`${f}_auto_off_mes`, '', who);
+          }
+        }
+      } catch (_e) { /* override best-effort */ }
       return res.json({ ok: true, config: await _getRecursos() });
     } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
@@ -24180,6 +24254,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await _ensureRecursosSchema;
       const cfg = await _getRecursos();
+      await _autoResetRecursos(cfg);
+      const mesAtual = _mesAtual();
       const preco = Number(cfg.radar_preco_mil) || 32;
       const cota = Number(cfg.radar_cota_gratis) || 5000;
       const cambio = Number(cfg.radar_cambio) || 5.2;
@@ -24193,7 +24269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                COUNT(*) FILTER (WHERE feature = 'foto' AND billable) AS foto_cobravel,
                COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total
         FROM places_usage
-        WHERE date_trunc('month', created_at) = date_trunc('month', now())
+        WHERE date_trunc('month', (created_at AT TIME ZONE 'America/Sao_Paulo')) = date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))
         GROUP BY user_name, user_id
         ORDER BY radar_cobravel DESC, radar_total DESC
       `);
@@ -24202,8 +24278,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                COUNT(*) FILTER (WHERE feature = 'radar' AND billable) AS radar_cobravel,
                COUNT(*) FILTER (WHERE feature = 'foto') AS foto_total,
                COUNT(*) FILTER (WHERE feature = 'foto' AND billable) AS foto_cobravel,
-               COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total
-        FROM places_usage WHERE date_trunc('month', created_at) = date_trunc('month', now())
+               COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total,
+               COUNT(*) FILTER (WHERE feature = 'ficha' AND billable) AS ficha_cobravel
+        FROM places_usage WHERE date_trunc('month', (created_at AT TIME ZONE 'America/Sao_Paulo')) = date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))
       `);
       const t = ((tot?.rows || []) as any[])[0] || {};
       const totalCobravel = Number(t.radar_cobravel || 0);
@@ -24217,12 +24294,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const custoBRL = custoUSD * cambio;
       const precoBRL = preco * cambio;
       const fotoPrecoBRL = fotoPreco * cambio;
+      const blindagem = String(cfg.auto_off_enabled) === 'true';
+      const margem = Math.max(0, Number(cfg.auto_off_margem) || 0);
       return res.json({
-        ok: true, mes: new Date().toISOString().slice(0, 7), preco, cota, cambio, precoBRL,
+        ok: true, mes: mesAtual, preco, cota, cambio, precoBRL,
         totalRadar: Number(t.radar_total || 0), totalCobravel, cobravelPago, custoUSD, custoBRL,
         custoRadarUSD, custoFotoUSD,
         fotoTotal, fotoCobravel, fotoCota, fotoPreco, fotoPrecoBRL, fotoPago,
-        fichaTotal: Number(t.ficha_total || 0),
+        fichaTotal: Number(t.ficha_total || 0), fichaCobravel: Number(t.ficha_cobravel || 0), fichaCota: Number(cfg.ficha_cota_gratis) || 1000,
+        blindagem, margem,
+        limites: { radar: _limiteFeature(cfg, 'radar'), foto: _limiteFeature(cfg, 'foto'), ficha: _limiteFeature(cfg, 'ficha') },
+        autoOff: { radar: cfg.radar_auto_off_mes === mesAtual, foto: cfg.foto_auto_off_mes === mesAtual, ficha: cfg.ficha_auto_off_mes === mesAtual },
+        override: { radar: cfg.radar_override_mes === mesAtual, foto: cfg.foto_override_mes === mesAtual, ficha: cfg.ficha_override_mes === mesAtual },
         porVendedor: ((porVend?.rows || []) as any[]).map((x) => ({
           vendedor: x.vendedor, userId: x.user_id,
           radarTotal: Number(x.radar_total || 0), radarCobravel: Number(x.radar_cobravel || 0),
@@ -24238,8 +24321,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await _ensureRecursosSchema;
       const cfg = await _getRecursos();
+      await _autoResetRecursos(cfg);
       if (String(cfg.radar_enabled) !== 'true') {
-        return res.json({ ok: false, disabled: true, message: 'Recurso desativado pelo administrador.' });
+        const autoOff = cfg.radar_auto_off_mes === _mesAtual();
+        return res.json({ ok: false, disabled: true, autoOff, message: autoOff ? 'Radar desligado automaticamente: atingiu o limite de buscas grátis do mês. Religa no dia 1º ou reative no painel de Recursos.' : 'Recurso desativado pelo administrador.' });
+      }
+      const _g = await _guardAutoOff(cfg, 'radar');
+      if (!_g.allowed) {
+        return res.json({ ok: false, disabled: true, autoOff: true, message: `Radar desligado automaticamente: atingiu ${_g.limite} buscas no mês (cota grátis). Religa no dia 1º ou reative no painel de Recursos.` });
       }
       const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
       if (!key) return res.status(400).json({ ok: false, message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.' });
@@ -24343,8 +24432,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await _ensureRecursosSchema;
       const cfg = await _getRecursos();
+      await _autoResetRecursos(cfg);
       if (String(cfg.foto_enabled) !== 'true') {
-        return res.json({ ok: false, disabled: true, message: 'Busca por foto desativada pelo administrador.' });
+        const autoOff = cfg.foto_auto_off_mes === _mesAtual();
+        return res.json({ ok: false, disabled: true, autoOff, message: autoOff ? 'Busca por foto desligada automaticamente: atingiu o limite de fotos grátis do mês. Religa no dia 1º ou reative no painel de Recursos.' : 'Busca por foto desativada pelo administrador.' });
+      }
+      const _g = await _guardAutoOff(cfg, 'foto');
+      if (!_g.allowed) {
+        return res.json({ ok: false, disabled: true, autoOff: true, message: `Busca por foto desligada automaticamente: atingiu ${_g.limite} fotos no mês (cota grátis). Religa no dia 1º ou reative no painel de Recursos.` });
       }
       const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
       if (!key) return res.status(400).json({ ok: false, message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.' });
@@ -24410,11 +24505,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Requer GOOGLE_MAPS_API_KEY com "Places API (New)" habilitada no Google Cloud.
   app.post('/api/admin/leads/preencher-google', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
-      try { await _ensureRecursosSchema; const _cfgF = await _getRecursos(); if (String(_cfgF.ficha_google_enabled) !== 'true') return res.status(400).json({ ok: false, message: 'Ficha Google desativada pelo administrador.', code: 'DISABLED' }); } catch (_e) {}
+      await _ensureRecursosSchema;
+      const _cfgF = await _getRecursos();
+      await _autoResetRecursos(_cfgF);
+      if (String(_cfgF.ficha_google_enabled) !== 'true') {
+        const autoOff = _cfgF.ficha_auto_off_mes === _mesAtual();
+        return res.status(400).json({ ok: false, autoOff, code: autoOff ? 'AUTO_OFF' : 'DISABLED', message: autoOff ? 'Ficha Google desligada automaticamente: atingiu o limite grátis do mês. Religa no dia 1º ou reative no painel de Recursos.' : 'Ficha Google desativada pelo administrador.' });
+      }
       const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
       if (!key) {
         return res.status(400).json({ message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.', code: 'SEM_GOOGLE' });
       }
+      const _capAtivoF = String(_cfgF.auto_off_enabled) === 'true' && _cfgF.ficha_override_mes !== _mesAtual();
+      const _limiteFichaF = _limiteFeature(_cfgF, 'ficha');
+      let _usadosFichaF = _capAtivoF ? await _billableMes('ficha') : 0;
+      let _autoDesligouFichaF = false;
+      const _uidF = req.currentUser?.id || null;
+      const _unameF = req.currentUser?.name || req.currentUser?.email || null;
       try {
         await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_place jsonb`));
         await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_tries integer DEFAULT 0`));
@@ -24440,6 +24547,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const PRICE: any = { PRICE_LEVEL_FREE: 0, PRICE_LEVEL_INEXPENSIVE: 1, PRICE_LEVEL_MODERATE: 2, PRICE_LEVEL_EXPENSIVE: 3, PRICE_LEVEL_VERY_EXPENSIVE: 4 };
       const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.priceLevel,places.businessStatus,places.regularOpeningHours.weekdayDescriptions,places.formattedAddress,places.location';
       for (const r of rows) {
+        if (_capAtivoF && _usadosFichaF >= _limiteFichaF) { _autoDesligouFichaF = true; break; }
         try {
           const lat = parseFloat((r as any).lat), lng = parseFloat((r as any).lng);
           const nome = String((r as any).nome || '').trim();
@@ -24463,6 +24571,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (resp.status === 403 || js?.error?.status === 'PERMISSION_DENIED') break;
             continue;
           }
+          // chamada cobrável (200) → registra uso para a blindagem/painel
+          try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('ficha', ${_uidF}, ${_unameF}, true, ${(((js && js.places) || []) as any[]).length}, ${lat}, ${lng})`); } catch (_e) {}
+          _usadosFichaF++;
           const p = ((js && js.places) || [])[0];
           if (!p) {
             try { await db.execute(sql`UPDATE leads SET google_tries = COALESCE(google_tries, 0) + 1 WHERE id = ${(r as any).id}`); } catch (_e) {}
@@ -24501,6 +24612,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           semResultado++;
         }
       }
+      if (_autoDesligouFichaF) {
+        try { await _setRecurso('ficha_google_enabled', 'false', 'auto-off'); await _setRecurso('ficha_auto_off_mes', _mesAtual(), 'auto-off'); } catch (_e) {}
+      }
       const restRes: any = await db.execute(sql`
         SELECT COUNT(*)::int AS n FROM leads
         WHERE google_place IS NULL AND COALESCE(google_tries, 0) < 2
@@ -24510,7 +24624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
       const restantes = Number((restRes?.rows?.[0] as any)?.n || 0);
       console.log(`🔎 [LEADS-GOOGLE] processados ${rows.length}, atualizados ${atualizados}, sem resultado ${semResultado}, restam ${restantes} por ${req.currentUser?.email}`);
-      return res.json({ ok: true, processados: rows.length, atualizados, semResultado, restantes, ultimoErro });
+      return res.json({ ok: true, processados: rows.length, atualizados, semResultado, restantes, ultimoErro, autoOff: _autoDesligouFichaF, limiteFicha: _limiteFichaF });
     } catch (error: any) {
       console.error('Erro ao preencher ficha Google dos leads:', error);
       return res.status(500).json({ message: 'Erro ao preencher ficha Google dos leads', error: error?.message });
