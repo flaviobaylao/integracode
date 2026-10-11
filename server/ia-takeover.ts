@@ -336,6 +336,8 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       }
     } catch (e: any) { console.error('[CONFIRMACAO-TEL]', e?.message || e); }
 
+    // Lead do SDR respondeu -> warm (nao interrompe o fluxo).
+    try { const { leadRespondeu } = await import('./ia-sdr-mapa'); await leadRespondeu(phone); } catch {}
     // Resgate por faixa: marca que respondeu; na faixa 61-90 trata o motivo (1/2/3).
     try {
       const { respostaDoResgate } = await import('./ia-resgate');
