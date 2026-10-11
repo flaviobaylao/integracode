@@ -57,7 +57,7 @@ export async function contextoDoCliente(customerId?: string | null): Promise<str
     const p: any = await db.execute(sql`
       SELECT (COALESCE(sc.completed_date, sc.updated_at, sc.created_at)
                 AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date AS dia,
-             sc.sale_value
+             sc.sale_value, sc.products
       FROM sales_cards sc
       WHERE sc.customer_id = ${customerId}
         AND COALESCE(sc.operation_type, 'venda') = 'venda'
@@ -75,6 +75,18 @@ export async function contextoDoCliente(customerId?: string | null): Promise<str
       const hoje = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })).setHours(12, 0, 0, 0);
       const faz = Math.round((hoje - ultima) / 86400000);
       linhas.push(`Ultima compra: ${ddmm(compras[0].dia)} (ha ${faz} dia(s)).`);
+      // ITENS da ultima compra, direto no prompt. 11/10: cliente pediu "repetir meu ultimo
+      // pedido" e a IA respondeu que "nao tinha os detalhes aqui no chat" — ela so via a data.
+      try {
+        const raw = compras[0].products;
+        const itens: any[] = Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw || '[]') : []);
+        if (itens.length) {
+          const lista = itens.slice(0, 20).map((i: any) => `${i.quantity || 1}x ${i.name}`).join('; ');
+          const total = Number(compras[0].sale_value || 0);
+          linhas.push(`Itens da ultima compra${total ? ' (R$ ' + total.toFixed(2).replace('.', ',') + ')' : ''}: ${lista}.`);
+          linhas.push('Se o cliente pedir para REPETIR o pedido, "o de sempre" ou "a mesma coisa", monte o pedido com exatamente esses itens, mostre a lista para ele confirmar e so entao registre.');
+        }
+      } catch {}
       if (dias.length >= 3) {
         // Intervalo tipico = mediana dos intervalos. Media escorrega com um pedido atipico.
         const gaps: number[] = [];

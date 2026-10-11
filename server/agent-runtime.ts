@@ -43,7 +43,7 @@ const TOOL_DEFS: any[] = [
   { name: 'transferir_humano', description: 'Transfere a conversa para um atendente humano quando o cliente pede falar com pessoa, reclama, ou o caso foge do seu escopo. Após chamar, avise o cliente que um atendente vai continuar.', input_schema: { type: 'object', properties: { motivo: { type: 'string', description: 'motivo da transferência' } }, required: [] } },
   { name: 'buscar_boleto', description: 'Busca a 2ª via de boleto/cobrança em aberto do cliente. Retorna link de pagamento, valor e vencimento. Use o documento se o cliente informar; senão usa o cliente da conversa.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ (somente se o cliente informar)' } }, required: [] } },
   { name: 'consultar_debitos', description: 'Consulta os débitos/títulos em aberto (vencidos) do cliente. Retorna total e dias de atraso.', input_schema: { type: 'object', properties: { documento: { type: 'string' } }, required: [] } },
-  { name: 'consultar_pedido', description: 'Le o pedido do cliente e devolve tudo sobre ele: numero, data, situacao, valor, forma de pagamento, previsao de entrega, nota fiscal e a LISTA DE PRODUTOS com quantidades. Use SEMPRE que o cliente perguntar qualquer coisa sobre "esse pedido" / "meu pedido" — o que veio, quando chega, quanto ficou, por que travou. NAO peca CPF/CNPJ nem diga que nao ha pedido nesta conversa: consulte primeiro.', input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'numero do pedido, apenas se o cliente citar um especifico' } }, required: [] } },
+  { name: 'consultar_pedido', description: 'Le o pedido do cliente e devolve tudo sobre ele: numero, data, situacao, valor, forma de pagamento, previsao de entrega, nota fiscal e a LISTA DE PRODUTOS com quantidades. Use SEMPRE que o cliente perguntar qualquer coisa sobre "esse pedido" / "meu pedido" / "meu ultimo pedido" — o que veio, quando chega, quanto ficou, por que travou — e tambem quando pedir para REPETIR o pedido ("o de sempre", "a mesma coisa"): consulte, mostre a lista e confirme antes de registrar. NAO peca CPF/CNPJ nem diga que nao ha pedido nesta conversa: consulte primeiro.', input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'numero do pedido, apenas se o cliente citar um especifico' } }, required: [] } },
   { name: 'segunda_via', description: 'Envia a 2ª via de TODOS os títulos vencidos em aberto do cliente: um PIX copia-e-cola por título, com número, vencimento e valor, mais o total. Use SEMPRE que o cliente pedir 2ª via, boleto, chave PIX, "como pago" ou responder pedindo a via de um aviso de pedido. Você JÁ sabe quem é o cliente pela conversa — NÃO peça CPF/CNPJ.', input_schema: { type: 'object', properties: { documento: { type: 'string', description: 'CPF ou CNPJ, apenas se o cliente informar espontaneamente' } }, required: [] } },
   { name: 'consultar_produto', description: 'Consulta preço e disponibilidade de um produto pelo nome/termo.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome ou parte do nome do produto' } }, required: ['termo'] } },
   { name: 'consultar_ficha_tecnica', description: 'Le a FICHA TECNICA oficial do produto (o PDF que a equipe anexou no catalogo) e devolve o conteudo dela em texto, mais o link do PDF. Use SEMPRE que o cliente perguntar composicao, ingredientes, informacao nutricional, calorias, acucar, conservante, corante, alergenico, gluten, lactose, se e vegano, validade, prazo de consumo, modo de conservacao, rendimento, embalagem, peso, registro/MAPA ou qualquer detalhe tecnico do produto. NAO responda esse tipo de pergunta de cabeca: consulte a ficha e responda SO com o que estiver escrita nela. Se o produto nao tiver ficha anexada, diga que vai confirmar com a equipe — nunca invente numero de rotulo. PESO, MEDIDAS DA GARRAFA, FARDO (quantas unidades, medidas, peso) e PALETIZACAO vem do cadastro do produto e aparecem no bloco LOGISTICA da resposta, com link da ficha logistica em PDF — use esses numeros para cliente de rede, distribuidor ou transportadora. Pode buscar tambem por atributo (ex.: "sem acucar") quando o cliente nao citar o produto pelo nome.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome do produto, ou o atributo procurado quando o cliente nao citar o produto' } }, required: ['termo'] } },
@@ -185,10 +185,16 @@ async function resolveCustomerId(ctx: any, documento?: string): Promise<string |
   // 2) Telefone do cadastro (DDD + 8 finais, para casar com e sem o 9o digito).
   try {
     if (d.length >= 8) {
-      const r: any = await db.execute(sql`SELECT id FROM customers
-        WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'), 8) = ${d.slice(-8)}
-          AND COALESCE(is_active, true) = true
-        ORDER BY updated_at DESC NULLS LAST LIMIT 1`);
+      // Mesmo telefone em varios cadastros (ex.: socio com 3 empresas): fica com o que
+      // COMPROU por ultimo — e dele que o cliente fala quando pede "meu ultimo pedido".
+      const r: any = await db.execute(sql`SELECT c.id FROM customers c
+        WHERE right(regexp_replace(COALESCE(c.phone,''),'[^0-9]','','g'), 8) = ${d.slice(-8)}
+          AND COALESCE(c.is_active, true) = true
+        ORDER BY (SELECT max(COALESCE(sc.completed_date, sc.updated_at)) FROM sales_cards sc
+                  WHERE sc.customer_id = c.id AND COALESCE(sc.status,'') NOT IN ('cancelled','telemarketing')
+                    AND (sc.completed_date IS NOT NULL OR COALESCE(sc.status,'') IN ('blocked','completed','invoiced'))) DESC NULLS LAST,
+                 c.updated_at DESC NULLS LAST
+        LIMIT 1`);
       if (r.rows?.[0]?.id) return String(r.rows[0].id);
     }
   } catch {}
