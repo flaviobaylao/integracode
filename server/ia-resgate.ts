@@ -29,7 +29,7 @@ function hojeBR(): string { return new Date().toLocaleDateString('en-CA', { time
 function horaBR(): number { return parseInt(new Date().toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', hour12: false }), 10) || 0; }
 const dig = (s: any) => String(s || '').replace(/\D/g, '');
 function normalizar(t: string): string { return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(); }
-function title(t: string): string { return String(t || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').replace(/[\s.,;:!-]+$/g, '').trim(); }
+function title(t: string): string { return String(t || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b\d{8,14}\b/g, '').replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').replace(/[\s.,;:!-]+$/g, '').trim(); }
 
 async function getSetting(key: string, def: string): Promise<string> {
   try {
@@ -71,6 +71,7 @@ type Alvo = { customerId: string; nome: string; telefone: string; faixa: Faixa; 
 function celular(phone: any): string | null {
   let d = dig(phone).replace(/^55/, '');
   if (d.length === 10 && /^[1-9][0-9][6-9]/.test(d)) d = d.slice(0, 2) + '9' + d.slice(2);
+  if (/(\d)\1{6,}/.test(d)) return null; // 99999-9999 e afins nao sao celular
   return /^[1-9][0-9]9[0-9]{8}$/.test(d) ? '55' + d : null;
 }
 

@@ -141,7 +141,7 @@ async function montarAbertura(customerId: string, nome: string): Promise<{ tipo:
   // Nome fantasia em Title Case ("COLEGIO CIMAN" -> "Colegio Ciman"); contato, se houver, vem antes.
   let contato = '';
   try { const c: any = await db.execute(sql`SELECT contact FROM customers WHERE id = ${customerId} LIMIT 1`); contato = String(c.rows?.[0]?.contact || '').trim().split(/[\s/,-]+/)[0] || ''; } catch {}
-  const title = (t: string) => t.toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').trim();
+  const title = (t: string) => t.toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b\d{8,14}\b/g, '').replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').trim();
   const quem = contato ? title(contato) : title(nome);
   const saud = horaBR() < 12 ? 'Bom dia' : (horaBR() < 18 ? 'Boa tarde' : 'Boa noite');
   const abre = `${saud}${quem ? ', ' + quem : ''}! Aqui é a Honest Sucos 🧡`;
