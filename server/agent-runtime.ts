@@ -52,6 +52,9 @@ const TOOL_DEFS: any[] = [
   { name: 'consultar_ficha_tecnica', description: 'Le a FICHA TECNICA oficial do produto (o PDF que a equipe anexou no catalogo) e devolve o conteudo dela em texto, mais o link do PDF. Use SEMPRE que o cliente perguntar composicao, ingredientes, informacao nutricional, calorias, acucar, conservante, corante, alergenico, gluten, lactose, se e vegano, validade, prazo de consumo, modo de conservacao, rendimento, embalagem, peso, registro/MAPA ou qualquer detalhe tecnico do produto. NAO responda esse tipo de pergunta de cabeca: consulte a ficha e responda SO com o que estiver escrita nela. Se o produto nao tiver ficha anexada, diga que vai confirmar com a equipe — nunca invente numero de rotulo. PESO, MEDIDAS DA GARRAFA, FARDO (quantas unidades, medidas, peso) e PALETIZACAO vem do cadastro do produto e aparecem no bloco LOGISTICA da resposta, com link da ficha logistica em PDF — use esses numeros para cliente de rede, distribuidor ou transportadora. Pode buscar tambem por atributo (ex.: "sem acucar") quando o cliente nao citar o produto pelo nome.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome do produto, ou o atributo procurado quando o cliente nao citar o produto' } }, required: ['termo'] } },
 ];
 
+// Indicação (Plano 11/10): o cliente indica outro comércio; R$ 30 para os dois. Ver server/ia-indicacao.ts.
+TOOL_DEFS.push({ name: 'registrar_indicacao', description: 'Registra a INDICAÇÃO de outro comércio feita pelo cliente desta conversa (programa: R$ 30 de desconto para quem indica e R$ 30 para o indicado no primeiro pedido). Use quando o cliente mandar o nome e o WhatsApp de um estabelecimento. O sistema cria o lead para o vendedor, gera o cupom e já manda a primeira mensagem ao indicado — você só confirma ao cliente que a indicação foi registrada e que o desconto dele é liberado quando o indicado fizer o primeiro pedido.', input_schema: { type: 'object', properties: { nome_estabelecimento: { type: 'string', description: 'nome do comércio indicado' }, telefone: { type: 'string', description: 'WhatsApp do indicado, com DDD' }, contato: { type: 'string', description: 'nome da pessoa de contato, se informado' }, cidade: { type: 'string', description: 'cidade do indicado, se informada' } }, required: ['nome_estabelecimento', 'telefone'] } });
+
 // Ferramenta EXTRA (só habilitada no canal Instagram): registra um pedido no pipeline de faturamento.
 const ORDER_TOOL: any = {
   name: 'registrar_pedido',
@@ -387,6 +390,7 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
     }
     if (name === 'consultar_ficha_tecnica') return await consultarFichaTecnica(input || {});
     if (name === 'consultar_pedido') return await consultarPedido(input || {}, ctx);
+    if (name === 'registrar_indicacao') { const { registrarIndicacao } = await import('./ia-indicacao'); return await registrarIndicacao(input || {}, ctx); }
     if (name === 'consultar_financeiro') { const { consultarFinanceiro } = await import('./ia-financeiro'); return await consultarFinanceiro(ctx, input || {}); }
     if (name === 'enviar_boleto') { const { enviarBoleto } = await import('./ia-financeiro'); return await enviarBoleto(ctx, input || {}); }
     if (name === 'enviar_nota_fiscal') { const { enviarNotaFiscal } = await import('./ia-financeiro'); return await enviarNotaFiscal(ctx, input || {}); }
@@ -771,7 +775,9 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     } catch (e: any) { console.error('[IG-ORDER] lead-routing', e?.message || e); }
 
     console.log(`[IG-ORDER] pedido card=${card?.id} total=${total.toFixed(2)} tabela=${table} conv=${ctx?.conversationId}`);
-    return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + (cupomInfo ? ' (cupom ' + cupomInfo.code + ' aplicado: -' + brl(cupomInfo.desconto) + ')' : '') + cupomAviso + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.';
+    let convite = '';
+    try { const { instrucaoConvite } = await import('./ia-indicacao'); convite = await instrucaoConvite(customer?.id || null); } catch {}
+    return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + (cupomInfo ? ' (cupom ' + cupomInfo.code + ' aplicado: -' + brl(cupomInfo.desconto) + ')' : '') + cupomAviso + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.' + convite;
   } catch (e: any) {
     console.error('[IG-ORDER]', e?.message || e);
     return 'Não consegui registrar o pedido agora (erro interno). Transfira para um atendente humano.';
@@ -1174,6 +1180,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
       if (ctx) {
         const _cid = await resolveCustomerId(ctx, undefined).catch(() => null);
         if (_cid) _cli = await contextoDoCliente(_cid);
+        else if (ctx.phone) { try { const { contextoDoLead } = await import('./ia-sdr-mapa'); _cli = await contextoDoLead(String(ctx.phone)); } catch {} }
       }
     } catch (e: any) { console.error('[CTX-CLIENTE]', e?.message || e); }
     const systemPrompt = _tempo + '\n\n'
