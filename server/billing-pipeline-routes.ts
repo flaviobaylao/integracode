@@ -1828,17 +1828,27 @@ export function registerBillingPipelineRoutes(app: Express) {
       // every seller; sellers see only their own. Keeps admin-role + SELLER_EDIT
       // emails (e.g. Lanucy) too, for backward compatibility.
       const seeAll = ['admin', 'coordinator', 'administrative'].includes(String(user.role || '')) || canEditPedidoSeller(user);
-      const cards = seeAll
-        ? await storage.getSalesCards(undefined, { status: 'draft' })
-        : await storage.getSalesCards(user.id, { status: 'draft' });
-      const drafts = (cards || []).map((c: any) => ({
+      // PERF (11/out/2026): consulta enxuta no lugar de getSalesCards (que traz a linha inteira,
+      // inclusive check_in_photo_url em base64 — 850 KB para 6 rascunhos). Mesma regra de
+      // visibilidade: vendedor ve os cards dele OU de clientes da carteira dele.
+      const uid = String(user.id || '');
+      const rows: any = await db.execute(sql`
+        SELECT sc.id, sc.seller_id, sc.sale_value, sc.operation_type, sc.updated_at, sc.created_at,
+               c.fantasy_name, c.name AS customer_name, u.first_name, u.last_name
+        FROM sales_cards sc
+        JOIN customers c ON c.id = sc.customer_id
+        LEFT JOIN users u ON u.id = sc.seller_id
+        WHERE sc.status = 'draft'
+          AND (${seeAll} OR sc.seller_id = ${uid} OR c.seller_id = ${uid})
+        ORDER BY sc.scheduled_date DESC NULLS LAST`);
+      const drafts = ((rows?.rows ?? rows ?? []) as any[]).map((c: any) => ({
         id: c.id,
-        customerName: c.customer?.fantasyName || c.customer?.name || 'Cliente',
-        sellerId: c.sellerId || c.seller?.id || null,
-        sellerName: c.seller ? `${c.seller.firstName || ''} ${c.seller.lastName || ''}`.trim() || 'Sem vendedor' : 'Sem vendedor',
-        saleValue: c.saleValue || null,
-        operationType: c.operationType || 'venda',
-        updatedAt: c.updatedAt || c.createdAt || null,
+        customerName: c.fantasy_name || c.customer_name || 'Cliente',
+        sellerId: c.seller_id || null,
+        sellerName: (c.first_name || c.last_name) ? `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Sem vendedor' : 'Sem vendedor',
+        saleValue: c.sale_value || null,
+        operationType: c.operation_type || 'venda',
+        updatedAt: c.updated_at || c.created_at || null,
       }));
       res.json({ seeAll, total: drafts.length, drafts });
     } catch (error) {
