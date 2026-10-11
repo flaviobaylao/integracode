@@ -1307,6 +1307,12 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     catch (se: any) { await _t('agente:falha_no_envio', se?.message || String(se)); return; }
     await _t('agente:respondeu', 'via ' + JSON.stringify(sent || {}).slice(0, 120));
     try { const { storage } = await import('./storage'); await storage.createChatMessage({ conversationId: opts.conversationId, senderId: 'agent:' + chosenId, senderType: 'system', content: gen.reply, messageType: 'text', metadata: { agent: chosenId, auto: true, tools: gen.usedTools, delivery: sent } as any }); } catch {}
+    // Copia em tempo real para o WhatsApp do gestor (ia-espelho.ts). Nao espera, nao lanca.
+    try {
+      const tools = (gen.usedTools || []).filter(Boolean);
+      const nota = tools.length ? (tools.includes('transferir_humano') ? 'TRANSFERIDA PARA HUMANO · ' : '') + 'ferramentas: ' + tools.join(', ') : undefined;
+      import('./ia-espelho').then(({ espelharConversa }) => espelharConversa({ conversationId: opts.conversationId, phone: opts.phone, cliente: opts.incomingText, ia: gen.reply, agente: chosenId, nota })).catch(() => {});
+    } catch {}
   } catch (e: any) {
     try { const { trilha } = await import('./ia-takeover'); await trilha(opts.conversationId, opts.phone, opts.incomingText, 'agente:excecao', e?.message || String(e)); } catch {}
     console.error('[AGENT-RUNTIME]', e?.message || e);
