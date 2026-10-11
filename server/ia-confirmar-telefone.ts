@@ -104,7 +104,7 @@ export async function confirmacaoTick(opts: { force?: boolean; dry?: boolean; li
   const res: Record<string, number> = {};
   for (const a of alvos) {
     try {
-      const r = await enqueueOfficialDispatch({ customerId: a.id, customerPhone: a.tel, templateLabel: TEMPLATE, params: [titulo(a.nome) || 'sua empresa'], useCase: USE_CASE, campaign: 'confirmacao:' + hojeBR() + ':' + a.id, category: 'UTILITY' });
+      const r = await enqueueOfficialDispatch({ customerId: a.id, customerPhone: a.tel, templateLabel: TEMPLATE, params: [titulo(a.nome) || 'sua empresa'], useCase: USE_CASE, campaign: 'confirmacao:' + hojeBR() + ':' + a.id, category: 'MARKETING' });
       res[r] = (res[r] || 0) + 1;
     } catch (e: any) { res['erro'] = (res['erro'] || 0) + 1; }
   }
@@ -162,7 +162,7 @@ export async function respostaDaConfirmacao(phone: string, texto: string): Promi
           try {
             const { enqueueOfficialDispatch } = await import('./official-dispatch');
             const nome: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name,''), name) AS n FROM customers WHERE id = ${cid}`);
-            await enqueueOfficialDispatch({ customerId: cid, customerPhone: novo, templateLabel: TEMPLATE, params: [titulo(String(nome.rows?.[0]?.n || '')) || 'sua empresa'], useCase: USE_CASE, campaign: 'confirmacao:novo:' + cid + ':' + novo, category: 'UTILITY' });
+            await enqueueOfficialDispatch({ customerId: cid, customerPhone: novo, templateLabel: TEMPLATE, params: [titulo(String(nome.rows?.[0]?.n || '')) || 'sua empresa'], useCase: USE_CASE, campaign: 'confirmacao:novo:' + cid + ':' + novo, category: 'MARKETING' });
           } catch {}
         } catch (e: any) { console.error('[CONFIRMACAO-TEL] trocar', e?.message || e); }
         return `Anotado! Atualizei o cadastro para (${novo.slice(2, 4)}) ${novo.slice(4, 9)}-${novo.slice(9)} e mandei a confirmação lá. Obrigado! 🧡`;
