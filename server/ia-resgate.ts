@@ -29,7 +29,7 @@ function hojeBR(): string { return new Date().toLocaleDateString('en-CA', { time
 function horaBR(): number { return parseInt(new Date().toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', hour12: false }), 10) || 0; }
 const dig = (s: any) => String(s || '').replace(/\D/g, '');
 function normalizar(t: string): string { return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(); }
-function title(t: string): string { return String(t || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').trim(); }
+function title(t: string): string { return String(t || '').toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase()).replace(/\b(Ltda|Me|Epp|Eireli|S\/a)\b\.?/gi, '').replace(/\s+/g, ' ').replace(/[\s.,;:!-]+$/g, '').trim(); }
 
 async function getSetting(key: string, def: string): Promise<string> {
   try {
@@ -109,9 +109,11 @@ async function selecionar(limit: number, soFaixa?: string): Promise<Alvo[]> {
     ORDER BY b.dias ASC
     LIMIT ${limit * 4}`);
   const out: Alvo[] = [];
+  const vistos = new Set<string>();
   for (const x of (r.rows || []) as any[]) {
     const tel = celular(x.phone);
-    if (!tel) continue;
+    if (!tel || vistos.has(tel)) continue; // mesmo telefone em 2 cadastros (matriz/filial): 1 contato
+    vistos.add(tel);
     const c30 = Number(x.contatos30d || 0);
     const ult = x.ultimo_contato_dias == null ? null : Number(x.ultimo_contato_dias);
     const faixa = String(x.faixa) as Faixa;
@@ -119,9 +121,17 @@ async function selecionar(limit: number, soFaixa?: string): Promise<Alvo[]> {
     const lembrete = faixa === '31-60' && c30 === 1 && ult != null && ult >= 3 && !x.respondeu && x.ultimo_tipo !== 'lembrete';
     if (c30 > 0 && !lembrete) continue;
     out.push({ customerId: String(x.id), nome: String(x.nome || '').trim(), telefone: tel, faixa, dias: Number(x.dias), ultima: x.ult, contatos30d: c30, ultimoContatoDias: ult, ultimoTipo: lembrete ? 'lembrete' : (x.ultimo_tipo || null) });
-    if (out.length >= limit) break;
   }
-  return out;
+  // Cota por faixa (senao a 31-60 consome o teto e os 91-365 — o alvo do plano — nunca entram):
+  // 35% 31-60 · 20% 61-90 · 25% 91-180 · 20% 181-365; sobra de uma faixa vai para as outras.
+  if (soFaixa) return out.slice(0, limit);
+  const grupos: Record<string, Alvo[]> = { '31-60': [], '61-90': [], '91-180': [], '181-365': [] };
+  for (const a of out) grupos[a.faixa].push(a);
+  const cotas: Record<string, number> = { '31-60': Math.round(limit * 0.35), '61-90': Math.round(limit * 0.20), '91-180': Math.round(limit * 0.25), '181-365': Math.round(limit * 0.20) };
+  const sel: Alvo[] = [];
+  for (const f of Object.keys(grupos)) sel.push(...grupos[f].splice(0, cotas[f]));
+  for (const f of Object.keys(grupos)) { while (sel.length < limit && grupos[f].length) sel.push(grupos[f].shift()!); }
+  return sel.slice(0, limit);
 }
 
 // Cupom mensal da faixa (uma vez por cliente), criado sob demanda. Ex.: VOLTA10-OUT26.
