@@ -232,6 +232,7 @@ export async function iaRepescagemTick(opts: { force?: boolean; dry?: boolean; l
         await db.execute(sql`INSERT INTO virtual_service_logs (customer_id, entity_type, attendant_id, attendant_name, attendance_date, service_type, notes)
           VALUES (${a.customerId}, 'customer', 'ia', 'IA WhatsApp (repescagem)', now(), 'repescagem_ia', ${'Contato automatico da IA (' + ab.tipo + ') via ' + canal})`);
       } catch (e: any) { console.error('[IA-REP] vlog', e?.message || e); }
+      try { const { espelharConversa } = await import('./ia-espelho'); await espelharConversa({ conversationId: conv.id, phone: a.telefone, ia: ab.texto, agente: 'repescagem', nota: 'abertura (' + ab.tipo + ')' }); } catch {}
       enviados++; det.ok = true; detalhes.push(det);
       await new Promise(res => setTimeout(res, 4000));
     } catch (e: any) { falhas++; det.erro = e?.message || String(e); detalhes.push(det); }

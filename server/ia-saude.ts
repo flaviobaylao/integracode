@@ -104,6 +104,7 @@ export async function alertarFalhaIA(opts: {
     }
   } catch (e: any) { console.error('[IA-SAUDE] aviso cliente', e?.message || e); }
 
+  try { const { espelharConversa } = await import('./ia-espelho'); await espelharConversa({ conversationId, phone, cliente: opts.incomingText, ia: '(sem resposta do modelo — aviso fixo + fila humana)', agente: 'saude', nota: 'ERRO: ' + erro }); } catch {}
   // (b) transfere para humano pela fila (dono da carteira → padrão → rodízio).
   try {
     const { handoffParaHumano } = await import('./ia-fila');
