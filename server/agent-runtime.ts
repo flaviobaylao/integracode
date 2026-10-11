@@ -1279,7 +1279,16 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
       }
     } catch {}
     const gen = await generateAgentReply(chosenId, hist, ctx);
-    if (!gen.ok || !gen.reply) { await _t('agente:modelo_sem_resposta', gen.error || 'resposta vazia'); return; }
+    if (!gen.ok || !gen.reply) {
+      await _t('agente:modelo_sem_resposta', gen.error || 'resposta vazia');
+      // O cliente nao pode ficar no vacuo: aviso fixo (sem modelo), handoff para humano
+      // e alerta ao gestor. Ver server/ia-saude.ts (origem: 16 dias mudos por falta de credito).
+      try {
+        const { alertarFalhaIA } = await import('./ia-saude');
+        await alertarFalhaIA({ conversationId: opts.conversationId, phone: opts.phone, erro: gen.error || 'resposta vazia', incomingText: opts.incomingText, sendText: opts.sendText });
+      } catch (fe: any) { console.error('[AGENT-RUNTIME] fallback', fe?.message || fe); }
+      return;
+    }
     // O envio vem ANTES do registro da mensagem: se falhar, sem a trilha nao sobra rastro.
     let sent: any = null;
     try { sent = await opts.sendText(opts.phone, gen.reply); }
