@@ -160,7 +160,8 @@ export function registerPainelAtendimento(app: Express) {
 
         // ── Atendimentos virtuais do dia ───────────────────────────────────────
         const CTE_VIRTUAIS = `virtuais AS (
-          SELECT COALESCE(${userIdDe("vl.attendant_id")}, 'sem-vendedor') AS uid,
+          SELECT CASE WHEN vl.attendant_id = 'ia' THEN 'ia'
+                      ELSE COALESCE(${userIdDe("vl.attendant_id")}, 'sem-vendedor') END AS uid,
                  vl.customer_id AS cid
           FROM virtual_service_logs vl
           WHERE ${sqlDiaBR("vl.attendance_date")} = ${D}
@@ -259,7 +260,7 @@ export function registerPainelAtendimento(app: Express) {
           let l = linhas.get(uid);
           if (!l) {
             l = {
-              vendedorId: uid, vendedor: uid === "sem-vendedor" ? "Sem vendedor" : uid, papel: null, ativo: true,
+              vendedorId: uid, vendedor: uid === "sem-vendedor" ? "Sem vendedor" : (uid === "ia" ? "IA WhatsApp" : uid), papel: uid === "ia" ? "ia" : null, ativo: true,
               visitas: 0, atendimentos: 0, pedidos: 0, valorPedidos: 0, repescagem: 0, repescagemAlocados: 0, faturado: 0, notas: 0,
               km: null, kmFonte: null, primeiroCheckIn: null, ultimoCheckIn: null,
             };

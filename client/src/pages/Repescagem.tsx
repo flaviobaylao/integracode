@@ -57,6 +57,7 @@ type Assignment = {
   locked?: boolean;
   lockedBy?: string | null;
   canUnlock?: boolean;
+  ia?: { contatoEm: string | null; respondeu: boolean; pedido: boolean } | null;
 };
 
 type HistoryEntry = {
@@ -851,6 +852,7 @@ export default function Repescagem() {
                         })()}
                       </span>
                     </th>
+                    <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800" title="Contato automático da IA pelo WhatsApp (11h): se o cliente respondeu e se saiu pedido">🤖 IA</th>
                     <th className="px-3 py-2 text-center font-semibold bg-gray-50 dark:bg-gray-800">Ações</th>
                   </tr>
                 </thead>
@@ -947,6 +949,16 @@ export default function Repescagem() {
                             </button>
                           </div>
                         )}
+                      </td>
+                      <td className="px-3 py-2 text-center text-xs">
+                        {a.ia ? (
+                          <div className="inline-flex flex-col items-center gap-0.5" title={a.ia.contatoEm ? 'IA contatou em ' + new Date(a.ia.contatoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : ''}>
+                            <span className="rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">contatou {a.ia.contatoEm ? new Date(a.ia.contatoEm).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' }) : ''}</span>
+                            {a.ia.pedido ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">pedido ✔</span>
+                              : a.ia.respondeu ? <span className="rounded-full bg-sky-100 px-2 py-0.5 font-medium text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">respondeu</span>
+                              : <span className="text-gray-400">sem resposta</span>}
+                          </div>
+                        ) : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">

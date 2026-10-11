@@ -321,6 +321,21 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
 
     // Resposta ao aviso de VISITA (rota do dia): "Sim, confirmar" / "Nao" / 1-2-3.
     // Vira decisao registrada e resposta pronta — a IA nao precisa adivinhar o contexto.
+    // Resposta ao template de confirmacao de telefone (botoes SIM / NAO, ou o numero novo).
+    try {
+      const { respostaDaConfirmacao } = await import('./ia-confirmar-telefone');
+      const rcf = await respostaDaConfirmacao(phone, incomingText);
+      if (rcf) {
+        await trilha(conversationId, phone, incomingText, 'confirmacao_telefone');
+        await replyVia(conversationId, phone, rcf);
+        try {
+          await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+            VALUES (${conversationId}, 'agent:confirmacao', 'agent', ${rcf}, 'text', true)`);
+        } catch {}
+        return;
+      }
+    } catch (e: any) { console.error('[CONFIRMACAO-TEL]', e?.message || e); }
+
     try {
       const { respostaDaRota } = await import('./rota-respostas');
       const rr = await respostaDaRota(phone, incomingText);

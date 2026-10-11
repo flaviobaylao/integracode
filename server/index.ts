@@ -10,6 +10,7 @@ import { registerIaFila } from "./ia-fila";
 import { registerIaSaude } from "./ia-saude";
 import { registerIaFinanceiro } from "./ia-financeiro";
 import { registerIaRepescagem } from "./ia-repescagem";
+import { registerConfirmacaoTelefone } from "./ia-confirmar-telefone";
 import { registerIaDiag } from "./ia-diag";
 import { registerCanaisGestao } from "./canais-gestao";
 import { registerRelatorioEntregas } from "./relatorio-entregas-whatsapp";
@@ -128,6 +129,7 @@ registerIaFila(app);
 registerIaSaude(app);
 registerIaFinanceiro(app);
 registerIaRepescagem(app);
+registerConfirmacaoTelefone(app);
 registerIaDiag(app);
 registerCanaisGestao(app);
 try { registerRelatorioEntregas(app); } catch (e) { console.error('[rel-entregas]', e); }

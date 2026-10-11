@@ -56,6 +56,7 @@ function situacao(l: Linha, ehHoje: boolean): { rotulo: string; cor: string } {
   if (l.visitas > 0 || l.atendimentos > 0 || l.pedidos > 0) {
     return { rotulo: ehHoje ? 'Em atividade' : 'Ativo no dia', cor: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' };
   }
+  if (l.papel === 'ia') return { rotulo: 'Sem contato', cor: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300' };
   if (l.papel === 'telemarketing') return { rotulo: 'Sem atendimento', cor: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' };
   return { rotulo: 'Sem check-in', cor: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300' };
 }
@@ -277,6 +278,7 @@ export default function PainelAtendimento() {
                     <td className="px-3 py-2 font-medium text-gray-900 dark:text-gray-50">
                       {l.vendedor}
                       {l.papel === 'telemarketing' && <span className="ml-1 text-xs font-normal text-gray-500">(TMK)</span>}
+                      {l.papel === 'ia' && <span className="ml-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800 dark:bg-violet-900/40 dark:text-violet-300" title="Atendimentos feitos pelo agente de IA no WhatsApp (repescagem e conversas)">🤖 IA</span>}
                       {!l.ativo && <span className="ml-1 text-xs font-normal text-gray-500">(inativo)</span>}
                     </td>
                     <td className="px-3 py-2">
