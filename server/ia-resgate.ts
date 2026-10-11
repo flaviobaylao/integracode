@@ -81,11 +81,18 @@ async function selecionar(limit: number, soFaixa?: string): Promise<Alvo[]> {
     WITH nf AS (
       SELECT regexp_replace(COALESCE(customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, max(emission_date)::date AS ult
       FROM fiscal_invoices WHERE status = 'authorized' AND cfop = ANY(string_to_array(${CFOPS.join(',')}, ',')) GROUP BY 1
+    ), sc AS (
+      -- pedido no pipeline (card concluido/faturado) tambem conta como compra: a NF pode ainda nao existir
+      SELECT customer_id, max(COALESCE(completed_date, updated_at))::date AS ult FROM sales_cards
+      WHERE COALESCE(operation_type,'venda') = 'venda' AND COALESCE(status,'') NOT IN ('cancelled','telemarketing')
+        AND (completed_date IS NOT NULL OR COALESCE(status,'') IN ('blocked','completed','invoiced')) GROUP BY 1
     ), base AS (
-      SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.phone, nf.ult,
-             ((now() AT TIME ZONE 'America/Sao_Paulo')::date - nf.ult) AS dias
+      SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.phone,
+             GREATEST(nf.ult, COALESCE(sc.ult, nf.ult)) AS ult,
+             ((now() AT TIME ZONE 'America/Sao_Paulo')::date - GREATEST(nf.ult, COALESCE(sc.ult, nf.ult))) AS dias
       FROM customers c
       JOIN nf ON nf.doc <> '' AND nf.doc = regexp_replace(COALESCE(c.cnpj, c.cpf, ''),'[^0-9]','','g')
+      LEFT JOIN sc ON sc.customer_id = c.id
       WHERE COALESCE(c.is_supplier, false) = false
         AND COALESCE(c.situacao, '') NOT ILIKE 'inativo'
         AND regexp_replace(COALESCE(c.phone,''), '[^0-9]', '', 'g') ~ '^(55)?[1-9][0-9](9[0-9]{8}|[6-9][0-9]{7})$'
@@ -107,7 +114,7 @@ async function selecionar(limit: number, soFaixa?: string): Promise<Alvo[]> {
       AND NOT EXISTS (SELECT 1 FROM virtual_service_logs v WHERE v.customer_id = b.id AND v.attendance_date > now() - interval '7 days')
       AND NOT EXISTS (SELECT 1 FROM route_checkpoints k WHERE k.customer_id = b.id AND k.checkpoint_type = 'check_in' AND k.checkpoint_time > now() - interval '7 days')
     ORDER BY b.dias ASC
-    LIMIT ${limit * 4}`);
+    LIMIT 3000`);
   const out: Alvo[] = [];
   const vistos = new Set<string>();
   for (const x of (r.rows || []) as any[]) {
