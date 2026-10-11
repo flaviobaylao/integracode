@@ -1861,24 +1861,51 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Situacao do ESTOQUE EM USO dos pedidos ainda nao faturados (pedido, a faturar,
   // agendado): o card mostra antes do clique se o faturamento vai travar.
   // Somente leitura — a filial resolvida (pedido -> cliente -> GYN) NAO e gravada.
-  app.get('/api/billing-pipeline/stock-status', authenticateUser, isPipelineViewer, async (_req: any, res) => {
-    try {
-      const r: any = await db.execute(sql`SELECT id FROM billing_pipeline WHERE stage::text IN ('pedido','a_faturar','agendado')`);
-      const ids: string[] = ((r?.rows ?? r ?? []) as any[]).map((x: any) => String(x.id));
-      const out: Record<string, { ok: boolean; details: string; filial: string | null }> = {};
-      for (const id of ids) {
+  // PERF (11/out/2026): antes esta rota fazia, POR PEDIDO e EM SERIE, ~6-10 consultas
+  // (item, instancias, cliente, baixa vigente, lotes por produto) e era chamada a cada
+  // 60 s por cada aba aberta — 9 s por chamada segurando uma conexao do pool de 10.
+  // Agora: cache de 30 s com single-flight (todas as abas compartilham um calculo),
+  // itens carregados numa consulta so', e a validacao (mesma regra do faturamento,
+  // nao duplicada) roda com paralelismo limitado.
+  let _stockStatusCache: { at: number; data: Record<string, { ok: boolean; details: string; filial: string | null }> } | null = null;
+  let _stockStatusInflight: Promise<Record<string, { ok: boolean; details: string; filial: string | null }>> | null = null;
+  const STOCK_STATUS_TTL_MS = 30_000;
+  async function calcularStockStatus(): Promise<Record<string, { ok: boolean; details: string; filial: string | null }>> {
+    const itens: any[] = await storage.getBillingPipelineItems({ ativosApenas: true });
+    const pendentes = itens.filter((i: any) => ['pedido', 'a_faturar', 'agendado'].includes(String(i.stage)));
+    const out: Record<string, { ok: boolean; details: string; filial: string | null }> = {};
+    const CONC = 4;
+    let idx = 0;
+    const worker = async () => {
+      while (idx < pendentes.length) {
+        const item = pendentes[idx++];
+        const id = String(item.id);
         try {
-          const item: any = await storage.getBillingPipelineItem(id);
-          if (!item) continue;
           const copia = { ...item };
           await garantirInstanciaEstoque(copia, { persist: false });
           const v = await validateStockForBilling(copia);
           out[id] = { ok: v.valid, details: v.details, filial: copia.omieInstanceName || null };
-        } catch (e: any) {
+        } catch {
           out[id] = { ok: true, details: '', filial: null };
         }
       }
-      res.json(out);
+    };
+    await Promise.all(Array.from({ length: Math.min(CONC, pendentes.length) }, () => worker()));
+    return out;
+  }
+  export_invalidarStockStatus = () => { _stockStatusCache = null; };
+  app.get('/api/billing-pipeline/stock-status', authenticateUser, isPipelineViewer, async (req: any, res) => {
+    try {
+      const force = String(req.query.force || '') === '1';
+      if (!force && _stockStatusCache && Date.now() - _stockStatusCache.at < STOCK_STATUS_TTL_MS) {
+        return res.json(_stockStatusCache.data);
+      }
+      if (!_stockStatusInflight) {
+        _stockStatusInflight = calcularStockStatus()
+          .then((data) => { _stockStatusCache = { at: Date.now(), data }; return data; })
+          .finally(() => { _stockStatusInflight = null; });
+      }
+      res.json(await _stockStatusInflight);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1892,7 +1919,15 @@ export function registerBillingPipelineRoutes(app: Express) {
         await promoteDueScheduledOrders();
       }
       const stage = req.query.stage as string | undefined;
-      const items = await storage.getBillingPipelineItems(stage ? { stage } : undefined);
+      // PERF (11/out/2026): sem parametros a resposta traz SO' os cards ativos (~110 linhas).
+      // Antes vinha a tabela inteira (6.900+ cards, 98% entregue/lixeira = 14,5 MB por carga).
+      // Entregue e lixeira sao pedidos pela tela com ?stage=...&dias=N (janela por updated_at).
+      // ?all=1 devolve tudo, para quem precisar do comportamento antigo.
+      const dias = req.query.dias ? parseInt(String(req.query.dias), 10) : undefined;
+      const all = String(req.query.all || '') === '1';
+      const items = await storage.getBillingPipelineItems(
+        stage ? { stage, dias: dias && dias > 0 ? dias : undefined } : (all ? undefined : { ativosApenas: true })
+      );
       // FOTOS DA TROCA no card do pipeline: anexadas em order_pipeline_audit por sales_card_id. Só
       // enriquecemos itens de troca/amostra/bonificacao (os que têm foto) para não pesar. O card-filho
       // (por pedido) tem id próprio, mas a foto foi gravada no card de ORIGEM (parentCardId) — por isso
@@ -2054,6 +2089,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Move item to next/specific stage
   app.patch('/api/billing-pipeline/:id/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
+      invalidarStockStatus();
       const { stage, scheduledBillingDate } = req.body;
       if (!stage || !BILLING_STAGES.includes(stage)) {
         return res.status(400).json({ message: `Stage inválido. Valores aceitos: ${BILLING_STAGES.join(', ')}` });
@@ -2213,6 +2249,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Update item details (notes, invoice number, etc.)
   app.patch('/api/billing-pipeline/:id', authenticateUser, async (req: any, res) => {
     try {
+      invalidarStockStatus();
       // AUTORIZACAO: managers (admin/coord/adm) editam tudo, como antes. Vendedor externo e
       // Telemarketing so editam o PROPRIO pedido (sellerId == user.id), so nos status Agendado/
       // Pedido, e SOMENTE produtos/quantidades, forma de pagamento e 'Faturar em'. Nunca outros
@@ -2561,6 +2598,7 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Batch move items to a stage
   app.post('/api/billing-pipeline/batch/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
+      invalidarStockStatus();
       const { ids, stage } = req.body;
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ message: 'ids é obrigatório (array)' });
@@ -2928,6 +2966,10 @@ export async function registrarBloqueioEstoqueNoPedido(item: any, details: strin
 // por "pedido sem filial" ou sairiam da GYN sem baixar estoque. A instancia
 // resolvida e GRAVADA no item, para baixa, emitente e ambiente fiscal
 // sairem todos da mesma filial. Muta o objeto recebido.
+// PERF: invalida o cache do stock-status (chamado ao mover/faturar card).
+let export_invalidarStockStatus: () => void = () => {};
+export function invalidarStockStatus() { try { export_invalidarStockStatus(); } catch {} }
+
 export async function garantirInstanciaEstoque(item: any, opts?: { persist?: boolean }): Promise<void> {
   if (!item || item.omieInstanceId) return;
   const persist = opts?.persist !== false;

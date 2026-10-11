@@ -445,20 +445,45 @@ export default function BillingPipeline() {
   const SELLER_EDIT_STAGES = ['agendado', 'pedido'];
   const canSellerEditItem = (it: any) => isSellerRole && !!it && String(it.sellerId || '') === String(myUserId) && SELLER_EDIT_STAGES.includes(String(it.stage));
 
-  const { data: rawItems = [], isLoading } = useQuery<BillingPipelineItem[]>({
+  // PERF (11/out/2026): o GET /api/billing-pipeline passou a devolver SO' os cards ativos
+  // (~110). Entregue e Lixeira (98% da tabela, ~6.800 cards) vem em consultas proprias,
+  // limitadas a uma janela de dias que o usuario amplia na propria coluna.
+  const { data: ativosItems = [], isLoading } = useQuery<BillingPipelineItem[]>({
     queryKey: ['/api/billing-pipeline'],
     // Board de operação: atualiza ao VOLTAR O FOCO para a tela (troca de janela/aba e retorno).
-    // NÃO usar polling contínuo aqui: a lista do pipeline é grande (milhares de itens) e o
-    // refetch a cada 30s de todas as telas abertas sobrecarregava o servidor. O foco cobre o
-    // fluxo real (lançou pedido -> volta pro pipeline) sem carga contínua.
+    // NÃO usar polling contínuo aqui: o refetch a cada 30s de todas as telas abertas
+    // sobrecarregava o servidor. O foco cobre o fluxo real (lançou pedido -> volta pro pipeline).
     refetchOnWindowFocus: true,
     staleTime: 15000,
   });
+  const [diasFinais, setDiasFinais] = useState<Record<'entregue' | 'lixeira', number>>({ entregue: 7, lixeira: 30 });
+  const { data: entregueItems = [] } = useQuery<BillingPipelineItem[]>({
+    queryKey: ['/api/billing-pipeline', 'stage', 'entregue', diasFinais.entregue],
+    queryFn: async () => await apiRequest('GET', `/api/billing-pipeline?stage=entregue&dias=${diasFinais.entregue}`),
+    staleTime: 60000,
+  });
+  const { data: lixeiraItems = [] } = useQuery<BillingPipelineItem[]>({
+    queryKey: ['/api/billing-pipeline', 'stage', 'lixeira', diasFinais.lixeira],
+    queryFn: async () => await apiRequest('GET', `/api/billing-pipeline?stage=lixeira&dias=${diasFinais.lixeira}`),
+    staleTime: 60000,
+  });
+  const rawItems = useMemo<BillingPipelineItem[]>(() => {
+    const seen = new Set<string>();
+    const out: BillingPipelineItem[] = [];
+    for (const it of [...ativosItems, ...entregueItems, ...lixeiraItems]) {
+      if (!it || seen.has(it.id)) continue;
+      seen.add(it.id); out.push(it);
+    }
+    return out;
+  }, [ativosItems, entregueItems, lixeiraItems]);
 
   // Situacao do estoque EM USO dos pedidos ainda nao faturados (badge no card).
+  // PERF: sem polling — o servidor calcula em lote e cacheia; aqui atualiza ao voltar o foco
+  // e nas invalidacoes de '/api/billing-pipeline' (prefixo) feitas pelas mutations.
   const { data: stockStatus = {} } = useQuery<Record<string, { ok: boolean; details: string; filial: string | null }>>({
     queryKey: ['/api/billing-pipeline/stock-status'],
-    refetchInterval: 60000,
+    refetchOnWindowFocus: true,
+    staleTime: 30000,
   });
   const { data: blockedOrders = [] } = useQuery<any[]>({
     queryKey: ['/api/blocked-orders'],
@@ -553,7 +578,7 @@ export default function BillingPipeline() {
 
   const { data: modeStatus } = useQuery<{ active: boolean; activatedBy: string | null }>({
     queryKey: ['/api/billing-pipeline/mode'],
-    refetchInterval: 10000,
+    refetchInterval: 120000,
   });
 
   const syncNowMutation = useMutation({
@@ -1665,7 +1690,22 @@ export default function BillingPipeline() {
                 </div>
                 <div className={`bg-gray-100 dark:bg-gray-800 rounded-b-lg p-2 space-y-2 flex-1 min-h-0 overflow-y-auto transition-colors ${dragOverStage === stage.key ? 'ring-2 ring-inset ring-blue-500 bg-blue-50 dark:bg-blue-950/40' : ''}`}>
                   {/* Seletor de classificação por data de criação (A-Z / Z-A) */}
-                  <div className="flex items-center justify-end">
+                  <div className="flex items-center justify-end gap-1">
+                    {(stage.key === 'entregue' || stage.key === 'lixeira') && (
+                      <select
+                        value={diasFinais[stage.key]}
+                        onChange={(e) => setDiasFinais(prev => ({ ...prev, [stage.key]: Number(e.target.value) }))}
+                        className="text-[11px] text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded px-1 py-0.5 bg-white dark:bg-gray-900"
+                        title="Período mostrado nesta coluna (cards mais antigos ficam fora para a tela carregar rápido)"
+                        data-testid={`dias-stage-${stage.key}`}
+                      >
+                        <option value={7}>7 dias</option>
+                        <option value={30}>30 dias</option>
+                        <option value={90}>90 dias</option>
+                        <option value={365}>1 ano</option>
+                        <option value={3650}>Tudo</option>
+                      </select>
+                    )}
                     <button
                       onClick={() => setStageSort(prev => ({ ...prev, [stage.key]: (prev[stage.key] || 'desc') === 'asc' ? 'desc' : 'asc' }))}
                       className="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded px-1.5 py-0.5 bg-white dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-700"

@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import { createHash as _perfCreateHash } from "crypto";
 import { fireAutomation, fireOrderAutomation } from './automation-engine';
 import { ensureEntregaTempoSchema, registrarTempoEntregaCliente, notifyRotaIniciada, notifyEntregaFinalizada, testarNotificacoesRota } from './rota-entrega-notificacoes';
 import { createServer, type Server } from "http";
@@ -4944,6 +4945,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // recebem, para nao entrarem em pedido por engano.
   const PAPEIS_ITENS_INTERNOS = ['admin', 'coordinator', 'administrative'];
 
+  // PERF (11/out/2026): imagem do produto por rota propria. O GET /api/products
+  // deixou de embutir o base64 (80 MB por carga) e devolve estas URLs no lugar.
+  // Sem autenticacao de proposito: e' a mesma foto que a loja publica ja' mostra,
+  // e o <img> do app precisa funcionar em qualquer tela. ETag + cache de 1 dia.
+  const servirImagemProduto = (res: any, req: any, texto: string | null | undefined) => {
+    if (!texto) return res.status(404).json({ message: 'Produto sem imagem.' });
+    const t = String(texto);
+    if (/^https?:\/\//i.test(t)) return res.redirect(302, t);
+    if (t.startsWith('/')) return res.redirect(302, t);
+    const m = /^data:([^;,]+)?(?:;base64)?,([\s\S]*)$/.exec(t);
+    if (!m) return res.status(415).json({ message: 'Formato de imagem nao suportado.' });
+    const buf = Buffer.from(m[2], 'base64');
+    const etag = `"${_perfCreateHash("sha1").update(buf).digest('hex')}"`;
+    if (req.headers['if-none-match'] === etag) return res.status(304).end();
+    res.setHeader('Content-Type', m[1] || 'image/jpeg');
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.end(buf);
+  };
+  app.get('/api/products/:id/image', async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT image_url FROM products WHERE id = ${String(req.params.id)} LIMIT 1`);
+      servirImagemProduto(res, req, ((r.rows || r) as any[])[0]?.image_url);
+    } catch (e: any) { res.status(500).json({ message: String(e?.message || e) }); }
+  });
+  app.get('/api/products/:id/images/:idx', async (req: any, res) => {
+    try {
+      const idx = Math.max(0, parseInt(String(req.params.idx), 10) || 0);
+      const r: any = await db.execute(sql`SELECT (images)[${idx + 1}] AS img FROM products WHERE id = ${String(req.params.id)} LIMIT 1`);
+      servirImagemProduto(res, req, ((r.rows || r) as any[])[0]?.img);
+    } catch (e: any) { res.status(500).json({ message: String(e?.message || e) }); }
+  });
+  // Guarda: a tela de produtos recebe as URLs acima em imageUrl/images e devolve
+  // o objeto inteiro ao salvar — sem isto, a URL sobrescreveria o base64 gravado.
+  const limparUrlsDeImagemDoBody = (body: any) => {
+    if (!body || typeof body !== 'object') return;
+    if (typeof body.imageUrl === 'string' && body.imageUrl.startsWith('/api/products/')) delete body.imageUrl;
+    if (Array.isArray(body.images) && body.images.length && body.images.every((x: any) => typeof x === 'string' && x.startsWith('/api/products/'))) delete body.images;
+  };
+
   app.get('/api/products', authenticateUser, async (req: any, res) => {
     try {
       const products = await storage.getProducts();
@@ -4964,6 +5005,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
+      limparUrlsDeImagemDoBody(req.body);
       const data = insertProductSchema.parse(req.body);
       const product = await storage.createProduct(data);
       res.json(product);
@@ -4987,6 +5029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📝 [PUT /api/products/${id}] Payload recebido:`, JSON.stringify(req.body, null, 2));
       
+      limparUrlsDeImagemDoBody(req.body);
       const data = insertProductSchema.partial().parse(req.body);
       console.log(`✅ [PUT /api/products/${id}] Dados após validação Zod:`, JSON.stringify(data, null, 2));
       
