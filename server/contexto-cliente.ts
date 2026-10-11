@@ -104,6 +104,9 @@ export async function contextoDoCliente(customerId?: string | null): Promise<str
       linhas.push('Sem compra registrada no sistema. Nao fale em "de costume", "como sempre" nem em periodicidade.');
     }
 
+    // Cupom de resgate ativo (ia-resgate): a IA precisa saber para aplicar no registrar_pedido.
+    try { const { cupomAtivoDoCliente } = await import('./ia-resgate'); const cu = await cupomAtivoDoCliente(customerId); if (cu) linhas.push(cu); } catch {}
+
     // Proxima visita agendada (mesma fonte usada na resposta da Rota do Dia).
     const v: any = await db.execute(sql`
       SELECT to_char(scheduled_date, 'DD/MM/YYYY') AS quando

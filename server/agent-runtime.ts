@@ -73,6 +73,7 @@ const ORDER_TOOL: any = {
       dia_entrega: { type: 'string', description: 'dia preferido de entrega (ex: segunda, amanhã)' },
       horario: { type: 'string' },
       observacoes: { type: 'string' },
+      cupom: { type: 'string', description: 'codigo de cupom de desconto, SOMENTE se o cliente informar ou se o contexto da conversa (bloco ESTE CLIENTE / mensagem de resgate) disser que ele tem um cupom' },
     },
     required: ['tipo_cliente', 'itens', 'nome', 'documento', 'endereco', 'bairro', 'cidade', 'forma_pagamento', 'dia_entrega'],
   },
@@ -570,8 +571,45 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       const unit = tipo === 'revenda' ? priceRevenda(r.p, table) : priceConsumer(r.p, table as any);
       return { id: rid(), name: r.p.name, quantity: r.qtd, unitPrice: unit, totalPrice: Number((unit * r.qtd).toFixed(2)) };
     });
-    const total = products.reduce((s, p) => s + p.totalPrice, 0);
+    let total = products.reduce((s, p) => s + p.totalPrice, 0);
     if (!(total > 0)) return 'Não consegui calcular o valor (tabela de preço sem valor para esses itens). Melhor transferir para um atendente humano.';
+
+    // CUPOM (plano 11/10 — resgate por faixa): valida na tabela coupons e aplica o percentual
+    // (teto 15%) sobre os itens. Invalido -> registra sem desconto e avisa a IA.
+    let cupomInfo: { code: string; pct: number; desconto: number; id: string } | null = null;
+    let cupomAviso = '';
+    const _cup = String(inp.cupom || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+    if (_cup) {
+      try {
+        const cq: any = await db.execute(sql`SELECT id, code, discount_type, discount_value::float AS v, valid_until, is_active, max_uses, used_count, min_order_value::float AS minimo, once_per_customer
+          FROM coupons WHERE upper(code) = ${_cup} LIMIT 1`);
+        const c = cq.rows?.[0];
+        const docDigits = onlyDigits(inp.documento);
+        let motivo = '';
+        if (!c) motivo = 'cupom nao existe';
+        else if (!c.is_active) motivo = 'cupom inativo';
+        else if (c.valid_until && new Date(c.valid_until).getTime() < Date.now()) motivo = 'cupom vencido';
+        else if (c.max_uses && Number(c.used_count || 0) >= Number(c.max_uses)) motivo = 'cupom esgotado';
+        else if (c.minimo && total < Number(c.minimo)) motivo = 'pedido abaixo do minimo do cupom (' + brl(c.minimo) + ')';
+        else if (c.once_per_customer && docDigits) {
+          const u: any = await db.execute(sql`SELECT 1 FROM coupon_redemptions r JOIN customers cu ON cu.id = r.customer_id
+            WHERE r.coupon_id = ${c.id} AND regexp_replace(COALESCE(cu.cnpj, cu.cpf, ''),'[^0-9]','','g') = ${docDigits} LIMIT 1`);
+          if (u.rows?.length) motivo = 'cupom ja usado por este cliente';
+        }
+        if (motivo) cupomAviso = ` ATENCAO: o cupom ${_cup} NAO foi aplicado (${motivo}); avise o cliente com simpatia.`;
+        else {
+          const pct = c.discount_type === 'percent' ? Math.min(15, Number(c.v)) : 0;
+          const fixo = c.discount_type === 'percent' ? 0 : Math.min(Number(c.v), total);
+          let desconto = 0;
+          if (pct > 0) { for (const p of products) { p.totalPrice = Number((p.totalPrice * (1 - pct / 100)).toFixed(2)); p.unitPrice = Number((p.totalPrice / (p.quantity || 1)).toFixed(4)); } desconto = Number((total - products.reduce((s2, p) => s2 + p.totalPrice, 0)).toFixed(2)); }
+          else if (fixo > 0) { const f = fixo / total; for (const p of products) { p.totalPrice = Number((p.totalPrice * (1 - f)).toFixed(2)); p.unitPrice = Number((p.totalPrice / (p.quantity || 1)).toFixed(4)); } desconto = fixo; }
+          const novo = products.reduce((s2, p) => s2 + p.totalPrice, 0);
+          cupomInfo = { code: String(c.code), pct, desconto, id: String(c.id) };
+          (inp as any)._totalAntes = total;
+          total = novo;
+        }
+      } catch (e: any) { cupomAviso = ' (nao consegui validar o cupom ' + _cup + '; registrado sem desconto)'; }
+    }
 
     // 🔒 TRAVA DE VALOR — PEDIDO MINIMO DO CONSUMIDOR (ago/2026)
     // Mesma regra do Hotsite, mesma configuracao (Canais > Hotsite > Configuracoes):
@@ -647,6 +685,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       'Pagamento (informado): ' + inp.forma_pagamento,
       'Entrega (preferida): ' + inp.dia_entrega + (inp.horario ? ' às ' + inp.horario : ''),
       inp.observacoes ? 'Obs: ' + inp.observacoes : '',
+      cupomInfo ? ('CUPOM ' + cupomInfo.code + (cupomInfo.pct ? ' (' + cupomInfo.pct + '%)' : '') + ': desconto ' + brl(cupomInfo.desconto) + ' — total antes ' + brl((inp as any)._totalAntes || 0)) : '',
       customer ? ('Cliente cadastrado: ' + (customer.fantasyName || customer.name || customer.id)) : '** Cliente NÃO cadastrado — vincular/cadastrar antes de faturar **',
     ].filter(Boolean).join('\n');
 
@@ -697,6 +736,14 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
         VALUES (${ctx?.conversationId || null}, ${card?.id || null}, ${_orderNum}, ${onlyDigits(ctx?.phone) || null}, ${String(inp.nome || '')}, ${doc}, ${total.toFixed(2)}, 'registered')`);
     } catch (e: any) { console.error('[IG-ORDER] vinculo pix', e?.message || e); }
 
+    if (cupomInfo) {
+      try {
+        await db.execute(sql`INSERT INTO coupon_redemptions (coupon_id, coupon_code, sales_card_id, customer_id, order_total_before, discount_applied, order_total_after)
+          VALUES (${cupomInfo.id}, ${cupomInfo.code}, ${card?.id || null}, ${customer?.id || null}, ${Number((inp as any)._totalAntes || 0).toFixed(2)}, ${cupomInfo.desconto.toFixed(2)}, ${total.toFixed(2)})`);
+        await db.execute(sql`UPDATE coupons SET used_count = COALESCE(used_count,0) + 1, updated_at = now() WHERE id = ${cupomInfo.id}`);
+      } catch (e: any) { console.error('[IG-ORDER] cupom', e?.message || e); }
+    }
+
     // ROTEAMENTO POR CARTEIRA + CAPTURA DE LEAD (Honest).
     // - Cliente já cadastrado numa carteira → venda vai pro dono da carteira; se ele for
     //   telemarketing, dispara alerta (WhatsApp) para acompanhar a logística.
@@ -724,7 +771,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     } catch (e: any) { console.error('[IG-ORDER] lead-routing', e?.message || e); }
 
     console.log(`[IG-ORDER] pedido card=${card?.id} total=${total.toFixed(2)} tabela=${table} conv=${ctx?.conversationId}`);
-    return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.';
+    return 'OK: pedido registrado no pipeline de faturamento como PENDENTE (aguarda confirmação da equipe; NÃO foi faturado). Total ' + brl(total) + (cupomInfo ? ' (cupom ' + cupomInfo.code + ' aplicado: -' + brl(cupomInfo.desconto) + ')' : '') + cupomAviso + ' pela tabela ' + (tabelaLabel[table] || table) + '. Itens: ' + products.map((p) => `${p.quantity}x ${p.name} = ${brl(p.totalPrice)}`).join('; ') + '. Diga ao cliente que o pedido foi registrado e que a equipe vai confirmar valor, pagamento e entrega em breve. NÃO prometa prazo específico de entrega.';
   } catch (e: any) {
     console.error('[IG-ORDER]', e?.message || e);
     return 'Não consegui registrar o pedido agora (erro interno). Transfira para um atendente humano.';

@@ -336,6 +336,21 @@ export async function reactiveInbound(conversationId: string, phone: string, inc
       }
     } catch (e: any) { console.error('[CONFIRMACAO-TEL]', e?.message || e); }
 
+    // Resgate por faixa: marca que respondeu; na faixa 61-90 trata o motivo (1/2/3).
+    try {
+      const { respostaDoResgate } = await import('./ia-resgate');
+      const rrs = await respostaDoResgate(phone, incomingText);
+      if (rrs) {
+        await trilha(conversationId, phone, incomingText, 'resgate_motivo');
+        await replyVia(conversationId, phone, rrs);
+        try {
+          await db.execute(sql`INSERT INTO chat_messages (conversation_id, sender_id, sender_type, content, message_type, is_read)
+            VALUES (${conversationId}, 'agent:resgate', 'system', ${rrs}, 'text', true)`);
+        } catch {}
+        return;
+      }
+    } catch (e: any) { console.error('[IA-RESGATE]', e?.message || e); }
+
     try {
       const { respostaDaRota } = await import('./rota-respostas');
       const rr = await respostaDaRota(phone, incomingText);
