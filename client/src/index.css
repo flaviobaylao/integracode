@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* App e sempre light (Tailwind darkMode: 'class' nunca e ativado). Forcamos o
+   color-scheme para light para que o navegador NAO renderize os controles
+   nativos (select, input, date, dropdown) em tema escuro no modo escuro do
+   celular. Isso mantem TODOS os filtros com fundo branco e fonte preta. */
+:root {
+  color-scheme: light;
+}
+
+/* Rede de seguranca: controles de formulario/filtro sempre claros no mobile,
+   mesmo que o SO esteja em modo escuro. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+select,
+textarea,
+option {
+  background-color: #ffffff;
+  color: #111827;
+}
+select option,
+option {
+  background-color: #ffffff;
+  color: #111827;
+}
+
 :root {
   --background: hsl(0 0% 100%);
   --foreground: hsl(224 71% 4%);
