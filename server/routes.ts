@@ -1754,6 +1754,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 🔻 IDs dos clientes "Perdidos" (mesma régua da Gestão de Carteiras / map-data): cadastro ATIVO,
   // comprou em 3+ meses distintos e está há 3+ meses sem comprar. Sem exigir coordenadas.
   // Definido ANTES de :id para evitar conflito de rota.
+  // 🔎 Busca de clientes por nome, retornando só os que têm coordenadas (lat/lng).
+  // Usado pelo "interno" (telemarketing/administrativo) na Consulta no local para escolher um
+  // CLIENTE DE REFERÊNCIA e consultar a região dele (sem GPS do aparelho). Qualquer autenticado.
+  app.get('/api/customers/busca-coord', authenticateUser, async (req: any, res) => {
+    try {
+      const q = String(req.query?.q || '').trim();
+      if (q.length < 2) return res.json({ ok: true, resultados: [] });
+      const like = `%${q}%`;
+      const r: any = await db.execute(sql`
+        SELECT id, COALESCE(NULLIF(fantasy_name, ''), name) AS nome,
+               neighborhood, city,
+               latitude::float AS lat, longitude::float AS lng
+        FROM customers
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude::float <> 0 AND longitude::float <> 0
+          AND COALESCE(is_lead, false) = false
+          AND COALESCE(is_supplier, false) = false
+          AND COALESCE(is_colaborador, false) = false
+          AND (COALESCE(NULLIF(fantasy_name, ''), name) ILIKE ${like} OR name ILIKE ${like})
+        ORDER BY COALESCE(NULLIF(fantasy_name, ''), name)
+        LIMIT 20
+      `);
+      const resultados = ((r?.rows || []) as any[]).map((x) => ({
+        id: x.id,
+        nome: x.nome || 'Cliente',
+        bairro: x.neighborhood || null,
+        cidade: x.city || null,
+        lat: Number(x.lat),
+        lng: Number(x.lng),
+      }));
+      return res.json({ ok: true, resultados });
+    } catch (e: any) {
+      console.error('Erro na busca de clientes por coordenada:', e);
+      return res.status(500).json({ ok: false, message: 'Erro ao buscar clientes', error: e?.message });
+    }
+  });
+
   app.get('/api/customers/perdidos-ids', authenticateUser, async (_req: any, res) => {
     try {
       const r: any = await db.execute(sql`
