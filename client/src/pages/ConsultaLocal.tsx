@@ -43,6 +43,7 @@ type NovoPonto = {
   endereco: string;
   businessStatus: string;
   jaVisitado?: boolean;
+  disponivel?: boolean; // lead de Novos Pontos liberado (sem vendedor) — qualquer vendedor pode pegar
   leadId?: string | null;
   lat: number;
   lng: number;
@@ -392,7 +393,14 @@ export default function ConsultaLocal() {
     if (!leadId) return null;
     const st = resgate[leadId];
     if (st === "gravado") {
-      return <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Gravado — na sua rota do dia</span>;
+      return (
+        <>
+          <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Na sua rota (7 dias)</span>
+          <Button size="sm" variant="outline" className="border-emerald-400 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30" onClick={() => navigate("/rota-do-dia")} data-testid="button-voltar-rota">
+            <ArrowLeft className="h-4 w-4 mr-1.5" /> Voltar para Rota
+          </Button>
+        </>
+      );
     }
     if (st === "resgatado" || st === "gravando") {
       return (
@@ -404,6 +412,18 @@ export default function ConsultaLocal() {
     return (
       <Button size="sm" variant="outline" className="border-emerald-400 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30" disabled={st === "resgatando"} onClick={() => resgatarLead(leadId)} data-testid="button-resgatar">
         {st === "resgatando" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Resgatando…</> : <><RefreshCw className="h-4 w-4 mr-1.5" /> Resgatar</>}
+      </Button>
+    );
+  };
+
+  // Lead disponível (liberado, sem vendedor): "Pegar lead" → fica no nome de quem pegou, rota do dia, 7 dias.
+  const renderPegar = (leadId: string | null | undefined) => {
+    if (!leadId) return null;
+    const st = resgate[leadId];
+    if (st === "gravado") return renderResgate(leadId);
+    return (
+      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={st === "gravando"} onClick={() => gravarLead(leadId)} data-testid="button-pegar-lead">
+        {st === "gravando" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Pegando…</> : <><Plus className="h-4 w-4 mr-1.5" /> Pegar lead</>}
       </Button>
     );
   };
@@ -722,21 +742,23 @@ export default function ConsultaLocal() {
                 {novos.map((p) => {
                   const st = cadastrados[p.placeId];
                   return (
-                    <Card key={p.placeId || p.nome} className={`border-l-4 ${p.jaVisitado ? "border-l-gray-400" : "border-l-amber-500"}`} data-testid="card-novo-ponto">
+                    <Card key={p.placeId || p.nome} className={`border-l-4 ${p.disponivel ? "border-l-blue-500" : p.jaVisitado ? "border-l-gray-400" : "border-l-amber-500"}`} data-testid="card-novo-ponto">
                       <CardContent className="py-4 space-y-2">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-2 min-w-0">
-                            {p.jaVisitado ? <Ban className="h-5 w-5 text-gray-500 shrink-0 mt-0.5" /> : <MapPin className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />}
+                            {p.disponivel ? <Target className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" /> : p.jaVisitado ? <Ban className="h-5 w-5 text-gray-500 shrink-0 mt-0.5" /> : <MapPin className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />}
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="font-semibold leading-tight break-words">{p.nome}</span>
-                                {p.jaVisitado && p.leadId && (
+                                {(p.jaVisitado || p.disponivel) && p.leadId && (
                                   <HistoricoOcorrencias leadId={p.leadId} nome={p.nome} />
                                 )}
                               </div>
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
                                 {p.categoria && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{p.categoria}</span>}
-                                {p.jaVisitado ? (
+                                {p.disponivel ? (
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">Lead disponível — sem vendedor</span>
+                                ) : p.jaVisitado ? (
                                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">Lead já visitado — não convertido</span>
                                 ) : (
                                   <span className="text-[9px] font-bold tracking-wide text-white bg-amber-500 px-1.5 py-0.5 rounded-full">NOVO</span>
@@ -749,7 +771,9 @@ export default function ConsultaLocal() {
                         </div>
                         {p.endereco && <div className="text-xs text-muted-foreground pl-7 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{p.endereco}</div>}
                         <div className="pl-7 pt-1 flex items-center gap-3 flex-wrap">
-                          {p.jaVisitado ? (
+                          {p.disponivel ? (
+                            renderPegar(p.leadId)
+                          ) : p.jaVisitado ? (
                             renderResgate(p.leadId)
                           ) : st === "ok" ? (
                             <>
