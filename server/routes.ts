@@ -24403,12 +24403,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // dedup com o Integra (leads + clientes próximos) → mostra só o que ainda NÃO é cadastro
       const latD = 0.0025, lngD = 0.0025 / (Math.cos((lat * Math.PI) / 180) || 1);
+      // Leads trazem id + status: um lead DESCARTADO (não convertido) não "esconde" o ponto —
+      // ele reaparece aqui como "já visitado" para o vendedor poder resgatar na hora.
       const exist: any[] = [];
       try {
-        const le: any = await db.execute(sql`SELECT fantasy_name AS nome, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, status, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
         const cu: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name, ''), name) AS nome, latitude::float AS la, longitude::float AS lo FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
-        for (const r of (le?.rows || []) as any[]) exist.push(r);
-        for (const r of (cu?.rows || []) as any[]) exist.push(r);
+        for (const r of (le?.rows || []) as any[]) exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: r.status === 'discarded', leadId: r.id });
+        for (const r of (cu?.rows || []) as any[]) exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: false, leadId: null });
       } catch (_e) {}
       const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
       const hav = (aLa: number, aLo: number, bLa: number, bLo: number) => {
@@ -24416,7 +24418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const s = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
         return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
       };
-      const existNorm = exist.map((e) => ({ n: norm(e.nome), la: Number(e.la), lo: Number(e.lo) }));
+      const existNorm = exist.map((e) => ({ n: norm(e.nome), la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, leadId: e.leadId || null }));
 
       // Classificação do segmento: "primário" quando o tipo principal do lugar está nos segmentos;
       // "secundário" quando casou por um tipo secundário do lugar (afrouxa o filtro).
@@ -24426,13 +24428,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const pLat = p.location?.latitude, pLng = p.location?.longitude;
         const nome = (p.displayName && p.displayName.text) || '';
         const nnome = norm(nome);
-        let jaTem = false;
+        let bloqueado = false;            // casou com cadastro ATIVO (lead/cliente) → esconde
+        let resgatavel: { leadId: any } | null = null;  // casou só com lead descartado → mostra p/ resgatar
+        let resgDist = Infinity;
         for (const e of existNorm) {
           const d = (isFinite(pLat) && isFinite(pLng) && isFinite(e.la) && isFinite(e.lo)) ? hav(pLat, pLng, e.la, e.lo) : 9999;
-          if (d < 45) { jaTem = true; break; }
-          if (nnome && e.n && (nnome === e.n || (nnome.length > 5 && (e.n.includes(nnome) || nnome.includes(e.n)))) && d < 120) { jaTem = true; break; }
+          const casou = d < 45 || (nnome && e.n && (nnome === e.n || (nnome.length > 5 && (e.n.includes(nnome) || nnome.includes(e.n)))) && d < 120);
+          if (!casou) continue;
+          if (e.discarded) {
+            if (d < resgDist) { resgDist = d; resgatavel = { leadId: e.leadId }; }
+          } else {
+            bloqueado = true; break;
+          }
         }
-        if (jaTem) continue;
+        if (bloqueado) continue;
         const dist = (isFinite(pLat) && isFinite(pLng)) ? Math.round(hav(lat, lng, pLat, pLng)) : null;
         const ehPrimario = segSet.size === 0 || (p.primaryType && segSet.has(p.primaryType));
         novos.push({
@@ -24443,6 +24452,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           distancia: dist,
           endereco: p.formattedAddress || '',
           businessStatus: p.businessStatus || '',
+          jaVisitado: !!resgatavel,
+          leadId: resgatavel ? resgatavel.leadId : null,
           lat: pLat, lng: pLng, placeId: p.id || '',
         });
       }
@@ -24512,11 +24523,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const encontrados: any[] = [];
       try {
         const cu: any = await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, address, neighborhood, phone, is_active FROM customers WHERE (is_supplier IS NOT TRUE) AND COALESCE(NULLIF(fantasy_name,''), name) IS NOT NULL LIMIT 8000`);
-        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone, status FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
         const push = (r: any, tipo: string) => {
           const nn = norm(r.nome);
           if (nn.length < 4) return;
-          if (normTxt.includes(nn)) encontrados.push({ tipo, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, score: nn.length });
+          if (normTxt.includes(nn)) encontrados.push({ tipo, id: r.id || null, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, descartado: tipo === 'lead' && r.status === 'discarded', score: nn.length });
         };
         for (const r of (cu?.rows || []) as any[]) push(r, (r.is_active === false ? 'cliente_inativo' : 'cliente'));
         for (const r of (le?.rows || []) as any[]) push(r, 'lead');
@@ -25273,8 +25284,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const lead = await storage.getLead(id);
       if (!lead) return res.status(404).json({ message: 'Lead não encontrado' });
 
-      // Vendedor só age no lead atribuído a ele.
-      if (['vendedor', 'telemarketing'].includes(user.role) && lead.assignedTo && lead.assignedTo !== user.id) {
+      // Vendedor só age no lead atribuído a ele — EXCETO resgatar/gravar como lead, que servem
+      // justamente para o vendedor assumir na rua um lead já visitado e não convertido.
+      const _isResgate = acao === 'resgatar' || acao === 'gravar_lead';
+      if (['vendedor', 'telemarketing'].includes(user.role) && lead.assignedTo && lead.assignedTo !== user.id && !_isResgate) {
         return res.status(403).json({ message: 'Acesso negado. Você só pode dar desfecho em leads atribuídos a você.' });
       }
 
@@ -25390,7 +25403,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ message: 'Lead resgatado — voltou para a lista como novo.', status: 'scheduled', returnDate: _ret.toISOString() });
       }
 
-      return res.status(400).json({ message: "Ação inválida. Use 'nao_converter', 'prorrogar' ou 'resgatar'. (Para converter, use /convert-to-customer.)" });
+      if (acao === 'gravar_lead') {
+        // "Gravar como Lead" (mobile, após resgatar): o vendedor assume o ponto no nome dele,
+        // entra na ROTA DO DIA e agenda o retorno para hoje + 7 dias (dia útil).
+        let _ret = dataCalendario(hojeBR());
+        _ret.setDate(_ret.getDate() + 7);
+        const _dow = _ret.getDay();
+        if (_dow === 6) _ret.setDate(_ret.getDate() + 2);
+        else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
+        await db.execute(sql`
+          UPDATE leads
+          SET status = 'scheduled', assigned_to = ${user.id}, route_type = 'dia',
+              next_contact_date = ${_ret}, original_return_date = ${_ret},
+              postponement_count = 0, non_conversion_reason = NULL, return_overdue = false, updated_at = NOW()
+          WHERE id = ${id}
+        `);
+        try {
+          await storage.createLeadVisit({
+            leadId: id, userId: user.id, userName: user.name || user.email,
+            observation: `GRAVADO COMO LEAD — assumido por ${user.name || user.email} (rota do dia, retorno ${_ret.toISOString().slice(0,10)})`,
+          } as any);
+        } catch (_e) {}
+        await __inboxLeadAcao({ leadId: String(id), assignedTo: user.id, userId: user.id, userName: user.name || user.email, motivo: `Gravado como lead (retorno ${_ret.toISOString().slice(0,10)})` });
+        console.log(`✅ [LEAD-DESFECHO] ${lead.fantasyName} GRAVADO COMO LEAD por ${user.email}`);
+        return res.json({ message: 'Gravado como lead — entrou na sua rota do dia.', status: 'scheduled', returnDate: _ret.toISOString(), assignedTo: user.id });
+      }
+
+      return res.status(400).json({ message: "Ação inválida. Use 'nao_converter', 'prorrogar', 'resgatar' ou 'gravar_lead'. (Para converter, use /convert-to-customer.)" });
     } catch (error: any) {
       console.error('Erro no desfecho do lead:', error);
       res.status(500).json({ message: 'Erro ao registrar desfecho do lead', error: error?.message });
