@@ -38,6 +38,8 @@ type NovoPonto = {
   distancia: number | null;
   endereco: string;
   businessStatus: string;
+  jaVisitado?: boolean;
+  leadId?: string | null;
   lat: number;
   lng: number;
   placeId: string;
@@ -45,11 +47,13 @@ type NovoPonto = {
 
 type FotoMatch = {
   tipo: string;
+  id?: string | null;
   nome: string;
   endereco: string;
   bairro: string;
   telefone: string;
   ativo: boolean;
+  descartado?: boolean;
   score: number;
 };
 
@@ -74,9 +78,10 @@ function estiloCenario(r: ResultadoConsulta) {
   return { barra: "border-l-amber-500", icone: <Target className="h-5 w-5 text-amber-600" />, tag: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" };
 }
 
-function estiloFoto(tipo: string) {
+function estiloFoto(tipo: string, descartado?: boolean) {
   if (tipo === "cliente") return { barra: "border-l-emerald-500", icone: <Store className="h-5 w-5 text-emerald-600" />, rotulo: "Cliente ativo", tag: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" };
   if (tipo === "cliente_inativo") return { barra: "border-l-slate-400", icone: <Store className="h-5 w-5 text-slate-500" />, rotulo: "Cliente inativado", tag: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200" };
+  if (descartado) return { barra: "border-l-gray-400", icone: <Ban className="h-5 w-5 text-gray-500" />, rotulo: "Lead já visitado — não convertido", tag: "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200" };
   return { barra: "border-l-blue-500", icone: <Target className="h-5 w-5 text-blue-600" />, rotulo: "Lead em prospecção", tag: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300" };
 }
 
@@ -126,6 +131,9 @@ export default function ConsultaLocal() {
   const [novosMsg, setNovosMsg] = useState<string>("");
   const [novosRaio, setNovosRaio] = useState<number>(300);
   const [cadastrados, setCadastrados] = useState<Record<string, "ok" | "loading">>({});
+  // Resgate de leads descartados (não convertidos) direto da consulta — chave = leadId.
+  // Estados: "resgatando" → "resgatado" (habilita Gravar) → "gravando" → "gravado".
+  const [resgate, setResgate] = useState<Record<string, "resgatando" | "resgatado" | "gravando" | "gravado">>({});
 
   // ----- busca por foto -----
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -251,6 +259,44 @@ export default function ConsultaLocal() {
     }
   }, [toast, user]);
 
+  // Resgatar um lead descartado (não convertido): volta à condição de lead novo.
+  const resgatarLead = useCallback(async (leadId: string) => {
+    if (!leadId) return;
+    setResgate((m) => ({ ...m, [leadId]: "resgatando" }));
+    try {
+      const res: any = await apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "resgatar" });
+      if (res && res.status === "scheduled") {
+        setResgate((m) => ({ ...m, [leadId]: "resgatado" }));
+        toast({ title: "Lead resgatado", description: "Voltou à condição de lead novo. Agora grave como lead." });
+      } else {
+        setResgate((m) => { const n = { ...m }; delete n[leadId]; return n; });
+        toast({ title: "Não foi possível resgatar", description: (res && res.message) || "", variant: "destructive" });
+      }
+    } catch (e: any) {
+      setResgate((m) => { const n = { ...m }; delete n[leadId]; return n; });
+      toast({ title: "Erro ao resgatar", description: String((e && e.message) || e), variant: "destructive" });
+    }
+  }, [toast]);
+
+  // Gravar como Lead (após resgatar): assume no nome do vendedor e entra na rota do dia.
+  const gravarLead = useCallback(async (leadId: string) => {
+    if (!leadId) return;
+    setResgate((m) => ({ ...m, [leadId]: "gravando" }));
+    try {
+      const res: any = await apiRequest("POST", `/api/leads/${leadId}/desfecho`, { acao: "gravar_lead" });
+      if (res && res.status === "scheduled") {
+        setResgate((m) => ({ ...m, [leadId]: "gravado" }));
+        toast({ title: "Gravado como lead", description: "Entrou na sua rota do dia." });
+      } else {
+        setResgate((m) => ({ ...m, [leadId]: "resgatado" }));
+        toast({ title: "Não foi possível gravar", description: (res && res.message) || "", variant: "destructive" });
+      }
+    } catch (e: any) {
+      setResgate((m) => ({ ...m, [leadId]: "resgatado" }));
+      toast({ title: "Erro ao gravar", description: String((e && e.message) || e), variant: "destructive" });
+    }
+  }, [toast]);
+
   const onFotoEscolhida = useCallback(async (file: File | null) => {
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (!file) return;
@@ -277,6 +323,27 @@ export default function ConsultaLocal() {
       setFotoMsg(String((e && e.message) || e));
     }
   }, []);
+
+  // Bloco de ações para um lead já visitado e não convertido (Resgatar → Gravar como Lead).
+  const renderResgate = (leadId: string | null | undefined) => {
+    if (!leadId) return null;
+    const st = resgate[leadId];
+    if (st === "gravado") {
+      return <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Gravado — na sua rota do dia</span>;
+    }
+    if (st === "resgatado" || st === "gravando") {
+      return (
+        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={st === "gravando"} onClick={() => gravarLead(leadId)} data-testid="button-gravar-lead">
+          {st === "gravando" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Gravando…</> : <><Plus className="h-4 w-4 mr-1.5" /> Gravar como Lead</>}
+        </Button>
+      );
+    }
+    return (
+      <Button size="sm" variant="outline" className="border-emerald-400 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30" disabled={st === "resgatando"} onClick={() => resgatarLead(leadId)} data-testid="button-resgatar">
+        {st === "resgatando" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Resgatando…</> : <><RefreshCw className="h-4 w-4 mr-1.5" /> Resgatar</>}
+      </Button>
+    );
+  };
 
   const carregando = fase === "localizando" || fase === "buscando";
   const primeiraLinha = (fotoTexto || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] || "";
@@ -366,7 +433,7 @@ export default function ConsultaLocal() {
               <>
                 <p className="text-xs text-muted-foreground">{fotoEncontrados.length} cadastro{fotoEncontrados.length > 1 ? "s" : ""} com esse nome no Integra</p>
                 {fotoEncontrados.map((m, i) => {
-                  const est = estiloFoto(m.tipo);
+                  const est = estiloFoto(m.tipo, m.descartado);
                   return (
                     <Card key={`${m.tipo}-${i}-${m.nome}`} className={`border-l-4 ${est.barra}`} data-testid="card-foto-match">
                       <CardContent className="py-4 space-y-2">
@@ -385,6 +452,9 @@ export default function ConsultaLocal() {
                             <a href={`tel:${m.telefone}`} className="flex items-center gap-1.5 text-blue-600 hover:underline w-fit"><Phone className="h-3.5 w-3.5" /><span>{m.telefone}</span></a>
                           )}
                         </div>
+                        {m.tipo === "lead" && m.descartado && m.id && (
+                          <div className="pl-7 pt-1">{renderResgate(m.id)}</div>
+                        )}
                       </CardContent>
                     </Card>
                   );
@@ -470,7 +540,7 @@ export default function ConsultaLocal() {
                             <div className="shrink-0 mt-0.5">{est.icone}</div>
                             <div className="min-w-0">
                               <div className="font-semibold leading-tight break-words">{r.nome}</div>
-                              <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{r.statusLabel}</span>
+                              <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{r.tipo === "lead" && r.descartado ? "Lead já visitado — não convertido" : r.statusLabel}</span>
                             </div>
                           </div>
                           <Badge variant="secondary" className="shrink-0 whitespace-nowrap">{r.distancia} m</Badge>
@@ -487,7 +557,8 @@ export default function ConsultaLocal() {
                             <a href={`tel:${r.telefone}`} className="flex items-center gap-1.5 text-blue-600 hover:underline w-fit"><Phone className="h-3.5 w-3.5" /><span>{r.telefone}{r.contato ? ` · ${r.contato}` : ""}</span></a>
                           )}
                         </div>
-                        <div className="pl-7 pt-1">
+                        <div className="pl-7 pt-1 flex items-center gap-3 flex-wrap">
+                          {r.tipo === "lead" && r.descartado && renderResgate(r.id)}
                           <a href={`https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lng}`} target="_blank" rel="noreferrer" className="text-xs text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1"><Navigation className="h-3.5 w-3.5" /> Ver no mapa</a>
                         </div>
                       </CardContent>
@@ -525,16 +596,20 @@ export default function ConsultaLocal() {
                 {novos.map((p) => {
                   const st = cadastrados[p.placeId];
                   return (
-                    <Card key={p.placeId || p.nome} className="border-l-4 border-l-amber-500" data-testid="card-novo-ponto">
+                    <Card key={p.placeId || p.nome} className={`border-l-4 ${p.jaVisitado ? "border-l-gray-400" : "border-l-amber-500"}`} data-testid="card-novo-ponto">
                       <CardContent className="py-4 space-y-2">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-2 min-w-0">
-                            <MapPin className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                            {p.jaVisitado ? <Ban className="h-5 w-5 text-gray-500 shrink-0 mt-0.5" /> : <MapPin className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />}
                             <div className="min-w-0">
                               <div className="font-semibold leading-tight break-words">{p.nome}</div>
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
                                 {p.categoria && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{p.categoria}</span>}
-                                <span className="text-[9px] font-bold tracking-wide text-white bg-amber-500 px-1.5 py-0.5 rounded-full">NOVO</span>
+                                {p.jaVisitado ? (
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">Lead já visitado — não convertido</span>
+                                ) : (
+                                  <span className="text-[9px] font-bold tracking-wide text-white bg-amber-500 px-1.5 py-0.5 rounded-full">NOVO</span>
+                                )}
                                 {p.match === "secundario" && <span className="text-[9px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded-full">tipo secundário</span>}
                               </div>
                             </div>
@@ -542,8 +617,10 @@ export default function ConsultaLocal() {
                           {p.distancia != null && <Badge variant="secondary" className="shrink-0 whitespace-nowrap">{p.distancia} m</Badge>}
                         </div>
                         {p.endereco && <div className="text-xs text-muted-foreground pl-7 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{p.endereco}</div>}
-                        <div className="pl-7 pt-1 flex items-center gap-3">
-                          {st === "ok" ? (
+                        <div className="pl-7 pt-1 flex items-center gap-3 flex-wrap">
+                          {p.jaVisitado ? (
+                            renderResgate(p.leadId)
+                          ) : st === "ok" ? (
                             <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Na sua rota (7 dias)</span>
                           ) : (
                             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={st === "loading"} onClick={() => cadastrarLead(p)} data-testid="button-cadastrar-lead">
