@@ -23111,8 +23111,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasPhoto: sql<boolean>`CASE WHEN ${leads.photo} IS NOT NULL AND ${leads.photo} != '' THEN true ELSE false END`,
         googlePlace: sql<any>`google_place`,
         registroCountToday: sql<number>`(SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = ${leads.id} AND (lv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)`,
-        ocorrenciasCount: sql<number>`(SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = ${leads.id})`,
       }).from(leads).orderBy(desc(leads.createdAt));
+
+      // Total de ocorrências (lead_visits) por lead — para o "relógio" ao lado do nome.
+      // Em consulta única agrupada e casada em JS (mais robusto que subconsulta correlacionada).
+      const ocorrPorLead = new Map<string, number>();
+      try {
+        const _vc: any = await db.execute(sql`SELECT lead_id, COUNT(*)::int AS n FROM lead_visits GROUP BY lead_id`);
+        for (const r of (_vc?.rows || []) as any[]) ocorrPorLead.set(String(r.lead_id), Number(r.n) || 0);
+      } catch (_e) {}
 
       console.log('📋 [LEADS] Leads encontrados:', rows.length);
       
@@ -23146,7 +23153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdAt: row.createdAt ? String(row.createdAt) : null,
         updatedAt: row.updatedAt ? String(row.updatedAt) : null,
         registroCountToday: Number(row.registroCountToday || 0),
-        ocorrenciasCount: Number(row.ocorrenciasCount || 0),
+        ocorrenciasCount: ocorrPorLead.get(String(row.id || '')) || 0,
       }));
 
       if (user.role === 'telemarketing') {
