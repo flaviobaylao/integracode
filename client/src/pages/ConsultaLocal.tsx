@@ -643,7 +643,12 @@ export default function ConsultaLocal() {
                           {p.jaVisitado ? (
                             renderResgate(p.leadId)
                           ) : st === "ok" ? (
-                            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Na sua rota (7 dias)</span>
+                            <>
+                              <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5"><Check className="h-4 w-4" /> Na sua rota (7 dias)</span>
+                              <Button size="sm" variant="outline" className="border-emerald-400 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30" onClick={() => navigate("/rota-do-dia")} data-testid="button-voltar-rota">
+                                <ArrowLeft className="h-4 w-4 mr-1.5" /> Voltar para Rota
+                              </Button>
+                            </>
                           ) : (
                             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={st === "loading"} onClick={() => cadastrarLead(p)} data-testid="button-cadastrar-lead">
                               {st === "loading" ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Registrando…</> : <><Plus className="h-4 w-4 mr-1.5" /> Registrar lead</>}
