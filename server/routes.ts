@@ -542,6 +542,67 @@ function maybePreencherBairrosAuto(): void {
   })();
 }
 
+// ⏳ Libera AUTOMATICAMENTE os leads de PROSPECÇÃO (origin='radar', cadastrados em "Novos Pontos")
+// que esgotaram a renovação única (prorrogação já usada) e continuam SEM ATENDIMENTO (sem check-in)
+// após o ciclo renovado vencer. Regra do negócio: o vendedor registra o ponto → tem 7 dias → pode
+// renovar (Prorrogar) só mais 1 ciclo; se nesse ciclo também não houver atendimento, o lead volta a
+// ficar disponível (sem vendedor, status 'pending', contagem de renovação zerada p/ o próximo dono).
+// Fire-and-forget e throttled (no máx. 1x/30min por instância).
+let __lastLiberarRadarMs = 0;
+let __liberarRadarRunning = false;
+function maybeLiberarLeadsRadarExpirados(): void {
+  const nowMs = Date.now();
+  if (__liberarRadarRunning || (nowMs - __lastLiberarRadarMs) < 30 * 60 * 1000) return;
+  __lastLiberarRadarMs = nowMs;
+  __liberarRadarRunning = true;
+  (async () => {
+    try {
+      await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS origin varchar`));
+      const sel: any = await db.execute(sql`
+        SELECT id, fantasy_name AS nome, assigned_to
+        FROM leads
+        WHERE origin = 'radar'
+          AND status = 'scheduled'
+          AND assigned_to IS NOT NULL
+          AND COALESCE(postponement_count, 0) >= 1
+          AND last_check_in_at IS NULL
+          AND next_contact_date IS NOT NULL
+          AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        LIMIT 200
+      `);
+      const rows = (sel?.rows || []) as any[];
+      if (!rows.length) return;
+      const ids = rows.map((r) => String(r.id));
+      await db.execute(sql`
+        UPDATE leads
+        SET assigned_to = NULL, status = 'pending', next_contact_date = NULL,
+            original_return_date = NULL, return_overdue = false, postponement_count = 0, updated_at = NOW()
+        WHERE id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)})
+      `);
+      for (const r of rows) {
+        const vendedorId = r.assigned_to || '00000000-0000-0000-0000-000000000000';
+        try {
+          await db.execute(sql`
+            INSERT INTO lead_visits (lead_id, user_id, user_name, observation)
+            VALUES (${String(r.id)}, ${vendedorId}, 'Sistema', ${'LIBERADO — renovação esgotada e sem atendimento (check-in) no prazo; o lead voltou a ficar disponível.'})
+          `);
+        } catch (_e) {}
+        try {
+          await db.execute(sql`
+            INSERT INTO prospections (lead_id, type, user_id, user_name, notes)
+            VALUES (${String(r.id)}, 'lead_liberado', ${vendedorId}, 'Sistema', ${'Liberado automaticamente: renovação esgotada e sem atendimento no prazo.'})
+          `);
+        } catch (_e) {}
+      }
+      console.log(`⏳ [LEAD-RADAR] ${rows.length} lead(s) de prospecção liberados por expiração (renovação esgotada, sem atendimento).`);
+    } catch (e: any) {
+      console.warn('[LEAD-RADAR] falha ao liberar leads expirados:', e?.message || e);
+    } finally {
+      __liberarRadarRunning = false;
+    }
+  })();
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -559,6 +620,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   try {
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS segmento_principal varchar`);
   } catch (e: any) { console.warn('⚠️ ALTER segmento_principal:', e?.message); }
+
+  // Garante a coluna de origem do lead ('radar' = cadastrado em "Novos Pontos") — aditivo e idempotente.
+  try {
+    await db.execute(sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS origin varchar`);
+  } catch (e: any) { console.warn('⚠️ ALTER leads.origin:', e?.message); }
 
   // Garante a coluna de cronograma de parcelas do cliente (ex.: "7/14/21") — aditivo e idempotente
   try {
@@ -23081,6 +23147,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('📋 [LEADS] Buscando leads... user:', user?.email);
       maybePreencherBairrosAuto(); // 🏘️ preenche em 2o plano os bairros faltantes por coordenada
+      maybeLiberarLeadsRadarExpirados(); // ⏳ libera leads de prospecção expirados (renovação esgotada, sem atendimento)
       
       const rows = await db.select({
         id: leads.id,
@@ -23507,6 +23574,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (prospectionError) {
         console.error('Erro ao registrar prospecção:', prospectionError);
       }
+
+      // 🏷️ Origem do lead (ex.: 'radar' = cadastrado via "Novos Pontos" na Consulta no local).
+      // Usado pela regra de liberação automática (renovação única + sem atendimento → libera o lead).
+      try {
+        const _origin = String((leadData as any)?.origin || '').trim().slice(0, 40);
+        if (_origin) {
+          await db.execute(sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS origin varchar`);
+          await db.execute(sql`UPDATE leads SET origin = ${_origin} WHERE id = ${lead.id}`);
+        }
+      } catch (_e) { /* origem é complementar */ }
 
       // 🗺️ Preenche o município (city) via geocode reverso - best-effort, não bloqueia a resposta.
       // Só quando o cadastro NÃO informou a cidade (pick-list): não sobrescreve a escolha manual.
@@ -24547,6 +24624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           else if (/^PRORROGAD/i.test(obs)) titulo = 'Retorno prorrogado';
           else if (/^RESGATAD/i.test(obs)) titulo = 'Lead resgatado';
           else if (/^GRAVADO COMO LEAD/i.test(obs)) titulo = 'Gravado como lead';
+          else if (/^LIBERADO/i.test(obs)) titulo = 'Liberado (expirou)';
           ocorrencias.push({ data: v.visitDate || v.createdAt, categoria: 'visita', titulo, detalhe: obs, por: v.userName || null });
         }
       } catch (_e) {}
