@@ -623,30 +623,6 @@ export default function RotaDoDia() {
     },
   });
 
-  // 🧭 Alterna Rota do Dia ↔ Rota de Prospecção (somente admin) para o vendedor+data atual.
-  const toggleRouteModeMutation = useMutation({
-    mutationFn: async (mode: string) => {
-      return await apiRequest('POST', '/api/daily-routes/route-mode', {
-        sellerId: selectedSellerId,
-        date: selectedDate,
-        mode,
-      });
-    },
-    onSuccess: (data: any) => {
-      toast({
-        title: data?.mode === 'prospeccao' ? 'Rota de Prospecção ativada' : 'Rota do Dia ativada',
-        description: data?.mode === 'prospeccao'
-          ? 'Neste dia a rota exibe somente os leads de prospecção (próximo contato = a data).'
-          : 'A rota deste dia voltou ao normal (clientes ativos + leads do dia).',
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes', selectedSellerId, 'date', selectedDate] });
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
-    },
-    onError: (error: any) => {
-      toast({ variant: 'destructive', title: 'Erro ao alternar a rota', description: error.message || 'Tente novamente.' });
-    },
-  });
-
   const createEmptyRouteMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest('POST', '/api/daily-routes/create-empty', {
@@ -1599,20 +1575,6 @@ export default function RotaDoDia() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {isAdmin && selectedSellerId && (
-            <Button
-              onClick={() => toggleRouteModeMutation.mutate(((response?.route as any)?.routeMode === 'prospeccao') ? 'dia' : 'prospeccao')}
-              disabled={toggleRouteModeMutation.isPending}
-              variant="outline"
-              size="sm"
-              className={`flex items-center gap-2 ${((response?.route as any)?.routeMode === 'prospeccao') ? 'border-amber-500 text-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950' : ''}`}
-              data-testid="button-toggle-route-mode"
-              title="Alterna entre Rota do Dia e Rota de Prospecção para este vendedor neste dia (somente admin)"
-            >
-              <Target className="h-4 w-4" />
-              {((response?.route as any)?.routeMode === 'prospeccao') ? 'Rota de Prospecção' : 'Rota do Dia'}
-            </Button>
-          )}
           {selectedSellerId && (
             <Button
               onClick={handleManualRefresh}
