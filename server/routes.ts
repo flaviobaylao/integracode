@@ -3229,6 +3229,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Validar com o schema
           const validatedLead = insertLeadSchema.parse(leadData);
           const lead = await storage.createLead(validatedLead);
+      // 🛰️ PROSPECÇÃO: se a rota do dia do vendedor está em modo 'prospeccao', cada lead
+      // registrado é a "passagem" no ponto (não há check-in). Recalcula a km do percurso
+      // na hora — senão a "Km hoje" fica 0 o dia todo até um recálculo manual do admin.
+      // Best-effort e fora do caminho da resposta (não atrasa o cadastro). (set/2026)
+      (async () => {
+        try {
+          const _sid = String((lead as any).assignedTo || user.id);
+          const rr: any = await db.execute(sql`SELECT id, route_mode FROM daily_routes WHERE seller_id = ${_sid} AND DATE(route_date) = (now() AT TIME ZONE 'America/Sao_Paulo')::date LIMIT 1`);
+          const _route = (rr && (rr.rows || rr))[0];
+          if (_route && String(_route.route_mode) === 'prospeccao') {
+            const { recalculateRouteDistance } = await import('./actualRouteService');
+            await recalculateRouteDistance(String(_route.id), storage);
+            console.log(`🛰️ [PROSPECÇÃO] Km recalculada após novo lead (rota ${_route.id}, vendedor ${_sid}).`);
+          }
+        } catch (_e: any) { console.warn('[PROSPECÇÃO] recalc pós-lead:', _e?.message); }
+      })();
 
           leadMessage = ` ✅ Lead criado (ID: ${lead.id})`;
           console.log(`✅ [CREATE CUSTOMER] Lead criado com sucesso: ${lead.id}`);
@@ -16681,6 +16697,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 🧭 Alternar o MODO da rota (Rota do Dia ↔ Rota de Prospecção) de um vendedor num dia. Só admin.
+  // Se ainda não existe rota para o dia e o modo pedido é 'prospeccao', cria uma rota vazia
+  // (com a casa do vendedor) para segurar o modo; para 'dia' sem rota, apenas retorna (padrão).
+  app.post('/api/daily-routes/route-mode', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { sellerId, date, mode } = req.body || {};
+      if (!sellerId || !date) {
+        return res.status(400).json({ message: 'Informe o vendedor e a data.' });
+      }
+      if (mode !== 'dia' && mode !== 'prospeccao') {
+        return res.status(400).json({ message: "Modo inválido. Use 'dia' ou 'prospeccao'." });
+      }
+      const routeDate = new Date(`${date}T00:00:00.000Z`);
+      let route = await storage.getDailyRouteBySellerAndDate(sellerId, routeDate);
+      if (!route) {
+        if (mode === 'dia') {
+          return res.json({ mode: 'dia', routeId: null, message: 'Sem rota criada; modo padrão (dia).' });
+        }
+        // Criar rota vazia p/ segurar o modo prospecção
+        const seller = await storage.getUserById(sellerId);
+        if (!seller) return res.status(404).json({ message: 'Vendedor não encontrado' });
+        const startLatitude = seller.homeLatitude?.toString() || '-23.5505';
+        const startLongitude = seller.homeLongitude?.toString() || '-46.6333';
+        const startAddress = seller.homeLatitude && seller.homeLongitude
+          ? `Casa do vendedor ${seller.firstName} ${seller.lastName || ''}`
+          : `São Paulo, SP (padrão)`;
+        const startOfDay = new Date(routeDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        route = await storage.createDailyRoute({
+          sellerId,
+          routeDate: startOfDay,
+          startLatitude,
+          startLongitude,
+          startAddress,
+          optimizedOrder: [],
+          totalEstimatedDistance: '0',
+          totalActualDistance: '0',
+          totalVisits: 0,
+          completedVisits: 0,
+          routeStatus: 'pending',
+          routeMode: 'prospeccao',
+        } as any);
+        console.log(`🧭 [ROUTE-MODE] Rota vazia criada em modo prospecção p/ ${sellerId} em ${date} por ${req.currentUser?.email}`);
+        return res.json({ mode: 'prospeccao', routeId: route.id, created: true });
+      }
+      await storage.updateDailyRoute(route.id, { routeMode: mode } as any);
+      console.log(`🧭 [ROUTE-MODE] ${sellerId} em ${date} → modo ${mode} por ${req.currentUser?.email}`);
+      return res.json({ mode, routeId: route.id });
+    } catch (error: any) {
+      console.error('Erro ao alternar modo da rota:', error);
+      return res.status(500).json({ message: 'Erro ao alternar modo da rota', error: error?.message });
+    }
+  });
+
   // 🔁 Reprograma leads VENCIDOS por COORDENADA (dia de rota da regiao) para TODOS os vendedores
   // (ou um especifico via body.sellerId), sem depender de existir rota do dia. Admin apenas.
   app.post('/api/admin/leads/reprogramar-vencidos', authenticateUser, async (req: any, res) => {
@@ -17159,12 +17229,125 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // 🧭 Rota de Prospecção RETIRADA da tela Rota do Dia (out/2026, pedido do Flavio): a rota
-      // sempre mostra a Rota do Dia normal. Rotas de hoje/futuras que ficaram marcadas como
-      // 'prospeccao' voltam para 'dia' (as passadas mantêm a marca só para o histórico de km).
-      if ((route as any).routeMode === 'prospeccao' && date >= getBrazilDateString()) {
-        try { await storage.updateDailyRoute(route.id, { routeMode: 'dia' } as any); } catch (_e) { /* segue */ }
-        (route as any).routeMode = 'dia';
+      // 🧭 ROTA DE PROSPECÇÃO: quando o Admin liga o modo prospecção para este vendedor+dia,
+      // a rota exibe SOMENTE os leads alocados em prospecção (route_type='prospeccao') cujo
+      // próximo contato seja exatamente esta data. Não entram clientes ativos nem as regras de
+      // cadência de cliente — apenas as regras de lead. Branch isolado com retorno antecipado.
+      if ((route as any).routeMode === 'prospeccao') {
+        try {
+          const { db: _dbP } = await import('./db');
+          const { leads: _leadsTbl } = await import('../shared/schema');
+          const { inArray: _inArrayP } = await import('drizzle-orm');
+          const pRows: any = await _dbP.execute(sql`
+            SELECT id FROM leads
+            WHERE assigned_to = ${sellerId}
+              AND COALESCE(route_type, 'dia') = 'prospeccao'
+              AND status NOT IN ('converted', 'discarded')
+              AND next_contact_date IS NOT NULL
+              AND (next_contact_date)::date = ${date}::date
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          `);
+          const pIds = (pRows?.rows || []).map((r: any) => r.id);
+          // ➕ Cada LEAD IMPLANTADO (registrado) pelo vendedor na data da prospecção deve
+          // aparecer na rota como um registro/card — mesma base dos "check-ins" do km.
+          // Une aos leads planejados (next_contact) os leads criados no dia, sem status
+          // (um lead recém-implantado, mesmo já convertido/descartado, é um registro). (set/2026)
+          let regIds: string[] = [];
+          try {
+            const regRows: any = await _dbP.execute(sql`
+              SELECT id FROM leads
+              WHERE (assigned_to = ${sellerId} OR created_by = ${sellerId})
+                AND DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+                AND latitude IS NOT NULL AND longitude IS NOT NULL
+            `);
+            regIds = (regRows?.rows || []).map((r: any) => r.id);
+          } catch (e) { regIds = []; }
+          const allProspIds = Array.from(new Set([...pIds, ...regIds]));
+          let pLeads: any[] = [];
+          if (allProspIds.length > 0) {
+            pLeads = await _dbP.select().from(_leadsTbl).where(_inArrayP(_leadsTbl.id, allProspIds));
+          }
+          // 🧭 Ordem da rota de prospecção:
+          // 1) Se há ordem OTIMIZADA persistida (botão "Otimizar Rota" na prospecção), respeita essa ordem.
+          // 2) Senão, ordena por vizinho-mais-próximo a partir da casa do vendedor (padrão).
+          const homeLat0 = parseFloat(route.startLatitude), homeLon0 = parseFloat(route.startLongitude);
+          const leadById0 = new Map<string, any>(pLeads.map((l: any) => [String(l.id), l]));
+          const persistedOrder0: string[] = Array.isArray((route as any).optimizedOrder) ? (route as any).optimizedOrder : [];
+          const persistedLeadIds0 = persistedOrder0
+            .map((s: string) => (typeof s === 'string' && s.startsWith('lead:')) ? s.slice(5) : null)
+            .filter((id: string | null): id is string => !!id && leadById0.has(id));
+          let ordered: any[] = [];
+          if (persistedLeadIds0.length > 0) {
+            const used0 = new Set<string>();
+            for (const id of persistedLeadIds0) { ordered.push(leadById0.get(id)); used0.add(id); }
+            // leads novos (sem ordem persistida ainda) vão para o fim, preservando os já ordenados
+            for (const l of pLeads) { if (!used0.has(String(l.id))) ordered.push(l); }
+          } else {
+            const { calculateDistance: _cdP } = await import('./routeOptimizationService');
+            const remaining = pLeads.slice();
+            let curLat: number | null = isNaN(homeLat0) ? null : homeLat0;
+            let curLon: number | null = isNaN(homeLon0) ? null : homeLon0;
+            while (remaining.length > 0) {
+              let bi = 0;
+              if (curLat != null && curLon != null) {
+                let bc = Infinity;
+                for (let i = 0; i < remaining.length; i++) {
+                  const d = _cdP(curLat, curLon, parseFloat(remaining[i].latitude), parseFloat(remaining[i].longitude));
+                  if (d < bc) { bc = d; bi = i; }
+                }
+              }
+              const nx = remaining.splice(bi, 1)[0];
+              ordered.push(nx);
+              curLat = parseFloat(nx.latitude); curLon = parseFloat(nx.longitude);
+            }
+          }
+          const pVisits = ordered.map((lead: any) => ({
+            id: `lead:${lead.id}`,
+            visitType: 'lead' as const,
+            entityId: lead.id,
+            leadId: lead.id,
+            customerName: lead.fantasyName,
+            customerLatitude: lead.latitude,
+            customerLongitude: lead.longitude,
+            customerAddress: null,
+            scheduledDate: route.routeDate,
+            isVirtual: false,
+            isAutoCheckout: false,
+            visitDuration: null,
+            leadStatus: lead.status,
+            leadNextContactDate: lead.nextContactDate,
+            leadPostponementCount: lead.postponementCount,
+            leadNonConversionReason: lead.nonConversionReason,
+          }));
+          let pCheckpoints: any[] = [];
+          try { pCheckpoints = await storage.getRouteCheckpoints(route.id); } catch {}
+          const pCompleted = pCheckpoints.filter((cp: any) => cp.checkpointType === 'check_out').length;
+          return res.json({
+            route: {
+              ...route,
+              routeMode: 'prospeccao',
+              visits: pVisits,
+              checkpoints: pCheckpoints,
+              segments: [],
+              adminAdjustments: {},
+              sellerHome: { latitude: homeLat0, longitude: homeLon0 },
+              progress: {
+                totalVisits: pVisits.length,
+                completedVisits: pCompleted,
+                totalEstimatedDistance: 0,
+                totalActualDistance: 0,
+                percentComplete: pVisits.length > 0 ? Math.round((pCompleted / pVisits.length) * 100) : 0,
+                workedHours: 0,
+                lunchBreak: null,
+                ordersCount: 0,
+                performanceIndex: 0,
+              }
+            }
+          });
+        } catch (pErr: any) {
+          console.error('Erro ao montar rota de prospecção:', pErr);
+          return res.status(500).json({ message: 'Erro ao montar rota de prospecção', error: pErr?.message });
+        }
       }
 
       // 📅 Retornos de lead do dia entram na ROTA DO DIA como paradas de lead (sequência + mapa).
@@ -17370,7 +17553,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const agRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM visit_agenda
               WHERE DATE(scheduled_date) = ${date}
-                AND COALESCE(visit_status, 'pending') <> 'cancelled'
                 AND customer_id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const agendaDateIds = new Set<string>((agRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
             // Dono ATUAL da carteira (customers.seller_id). A delegação de carteira reatribui
@@ -18501,6 +18683,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!seller?.homeLatitude || !seller?.homeLongitude) {
         return res.status(400).json({ message: 'Vendedor não tem coordenadas de casa configuradas' });
+      }
+
+      // 🧭 ROTA DE PROSPECÇÃO: os leads não ficam no optimizedOrder persistido (são montados
+      // on-the-fly no GET). Aqui otimizamos a ordem dos leads de prospecção do dia (OSRM) e
+      // PERSISTIMOS o optimizedOrder (paradas lead:{id}); o GET passa a respeitar essa ordem.
+      if ((route as any).routeMode === 'prospeccao') {
+        const dateStr = new Date(route.routeDate).toISOString().split('T')[0];
+        const pRows: any = await db.execute(sql`
+          SELECT id, fantasy_name, latitude, longitude, address
+          FROM leads
+          WHERE assigned_to = ${route.sellerId}
+            AND COALESCE(route_type, 'dia') = 'prospeccao'
+            AND status NOT IN ('converted', 'discarded')
+            AND next_contact_date IS NOT NULL
+            AND (next_contact_date)::date = ${dateStr}::date
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+        `);
+        const pLeads = (pRows?.rows || []) as any[];
+        if (pLeads.length === 0) {
+          return res.status(400).json({ message: 'Nenhum lead de prospecção com coordenadas para otimizar nesta data' });
+        }
+        const pPoints = pLeads.map((l: any) => ({
+          id: String(l.id),
+          latitude: parseFloat(l.latitude),
+          longitude: parseFloat(l.longitude),
+          customerName: l.fantasy_name || 'Lead',
+          customerAddress: l.address || ''
+        }));
+        const { optimizeRoute: optimizeRouteP } = await import('./routeOptimizationService');
+        const optP = await optimizeRouteP(seller.homeLatitude, seller.homeLongitude, pPoints);
+        const pOrder: string[] = [];
+        const pStops: { [stopId: string]: { entityType: 'customer' | 'lead'; entityId: string } } = {};
+        const pSeen = new Set<string>();
+        optP.orderedPoints.forEach((pt: any) => {
+          const stopId = `lead:${pt.id}`;
+          if (!pSeen.has(stopId)) {
+            pSeen.add(stopId);
+            pOrder.push(stopId);
+            pStops[stopId] = { entityType: 'lead', entityId: String(pt.id) };
+          }
+        });
+        await storage.updateDailyRoute(routeId, {
+          optimizedOrder: pOrder,
+          visitStops: pStops,
+          totalEstimatedDistance: optP.totalDistance.toString(),
+          totalVisits: pOrder.length
+        } as any);
+        // Reotimizou: sai do modo de ORDEM MANUAL (volta a posicionar leads por proximidade).
+        try { await db.execute(sql`UPDATE daily_routes SET manual_order = false WHERE id = ${routeId}`); } catch {}
+        console.log(`✅ Rota de PROSPECÇÃO ${routeId} otimizada: ${pOrder.length} leads, ${optP.totalDistance}km`);
+        return res.json({
+          success: true,
+          optimizedOrder: pOrder,
+          totalDistance: optP.totalDistance,
+          totalVisits: pOrder.length,
+          message: `Rota de prospecção otimizada! ${pOrder.length} leads, distância: ${optP.totalDistance}km`
+        });
       }
 
       // Resolver stops (customers + leads) usando helper
@@ -23098,7 +23337,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         city: leads.city,
         neighborhood: leads.neighborhood,
         periodicity: leads.periodicity,
-        routeType: leads.routeType,
         lastCheckInAt: leads.lastCheckInAt,
         lastCheckOutAt: leads.lastCheckOutAt,
         nextContactDate: leads.nextContactDate,
@@ -23111,6 +23349,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasPhoto: sql<boolean>`CASE WHEN ${leads.photo} IS NOT NULL AND ${leads.photo} != '' THEN true ELSE false END`,
         googlePlace: sql<any>`google_place`,
         registroCountToday: sql<number>`(SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = ${leads.id} AND (lv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)`,
+        ocorrenciasCount: sql<number>`(SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = ${leads.id})`,
       }).from(leads).orderBy(desc(leads.createdAt));
 
       console.log('📋 [LEADS] Leads encontrados:', rows.length);
@@ -23134,7 +23373,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         city: row.city || null,
         neighborhood: row.neighborhood || null,
         periodicity: row.periodicity || 'semanal',
-        routeType: row.routeType || 'dia',
         lastCheckInAt: row.lastCheckInAt ? String(row.lastCheckInAt) : null,
         lastCheckOutAt: row.lastCheckOutAt ? String(row.lastCheckOutAt) : null,
         nextContactDate: row.nextContactDate ? String(row.nextContactDate) : null,
@@ -23145,6 +23383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdAt: row.createdAt ? String(row.createdAt) : null,
         updatedAt: row.updatedAt ? String(row.updatedAt) : null,
         registroCountToday: Number(row.registroCountToday || 0),
+        ocorrenciasCount: Number(row.ocorrenciasCount || 0),
       }));
 
       if (user.role === 'telemarketing') {
@@ -23797,7 +24036,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const leadsRes: any = await db.execute(sql`
         SELECT id, fantasy_name AS nome, status, assigned_to,
-               neighborhood, city, phone, contact,
+               neighborhood, city, phone, contact, next_contact_date,
+               (SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = leads.id) AS ocorrencias,
                latitude::float AS lat, longitude::float AS lng
         FROM leads
         WHERE latitude IS NOT NULL AND longitude IS NOT NULL
@@ -23837,10 +24077,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const _hojeConsulta = dataCalendario(hojeBR());
+      const _diasAtrasoLead = (r: any): number => {
+        if (!r.next_contact_date) return 0;
+        if (!['scheduled', 'pending', 'visited'].includes(String(r.status))) return 0;
+        const n = new Date(r.next_contact_date);
+        if (isNaN(n.getTime())) return 0;
+        const n0 = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+        const diff = Math.floor((_hojeConsulta.getTime() - n0.getTime()) / 86400000);
+        return diff > 0 ? diff : 0;
+      };
+
       const out: any[] = [];
       for (const r of (leadsRes?.rows || []) as any[]) {
         const d = haversine(lat, lng, Number(r.lat), Number(r.lng));
         if (d > raio) continue;
+        const _dAtr = _diasAtrasoLead(r);
         out.push({
           tipo: 'lead',
           id: r.id,
@@ -23850,6 +24102,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           statusLabel: LEAD_STATUS[r.status as string] || 'Lead',
           ativo: r.status !== 'discarded',
           descartado: r.status === 'discarded',
+          ocorrencias: Number(r.ocorrencias || 0),
+          atrasado: _dAtr > 0,
+          diasAtraso: _dAtr,
           responsavelLabel: 'Prospecção',
           responsavel: r.assigned_to ? (nameById[String(r.assigned_to)] || '—') : null,
           bairro: r.neighborhood || null,
@@ -24286,11 +24541,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const encontrados: any[] = [];
       try {
         const cu: any = await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, address, neighborhood, phone, is_active FROM customers WHERE (is_supplier IS NOT TRUE) AND COALESCE(NULLIF(fantasy_name,''), name) IS NOT NULL LIMIT 8000`);
-        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone, status FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone, status, next_contact_date, (SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = leads.id) AS ocorrencias FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
+        const _hojeFoto = dataCalendario(hojeBR());
+        const _atrasoFoto = (r: any): number => {
+          if (!r.next_contact_date || !['scheduled', 'pending', 'visited'].includes(String(r.status))) return 0;
+          const n = new Date(r.next_contact_date); if (isNaN(n.getTime())) return 0;
+          const n0 = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+          const diff = Math.floor((_hojeFoto.getTime() - n0.getTime()) / 86400000);
+          return diff > 0 ? diff : 0;
+        };
         const push = (r: any, tipo: string) => {
           const nn = norm(r.nome);
           if (nn.length < 4) return;
-          if (normTxt.includes(nn)) encontrados.push({ tipo, id: r.id || null, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, descartado: tipo === 'lead' && r.status === 'discarded', score: nn.length });
+          const _dAtr = tipo === 'lead' ? _atrasoFoto(r) : 0;
+          if (normTxt.includes(nn)) encontrados.push({ tipo, id: r.id || null, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, descartado: tipo === 'lead' && r.status === 'discarded', ocorrencias: tipo === 'lead' ? Number(r.ocorrencias || 0) : 0, atrasado: _dAtr > 0, diasAtraso: _dAtr, score: nn.length });
         };
         for (const r of (cu?.rows || []) as any[]) push(r, (r.is_active === false ? 'cliente_inativo' : 'cliente'));
         for (const r of (le?.rows || []) as any[]) push(r, 'lead');
@@ -24464,6 +24728,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Erro ao listar visitas do lead:', error);
       res.status(500).json({ message: 'Erro ao listar visitas do lead' });
+    }
+  });
+
+  // 🕑 Histórico de ocorrências do lead (para o "relógio" ao lado do nome): resumo do lead
+  // (criação, agendamento, atraso em dias) + linha do tempo unindo prospecções e registros/visitas.
+  app.get('/api/leads/:id/ocorrencias', authenticateUser, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const lead: any = await storage.getLead(id);
+      if (!lead) return res.status(404).json({ message: 'Lead não encontrado' });
+
+      // Nome de quem prospecta
+      let responsavel: string | null = null;
+      try {
+        if (lead.assignedTo) {
+          const us: any = await db.execute(sql`SELECT first_name, last_name FROM users WHERE id = ${lead.assignedTo} LIMIT 1`);
+          const u = (us?.rows || [])[0] as any;
+          if (u) responsavel = [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || null;
+        }
+      } catch (_e) {}
+
+      // Dias de atraso: só faz sentido quando está agendado/pendente e a data de retorno passou.
+      const _next = lead.nextContactDate ? new Date(lead.nextContactDate) : null;
+      const _hoje = dataCalendario(hojeBR());
+      let diasAtraso = 0;
+      const _ativoParaAtraso = lead.status === 'scheduled' || lead.status === 'pending' || lead.status === 'visited';
+      if (_ativoParaAtraso && _next && !isNaN(_next.getTime())) {
+        const _d0 = new Date(_next.getFullYear(), _next.getMonth(), _next.getDate());
+        const _diff = Math.floor((_hoje.getTime() - _d0.getTime()) / 86400000);
+        if (_diff > 0) diasAtraso = _diff;
+      }
+
+      const ocorrencias: any[] = [];
+      try {
+        const pr: any = await db.execute(sql`SELECT type, user_name, notes, created_at FROM prospections WHERE lead_id = ${id} ORDER BY created_at ASC`);
+        const PROSP: Record<string, string> = { lead_created: 'Lead criado', lead_sem_coordenada: 'Lead sem coordenada', lead_desfecho: 'Desfecho do lead' };
+        for (const r of (pr?.rows || []) as any[]) {
+          ocorrencias.push({ data: r.created_at, categoria: 'prospeccao', titulo: PROSP[String(r.type)] || String(r.type || 'Prospecção'), detalhe: r.notes || '', por: r.user_name || null });
+        }
+      } catch (_e) {}
+      try {
+        const visits = await storage.getLeadVisits(id);
+        for (const v of (visits || []) as any[]) {
+          const obs = String(v.observation || '');
+          let titulo = 'Registro de visita';
+          if (/^N[ÃA]O CONVERTIDO/i.test(obs)) titulo = 'Não convertido';
+          else if (/^PRORROGAD/i.test(obs)) titulo = 'Retorno prorrogado';
+          else if (/^RESGATAD/i.test(obs)) titulo = 'Lead resgatado';
+          else if (/^GRAVADO COMO LEAD/i.test(obs)) titulo = 'Gravado como lead';
+          ocorrencias.push({ data: v.visitDate || v.createdAt, categoria: 'visita', titulo, detalhe: obs, por: v.userName || null });
+        }
+      } catch (_e) {}
+      // Mais recentes primeiro
+      ocorrencias.sort((a, b) => new Date(b.data || 0).getTime() - new Date(a.data || 0).getTime());
+
+      return res.json({
+        lead: {
+          id: lead.id,
+          fantasyName: lead.fantasyName || 'Lead',
+          status: lead.status,
+          responsavel,
+          createdAt: lead.createdAt || null,
+          nextContactDate: lead.nextContactDate || null,
+          originalReturnDate: (lead as any).originalReturnDate || null,
+          postponementCount: Number((lead as any).postponementCount || 0),
+          diasAtraso,
+          atrasado: diasAtraso > 0,
+          naoConvertido: lead.status === 'discarded',
+          nonConversionReason: (lead as any).nonConversionReason || null,
+        },
+        total: ocorrencias.length,
+        ocorrencias,
+      });
+    } catch (error: any) {
+      console.error('Erro ao montar ocorrências do lead:', error);
+      res.status(500).json({ message: 'Erro ao montar ocorrências do lead', error: error?.message });
     }
   });
   
