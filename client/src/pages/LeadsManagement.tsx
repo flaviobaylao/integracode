@@ -90,6 +90,8 @@ export default function LeadsManagement() {
   const [filterSellerId, setFilterSellerId] = useState("");
   const [filterCity, setFilterCity] = useState("");
   const [filterPeriodicity, setFilterPeriodicity] = useState("");
+  // Filtro por alocação (Rota do Dia / Rota de Prospecção) — útil p/ achar os leads de prospecção.
+  const [filterRouteType, setFilterRouteType] = useState("");
   const [filterNeighborhood, setFilterNeighborhood] = useState<string[]>([]);
   const [bairroOpen, setBairroOpen] = useState(false);
   const [filterDateFrom, setFilterDateFrom] = useState("");
@@ -709,6 +711,11 @@ export default function LeadsManagement() {
         return false;
       }
 
+      // Filtro por alocação (Rota do Dia / Rota de Prospecção)
+      if (filterRouteType && String((lead as any).routeType || 'dia') !== filterRouteType) {
+        return false;
+      }
+
       // Filtro por data de criação
       if (filterDateFrom || filterDateTo) {
         if (!lead.createdAt) return false;
@@ -741,7 +748,7 @@ export default function LeadsManagement() {
 
       return true;
     });
-  }, [leads, filterName, filterSellerId, filterCity, filterNeighborhood, filterPeriodicity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
+  }, [leads, filterName, filterSellerId, filterCity, filterNeighborhood, filterPeriodicity, filterRouteType, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
   // Lista da tabela: exclui convertidos (que saem da lista e contam apenas nas caixas)
   const filteredLeads = useMemo(() => {
@@ -1055,8 +1062,21 @@ export default function LeadsManagement() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label htmlFor="filter-route-type">Alocação</Label>
+              <Select value={filterRouteType || "all"} onValueChange={(val) => setFilterRouteType(val === "all" ? "" : val)}>
+                <SelectTrigger data-testid="select-filter-route-type">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="dia">Rota do Dia</SelectItem>
+                  <SelectItem value="prospeccao">Rota de Prospecção</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          {(filterName || filterSellerId || filterCity || filterNeighborhood.length || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
+          {(filterName || filterSellerId || filterCity || filterNeighborhood.length || filterPeriodicity || filterRouteType || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -1067,6 +1087,7 @@ export default function LeadsManagement() {
                 setFilterCity("");
                 setFilterNeighborhood([]);
                 setFilterPeriodicity("");
+                setFilterRouteType("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
                 setFilterNextContactFrom("");
