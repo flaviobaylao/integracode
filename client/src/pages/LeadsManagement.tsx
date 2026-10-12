@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
+import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
 import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -89,8 +90,6 @@ export default function LeadsManagement() {
   const [filterSellerId, setFilterSellerId] = useState("");
   const [filterCity, setFilterCity] = useState("");
   const [filterPeriodicity, setFilterPeriodicity] = useState("");
-  // Filtro por alocação (Rota do Dia / Rota de Prospecção) — útil p/ achar os leads de prospecção.
-  const [filterRouteType, setFilterRouteType] = useState("");
   const [filterNeighborhood, setFilterNeighborhood] = useState<string[]>([]);
   const [bairroOpen, setBairroOpen] = useState(false);
   const [filterDateFrom, setFilterDateFrom] = useState("");
@@ -710,11 +709,6 @@ export default function LeadsManagement() {
         return false;
       }
 
-      // Filtro por alocação (Rota do Dia / Rota de Prospecção)
-      if (filterRouteType && String((lead as any).routeType || 'dia') !== filterRouteType) {
-        return false;
-      }
-
       // Filtro por data de criação
       if (filterDateFrom || filterDateTo) {
         if (!lead.createdAt) return false;
@@ -747,7 +741,7 @@ export default function LeadsManagement() {
 
       return true;
     });
-  }, [leads, filterName, filterSellerId, filterCity, filterNeighborhood, filterPeriodicity, filterRouteType, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
+  }, [leads, filterName, filterSellerId, filterCity, filterNeighborhood, filterPeriodicity, filterDateFrom, filterDateTo, filterNextContactFrom, filterNextContactTo]);
 
   // Lista da tabela: exclui convertidos (que saem da lista e contam apenas nas caixas)
   const filteredLeads = useMemo(() => {
@@ -1061,21 +1055,8 @@ export default function LeadsManagement() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label htmlFor="filter-route-type">Alocação</Label>
-              <Select value={filterRouteType || "all"} onValueChange={(val) => setFilterRouteType(val === "all" ? "" : val)}>
-                <SelectTrigger data-testid="select-filter-route-type">
-                  <SelectValue placeholder="Todas" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas</SelectItem>
-                  <SelectItem value="dia">Rota do Dia</SelectItem>
-                  <SelectItem value="prospeccao">Rota de Prospecção</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
-          {(filterName || filterSellerId || filterCity || filterNeighborhood.length || filterPeriodicity || filterRouteType || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
+          {(filterName || filterSellerId || filterCity || filterNeighborhood.length || filterPeriodicity || filterDateFrom || filterDateTo || filterNextContactFrom || filterNextContactTo) && (
             <Button
               variant="outline"
               size="sm"
@@ -1086,7 +1067,6 @@ export default function LeadsManagement() {
                 setFilterCity("");
                 setFilterNeighborhood([]);
                 setFilterPeriodicity("");
-                setFilterRouteType("");
                 setFilterDateFrom("");
                 setFilterDateTo("");
                 setFilterNextContactFrom("");
@@ -1180,6 +1160,8 @@ export default function LeadsManagement() {
                 ) : (
                   displayLeads.map((lead) => {
                     const descartado = lead.status === 'discarded';
+                    const atrasadoLead = !descartado && lead.status !== 'converted' && !!(lead as any).nextContactDate && diaCalendario((lead as any).nextContactDate) < hojeBR();
+                    const temOcorrencias = Number((lead as any).ocorrenciasCount || 0) > 0;
                     // Verde quando ha registro (contato/visita) feito HOJE para o lead.
                     const temRegistroHoje = (((lead as any).registroCountToday) || 0) > 0;
                     return (
@@ -1214,16 +1196,8 @@ export default function LeadsManagement() {
                       </td>
                       <td className={`py-3 px-4 font-medium ${descartado ? 'text-gray-400 dark:text-gray-500' : ''}`}>
                         <span className="inline-flex items-center gap-1.5">
-                          {isAdmin && (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); setSelectedLeadForVisitHistory(lead); }}
-                              title="Histórico de Atendimentos"
-                              data-testid={`button-history-lead-${lead.id}`}
-                              className="shrink-0 text-muted-foreground hover:text-foreground"
-                            >
-                              <History className="h-4 w-4" />
-                            </button>
+                          {(temOcorrencias || atrasadoLead) && (
+                            <HistoricoOcorrencias leadId={lead.id} nome={lead.fantasyName} atrasado={atrasadoLead} />
                           )}
                           <span>{lead.fantasyName}</span>
                         </span>
@@ -1402,6 +1376,8 @@ export default function LeadsManagement() {
                 const prorrogado = Number((lead as any).postponementCount || 0) >= 1 && lead.status !== 'discarded' && lead.status !== 'converted';
                 const dotColor = descartado ? 'bg-gray-300' : (visitado ? 'bg-green-500' : (prorrogado ? 'bg-blue-500' : (agendado ? 'bg-yellow-500' : 'bg-red-500')));
                 const venc = (lead as any).nextContactDate && diaCalendario((lead as any).nextContactDate) < hojeBR();
+                const atrasadoLead = !!venc && !descartado && lead.status !== 'converted';
+                const temOcorrencias = Number((lead as any).ocorrenciasCount || 0) > 0;
                 return (
                   <div
                     key={lead.id}
@@ -1423,10 +1399,10 @@ export default function LeadsManagement() {
                           {prorrogado && <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Prorrogado</Badge>}
                         </div>
                       </button>
-                      {isAdmin && (
-                        <button type="button" onClick={() => setSelectedLeadForVisitHistory(lead)} title="Histórico de atendimentos" className="text-muted-foreground hover:text-foreground p-1 shrink-0" data-testid={`button-history-lead-m-${lead.id}`}>
-                          <History className="h-4 w-4" />
-                        </button>
+                      {(temOcorrencias || atrasadoLead) && (
+                        <div className="shrink-0 mt-0.5">
+                          <HistoricoOcorrencias leadId={lead.id} nome={lead.fantasyName} atrasado={atrasadoLead} />
+                        </div>
                       )}
                     </div>
 

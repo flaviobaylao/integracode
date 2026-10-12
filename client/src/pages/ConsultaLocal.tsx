@@ -10,6 +10,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
 
 type ResultadoConsulta = {
   tipo: "lead" | "cliente";
@@ -26,6 +27,9 @@ type ResultadoConsulta = {
   cidade: string | null;
   telefone: string | null;
   contato: string | null;
+  ocorrencias?: number;
+  atrasado?: boolean;
+  diasAtraso?: number;
   lat: number;
   lng: number;
 };
@@ -54,6 +58,9 @@ type FotoMatch = {
   telefone: string;
   ativo: boolean;
   descartado?: boolean;
+  ocorrencias?: number;
+  atrasado?: boolean;
+  diasAtraso?: number;
   score: number;
 };
 
@@ -440,7 +447,12 @@ export default function ConsultaLocal() {
                         <div className="flex items-start gap-2 min-w-0">
                           <div className="shrink-0 mt-0.5">{est.icone}</div>
                           <div className="min-w-0">
-                            <div className="font-semibold leading-tight break-words">{m.nome}</div>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-semibold leading-tight break-words">{m.nome}</span>
+                              {m.tipo === "lead" && m.id && ((m.ocorrencias || 0) > 0 || m.atrasado) && (
+                                <HistoricoOcorrencias leadId={m.id} nome={m.nome} atrasado={m.atrasado} diasAtraso={m.diasAtraso} />
+                              )}
+                            </div>
                             <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{est.rotulo}</span>
                           </div>
                         </div>
@@ -539,7 +551,12 @@ export default function ConsultaLocal() {
                           <div className="flex items-start gap-2 min-w-0">
                             <div className="shrink-0 mt-0.5">{est.icone}</div>
                             <div className="min-w-0">
-                              <div className="font-semibold leading-tight break-words">{r.nome}</div>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-semibold leading-tight break-words">{r.nome}</span>
+                                {r.tipo === "lead" && r.id && ((r.ocorrencias || 0) > 0 || r.atrasado) && (
+                                  <HistoricoOcorrencias leadId={r.id} nome={r.nome} atrasado={r.atrasado} diasAtraso={r.diasAtraso} />
+                                )}
+                              </div>
                               <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{r.tipo === "lead" && r.descartado ? "Lead já visitado — não convertido" : r.statusLabel}</span>
                             </div>
                           </div>
@@ -602,7 +619,12 @@ export default function ConsultaLocal() {
                           <div className="flex items-start gap-2 min-w-0">
                             {p.jaVisitado ? <Ban className="h-5 w-5 text-gray-500 shrink-0 mt-0.5" /> : <MapPin className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />}
                             <div className="min-w-0">
-                              <div className="font-semibold leading-tight break-words">{p.nome}</div>
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-semibold leading-tight break-words">{p.nome}</span>
+                                {p.jaVisitado && p.leadId && (
+                                  <HistoricoOcorrencias leadId={p.leadId} nome={p.nome} />
+                                )}
+                              </div>
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
                                 {p.categoria && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{p.categoria}</span>}
                                 {p.jaVisitado ? (
