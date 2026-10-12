@@ -24320,10 +24320,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // ele reaparece aqui como "já visitado" para o vendedor poder resgatar na hora.
       const exist: any[] = [];
       try {
-        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, status, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, status, assigned_to, origin, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
         const cu: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name, ''), name) AS nome, latitude::float AS la, longitude::float AS lo FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
-        for (const r of (le?.rows || []) as any[]) exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: r.status === 'discarded', leadId: r.id });
-        for (const r of (cu?.rows || []) as any[]) exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: false, leadId: null });
+        for (const r of (le?.rows || []) as any[]) {
+          // "Disponível": lead de Novos Pontos (origin radar) que foi LIBERADO (sem vendedor) e voltou
+          // para a base de novos leads → reaparece aqui para qualquer vendedor capturar ("Pegar lead").
+          const disponivel = !r.assigned_to && r.origin === 'radar' && !['converted', 'discarded'].includes(String(r.status));
+          exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: r.status === 'discarded', disponivel, leadId: r.id });
+        }
+        for (const r of (cu?.rows || []) as any[]) exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: false, disponivel: false, leadId: null });
       } catch (_e) {}
       const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
       const hav = (aLa: number, aLo: number, bLa: number, bLo: number) => {
@@ -24331,7 +24336,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const s = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
         return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
       };
-      const existNorm = exist.map((e) => ({ n: norm(e.nome), la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, leadId: e.leadId || null }));
+      const existNorm = exist.map((e) => ({ n: norm(e.nome), la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, disponivel: !!e.disponivel, leadId: e.leadId || null }));
 
       // Classificação do segmento: "primário" quando o tipo principal do lugar está nos segmentos;
       // "secundário" quando casou por um tipo secundário do lugar (afrouxa o filtro).
@@ -24344,17 +24349,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let bloqueado = false;            // casou com cadastro ATIVO (lead/cliente) → esconde
         let resgatavel: { leadId: any } | null = null;  // casou só com lead descartado → mostra p/ resgatar
         let resgDist = Infinity;
+        let livre: { leadId: any } | null = null;       // casou com lead liberado (sem vendedor) → mostra p/ pegar
+        let livreDist = Infinity;
         for (const e of existNorm) {
           const d = (isFinite(pLat) && isFinite(pLng) && isFinite(e.la) && isFinite(e.lo)) ? hav(pLat, pLng, e.la, e.lo) : 9999;
           const casou = d < 45 || (nnome && e.n && (nnome === e.n || (nnome.length > 5 && (e.n.includes(nnome) || nnome.includes(e.n)))) && d < 120);
           if (!casou) continue;
-          if (e.discarded) {
+          if (e.disponivel) {
+            if (d < livreDist) { livreDist = d; livre = { leadId: e.leadId }; }
+          } else if (e.discarded) {
             if (d < resgDist) { resgDist = d; resgatavel = { leadId: e.leadId }; }
           } else {
             bloqueado = true; break;
           }
         }
         if (bloqueado) continue;
+        // Prioridade: lead disponível (pegar direto) > lead já visitado/não convertido (resgatar).
+        if (livre) resgatavel = null;
         const dist = (isFinite(pLat) && isFinite(pLng)) ? Math.round(hav(lat, lng, pLat, pLng)) : null;
         const ehPrimario = segSet.size === 0 || (p.primaryType && segSet.has(p.primaryType));
         novos.push({
@@ -24366,7 +24377,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           endereco: p.formattedAddress || '',
           businessStatus: p.businessStatus || '',
           jaVisitado: !!resgatavel,
-          leadId: resgatavel ? resgatavel.leadId : null,
+          disponivel: !!livre,
+          leadId: livre ? livre.leadId : (resgatavel ? resgatavel.leadId : null),
           lat: pLat, lng: pLng, placeId: p.id || '',
         });
       }
