@@ -18,6 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { ClipboardCheck, Lock, BarChart3, Flag, History, Search } from "lucide-react";
+import { getBrazilDateISO } from "@/lib/brazilTimezone";
 
 type Cfg = {
   travaObrigatoria: boolean;
@@ -74,7 +75,9 @@ function RegrasTab() {
   const { data: usersData } = useQuery<any>({ queryKey: ["/api/users"] });
   const sellers = (Array.isArray(usersData) ? usersData : []).filter((u: any) => ["vendedor", "telemarketing"].includes(u?.role) && u?.isActive);
   const [admSeller, setAdmSeller] = useState<string>("");
-  const [admDate, setAdmDate] = useState<string>("");
+  // Campo de data do admin ja vem preenchido com HOJE (Brasil). Antes comecava vazio e,
+  // no mobile, o admin ficava sem data preenchida e os botoes travados ate digitar.
+  const [admDate, setAdmDate] = useState<string>(getBrazilDateISO());
   // Ao escolher o vendedor, busca o DIA PENDENTE (rota bloqueada) e ja preenche a data —
   // e essa data que a "Liberar rota" precisa usar. Sem isto o admin tinha de adivinhar a data
   // e, se errasse, a rota continuava bloqueada (parecia que o botao "nao funcionava").
@@ -86,7 +89,7 @@ function RegrasTab() {
     if (!admSeller) return;
     setAdmPendLoad(true);
     apiRequest("GET", "/api/vendedor/fechamento/bloqueio?sellerId=" + encodeURIComponent(admSeller))
-      .then((r: any) => { if (!vivo) return; const p = r && r.blocked ? r.pendingDate : null; setAdmPendente(p || null); if (p) setAdmDate(p); })
+      .then((r: any) => { if (!vivo) return; const p = r && r.blocked ? r.pendingDate : null; setAdmPendente(p || null); setAdmDate(p || getBrazilDateISO()); })
       .catch(() => { if (vivo) setAdmPendente(null); })
       .finally(() => { if (vivo) setAdmPendLoad(false); });
     return () => { vivo = false; };
