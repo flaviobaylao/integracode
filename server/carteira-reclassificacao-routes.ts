@@ -158,7 +158,17 @@ export function registerCarteiraReclassificacao(app: Express) {
   app.post("/api/admin/carteira/regenerar-agenda-todos", authenticateUser, async (req: Request, res: Response) => {
     try {
       const esc = escopo(req);
-      if (!ADMINS_VISITA.includes(esc.email)) return res.status(403).json({ ok: false, error: "Restrito ao Admin." });
+      // Botão "Regenerar" da Rota do Dia (out/2026): liberado para todo usuário com papel admin.
+      if (!ADMINS_VISITA.includes(esc.email) && esc.papel !== "admin") return res.status(403).json({ ok: false, error: "Restrito ao Admin." });
+      // Evita duas regenerações simultâneas (o lote roda em segundo plano).
+      try {
+        const cur: any = await db.execute(sql.raw("SELECT value FROM system_settings WHERE key='regen_agenda_todos_last'"));
+        const v = ((((cur as any).rows || cur) as any[])[0] || {}).value;
+        const st = v ? JSON.parse(v) : null;
+        if (st && st.finished === false && st.at && (Date.now() - new Date(st.at).getTime()) < 15 * 60 * 1000) {
+          return res.json({ ok: true, started: false, running: true, total: st.total || 0 });
+        }
+      } catch (_e) { /* segue */ }
       const bf: any = await db.execute(sql`
         UPDATE customers SET service_start_date = COALESCE(created_at, now())::date
         WHERE is_active = true AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE)
@@ -176,12 +186,14 @@ export function registerCarteiraReclassificacao(app: Express) {
         const prog: any = { at: new Date().toISOString(), total: ids.length, datasPreenchidas, regenerados: 0, semData: 0, erros: [], finished: false };
         const salvar = async () => {
           try {
+            prog.at = new Date().toISOString();
             const payload = JSON.stringify(prog).slice(0, 100000);
             const ex: any = await db.execute(sql.raw("SELECT 1 FROM system_settings WHERE key='regen_agenda_todos_last'"));
             if ((((ex as any).rows || ex) as any[]).length > 0) await db.execute(sql`UPDATE system_settings SET value=${payload}, updated_at=now() WHERE key='regen_agenda_todos_last'`);
             else await db.execute(sql`INSERT INTO system_settings (key, value, description, updated_by) VALUES ('regen_agenda_todos_last', ${payload}, 'ultima regeneracao de agenda de todos', 'regen-agenda-todos')`);
           } catch (e) { /* ignora */ }
         };
+        await salvar();
         try {
           const { regenerateCustomerAgenda } = await import("./visitScheduleService");
           for (const id of ids) {

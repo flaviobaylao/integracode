@@ -224,6 +224,8 @@ function shiftOffHoliday(iso: string, recurrence: string, feriados: Map<string, 
   return { date: cur, tipo: dir === 1 ? "post" : "ant" };
 }
 const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
+// Hoje no Brasil (YYYY-MM-DD), sem depender do fuso do processo.
+function hojeBRIso(): string { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
 
 // ── Núcleo: reposiciona linhas da visit_agenda que caem em feriado. ──
 // `where` extra limita o conjunto (um cliente, um mês). Idempotente: ignora
@@ -262,13 +264,42 @@ async function processShift(opts: { customerId?: string; monthStart?: string; mo
     const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, override);
     if (!sh) continue; // configurado para não deslocar
     const { date: alvo, tipo } = sh;
+    const origDt = new Date(diaOrig + "T12:00:00Z");
+    // ⏭️ ANTECIPAÇÃO NO PASSADO (out/2026, decisão do Flavio): se antecipar cairia num dia que
+    // JÁ PASSOU (ex.: feriado hoje, segunda → sexta anterior), a visita deste ciclo é PULADA —
+    // fica cancelada no dia do feriado e o cliente volta na próxima data da periodicidade.
+    if (tipo === "ant" && alvo < hojeBRIso()) {
+      const notaPulo = `Visita pulada: feriado ${brDate(diaOrig)} (antecipação cairia em ${brDate(alvo)}, data já passada)`;
+      await db.execute(sql`
+        UPDATE visit_agenda
+           SET visit_status = 'cancelled', holiday_note = ${notaPulo}, holiday_original_date = ${origDt}, updated_at = now()
+         WHERE id = ${r.id}`);
+      moved++;
+      list.push({ customerId: r.customer_id, customerName: r.customer_name, periodicidade: r.recurrence_type,
+        de: brDate(diaOrig), para: "—", paraDow: "", tipo: "pulada", feriado: hit.name, nota: notaPulo });
+      continue;
+    }
     const nota = `${tipo === "post" ? "Postergação" : "Antecipação"} de visita devido ao feriado ${brDate(diaOrig)}`;
     const alvoDt = new Date(alvo + "T12:00:00Z");
-    await db.execute(sql`
-      UPDATE visit_agenda
-         SET scheduled_date = ${alvoDt}, route_day = ${DIAS[alvoDt.getUTCDay()]},
-             holiday_note = ${nota}, holiday_original_date = ${new Date(diaOrig + "T12:00:00Z")}, updated_at = now()
-       WHERE id = ${r.id}`);
+    try {
+      await db.execute(sql`
+        UPDATE visit_agenda
+           SET scheduled_date = ${alvoDt}, route_day = ${DIAS[alvoDt.getUTCDay()]},
+               holiday_note = ${nota}, holiday_original_date = ${origDt}, updated_at = now()
+         WHERE id = ${r.id}`);
+    } catch (e: any) {
+      // Cliente já tem visita no dia de destino (chave única cliente+data): não duplica —
+      // a visita do feriado é cancelada, pois ele já será atendido no destino.
+      const notaDup = `Visita do feriado ${brDate(diaOrig)} cancelada: cliente já tem visita em ${brDate(alvo)}`;
+      await db.execute(sql`
+        UPDATE visit_agenda
+           SET visit_status = 'cancelled', holiday_note = ${notaDup}, holiday_original_date = ${origDt}, updated_at = now()
+         WHERE id = ${r.id}`);
+      moved++;
+      list.push({ customerId: r.customer_id, customerName: r.customer_name, periodicidade: r.recurrence_type,
+        de: brDate(diaOrig), para: brDate(alvo), paraDow: DIAS[alvoDt.getUTCDay()], tipo: "ja_tem_visita", feriado: hit.name, nota: notaDup });
+      continue;
+    }
     moved++;
     list.push({ customerId: r.customer_id, customerName: r.customer_name, periodicidade: r.recurrence_type,
       de: brDate(diaOrig), para: brDate(alvo), paraDow: DIAS[alvoDt.getUTCDay()], tipo, feriado: hit.name, nota });
@@ -305,6 +336,11 @@ async function previewShift(monthStart: string, monthEnd: string): Promise<any[]
     const sh = shiftOffHoliday(diaOrig, r.recurrence_type || "semanal", fer, rules, override);
     if (!sh) continue;
     const { date: alvo, tipo } = sh;
+    if (tipo === "ant" && alvo < hojeBRIso()) {
+      list.push({ customerId: r.customer_id, customerName: r.customer_name, periodicidade: r.recurrence_type,
+        de: brDate(diaOrig), para: "—", paraDow: "", tipo: "pulada", feriado: hit.name, feriadoData: brDate(diaOrig) });
+      continue;
+    }
     const alvoDt = new Date(alvo + "T12:00:00Z");
     list.push({ customerId: r.customer_id, customerName: r.customer_name, periodicidade: r.recurrence_type,
       de: brDate(diaOrig), para: brDate(alvo), paraDow: DIAS[alvoDt.getUTCDay()], tipo, feriado: hit.name,

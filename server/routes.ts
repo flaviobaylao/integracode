@@ -17553,6 +17553,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const agRows: any = await _dbPrune.execute(sql`
               SELECT DISTINCT customer_id FROM visit_agenda
               WHERE DATE(scheduled_date) = ${date}
+                AND COALESCE(visit_status, 'pending') <> 'cancelled'
                 AND customer_id = ANY(string_to_array(${custIds.join(',')}, ','))`);
             const agendaDateIds = new Set<string>((agRows?.rows || []).map((r: any) => String(r.customer_id)).filter(Boolean));
             // Dono ATUAL da carteira (customers.seller_id). A delegação de carteira reatribui
