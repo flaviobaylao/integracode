@@ -565,7 +565,18 @@ function maybeLiberarLeadsRadarExpirados(): void {
           AND status = 'scheduled'
           AND assigned_to IS NOT NULL
           AND COALESCE(postponement_count, 0) >= 1
+          -- "Atendimento" = check-in OU atendimento registrado (virtual do interno/telemarketing,
+          -- ou registro de visita). Lançamentos de sistema/desfecho não contam como atendimento.
           AND last_check_in_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM prospections p
+            WHERE p.lead_id = leads.id AND p.type = 'service_registered'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_visits lv
+            WHERE lv.lead_id = leads.id
+              AND lv.observation !~* '^(PRORROGAD|RESGATAD|GRAVADO COMO LEAD|LIBERADO|N[ÃA]O CONVERTIDO)'
+          )
           AND next_contact_date IS NOT NULL
           AND (next_contact_date AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
         LIMIT 200
