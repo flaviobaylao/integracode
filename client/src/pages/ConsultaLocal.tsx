@@ -250,12 +250,13 @@ export default function ConsultaLocal() {
         routeType: "dia",
         status: "scheduled", // servidor agenda o próximo contato para hoje + 7 dias
         assignedTo: (user as any)?.id, // registrado no nome do vendedor logado
+        origin: "radar", // regra: renova só 1 ciclo; sem atendimento após a renovação → lead é liberado
         observation: "Prospecção via radar" + (p.categoria ? ` · ${p.categoria}` : ""),
       };
       const res: any = await apiRequest("POST", "/api/leads", payload);
       if (res && (res.id || res.ok !== false)) {
         setCadastrados((m) => ({ ...m, [p.placeId]: "ok" }));
-        toast({ title: "Lead registrado", description: `${p.nome} · entra na sua rota daqui a 7 dias` });
+        toast({ title: "Lead registrado", description: `${p.nome} · na sua rota em 7 dias. Sem atendimento, dá p/ renovar só mais 1 vez — depois ele é liberado.` });
       } else {
         setCadastrados((m) => { const n = { ...m }; delete n[p.placeId]; return n; });
         toast({ title: "Não foi possível cadastrar", description: (res && res.message) || "", variant: "destructive" });
