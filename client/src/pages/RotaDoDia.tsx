@@ -126,6 +126,30 @@ function SalesCycleDots({ cycles }: { cycles?: SalesCycle[] | null }) {
   );
 }
 
+// ℹ️ Botão "i" ao lado das ações do cabeçalho: abre um balão explicando o que a ação faz
+// (Popover, funciona no clique — inclusive no celular, onde não há "hover").
+function InfoTip({ titulo, children, testId }: { titulo: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800"
+          aria-label={`O que faz: ${titulo}`}
+          title={`O que faz: ${titulo}`}
+          data-testid={testId}
+        >
+          <Info className="h-4 w-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 text-sm" align="end">
+        <p className="font-semibold mb-1">{titulo}</p>
+        <div className="text-muted-foreground space-y-1">{children}</div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function RotaDoDia() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -919,6 +943,52 @@ export default function RotaDoDia() {
     }
   };
 
+  // 🔁 REGENERAR (admin): recalcula a agenda de TODOS os clientes ativos (cadastro + regras de
+  // Feriados) em segundo plano no servidor, acompanha o progresso e, ao final, reorganiza a rota
+  // da data selecionada de todos os vendedores (self-heal do GET).
+  const [regen, setRegen] = useState<{ running: boolean; fase: string; done: number; total: number }>({ running: false, fase: '', done: 0, total: 0 });
+  const handleRegenerarTodos = async () => {
+    if (!confirm('Regenerar a agenda de TODOS os clientes de todos os vendedores?\n\nRecalcula as próximas visitas pelo cadastro e aplica as regras de Feriados. Pode levar alguns minutos.')) return;
+    try {
+      setRegen({ running: true, fase: 'Iniciando', done: 0, total: 0 });
+      const ini = await fetch('/api/admin/carteira/regenerar-agenda-todos', { method: 'POST', credentials: 'include' });
+      const ij: any = await ini.json().catch(() => ({}));
+      if (!ini.ok || ij?.ok === false) throw new Error(ij?.error || `Falha ao iniciar (${ini.status})`);
+      // Acompanha o lote (roda em segundo plano no servidor).
+      const t0 = Date.now();
+      let st: any = { finished: false, total: ij?.total || 0 };
+      await new Promise((r) => setTimeout(r, 2500));
+      while (Date.now() - t0 < 20 * 60 * 1000) {
+        try {
+          const sr = await fetch('/api/admin/carteira/regenerar-agenda-todos/status', { credentials: 'include' });
+          if (sr.ok) st = await sr.json();
+        } catch (_e) { /* tenta de novo */ }
+        const feitos = Number(st?.regenerados || 0) + Number(st?.semData || 0);
+        setRegen({ running: true, fase: 'Agenda', done: feitos, total: Number(st?.total || ij?.total || 0) });
+        if (st?.finished) break;
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      // Reorganiza a rota da data selecionada de todos os vendedores.
+      const sResp = await fetch('/api/sellers/active', { credentials: 'include' });
+      const sellers: any = sResp.ok ? await sResp.json() : [];
+      const list: any[] = Array.isArray(sellers) ? sellers : [];
+      for (let i = 0; i < list.length; i++) {
+        setRegen({ running: true, fase: 'Rotas', done: i, total: list.length });
+        try { await fetch(`/api/daily-routes/${list[i].id}/date/${selectedDate}`, { credentials: 'include' }); } catch (_e) { /* segue */ }
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+      await refetch();
+      toast({
+        title: 'Agenda regenerada',
+        description: `${Number(st?.regenerados || 0)} cliente(s) com agenda refeita${st?.erros?.length ? `, ${st.erros.length} com erro` : ''}. Regras de Feriados aplicadas e rotas de ${selectedDate.split('-').reverse().join('/')} reorganizadas.`,
+      });
+    } catch (e: any) {
+      toast({ title: 'Erro ao regenerar', description: e?.message || 'Falha ao regenerar a agenda.', variant: 'destructive' });
+    } finally {
+      setRegen({ running: false, fase: '', done: 0, total: 0 });
+    }
+  };
+
   const filteredCustomers = useMemo(() => {
     if (!customers || !customerSearchQuery) return customers || [];
     
@@ -1556,6 +1626,13 @@ export default function RotaDoDia() {
               {isFetching ? 'Atualizando...' : 'Atualizar'}
             </Button>
           )}
+          {selectedSellerId && (
+            <InfoTip titulo="Atualizar" testId="info-atualizar">
+              <p>Recarrega a rota <b>deste vendedor</b> na data escolhida.</p>
+              <p>Antes, corrige a agenda só dos clientes que estão <b>diferentes do cadastro</b> (dia de rota, periodicidade ou sem próxima visita). Quem já está certo não muda de data.</p>
+              <p>Visitas incluídas manualmente permanecem.</p>
+            </InfoTip>
+          )}
           {isAdmin && (
             <Button
               onClick={handleReorganizeAll}
@@ -1569,6 +1646,34 @@ export default function RotaDoDia() {
               <RefreshCw className={`h-4 w-4 ${reorgAll.running ? 'animate-spin' : ''}`} />
               {reorgAll.running ? `Atualizando ${reorgAll.done}/${reorgAll.total}...` : 'Atualizar Todas'}
             </Button>
+          )}
+          {isAdmin && (
+            <InfoTip titulo="Atualizar Todas" testId="info-atualizar-todas">
+              <p>Faz o mesmo que o <b>Atualizar</b>, para <b>todos os vendedores</b> de uma vez, na data escolhida.</p>
+              <p>Corrige só quem está diferente do cadastro, tira inativos e clientes fora da carteira. Visitas incluídas manualmente permanecem.</p>
+            </InfoTip>
+          )}
+          {user?.role === 'admin' && (
+            <Button
+              onClick={handleRegenerarTodos}
+              disabled={regen.running || reorgAll.running || isFetching}
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-2 border-amber-500 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950"
+              data-testid="button-regenerar-todos"
+            >
+              <Zap className={`h-4 w-4 ${regen.running ? 'animate-pulse' : ''}`} />
+              {regen.running
+                ? (regen.fase === 'Rotas' ? `Rotas ${regen.done}/${regen.total}...` : regen.total ? `Regenerando ${regen.done}/${regen.total}...` : 'Regenerando...')
+                : 'Regenerar'}
+            </Button>
+          )}
+          {user?.role === 'admin' && (
+            <InfoTip titulo="Regenerar" testId="info-regenerar">
+              <p>Recalcula a agenda de <b>todos os clientes ativos de todos os vendedores</b> a partir do cadastro: dia de rota, periodicidade, semana de atendimento (em Brasília, a partir da última entrega).</p>
+              <p>Aplica as <b>regras de Feriados</b>: semanal vai para o próximo dia útil; quinzenal e mensal são antecipados para o dia útil anterior. Se a antecipação cair em data que já passou, a visita daquele ciclo é pulada.</p>
+              <p>Visitas já concluídas não mudam. No fim, reorganiza as rotas da data escolhida. Pode levar alguns minutos.</p>
+            </InfoTip>
           )}
         </div>
       </div>
