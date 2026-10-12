@@ -1392,7 +1392,9 @@ export class DatabaseStorage implements IStorage {
           gte(visitAgenda.scheduledDate, startOfDay),
           lte(visitAgenda.scheduledDate, endOfDay),
           eq(visitAgenda.sellerId, sellerId),
-          eq(visitAgenda.isVirtual, true)
+          eq(visitAgenda.isVirtual, true),
+          // 🎌 Visita cancelada (ex.: pulada por feriado) não entra na rota.
+          sql`COALESCE(${visitAgenda.visitStatus}, 'pending') <> 'cancelled'`
         )
       );
       
