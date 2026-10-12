@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   MapPin, Navigation, Loader2, ArrowLeft, Phone, User, Crosshair,
-  Store, Target, XCircle, Ban, HelpCircle, RefreshCw, Plus, Check, Camera,
+  Store, Target, XCircle, Ban, HelpCircle, RefreshCw, Plus, Check, Camera, Search, X,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -69,6 +69,16 @@ type NovosFase = "idle" | "buscando" | "pronto" | "erro" | "disabled";
 type FotoFase = "idle" | "lendo" | "pronto" | "erro" | "disabled";
 
 const RAIO_PADRAO = 100;
+const RAIO_INTERNO = 300; // interno (telemarketing/administrativo) consulta a região do cliente de referência em 300 m
+
+type ClienteRef = {
+  id: string;
+  nome: string;
+  bairro: string | null;
+  cidade: string | null;
+  lat: number;
+  lng: number;
+};
 
 function estiloCenario(r: ResultadoConsulta) {
   if (r.tipo === "cliente") {
@@ -142,6 +152,14 @@ export default function ConsultaLocal() {
   // Estados: "resgatando" → "resgatado" (habilita Gravar) → "gravando" → "gravado".
   const [resgate, setResgate] = useState<Record<string, "resgatando" | "resgatado" | "gravando" | "gravado">>({});
 
+  // ----- interno (telemarketing/administrativo): consulta pela região de um CLIENTE DE REFERÊNCIA -----
+  const isInterno = ((user as any)?.role === "telemarketing" || (user as any)?.role === "administrative");
+  const [clienteBusca, setClienteBusca] = useState<string>("");
+  const [clienteResultados, setClienteResultados] = useState<ClienteRef[]>([]);
+  const [clienteBuscando, setClienteBuscando] = useState<boolean>(false);
+  const [clienteRef, setClienteRef] = useState<ClienteRef | null>(null);
+  const buscaDebounce = useRef<any>(null);
+
   // ----- busca por foto -----
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fotoFase, setFotoFase] = useState<FotoFase>("idle");
@@ -167,6 +185,32 @@ export default function ConsultaLocal() {
     }
   }, []);
 
+  // Busca de clientes por nome (interno) — retorna só os que têm coordenadas.
+  const buscarClientes = useCallback((termo: string) => {
+    setClienteBusca(termo);
+    setClienteRef(null);
+    if (buscaDebounce.current) clearTimeout(buscaDebounce.current);
+    const q = termo.trim();
+    if (q.length < 2) { setClienteResultados([]); setClienteBuscando(false); return; }
+    setClienteBuscando(true);
+    buscaDebounce.current = setTimeout(async () => {
+      try {
+        const data: any = await apiRequest("GET", `/api/customers/busca-coord?q=${encodeURIComponent(q)}`);
+        setClienteResultados(Array.isArray(data?.resultados) ? data.resultados : []);
+      } catch {
+        setClienteResultados([]);
+      } finally {
+        setClienteBuscando(false);
+      }
+    }, 320);
+  }, []);
+
+  const selecionarCliente = useCallback((c: ClienteRef) => {
+    setClienteRef(c);
+    setClienteBusca(c.nome);
+    setClienteResultados([]);
+  }, []);
+
   const consultar = useCallback(() => {
     setErroMsg("");
     setResultados([]);
@@ -174,6 +218,17 @@ export default function ConsultaLocal() {
     setNovos([]);
     setNovosFase("idle");
     setCadastrados({});
+    // Interno: usa as coordenadas do CLIENTE DE REFERÊNCIA (raio 300 m), sem GPS do aparelho.
+    if (isInterno) {
+      if (!clienteRef) {
+        setErroMsg("Escolha um cliente de referência para consultar a região dele.");
+        setFase("erro");
+        return;
+      }
+      setCoords({ lat: clienteRef.lat, lng: clienteRef.lng, acc: 0 });
+      buscar(clienteRef.lat, clienteRef.lng, RAIO_INTERNO);
+      return;
+    }
     if (!("geolocation" in navigator)) {
       setErroMsg("Este aparelho não permite usar a localização.");
       setFase("erro");
@@ -198,7 +253,7 @@ export default function ConsultaLocal() {
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-  }, [buscar]);
+  }, [buscar, isInterno, clienteRef]);
 
   const ampliar = useCallback(
     (raio: number) => {
@@ -374,40 +429,84 @@ export default function ConsultaLocal() {
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-5 space-y-4">
+        {/* Interno (telemarketing/administrativo): escolher um CLIENTE DE REFERÊNCIA para consultar a região dele */}
+        {isInterno && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium flex items-center gap-1.5"><User className="h-4 w-4 text-emerald-600" /> Cliente de referência</label>
+            <div className="relative">
+              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={clienteBusca}
+                onChange={(e) => buscarClientes(e.target.value)}
+                placeholder="Buscar cliente por nome…"
+                className="w-full h-12 pl-9 pr-9 rounded-lg border bg-white dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                data-testid="input-cliente-ref"
+              />
+              {clienteBusca && (
+                <button type="button" onClick={() => { setClienteBusca(""); setClienteRef(null); setClienteResultados([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Limpar"><X className="h-4 w-4" /></button>
+              )}
+              {!clienteRef && (clienteBuscando || clienteResultados.length > 0 || clienteBusca.trim().length >= 2) && (
+                <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border bg-white dark:bg-gray-950 shadow-lg">
+                  {clienteBuscando ? (
+                    <div className="px-3 py-3 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Buscando…</div>
+                  ) : clienteResultados.length === 0 ? (
+                    <div className="px-3 py-3 text-sm text-muted-foreground">Nenhum cliente com localização encontrado.</div>
+                  ) : (
+                    clienteResultados.map((c) => (
+                      <button key={c.id} type="button" onClick={() => selecionarCliente(c)} className="w-full text-left px-3 py-2.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border-b last:border-0" data-testid="option-cliente-ref">
+                        <div className="font-medium text-sm leading-tight break-words">{c.nome}</div>
+                        {(c.bairro || c.cidade) && <div className="text-xs text-muted-foreground">{[c.bairro, c.cidade].filter(Boolean).join(" · ")}</div>}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            {clienteRef && (
+              <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><Check className="h-3.5 w-3.5 shrink-0" /> Região de <strong className="break-words">{clienteRef.nome}</strong> · raio {RAIO_INTERNO} m</p>
+            )}
+          </div>
+        )}
+
         {/* Botão principal */}
-        <Button onClick={consultar} disabled={carregando} className="w-full h-14 text-base bg-emerald-600 hover:bg-emerald-700" data-testid="button-consultar">
+        <Button onClick={consultar} disabled={carregando || (isInterno && !clienteRef)} className="w-full h-14 text-base bg-emerald-600 hover:bg-emerald-700" data-testid="button-consultar">
           {fase === "localizando" ? (
             <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Obtendo sua localização…</>
           ) : fase === "buscando" ? (
             <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Consultando…</>
           ) : (
-            <><Navigation className="h-5 w-5 mr-2" /> Consultar este local</>
+            <><Navigation className="h-5 w-5 mr-2" /> {isInterno ? "Consultar região do cliente" : "Consultar este local"}</>
           )}
         </Button>
 
-        {/* Busca por foto */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={(e) => onFotoEscolhida(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
-          data-testid="input-foto"
-        />
-        <Button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={fotoFase === "lendo"}
-          variant="outline"
-          className="w-full h-12 border-emerald-300 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-          data-testid="button-foto"
-        >
-          {fotoFase === "lendo" ? (
-            <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Lendo a foto…</>
-          ) : (
-            <><Camera className="h-5 w-5 mr-2" /> Buscar por foto (fachada)</>
-          )}
-        </Button>
+        {/* Busca por foto — só vendedor externo (em campo) */}
+        {!isInterno && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => onFotoEscolhida(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+              data-testid="input-foto"
+            />
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={fotoFase === "lendo"}
+              variant="outline"
+              className="w-full h-12 border-emerald-300 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              data-testid="button-foto"
+            >
+              {fotoFase === "lendo" ? (
+                <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Lendo a foto…</>
+              ) : (
+                <><Camera className="h-5 w-5 mr-2" /> Buscar por foto (fachada)</>
+              )}
+            </Button>
+          </>
+        )}
 
         {coords && fase !== "erro" && (
           <p className="text-center text-xs text-muted-foreground">
@@ -483,9 +582,18 @@ export default function ConsultaLocal() {
           <Card className="border-dashed">
             <CardContent className="py-8 text-center text-sm text-muted-foreground space-y-2">
               <Crosshair className="h-10 w-10 mx-auto text-emerald-500/70" />
-              <p>Pare em frente ao estabelecimento e toque em <strong>Consultar este local</strong>.</p>
-              <p>Buscamos leads e clientes num raio de {RAIO_PADRAO} m da sua posição.</p>
-              <p className="pt-1">Ou use <strong>Buscar por foto</strong> para conferir pelo nome da fachada.</p>
+              {isInterno ? (
+                <>
+                  <p>Busque um <strong>cliente de referência</strong> e toque em <strong>Consultar região do cliente</strong>.</p>
+                  <p>Mostramos leads e clientes do Integra num raio de {RAIO_INTERNO} m do cliente escolhido, e em <strong>Novos pontos</strong> os potenciais leads da região.</p>
+                </>
+              ) : (
+                <>
+                  <p>Pare em frente ao estabelecimento e toque em <strong>Consultar este local</strong>.</p>
+                  <p>Buscamos leads e clientes num raio de {RAIO_PADRAO} m da sua posição.</p>
+                  <p className="pt-1">Ou use <strong>Buscar por foto</strong> para conferir pelo nome da fachada.</p>
+                </>
+              )}
             </CardContent>
           </Card>
         )}
