@@ -8,7 +8,7 @@ import { agora, paredeBR, dataCalendario, hojeBR } from '@shared/tempo';
 import { authenticateUser } from './authMiddleware';
 import { INSTANCE_COMPANY_DATA } from './nfe-routes';
 import { registrarBoleto, cancelarBoleto } from './bb-boleto-service';
-import { baseDescontoCadastro, getDescontoBoletoAtivo, getDescontoBoletoHistorico, salvarDescontoBoleto, marcarDescontoAplicado } from './boleto-desconto-pipeline';
+import { baseDescontoCadastro, descontoCadastroJaAbatido, getDescontoBoletoAtivo, getDescontoBoletoHistorico, salvarDescontoBoleto, marcarDescontoAplicado } from './boleto-desconto-pipeline';
 import { createImmediateCharge } from './bb-pix-service';
 import { cieloDiag } from './hotsite-card';
 import { db } from './db';
@@ -4044,6 +4044,9 @@ export async function generateBoletoForReceivable(receivable: any, item: any): P
     // valor cheio do pedido (saldo + abatimento), nao sobre o saldo ja reduzido.
     let descontoBase: number | undefined;
     try { descontoBase = await baseDescontoCadastro(receivable.id, parseFloat(receivable.amount), parseFloat(receivable.amountPaid || '0')); } catch {}
+    // % do cadastro JA abatido no titulo (faturamento a partir de 13/out/2026): o boleto vai
+    // pelo valor final, sem "desconto ate o vencimento" — senao o desconto sairia em dobro.
+    try { if (await descontoCadastroJaAbatido(receivable.id)) { descontoPct = 0; descontoBase = undefined; } } catch {}
     const r = await registrarBoleto(account.id, {
       amount: parseFloat(receivable.amount),
       dueDate: receivable.dueDate ? new Date(receivable.dueDate) : new Date(Date.now() + 30 * 864e5),
@@ -4230,18 +4233,77 @@ export async function getHotsitePaidMethod(salesCardId: string | null | undefine
   return null;
 }
 
-// DESCONTO EXTRA NO BOLETO (lançado no card do pipeline) -> ABATIMENTO no titulo, antes
-// de registrar o boleto. Mesmo mecanismo do "desconto na baixa" (Contas a Receber):
-// linha em receivable_payments com amount 0 + discount, amount do titulo reduzido e
-// original_amount guardando o valor cheio. A NF-e NAO muda (desconto e so da cobranca).
-// Devolve o titulo atualizado (e ele que vai para o boleto). Nunca lanca.
+// ABATIMENTO NO TITULO antes de registrar o boleto (13/out/2026). Mesmo mecanismo do
+// "desconto na baixa" (Contas a Receber): linha em receivable_payments com amount 0 +
+// discount, amount do titulo reduzido e original_amount guardando o valor cheio, mais
+// financial_audit_log. A NF-e NAO muda (desconto e so da cobranca). Assim o boleto e
+// registrado no BB JA pelo valor final e o cliente ve no DDA o valor com todos os
+// descontos. Devolve o titulo atualizado (e ele que vai para o boleto). Lanca em erro.
+async function abaterNoTitulo(rcv: any, valor: number, now: Date, o: {
+  reference: string; texto: (v: number, antes: number, depois: number) => string;
+  userId?: string | null; userEmail?: string | null; createdBy?: string | null; role: string; extra?: any;
+}): Promise<any> {
+  if (!rcv?.id || !(valor > 0.004)) return rcv;
+  const antes = parseFloat(String(rcv.amount));
+  const v = Math.min(Number(valor.toFixed(2)), Number((antes - 0.01).toFixed(2)));
+  if (!(v > 0.004)) return rcv;
+  const depois = Number((antes - v).toFixed(2));
+  const texto = o.texto(v, antes, depois);
+  const pay: any = await storage.createReceivablePayment({
+    receivableId: rcv.id, paidAt: now, amount: '0.00', discount: v.toFixed(2),
+    paymentMethod: null, financialAccountId: null,
+    reference: o.reference, notes: texto, createdBy: o.createdBy || null,
+  } as any);
+  let upd: any = null;
+  try {
+    upd = await storage.updateReceivable(rcv.id, {
+      amount: depois.toFixed(2),
+      originalAmount: rcv.originalAmount || antes.toFixed(2),
+      notes: (rcv.notes ? String(rcv.notes) + '\n' : '') + texto,
+    } as any);
+  } catch (e: any) {
+    // sem o abatimento no titulo, a linha de desconto nao pode ficar sozinha
+    try { await db.execute(sql`DELETE FROM receivable_payments WHERE id = ${pay?.id}`); } catch {}
+    throw e;
+  }
+  try {
+    await db.execute(sql`
+      INSERT INTO financial_audit_log (action, entity, entity_id, user_id, user_email, user_role, amount, before_json, after_json, note, ip)
+      VALUES ('update', 'receivable', ${rcv.id}, ${o.userId || null}, ${o.userEmail || null}, ${o.role}, ${v},
+              ${JSON.stringify({ amount: antes.toFixed(2) })}::jsonb,
+              ${JSON.stringify({ amount: depois.toFixed(2), desconto: v.toFixed(2), origem: o.reference, ...(o.extra || {}) })}::jsonb,
+              ${texto}, null)`);
+  } catch (e: any) { console.warn('[ABATIMENTO] auditoria falhou (segue):', e?.message); }
+  return { ...rcv, ...(upd || {}), amount: depois.toFixed(2), originalAmount: rcv.originalAmount || antes.toFixed(2) };
+}
+
+// DESCONTO DE COBRANCA (%) DO CADASTRO -> abatido no titulo (antes ia ao BB como "desconto
+// ate o vencimento", e o DDA mostrava o valor sem ele). Base = valor cheio do titulo/parcela.
+// Em falha, devolve o titulo intacto: o boleto cai na regra antiga (desconto ate o
+// vencimento no BB), ou seja, o cliente nunca perde o desconto do cadastro.
+async function aplicarDescontoCadastroNoTitulo(rcv: any, pct: number, now: Date): Promise<any> {
+  try {
+    if (!(pct > 0 && pct < 100)) return rcv;
+    const base = parseFloat(String(rcv.amount));
+    const v = Number((base * pct / 100).toFixed(2));
+    const pctTxt = String(pct).replace('.', ',');
+    const r = await abaterNoTitulo(rcv, v, now, {
+      reference: 'desconto-cobranca-cadastro', role: 'sistema', createdBy: 'sistema (cadastro do cliente)',
+      extra: { pct },
+      texto: (vv, a, d) => `Desconto de cobrança do cadastro (${pctTxt}%) de R$ ${vv.toFixed(2)} abatido no faturamento — boleto registrado já pelo valor final. Título R$ ${a.toFixed(2)} -> R$ ${d.toFixed(2)}.`,
+    });
+    console.log(`[DESCONTO-CADASTRO] titulo ${rcv.titleNumber || rcv.id}: abatimento ${pctTxt}% = R$ ${v.toFixed(2)}`);
+    return r;
+  } catch (e: any) {
+    console.error(`[DESCONTO-CADASTRO] FALHA ao abater ${pct}% no titulo ${rcv?.id} — boleto sai com o desconto ate o vencimento (regra antiga):`, e?.message || e);
+    return rcv;
+  }
+}
+
+// DESCONTO EXTRA NO BOLETO (lançado no card do pipeline) -> abatimento no titulo.
+// Nunca lanca: em falha o boleto sai sem ele (e o erro fica no log).
 async function aplicarDescontoBoletoPipeline(rcv: any, valor: number, desc: any, now: Date): Promise<any> {
   try {
-    if (!rcv?.id || !(valor > 0.004)) return rcv;
-    const antes = parseFloat(String(rcv.amount));
-    const v = Math.min(Number(valor.toFixed(2)), Number((antes - 0.01).toFixed(2)));
-    if (!(v > 0.004)) return rcv;
-    const depois = Number((antes - v).toFixed(2));
     const quem = desc.userName ? `${desc.userName}${desc.userEmail ? ' <' + desc.userEmail + '>' : ''}` : (desc.userEmail || 'usuario');
     let quando = '';
     try {
@@ -4249,36 +4311,17 @@ async function aplicarDescontoBoletoPipeline(rcv: any, valor: number, desc: any,
       quando = ` em ${p.slice(8, 10)}/${p.slice(5, 7)}/${p.slice(0, 4)} ${p.slice(11, 16)}`;
     } catch {}
     const motivo = desc.motivo ? ` — motivo: ${desc.motivo}` : '';
-    const texto = `Desconto no boleto de R$ ${v.toFixed(2)} lançado no Pipeline por ${quem}${quando}${motivo}. Título R$ ${antes.toFixed(2)} -> R$ ${depois.toFixed(2)}.`;
-    const pay: any = await storage.createReceivablePayment({
-      receivableId: rcv.id, paidAt: now, amount: '0.00', discount: v.toFixed(2),
-      paymentMethod: null, financialAccountId: null,
-      reference: 'desconto-boleto-pipeline', notes: texto,
-      createdBy: desc.userEmail || desc.userName || null,
-    } as any);
-    let upd: any = null;
-    try {
-      upd = await storage.updateReceivable(rcv.id, {
-        amount: depois.toFixed(2),
-        originalAmount: rcv.originalAmount || antes.toFixed(2),
-        notes: (rcv.notes ? String(rcv.notes) + '\n' : '') + texto,
-      } as any);
-    } catch (e: any) {
-      // sem o abatimento no titulo, a linha de desconto nao pode ficar sozinha
-      try { await db.execute(sql`DELETE FROM receivable_payments WHERE id = ${pay?.id}`); } catch {}
-      throw e;
+    const r = await abaterNoTitulo(rcv, valor, now, {
+      reference: 'desconto-boleto-pipeline', role: 'pipeline',
+      userId: desc.userId, userEmail: desc.userEmail, createdBy: desc.userEmail || desc.userName || null,
+      extra: { descontoId: desc.id },
+      texto: (v, a, d) => `Desconto no boleto de R$ ${v.toFixed(2)} lançado no Pipeline por ${quem}${quando}${motivo}. Título R$ ${a.toFixed(2)} -> R$ ${d.toFixed(2)}.`,
+    });
+    if (r !== rcv) {
+      await marcarDescontoAplicado(desc.id, rcv.id);
+      console.log(`[DESCONTO-BOLETO] titulo ${rcv.titleNumber || rcv.id}: abatimento R$ ${valor.toFixed(2)} (pipeline ${desc.billingPipelineId}, por ${quem})`);
     }
-    try {
-      await db.execute(sql`
-        INSERT INTO financial_audit_log (action, entity, entity_id, user_id, user_email, user_role, amount, before_json, after_json, note, ip)
-        VALUES ('update', 'receivable', ${rcv.id}, ${desc.userId || null}, ${desc.userEmail || null}, 'pipeline', ${v},
-                ${JSON.stringify({ amount: antes.toFixed(2) })}::jsonb,
-                ${JSON.stringify({ amount: depois.toFixed(2), desconto: v.toFixed(2), origem: 'desconto-boleto-pipeline', descontoId: desc.id })}::jsonb,
-                ${texto}, null)`);
-    } catch (e: any) { console.warn('[DESCONTO-BOLETO] auditoria falhou (segue):', e?.message); }
-    await marcarDescontoAplicado(desc.id, rcv.id);
-    console.log(`[DESCONTO-BOLETO] titulo ${rcv.titleNumber || rcv.id}: abatimento R$ ${v.toFixed(2)} (pipeline ${desc.billingPipelineId}, por ${quem})`);
-    return { ...rcv, ...(upd || {}), amount: depois.toFixed(2), originalAmount: rcv.originalAmount || antes.toFixed(2) };
+    return r;
   } catch (e: any) {
     console.error(`[DESCONTO-BOLETO] FALHA ao abater R$ ${valor} no titulo ${rcv?.id} — boleto sai SEM o desconto do pipeline:`, e?.message || e);
     return rcv;
@@ -4354,6 +4397,19 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
   let descBoleto: any = null;
   try { descBoleto = await getDescontoBoletoAtivo(item.id); } catch (e: any) {
     console.error('[DESCONTO-BOLETO] nao foi possivel ler o desconto do pedido', item.id, e?.message);
+  }
+  // DESCONTO DE COBRANCA (%) do cadastro: no boleto, vai ABATIDO no titulo (valor final no DDA).
+  // Quem paga e' o destinatario (rede) -> cadastro dele.
+  let pctCadastro = 0;
+  if (!paidOnline && effForma === 'boleto') {
+    try {
+      const cidPct = (await resolveDestinoFiscal(item.customerId))?.destinatario?.id || item.customerId;
+      if (cidPct) {
+        const dq: any = await db.execute(sql`SELECT collection_discount FROM customers WHERE id = ${cidPct} LIMIT 1`);
+        pctCadastro = parseFloat(String((dq?.rows ?? dq ?? [])[0]?.collection_discount ?? '0')) || 0;
+      }
+    } catch (e: any) { console.warn('[DESCONTO-CADASTRO] nao leu o % do cadastro (boleto cai na regra antiga):', e?.message); }
+    if (!(pctCadastro > 0 && pctCadastro < 100)) pctCadastro = 0;
   }
   if (descBoleto && (paidOnline || effForma !== 'boleto')) {
     console.warn(`[DESCONTO-BOLETO] pedido ${item.orderNumber || item.id} tem desconto de R$ ${descBoleto.valor.toFixed(2)}, mas a cobranca nao sai em boleto (forma=${effForma}${paidOnline ? ', pago na loja' : ''}) — desconto NAO aplicado`);
@@ -4448,6 +4504,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
         dueDate: due,
         amount: (cents / 100).toFixed(2),
       });
+      if (pctCadastro > 0) rcv = await aplicarDescontoCadastroNoTitulo(rcv, pctCadastro, now);
       if (descBoleto && descCents > 0) rcv = await aplicarDescontoBoletoPipeline(rcv, descCents / 100, descBoleto, now);
       if (!firstRcv) firstRcv = rcv;
       emitCharge(rcv);
@@ -4496,6 +4553,7 @@ export async function createReceivableFromPipelineItem(item: any, fiscalInvoiceI
     }
   }
 
+  if (pctCadastro > 0) receivable = await aplicarDescontoCadastroNoTitulo(receivable, pctCadastro, now);
   if (descBoleto) receivable = await aplicarDescontoBoletoPipeline(receivable, descBoleto.valor, descBoleto, now);
 
   emitCharge(receivable);

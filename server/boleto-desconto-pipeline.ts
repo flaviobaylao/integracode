@@ -157,3 +157,18 @@ export async function baseDescontoCadastro(receivableId: string | null | undefin
   const d = await descontoPipelineNoTitulo(receivableId);
   return d > 0.005 ? Number((saldo + d).toFixed(2)) : undefined;
 }
+
+/**
+ * O "Desconto de Cobrança (%)" do cadastro já foi ABATIDO neste título no faturamento?
+ * (reference = 'desconto-cobranca-cadastro'). Se sim, o boleto vai pelo saldo, sem
+ * "desconto até o vencimento" no BB — senão o desconto sairia em dobro.
+ */
+export async function descontoCadastroJaAbatido(receivableId: string | null | undefined): Promise<boolean> {
+  if (!receivableId) return false;
+  try {
+    const r: any = await db.execute(sql`
+      SELECT 1 FROM receivable_payments
+       WHERE receivable_id = ${receivableId} AND reference = 'desconto-cobranca-cadastro' LIMIT 1`);
+    return rowsOf(r).length > 0;
+  } catch { return false; }
+}

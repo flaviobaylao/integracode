@@ -120,11 +120,11 @@ export default function DescontoBoletoBox({ itemId, canEdit, operationType }: { 
         <div className="text-xs bg-white/70 dark:bg-gray-900/40 rounded border border-amber-100 p-2 space-y-0.5">
           <div className="flex justify-between"><span>Valor do pedido (NF-e)</span><span>{brl(pv.total)}</span></div>
           {(pv.cadastroValor || 0) > 0 && (
-            <div className="flex justify-between"><span>− Desconto do cadastro ({String(pv.cadastroPct).replace('.', ',')}%, até o vencimento)</span><span>{brl(pv.cadastroValor)}</span></div>
+            <div className="flex justify-between"><span>− Desconto do cadastro ({String(pv.cadastroPct).replace('.', ',')}%)</span><span>{brl(pv.cadastroValor)}</span></div>
           )}
           {extra > 0 && <div className="flex justify-between"><span>− Desconto no boleto (pipeline)</span><span>{brl(extra)}</span></div>}
           <div className={`flex justify-between font-semibold border-t pt-0.5 ${boleto < 0.01 ? 'text-red-700' : 'text-green-800'}`}>
-            <span>Boleto pago até o vencimento</span><span>{brl(boleto)}</span>
+            <span>Valor do boleto (já no DDA)</span><span>{brl(boleto)}</span>
           </div>
         </div>
       )}
@@ -136,8 +136,8 @@ export default function DescontoBoletoBox({ itemId, canEdit, operationType }: { 
         </p>
       )}
       <p className="text-[10px] text-amber-700 mt-2">
-        Vale só para a cobrança: a NF-e sai com o valor cheio. No faturamento o desconto vira abatimento no título;
-        o % do cadastro continua calculado sobre o valor cheio do pedido.
+        Vale só para a cobrança: a NF-e sai com o valor cheio. No faturamento o % do cadastro (sobre o valor cheio)
+        e este desconto viram abatimento no título, e o boleto é registrado no banco já pelo valor final.
       </p>
 
       {historicoAntigo.length > 0 && (
