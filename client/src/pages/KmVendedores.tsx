@@ -95,6 +95,8 @@ export default function KmVendedores() {
   const [trechoSeller, setTrechoSeller] = useState<string>("");
   // Filtro por data dentro do mes ("" = todos os dias).
   const [trechoDia, setTrechoDia] = useState<string>("");
+  // Busca por cliente (texto livre: casa com o DE ou o PARA do trecho).
+  const [trechoCliente, setTrechoCliente] = useState<string>("");
   useEffect(() => { setTrechoDia(""); }, [mesTrechos]);
   const { data: trechosResp, isLoading: trechosLoading } = useQuery<TrechosResp>({
     queryKey: ["/api/admin/km-vendedores/trechos", mesTrechos],
@@ -184,8 +186,9 @@ export default function KmVendedores() {
     return todos.filter((t) =>
       (!trechoSeller || t.sellerId === trechoSeller) &&
       (!trechoDia || t.dia === trechoDia) &&
+      (!trechoCliente.trim() || `${t.de} ${t.para}`.toLowerCase().includes(trechoCliente.trim().toLowerCase())) &&
       (!q || (t.sellerName || "").toLowerCase().includes(q)));
-  }, [trechosResp, trechoSeller, trechoDia, busca]);
+  }, [trechosResp, trechoSeller, trechoDia, trechoCliente, busca]);
   // Dias do mes que tem trecho (respeitando o vendedor escolhido) para o filtro de data.
   const diasTrechos = useMemo(() => {
     const set = new Set<string>();
@@ -563,6 +566,11 @@ export default function KmVendedores() {
                   <option value="">Todas as datas</option>
                   {diasTrechos.map((d) => <option key={d} value={d}>{fmtDiaCurto(d)}</option>)}
                 </select>
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input value={trechoCliente} onChange={(e) => setTrechoCliente(e.target.value)} placeholder="Buscar cliente..." title="Filtra os trechos em que o cliente aparece no De ou no Para" className="rounded-md border bg-background pl-7 pr-6 py-1.5 text-sm w-48" />
+                  {trechoCliente ? <button type="button" onClick={() => setTrechoCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">x</button> : null}
+                </div>
                 <Button variant="outline" size="sm" onClick={exportarTrechos} disabled={trechosFiltrados.length === 0}>
                   <Download className="w-4 h-4 mr-1" /> Excel
                 </Button>
