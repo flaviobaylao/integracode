@@ -173,7 +173,79 @@ function buildRecurrenceDates(base: Date, rec: any): Date[] {
   return dates;
 }
 
+// ============================================================================
+// MOTIVO DO CANCELAMENTO — guarda de migracao no boot (13/out/2026).
+// ----------------------------------------------------------------------------
+// O build de producao NAO roda `db:push` (mesma razao de `garantirColunaSemana` em
+// carteira-reclassificacao-routes.ts). Entao o enum, as colunas, os indices e a
+// retro-classificacao do historico sao aplicados AQUI, na subida do servidor, em
+// instrucoes idempotentes: cada ALTER usa IF NOT EXISTS e cada UPDATE so toca em quem
+// ainda esta com cancel_reason IS NULL. Depois da 1a subida vira no-op (milissegundos).
+// E o espelho exato de migracao_cancel_reason.sql, que continua valendo para rodar na
+// mao se alguem preferir — rodar os dois nao causa efeito colateral.
+//
+// As rotas write-off e irmaos AGUARDAM esta promessa antes de tocar nas colunas, para
+// nao existir janela entre o deploy e a migracao em que a baixa administrativa falhe
+// com "column cancel_reason does not exist" (aconteceu em 13/10 por ~1h).
+// ============================================================================
+const MIGRACAO_CANCEL_REASON: string[] = [
+  `DO $$ BEGIN
+     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'receivable_cancel_reason') THEN
+       CREATE TYPE receivable_cancel_reason AS ENUM ('duplicidade','nfe_cancelada','devolucao','erro_faturamento','cobrado_fora','incobravel','operacao_sem_cr','outro');
+     END IF;
+   END $$`,
+  `ALTER TABLE receivables ADD COLUMN IF NOT EXISTS cancel_reason receivable_cancel_reason`,
+  `ALTER TABLE receivables ADD COLUMN IF NOT EXISTS canceled_at timestamp`,
+  `ALTER TABLE receivables ADD COLUMN IF NOT EXISTS canceled_by varchar`,
+  `ALTER TABLE receivables ADD COLUMN IF NOT EXISTS duplicate_of_id varchar`,
+  `CREATE INDEX IF NOT EXISTS idx_receivables_cancel_reason ON receivables (cancel_reason) WHERE cancel_reason IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_receivables_duplicate_of ON receivables (duplicate_of_id) WHERE duplicate_of_id IS NOT NULL`,
+  // --- retro-classificacao: do padrao mais especifico ao mais generico ---------------
+  `UPDATE receivables SET cancel_reason = 'duplicidade',
+      duplicate_of_id = COALESCE(duplicate_of_id, NULLIF(substring(notes from 'Titulo original mantido:\\s*([0-9a-fA-F-]{36})'), ''))
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%titulo repetido%'`,
+  `UPDATE receivables SET cancel_reason = 'duplicidade'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%baixa administrativa%'
+      AND (notes ILIKE '%duplicid%' OR notes ILIKE '%repetid%' OR notes ILIKE '%em dobro%' OR notes ILIKE '%dobrad%')`,
+  `UPDATE receivables SET cancel_reason = 'nfe_cancelada'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%cancelamento nf-e%'`,
+  `UPDATE receivables SET cancel_reason = 'devolucao'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%devolu%'`,
+  `UPDATE receivables SET cancel_reason = 'operacao_sem_cr'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%nao gera conta a receber%'`,
+  `UPDATE receivables SET cancel_reason = 'erro_faturamento'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL
+      AND (notes ILIKE '%rejeitada pela sefaz%' OR notes ILIKE '%venda rejeitada%')`,
+  `UPDATE receivables SET cancel_reason = 'cobrado_fora'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%baixa administrativa%'
+      AND (notes ILIKE '%boleto emitido%' OR notes ILIKE '%emitido via omie%' OR notes ILIKE '%emitido na puro%' OR notes ILIKE '%cobrado no 1.0%')`,
+  `UPDATE receivables SET cancel_reason = 'incobravel'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL AND notes ILIKE '%baixa administrativa%'`,
+  `UPDATE receivables SET cancel_reason = 'outro'
+    WHERE status::text = 'cancelada' AND cancel_reason IS NULL`,
+  `UPDATE receivables SET canceled_at = COALESCE(canceled_at, updated_at), canceled_by = COALESCE(canceled_by, updated_by)
+    WHERE status::text = 'cancelada' AND (canceled_at IS NULL OR canceled_by IS NULL)`,
+];
+let motivoCancelamentoPronto: Promise<void> | null = null;
+function garantirMotivoCancelamento(): Promise<void> {
+  if (!motivoCancelamentoPronto) {
+    motivoCancelamentoPronto = (async () => {
+      const t0 = Date.now();
+      for (const stmt of MIGRACAO_CANCEL_REASON) {
+        await db.execute(sql.raw(stmt));
+      }
+      console.log(`[financeiro] motivo do cancelamento: enum/colunas/retro-classificacao prontos (${Date.now() - t0}ms)`);
+    })().catch((e: any) => {
+      console.error('[financeiro] migracao motivo do cancelamento FALHOU:', e?.message);
+      motivoCancelamentoPronto = null; // proxima chamada tenta de novo
+      throw e;
+    });
+  }
+  return motivoCancelamentoPronto;
+}
+
 export function registerFinancialRoutes(app: Express) {
+  void garantirMotivoCancelamento().catch(() => { /* ja logado; as rotas re-tentam */ });
 
   // ============================================================================
   // REPAIR-BAIXAS — REMOVIDO EM 04/08/2026. NAO RECRIAR.
@@ -3090,6 +3162,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // como 5 NF-e autorizadas ficaram sem nenhum titulo vivo.
   app.get('/api/financial/receivables/:id/irmaos', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      await garantirMotivoCancelamento();
       const rec: any = await storage.getReceivable(req.params.id);
       if (!rec) return res.status(404).json({ message: 'Recebível não encontrado' });
       const q: any = await db.execute(sql`
@@ -3125,6 +3198,7 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // campo estruturado. Para `duplicidade` há duas exigências extras, explicadas abaixo.
   app.post('/api/financial/receivables/:id/write-off', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
+      await garantirMotivoCancelamento();
       const user = actorOf(req);
       const reason = String(req.body?.reason ?? '').trim();
       const MOTIVOS = ['duplicidade', 'nfe_cancelada', 'devolucao', 'erro_faturamento', 'cobrado_fora', 'incobravel', 'operacao_sem_cr', 'outro'];
