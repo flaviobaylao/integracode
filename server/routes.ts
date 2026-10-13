@@ -15137,7 +15137,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (currentCard.sellerId) {
           // Usar timezone do Brasil para garantir que encontramos a rota correta
           const todayBrazil = dataCalendario(hojeBR());
-          const dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
+          // DELEGACAO (13/out/2026): quem FAZ o check-in e quem rodou o km. Se o cliente e
+          // de outro vendedor (delegado/coberto) e o usuario logado tem Rota do Dia hoje, o
+          // checkpoint vai para a rota DELE (delegado), nao para a do dono da carteira.
+          const _execId = req.currentUser?.id && String(req.currentUser.id) !== String(currentCard.sellerId) ? String(req.currentUser.id) : null;
+          let dailyRoute = _execId ? await storage.getDailyRouteBySellerAndDate(_execId, todayBrazil) : null;
+          const _ckSellerId = dailyRoute ? (_execId as string) : currentCard.sellerId;
+          if (dailyRoute) console.log(`🔁 [DELEGACAO] check-in de ${_execId} no cliente de ${currentCard.sellerId} -> rota do delegado ${dailyRoute.id}`);
+          if (!dailyRoute) dailyRoute = await storage.getDailyRouteBySellerAndDate(currentCard.sellerId, todayBrazil);
           
           if (dailyRoute && hasGps) {
             console.log(`📍 Registrando checkpoint de check-in para sales_card ${id} na rota ${dailyRoute.id}`);
@@ -15147,7 +15154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               dailyRoute.id,
               id,  // visitId = sales_card ID (rotas usam sales_card IDs)
               currentCard.customerId,
-              currentCard.sellerId,
+              _ckSellerId,
               'check_in',
               _lat,
               _lng
@@ -19769,6 +19776,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _h = (t: any) => { try { return new Date(t).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
       res.json({ pendentes: (r?.rows || []).map((x: any) => ({ id: x.id, dia: x.dia, hora: _h(x.t), sellerId: x.seller_id, sellerName: x.seller_name, cliente: x.cliente, motivo: x.motivo, lat: Number(x.lat), lon: Number(x.lon) })) });
     } catch (e: any) { res.status(500).json({ message: 'Erro ao listar pendentes', error: e?.message }); }
+  });
+
+  // Corrige delegacao: move check-ins para a rota do vendedor que realmente os fez
+  // (delegado) e recalcula as duas rotas. body: { ids: string[], destinoRouteId }.
+  app.post('/api/admin/km-vendedores/mover-checkins', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+      const destino = String(req.body?.destinoRouteId || '');
+      const dr = destino ? await storage.getDailyRoute(destino) : null;
+      if (!ids.length || !dr) return res.status(400).json({ message: 'ids e destinoRouteId validos sao obrigatorios' });
+      const origens = new Set<string>();
+      for (const id of ids) {
+        const r: any = await db.execute(sql`SELECT daily_route_id FROM route_checkpoints WHERE id = ${id}`);
+        const org = (r?.rows || [])[0]?.daily_route_id;
+        if (!org) continue;
+        origens.add(String(org));
+        await db.execute(sql`UPDATE route_checkpoints SET daily_route_id = ${destino}, seller_id = ${(dr as any).sellerId} WHERE id = ${id}`);
+      }
+      const { recalculateRouteDistance } = await import('./actualRouteService');
+      for (const rid of String(req.body?.origemRouteIds || '').split(',').filter(Boolean)) origens.add(rid);
+      origens.add(destino);
+      for (const rid of Array.from(origens)) await recalculateRouteDistance(rid, storage);
+      const kms: any = {};
+      for (const rid of Array.from(origens)) kms[rid] = Number(((await storage.getDailyRoute(rid)) as any)?.totalActualDistance || 0);
+      res.json({ ok: true, movidos: ids.length, km: kms });
+    } catch (e: any) { res.status(500).json({ message: 'Erro ao mover check-ins', error: e?.message }); }
   });
 
   // Decisao do admin: aprovar (volta a contar km) ou recusar (nao conta). Recalcula a rota.
