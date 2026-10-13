@@ -14946,9 +14946,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS accuracy_m numeric`);
       await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS distance_to_customer_m numeric`);
       await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS clock_skew_s integer`);
+      await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS audit_motivo varchar`);
       await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_route_checkpoints_client_uuid ON route_checkpoints (client_uuid) WHERE client_uuid IS NOT NULL`);
       __ckColsReady = true;
     } catch (e: any) { console.warn('[CHECKIN-OFFLINE] ensure colunas:', e?.message); }
+  };
+
+  // AUDITORIA DE CHECK-IN (13/out/2026): a partir de KM_AUDIT_DESDE, check-in feito a
+  // mais de 150 m do cliente/lead, ou no MESMO PONTO (<= 15 m) do check-in anterior da
+  // rota em outro cliente, fica 'pending' com audit_motivo e NAO conta km ate o admin
+  // aprovar (aba "Check-ins pendentes" do modulo KM). Aprovado volta a contar; recusado
+  // vira 'cancelled'.
+  const KM_AUDIT_DESDE = '2026-10-13';
+  const __hav = (a: number, b: number, c: number, d: number): number => {
+    const R = 6371000, t = (x: number) => (x * Math.PI) / 180;
+    const p = t(c - a), q = t(d - b);
+    return 2 * R * Math.asin(Math.sqrt(Math.sin(p / 2) ** 2 + Math.cos(t(a)) * Math.cos(t(c)) * Math.sin(q / 2) ** 2));
+  };
+  const __okc = (a: any, b: any) => { const x = Number(a), y = Number(b); return isFinite(x) && isFinite(y) && !(Math.abs(x) < 0.001 && Math.abs(y) < 0.001); };
+  // Avalia UM check-in. So marca (nunca desmarca) e so mexe em quem esta 'validated'
+  // sem decisao do admin. Retorna o motivo ou null.
+  const __auditarCheckin = async (cpId: string): Promise<string | null> => {
+    await __ensureCheckinCols();
+    const r: any = await db.execute(sql`
+      SELECT rc.id, rc.daily_route_id, rc.customer_id, rc.checkpoint_time, rc.validation_status, rc.validated_by,
+             rc.audit_motivo, rc.checkpoint_latitude AS lat, rc.checkpoint_longitude AS lon,
+             to_char(dr.route_date, 'YYYY-MM-DD') AS dia,
+             COALESCE(c.latitude, l.latitude) AS clat, COALESCE(c.longitude, l.longitude) AS clon
+      FROM route_checkpoints rc
+      JOIN daily_routes dr ON dr.id = rc.daily_route_id
+      LEFT JOIN customers c ON c.id = rc.customer_id
+      LEFT JOIN leads l ON c.id IS NULL AND l.id = rc.customer_id
+      WHERE rc.id = ${cpId} AND rc.checkpoint_type = 'check_in'`);
+    const cp = (r?.rows || [])[0];
+    if (!cp || String(cp.dia) < KM_AUDIT_DESDE) return null;
+    if (cp.audit_motivo || cp.validated_by || String(cp.validation_status) === 'cancelled') return null;
+    if (!__okc(cp.lat, cp.lon)) return null;
+    let motivo: string | null = null;
+    if (__okc(cp.clat, cp.clon)) {
+      const d = __hav(Number(cp.lat), Number(cp.lon), Number(cp.clat), Number(cp.clon));
+      if (d > 150) motivo = `longe do cliente (${d >= 1000 ? (d / 1000).toFixed(1).replace('.', ',') + ' km' : Math.round(d) + ' m'})`;
+    }
+    if (!motivo) {
+      const pr: any = await db.execute(sql`
+        SELECT customer_id, checkpoint_latitude AS lat, checkpoint_longitude AS lon
+        FROM route_checkpoints
+        WHERE daily_route_id = ${cp.daily_route_id} AND checkpoint_type = 'check_in'
+          AND checkpoint_time < ${cp.checkpoint_time} AND id <> ${cp.id}
+          AND validation_status <> 'cancelled'
+        ORDER BY checkpoint_time DESC LIMIT 1`);
+      const prev = (pr?.rows || [])[0];
+      if (prev && String(prev.customer_id) !== String(cp.customer_id) && __okc(prev.lat, prev.lon)
+          && __hav(Number(cp.lat), Number(cp.lon), Number(prev.lat), Number(prev.lon)) <= 15) {
+        motivo = 'mesmo ponto do check-in anterior';
+      }
+    }
+    if (motivo) {
+      await db.execute(sql`UPDATE route_checkpoints SET validation_status = 'pending', audit_motivo = ${motivo} WHERE id = ${cp.id}`);
+      console.log(`⏳ [AUDIT-CHECKIN] ${cp.id} pendente: ${motivo}`);
+    }
+    return motivo;
   };
 
   app.post('/api/sales-cards/:id/check-in', authenticateUser, upload.single('photo'), async (req: any, res) => {
@@ -15119,6 +15176,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
               `);
               if (_status === 'pending') console.log(`⏳ [CHECKIN-OFFLINE] fora dos criterios — aguardando aprovacao (dist=${checkInDistance}, skew=${_skew}s)`);
             } catch (e: any) { console.warn('[CHECKIN-OFFLINE] gravar proveniencia:', e?.message); }
+            // Auditoria: longe do cliente / mesmo ponto do anterior -> pendente de aprovacao.
+            try {
+              const _ult: any = await db.execute(sql`
+                SELECT id FROM route_checkpoints
+                WHERE daily_route_id = ${dailyRoute.id} AND customer_id = ${currentCard.customerId}
+                  AND checkpoint_type = 'check_in' AND created_at >= now() - interval '2 minutes'
+                ORDER BY created_at DESC LIMIT 1`);
+              const _cpId = (_ult?.rows || [])[0]?.id;
+              if (_cpId && await __auditarCheckin(String(_cpId))) {
+                const { recalculateRouteDistance } = await import('./actualRouteService');
+                await recalculateRouteDistance(String(dailyRoute.id), storage);
+              }
+            } catch (e: any) { console.warn('[AUDIT-CHECKIN] check-in:', e?.message); }
           } else if (dailyRoute) {
             console.log(`ℹ️ Check-in sem GPS - checkpoint de rota não registrado (sales_card ${id})`);
           } else {
@@ -19604,7 +19674,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         WHERE rc.daily_route_id = ${r.id} AND rc.checkpoint_type = 'check_in'
           AND COALESCE(rc.validation_status, 'validated') <> 'cancelled'
           -- check-in offline fora dos criterios fica pendente de aprovacao e nao conta
-          AND NOT (COALESCE(rc.validation_status, '') = 'pending' AND COALESCE(rc.source, 'online') = 'offline')
+          AND NOT (COALESCE(rc.validation_status, '') = 'pending' AND (COALESCE(rc.source, 'online') = 'offline' OR rc.audit_motivo IS NOT NULL))
         ORDER BY rc.checkpoint_time ASC
       `);
       const pts = ((cr?.rows || []) as any[]).filter((p) => _ok(p.lat, p.lon));
@@ -19677,6 +19747,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
       gravadoEm: rows.length ? new Date(rows[0].gravado_em).toISOString() : null,
     };
   };
+
+  // Check-ins pendentes de aprovacao (auditoria + offline fora dos criterios).
+  app.get('/api/admin/km-vendedores/pendentes', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      await __ensureCheckinCols();
+      const r: any = await db.execute(sql`
+        SELECT rc.id, to_char(dr.route_date, 'YYYY-MM-DD') AS dia, rc.checkpoint_time AS t, dr.seller_id,
+               COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email) AS seller_name,
+               COALESCE(NULLIF(c.fantasy_name, ''), c.name, 'Lead: ' || NULLIF(l.fantasy_name, ''), 'Cliente sem cadastro') AS cliente,
+               COALESCE(rc.audit_motivo, CASE WHEN rc.source = 'offline' THEN 'check-in offline fora dos critérios' END) AS motivo,
+               rc.checkpoint_latitude AS lat, rc.checkpoint_longitude AS lon
+        FROM route_checkpoints rc
+        JOIN daily_routes dr ON dr.id = rc.daily_route_id
+        LEFT JOIN users u ON u.id = dr.seller_id
+        LEFT JOIN customers c ON c.id = rc.customer_id
+        LEFT JOIN leads l ON c.id IS NULL AND l.id = rc.customer_id
+        WHERE rc.checkpoint_type = 'check_in' AND rc.validation_status = 'pending'
+          AND (rc.audit_motivo IS NOT NULL OR COALESCE(rc.source, 'online') = 'offline')
+        ORDER BY rc.checkpoint_time DESC LIMIT 500`);
+      const _h = (t: any) => { try { return new Date(t).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+      res.json({ pendentes: (r?.rows || []).map((x: any) => ({ id: x.id, dia: x.dia, hora: _h(x.t), sellerId: x.seller_id, sellerName: x.seller_name, cliente: x.cliente, motivo: x.motivo, lat: Number(x.lat), lon: Number(x.lon) })) });
+    } catch (e: any) { res.status(500).json({ message: 'Erro ao listar pendentes', error: e?.message }); }
+  });
+
+  // Decisao do admin: aprovar (volta a contar km) ou recusar (nao conta). Recalcula a rota.
+  app.post('/api/admin/km-vendedores/pendentes/:id', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const acao = String(req.body?.acao || '');
+      if (!['aprovar', 'recusar'].includes(acao)) return res.status(400).json({ message: 'acao deve ser aprovar ou recusar' });
+      const r: any = await db.execute(sql`
+        UPDATE route_checkpoints SET validation_status = ${acao === 'aprovar' ? 'validated' : 'cancelled'},
+               validated_by = ${req.currentUser?.id || null}, validated_at = now()
+        WHERE id = ${req.params.id} AND validation_status = 'pending'
+        RETURNING daily_route_id`);
+      const rid = (r?.rows || [])[0]?.daily_route_id;
+      if (!rid) return res.status(404).json({ message: 'Check-in pendente nao encontrado' });
+      const { recalculateRouteDistance } = await import('./actualRouteService');
+      await recalculateRouteDistance(String(rid), storage);
+      const dr = await storage.getDailyRoute(String(rid));
+      res.json({ ok: true, acao, routeId: rid, kmRota: Number((dr as any)?.totalActualDistance || 0) });
+    } catch (e: any) { res.status(500).json({ message: 'Erro ao decidir', error: e?.message }); }
+  });
+
+  // Auditoria retroativa de um intervalo (>= KM_AUDIT_DESDE): marca os check-ins suspeitos
+  // como pendentes e recalcula a km das rotas afetadas. Admin, idempotente.
+  app.post('/api/admin/km-vendedores/auditar', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const de = String(req.body?.de || KM_AUDIT_DESDE) < KM_AUDIT_DESDE ? KM_AUDIT_DESDE : String(req.body?.de || KM_AUDIT_DESDE);
+      const ate = String(req.body?.ate || getBrazilDateString());
+      const r: any = await db.execute(sql`
+        SELECT rc.id, rc.daily_route_id FROM route_checkpoints rc JOIN daily_routes dr ON dr.id = rc.daily_route_id
+        WHERE rc.checkpoint_type = 'check_in' AND dr.route_date >= ${de}::date AND dr.route_date <= ${ate}::date
+        ORDER BY rc.daily_route_id, rc.checkpoint_time`);
+      const marcados: any[] = []; const rotas = new Set<string>();
+      for (const x of (r?.rows || []) as any[]) {
+        const m = await __auditarCheckin(String(x.id));
+        if (m) { marcados.push({ id: x.id, motivo: m }); rotas.add(String(x.daily_route_id)); }
+      }
+      const { recalculateRouteDistance } = await import('./actualRouteService');
+      for (const rid of Array.from(rotas)) await recalculateRouteDistance(rid, storage);
+      res.json({ de, ate, verificados: (r?.rows || []).length, marcados: marcados.length, rotasRecalculadas: rotas.size, detalhes: marcados });
+    } catch (e: any) { res.status(500).json({ message: 'Erro na auditoria', error: e?.message }); }
+  });
 
   app.get('/api/admin/km-vendedores/trechos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
