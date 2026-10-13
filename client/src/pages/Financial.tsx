@@ -27,7 +27,7 @@ import {
   Search, CreditCard, TrendingUp, TrendingDown, BarChart3, FileCode, Database,
   CheckCircle2, Clock, XCircle, AlertTriangle, Banknote, Landmark, QrCode,
   History, ArrowUpCircle, ArrowDownCircle, Wifi, WifiOff, Copy, RefreshCw,
-  Key, Ban, Camera, ArrowUp, ArrowDown, ArrowUpDown
+  Key, Ban, Camera, ArrowUp, ArrowDown, ArrowUpDown, Smartphone
 } from 'lucide-react';
 
 const INSTANCES = [
@@ -126,6 +126,20 @@ function isOverdueByDate(dueDate?: string) {
   const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   return venc < hoje;
 }
+
+// Rotulo curto do motivo do cancelamento (campo cancel_reason). O que a tela precisa
+// responder num relance e: este titulo sumiu porque a venda continua cobrada em outro
+// titulo (duplicidade) ou porque ela deixou de ser cobrada?
+const CANCEL_LABEL: Record<string, string> = {
+  duplicidade: 'Duplicidade',
+  nfe_cancelada: 'NF-e cancelada',
+  devolucao: 'Devolução',
+  erro_faturamento: 'Erro de faturamento',
+  cobrado_fora: 'Cobrado no 1.0',
+  incobravel: 'Incobrável',
+  operacao_sem_cr: 'Não gera CR',
+  outro: 'Outro',
+};
 
 function getReceivableStatusBadge(status: string, dueDate?: string, pddAt?: string | null) {
   if (pddAt && (status === 'a_vencer' || status === 'vencida')) {
@@ -632,6 +646,16 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   const [showDetail, setShowDetail] = useState(false);
   const [showPhotos, setShowPhotos] = useState(false); // comprovante de entrega (fotos do entregador)
   const [photosItem, setPhotosItem] = useState<any>(null);
+  // BAIXA ADMINISTRATIVA — deixou de ser um window.prompt de texto livre. Agora exige a
+  // CLASSIFICACAO do cancelamento, e quando ela e "duplicidade" exige apontar qual titulo
+  // da mesma venda permanece valendo.
+  const [showBaixa, setShowBaixa] = useState(false);
+  const [baixaItem, setBaixaItem] = useState<any>(null);
+  const [baixaClasse, setBaixaClasse] = useState('');
+  const [baixaMotivo, setBaixaMotivo] = useState('');
+  const [baixaIrmaos, setBaixaIrmaos] = useState<any[]>([]);
+  const [baixaMantido, setBaixaMantido] = useState('');
+  const [baixaBusy, setBaixaBusy] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [form, setForm] = useState<any>({});
   const [paymentForm, setPaymentForm] = useState<any>({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
@@ -748,6 +772,10 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     return true;
   });
   applyFinancialSort(filtered, sortConfig, 'customerName');
+  // id -> numero do titulo, para o selo de duplicidade poder dizer "Duplicidade de NF-xxxxx"
+  // em vez de so "Duplicidade". So enxerga o que esta carregado na tela; quando o titulo
+  // mantido nao esta na lista filtrada, o selo cai no texto curto, sem quebrar.
+  const tituloPorId = new Map<string, string>(receivables.map((x: any) => [String(x.id), String(x.titleNumber || '')]).filter((p: any) => p[1]));
 
   // Totais: no modo paginado usa o RESUMO do servidor (sobre todas as contas); com filtro
   // do cliente ativo, soma sobre o conjunto completo carregado (filtered).
@@ -816,6 +844,19 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
     } catch (e: any) { alert('Erro ao gerar boleto: ' + (e?.message || e)); }
   };
 
+  // Caminho INVERSO do trocarParaBoleto: cancela a cobrança atual (boleto ou PIX) e emite
+  // uma cobrança PIX nova. Resolve o "emitiu boleto mas o título é PIX".
+  const trocarParaPix = async (r: any) => {
+    if (!confirm(`Trocar a cobrança de "${r.titleNumber || r.customerName}" para PIX?\n\nA cobrança atual (boleto ou PIX) será CANCELADA no banco e uma nova cobrança PIX será gerada.`)) return;
+    try {
+      const rg = await fetch(`/api/financial/receivables/${r.id}/regenerate-pix`, { method: 'POST', credentials: 'include' });
+      const jr = await rg.json();
+      if (!(jr.success || jr.ok)) { alert('Falha ao gerar PIX: ' + (jr.error || jr.persistError || 'erro')); return; }
+      alert('Cobrança PIX gerada com sucesso.' + (jr.canceladoAnterior ? '\n\nA cobrança anterior (boleto/PIX) foi cancelada no banco.' : ''));
+      queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
+    } catch (e: any) { alert('Erro ao gerar PIX: ' + (e?.message || e)); }
+  };
+
   // BAIXA ADMINISTRATIVA (100%): fecha o título SEM entrada de dinheiro (perdão /
   // incobrável). Exige MOTIVO (obrigatório) e registra quem executou (backend grava
   // updated_by + auditoria financeira). Não conta como recebimento no caixa.
@@ -838,18 +879,33 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
   };
 
   const baixaAdministrativa = async (r: any) => {
-    const saldo = Math.max(0, (Number(r.amount || 0) - Number(r.amountPaid || 0)));
-    const motivo = window.prompt(`BAIXA ADMINISTRATIVA (100%) do título "${r.titleNumber || r.customerName}" — saldo ${formatCurrency(saldo)}.\n\nFecha o título SEM entrada de dinheiro (perdão / incobrável) e fica registrado com o seu usuário.\n\nDigite o MOTIVO (obrigatório):`);
-    if (motivo === null) return;
-    if (!motivo.trim()) { alert('O motivo é obrigatório para a baixa administrativa.'); return; }
-    if (!confirm(`Confirmar baixa administrativa de ${formatCurrency(saldo)} no título "${r.titleNumber || r.customerName}"?\n\nMotivo: ${motivo.trim()}\n\nEssa ação FECHA o título e NÃO conta como recebimento.`)) return;
+    setBaixaItem(r); setBaixaClasse(''); setBaixaMotivo(''); setBaixaMantido(''); setBaixaIrmaos([]);
+    setShowBaixa(true);
+    // Carrega os titulos da MESMA venda em paralelo: so com eles na tela da para dizer se o
+    // caso e duplicidade (sobra outro titulo) ou a venda inteira deixando de ser cobrada.
     try {
-      const rr = await fetch(`/api/financial/receivables/${r.id}/write-off`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ reason: motivo.trim() }) });
+      const rr = await fetch(`/api/financial/receivables/${r.id}/irmaos`, { credentials: 'include' });
+      const j = await rr.json();
+      setBaixaIrmaos(Array.isArray(j.irmaos) ? j.irmaos : []);
+    } catch { setBaixaIrmaos([]); }
+  };
+
+  const confirmarBaixa = async () => {
+    const r = baixaItem; if (!r) return;
+    if (!baixaClasse) { alert('Selecione a classificação do cancelamento.'); return; }
+    if (!baixaMotivo.trim()) { alert('O motivo é obrigatório para a baixa administrativa.'); return; }
+    if (baixaClasse === 'duplicidade' && !baixaMantido) { alert('Aponte qual título permanece valendo.'); return; }
+    const saldo = Math.max(0, (Number(r.amount || 0) - Number(r.amountPaid || 0)));
+    if (!confirm(`Confirmar baixa administrativa de ${formatCurrency(saldo)} no título "${r.titleNumber || r.customerName}"?\n\nEssa ação FECHA o título e NÃO conta como recebimento.`)) return;
+    setBaixaBusy(true);
+    try {
+      const rr = await fetch(`/api/financial/receivables/${r.id}/write-off`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ reason: baixaMotivo.trim(), cancelReason: baixaClasse, duplicateOfId: baixaMantido || null }) });
       const j = await rr.json();
       if (!(j.ok || j.success)) { alert('Falha na baixa: ' + (j.message || j.error || 'erro')); return; }
-      alert('Baixa administrativa registrada com sucesso.');
+      setShowBaixa(false);
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
     } catch (e: any) { alert('Erro ao dar baixa: ' + (e?.message || e)); }
+    finally { setBaixaBusy(false); }
   };
 
   // FASE 3.4e - categorias analiticas do DRE p/ o campo obrigatorio do formulario
@@ -1046,7 +1102,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                   <TableCell className="max-w-[200px] truncate">{r.description || '-'}</TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(r.amount)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(r.amountPaid)}</TableCell>
-                  <TableCell>{getReceivableStatusBadge(r.status, r.dueDate, r.pddAt)}{String(r.notes || '').includes('BAIXA ADMINISTRATIVA') && (<Badge variant="outline" className="ml-1 border-rose-400 text-rose-700 px-1.5 py-0" title="Baixa administrativa (perdão/incobrável)">Baixa adm.</Badge>)}</TableCell>
+                  <TableCell>{getReceivableStatusBadge(r.status, r.dueDate, r.pddAt)}{r.cancelReason ? (<Badge variant="outline" className={`ml-1 px-1.5 py-0 ${r.cancelReason === 'duplicidade' ? 'border-sky-400 text-sky-700' : 'border-rose-400 text-rose-700'}`} title={r.cancelReason === 'duplicidade' ? ('Duplicidade — o título que permanece é ' + (tituloPorId.get(String(r.duplicateOfId)) || 'outro desta mesma venda')) : ('Cancelamento classificado como: ' + (CANCEL_LABEL[String(r.cancelReason)] || r.cancelReason))}>{CANCEL_LABEL[String(r.cancelReason)] || r.cancelReason}{r.cancelReason === 'duplicidade' && tituloPorId.get(String(r.duplicateOfId)) ? ` de ${tituloPorId.get(String(r.duplicateOfId))}` : ''}</Badge>) : (String(r.notes || '').includes('BAIXA ADMINISTRATIVA') && (<Badge variant="outline" className="ml-1 border-rose-400 text-rose-700 px-1.5 py-0" title="Baixa administrativa (perdão/incobrável)">Baixa adm.</Badge>))}</TableCell>
                   <TableCell><LancamentoBadges item={r} /></TableCell>
                   <TableCell>{formatDate(r.dueDate)}</TableCell>
                   <TableCell>{r.paymentMethod || '-'}</TableCell>
@@ -1058,6 +1114,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                       {r.deliveryPhotos?.length ? (<Button variant="ghost" size="icon" title="Comprovante de entrega (foto do entregador)" onClick={() => { setPhotosItem(r); setShowPhotos(true); }}><Camera className="h-4 w-4 text-emerald-600" /></Button>) : null}
                       {(!readOnly || canBoleto) && (<Button variant="ghost" size="icon" title="Boleto bancário / PIX" onClick={() => emitirCobranca(r)}><QrCode className="h-4 w-4 text-blue-600" /></Button>)}
                       {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar boleto (trocar cobrança) — cancela o PIX/boleto atual e emite um boleto novo" onClick={() => trocarParaBoleto(r)}><Landmark className="h-4 w-4 text-amber-600" /></Button>)}
+                      {(!readOnly || canBoleto) && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Gerar PIX (trocar cobrança) — cancela o boleto/PIX atual e emite uma cobrança PIX nova" onClick={() => trocarParaPix(r)}><Smartphone className="h-4 w-4 text-teal-600" /></Button>)}
                       {isAdminUser && ['a_vencer', 'vencida'].includes(String(r.status)) && (r.pddAt || isOverdueByDate(r.dueDate)) && (<Button variant="ghost" size="icon" title={r.pddAt ? 'Tirar de PDD (voltar para Vencida)' : 'Mover para PDD (previsão de devedor duvidoso)'} onClick={() => moverPdd(r)}><AlertTriangle className={`h-4 w-4 ${r.pddAt ? 'text-purple-700' : 'text-purple-400'}`} /></Button>)}
                       {!readOnly && ['a_vencer', 'vencida'].includes(String(r.status)) && (<Button variant="ghost" size="icon" title="Baixa administrativa 100% (perdão/incobrável — exige motivo; NÃO conta como recebimento)" onClick={() => baixaAdministrativa(r)}><Ban className="h-4 w-4 text-rose-600" /></Button>)}
                       {!readOnly && (<><Button variant="ghost" size="icon" onClick={() => { setSelectedItem(r); setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: hojeBR(), reference: '', notes: '' }); setShowPayment(true); }}><Banknote className="h-4 w-4 text-green-600" /></Button>
@@ -1140,6 +1197,75 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancelar</Button>
             <Button onClick={() => createMutation.mutate(form)} disabled={createMutation.isPending || !form.chartAccountId}>
               {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Criar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* BAIXA ADMINISTRATIVA — classificacao obrigatoria do cancelamento. */}
+      <Dialog open={showBaixa} onOpenChange={(v) => { if (!baixaBusy) setShowBaixa(v); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Ban className="h-5 w-5 text-rose-600" /> Baixa administrativa (100%)</DialogTitle>
+            <DialogDescription>
+              Fecha o título <span className="font-medium text-foreground">{baixaItem?.titleNumber || baixaItem?.customerName || ''}</span> sem entrada de dinheiro
+              {baixaItem ? <> — saldo <span className="font-medium text-foreground">{formatCurrency(Math.max(0, Number(baixaItem.amount || 0) - Number(baixaItem.amountPaid || 0)))}</span></> : null}. Não conta como recebimento.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Classificação do cancelamento *</Label>
+              <Select value={baixaClasse} onValueChange={(v) => { setBaixaClasse(v); if (v !== 'duplicidade') setBaixaMantido(''); }}>
+                <SelectTrigger data-testid="select-classe-baixa"><SelectValue placeholder="Selecione o que aconteceu" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="duplicidade">Duplicidade — existe outro título da mesma venda valendo</SelectItem>
+                  <SelectItem value="erro_faturamento">Erro de faturamento — a venda não será cobrada</SelectItem>
+                  <SelectItem value="nfe_cancelada">NF-e cancelada na SEFAZ</SelectItem>
+                  <SelectItem value="devolucao">Devolução de venda</SelectItem>
+                  <SelectItem value="cobrado_fora">Cobrado em outro sistema (Omie / 1.0)</SelectItem>
+                  <SelectItem value="incobravel">Incobrável / perdão</SelectItem>
+                  <SelectItem value="operacao_sem_cr">Operação que não gera conta a receber</SelectItem>
+                  <SelectItem value="outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {baixaClasse === 'duplicidade' && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <Label className="text-xs text-amber-900">Qual título PERMANECE valendo? *</Label>
+                {baixaIrmaos.filter((x) => x.vivo).length === 0 ? (
+                  <p className="text-sm text-amber-900 mt-2">
+                    Nenhum outro título desta venda está ativo. Então não é duplicidade — se a venda inteira deixou de ser
+                    cobrada, classifique como <span className="font-medium">erro de faturamento</span>, devolução ou incobrável.
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-1">
+                    {baixaIrmaos.filter((x) => x.vivo).map((x) => (
+                      <label key={x.id} className="flex items-center gap-2 text-sm bg-white rounded border px-2 py-1.5 cursor-pointer">
+                        <input type="radio" name="baixa-mantido" value={x.id} checked={baixaMantido === x.id} onChange={() => setBaixaMantido(x.id)} />
+                        <span className="font-medium">{x.titleNumber || '(sem número)'}</span>
+                        <span className="text-muted-foreground">{formatCurrency(x.amount)} · venc. {formatDate(x.dueDate)} · {x.status}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {baixaIrmaos.filter((x) => !x.vivo).length > 0 && (
+                  <p className="text-xs text-amber-800 mt-2">
+                    Outros {baixaIrmaos.filter((x) => !x.vivo).length} título(s) desta venda já estão cancelados.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <Label className="text-xs">Motivo (texto livre) *</Label>
+              <Textarea rows={3} value={baixaMotivo} onChange={(e) => setBaixaMotivo(e.target.value)} placeholder="Descreva o que aconteceu — fica registrado com o seu usuário." data-testid="input-motivo-baixa" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBaixa(false)} disabled={baixaBusy}>Cancelar</Button>
+            <Button onClick={confirmarBaixa} disabled={baixaBusy || !baixaClasse || !baixaMotivo.trim() || (baixaClasse === 'duplicidade' && !baixaMantido)}>
+              {baixaBusy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Confirmar baixa
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1331,6 +1457,7 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
                 <div><Label className="text-xs text-muted-foreground">Valor</Label><p className="font-bold text-green-700">{formatCurrency(selectedItem.amount)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Valor Pago</Label><p>{formatCurrency(selectedItem.amountPaid)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Status</Label><div>{getReceivableStatusBadge(selectedItem.status, selectedItem.dueDate)}</div></div>
+                {selectedItem.cancelReason && (<div><Label className="text-xs text-muted-foreground">Motivo do cancelamento</Label><p>{CANCEL_LABEL[String(selectedItem.cancelReason)] || selectedItem.cancelReason}{selectedItem.duplicateOfId ? ` · mantido: ${tituloPorId.get(String(selectedItem.duplicateOfId)) || selectedItem.duplicateOfId}` : ''}{selectedItem.canceledBy ? ` · por ${selectedItem.canceledBy}` : ''}</p></div>)}
                 <div><Label className="text-xs text-muted-foreground">Emissão</Label><p>{formatDate(history?.receivable?.issueDate || selectedItem.issueDate)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Vencimento</Label><p>{formatDate(selectedItem.dueDate)}</p></div>
                 <div><Label className="text-xs text-muted-foreground">Forma Pgto</Label><p>{selectedItem.paymentMethod || '-'}</p></div>
