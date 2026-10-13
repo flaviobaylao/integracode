@@ -614,6 +614,59 @@ function maybeLiberarLeadsRadarExpirados(): void {
   })();
 }
 
+// 🧾 Enriquecimento dos cards de CLIENTE da Consulta no local: último pedido implantado
+// (Pipeline de Faturamento, fora da Lixeira — mesma regra da ficha do cliente) e se o telefone
+// atual do cliente já foi confirmado por WhatsApp. Duas consultas agrupadas p/ toda a lista.
+async function __enriquecerClientesConsulta(lista: any[]): Promise<void> {
+  const clientes = lista.filter((x) => x && (x.tipo === 'cliente' || x.tipo === 'cliente_inativo') && x.id);
+  if (!clientes.length) return;
+  const ids = Array.from(new Set(clientes.map((x) => String(x.id))));
+  const inIds = sql.join(ids.map((x) => sql`${x}`), sql`, `);
+  const ultimo: Record<string, any> = {};
+  try {
+    const r: any = await db.execute(sql`
+      SELECT DISTINCT ON (bp.customer_id)
+             bp.customer_id, bp.created_at, bp.sale_value, bp.order_number, bp.invoice_number, bp.stage::text AS stage
+      FROM billing_pipeline bp
+      WHERE bp.customer_id IN (${inIds}) AND bp.stage::text <> 'lixeira'
+      ORDER BY bp.customer_id, bp.created_at DESC
+    `);
+    for (const p of (r?.rows || []) as any[]) ultimo[String(p.customer_id)] = p;
+  } catch (e: any) { console.warn('[consulta-local] último pedido indisponível:', e?.message || e); }
+  const confirmados = new Set<string>(); // "customerId|digitos"
+  try {
+    const r2: any = await db.execute(sql`
+      SELECT DISTINCT customer_id, phone_digits FROM phone_verifications
+      WHERE customer_id IN (${inIds}) AND status = 'confirmed'
+    `);
+    for (const v of (r2?.rows || []) as any[]) confirmados.add(`${v.customer_id}|${v.phone_digits}`);
+  } catch (_e) { /* tabela criada sob demanda — pode não existir ainda */ }
+  const ETAPA: Record<string, string> = {
+    agendado: 'Agendado', pedido: 'Pedido', a_faturar: 'A faturar', faturado: 'Faturado', impresso: 'Impresso',
+    aguardando_rota: 'Aguardando rota', em_rota: 'Em rota', entregue: 'Entregue',
+  };
+  for (const c of clientes) {
+    const digitos = String(c.telefone || '').replace(/\D/g, '');
+    c.whatsapp = digitos.length >= 10 ? (digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`) : null;
+    c.whatsConfirmado = !!(digitos && confirmados.has(`${c.id}|${digitos}`));
+    const p = ultimo[String(c.id)];
+    if (p) {
+      const nf = String(p.invoice_number || '').trim();
+      const ped = String(p.order_number || '').trim();
+      c.ultimoPedido = {
+        data: p.created_at || null,
+        valor: p.sale_value != null ? Number(p.sale_value) : null,
+        // Faturado → mostra a NF; senão, o nº do pedido.
+        numeroTipo: nf ? 'NF' : (ped ? 'Pedido' : null),
+        numero: nf || ped || null,
+        etapa: ETAPA[String(p.stage)] || String(p.stage || ''),
+      };
+    } else {
+      c.ultimoPedido = null;
+    }
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -24198,7 +24251,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       out.sort((a, b) => a.distancia - b.distancia);
-      return res.json({ ok: true, raio, total: out.length, resultados: out.slice(0, 20) });
+      const _resultados = out.slice(0, 20);
+      await __enriquecerClientesConsulta(_resultados); // WhatsApp + último pedido nos cards de cliente
+      return res.json({ ok: true, raio, total: out.length, resultados: _resultados });
     } catch (e: any) {
       console.error('[consulta-local] erro:', e);
       return res.status(500).json({ ok: false, message: String((e && e.message) || e) });
@@ -24634,6 +24689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (_e) {}
       encontrados.sort((a, b) => b.score - a.score);
       const top = encontrados.slice(0, 10);
+      await __enriquecerClientesConsulta(top); // WhatsApp + último pedido nos cards de cliente
       return res.json({ ok: true, texto, linhas, total: top.length, encontrados: top });
     } catch (e: any) { console.error('[foto] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
