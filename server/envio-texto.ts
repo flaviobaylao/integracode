@@ -178,7 +178,7 @@ export async function enviarInterno(toPhone: string, texto: string): Promise<Env
   if (!destino) return { success: false, error: 'Telefone vazio' };
   if (!texto || !texto.trim()) return { success: false, error: 'Mensagem vazia' };
 
-  const { sendUmblerTalkText } = await import('./chat-routes');
+  const { sendUmblerTalkText, umblerLiveChannels } = await import('./chat-routes');
   const { canalAtivoPorTelefone } = await import('./canais-gestao');
 
   // Preferencia configuravel; sem ela, os comuns na ordem e o oficial por ultimo.
@@ -189,8 +189,20 @@ export async function enviarInterno(toPhone: string, texto: string): Promise<Env
   for (const c of CANAIS) if (c.fone !== FONE_1841) põe(c.fone);
   põe(FONE_1841);
 
+  // Canais REALMENTE conectados no Umbler Talk. Um canal Offline (ex.: 2630 caído)
+  // aceita a chamada (HTTP 200) mas NÃO entrega — e, por "dar certo", o código parava
+  // nele e nem tentava o próximo. Aqui pulamos quem não está Live. Só filtramos quando
+  // a consulta retorna uma lista com pelo menos 1 Live; se a API falhar (null) ou vier
+  // vazia, NÃO filtramos — mantém o comportamento antigo e não piora o estado.
+  const liveSet = await umblerLiveChannels().catch(() => null);
+  const usaLive = !!(liveSet && liveSet.size > 0);
+
   const tentativas: any[] = [];
   for (const fone of fila) {
+    if (usaLive && !liveSet!.has(so(fone))) {
+      tentativas.push({ canal: fone, resultado: 'offline no Umbler Talk (não entregaria)' });
+      continue;
+    }
     if (!(await canalAtivoPorTelefone(fone).catch(() => true))) {
       tentativas.push({ canal: fone, resultado: 'desligado no painel' });
       continue;
