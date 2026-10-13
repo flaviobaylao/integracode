@@ -13,6 +13,10 @@ const casos: Array<[string|null, string, string]> = [
   [null,'1.202','DEVOLUCAO DE VENDA'],
   ['','1.202','DEVOLUCAO DE VENDA'],
   ['1202','1.202','DEVOLUCAO DE VENDA'],
+  ['5405','1.411','DEVOLUCAO DE VENDA'],
+  ['6404','2.411','DEVOLUCAO DE VENDA'],
+  ['5401','1.410','DEVOLUCAO DE VENDA'],
+  ['6403','2.411','DEVOLUCAO DE VENDA'],
 ];
 let ok=0, fail=0;
 for (const [ent, esp, nat] of casos) {

@@ -32,6 +32,11 @@ const SUFIXO_DEVOLUCAO_VENDA: Record<string, string> = {
   '105': '201', '106': '202', '109': '202',
   '111': '201', '113': '202', '116': '201', '118': '202',
   '119': '202', '120': '201', '122': '201', '123': '202',
+  // Vendas com SUBSTITUICAO TRIBUTARIA (out/2026): o espelho "mesmo sufixo"
+  // gerava 1405/2404, CFOPs que NAO existem -> SEFAZ "CFOP Inexistente".
+  // Devolucao de venda com ST: 1410/2410 (producao propria, 5401/5402/6401/6402)
+  // e 1411/2411 (mercadoria de terceiros, 5403/5405/6403/6404 — caso do BSB).
+  '401': '410', '402': '410', '403': '411', '404': '411', '405': '411',
 };
 
 export function cfopDevolucao(cfopOriginal: string | null | undefined): { cfop: string; cfopItem: string; natureza: string } {
@@ -1335,9 +1340,36 @@ export function registerNfeRoutes(app: Express) {
       const user = req.currentUser || req.user;
       // CFOP/natureza espelhados na nota original (transferencia devolve 1409/2409,
       // venda devolve 1202/2202) — antes era 1.202 fixo para tudo.
-      const dev = cfopDevolucao(originalInvoice.cfop);
+      // CFOP da original: o do cabecalho ou, se vazio, o do 1o item.
+      const dev = cfopDevolucao(originalInvoice.cfop || (originalItems[0] as any)?.cfop);
 
-      const returnInvoice = await storage.createFiscalInvoiceAtomic({
+      // Tentativa anterior que ficou em RASCUNHO/REJEITADA (ex.: CFOP errado):
+      // reaproveita a mesma nota — corrige CFOP/natureza e retransmite — em vez
+      // de alocar outro numero (o anterior viraria buraco a inutilizar).
+      let returnInvoice: any = null;
+      if (originalInvoice.accessKey) {
+        const prev: any = await db.execute(sql`
+          SELECT id FROM fiscal_invoices
+          WHERE referenced_access_key = ${originalInvoice.accessKey}
+            AND fin_nfe = '4' AND status IN ('draft','rejected')
+            AND invoice_number IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1`);
+        const prevId = (prev?.rows || prev || [])[0]?.id;
+        if (prevId) {
+          returnInvoice = await storage.updateFiscalInvoice(prevId, {
+            cfop: dev.cfop,
+            natureOfOperation: dev.natureza,
+            notes: `NF-e de DEVOLUÇÃO referente à NF-e nº ${originalInvoice.invoiceNumber || 'N/A'} (chave: ${originalInvoice.accessKey || 'N/A'}). Motivo: ${justification}`,
+          } as any);
+          for (const it of await storage.getFiscalInvoiceItems(prevId)) {
+            await storage.updateFiscalInvoiceItem(it.id, { cfop: dev.cfopItem } as any);
+          }
+          console.log(`♻️ [NF-e RETURN] Reaproveitando devolução em ${returnInvoice.status} nº ${returnInvoice.invoiceNumber} (CFOP ${dev.cfopItem})`);
+        }
+      }
+
+      if (!returnInvoice) {
+      returnInvoice = await storage.createFiscalInvoiceAtomic({
         series: originalInvoice.series || '1',
         operationType: 'entrada',
         fiscalScenarioId: originalInvoice.fiscalScenarioId,
@@ -1419,6 +1451,8 @@ export function registerNfeRoutes(app: Express) {
           lotId: item.lotId,
         });
       }
+
+      } // fim: criação de nova devolução
 
       await storage.createFiscalInvoiceEvent({
         invoiceId: returnInvoice.id,
