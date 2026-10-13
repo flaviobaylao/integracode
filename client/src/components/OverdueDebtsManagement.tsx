@@ -64,7 +64,7 @@ export default function OverdueDebtsManagement() {
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [dtStart, setDtStart] = useState('');
   const [dtEnd, setDtEnd] = useState('');
-  const [sortBy, setSortBy] = useState<'dias_atraso' | 'cliente' | 'instancia' | 'valor'>('dias_atraso');
+  const [sortBy, setSortBy] = useState<'dias_atraso' | 'cliente' | 'instancia' | 'valor' | 'nota_fiscal' | 'vencimento'>('dias_atraso');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const { toast } = useToast();
 
@@ -173,7 +173,9 @@ export default function OverdueDebtsManagement() {
       setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortBy(column);
-      setSortDir(column === 'cliente' ? 'asc' : 'desc');
+      // Colunas "de leitura" (nome, nota, vencimento) comecam em ordem crescente (A-Z / menor
+      // numero / mais antigo). Colunas de grandeza (valor, atraso) comecam na maior primeiro.
+      setSortDir(column === 'cliente' || column === 'nota_fiscal' || column === 'vencimento' ? 'asc' : 'desc');
     }
   };
 
@@ -192,6 +194,35 @@ export default function OverdueDebtsManagement() {
     return labels[id] || id.substring(0, 4).toUpperCase();
   };
 
+  // Ordenacao por NOTA FISCAL e por VENCIMENTO. A tabela e aninhada: cada linha da lista e um
+  // CLIENTE que rende uma <tr> por titulo. Entao ordenar por essas duas colunas tem dois passos:
+  // (1) ordena os CLIENTES pelo extremo que importa na direcao escolhida — na crescente o MENOR
+  //     numero / vencimento MAIS ANTIGO do cliente, na decrescente o maior / mais recente;
+  // (2) ordena os TITULOS DENTRO de cada cliente na mesma direcao, senao o bloco do cliente sairia
+  //     ordenado por fora e baguncado por dentro.
+  const dirNum = sortDir === 'asc' ? 1 : -1;
+  // "NF-104298" / "104298" / "TIT-123" -> numero. Sem digitos (ou sem documento) vira null.
+  const nfKey = (d: any): number | null => {
+    const n = String(d?.numero_documento_fiscal || d?.numero_documento || '').replace(/\D/g, '');
+    return n ? parseInt(n, 10) : null;
+  };
+  const vencKey = (d: any): number | null => {
+    const t = new Date(d?.data_vencimento).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
+  // Sem valor vai SEMPRE para o fim, nas duas direcoes.
+  const cmpKey = (x: number | null, y: number | null, dir: number) => {
+    if (x === null && y === null) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return (x - y) * dir;
+  };
+  const extremo = (debt: any, pick: (d: any) => number | null): number | null => {
+    const vals = (debt?.debitos || []).map(pick).filter((v: number | null) => v !== null) as number[];
+    if (!vals.length) return null;
+    return sortDir === 'asc' ? Math.min(...vals) : Math.max(...vals);
+  };
+
   const sortedDebts = [...filteredDebts].sort((a, b) => {
     const dir = sortDir === 'asc' ? 1 : -1;
     switch (sortBy) {
@@ -203,9 +234,17 @@ export default function OverdueDebtsManagement() {
         return instanceLabel(a.omieInstanceId).localeCompare(instanceLabel(b.omieInstanceId), 'pt-BR') * dir;
       case 'valor':
         return (a.valorTotal - b.valorTotal) * dir;
+      case 'nota_fiscal':
+        return cmpKey(extremo(a, nfKey), extremo(b, nfKey), dir);
+      case 'vencimento':
+        return cmpKey(extremo(a, vencKey), extremo(b, vencKey), dir);
       default:
         return 0;
     }
+  }).map((debt) => {
+    if (sortBy !== 'nota_fiscal' && sortBy !== 'vencimento') return debt;
+    const pick = sortBy === 'nota_fiscal' ? nfKey : vencKey;
+    return { ...debt, debitos: [...(debt.debitos || [])].sort((x: any, y: any) => cmpKey(pick(x), pick(y), dirNum)) };
   });
 
   // Calcular subtotais dos débitos filtrados
@@ -464,11 +503,15 @@ export default function OverdueDebtsManagement() {
                       </th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">CNPJ/CPF</th>
                       <th className="text-left p-3 font-semibold text-sm text-gray-700">Telefone</th>
-                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Nº Nota Fiscal</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('nota_fiscal')}>
+                        <span className="flex items-center">Nº Nota Fiscal <SortIcon column="nota_fiscal" /></span>
+                      </th>
                       <th className="text-right p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('valor')}>
                         <span className="flex items-center justify-end">Valor <SortIcon column="valor" /></span>
                       </th>
-                      <th className="text-left p-3 font-semibold text-sm text-gray-700">Data Vencimento</th>
+                      <th className="text-left p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('vencimento')}>
+                        <span className="flex items-center">Data Vencimento <SortIcon column="vencimento" /></span>
+                      </th>
                       <th className="text-right p-3 font-semibold text-sm text-gray-700 cursor-pointer select-none hover:bg-gray-100 transition-colors" onClick={() => handleSort('dias_atraso')}>
                         <span className="flex items-center justify-end">Dias Atraso <SortIcon column="dias_atraso" /></span>
                       </th>
