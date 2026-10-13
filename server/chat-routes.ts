@@ -852,6 +852,35 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
   }
 }
 
+// Canais do Umbler Talk REALMENTE conectados ("Live"). Usado pelo envio interno para
+// NÃO mandar por um número que caiu (ex.: 2630 Offline): o Umbler aceita a chamada
+// (HTTP 200 → grava "enviado") mas a mensagem fica na fila e nunca é entregue.
+// Cache curto (60s) para não consultar a API a cada aviso.
+// Retorno: Set de telefones (só dígitos) Live, ou null quando não deu para saber
+// (erro/API fora) — nesse caso quem chama NÃO deve filtrar (não piora o estado atual).
+let _umblerLiveCache: { at: number; set: Set<string> } | null = null;
+export async function umblerLiveChannels(): Promise<Set<string> | null> {
+  if (_umblerLiveCache && Date.now() - _umblerLiveCache.at < 60000) return _umblerLiveCache.set;
+  try {
+    if (!process.env.UMBLER_TALK_TOKEN) return null;
+    const cfg = await resolveUmblerTalkConfig();
+    if ('error' in cfg) return _umblerLiveCache?.set || null;
+    const resp = await umblerTalkFetch('/v1/channels/?organizationId=' + encodeURIComponent(cfg.orgId));
+    if (!resp.ok) return _umblerLiveCache?.set || null;
+    const raw = await resp.text();
+    let chans: any; try { chans = JSON.parse(raw); } catch { return _umblerLiveCache?.set || null; }
+    const list = Array.isArray(chans) ? chans : (chans && (chans.items || chans.channels || []));
+    const set = new Set<string>();
+    for (const c of (list || [])) {
+      const st = String(c?.status || c?.connectionStatus || c?.state || '').toLowerCase();
+      const phone = String(c?.phoneNumber || '').replace(/\D/g, '');
+      if (phone && st === 'live') set.add(phone);
+    }
+    _umblerLiveCache = { at: Date.now(), set };
+    return set;
+  } catch { return _umblerLiveCache?.set || null; }
+}
+
 export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, caption?: string, fromPhoneOverride?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (!fromPhoneOverride) fromPhoneOverride = await canalSaidaPadrao();
   const token = process.env.UMBLER_TALK_TOKEN;
