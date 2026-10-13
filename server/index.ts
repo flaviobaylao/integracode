@@ -88,7 +88,7 @@ import { registerPedidoGynServRoutes } from './pedido-gyn-serv-routes';
 import { registrarBoleto, testarConexaoBoleto, consultarBoleto, boletoIsSandbox, processBoletoWebhook, checkAndSettleBoleto, cancelarBoleto, sweepOpenBoletos } from "./bb-boleto-service";
 import { storage } from "./storage";
 import { createReceivableFromPipelineItem } from "./billing-pipeline-routes";
-import { baseDescontoCadastro } from "./boleto-desconto-pipeline";
+import { baseDescontoCadastro, descontoCadastroJaAbatido } from "./boleto-desconto-pipeline";
 import { calculateNextVisitDate } from "../shared/visitSchedule";
 
 const app = express();
@@ -3475,7 +3475,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
         debtorState: row.state, debtorZip: row.zip_code,
         receivableId: row.id, fiscalInvoiceId: row.fiscal_invoice_id,
         customerId: row.customer_id, billingPipelineId: row.billing_pipeline_id,
-        descontoPct: parseFloat(String(row.collection_discount ?? '0')) || 0,
+        // % do cadastro ja ABATIDO no titulo (faturamento desde 13/out/2026) -> boleto pelo
+        // saldo, sem "desconto ate o vencimento" (senao o desconto sairia em dobro).
+        descontoPct: (await descontoCadastroJaAbatido(row.id)) ? 0 : (parseFloat(String(row.collection_discount ?? '0')) || 0),
         // Titulo com desconto extra do pipeline ja abatido: o % do cadastro incide sobre o
         // valor cheio do pedido (saldo + abatimento). Ver server/boleto-desconto-pipeline.ts.
         descontoBase: await baseDescontoCadastro(row.id, _saldo, parseFloat(row.amount_paid || '0')).catch(() => undefined),
@@ -3833,6 +3835,17 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (!accId) return res.status(422).json({ error: "Nenhuma conta com boleto BB habilitado." });
 
       const titulos = recs.map((r) => r.titleNumber).filter(Boolean).join(', ');
+      let _baseUnif = 0;
+      for (const r of recs) {
+        if (!(await descontoCadastroJaAbatido(r.id))) _baseUnif += parseFloat(r.amount) - parseFloat(r.amountPaid || '0');
+      }
+      // descontoPct do recs[0] pode ter vindo 0 por ele estar abatido: relê o % do cadastro
+      if (_baseUnif > 0.005 && !(base.params.descontoPct > 0)) {
+        try {
+          const cq: any = await db.execute(sql`SELECT collection_discount FROM customers WHERE id = ${base.params.customerId} LIMIT 1`);
+          base.params.descontoPct = parseFloat(String(cq.rows?.[0]?.collection_discount ?? '0')) || 0;
+        } catch {}
+      }
       const params = {
         ...base.params,
         amount: Number(total.toFixed(2)),
@@ -3840,7 +3853,10 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         receivableId: null,            // boleto unificado: vinculo fica na juncao, nao no receivable_id
         fiscalInvoiceId: null,
         billingPipelineId: null,
-        descontoBase: undefined,       // unificado: o % do cadastro incide sobre o total unificado
+        // unificado: o % do cadastro (desconto ate o vencimento) so incide sobre os titulos que
+        // AINDA NAO tiveram o % abatido no faturamento — os demais ja estao pelo valor final.
+        descontoBase: _baseUnif > 0.005 ? Number(_baseUnif.toFixed(2)) : undefined,
+        descontoPct: _baseUnif > 0.005 ? base.params.descontoPct : 0,
         description: `Boleto unificado de ${recs.length} titulos${titulos ? ' (' + titulos + ')' : ''}`,
         instrucoes: `Cobranca unificada de ${recs.length} titulos${titulos ? ': ' + titulos : ''}.`,
       };
