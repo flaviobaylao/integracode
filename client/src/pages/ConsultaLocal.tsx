@@ -136,29 +136,32 @@ function fmtDataBR(s: string | null | undefined): string {
 const fmtBRL = (v: number | null | undefined) =>
   v == null || !isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-// Número no formato do WhatsApp (só dígitos, com 55). null se não der para montar (sem DDD).
-function waNumero(t: string | null | undefined): string | null {
-  const d = String(t || "").replace(/\D/g, "");
-  if (d.length < 10) return null;
-  return d.startsWith("55") && d.length >= 12 ? d : `55${d}`;
+// Separa o campo telefone em números válidos (com DDD). O cadastro às vezes guarda mais de um
+// número no mesmo campo ("62 9999-9999 / 62 3333-3333") — cada um vira um link próprio.
+function numerosTelefone(t: string | null | undefined): string[] {
+  return String(t || "").split(/[\/,;|]|\s+e\s+/i)
+    .map((p) => { let d = p.replace(/\D/g, ""); if (d.startsWith("55") && d.length >= 12) d = d.slice(2); return d; })
+    .filter((d) => d.length === 10 || d.length === 11);
 }
 
-// Telefone clicável: tocar ABRE A CONVERSA NO WHATSAPP com o cliente/lead.
+// Telefone clicável: tocar ABRE A CONVERSA NO WHATSAPP com o cliente/lead (um link por número).
 // Só cai para "ligar" quando o número não tem DDD (não dá para montar o link do WhatsApp).
 function TelefoneWhats({ telefone, contato, confirmado }: { telefone: string; contato?: string | null; confirmado?: boolean }) {
-  const wa = waNumero(telefone);
+  const nums = numerosTelefone(telefone);
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {wa ? (
-        <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium hover:underline" data-testid="link-whatsapp">
-          <MessageCircle className="h-3.5 w-3.5" /> {fmtTelefone(telefone)}
-        </a>
+      {nums.length > 0 ? (
+        nums.map((d) => (
+          <a key={d} href={`https://wa.me/55${d}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium hover:underline" data-testid="link-whatsapp">
+            <MessageCircle className="h-3.5 w-3.5" /> {fmtTelefone(d)}
+          </a>
+        ))
       ) : (
         <a href={`tel:${String(telefone).replace(/\D/g, "")}`} className="inline-flex items-center gap-1.5 text-blue-600 hover:underline"><Phone className="h-3.5 w-3.5" /> {telefone}</a>
       )}
       {confirmado && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">✓ confirmado</span>}
       {contato && <span className="text-muted-foreground">· {contato}</span>}
-      {wa && <a href={`tel:${String(telefone).replace(/\D/g, "")}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline" aria-label="Ligar"><Phone className="h-3 w-3" /> ligar</a>}
+      {nums.length > 0 && <a href={`tel:${nums[0]}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline" aria-label="Ligar"><Phone className="h-3 w-3" /> ligar</a>}
     </div>
   );
 }
