@@ -3084,27 +3084,99 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   // executou (updated_by + auditoria financeira). Marca status 'cancelada' (estado
   // "fechado / não recebível" já usado no sistema — some das listas de aberto/vencido
   // e não entra em "recebido") e carimba o motivo em notes.
+  // IRMAOS DO TITULO: outros titulos da MESMA venda (mesma NF-e, ou mesmo item do pipeline
+  // quando ainda nao ha NF-e). E o que a tela mostra quando o operador escolhe "duplicidade",
+  // para ele apontar qual titulo FICA — sem isso ele cancela no escuro, que foi exatamente
+  // como 5 NF-e autorizadas ficaram sem nenhum titulo vivo.
+  app.get('/api/financial/receivables/:id/irmaos', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const rec: any = await storage.getReceivable(req.params.id);
+      if (!rec) return res.status(404).json({ message: 'Recebível não encontrado' });
+      const q: any = await db.execute(sql`
+        SELECT id, title_number, amount, COALESCE(amount_paid,0) AS amount_paid, status::text AS status,
+               due_date, description, cancel_reason::text AS cancel_reason
+          FROM receivables
+         WHERE deleted_at IS NULL
+           AND id <> ${rec.id}
+           AND (
+             (${rec.fiscalInvoiceId}::varchar   IS NOT NULL AND fiscal_invoice_id   = ${rec.fiscalInvoiceId})
+             OR (${rec.billingPipelineId}::varchar IS NOT NULL AND billing_pipeline_id = ${rec.billingPipelineId})
+           )
+         ORDER BY created_at ASC`);
+      const irmaos = (q.rows || q || []).map((x: any) => ({
+        id: x.id, titleNumber: x.title_number, amount: x.amount, amountPaid: x.amount_paid,
+        status: x.status, dueDate: x.due_date, description: x.description, cancelReason: x.cancel_reason,
+        vivo: !['cancelada'].includes(String(x.status)),
+      }));
+      res.json({ ok: true, irmaos, vivos: irmaos.filter((x: any) => x.vivo).length });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // BAIXA ADMINISTRATIVA (perdão/incobrável): fecha o título em 100% SEM entrada de
+  // dinheiro (NÃO conta como recebimento no caixa). Exige MOTIVO e registra QUEM
+  // executou (updated_by + auditoria financeira). Marca status 'cancelada' (estado
+  // "fechado / não recebível" já usado no sistema — some das listas de aberto/vencido
+  // e não entra em "recebido") e carimba o motivo em notes.
+  //
+  // 13/out/2026 — passa a exigir `cancelReason` do enum, e não só o texto livre. O texto
+  // continua existindo como complemento, mas quem responde "por que este título sumiu" é o
+  // campo estruturado. Para `duplicidade` há duas exigências extras, explicadas abaixo.
   app.post('/api/financial/receivables/:id/write-off', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
       const user = actorOf(req);
       const reason = String(req.body?.reason ?? '').trim();
+      const MOTIVOS = ['duplicidade', 'nfe_cancelada', 'devolucao', 'erro_faturamento', 'cobrado_fora', 'incobravel', 'operacao_sem_cr', 'outro'];
+      const cancelReason = String(req.body?.cancelReason ?? '').trim();
+      const duplicateOfId = String(req.body?.duplicateOfId ?? '').trim() || null;
       if (!reason) return res.status(400).json({ message: 'Informe o MOTIVO da baixa administrativa.' });
+      if (!MOTIVOS.includes(cancelReason)) {
+        return res.status(400).json({ message: 'Selecione a CLASSIFICAÇÃO do cancelamento: ' + MOTIVOS.join(', ') });
+      }
       const rec: any = await storage.getReceivable(req.params.id);
       if (!rec) return res.status(404).json({ message: 'Recebível não encontrado' });
       if (String(rec.status) === 'cancelada') return res.status(409).json({ message: 'Título já está cancelado/baixado.' });
       if (String(rec.status) === 'recebida') return res.status(409).json({ message: 'Título já recebido — desfaça o recebimento antes de dar baixa administrativa.' });
+
+      // TRAVA DA DUPLICIDADE ------------------------------------------------
+      // Duplicidade quer dizer "existe OUTRO título da mesma venda que continua valendo".
+      // Se não existe, não é duplicidade — é a venda inteira deixando de ser cobrada, e
+      // tem que ser classificada como tal (erro_faturamento, devolucao, incobravel...).
+      // Esta é a regra que teria impedido NF-107000, 104144, 104143, 104142 e 104121 de
+      // ficarem autorizadas na SEFAZ e sem nenhum título a receber.
+      if (cancelReason === 'duplicidade') {
+        if (!duplicateOfId) return res.status(400).json({ message: 'Para cancelar por duplicidade, informe qual título PERMANECE valendo.' });
+        if (duplicateOfId === rec.id) return res.status(400).json({ message: 'O título mantido não pode ser o próprio título que está sendo cancelado.' });
+        const mantido: any = await storage.getReceivable(duplicateOfId);
+        if (!mantido) return res.status(400).json({ message: 'Título mantido não encontrado.' });
+        if (String(mantido.status) === 'cancelada') {
+          return res.status(409).json({ message: `O título indicado (${mantido.titleNumber || duplicateOfId}) também está cancelado. Se nenhum título da venda sobrevive, o motivo não é duplicidade.` });
+        }
+        const mesmaVenda =
+          (rec.fiscalInvoiceId && mantido.fiscalInvoiceId && rec.fiscalInvoiceId === mantido.fiscalInvoiceId) ||
+          (rec.billingPipelineId && mantido.billingPipelineId && rec.billingPipelineId === mantido.billingPipelineId);
+        if (!mesmaVenda) {
+          return res.status(400).json({ message: 'O título mantido precisa ser da MESMA venda (mesma NF-e ou mesmo item do pipeline).' });
+        }
+      }
+
       const total = parseFloat(rec.amount || '0');
       const jaPago = parseFloat(rec.amountPaid || '0');
       const saldo = Math.max(0, total - jaPago);
-      const stamp = `[BAIXA ADMINISTRATIVA ${new Date().toISOString().slice(0, 10)} por ${user?.email || '?'}] ${reason}`;
+      const stamp = `[BAIXA ADMINISTRATIVA ${new Date().toISOString().slice(0, 10)} por ${user?.email || '?'}] (${cancelReason}) ${reason}`;
       const prevNotes = String(rec.notes || '');
       await storage.updateReceivable(req.params.id, {
         status: 'cancelada' as any,
+        cancelReason: cancelReason as any,
+        canceledAt: new Date(),
+        canceledBy: user?.email || null,
+        duplicateOfId: cancelReason === 'duplicidade' ? duplicateOfId : null,
         notes: prevNotes ? (prevNotes + '\n' + stamp) : stamp,
         updatedBy: user?.email || null,
       } as any);
-      await logFinancialAudit({ req, action: 'status', entity: 'receivable', entityId: req.params.id, amount: saldo, note: 'baixa administrativa (100%): ' + reason });
-      res.json({ ok: true, saldoBaixado: saldo, status: 'cancelada' });
+      await logFinancialAudit({ req, action: 'status', entity: 'receivable', entityId: req.params.id, amount: saldo, note: `baixa administrativa (100%) [${cancelReason}]: ` + reason });
+      res.json({ ok: true, saldoBaixado: saldo, status: 'cancelada', cancelReason, duplicateOfId });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

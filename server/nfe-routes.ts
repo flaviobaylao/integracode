@@ -1242,8 +1242,11 @@ export function registerNfeRoutes(app: Express) {
             }
             await storage.updateReceivable(rec.id, {
               status: 'cancelada',
+              cancelReason: 'nfe_cancelada' as any,
+              canceledAt: new Date(),
+              canceledBy: (req as any)?.user?.email || 'sistema',
               notes: `${rec.notes ? rec.notes + ' | ' : ''}Cancelada automaticamente - Cancelamento NF-e: ${justification}`,
-            });
+            } as any);
             console.log(`💰 [NF-e CANCEL] Conta a receber ${rec.id} cancelada (NF-e ${req.params.id})`);
           }
         } catch (recErr: any) {
@@ -1468,8 +1471,11 @@ export function registerNfeRoutes(app: Express) {
           }
           await storage.updateReceivable(rec.id, {
             status: 'cancelada',
+            cancelReason: 'devolucao' as any,
+            canceledAt: new Date(),
+            canceledBy: (req as any)?.user?.email || 'sistema',
             notes: `${rec.notes ? rec.notes + ' | ' : ''}Cancelada automaticamente - Devolução de venda: ${justification}`,
-          });
+          } as any);
           console.log(`💰 [NF-e RETURN] Conta a receber ${rec.id} cancelada (Devolução NF-e ${req.params.id})`);
         }
       } catch (recErr: any) {

@@ -3673,6 +3673,70 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+  // Caminho INVERSO do regenerate-charge: troca a cobranca ATIVA (boleto ou PIX) por uma
+  // cobranca PIX nova, cancelando a anterior. Resolve o caso "saiu boleto mas o titulo e PIX".
+  // ORDEM IMPORTA: valida instancia e conta PIX ANTES de cancelar qualquer coisa — fazer o
+  // contrario deixaria o titulo SEM cobranca nenhuma se a emissao do PIX falhasse depois do
+  // cancelamento, que e o pior desfecho possivel aqui.
+  app.post("/api/financial/receivables/:id/regenerate-pix", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
+    try {
+      const recId = req.params.id;
+      const resolved = await boletoParamsFromReceivable(recId);
+      if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado, ja quitado ou cancelado" });
+      // SERV (PURO SERVICOS, CNPJ ...0105) nao emite PIX — mesma regra do hook de faturamento.
+      try {
+        const _ref = String(resolved.omieInstanceId || '');
+        if (_ref) {
+          const iq: any = await db.execute(sql`SELECT name, cnpj FROM omie_instances WHERE id = ${_ref} LIMIT 1`);
+          const _row = iq.rows?.[0];
+          const _c = String(_row?.cnpj || '').replace(/\D/g, '');
+          if (String(_row?.name || '').toUpperCase() === 'SERV' || _c === '52921727000105') {
+            return res.status(422).json({ error: "A instancia SERV nao emite PIX — mantenha o boleto." });
+          }
+        }
+      } catch { /* sem instancia resolvida: segue */ }
+      const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
+      const accId = accq.rows?.[0]?.id;
+      if (!accId) return res.status(422).json({ error: "nenhuma conta com PIX BB habilitado" });
+
+      // Cobranca ativa atual (boleto tem prioridade, igual ao regenerate-charge).
+      const bq: any = await db.execute(sql`SELECT * FROM boleto_charges WHERE receivable_id = ${recId} AND status <> 'cancelado' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      const boleto = bq.rows?.[0];
+      let canceladoAnterior = false;
+      if (boleto) {
+        if (/(liquid|pag|receb)/i.test(String(boleto.status || ''))) return res.status(409).json({ error: "Boleto anterior ja liquidado — nao e possivel trocar por PIX." });
+        const bacc: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_boleto_enabled = true AND bb_convenio IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
+        const bAccId = bacc.rows?.[0]?.id;
+        if (!bAccId) return res.status(422).json({ error: "nenhuma conta com boleto BB habilitado para cancelar o boleto atual" });
+        const cancel = await cancelarBoleto(bAccId, boleto);
+        if (!cancel.ok) return res.status(422).json({ error: "Falha ao cancelar o boleto anterior no BB: " + (cancel.error || "") });
+        await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado' WHERE id = ${boleto.id}`);
+        canceladoAnterior = true;
+      } else {
+        const upd: any = await db.execute(sql`UPDATE pix_charges SET status = 'REMOVIDA_PELO_USUARIO_RECEBEDOR' WHERE receivable_id = ${recId} AND status = 'ATIVA'`);
+        canceladoAnterior = ((upd?.rowCount ?? 0) as number) > 0;
+      }
+
+      const p: any = resolved.params;
+      const tq: any = await db.execute(sql`SELECT title_number FROM receivables WHERE id = ${recId} LIMIT 1`);
+      const titulo = tq.rows?.[0]?.title_number || '';
+      const dueMs = p.dueDate instanceof Date ? p.dueDate.getTime() : Date.now();
+      const expirationSeconds = Math.max(259200, Math.round((dueMs - Date.now()) / 1000));
+      const pixSvc: any = await import("./bb-pix-service");
+      const charge = await pixSvc.createImmediateCharge(accId, {
+        amount: p.amount,
+        debtorName: p.debtorName,
+        debtorDocument: p.debtorDocument || undefined,
+        description: titulo ? `Titulo ${titulo}` : undefined,
+        expirationSeconds,
+        receivableId: recId,
+        customerId: p.customerId || undefined,
+        createdBy: (req as any)?.user?.email || null,
+      });
+      return res.json({ ok: true, success: true, pixChargeId: charge.id, txid: charge.txid, viewUrl: `/api/pix-view/${charge.id}`, canceladoAnterior });
+    } catch (e: any) { res.status(422).json({ error: e?.message || String(e) }); }
+  });
+
   // Cancela a cobranca ATIVA de um recebivel (baixa o boleto no BB / remove o PIX), SEM recriar.
   // Uso: limpeza de cobrancas de NF-e devolvidas/rejeitadas (multiplicidade de faturamento).
   // Nao toca em boleto ja liquidado/pago (protecao contra estorno indevido).

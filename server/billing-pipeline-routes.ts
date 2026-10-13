@@ -1288,7 +1288,7 @@ export function registerBillingPipelineRoutes(app: Express) {
             if (((cj as any).rows || cj)?.[0]?.conciliado === true) {
               r.erros.push('titulo conciliado — desfaca a conciliacao bancaria antes de cancelar');
             } else {
-              await db.execute(sql`UPDATE receivables SET status = 'cancelada', updated_at = now(), updated_by = ${by}, notes = COALESCE(notes || ' | ', '') || ${'Cancelada automaticamente - operacao ' + String(t.op) + ' nao gera conta a receber'} WHERE id = ${t.id}`);
+              await db.execute(sql`UPDATE receivables SET status = 'cancelada', cancel_reason = 'operacao_sem_cr', canceled_at = now(), canceled_by = ${by}, updated_at = now(), updated_by = ${by}, notes = COALESCE(notes || ' | ', '') || ${'Cancelada automaticamente - operacao ' + String(t.op) + ' nao gera conta a receber'} WHERE id = ${t.id}`);
               r.cancelada = true;
             }
           }
