@@ -97,6 +97,16 @@ export default function KmVendedores() {
     staleTime: 30_000,
   });
   const pendentes = pendResp?.pendentes || [];
+  // Filtros da aba de pendentes: vendedor, data e cliente.
+  const [pendSeller, setPendSeller] = useState<string>("");
+  const [pendDia, setPendDia] = useState<string>("");
+  const [pendCliente, setPendCliente] = useState<string>("");
+  const pendSellers = useMemo(() => Array.from(new Map(pendentes.map((p) => [p.sellerId, p.sellerName] as [string, string]))).sort((a, b) => String(a[1]).localeCompare(String(b[1]))), [pendentes]);
+  const pendDias = useMemo(() => Array.from(new Set(pendentes.filter((p) => !pendSeller || p.sellerId === pendSeller).map((p) => p.dia))).sort().reverse(), [pendentes, pendSeller]);
+  const pendFiltrados = useMemo(() => {
+    const q = pendCliente.trim().toLowerCase();
+    return pendentes.filter((p) => (!pendSeller || p.sellerId === pendSeller) && (!pendDia || p.dia === pendDia) && (!q || String(p.cliente || "").toLowerCase().includes(q)));
+  }, [pendentes, pendSeller, pendDia, pendCliente]);
   const decidirMut = useMutation({
     mutationFn: (p: { id: string; acao: "aprovar" | "recusar" }) => apiRequest("POST", `/api/admin/km-vendedores/pendentes/${p.id}`, { acao: p.acao }),
     onSuccess: (r: any) => {
@@ -686,12 +696,28 @@ export default function KmVendedores() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2"><Info className="w-4 h-4" /> Check-ins pendentes de aprovação</CardTitle>
             <div className="text-xs text-muted-foreground mt-1">Desde 13/10/2026, check-in feito a mais de 150 m do cliente, ou no mesmo ponto do check-in anterior em outro cliente, fica pendente e <b>não conta km</b> até ser aprovado. Aprovar: volta a contar. Recusar: não conta.</div>
+            <div className="flex items-center gap-2 flex-wrap mt-2">
+              <select value={pendSeller} onChange={(e) => { setPendSeller(e.target.value); setPendDia(""); }} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
+                <option value="">Todos os vendedores</option>
+                {pendSellers.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
+              </select>
+              <select value={pendDia} onChange={(e) => setPendDia(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Data">
+                <option value="">Todas as datas</option>
+                {pendDias.map((d) => <option key={d} value={d}>{fmtDiaCurto(d)}</option>)}
+              </select>
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input value={pendCliente} onChange={(e) => setPendCliente(e.target.value)} placeholder="Buscar cliente..." className="rounded-md border bg-background pl-7 pr-6 py-1.5 text-sm w-48" />
+                {pendCliente ? <button type="button" onClick={() => setPendCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">x</button> : null}
+              </div>
+              <div className="rounded-lg border bg-muted/30 px-3 py-1.5 text-sm"><b>{pendFiltrados.length}</b> de {pendentes.length} pendente(s)</div>
+            </div>
           </CardHeader>
           <CardContent>
             {pendLoading ? (
               <div className="text-sm text-muted-foreground py-6">Carregando...</div>
-            ) : pendentes.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-6">Nenhum check-in pendente.</div>
+            ) : pendFiltrados.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6">{pendentes.length ? "Nenhum pendente com esses filtros." : "Nenhum check-in pendente."}</div>
             ) : (
               <div className="overflow-auto max-h-[70vh] rounded-lg border">
                 <table className="w-full text-sm">
@@ -707,7 +733,7 @@ export default function KmVendedores() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pendentes.map((p) => (
+                    {pendFiltrados.map((p) => (
                       <tr key={p.id} className="border-t hover:bg-muted/40">
                         <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDiaCurto(p.dia)}</td>
                         <td className="py-2 px-3 tabular-nums">{p.hora}</td>
