@@ -645,9 +645,20 @@ async function __enriquecerClientesConsulta(lista: any[]): Promise<void> {
     agendado: 'Agendado', pedido: 'Pedido', a_faturar: 'A faturar', faturado: 'Faturado', impresso: 'Impresso',
     aguardando_rota: 'Aguardando rota', em_rota: 'Em rota', entregue: 'Entregue',
   };
+  // O campo telefone às vezes tem mais de um número ("62 9999-9999 / 62 3333-3333"): separa e
+  // usa o primeiro CELULAR válido (WhatsApp), senão o primeiro número válido.
+  const numeroWhats = (t: string): string | null => {
+    const partes = String(t || '').split(/[\/,;|]|\s+e\s+/i)
+      .map((p) => { let d = p.replace(/\D/g, ''); if (d.startsWith('55') && d.length >= 12) d = d.slice(2); return d; })
+      .filter((d) => d.length === 10 || d.length === 11);
+    const cel = partes.find((d) => d.length === 11 && d[2] === '9');
+    const escolhido = cel || partes[0];
+    return escolhido ? `55${escolhido}` : null;
+  };
   for (const c of clientes) {
+    // dígitos do campo inteiro = mesmo critério do módulo de confirmação por WhatsApp
     const digitos = String(c.telefone || '').replace(/\D/g, '');
-    c.whatsapp = digitos.length >= 10 ? (digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`) : null;
+    c.whatsapp = numeroWhats(c.telefone);
     c.whatsConfirmado = !!(digitos && confirmados.has(`${c.id}|${digitos}`));
     const p = ultimo[String(c.id)];
     if (p) {
