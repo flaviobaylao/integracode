@@ -88,7 +88,25 @@ export default function KmVendedores() {
 
   // Abas: "mensal" (matriz vendedor x mes, padrao) e "pagamento" (uma linha por
   // vendedor e mes: km rodada, tarifa e valor a pagar).
-  const [aba, setAba] = useState<"mensal" | "pagamento" | "trechos">("mensal");
+  const [aba, setAba] = useState<"mensal" | "pagamento" | "trechos" | "pendentes">("mensal");
+  // Check-ins pendentes de aprovacao (auditoria: longe do cliente / mesmo ponto do anterior).
+  type Pendente = { id: string; dia: string; hora: string; sellerId: string; sellerName: string; cliente: string; motivo: string; lat: number; lon: number };
+  const { data: pendResp, isLoading: pendLoading } = useQuery<{ pendentes: Pendente[] }>({
+    queryKey: ["/api/admin/km-vendedores/pendentes"],
+    queryFn: () => apiRequest("GET", "/api/admin/km-vendedores/pendentes"),
+    staleTime: 30_000,
+  });
+  const pendentes = pendResp?.pendentes || [];
+  const decidirMut = useMutation({
+    mutationFn: (p: { id: string; acao: "aprovar" | "recusar" }) => apiRequest("POST", `/api/admin/km-vendedores/pendentes/${p.id}`, { acao: p.acao }),
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores/pendentes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores/trechos"] });
+      toast({ title: r?.acao === "aprovar" ? "Check-in aprovado" : "Check-in recusado", description: `Km da rota agora: ${fmtKm(Number(r?.kmRota || 0))} km.` });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível salvar", description: String(e?.message || ""), variant: "destructive" }),
+  });
   // Relatorio do mes inteiro, trecho a trecho (DE, PARA, SAIDA, CHEGADA, KM, MIN, TIPO).
   // Mesma regra da Rota do Dia: desde 01/10/2026 casa -> check-ins -> casa, +10%.
   const [mesTrechos, setMesTrechos] = useState<string>("");
@@ -327,7 +345,7 @@ export default function KmVendedores() {
 
       {/* Abas: Histórico mensal | Histórico por dia */}
       <div className="flex items-center gap-1 mb-3 border-b">
-        {([["mensal", "Histórico mensal"], ["pagamento", "Km e pagamento por mês"], ["trechos", "Relatório de trechos"]] as const).map(([id, label]) => (
+        {([["mensal", "Histórico mensal"], ["pagamento", "Km e pagamento por mês"], ["trechos", "Relatório de trechos"], ["pendentes", `Check-ins pendentes${pendentes.length ? ` (${pendentes.length})` : ""}`]] as const).map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -658,6 +676,58 @@ export default function KmVendedores() {
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-2">Km por vias (OSRM), uma consulta por rota. "Lead: nome" = check-in em lead (prospecção); "Cliente sem cadastro" = check-in cujo cliente foi excluído do cadastro. Passe o mouse no ⓘ das colunas para ver o que significam. Atendimento e jornada são estimados (check-out desligado): atendimento = intervalo entre check-ins − deslocamento. Mês encerrado fica gravado no histórico na primeira consulta e não muda mais; o mês vigente é calculado na hora. "Retorno" é o fecho do dia na coordenada de casa; "intermunicipal" marca trechos de 10 km ou mais; "mesmo ponto" são check-ins na mesma coordenada.</div>
               </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {aba === "pendentes" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><Info className="w-4 h-4" /> Check-ins pendentes de aprovação</CardTitle>
+            <div className="text-xs text-muted-foreground mt-1">Desde 13/10/2026, check-in feito a mais de 150 m do cliente, ou no mesmo ponto do check-in anterior em outro cliente, fica pendente e <b>não conta km</b> até ser aprovado. Aprovar: volta a contar. Recusar: não conta.</div>
+          </CardHeader>
+          <CardContent>
+            {pendLoading ? (
+              <div className="text-sm text-muted-foreground py-6">Carregando...</div>
+            ) : pendentes.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6">Nenhum check-in pendente.</div>
+            ) : (
+              <div className="overflow-auto max-h-[70vh] rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <th className="text-left font-bold py-2 px-3 bg-background border-b">Dia</th>
+                      <th className="text-left font-bold py-2 px-3 bg-background border-b">Hora</th>
+                      <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
+                      <th className="text-left font-bold py-2 px-3 bg-background border-b">Cliente</th>
+                      <th className="text-left font-bold py-2 px-3 bg-background border-b">Motivo</th>
+                      <th className="text-left font-bold py-2 px-3 bg-background border-b">Local</th>
+                      <th className="text-right font-bold py-2 px-3 bg-background border-b">Decisão</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendentes.map((p) => (
+                      <tr key={p.id} className="border-t hover:bg-muted/40">
+                        <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDiaCurto(p.dia)}</td>
+                        <td className="py-2 px-3 tabular-nums">{p.hora}</td>
+                        <td className="py-2 px-3 whitespace-nowrap">{p.sellerName}</td>
+                        <td className="py-2 px-3">{p.cliente}</td>
+                        <td className="py-2 px-3 text-amber-700">{p.motivo}</td>
+                        <td className="py-2 px-3"><a className="text-indigo-600 hover:underline" href={`https://www.google.com/maps?q=${p.lat},${p.lon}`} target="_blank" rel="noreferrer">ver no mapa</a></td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">
+                          {isAdmin ? (
+                            <>
+                              <Button size="sm" variant="outline" className="mr-1 text-green-700" disabled={decidirMut.isPending} onClick={() => decidirMut.mutate({ id: p.id, acao: "aprovar" })}>Aprovar</Button>
+                              <Button size="sm" variant="outline" className="text-red-700" disabled={decidirMut.isPending} onClick={() => decidirMut.mutate({ id: p.id, acao: "recusar" })}>Recusar</Button>
+                            </>
+                          ) : <span className="text-xs text-muted-foreground">só admin</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </CardContent>
         </Card>
