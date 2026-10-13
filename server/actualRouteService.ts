@@ -246,7 +246,24 @@ export async function calculateActualRouteDistance(
   // Pontos validados (em ordem cronológica) p/ o recorte intermunicipal.
   const validPts: Array<{ lat: number; lon: number }> = [];
 
+  // Check-ins PENDENTES DE APROVACAO nao contam km ate o admin aprovar (out/2026):
+  // os marcados pela auditoria (audit_motivo: longe do cliente / mesmo ponto do anterior)
+  // e os offline fora dos criterios. Visita "fora da rota" comum ('pending' sem motivo)
+  // continua contando como antes.
+  const bloqueados = new Set<string>();
+  try {
+    const { db } = await import('./db');
+    const { sql } = await import('drizzle-orm');
+    await db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS audit_motivo varchar`);
+    const br: any = await db.execute(sql`
+      SELECT id FROM route_checkpoints
+      WHERE daily_route_id = ${dailyRouteId} AND validation_status = 'pending'
+        AND (audit_motivo IS NOT NULL OR COALESCE(source, 'online') = 'offline')`);
+    for (const x of ((br?.rows || br || []) as any[])) bloqueados.add(String(x.id));
+  } catch (e: any) { console.warn('[KM] check-ins pendentes:', e?.message); }
+
   for (const checkpoint of checkIns) {
+    const excluido = checkpoint.validationStatus === 'cancelled' || bloqueados.has(String(checkpoint.id));
     const currentLat = parseFloat(checkpoint.checkpointLatitude as any);
     const currentLon = parseFloat(checkpoint.checkpointLongitude as any);
     
@@ -267,7 +284,7 @@ export async function calculateActualRouteDistance(
       offRouteVisits++;
     }
     
-    if (checkpoint.validationStatus === 'cancelled') {
+    if (excluido) {
       cancelledVisits++;
     } else {
       validatedVisits++;
@@ -276,7 +293,7 @@ export async function calculateActualRouteDistance(
     // Calcular distancia real apenas para visitas validadas E com coordenadas
     // validas nas duas pontas (evita km fantasma vinda de (0,0)/coordenada nula).
     let distance = 0;
-    if (checkpoint.validationStatus !== 'cancelled' && haveOrigin && coordOk(currentLat, currentLon)) {
+    if (!excluido && haveOrigin && coordOk(currentLat, currentLon)) {
       try {
         const distanceMeters = await calculateRealDistance(
           previousLat as number,
@@ -301,7 +318,7 @@ export async function calculateActualRouteDistance(
 
     // Se validada e com coordenada valida, vira o novo ponto de referencia (e passa
     // a haver origem, mesmo que a casa fosse invalida: o 1o check-in valido ancora).
-    if (checkpoint.validationStatus !== 'cancelled' && coordOk(currentLat, currentLon)) {
+    if (!excluido && coordOk(currentLat, currentLon)) {
       previousLat = currentLat;
       previousLon = currentLon;
       previousName = customerName;
