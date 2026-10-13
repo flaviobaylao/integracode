@@ -45,6 +45,40 @@ function fmtMes(iso: string): string { const [y, m] = iso.split("-"); return `${
 function hhmmMin(h: string): number { const [a, b] = String(h || "").split(":").map(Number); return isFinite(a) && isFinite(b) ? a * 60 + b : NaN; }
 function fmtHM(m: number): string { const v = Math.max(0, Math.round(m)); return `${Math.floor(v / 60)}h${String(v % 60).padStart(2, "0")}`; }
 function fmtHora(m: number): string { const v = ((Math.round(m) % 1440) + 1440) % 1440; return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; }
+// Filtro de selecao multipla (lista com caixas de marcar). Vazio = todos.
+function MultiFiltro({ label, options, value, onChange, width = "w-56" }: { label: string; options: Array<[string, string]>; value: string[]; onChange: (v: string[]) => void; width?: string }) {
+  const [aberto, setAberto] = useState(false);
+  const sel = new Set(value);
+  const texto = value.length === 0 ? label : value.length === 1 ? (options.find((o) => o[0] === value[0])?.[1] || value[0]) : `${value.length} selecionados`;
+  return (
+    <div className="relative" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setAberto(false); }}>
+      <button type="button" onClick={() => setAberto((v) => !v)} className={`rounded-md border bg-background px-2 py-1.5 text-sm text-left flex items-center justify-between gap-2 min-w-[150px] ${value.length ? "border-indigo-400 font-semibold" : ""}`} title={label}>
+        <span className="truncate max-w-[180px]">{texto}</span><span className="text-xs text-muted-foreground">▾</span>
+      </button>
+      {aberto ? (
+        <div tabIndex={-1} className={`absolute z-40 mt-1 ${width} max-h-72 overflow-auto rounded-md border bg-background shadow-lg p-1 text-sm`}>
+          <div className="flex justify-between px-2 py-1 text-xs">
+            <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange(options.map((o) => o[0]))}>Marcar todos</button>
+            <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange([])}>Limpar</button>
+          </div>
+          {options.length === 0 ? <div className="px-2 py-1 text-muted-foreground">Sem opções</div> : options.map(([v, l]) => (
+            <label key={v} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted cursor-pointer">
+              <input type="checkbox" checked={sel.has(v)} onChange={() => onChange(sel.has(v) ? value.filter((x) => x !== v) : [...value, v])} />
+              <span className="truncate">{l}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+// Busca de cliente com varios termos separados por virgula (casa com qualquer um).
+function casaTermos(texto: string, busca: string): boolean {
+  const termos = busca.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (!termos.length) return true;
+  const t = String(texto || "").toLowerCase();
+  return termos.some((q) => t.includes(q));
+}
 function fmtDiaCurto(iso: string): string { const [, m, d] = (iso || "").split("-"); return d ? `${d}/${m}` : iso; }
 function fmtKm(n: number): string { return (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function fmtBRL(n: number): string { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -98,14 +132,13 @@ export default function KmVendedores() {
   });
   const pendentes = pendResp?.pendentes || [];
   // Filtros da aba de pendentes: vendedor, data e cliente.
-  const [pendSeller, setPendSeller] = useState<string>("");
-  const [pendDia, setPendDia] = useState<string>("");
+  const [pendSeller, setPendSeller] = useState<string[]>([]);
+  const [pendDia, setPendDia] = useState<string[]>([]);
   const [pendCliente, setPendCliente] = useState<string>("");
   const pendSellers = useMemo(() => Array.from(new Map(pendentes.map((p) => [p.sellerId, p.sellerName] as [string, string]))).sort((a, b) => String(a[1]).localeCompare(String(b[1]))), [pendentes]);
-  const pendDias = useMemo(() => Array.from(new Set(pendentes.filter((p) => !pendSeller || p.sellerId === pendSeller).map((p) => p.dia))).sort().reverse(), [pendentes, pendSeller]);
+  const pendDias = useMemo(() => Array.from(new Set(pendentes.filter((p) => !pendSeller.length || pendSeller.includes(p.sellerId)).map((p) => p.dia))).sort().reverse(), [pendentes, pendSeller]);
   const pendFiltrados = useMemo(() => {
-    const q = pendCliente.trim().toLowerCase();
-    return pendentes.filter((p) => (!pendSeller || p.sellerId === pendSeller) && (!pendDia || p.dia === pendDia) && (!q || String(p.cliente || "").toLowerCase().includes(q)));
+    return pendentes.filter((p) => (!pendSeller.length || pendSeller.includes(p.sellerId)) && (!pendDia.length || pendDia.includes(p.dia)) && casaTermos(p.cliente, pendCliente));
   }, [pendentes, pendSeller, pendDia, pendCliente]);
   const decidirMut = useMutation({
     mutationFn: (p: { id: string; acao: "aprovar" | "recusar" }) => apiRequest("POST", `/api/admin/km-vendedores/pendentes/${p.id}`, { acao: p.acao }),
@@ -120,12 +153,12 @@ export default function KmVendedores() {
   // Relatorio do mes inteiro, trecho a trecho (DE, PARA, SAIDA, CHEGADA, KM, MIN, TIPO).
   // Mesma regra da Rota do Dia: desde 01/10/2026 casa -> check-ins -> casa, +10%.
   const [mesTrechos, setMesTrechos] = useState<string>("");
-  const [trechoSeller, setTrechoSeller] = useState<string>("");
+  const [trechoSeller, setTrechoSeller] = useState<string[]>([]);
   // Filtro por data dentro do mes ("" = todos os dias).
-  const [trechoDia, setTrechoDia] = useState<string>("");
+  const [trechoDia, setTrechoDia] = useState<string[]>([]);
   // Busca por cliente (texto livre: casa com o DE ou o PARA do trecho).
   const [trechoCliente, setTrechoCliente] = useState<string>("");
-  useEffect(() => { setTrechoDia(""); }, [mesTrechos]);
+  useEffect(() => { setTrechoDia([]); }, [mesTrechos]);
   const { data: trechosResp, isLoading: trechosLoading } = useQuery<TrechosResp>({
     queryKey: ["/api/admin/km-vendedores/trechos", mesTrechos],
     queryFn: () => apiRequest("GET", `/api/admin/km-vendedores/trechos?mes=${mesTrechos}`),
@@ -212,15 +245,15 @@ export default function KmVendedores() {
     const todos = trechosResp?.trechos || [];
     const q = busca.trim().toLowerCase();
     return todos.filter((t) =>
-      (!trechoSeller || t.sellerId === trechoSeller) &&
-      (!trechoDia || t.dia === trechoDia) &&
-      (!trechoCliente.trim() || `${t.de} ${t.para}`.toLowerCase().includes(trechoCliente.trim().toLowerCase())) &&
+      (!trechoSeller.length || trechoSeller.includes(t.sellerId)) &&
+      (!trechoDia.length || trechoDia.includes(t.dia)) &&
+      casaTermos(`${t.de} ${t.para}`, trechoCliente) &&
       (!q || (t.sellerName || "").toLowerCase().includes(q)));
   }, [trechosResp, trechoSeller, trechoDia, trechoCliente, busca]);
   // Dias do mes que tem trecho (respeitando o vendedor escolhido) para o filtro de data.
   const diasTrechos = useMemo(() => {
     const set = new Set<string>();
-    for (const t of trechosResp?.trechos || []) if (!trechoSeller || t.sellerId === trechoSeller) set.add(t.dia);
+    for (const t of trechosResp?.trechos || []) if (!trechoSeller.length || trechoSeller.includes(t.sellerId)) set.add(t.dia);
     return Array.from(set).sort();
   }, [trechosResp, trechoSeller]);
 
@@ -274,7 +307,7 @@ export default function KmVendedores() {
     const linhas = [...dataRows, totalRow].map((linha) =>
       Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
     );
-    exportToExcel(linhas, `trechos-km-${trechoDia || mesTrechos || "mes"}`, { aba: "Trechos", negritoUltimaLinha: true });
+    exportToExcel(linhas, `trechos-km-${trechoDia.length === 1 ? trechoDia[0] : mesTrechos || "mes"}`, { aba: "Trechos", negritoUltimaLinha: true });
   }
 
   const linhasMes = useMemo(() => {
@@ -292,16 +325,16 @@ export default function KmVendedores() {
   }, [rows, months, regions, rateGONum, rateDFNum, ratePSNNum]);
 
   // Filtros da aba "Km e pagamento por mes" ("" = todos).
-  const [pagMes, setPagMes] = useState<string>("");
-  const [pagSeller, setPagSeller] = useState<string>("");
+  const [pagMes, setPagMes] = useState<string[]>([]);
+  const [pagSeller, setPagSeller] = useState<string[]>([]);
   const linhasPag = useMemo(
-    () => linhasMes.filter((l) => (!pagMes || l.mes === pagMes) && (!pagSeller || l.sellerId === pagSeller)),
+    () => linhasMes.filter((l) => (!pagMes.length || pagMes.includes(l.mes)) && (!pagSeller.length || pagSeller.includes(l.sellerId))),
     [linhasMes, pagMes, pagSeller],
   );
   const mesesPag = useMemo(() => Array.from(new Set(linhasMes.map((l) => l.mes))).sort().reverse(), [linhasMes]);
   const sellersPag = useMemo(() => {
     const m = new Map<string, string>();
-    for (const l of linhasMes) if (!pagMes || l.mes === pagMes) m.set(l.sellerId, l.sellerName);
+    for (const l of linhasMes) if (!pagMes.length || pagMes.includes(l.mes)) m.set(l.sellerId, l.sellerName);
     return Array.from(m).sort((a, b) => a[1].localeCompare(b[1]));
   }, [linhasMes, pagMes]);
 
@@ -515,15 +548,9 @@ export default function KmVendedores() {
             <CardTitle className="text-base flex items-center gap-2"><DollarSign className="w-4 h-4" /> Km e pagamento por mês</CardTitle>
             <div className="text-xs text-muted-foreground mt-1">Histórico fixo: uma linha por vendedor e mês, com a km rodada (calculada pelos check-ins da rota) e o valor a pagar.</div>
             <div className="flex items-center gap-2 flex-wrap mt-2">
-              <select value={pagMes} onChange={(e) => setPagMes(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm font-semibold" title="Mês">
-                <option value="">Todos os meses</option>
-                {mesesPag.map((m) => <option key={m} value={m}>{fmtMes(m)}</option>)}
-              </select>
-              <select value={pagSeller} onChange={(e) => setPagSeller(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
-                <option value="">Todos os vendedores</option>
-                {sellersPag.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
-              </select>
-              {(pagMes || pagSeller) ? <button type="button" onClick={() => { setPagMes(""); setPagSeller(""); }} className="text-xs text-indigo-600 hover:underline">Limpar filtros</button> : null}
+              <MultiFiltro label="Todos os meses" options={mesesPag.map((m) => [m, fmtMes(m)] as [string, string])} value={pagMes} onChange={setPagMes} width="w-40" />
+              <MultiFiltro label="Todos os vendedores" options={sellersPag as Array<[string, string]>} value={pagSeller} onChange={setPagSeller} />
+              {(pagMes.length || pagSeller.length) ? <button type="button" onClick={() => { setPagMes([]); setPagSeller([]); }} className="text-xs text-indigo-600 hover:underline">Limpar filtros</button> : null}
             </div>
           </CardHeader>
           <CardContent>
@@ -586,17 +613,11 @@ export default function KmVendedores() {
                 <select value={mesTrechos} onChange={(e) => setMesTrechos(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm font-semibold" title="Mês do relatório">
                   {months.slice().reverse().map((mo) => <option key={mo} value={mo}>{fmtMes(mo)}</option>)}
                 </select>
-                <select value={trechoSeller} onChange={(e) => { setTrechoSeller(e.target.value); setTrechoDia(""); }} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
-                  <option value="">Todos os vendedores</option>
-                  {sellers.map((sl) => <option key={sl.sellerId} value={sl.sellerId}>{sl.sellerName}</option>)}
-                </select>
-                <select value={trechoDia} onChange={(e) => setTrechoDia(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Data">
-                  <option value="">Todas as datas</option>
-                  {diasTrechos.map((d) => <option key={d} value={d}>{fmtDiaCurto(d)}</option>)}
-                </select>
+                <MultiFiltro label="Todos os vendedores" options={sellers.map((sl) => [sl.sellerId, sl.sellerName] as [string, string])} value={trechoSeller} onChange={(v) => { setTrechoSeller(v); setTrechoDia([]); }} />
+                <MultiFiltro label="Todas as datas" options={diasTrechos.map((d) => [d, fmtDiaCurto(d)] as [string, string])} value={trechoDia} onChange={setTrechoDia} width="w-40" />
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <input value={trechoCliente} onChange={(e) => setTrechoCliente(e.target.value)} placeholder="Buscar cliente..." title="Filtra os trechos em que o cliente aparece no De ou no Para" className="rounded-md border bg-background pl-7 pr-6 py-1.5 text-sm w-48" />
+                  <input value={trechoCliente} onChange={(e) => setTrechoCliente(e.target.value)} placeholder="Buscar cliente..." title="Filtra os trechos em que o cliente aparece no De ou no Para. Vários clientes: separe por vírgula" className="rounded-md border bg-background pl-7 pr-6 py-1.5 text-sm w-48" />
                   {trechoCliente ? <button type="button" onClick={() => setTrechoCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">x</button> : null}
                 </div>
                 <Button variant="outline" size="sm" onClick={exportarTrechos} disabled={trechosFiltrados.length === 0}>
@@ -697,17 +718,11 @@ export default function KmVendedores() {
             <CardTitle className="text-base flex items-center gap-2"><Info className="w-4 h-4" /> Check-ins pendentes de aprovação</CardTitle>
             <div className="text-xs text-muted-foreground mt-1">Desde 13/10/2026, check-in feito a mais de 150 m do cliente, ou no mesmo ponto do check-in anterior em outro cliente, fica pendente e <b>não conta km</b> até ser aprovado. Aprovar: volta a contar. Recusar: não conta.</div>
             <div className="flex items-center gap-2 flex-wrap mt-2">
-              <select value={pendSeller} onChange={(e) => { setPendSeller(e.target.value); setPendDia(""); }} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Vendedor">
-                <option value="">Todos os vendedores</option>
-                {pendSellers.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
-              </select>
-              <select value={pendDia} onChange={(e) => setPendDia(e.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-sm" title="Data">
-                <option value="">Todas as datas</option>
-                {pendDias.map((d) => <option key={d} value={d}>{fmtDiaCurto(d)}</option>)}
-              </select>
+              <MultiFiltro label="Todos os vendedores" options={pendSellers} value={pendSeller} onChange={(v) => { setPendSeller(v); setPendDia([]); }} />
+              <MultiFiltro label="Todas as datas" options={pendDias.map((d) => [d, fmtDiaCurto(d)] as [string, string])} value={pendDia} onChange={setPendDia} width="w-40" />
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <input value={pendCliente} onChange={(e) => setPendCliente(e.target.value)} placeholder="Buscar cliente..." className="rounded-md border bg-background pl-7 pr-6 py-1.5 text-sm w-48" />
+                <input value={pendCliente} onChange={(e) => setPendCliente(e.target.value)} placeholder="Buscar cliente..." title="Vários clientes: separe por vírgula" className="rounded-md border bg-background pl-7 pr-6 py-1.5 text-sm w-48" />
                 {pendCliente ? <button type="button" onClick={() => setPendCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">x</button> : null}
               </div>
               <div className="rounded-lg border bg-muted/30 px-3 py-1.5 text-sm"><b>{pendFiltrados.length}</b> de {pendentes.length} pendente(s)</div>
