@@ -6,13 +6,29 @@ import { Badge } from "@/components/ui/badge";
 import {
   MapPin, Navigation, Loader2, ArrowLeft, Phone, User, Crosshair,
   Store, Target, XCircle, Ban, HelpCircle, RefreshCw, Plus, Check, Camera, Search, X,
+  MessageCircle, Receipt,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
 
-type ResultadoConsulta = {
+// Último pedido implantado (Pipeline de Faturamento) — vem só nos cards de CLIENTE.
+type UltimoPedido = {
+  data: string | null;
+  valor: number | null;
+  numeroTipo: "NF" | "Pedido" | null; // faturado → NF; senão nº do pedido
+  numero: string | null;
+  etapa: string;
+} | null;
+
+type DadosCliente = {
+  whatsapp?: string | null;        // só dígitos, com 55
+  whatsConfirmado?: boolean;       // número atual confirmado pelo link do WhatsApp
+  ultimoPedido?: UltimoPedido;
+};
+
+type ResultadoConsulta = DadosCliente & {
   tipo: "lead" | "cliente";
   id: string;
   nome: string;
@@ -50,7 +66,7 @@ type NovoPonto = {
   placeId: string;
 };
 
-type FotoMatch = {
+type FotoMatch = DadosCliente & {
   tipo: string;
   id?: string | null;
   nome: string;
@@ -101,6 +117,77 @@ function estiloFoto(tipo: string, descartado?: boolean) {
   if (tipo === "cliente_inativo") return { barra: "border-l-slate-400", icone: <Store className="h-5 w-5 text-slate-500" />, rotulo: "Cliente inativado", tag: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200" };
   if (descartado) return { barra: "border-l-gray-400", icone: <Ban className="h-5 w-5 text-gray-500" />, rotulo: "Lead já visitado — não convertido", tag: "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200" };
   return { barra: "border-l-blue-500", icone: <Target className="h-5 w-5 text-blue-600" />, rotulo: "Lead em prospecção", tag: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300" };
+}
+
+function fmtTelefone(t: string | null | undefined): string {
+  let d = String(t || "").replace(/\D/g, "");
+  if (d.startsWith("55") && d.length >= 12) d = d.slice(2);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return String(t || "");
+}
+
+function fmtDataBR(s: string | null | undefined): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
+const fmtBRL = (v: number | null | undefined) =>
+  v == null || !isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+// Número no formato do WhatsApp (só dígitos, com 55). null se não der para montar (sem DDD).
+function waNumero(t: string | null | undefined): string | null {
+  const d = String(t || "").replace(/\D/g, "");
+  if (d.length < 10) return null;
+  return d.startsWith("55") && d.length >= 12 ? d : `55${d}`;
+}
+
+// Telefone clicável: tocar ABRE A CONVERSA NO WHATSAPP com o cliente/lead.
+// Só cai para "ligar" quando o número não tem DDD (não dá para montar o link do WhatsApp).
+function TelefoneWhats({ telefone, contato, confirmado }: { telefone: string; contato?: string | null; confirmado?: boolean }) {
+  const wa = waNumero(telefone);
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {wa ? (
+        <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium hover:underline" data-testid="link-whatsapp">
+          <MessageCircle className="h-3.5 w-3.5" /> {fmtTelefone(telefone)}
+        </a>
+      ) : (
+        <a href={`tel:${String(telefone).replace(/\D/g, "")}`} className="inline-flex items-center gap-1.5 text-blue-600 hover:underline"><Phone className="h-3.5 w-3.5" /> {telefone}</a>
+      )}
+      {confirmado && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">✓ confirmado</span>}
+      {contato && <span className="text-muted-foreground">· {contato}</span>}
+      {wa && <a href={`tel:${String(telefone).replace(/\D/g, "")}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline" aria-label="Ligar"><Phone className="h-3 w-3" /> ligar</a>}
+    </div>
+  );
+}
+
+// Bloco do card de CLIENTE: WhatsApp (abre a conversa) + último pedido implantado (data, valor, nº/NF).
+function InfoCliente({ telefone, contato, whatsapp, whatsConfirmado, ultimoPedido }: DadosCliente & { telefone?: string | null; contato?: string | null }) {
+  const p = ultimoPedido;
+  return (
+    <div className="space-y-1">
+      {telefone ? (
+        <TelefoneWhats telefone={telefone} contato={contato} confirmado={whatsConfirmado} />
+      ) : (
+        <div className="flex items-center gap-1.5 text-muted-foreground"><MessageCircle className="h-3.5 w-3.5" /> Sem telefone cadastrado</div>
+      )}
+      <div className="flex items-start gap-1.5" data-testid="ultimo-pedido-cliente">
+        <Receipt className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        {p ? (
+          <span>
+            Último pedido: <span className="text-foreground font-medium">{fmtDataBR(p.data)}</span>
+            {" · "}<span className="text-foreground font-medium">{fmtBRL(p.valor)}</span>
+            {p.numero && <>{" · "}<span className="text-foreground font-medium">{p.numeroTipo === "NF" ? "NF" : "Pedido nº"} {p.numero}</span></>}
+            {p.etapa && <span className="text-muted-foreground"> ({p.etapa})</span>}
+          </span>
+        ) : (
+          <span>Nenhum pedido implantado</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Reduz a foto no próprio aparelho antes de enviar (OCR funciona bem com ~1600px).
@@ -580,8 +667,10 @@ export default function ConsultaLocal() {
                           {(m.bairro || m.endereco) && (
                             <div className="flex items-start gap-1.5"><MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span>{[m.endereco, m.bairro].filter(Boolean).join(" · ")}</span></div>
                           )}
-                          {m.telefone && (
-                            <a href={`tel:${m.telefone}`} className="flex items-center gap-1.5 text-blue-600 hover:underline w-fit"><Phone className="h-3.5 w-3.5" /><span>{m.telefone}</span></a>
+                          {m.tipo === "cliente" || m.tipo === "cliente_inativo" ? (
+                            <InfoCliente telefone={m.telefone} whatsapp={m.whatsapp} whatsConfirmado={m.whatsConfirmado} ultimoPedido={m.ultimoPedido} />
+                          ) : m.telefone && (
+                            <TelefoneWhats telefone={m.telefone} />
                           )}
                         </div>
                         {m.tipo === "lead" && m.descartado && m.id && (
@@ -699,8 +788,10 @@ export default function ConsultaLocal() {
                           {(r.bairro || r.cidade) && (
                             <div className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /><span>{[r.bairro, r.cidade].filter(Boolean).join(" · ")}</span></div>
                           )}
-                          {r.telefone && (
-                            <a href={`tel:${r.telefone}`} className="flex items-center gap-1.5 text-blue-600 hover:underline w-fit"><Phone className="h-3.5 w-3.5" /><span>{r.telefone}{r.contato ? ` · ${r.contato}` : ""}</span></a>
+                          {r.tipo === "cliente" ? (
+                            <InfoCliente telefone={r.telefone} contato={r.contato} whatsapp={r.whatsapp} whatsConfirmado={r.whatsConfirmado} ultimoPedido={r.ultimoPedido} />
+                          ) : r.telefone && (
+                            <TelefoneWhats telefone={r.telefone} contato={r.contato} />
                           )}
                         </div>
                         <div className="pl-7 pt-1 flex items-center gap-3 flex-wrap">
