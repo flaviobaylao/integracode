@@ -156,6 +156,10 @@ export interface RegistrarBoletoParams {
   billingPipelineId?: string | null;
   createdBy?: string | null;
   descontoPct?: number; // desconto de cobranca (%) do cadastro do cliente -> desconto ate o vencimento no boleto
+  // Base sobre a qual o descontoPct incide. Default = amount. Quando o titulo ja teve
+  // um abatimento do pipeline (desconto extra no boleto), a base e o valor CHEIO do
+  // pedido: o % do cadastro nao pode encolher por causa do desconto extra.
+  descontoBase?: number;
 }
 
 export interface RegistrarBoletoResult {
@@ -286,7 +290,8 @@ export async function registrarBoleto(
   // desconto por VALOR FIXO (tipo 1) valido ate o vencimento efetivo. Ex.: 6% de R$ 301,70 =>
   // desconto de R$ 18,10 -> cliente paga R$ 283,60 se pagar em dia, R$ 301,70 se atrasar.
   if (params.descontoPct && params.descontoPct > 0 && params.descontoPct < 100) {
-    const descValor = Number((Number(params.amount) * params.descontoPct / 100).toFixed(2));
+    const baseDesc = (params.descontoBase && params.descontoBase > 0) ? Number(params.descontoBase) : Number(params.amount);
+    const descValor = Number((baseDesc * params.descontoPct / 100).toFixed(2));
     if (descValor > 0 && descValor < Number(params.amount)) {
       body.desconto = { tipo: 1, dataExpiracao: formatBBDate(effectiveDueDate), valor: descValor };
     }
