@@ -3449,6 +3449,22 @@ export const financialPaymentMethodEnum = pgEnum("financial_payment_method", [
   "outros",
 ]);
 
+// MOTIVO DO CANCELAMENTO de um titulo (13/out/2026). Ate aqui o porque de um titulo ter
+// sido cancelado so existia como TEXTO LIVRE em `notes`: de 2.486 cancelados, apenas 37
+// diziam claramente que eram repeticao. Sem motivo estruturado ninguem distingue
+// "duplicidade" (existe outro titulo valendo) de "erro de faturamento" (a venda caiu), e foi
+// assim que 5 NF-e AUTORIZADAS ficaram sem nenhum titulo vivo — R$ 9.804,20 que ninguem cobra.
+export const receivableCancelReasonEnum = pgEnum("receivable_cancel_reason", [
+  "duplicidade",       // existe OUTRO titulo da mesma venda que permanece valendo
+  "nfe_cancelada",     // a NF-e foi cancelada na SEFAZ
+  "devolucao",         // devolucao de venda
+  "erro_faturamento",  // faturou errado (cliente/valor/pedido) e nao havera cobranca
+  "cobrado_fora",      // a cobranca existe, mas em OUTRO sistema (Omie / 1.0) — nao e perda
+  "incobravel",        // perdao / incobravel (baixa administrativa classica)
+  "operacao_sem_cr",   // operacao que por natureza nao gera conta a receber (bonificacao, transf.)
+  "outro",             // inclusive o historico legado que nao da para classificar
+]);
+
 export const receivables = pgTable("receivables", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   titleNumber: varchar("title_number"),
@@ -3480,6 +3496,13 @@ export const receivables = pgTable("receivables", {
   updatedBy: varchar("updated_by"),
   deletedAt: timestamp("deleted_at"),
   deletedBy: varchar("deleted_by"),
+  // CANCELAMENTO — por que o titulo foi cancelado, de forma consultavel (13/out/2026).
+  // duplicateOfId aponta para o titulo que FICOU valendo e so faz sentido com
+  // cancelReason = 'duplicidade'; e ele que permite provar que a venda continua cobrada.
+  cancelReason: receivableCancelReasonEnum("cancel_reason"),
+  canceledAt: timestamp("canceled_at"),
+  canceledBy: varchar("canceled_by"),
+  duplicateOfId: varchar("duplicate_of_id"),
   // PDD — Previsão de Devedor Duvidoso (19/set/2026). Título vencido que o admin
   // classificou como PDD. O status gravado continua a_vencer/vencida; a classificação
   // é esta marca (pdd_at preenchido = está em PDD).
