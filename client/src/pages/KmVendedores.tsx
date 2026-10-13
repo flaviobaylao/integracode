@@ -140,6 +140,26 @@ export default function KmVendedores() {
   const pendFiltrados = useMemo(() => {
     return pendentes.filter((p) => (!pendSeller.length || pendSeller.includes(p.sellerId)) && (!pendDia.length || pendDia.includes(p.dia)) && casaTermos(p.cliente, pendCliente));
   }, [pendentes, pendSeller, pendDia, pendCliente]);
+  // Selecao em massa de pendentes (aprovar/recusar varios de uma vez).
+  const [pendSel, setPendSel] = useState<string[]>([]);
+  const [lotePend, setLotePend] = useState<{ feitos: number; total: number } | null>(null);
+  const decidirLote = async (acao: "aprovar" | "recusar") => {
+    const ids = pendSel.slice();
+    if (!ids.length) return;
+    if (!window.confirm(`${acao === "aprovar" ? "Aprovar" : "Recusar"} ${ids.length} check-in(s) selecionado(s)?`)) return;
+    let ok = 0, falha = 0;
+    setLotePend({ feitos: 0, total: ids.length });
+    for (const id of ids) {
+      try { await apiRequest("POST", `/api/admin/km-vendedores/pendentes/${id}`, { acao }); ok++; } catch { falha++; }
+      setLotePend({ feitos: ok + falha, total: ids.length });
+    }
+    setLotePend(null);
+    setPendSel([]);
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores/pendentes"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/km-vendedores/trechos"] });
+    toast({ title: `${ok} check-in(s) ${acao === "aprovar" ? "aprovado(s)" : "recusado(s)"}`, description: falha ? `${falha} falharam — tente de novo.` : "Km das rotas recalculada.", variant: falha ? "destructive" : undefined });
+  };
   const decidirMut = useMutation({
     mutationFn: (p: { id: string; acao: "aprovar" | "recusar" }) => apiRequest("POST", `/api/admin/km-vendedores/pendentes/${p.id}`, { acao: p.acao }),
     onSuccess: (r: any) => {
@@ -726,6 +746,14 @@ export default function KmVendedores() {
                 {pendCliente ? <button type="button" onClick={() => setPendCliente("")} title="Limpar" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm">x</button> : null}
               </div>
               <div className="rounded-lg border bg-muted/30 px-3 py-1.5 text-sm"><b>{pendFiltrados.length}</b> de {pendentes.length} pendente(s)</div>
+              {isAdmin && pendSel.length ? (
+                <>
+                  <Button size="sm" variant="outline" className="text-green-700" disabled={!!lotePend} onClick={() => decidirLote("aprovar")}>Aprovar selecionados ({pendSel.length})</Button>
+                  <Button size="sm" variant="outline" className="text-red-700" disabled={!!lotePend} onClick={() => decidirLote("recusar")}>Recusar selecionados ({pendSel.length})</Button>
+                  <button type="button" className="text-xs text-indigo-600 hover:underline" disabled={!!lotePend} onClick={() => setPendSel([])}>Limpar seleção</button>
+                </>
+              ) : null}
+              {lotePend ? <span className="text-xs text-muted-foreground">Processando {lotePend.feitos}/{lotePend.total}...</span> : null}
             </div>
           </CardHeader>
           <CardContent>
@@ -738,6 +766,11 @@ export default function KmVendedores() {
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10">
                     <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      {isAdmin ? (
+                        <th className="py-2 px-3 bg-background border-b w-8">
+                          <input type="checkbox" title="Selecionar todos os filtrados" checked={pendFiltrados.length > 0 && pendFiltrados.every((p) => pendSel.includes(p.id))} onChange={(e) => setPendSel(e.target.checked ? Array.from(new Set([...pendSel, ...pendFiltrados.map((p) => p.id)])) : pendSel.filter((id) => !pendFiltrados.some((p) => p.id === id)))} />
+                        </th>
+                      ) : null}
                       <th className="text-left font-bold py-2 px-3 bg-background border-b">Dia</th>
                       <th className="text-left font-bold py-2 px-3 bg-background border-b">Hora</th>
                       <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
@@ -749,7 +782,10 @@ export default function KmVendedores() {
                   </thead>
                   <tbody>
                     {pendFiltrados.map((p) => (
-                      <tr key={p.id} className="border-t hover:bg-muted/40">
+                      <tr key={p.id} className={`border-t hover:bg-muted/40 ${pendSel.includes(p.id) ? "bg-indigo-50/60 dark:bg-indigo-950/40" : ""}`}>
+                        {isAdmin ? (
+                          <td className="py-2 px-3"><input type="checkbox" checked={pendSel.includes(p.id)} onChange={() => setPendSel(pendSel.includes(p.id) ? pendSel.filter((x) => x !== p.id) : [...pendSel, p.id])} /></td>
+                        ) : null}
                         <td className="py-2 px-3 whitespace-nowrap font-medium">{fmtDiaCurto(p.dia)}</td>
                         <td className="py-2 px-3 tabular-nums">{p.hora}</td>
                         <td className="py-2 px-3 whitespace-nowrap">{p.sellerName}</td>
