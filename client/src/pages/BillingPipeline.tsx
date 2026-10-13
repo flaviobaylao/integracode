@@ -4,6 +4,7 @@ import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import PaymentLinkDialog from '@/components/PaymentLinkDialog';
 import PedidoGynServDialog from '@/components/PedidoGynServDialog';
+import DescontoBoletoBox from '@/components/DescontoBoletoBox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -2028,6 +2029,9 @@ export default function BillingPipeline() {
                   </div>
                 </div>
               </div>
+
+              {/* DESCONTO EXTRA NO BOLETO: só a cobrança, soma com o % do cadastro, registra quem lançou. */}
+              <DescontoBoletoBox itemId={detailItem.id} canEdit={canEdit} operationType={detailItem.operationType} />
 
               {((detailItem.products && detailItem.products.length > 0) || editMode) && (
                 <div>
