@@ -79,11 +79,11 @@ export function QuarentenaTag({
   return (
     <span
       className="ml-1 inline-flex items-center gap-0.5 align-middle text-[10px] font-normal leading-none text-amber-600 dark:text-amber-400 whitespace-nowrap"
-      title={`Cliente em quarentena — visitas/fornecimento a partir de ${br}`}
+      title={`Atendimento/fornecimento a partir de ${br}`}
       data-testid="tag-quarentena"
     >
       <Clock className="h-3 w-3" />
-      quarentena{br ? ` até ${br}` : ""}
+      Atend. a partir de{br ? ` ${br}` : ""}
     </span>
   );
 }
