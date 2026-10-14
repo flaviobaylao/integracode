@@ -601,7 +601,7 @@ export default function ActiveCustomers() {
       console.log('✅ Geração de agendamentos iniciada:', data);
       toast({ 
         title: "✅ Gerando agendamentos!", 
-        description: `Ancorado no último atendimento de cada cliente (${data?.comAncora ?? 0} clientes com histórico). As próximas visitas estão sendo criadas em segundo plano.`
+        description: `Ancorado na Data de Início do Fornecimento (ou, em branco, no último dia de visita conforme periodicidade e dia de rota) — ${data?.comAncora ?? 0} cliente(s) com âncora. As próximas visitas estão sendo criadas em segundo plano.`
       });
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] }), 8000);
     },
