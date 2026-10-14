@@ -389,10 +389,33 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     }
   }
 
-  // Calcula 4 próximas datas ancoradas no início do fornecimento
+  // Sem semana fixa: encadeia por intervalo. ÂNCORA (regra unificada com a geração em massa):
+  //   1) Data de Início do Fornecimento (serviceStart) — o núcleo faseia nela;
+  //   2) em branco → ÚLTIMO DIA DE VISITA agendado (<= hoje), para continuar a cadência conforme
+  //      periodicidade e dia de rota (NÃO o último atendimento real do cliente);
+  //   3) sem nenhum → a partir de hoje pela regra.
+  let ancoraUV: Date | null = null;
+  if (!serviceStart) {
+    try {
+      const uv: any = await db.execute(sql`SELECT MAX(scheduled_date) AS d FROM visit_agenda WHERE customer_id = ${customerId} AND scheduled_date::date <= CURRENT_DATE`);
+      const d = ((uv.rows || uv) as any[])[0]?.d;
+      if (d) ancoraUV = new Date(d);
+    } catch { /* noop */ }
+  }
   let dates: Date[] = [];
   try {
-    const first = calculateNextVisitDate({ weekdays: targetWeekdays, periodicity, referenceDate: today, serviceStartDate: serviceStart }).nextDate;
+    // 1ª data futura: avança a partir da âncora (última visita) até cair em >= hoje; ou parte de hoje.
+    let cursor: Date | null = ancoraUV ? new Date(ancoraUV) : null;
+    let first: Date | null = null; let guard = 0;
+    while (guard++ < 400) {
+      const nx = calculateNextVisitDate(cursor
+        ? { weekdays: targetWeekdays, periodicity, lastCompletedDate: cursor, serviceStartDate: serviceStart }
+        : { weekdays: targetWeekdays, periodicity, referenceDate: today, serviceStartDate: serviceStart }).nextDate;
+      if (cursor && nx.getTime() <= cursor.getTime()) break; // trava anti-loop
+      cursor = nx;
+      if (nx >= today) { first = nx; break; }
+    }
+    if (!first) return 0;
     dates.push(first);
     let last = first;
     for (let i = 0; i < 3; i++) {

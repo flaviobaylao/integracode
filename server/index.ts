@@ -874,106 +874,35 @@ run();
 
 
 
-  // ROTINA: gera agendamentos no 2.0 ancorando na ULTIMA VISITA AGENDADA no 1.0 (pre go-live).
-  // Regra: proxima = ultima agendada(1.0) + intervalo (7/14/28/56), no dia da semana do cliente,
-  // pulando atrasos ate a proxima data FUTURA na cadencia. Sem ancora -> comeca de hoje.
+  // ROTINA UNIFICADA (out/2026): regera a agenda de TODOS os clientes ativos pelo MESMO motor por
+  // cliente do quadro "Agenda da Carteira" (regenerateCustomerAgenda). Esse motor honra a SEMANA DO
+  // MÊS fixa (1ª/3ª, 2ª/4ª, 1ª..4ª, última — via datasPelaRegra) e a ÂNCORA: Data de Início do
+  // Fornecimento → último dia de visita (<= hoje) → hoje. Assim Clientes Ativos, a tela do cliente e
+  // o quadro produzem EXATAMENTE as mesmas datas. (Antes havia cadência própria ancorada no último
+  // atendimento real — removida.) Preserva a visita de HOJE e o passado (regenerate só apaga pendente
+  // de amanhã em diante).
   app.post('/api/admin/visits/generate-from-1-0', async (req: Request, res: Response) => {
     const apply = req.body?.apply === true;
-    const count = Math.max(1, Math.min(6, Number(req.body?.count) || 4));
-    const replaceFuture = req.body?.replaceFuture !== false; // default true no apply
     try {
-      // 1) ÚLTIMO DIA DE VISITA agendado por cliente (<= hoje). Serve de âncora da cadência SOMENTE
-      //    quando o cliente NÃO tem Data de Início do Fornecimento. NÃO usamos mais o último
-      //    ATENDIMENTO real (virtual_service_logs / sales_cards) como âncora.
-      const lastVisitR: any = await db.execute(sql`
-        SELECT customer_id, MAX(scheduled_date) AS last_visit FROM visit_agenda
-          WHERE scheduled_date::date <= CURRENT_DATE
-        GROUP BY customer_id`);
-      const lastVisitByCustomer = new Map<string, Date>();
-      for (const r of ((lastVisitR.rows || lastVisitR) as any[])) {
-        if (r.customer_id && r.last_visit) lastVisitByCustomer.set(String(r.customer_id), new Date(r.last_visit));
-      }
-      // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
-      const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address, service_start_date
-        FROM customers WHERE (is_supplier IS NOT TRUE) AND (is_colaborador IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
+      const custR: any = await db.execute(sql`SELECT id, service_start_date FROM customers
+        WHERE (is_supplier IS NOT TRUE) AND (is_colaborador IS NOT TRUE) AND weekdays IS NOT NULL AND visit_periodicity IS NOT NULL AND is_active = true
+          AND EXISTS (SELECT 1 FROM active_customers ac WHERE ac.customer_id = customers.id AND ac.is_active IS TRUE)`);
       const cust = (custR.rows || custR) as any[];
-      const ABBR: any = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6, dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
-      const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      // BLINDAGEM (31/jul/2026): mesmo o seed replaceFuture nunca remove a visita de HOJE nem do
-      // passado; substitui apenas do dia seguinte em diante, preservando a Rota do Dia vigente.
-      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-      const parseWk = (w: any): string[] => { let x = w; if (typeof x === 'string') { const tt = x.trim(); if (tt.startsWith('[')) { try { x = JSON.parse(tt); } catch (e) { x = []; } } else x = tt ? [tt] : []; } if (!Array.isArray(x)) x = []; return x.map((d: any) => String(d)); };
-      const result: any = { apply, count, totalClientes: cust.length, comAncora: 0, semAncora: 0, semDiaValido: 0, visitasInseridas: 0, futurasRemovidas: 0, amostras: [] as any[], erros: 0 };
-      // por cliente: guarda ancoraThreshold p/ delete seletivo (preserva visitas ate a ancora)
-      const insertRows: any[] = [];
-      const delThreshold: Record<string, string> = {}; // customerId -> ISO (apaga futuras pendentes > este)
-      for (const c of cust) {
-        try {
-          const weekdaysRaw = parseWk(c.weekdays);
-          const targetNums = weekdaysRaw.map((d) => ABBR[d]).filter((n: any) => n != null);
-          if (targetNums.length === 0) { result.semDiaValido++; continue; }
-          const periodicity = String(c.visit_periodicity) as any;
-          // ÂNCORA = Data de Início do Fornecimento (service_start_date). Quando registrada, o núcleo
-          // ancora/fasa a periodicidade nela — nenhuma visita antes dela. EM BRANCO → encadeia a partir
-          // do ÚLTIMO DIA DE VISITA agendado (continua a cadência conforme periodicidade e dia de rota).
-          // Nunca usa o último atendimento real do cliente.
-          const svcStart = c.service_start_date ? new Date(c.service_start_date) : null;
-          if (svcStart) svcStart.setHours(0, 0, 0, 0);
-          const lastVisit = (!svcStart) ? (lastVisitByCustomer.get(String(c.id)) || null) : null;
-          if (lastVisit) lastVisit.setHours(0, 0, 0, 0);
-          if (svcStart || lastVisit) result.comAncora++; else result.semAncora++;
-          const startFuture = svcStart && svcStart.getTime() >= today.getTime();
-          // Gera `count` próximas visitas seguindo as REGRAS BASE (calculateNextVisitDate):
-          // semanal=+7, quinzenal=+14, mensal=1ª ocorrência do dia de rota no mês seguinte.
-          // Com Data de Início: parte dela (cursor nulo → referenceDate+serviceStartDate). Em branco:
-          // encadeia do último dia de visita. Sem nenhum dos dois: parte de hoje pela regra.
-          const dates: Date[] = [];
-          let cursor: Date | null = lastVisit ? new Date(lastVisit) : null;
-          let guard = 0;
-          while (dates.length < count && guard < 2000) {
-            guard++;
-            let next: Date;
-            try {
-              next = calculateNextVisitDate(cursor
-                ? { weekdays: weekdaysRaw, periodicity, lastCompletedDate: cursor, serviceStartDate: svcStart || undefined }
-                : { weekdays: weekdaysRaw, periodicity, referenceDate: today, serviceStartDate: svcStart || undefined }).nextDate;
-            } catch (e) { break; }
-            if (cursor && next.getTime() <= cursor.getTime()) break; // trava anti-loop
-            cursor = next;
-            if (next >= today) dates.push(next);
-          }
-          if (dates.length === 0) { result.semDiaValido++; continue; }
-          // Apaga as visitas FUTURAS pendentes (de amanhã em diante) e recria pela nova âncora.
-          // Preserva a visita de HOJE e o passado (a Rota do Dia vigente). O início do fornecimento
-          // futuro também cai aqui: as datas erradas entre amanhã e o início são removidas.
-          delThreshold[c.id] = new Date(today.getTime() - 86400000).toISOString();
-          if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targetNums.map((n: number) => DOW[n]).join(','), ancora: svcStart ? svcStart.toISOString().slice(0, 10) : (lastVisit ? lastVisit.toISOString().slice(0, 10) : null), fonteAncora: svcStart ? 'inicio_fornecimento' : (lastVisit ? 'ultima_visita' : 'hoje'), geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
-          for (const dt of dates) insertRows.push({ cid: c.id, sid: c.seller_id || '', name: c.name || '', sd: dt.toISOString(), rd: DOW[dt.getDay()], rec: c.visit_periodicity, iv: c.virtual_service === true, lat: c.latitude, lng: c.longitude, addr: c.address });
-        } catch (e) { result.erros++; }
-      }
+      const comAncora = cust.filter((c) => !!c.service_start_date).length; // com Data de Início do Fornecimento
+      const result: any = { apply, totalClientes: cust.length, comAncora, semAncora: cust.length - comAncora, motor: 'regenerateCustomerAgenda' };
       if (!apply) {
-        result.visitasInseridas = insertRows.length; // seria inserido
-        return res.json(result);
+        return res.json({ ...result, msg: 'Dry-run: nada foi gravado. Envie apply=true para regerar.' });
       }
       // APPLY em segundo plano (evita timeout do gateway). Status em system_settings 'visits_seed_last'.
-      res.json({ started: true, ...result, visitasPlanejadas: insertRows.length, msg: 'Gerando em segundo plano. Consulte /api/admin/visits/generate-from-1-0/status' });
+      res.json({ started: true, ...result, msg: 'Regerando em segundo plano (motor unificado). Consulte /api/admin/visits/generate-from-1-0/status' });
       (async () => {
-        let removed = 0, inserted = 0, errs = 0;
-        try {
-          if (replaceFuture) {
-            for (const c of cust) {
-              const th = delThreshold[c.id]; if (!th) continue;
-              try { const del: any = await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${tomorrow.toISOString()} AND scheduled_date > ${th}`); removed += (del.rowCount || 0); } catch (e) { errs++; }
-            }
-          }
-          for (let i = 0; i < insertRows.length; i += 400) {
-            const batch = insertRows.slice(i, i + 400);
-            const vals = batch.map((b) => sql`(${b.cid}, ${b.sid}, ${b.sd}, ${b.rd}, ${b.rec}, ${b.iv}, 'pending', ${b.name}, ${b.lat}, ${b.lng}, ${b.addr})`);
-            try { await db.execute(sql`INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address) VALUES ${sql.join(vals, sql`, `)} ON CONFLICT DO NOTHING`); inserted += batch.length; } catch (e) { errs++; }
-          }
-        } catch (e) { errs++; }
-        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('visits_seed_last', ${JSON.stringify({ at: new Date().toISOString(), clientes: cust.length, comAncora: result.comAncora, semAncora: result.semAncora, semDiaValido: result.semDiaValido, futurasRemovidas: removed, visitasInseridas: inserted, erros: errs })}, 'visits-seed') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
+        const { regenerateCustomerAgenda } = await import('./visitScheduleService');
+        let clientes = 0, visitas = 0, semData = 0, errs = 0;
+        for (const c of cust) {
+          try { const n = await regenerateCustomerAgenda(String(c.id)); clientes++; if (n > 0) visitas += n; else semData++; }
+          catch (e) { errs++; }
+        }
+        try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('visits_seed_last', ${JSON.stringify({ at: new Date().toISOString(), clientes, comAncora, visitas, semData, erros: errs, motor: 'regenerateCustomerAgenda' })}, 'visits-seed') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
       })();
     } catch (e: any) { res.status(500).json({ error: (e?.message || String(e)).slice(0, 300) }); }
   });
