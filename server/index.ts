@@ -62,6 +62,7 @@ import { registerCarteira } from "./carteira-routes";
 import { registerGestaoDebitoVendas } from "./gestao-debito-vendas-routes";
 import { registerConferenciaRecebimentos } from "./conferencia-recebimentos-routes";
 import { registerComodatosRoutes } from "./comodatos-routes";
+import { registerFornecedoresRoutes } from "./fornecedores-routes";
 import { registerCadastroReceitaSync } from "./cadastro-receita-sync";
 import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provider";
 import { registerGeocodeAnalyze } from "./geocode-analyze";
@@ -859,6 +860,8 @@ run();
   registerConferenciaRecebimentos(app);
   // Contratos de Comodato (freezer/geladeira em comodato nos pontos de venda) — 04/out/2026. Rotas /api/comodatos*.
   try { registerComodatosRoutes(app); } catch (e) { console.error('[comodatos]', e); }
+  // Fornecedores — edição completa, dados de pagamento e anexos (14/out/2026). Rotas /api/suppliers/:id/cadastro e /api/suppliers/*anexos*.
+  try { registerFornecedoresRoutes(app); } catch (e) { console.error('[fornecedores]', e); }
   registerPainelAtendimento(app);
   registerPainelAtendimentoDigital(app);
   registerPainelComunicacaoRoutes(app);

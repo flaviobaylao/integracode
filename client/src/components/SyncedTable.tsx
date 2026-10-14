@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,13 @@ function fmt(v: any, col: string) {
 }
 
 export default function SyncedTable({
-  table, hideColumns = [], labels = {}, limit = 2000, rowFilter,
-}: { table: string; hideColumns?: string[]; labels?: Record<string, string>; limit?: number; rowFilter?: (row: any) => boolean }) {
+  table, hideColumns = [], labels = {}, limit = 2000, rowFilter, rowActions, onRowDoubleClick,
+}: {
+  table: string; hideColumns?: string[]; labels?: Record<string, string>; limit?: number; rowFilter?: (row: any) => boolean;
+  /** Coluna de ações no início de cada linha (ex.: botão Editar). */
+  rowActions?: (row: any) => ReactNode;
+  onRowDoubleClick?: (row: any) => void;
+}) {
   const [q, setQ] = useState("");
   const [sortCol, setSortCol] = useState<string>("");
   const [sortAsc, setSortAsc] = useState(true);
@@ -69,6 +74,7 @@ export default function SyncedTable({
         <Table>
           <TableHeader>
             <TableRow>
+              {rowActions && <TableHead className="w-10" />}
               {cols.map((c) => (
                 <TableHead key={c} className="cursor-pointer select-none whitespace-nowrap" onClick={() => handleSort(c)}>
                   {labels[c] || c}{sortCol === c ? (sortAsc ? " ↑" : " ↓") : ""}
@@ -78,12 +84,13 @@ export default function SyncedTable({
           </TableHeader>
           <TableBody>
             {sorted.map((r, i) => (
-              <TableRow key={r.id || i}>
+              <TableRow key={r.id || i} onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(r) : undefined} className={onRowDoubleClick ? "cursor-pointer" : undefined}>
+                {rowActions && <TableCell className="py-1">{rowActions(r)}</TableCell>}
                 {cols.map((c) => (<TableCell key={c}>{fmt(r[c], c)}</TableCell>))}
               </TableRow>
             ))}
             {!isLoading && sorted.length === 0 && (
-              <TableRow><TableCell colSpan={cols.length} className="text-center text-gray-400 py-8">Nenhum registro</TableCell></TableRow>
+              <TableRow><TableCell colSpan={cols.length + (rowActions ? 1 : 0)} className="text-center text-gray-400 py-8">Nenhum registro</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
