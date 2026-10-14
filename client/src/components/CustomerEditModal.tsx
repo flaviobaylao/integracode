@@ -193,6 +193,45 @@ export default function CustomerEditModal({
     },
   });
 
+  // NOVO CLIENTE (botão "Novo Cliente" de Clientes Ativos). Antes o modal só sabia criar
+  // LEAD; com customer=null e isLead=false o submit caía no PATCH e dava "Customer ID is
+  // required". O servidor (POST /api/customers) já cria o card permanente e coloca o
+  // cliente em Clientes Ativos; aqui só gravamos também o envio por WhatsApp (rota própria).
+  const createCustomerMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const created: any = await apiRequest("POST", `/api/customers`, { ...data, isLead: false });
+      if (created?.id) {
+        try {
+          await apiRequest("PATCH", `/api/customers/${created.id}/doc-delivery`, {
+            notificationWhatsapp: String((formData as any).notificationWhatsapp || "").trim(),
+            sendDanfeWhatsapp: !!(formData as any).sendDanfeWhatsapp,
+            sendXmlWhatsapp: !!(formData as any).sendXmlWhatsapp,
+            sendBoletoPixWhatsapp: !!(formData as any).sendBoletoPixWhatsapp,
+            sendPedidoWhatsapp: !!(formData as any).sendPedidoWhatsapp,
+          });
+        } catch { /* não bloqueia o cadastro */ }
+      }
+      return created;
+    },
+    onSuccess: (created: any) => {
+      toast({
+        title: "Cliente cadastrado com sucesso!",
+        description: `${created?.fantasyName || created?.name || "O cliente"} foi criado e incluído em Clientes Ativos.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'], refetchType: 'all' });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      onClose();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao cadastrar cliente",
+        description: error.message || "Ocorreu um erro ao cadastrar o cliente",
+        variant: "destructive",
+      });
+    },
+  });
+
   const updateCustomerMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       if (!customer?.id) throw new Error("Customer ID is required");
@@ -245,6 +284,17 @@ export default function CustomerEditModal({
 
   // FIX 08/set/2026 — guarda o registro carregado para submeter so o diff.
   const loadedRef = useRef<any>(null);
+  // Formulário VAZIO (estado inicial do useState acima). Ao abrir "Novo Cliente"/"Novo Lead"
+  // (customer = null) o modal reaproveitava os dados do último cliente editado — e salvar
+  // criaria uma cópia dele. Aqui o form volta ao vazio sempre que abre sem cliente.
+  const emptyFormRef = useRef<any>(null);
+  if (emptyFormRef.current === null) emptyFormRef.current = formData;
+  useEffect(() => {
+    if (isOpen && !customer) {
+      setFormData(emptyFormRef.current);
+      loadedRef.current = null;
+    }
+  }, [isOpen, customer]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -303,6 +353,17 @@ export default function CustomerEditModal({
         return;
       }
       createLeadMutation.mutate(payload);
+    } else if (!customer?.id) {
+      // NOVO CLIENTE (não-lead)
+      if (!String((formData as any).name || "").trim()) {
+        toast({ title: "Campo obrigatório", description: "Informe o nome / razão social do cliente", variant: "destructive" });
+        return;
+      }
+      if (!formData.sellerId) {
+        toast({ title: "Campo obrigatório", description: "Selecione um vendedor responsável", variant: "destructive" });
+        return;
+      }
+      createCustomerMutation.mutate(payload);
     } else {
       // Caso contrário atualiza existente
       updateCustomerMutation.mutate(payload);
@@ -510,9 +571,9 @@ export default function CustomerEditModal({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Editar Dados do Cliente</DialogTitle>
+          <DialogTitle>{customer?.id ? "Editar Dados do Cliente" : isLead ? "Novo Lead" : "Novo Cliente"}</DialogTitle>
           <DialogDescription>
-            Atualize as informações cadastrais do cliente
+            {customer?.id ? "Atualize as informações cadastrais do cliente" : "Preencha os dados cadastrais do novo cliente"}
           </DialogDescription>
           {/* Marcação de REDE: só aparece quando o cliente faz parte de uma.
               Quem edita o cadastro precisa saber que o número dele é consolidado
@@ -1298,7 +1359,7 @@ export default function CustomerEditModal({
           {/* Botões */}
           <div className="flex justify-between">
             <div>
-              {!isInActiveList && (
+              {!isInActiveList && !!customer?.id && (
                 <Button
                   type="button"
                   variant="outline"
@@ -1327,13 +1388,13 @@ export default function CustomerEditModal({
               </Button>
               <Button
                 type="submit"
-                disabled={updateCustomerMutation.isPending || addToActiveMutation.isPending}
+                disabled={updateCustomerMutation.isPending || addToActiveMutation.isPending || createCustomerMutation.isPending || createLeadMutation.isPending}
                 data-testid="button-save-customer"
               >
-                {updateCustomerMutation.isPending && (
+                {(updateCustomerMutation.isPending || createCustomerMutation.isPending || createLeadMutation.isPending) && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 )}
-                Salvar Alterações
+                {customer?.id ? "Salvar Alterações" : isLead ? "Cadastrar Lead" : "Cadastrar Cliente"}
               </Button>
             </div>
           </div>
