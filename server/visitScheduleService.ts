@@ -1,6 +1,6 @@
 import { db } from './db';
 import { customers, visitAgenda } from '../shared/schema';
-import { eq, and, gte, lte, isNotNull, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, lt, isNotNull, sql } from 'drizzle-orm';
 import { toBrazilTime, formatBrazilDateTime, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario } from '@shared/tempo';
@@ -303,16 +303,27 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
 
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  // 🛡️ NUNCA remove a ocorrência de HOJE (nem o passado): só limpa o resíduo pendente de
-  // AMANHÃ em diante. Assim a Rota do Dia nunca encolhe quando a regeneração roda no meio do
-  // dia — mesma proteção da regeneração de telemarketing. A visita de hoje já agendada fica.
+  const serviceStart = c.serviceStartDate ? new Date(c.serviceStartDate) : undefined;
+  // 🏁 INÍCIO DO FORNECIMENTO FUTURO: o cliente ainda NÃO é atendido, então NÃO pode ter visita
+  // antes dessa data — nem a de HOJE. Remove as pendentes anteriores ao início (inválidas) antes
+  // de recriar a agenda a partir do início. (Ex.: Início 28/10 não pode manter uma visita de 14/10.)
+  if (serviceStart && serviceStart.getTime() > today.getTime()) {
+    const ss = new Date(serviceStart); ss.setUTCHours(0, 0, 0, 0);
+    await db.delete(visitAgenda).where(and(
+      eq(visitAgenda.customerId, customerId),
+      eq(visitAgenda.visitStatus, 'pending'),
+      lt(visitAgenda.scheduledDate, ss),
+    ));
+  }
+  // 🛡️ NUNCA remove a ocorrência de HOJE (nem o passado) — exceto o caso de início futuro acima:
+  // só limpa o resíduo pendente de AMANHÃ em diante. Assim a Rota do Dia não encolhe quando a
+  // regeneração roda no meio do dia — mesma proteção da regeneração de telemarketing.
   await db.delete(visitAgenda).where(and(
     eq(visitAgenda.customerId, customerId),
     eq(visitAgenda.visitStatus, 'pending'),
     gte(visitAgenda.scheduledDate, tomorrow),
   ));
 
-  const serviceStart = c.serviceStartDate ? new Date(c.serviceStartDate) : undefined;
   let periodicity = c.visitPeriodicity || 'semanal';
   let targetWeekdays: any[] = weekdaysRaw;
 
