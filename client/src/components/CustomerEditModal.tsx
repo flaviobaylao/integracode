@@ -34,6 +34,9 @@ interface CustomerEditModalProps {
   onClose: () => void;
   customer: Customer | null;
   isLead?: boolean;
+  // Chamado quando o "Novo Cliente" esbarra num cadastro que JÁ EXISTE (CPF/CNPJ) e o
+  // usuário escolhe abri-lo: a página troca o modal para edição desse cliente.
+  onOpenExisting?: (customer: Customer) => void;
 }
 
 export default function CustomerEditModal({
@@ -41,6 +44,7 @@ export default function CustomerEditModal({
   onClose,
   customer,
   isLead = false,
+  onOpenExisting,
 }: CustomerEditModalProps) {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -197,6 +201,33 @@ export default function CustomerEditModal({
   // LEAD; com customer=null e isLead=false o submit caía no PATCH e dava "Customer ID is
   // required". O servidor (POST /api/customers) já cria o card permanente e coloca o
   // cliente em Clientes Ativos; aqui só gravamos também o envio por WhatsApp (rota própria).
+  // Cadastro que JÁ EXISTE com o CPF/CNPJ digitado (409 do POST /api/customers).
+  const [dupCustomer, setDupCustomer] = useState<any>(null);
+  useEffect(() => { if (!isOpen) setDupCustomer(null); }, [isOpen]);
+  const reativarExistente = useMutation({
+    mutationFn: async (dup: any) => {
+      // 1) cadastro ativo de novo + linha da lista religada; 2) garante a linha em Clientes Ativos
+      if (dup.isActive === false || dup.naLista === false) {
+        await apiRequest("POST", `/api/customers/bulk-reactivate`, { ids: [dup.id] });
+        try { await apiRequest("POST", `/api/active-customers/add/${dup.id}`, {}); } catch { /* sem documento: segue */ }
+      }
+      return await apiRequest("GET", `/api/customers/${dup.id}`);
+    },
+    onSuccess: (c: any, dup: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
+      const reativado = dup.isActive === false || dup.naLista === false;
+      toast({
+        title: reativado ? "Cliente reativado" : "Cadastro existente aberto",
+        description: `${c?.fantasyName || c?.name || dup.name} ${reativado ? "voltou para Clientes Ativos. " : ""}Confira e atualize os dados.`,
+      });
+      setDupCustomer(null);
+      if (onOpenExisting && c?.id) onOpenExisting(c);
+      else onClose();
+    },
+    onError: (error: any) => toast({ title: "Não foi possível reativar", description: error?.message || "Erro", variant: "destructive" }),
+  });
+
   const createCustomerMutation = useMutation({
     mutationFn: async (data: any) => {
       const created: any = await apiRequest("POST", `/api/customers`, { ...data, isLead: false });
@@ -224,6 +255,10 @@ export default function CustomerEditModal({
       onClose();
     },
     onError: (error: any) => {
+      if (error?.status === 409 && error?.existingCustomer?.id) {
+        setDupCustomer(error.existingCustomer);
+        return;
+      }
       toast({
         title: "Erro ao cadastrar cliente",
         description: error.message || "Ocorreu um erro ao cadastrar o cliente",
@@ -1355,6 +1390,31 @@ export default function CustomerEditModal({
               </div>
             </div>
           </div>
+
+          {/* CPF/CNPJ JÁ CADASTRADO (Novo Cliente): mostra quem é e oferece reativar/abrir. */}
+          {dupCustomer && !customer?.id && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="box-cliente-existente">
+              <p className="font-semibold">Este {dupCustomer.cnpj ? "CNPJ" : "CPF"} já está cadastrado: {dupCustomer.name}</p>
+              <p className="text-xs mt-1">
+                {dupCustomer.isActive === false
+                  ? "O cadastro está INATIVO — por isso não aparece em Clientes Ativos."
+                  : dupCustomer.naLista === false
+                    ? "O cadastro está ativo, mas fora da lista de Clientes Ativos."
+                    : "O cadastro já está ativo em Clientes Ativos (confira os filtros da lista)."}
+                {dupCustomer.seller ? ` Vendedor: ${dupCustomer.seller}.` : ""}
+                {dupCustomer.isLead ? " (cadastrado como LEAD)" : ""}
+              </p>
+              <div className="flex gap-2 mt-2">
+                <Button type="button" size="sm" className="bg-amber-600 hover:bg-amber-700 text-white"
+                  disabled={reativarExistente.isPending}
+                  onClick={() => reativarExistente.mutate(dupCustomer)} data-testid="button-reativar-existente">
+                  {reativarExistente.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {dupCustomer.isActive === false || dupCustomer.naLista === false ? "Reativar e abrir o cadastro" : "Abrir o cadastro"}
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => setDupCustomer(null)}>Fechar aviso</Button>
+              </div>
+            </div>
+          )}
 
           {/* Botões */}
           <div className="flex justify-between">

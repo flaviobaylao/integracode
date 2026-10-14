@@ -1795,6 +1795,7 @@ export default function ActiveCustomers() {
           onClose={handleCustomerEditClose}
           customer={selectedCustomerForEdit}
           isLead={isLeadMode}
+          onOpenExisting={(c: any) => { setIsLeadMode(false); setSelectedCustomerForEdit(c); }}
         />
 
         {/* Modal de Edição Rápida de Telefone e Contato */}

@@ -3299,17 +3299,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         weekdaysType: typeof data.weekdays,
       });
       
+      // SITUAÇÃO do cadastro que já existe (14/out/2026): a base tem ~4,7 mil clientes
+      // INATIVOS (fora de Clientes Ativos). Só "já cadastrado" deixava o usuário sem saída —
+      // o cliente não aparecia na lista e não podia ser cadastrado. A tela usa isto para
+      // oferecer "Reativar e abrir o cadastro".
+      const __situacaoDup = async (id: string) => {
+        try {
+          const r: any = await db.execute(sql`
+            SELECT c.is_active, c.is_lead, c.is_supplier,
+                   EXISTS (SELECT 1 FROM active_customers a WHERE a.customer_id = c.id AND a.is_active = true) AS na_lista
+              FROM customers c WHERE c.id = ${id} LIMIT 1`);
+          const row = (r?.rows || [])[0] || {};
+          return { isActive: row.is_active !== false, isLead: row.is_lead === true, isSupplier: row.is_supplier === true, naLista: row.na_lista === true };
+        } catch { return {}; }
+      };
+
       // Verificar duplicidade de CPF
       if (data.cpf) {
         const existingCustomer = await storage.getCustomerByCpf(data.cpf);
         if (existingCustomer) {
+          const _sit: any = await __situacaoDup(existingCustomer.id);
           return res.status(409).json({ 
-            message: "CPF já cadastrado", 
+            message: `CPF já cadastrado sob "${(existingCustomer as any).fantasyName || existingCustomer.name}"${_sit.isActive === false ? ' (cadastro INATIVO)' : (_sit.naLista === false ? ' (fora de Clientes Ativos)' : '')}`, 
             field: "cpf",
             existingCustomer: {
               id: existingCustomer.id,
-              name: existingCustomer.name,
-              cpf: existingCustomer.cpf
+              name: (existingCustomer as any).fantasyName || existingCustomer.name,
+              cpf: existingCustomer.cpf,
+              ..._sit,
             }
           });
         }
@@ -3331,10 +3348,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
              LIMIT 1
           `)).rows[0] as any;
           if (dup) {
+            const _sit: any = await __situacaoDup(dup.id);
             return res.status(409).json({
-              message: `CNPJ já cadastrado sob "${dup.nome}"${dup.vendedor ? ' — vendedor: ' + dup.vendedor : ''}`,
+              message: `CNPJ já cadastrado sob "${dup.nome}"${dup.vendedor ? ' — vendedor: ' + dup.vendedor : ''}${_sit.isActive === false ? ' (cadastro INATIVO)' : (_sit.naLista === false ? ' (fora de Clientes Ativos)' : '')}`,
               field: "cnpj",
-              existingCustomer: { id: dup.id, name: dup.nome, cnpj: dup.cnpj, seller: dup.vendedor || null }
+              existingCustomer: { id: dup.id, name: dup.nome, cnpj: dup.cnpj, seller: dup.vendedor || null, ..._sit }
             });
           }
         }
