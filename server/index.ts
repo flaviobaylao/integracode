@@ -882,23 +882,16 @@ run();
     const count = Math.max(1, Math.min(6, Number(req.body?.count) || 4));
     const replaceFuture = req.body?.replaceFuture !== false; // default true no apply
     try {
-      // 1) ÚLTIMO ATENDIMENTO por cliente (Integra 2.0). Âncora = data do último atendimento real
-      //    ao cliente: atendimento virtual (virtual_service_logs) ou visita/venda concluída no card
-      //    de venda (sales_cards: completed_date / check_in_time). NÃO usa mais a agenda do Integra 1.0.
-      const lastAtendR: any = await db.execute(sql`
-        SELECT customer_id, MAX(dt) AS last_atend FROM (
-          SELECT customer_id, attendance_date AS dt FROM virtual_service_logs
-            WHERE entity_type = 'customer' AND attendance_date IS NOT NULL
-          UNION ALL
-          SELECT customer_id, completed_date AS dt FROM sales_cards
-            WHERE completed_date IS NOT NULL AND status IN ('completed','no_sale')
-          UNION ALL
-          SELECT customer_id, check_in_time AS dt FROM sales_cards
-            WHERE check_in_time IS NOT NULL
-        ) t GROUP BY customer_id`);
-      const lastAtendByCustomer = new Map<string, Date>();
-      for (const r of ((lastAtendR.rows || lastAtendR) as any[])) {
-        if (r.customer_id && r.last_atend) lastAtendByCustomer.set(String(r.customer_id), new Date(r.last_atend));
+      // 1) ÚLTIMO DIA DE VISITA agendado por cliente (<= hoje). Serve de âncora da cadência SOMENTE
+      //    quando o cliente NÃO tem Data de Início do Fornecimento. NÃO usamos mais o último
+      //    ATENDIMENTO real (virtual_service_logs / sales_cards) como âncora.
+      const lastVisitR: any = await db.execute(sql`
+        SELECT customer_id, MAX(scheduled_date) AS last_visit FROM visit_agenda
+          WHERE scheduled_date::date <= CURRENT_DATE
+        GROUP BY customer_id`);
+      const lastVisitByCustomer = new Map<string, Date>();
+      for (const r of ((lastVisitR.rows || lastVisitR) as any[])) {
+        if (r.customer_id && r.last_visit) lastVisitByCustomer.set(String(r.customer_id), new Date(r.last_visit));
       }
       // 2) clientes ativos do 2.0 (com dias + periodicidade, nao-fornecedor)
       const custR: any = await db.execute(sql`SELECT id, seller_id, name, cnpj, cpf, weekdays, visit_periodicity, virtual_service, latitude, longitude, address, service_start_date
@@ -921,19 +914,22 @@ run();
           const targetNums = weekdaysRaw.map((d) => ABBR[d]).filter((n: any) => n != null);
           if (targetNums.length === 0) { result.semDiaValido++; continue; }
           const periodicity = String(c.visit_periodicity) as any;
-          // ÂNCORA = data do último atendimento do cliente (2.0). Sem atendimento → agenda a partir de hoje.
-          const anchor = lastAtendByCustomer.get(String(c.id)) || null;
-          if (anchor) result.comAncora++; else result.semAncora++;
-          // Data de início do fornecimento: quando registrada, é a âncora de início da
-          // periodicidade — nenhuma visita antes dela (o núcleo aplica o piso).
+          // ÂNCORA = Data de Início do Fornecimento (service_start_date). Quando registrada, o núcleo
+          // ancora/fasa a periodicidade nela — nenhuma visita antes dela. EM BRANCO → encadeia a partir
+          // do ÚLTIMO DIA DE VISITA agendado (continua a cadência conforme periodicidade e dia de rota).
+          // Nunca usa o último atendimento real do cliente.
           const svcStart = c.service_start_date ? new Date(c.service_start_date) : null;
           if (svcStart) svcStart.setHours(0, 0, 0, 0);
+          const lastVisit = (!svcStart) ? (lastVisitByCustomer.get(String(c.id)) || null) : null;
+          if (lastVisit) lastVisit.setHours(0, 0, 0, 0);
+          if (svcStart || lastVisit) result.comAncora++; else result.semAncora++;
           const startFuture = svcStart && svcStart.getTime() >= today.getTime();
           // Gera `count` próximas visitas seguindo as REGRAS BASE (calculateNextVisitDate):
           // semanal=+7, quinzenal=+14, mensal=1ª ocorrência do dia de rota no mês seguinte.
-          // Avança a partir da âncora até cair em data futura (>= hoje), depois encadeia.
+          // Com Data de Início: parte dela (cursor nulo → referenceDate+serviceStartDate). Em branco:
+          // encadeia do último dia de visita. Sem nenhum dos dois: parte de hoje pela regra.
           const dates: Date[] = [];
-          let cursor: Date | null = anchor ? new Date(anchor) : null;
+          let cursor: Date | null = lastVisit ? new Date(lastVisit) : null;
           let guard = 0;
           while (dates.length < count && guard < 2000) {
             guard++;
@@ -948,14 +944,11 @@ run();
             if (next >= today) dates.push(next);
           }
           if (dates.length === 0) { result.semDiaValido++; continue; }
-          // limite de exclusao:
-          //  - início do fornecimento futuro → apaga TODAS as futuras (inclui as erradas antes do início) e recria a partir dele;
-          //  - senão, se âncora futura, preserva até ela (apaga > âncora); caso contrário apaga tudo futuro (> ontem).
-          const aDate = anchor ? new Date(anchor) : null; if (aDate) aDate.setHours(23,59,59,0);
-          delThreshold[c.id] = startFuture
-            ? new Date(today.getTime() - 86400000).toISOString()
-            : ((aDate && aDate >= today) ? aDate.toISOString() : new Date(today.getTime() - 86400000).toISOString());
-          if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targetNums.map((n: number) => DOW[n]).join(','), ancora: anchor ? new Date(anchor).toISOString().slice(0, 10) : null, geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
+          // Apaga as visitas FUTURAS pendentes (de amanhã em diante) e recria pela nova âncora.
+          // Preserva a visita de HOJE e o passado (a Rota do Dia vigente). O início do fornecimento
+          // futuro também cai aqui: as datas erradas entre amanhã e o início são removidas.
+          delThreshold[c.id] = new Date(today.getTime() - 86400000).toISOString();
+          if (result.amostras.length < 12) result.amostras.push({ periodicidade: c.visit_periodicity, dias: targetNums.map((n: number) => DOW[n]).join(','), ancora: svcStart ? svcStart.toISOString().slice(0, 10) : (lastVisit ? lastVisit.toISOString().slice(0, 10) : null), fonteAncora: svcStart ? 'inicio_fornecimento' : (lastVisit ? 'ultima_visita' : 'hoje'), geradas: dates.map((x) => x.toISOString().slice(0, 10)) });
           for (const dt of dates) insertRows.push({ cid: c.id, sid: c.seller_id || '', name: c.name || '', sd: dt.toISOString(), rd: DOW[dt.getDay()], rec: c.visit_periodicity, iv: c.virtual_service === true, lat: c.latitude, lng: c.longitude, addr: c.address });
         } catch (e) { result.erros++; }
       }
