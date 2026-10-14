@@ -584,7 +584,7 @@ export default function ActiveCustomers() {
 
   const generateVisitsMutation = useMutation({
     mutationFn: async () => {
-      // Âncora = data do ÚLTIMO ATENDIMENTO do cliente (2.0); gera as próximas seguindo as regras base (semanal/quinzenal/mensal).
+      // Motor unificado: regera pela Agenda da Carteira (honra semana do mês fixa + âncora na Data de Início do Fornecimento / último dia de visita).
       const response = await fetch("/api/admin/visits/generate-from-1-0", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
