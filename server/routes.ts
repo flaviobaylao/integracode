@@ -380,7 +380,8 @@ async function __reprogramarLeadsVencidos(sellerId: string, todayStr: string): P
   if (!sellerId || !todayStr) return 0;
   try {
     const overdue: any = await db.execute(sql`
-      SELECT id, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng, COALESCE(next_contact_locked, false) AS locked
+      SELECT id, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng, COALESCE(next_contact_locked, false) AS locked,
+             (prorrogado_para IS NOT NULL AND (prorrogado_para)::date > ${todayStr}::date) AS prorr_futuro
       FROM leads
       WHERE status = 'scheduled'
         AND assigned_to = ${sellerId}
@@ -399,6 +400,12 @@ async function __reprogramarLeadsVencidos(sellerId: string, todayStr: string): P
       // agora (consome o ciclo) e NAO reprograma nesta rodada; a proxima ja segue a regra normal.
       if ((r as any).locked === true) {
         await db.execute(sql`UPDATE leads SET next_contact_locked = false, updated_at = NOW() WHERE id = ${(r as any).id}`);
+        continue;
+      }
+      // 📆 Prorrogação ativa para data futura: volta para a data prorrogada (não para o dia da região).
+      if ((r as any).prorr_futuro === true) {
+        await db.execute(sql`UPDATE leads SET next_contact_date = prorrogado_para, updated_at = NOW() WHERE id = ${(r as any).id}`);
+        n++;
         continue;
       }
       const lat = Number((r as any).lat), lng = Number((r as any).lng);
@@ -433,7 +440,8 @@ async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: st
   const erros: string[] = [];
   let reprogramados = 0;
   const overdue: any = await db.execute(sql`
-    SELECT id, assigned_to AS seller, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng, COALESCE(next_contact_locked, false) AS locked
+    SELECT id, assigned_to AS seller, CAST(latitude AS DOUBLE PRECISION) AS lat, CAST(longitude AS DOUBLE PRECISION) AS lng, COALESCE(next_contact_locked, false) AS locked,
+           (prorrogado_para IS NOT NULL AND (prorrogado_para)::date > ${todayStr}::date) AS prorr_futuro
     FROM leads
     WHERE status = 'scheduled'
       AND COALESCE(route_type, 'dia') <> 'prospeccao'
@@ -453,6 +461,13 @@ async function reprogramarVencidosGlobal(onlySeller: string | null, todayStr: st
       // 🔒 Cadeado: data alterada manualmente. Abre o cadeado (consome 1 ciclo) e NAO reprograma agora.
       if ((r as any).locked === true) {
         await db.execute(sql`UPDATE leads SET next_contact_locked = false, updated_at = NOW() WHERE id = ${(r as any).id}`);
+        continue;
+      }
+      // 📆 Prorrogação ativa para data futura: volta para a data prorrogada (não para o dia da região).
+      if ((r as any).prorr_futuro === true) {
+        await db.execute(sql`UPDATE leads SET next_contact_date = prorrogado_para, updated_at = NOW() WHERE id = ${(r as any).id}`);
+        reprogramados++;
+        perSeller[seller] = (perSeller[seller] || 0) + 1;
         continue;
       }
       if (!custCache[seller]) custCache[seller] = await __sellerCustomers(seller);
@@ -586,7 +601,7 @@ function maybeLiberarLeadsRadarExpirados(): void {
       const ids = rows.map((r) => String(r.id));
       await db.execute(sql`
         UPDATE leads
-        SET assigned_to = NULL, status = 'pending', next_contact_date = NULL,
+        SET assigned_to = NULL, status = 'pending', next_contact_date = NULL, prorrogado_para = NULL,
             original_return_date = NULL, return_overdue = false, postponement_count = 0, updated_at = NOW()
         WHERE id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)})
       `);
@@ -612,6 +627,25 @@ function maybeLiberarLeadsRadarExpirados(): void {
       __liberarRadarRunning = false;
     }
   })();
+}
+
+// 📆 RETORNO PRORROGADO PREVALECE: quando o lead tem uma prorrogação ativa (leads.prorrogado_para
+// numa data FUTURA), uma visita feita antes dessa data (Adicionar Visita + check-in/check-out) NÃO
+// apaga o retorno combinado — a próxima visita volta para a data prorrogada e o lead fica agendado
+// (entra na Rota do Dia nesse dia). A parada de hoje continua verde: a rota mantém quem teve check-in.
+async function __manterRetornoProrrogado(leadId: string): Promise<void> {
+  try {
+    const r: any = await db.execute(sql`
+      UPDATE leads
+      SET next_contact_date = prorrogado_para, status = 'scheduled', return_overdue = false, updated_at = NOW()
+      WHERE id = ${leadId} AND prorrogado_para IS NOT NULL
+        AND (prorrogado_para)::date > ${hojeBR()}::date
+      RETURNING id
+    `);
+    if ((r?.rows || []).length) console.log(`📆 [LEAD-PRORROGADO] lead ${leadId}: visita antes do retorno — próxima visita mantida na data prorrogada.`);
+  } catch (e: any) {
+    console.warn('⚠️ [LEAD-PRORROGADO] não foi possível manter a data prorrogada:', e?.message || e);
+  }
 }
 
 // 🧾 Enriquecimento dos cards de CLIENTE da Consulta no local: último pedido implantado
@@ -695,6 +729,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   try {
     await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS segmento_principal varchar`);
   } catch (e: any) { console.warn('⚠️ ALTER segmento_principal:', e?.message); }
+
+  // 📆 Data da prorrogação ativa do lead (o retorno combinado). Aditivo e idempotente.
+  // Backfill a partir do histórico ("PRORROGADO p/ AAAA-MM-DD") e REPARO dos leads cuja próxima
+  // visita ficou para trás de uma prorrogação futura (visita/Adicionar Visita sobrescrevia a data).
+  try {
+    await db.execute(sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS prorrogado_para timestamp`);
+    await db.execute(sql`
+      UPDATE leads l
+      SET prorrogado_para = (sub.d || ' 15:00:00')::timestamp
+      FROM (
+        SELECT DISTINCT ON (lead_id) lead_id,
+               substring(observation from 'PRORROGADO p/ ([0-9]{4}-[0-9]{2}-[0-9]{2})') AS d
+        FROM lead_visits
+        WHERE observation ~ '^PRORROGADO p/ [0-9]{4}-[0-9]{2}-[0-9]{2}'
+        ORDER BY lead_id, created_at DESC
+      ) sub
+      WHERE sub.lead_id = l.id AND sub.d IS NOT NULL
+        AND l.prorrogado_para IS NULL
+        AND COALESCE(l.postponement_count, 0) >= 1
+        AND l.status IN ('scheduled', 'visited')
+    `);
+    const _rep: any = await db.execute(sql`
+      UPDATE leads
+      SET next_contact_date = prorrogado_para, status = 'scheduled', return_overdue = false, updated_at = NOW()
+      WHERE prorrogado_para IS NOT NULL
+        AND (prorrogado_para)::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        AND status IN ('scheduled', 'visited')
+        AND (next_contact_date IS NULL OR (next_contact_date)::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+      RETURNING id
+    `);
+    const _nRep = (_rep?.rows || []).length;
+    if (_nRep) console.log(`📆 [LEAD-PRORROGADO] ${_nRep} lead(s) com próxima visita reparada para a data prorrogada.`);
+  } catch (e: any) { console.warn('⚠️ ALTER/reparo leads.prorrogado_para:', e?.message); }
 
   // Garante a coluna de origem do lead ('radar' = cadastrado em "Novos Pontos") — aditivo e idempotente.
   try {
@@ -25254,6 +25321,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .execute();
 
         console.log(`✅ Lead atualizado no banco de dados`);
+        // Prorrogação ativa para data futura: a visita de hoje não apaga o retorno combinado.
+        await __manterRetornoProrrogado(id);
 
         // Registra SEMPRE no histórico do lead (com a observação escrita ou uma nota padrão)
         // e também notifica no inbox (Solicitações de Alteração).
@@ -25376,6 +25445,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(eq(leads.id, id));
         
         console.log(`✅ Lead atualizado com check-out`);
+        // O check-out regrava status 'visited' — reaplica a regra do retorno prorrogado.
+        await __manterRetornoProrrogado(id);
         
         // Registrar checkpoint de check-out na rota diária
         let routeProgress = null;
@@ -25570,7 +25641,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         await db.execute(sql`
           UPDATE leads
-          SET status = 'discarded', non_conversion_reason = ${String(motivo)}, return_overdue = false, updated_at = NOW()
+          SET status = 'discarded', non_conversion_reason = ${String(motivo)}, return_overdue = false, prorrogado_para = NULL, updated_at = NOW()
           WHERE id = ${id}
         `);
         try {
@@ -25620,7 +25691,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _novoCount = Number((lead as any).postponementCount || 0) >= 1 ? Number((lead as any).postponementCount) : 1;
         await db.execute(sql`
           UPDATE leads
-          SET next_contact_date = ${_ret}, postponement_count = ${_novoCount}, status = 'scheduled', return_overdue = false, updated_at = NOW()
+          SET next_contact_date = ${_ret}, prorrogado_para = ${_ret}, postponement_count = ${_novoCount}, status = 'scheduled', return_overdue = false, updated_at = NOW()
           WHERE id = ${id}
         `);
         try {
@@ -25650,7 +25721,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (_snapErr) { /* mantém _ret */ }
         await db.execute(sql`
           UPDATE leads
-          SET status = 'scheduled', next_contact_date = ${_ret}, original_return_date = ${_ret},
+          SET status = 'scheduled', next_contact_date = ${_ret}, original_return_date = ${_ret}, prorrogado_para = NULL,
               postponement_count = 0, non_conversion_reason = NULL, return_overdue = false, updated_at = NOW()
           WHERE id = ${id}
         `);
@@ -25675,7 +25746,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         else if (_dow === 0) _ret.setDate(_ret.getDate() + 1);
         await db.execute(sql`
           UPDATE leads
-          SET status = 'scheduled', assigned_to = ${user.id}, route_type = 'dia',
+          SET status = 'scheduled', assigned_to = ${user.id}, route_type = 'dia', prorrogado_para = NULL,
               next_contact_date = ${_ret}, original_return_date = ${_ret},
               postponement_count = 0, non_conversion_reason = NULL, return_overdue = false, updated_at = NOW()
           WHERE id = ${id}
