@@ -1042,6 +1042,7 @@ export function registerNfeRoutes(app: Express) {
       const savedItems = await storage.getFiscalInvoiceItems(invoice.id);
       res.status(201).json({ ...invoice, items: savedItems });
     } catch (error: any) {
+      if (error?.code === 'NF_PENDENTE_MESMA_ORIGEM') return res.status(409).json({ message: error.message, errorMessage: error.message, error: error.message, invoiceId: error.invoiceId, invoiceNumber: error.invoiceNumber });
       res.status(500).json({ message: 'Erro ao criar nota fiscal', error: error.message });
     }
   });
@@ -1082,10 +1083,11 @@ export function registerNfeRoutes(app: Express) {
       if (existing.status === 'authorized') {
         return res.status(400).json({ message: 'NF-e autorizada não pode ser excluída. Use cancelamento.' });
       }
-
+      // Numerada em produção: storage.deleteFiscalInvoice recusa (409) — ver lá.
       await storage.deleteFiscalInvoice(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
+      if (error?.code === 'NF_NUMERADA_NAO_EXCLUI') return res.status(409).json({ message: error.message });
       res.status(500).json({ message: 'Erro ao deletar nota fiscal', error: error.message });
     }
   });
@@ -1576,6 +1578,7 @@ export function registerNfeRoutes(app: Express) {
           : null,
       });
     } catch (error: any) {
+      if (error?.code === 'NF_PENDENTE_MESMA_ORIGEM') return res.status(409).json({ message: error.message, errorMessage: error.message, error: error.message, invoiceId: error.invoiceId, invoiceNumber: error.invoiceNumber });
       res.status(500).json({ success: false, errorMessage: error.message });
     }
   });
@@ -1725,6 +1728,7 @@ export function registerNfeRoutes(app: Express) {
       const updated = await storage.getFiscalInvoice(returnInvoice.id);
       res.json({ ok: true, ghostsRejected, returnNumber: updated?.invoiceNumber || null, protocol: sefazResult.protocolNumber, accessKey: updated?.accessKey || null });
     } catch (error: any) {
+      if (error?.code === 'NF_PENDENTE_MESMA_ORIGEM') return res.status(409).json({ message: error.message, errorMessage: error.message, error: error.message, invoiceId: error.invoiceId, invoiceNumber: error.invoiceNumber });
       res.status(500).json({ ok: false, error: error.message });
     }
   });

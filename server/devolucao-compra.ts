@@ -591,6 +591,15 @@ export function registerDevolucaoCompraRoutes(app: Express) {
       if (!pr) return res.status(404).json({ error: "Devolução não encontrada" });
       if (pr.status === "autorizada" || pr.nf_status === "authorized") return res.status(409).json({ error: "NF-e já autorizada — para desfazer, cancele a NF-e (até 24 h) em Notas Fiscais." });
       await db.execute(sql`UPDATE purchase_returns SET status = 'descartada', updated_at = now() WHERE id = ${pr.id}`);
+      // A NF numerada não é apagada (abriria buraco): fica registrada como descartada e o
+      // número entra no levantamento da Inutilização de NF (após 15 dias, ou antes, manualmente).
+      await db.execute(sql`
+        INSERT INTO fiscal_invoice_events (id, invoice_id, event_type, status, description, created_by, created_at)
+        SELECT gen_random_uuid(), fi.id, 'descartada', 'info',
+               'Devolução de compra descartada pelo usuário — se o número não for reaproveitado, inutilize-o na SEFAZ.',
+               ${req.currentUser?.email || null}, now()
+          FROM purchase_returns pr JOIN fiscal_invoices fi ON fi.id = pr.fiscal_invoice_id
+         WHERE pr.id = ${pr.id} AND fi.status IN ('draft','rejected')`);
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || String(e) });

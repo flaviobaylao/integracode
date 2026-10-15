@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,9 +11,16 @@ import { useToast } from "@/hooks/use-toast";
 // das notas que consumiram número) e envia o pedido à SEFAZ com o A1 do CNPJ.
 
 type Faixa = { ini: number; fim: number; qtd: number; dataAntes: string | null; dataDepois: string | null; ano: number; statusIntegra: string[] };
-type Grupo = { cnpj: string; nome: string; uf: string; modelo: string; serie: number; notas: number; primeiro: number; ultimo: number; ultimaEmissao: string; faixas: Faixa[]; totalFaixas: number; totalNumeros: number };
+type Conferir = { numero: number; motivo: string; statusIntegra: string; cliente: string | null; invoiceId: string };
+type Grupo = { cnpj: string; nome: string; uf: string; modelo: string; serie: number; notas: number; primeiro: number; ultimo: number; ultimaEmissao: string; faixas: Faixa[]; conferir?: Conferir[]; totalFaixas: number; totalNumeros: number };
+type Lote = {
+  id: string; nome: string; modelo: string; serie: number; status: "executando" | "concluido" | "interrompido";
+  faixasPrevistas: number; numerosPrevistos: number; pedidos: number; homologadas: number; numerosInutilizados: number;
+  usadosNaSefaz: { ini: number; fim: number; cStat: string; xMotivo: string }[]; erros: { ini: number; fim: number; cStat: string | null; msg: string }[];
+  motivoParada: string | null; atual?: string;
+};
 
-const JUST_PADRAO = "Numeracao nao utilizada por falha no sistema emissor";
+const JUST_PADRAO = "Quebra de sequencia na numeracao por falha no sistema emissor - numeros nao utilizados";
 
 const fmtData = (s: string | null) => (s ? new Date(s).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "—");
 const fmtCnpj = (c: string) => c.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
@@ -40,13 +47,22 @@ export default function InutilizacaoNF() {
   const [cnpjSel, setCnpjSel] = useState("");
   const [aberto, setAberto] = useState<string | null>(null);
   const [envio, setEnvio] = useState<null | { g: Grupo; ini: number; fim: number; ano: number; just: string; ambiente: "producao" | "homologacao" }>(null);
-  const [lote, setLote] = useState<{ total: number; feitos: number; ok: number; falhas: string[] } | null>(null);
+  const [loteId, setLoteId] = useState<string | null>(null);
+  const [confLote, setConfLote] = useState<null | { g: Grupo; just: string; palavra: string }>(null);
 
   const lacunas = useQuery<{ geradoEm: string; grupos: Grupo[] }>({
     queryKey: ["/api/fiscal/inutilizacao/lacunas", desde, cnpjSel],
     queryFn: () => jfetch(`/api/fiscal/inutilizacao/lacunas?desde=${encodeURIComponent(desde)}&cnpj=${cnpjSel}`),
   });
   const historico = useQuery<any[]>({ queryKey: ["/api/fiscal/inutilizacao"], queryFn: () => jfetch("/api/fiscal/inutilizacao") });
+  // Lote roda NO SERVIDOR (não depende da aba aberta); a tela só acompanha.
+  const lote = useQuery<Lote>({
+    queryKey: ["/api/fiscal/inutilizacao/lote", loteId],
+    queryFn: () => jfetch(`/api/fiscal/inutilizacao/lote/${loteId}`),
+    enabled: !!loteId,
+    retry: false,
+    refetchInterval: (q: any) => (q?.state?.status === "error" ? false : (q?.state?.data?.status === "executando" || !q?.state?.data ? 3000 : false)),
+  });
 
   const enviar = useMutation({
     mutationFn: (v: { cnpj: string; uf: string; modelo: string; serie: number; ano: number; numeroInicial: number; numeroFinal: number; justificativa: string; ambiente: string }) =>
@@ -76,28 +92,36 @@ export default function InutilizacaoNF() {
     }
   }
 
-  // Envia todas as faixas do grupo, uma por vez (a SEFAZ rejeita a faixa inteira se houver número usado).
-  async function enviarGrupo(g: Grupo) {
-    const alvo = g.faixas;
-    if (!alvo.length) return;
-    const just = window.prompt(`Justificativa para as ${alvo.length} faixas (${g.totalNumeros} números) de ${g.nome} mod ${g.modelo} série ${g.serie} — PRODUÇÃO:`, JUST_PADRAO);
-    if (!just) return;
+  // Lote no servidor: todas as faixas do grupo, com pausa entre pedidos e divisão
+  // automática quando a SEFAZ acusa número já usado/inutilizado dentro da faixa.
+  const [iniciando, setIniciando] = useState(false);
+  async function iniciarLote() {
+    if (!confLote || iniciando) return;
+    const { g, just, palavra } = confLote;
+    if (palavra.trim().toUpperCase() !== "INUTILIZAR") return toast({ title: "Confirmação", description: "Digite INUTILIZAR para confirmar.", variant: "destructive" });
     if (just.trim().length < 15) return toast({ title: "Justificativa curta", description: "Mínimo de 15 caracteres.", variant: "destructive" });
-    if (!window.confirm(`Enviar ${alvo.length} pedidos de inutilização à SEFAZ em PRODUÇÃO? Não há como desfazer.`)) return;
-    const st = { total: alvo.length, feitos: 0, ok: 0, falhas: [] as string[] };
-    setLote({ ...st });
-    for (const f of alvo) {
-      try {
-        await enviar.mutateAsync({ cnpj: g.cnpj, uf: g.uf, modelo: g.modelo, serie: g.serie, ano: f.ano, numeroInicial: f.ini, numeroFinal: f.fim, justificativa: just, ambiente: "producao" });
-        st.ok++;
-      } catch (e: any) {
-        st.falhas.push(`${f.ini}–${f.fim}: ${e.body?.cStat ? `cStat ${e.body.cStat} ` : ""}${e.message}`);
-      }
-      st.feitos++;
-      setLote({ ...st, falhas: st.falhas.slice() });
+    setIniciando(true);
+    try {
+      const j = await jfetch("/api/fiscal/inutilizacao/lote", { method: "POST", body: JSON.stringify({ cnpj: g.cnpj, modelo: g.modelo, serie: g.serie, desde, justificativa: just, confirmacao: palavra }) });
+      setLoteId(j.id);
+      setConfLote(null);
+      toast({ title: "Lote iniciado", description: `${j.faixasPrevistas} faixas · ${Number(j.numerosPrevistos).toLocaleString("pt-BR")} números` });
+    } catch (e: any) {
+      toast({ title: "Não iniciou", description: e.message, variant: "destructive" });
+    } finally {
+      setIniciando(false);
     }
-    refrescar();
   }
+  async function pararLote() {
+    if (!loteId) return;
+    try { await jfetch(`/api/fiscal/inutilizacao/lote/${loteId}/parar`, { method: "POST" }); } catch {}
+  }
+  const loteAtivo = lote.data?.status === "executando";
+  // Ao terminar o lote, atualiza levantamento e histórico (o que foi homologado sai das faixas).
+  useEffect(() => {
+    if (lote.data && lote.data.status !== "executando") refrescar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lote.data?.status]);
 
   return (
     <div className="container mx-auto p-4 md:p-6 max-w-6xl space-y-4">
@@ -105,7 +129,7 @@ export default function InutilizacaoNF() {
         <h1 className="text-2xl font-bold text-gray-900">Inutilização de NF-e / NFC-e</h1>
         <p className="text-sm text-gray-500 mt-1">
           Números pulados na sequência de cada CNPJ + modelo + série devem ser inutilizados na SEFAZ até o dia 10 do mês seguinte (Ajuste SINIEF 07/05).
-          O levantamento usa a chave de acesso das notas autorizadas, canceladas e denegadas em produção.
+          O levantamento usa a chave de acesso das notas autorizadas, canceladas, devolvidas e denegadas em produção. Faixas acima de 9.000 números são divididas (limite da SEFAZ: 10.000 por pedido).
         </p>
       </div>
 
@@ -130,14 +154,31 @@ export default function InutilizacaoNF() {
         </CardContent>
       </Card>
 
-      {lote && (
-        <Card className="border-blue-300">
-          <CardContent className="p-4 text-sm">
-            <div className="flex justify-between">
-              <b>Envio em lote: {lote.feitos}/{lote.total} · homologadas {lote.ok} · falhas {lote.falhas.length}</b>
-              {lote.feitos === lote.total && <Button size="sm" variant="ghost" onClick={() => setLote(null)}>Fechar</Button>}
+      {lote.data && (
+        <Card className={lote.data.status === "interrompido" ? "border-red-300" : "border-blue-300"}>
+          <CardContent className="p-4 text-sm space-y-2">
+            <div className="flex flex-wrap justify-between gap-2">
+              <b>
+                Lote {lote.data.nome} mod {lote.data.modelo}/série {lote.data.serie} — {lote.data.status}
+                {lote.data.atual ? ` · enviando ${lote.data.atual}` : ""}
+              </b>
+              <div className="flex gap-2">
+                {loteAtivo && <Button size="sm" variant="outline" onClick={pararLote}>Parar</Button>}
+                {!loteAtivo && <Button size="sm" variant="ghost" onClick={() => setLoteId(null)}>Fechar</Button>}
+              </div>
             </div>
-            {lote.falhas.length > 0 && <ul className="mt-2 max-h-40 overflow-auto text-red-700 text-xs">{lote.falhas.map((f, i) => <li key={i}>{f}</li>)}</ul>}
+            <p>
+              Pedidos enviados: {lote.data.pedidos} · homologados: {lote.data.homologadas} ·
+              números inutilizados: {lote.data.numerosInutilizados.toLocaleString("pt-BR")} de {lote.data.numerosPrevistos.toLocaleString("pt-BR")} previstos
+            </p>
+            {lote.data.motivoParada && <p className="text-red-700">Parou: {lote.data.motivoParada}</p>}
+            {lote.data.usadosNaSefaz.length > 0 && (
+              <div>
+                <p className="text-amber-800 font-semibold">Números que a SEFAZ diz já usados/inutilizados (não estão no Integra — conferir):</p>
+                <p className="font-mono text-xs">{lote.data.usadosNaSefaz.map((u) => (u.ini === u.fim ? u.ini : `${u.ini}–${u.fim}`) + ` (${u.cStat})`).join(", ")}</p>
+              </div>
+            )}
+            {lote.data.erros.length > 0 && <ul className="max-h-40 overflow-auto text-red-700 text-xs">{lote.data.erros.map((f, i) => <li key={i}>{f.ini}–{f.fim}: {f.cStat ? `cStat ${f.cStat} ` : ""}{f.msg}</li>)}</ul>}
           </CardContent>
         </Card>
       )}
@@ -165,11 +206,18 @@ export default function InutilizacaoNF() {
                         <Badge className="bg-amber-100 text-amber-800">{g.totalFaixas} faixas · {g.totalNumeros.toLocaleString("pt-BR")} números</Badge>
                         {vencidas > 0 && <Badge className="bg-red-100 text-red-800">{vencidas} fora do prazo</Badge>}
                         <Button size="sm" variant="outline" onClick={() => setAberto(aberto === k ? null : k)}>{aberto === k ? "Ocultar" : "Ver faixas"}</Button>
-                        <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => enviarGrupo(g)} disabled={!!lote && lote.feitos < lote.total}>Inutilizar todas</Button>
+                        <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => setConfLote({ g, just: JUST_PADRAO, palavra: "" })} disabled={loteAtivo}>Inutilizar todas…</Button>
                       </>}
                 </div>
               </div>
             </CardHeader>
+            {(g.conferir?.length || 0) > 0 && (
+              <div className="px-4 py-2 bg-amber-50 border-b text-xs text-amber-900">
+                <b>Conferir na SEFAZ antes ({g.conferir!.length}):</b> estes números ficaram fora das faixas porque há indício de uso —{" "}
+                {g.conferir!.map((c) => `${c.numero} (${c.motivo}${c.cliente ? `, ${c.cliente}` : ""})`).join("; ")}.
+                {" "}Use "Consultar situação" na nota; se a SEFAZ não tiver nada, inutilize pelo botão da faixa.
+              </div>
+            )}
             {aberto === k && g.totalFaixas > 0 && (
               <CardContent className="p-0 overflow-x-auto">
                 <table className="w-full text-sm">
@@ -200,6 +248,29 @@ export default function InutilizacaoNF() {
           </Card>
         );
       })}
+
+      {confLote && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setConfLote(null)}>
+          <div className="bg-white rounded-xl p-5 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-semibold text-lg">Inutilizar todas as faixas — PRODUÇÃO</h2>
+            <p className="text-sm text-gray-700">
+              {confLote.g.nome} · {fmtCnpj(confLote.g.cnpj)} · mod {confLote.g.modelo} · série {confLote.g.serie}<br />
+              <b>{confLote.g.totalFaixas} faixas · {confLote.g.totalNumeros.toLocaleString("pt-BR")} números</b> (lacunas a partir de {fmtData(desde + "T12:00:00Z")}).
+            </p>
+            <p className="text-xs text-gray-600">
+              O servidor envia uma faixa por vez (pausa de 1,5 s). Se a SEFAZ disser que há número já usado dentro da faixa, ela é dividida
+              ao meio até isolar esse número, que vai para a lista "conferir". 3 falhas seguidas de outro tipo param o lote.
+            </p>
+            <div><label className="text-xs text-gray-600">Justificativa (mín. 15)</label><Input value={confLote.just} onChange={(e) => setConfLote({ ...confLote, just: e.target.value })} /></div>
+            <div><label className="text-xs text-gray-600">Digite <b>INUTILIZAR</b> para confirmar</label><Input value={confLote.palavra} onChange={(e) => setConfLote({ ...confLote, palavra: e.target.value })} /></div>
+            <p className="text-xs text-red-700">Definitivo: números inutilizados nunca mais poderão ser usados.</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfLote(null)}>Cancelar</Button>
+              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={iniciarLote} disabled={iniciando}>{iniciando ? "Iniciando..." : "Iniciar lote"}</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {envio && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !enviar.isPending && setEnvio(null)}>

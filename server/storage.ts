@@ -8561,6 +8561,49 @@ export class DatabaseStorage implements IStorage {
           maxNum = Number(anyEnv?.rows?.[0]?.max_num || 0);
         }
         nextNumber = maxNum + 1;
+
+        // NUMERACAO SEM SALTOS (out/2026): se ja existe nota de PRODUCAO desta MESMA origem
+        // (mesmo pedido, ou mesma devolucao da mesma NF original) parada em rascunho/rejeitada,
+        // NAO aloca numero novo — a nota existente deve ser corrigida e retransmitida. Cada
+        // tentativa que criava nota nova deixava o numero anterior como buraco (ex.: BSB
+        // 104520-104522 e 104544, a mesma devolucao 4 vezes). Roda sob o advisory lock do
+        // CNPJ/serie, entao tambem barra o duplo clique (REI DO PAO 104478/104479, 2 s).
+        // Fica de fora a nota que colidiu com numero ja usado (539): essa nao tem conserto.
+        const env = String((data as any).environment || '');
+        const fin = String((data as any).finNFe || '1');
+        const ref = String((data as any).referencedAccessKey || '');
+        const card = String((data as any).salesCardId || '');
+        // Devolução de COMPRA (operationType 'devolucao_compra') fica fora: pode haver
+        // devoluções parciais legítimas da mesma NF do fornecedor em paralelo.
+        const opTipo = String((data as any).operationType || '');
+        const devVenda = fin === '4' && !!ref && opTipo !== 'devolucao_compra';
+        if (env === 'producao' && (devVenda || (fin !== '4' && card))) {
+          const pend: any = await tx.execute(sql`
+            SELECT f.id, f.invoice_number, f.status
+              FROM fiscal_invoices f
+             WHERE f.environment = 'producao'
+               AND f.invoice_number IS NOT NULL
+               AND f.status IN ('draft', 'rejected')
+               AND f.series = ${series}
+               AND regexp_replace(COALESCE(f.issuer_cnpj, ''), '[^0-9]', '', 'g') = ${digits}
+               AND (CASE WHEN ${fin} = '4' AND ${ref} <> ''
+                         THEN f.fin_nfe = '4' AND f.referenced_access_key = ${ref}
+                         ELSE f.sales_card_id = ${card} AND COALESCE(f.fin_nfe, '1') = ${fin}
+                              AND COALESCE(f.referenced_access_key, '') = '' END)
+               AND NOT EXISTS (SELECT 1 FROM fiscal_invoice_events e
+                                WHERE e.invoice_id = f.id
+                                  AND (e.event_type IN ('rejeicao_539', 'rejeicao_539_colisao', 'recuperacao_539', 'descartada')
+                                       OR e.error_code = '539'))
+             ORDER BY f.created_at DESC
+             LIMIT 1`);
+          const p = (pend?.rows ?? pend ?? [])[0];
+          if (p?.id) {
+            throw Object.assign(
+              new Error(`Já existe a NF-e nº ${p.invoice_number} (${p.status === 'draft' ? 'rascunho' : 'rejeitada'}) para esta mesma operação. Corrija o motivo da rejeição e retransmita essa nota — criar outra pularia a numeração.`),
+              { code: 'NF_PENDENTE_MESMA_ORIGEM', status: 409, invoiceId: p.id, invoiceNumber: p.invoice_number },
+            );
+          }
+        }
       } else {
         const r: any = await tx.execute(sql`SELECT COALESCE(MAX(invoice_number), 0) AS max_num FROM fiscal_invoices WHERE series = ${series}`);
         nextNumber = Number(r?.rows?.[0]?.max_num || 0) + 1;
@@ -8585,6 +8628,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteFiscalInvoice(id: string): Promise<void> {
+    // NUMERACAO SEM SALTOS (out/2026): nota de PRODUCAO que ja recebeu numero nunca e
+    // apagada — apagar abria um buraco na sequencia do CNPJ sem deixar rastro (11 numeros
+    // da GYN sumiram assim entre jul e set/2026). Ou ela e corrigida e retransmitida, ou o
+    // numero e inutilizado na SEFAZ (tela Inutilizacao de NF), que marca a nota 'inutilizada'.
+    // Exceção segura: rascunho NUNCA transmitido que é o MAIOR número do CNPJ/série —
+    // apagar não abre buraco (o próximo MAX+1 reaproveita o número).
+    const chk: any = await db.execute(sql`
+      SELECT f.invoice_number, f.environment,
+             EXISTS (SELECT 1 FROM fiscal_invoices g
+                      WHERE g.environment = 'producao' AND g.series = f.series AND g.id <> f.id
+                        AND regexp_replace(COALESCE(g.issuer_cnpj,''),'[^0-9]','','g') = regexp_replace(COALESCE(f.issuer_cnpj,''),'[^0-9]','','g')
+                        AND g.invoice_number > f.invoice_number) AS tem_maior,
+             EXISTS (SELECT 1 FROM fiscal_invoice_events e WHERE e.invoice_id = f.id
+                      AND e.event_type NOT IN ('criacao','created')) AS transmitida
+        FROM fiscal_invoices f WHERE f.id = ${id} LIMIT 1`);
+    const alvo = (chk?.rows ?? chk ?? [])[0];
+    const ultimoNuncaEnviado = alvo && !alvo.tem_maior && !alvo.transmitida;
+    if (alvo && alvo.invoice_number != null && String(alvo.environment || '') === 'producao' && !ultimoNuncaEnviado) {
+      throw Object.assign(
+        new Error(`A NF-e nº ${alvo.invoice_number} já tem número de produção e não pode ser excluída. Corrija e retransmita, ou inutilize o número em Fiscal › Inutilização de NF.`),
+        { code: 'NF_NUMERADA_NAO_EXCLUI', status: 409 },
+      );
+    }
     await db.delete(fiscalInvoiceItems).where(eq(fiscalInvoiceItems.invoiceId, id));
     await db.delete(fiscalInvoiceEvents).where(eq(fiscalInvoiceEvents.invoiceId, id));
     await db.delete(fiscalInvoices).where(eq(fiscalInvoices.id, id));

@@ -29,6 +29,9 @@ const emitir: any = _nfe.nf?.emitir ?? _nfe.emitir;
 const statusServico: any = _nfe.nf?.statusServico ?? _nfe.statusServico;
 const cancelar: any = _nfe.nf?.cancelar ?? _nfe.cancelar;
 const inutilizarLib: any = _nfe.nf?.inutilizar ?? _nfe.inutilizar;
+// cStat de USO DENEGADO (MOC 7.0): a nota fica registrada na SEFAZ como denegada e o
+// número é consumido. 302 NÃO entra: virou rejeição comum (não consome número).
+export const CSTAT_DENEGACAO = new Set(['110', '205', '301', '303']);
 
 // Formas de pagamento liquidadas NO ATO: indPag=0 e XML SEM bloco <cobr>/<dup>.
 // Inclui as variantes de cartao vindas do hotsite ('card'), do link de pagamento do
@@ -2943,6 +2946,36 @@ export class SefazService {
               xmlRetorno: result.xml_recebido,
             };
           }
+        }
+
+        // USO DENEGADO (110/301/303; 205 = "já está denegada na base da SEFAZ"): a SEFAZ
+        // REGISTRA a nota denegada e o número fica CONSUMIDO — não pode ser retransmitido
+        // nem inutilizado. Gravar como 'rejected' fazia o número aparecer como lacuna e a
+        // inutilização da faixa ser recusada. Observação: o 302 (irregularidade do
+        // destinatário) hoje é REJEIÇÃO comum — não consome número — e segue abaixo.
+        if (CSTAT_DENEGACAO.has(errorCodeStr)) {
+          const _prot: any = result.nfeProc?.protNFe;
+          const infProt: any = (Array.isArray(_prot) ? _prot[0]?.infProt : _prot?.infProt) || {};
+          const chDen = String(infProt.chNFe || '');
+          await storage.updateFiscalInvoice(invoiceId, {
+            status: 'denied',
+            ...(infProt.nProt ? { protocolNumber: String(infProt.nProt) } : {}),
+            ...(chDen.length === 44 ? { accessKey: chDen } : {}),
+            xmlEnvio: result.xml_enviado,
+            xmlRetorno: result.xml_recebido,
+          } as any);
+          await storage.createFiscalInvoiceEvent({
+            invoiceId,
+            eventType: 'denegacao',
+            status: 'error',
+            errorCode: errorCodeStr,
+            errorMessage: errorMsg,
+            description: `NF-e DENEGADA pela SEFAZ — cStat: ${errorCodeStr} | ${errorMsg}. O número ${invoice?.invoiceNumber} fica consumido (não retransmitir, não inutilizar).`,
+            xmlRequest: result.xml_enviado,
+            xmlResponse: result.xml_recebido,
+            createdBy: invoice?.createdBy || undefined,
+          });
+          return { success: false, errorCode: errorCodeStr, errorMessage: `Uso denegado: ${errorMsg}`, xmlEnvio: result.xml_enviado, xmlRetorno: result.xml_recebido };
         }
 
         await storage.updateFiscalInvoice(invoiceId, { status: 'rejected' });

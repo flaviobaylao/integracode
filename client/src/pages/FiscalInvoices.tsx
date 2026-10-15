@@ -249,6 +249,8 @@ const statusConfig: Record<string, { label: string; variant: 'default' | 'second
   rejected: { label: 'Rejeitada', variant: 'outline', className: 'bg-orange-100 text-orange-800 border-orange-300' },
   processing: { label: 'Processando', variant: 'default', className: 'bg-blue-100 text-blue-800 border-blue-300' },
   returned: { label: 'Devolvida', variant: 'destructive', className: 'bg-purple-100 text-purple-800 border-purple-300' },
+  denied: { label: 'Denegada', variant: 'destructive', className: 'bg-gray-800 text-white border-gray-900' },
+  inutilizada: { label: 'Inutilizada', variant: 'outline', className: 'bg-gray-100 text-gray-600 border-gray-300' },
 };
 
 function getStatusBadge(status: string) {
