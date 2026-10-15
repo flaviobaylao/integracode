@@ -526,7 +526,18 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       if (!customer && onCreated) { try { onCreated(response); } catch (_e) {} }
       onClose();
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      // CPF/CNPJ de cadastro que JÁ EXISTE (409): abre o mesmo diálogo da lupa de CNPJ, que
+      // mostra o cadastro e oferece "Reativar cliente" quando ele está inativo/fora da lista.
+      const ex = error?.existingCustomer;
+      if (!customer && error?.status === 409 && ex?.id) {
+        setCnpjDuplicate({
+          id: ex.id, nome: ex.name || '-', vendedor: ex.seller || '-',
+          isActive: ex.isActive !== false && ex.naLista !== false,
+          doc: ex.cnpj ? 'CNPJ' : 'CPF',
+        } as any);
+        return;
+      }
       toast({
         title: "Erro",
         description: error.message,
@@ -2002,12 +2013,12 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {cnpjDuplicate?.isActive ? '⚠️ CNPJ já cadastrado' : '♻️ CNPJ cadastrado (inativo)'}
+            {cnpjDuplicate?.isActive ? `⚠️ ${(cnpjDuplicate as any)?.doc || 'CNPJ'} já cadastrado` : `♻️ ${(cnpjDuplicate as any)?.doc || 'CNPJ'} cadastrado (inativo)`}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {cnpjDuplicate?.isActive
-              ? 'Este CNPJ já está cadastrado e ATIVO no sistema. O cadastro com CNPJ duplicado será bloqueado ao salvar — verifique se não é o mesmo cliente.'
-              : 'Este CNPJ já existe no sistema, mas o cadastro está INATIVO. Deseja reativar o cliente existente?'}
+              ? `Este ${(cnpjDuplicate as any)?.doc || 'CNPJ'} já está cadastrado e ATIVO no sistema. O cadastro duplicado é bloqueado ao salvar — procure o cliente na lista (filtro "Todos").`
+              : `Este ${(cnpjDuplicate as any)?.doc || 'CNPJ'} já existe no sistema, mas o cadastro está INATIVO (por isso não aparece na lista de ativos). Deseja reativar o cliente existente?`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-1 text-sm rounded-md border p-3 bg-muted/40">

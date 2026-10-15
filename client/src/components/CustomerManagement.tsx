@@ -923,6 +923,24 @@ export default function CustomerManagement() {
                   <tr>
                     <td colSpan={9} className="px-6 py-12 text-center text-gray-500">
                       Nenhum cliente encontrado
+                      {/* A busca acha o cliente, mas ele está INATIVO e o filtro padrão é "Ativo". */}
+                      {statusFilter === 'active' && searchTerm.trim() && (() => {
+                        const _t = searchTerm.toLowerCase();
+                        const _n = searchTerm.replace(/[.\-\/\s]/g, '');
+                        const _inat = (customers || []).filter((c: any) => c.isActive === false && (
+                          String(c.name || '').toLowerCase().includes(_t) ||
+                          String(c.fantasyName || '').toLowerCase().includes(_t) ||
+                          (_n.length >= 3 && String(c.cpf || c.cnpj || c.document || '').replace(/[.\-\/\s]/g, '').includes(_n))
+                        )).length;
+                        return _inat > 0 ? (
+                          <div className="mt-2">
+                            <button type="button" className="text-sm text-blue-700 underline" onClick={() => setStatusFilter('inactive')} data-testid="btn-mostrar-inativos">
+                              {_inat} cliente(s) INATIVO(s) corresponde(m) à busca — mostrar inativos
+                            </button>
+                            <p className="text-xs text-gray-400 mt-1">Para reativar: marque o cliente e use "Reativar".</p>
+                          </div>
+                        ) : null;
+                      })()}
                     </td>
                   </tr>
                 )}
