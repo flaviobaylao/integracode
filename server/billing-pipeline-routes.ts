@@ -2993,6 +2993,9 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (ehBloqueioEstoque(err)) {
         return res.status(400).json({ success: false, message: err.message, stockError: true, details: err.details });
       }
+      if (err?.code === 'NF_PENDENTE_MESMA_ORIGEM') {
+        return res.status(409).json({ success: false, message: err.message, invoiceId: err.invoiceId, invoiceNumber: err.invoiceNumber });
+      }
       res.status(500).json({ success: false, message: err.message });
     }
   });

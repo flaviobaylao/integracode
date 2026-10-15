@@ -1042,6 +1042,7 @@ export function registerNfeRoutes(app: Express) {
       const savedItems = await storage.getFiscalInvoiceItems(invoice.id);
       res.status(201).json({ ...invoice, items: savedItems });
     } catch (error: any) {
+      if (error?.code === 'NF_PENDENTE_MESMA_ORIGEM') return res.status(409).json({ message: error.message, errorMessage: error.message, error: error.message, invoiceId: error.invoiceId, invoiceNumber: error.invoiceNumber });
       res.status(500).json({ message: 'Erro ao criar nota fiscal', error: error.message });
     }
   });
@@ -1082,14 +1083,7 @@ export function registerNfeRoutes(app: Express) {
       if (existing.status === 'authorized') {
         return res.status(400).json({ message: 'NF-e autorizada não pode ser excluída. Use cancelamento.' });
       }
-      // Numerada em produção: excluir abriria buraco na sequência (ver storage.deleteFiscalInvoice).
-      if ((existing as any).invoiceNumber != null && (existing as any).environment === 'producao') {
-        return res.status(409).json({
-          message: `A NF-e nº ${(existing as any).invoiceNumber} já tem número de produção e não pode ser excluída.`,
-          details: 'Corrija o motivo da rejeição e retransmita a mesma nota, ou inutilize o número em Fiscal › Inutilização de NF.',
-        });
-      }
-
+      // Numerada em produção: storage.deleteFiscalInvoice recusa (409) — ver lá.
       await storage.deleteFiscalInvoice(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -1584,6 +1578,7 @@ export function registerNfeRoutes(app: Express) {
           : null,
       });
     } catch (error: any) {
+      if (error?.code === 'NF_PENDENTE_MESMA_ORIGEM') return res.status(409).json({ message: error.message, errorMessage: error.message, error: error.message, invoiceId: error.invoiceId, invoiceNumber: error.invoiceNumber });
       res.status(500).json({ success: false, errorMessage: error.message });
     }
   });
@@ -1733,6 +1728,7 @@ export function registerNfeRoutes(app: Express) {
       const updated = await storage.getFiscalInvoice(returnInvoice.id);
       res.json({ ok: true, ghostsRejected, returnNumber: updated?.invoiceNumber || null, protocol: sefazResult.protocolNumber, accessKey: updated?.accessKey || null });
     } catch (error: any) {
+      if (error?.code === 'NF_PENDENTE_MESMA_ORIGEM') return res.status(409).json({ message: error.message, errorMessage: error.message, error: error.message, invoiceId: error.invoiceId, invoiceNumber: error.invoiceNumber });
       res.status(500).json({ ok: false, error: error.message });
     }
   });

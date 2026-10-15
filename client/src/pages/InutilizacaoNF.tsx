@@ -60,7 +60,8 @@ export default function InutilizacaoNF() {
     queryKey: ["/api/fiscal/inutilizacao/lote", loteId],
     queryFn: () => jfetch(`/api/fiscal/inutilizacao/lote/${loteId}`),
     enabled: !!loteId,
-    refetchInterval: (q: any) => (q?.state?.data?.status === "executando" || !q?.state?.data ? 3000 : false),
+    retry: false,
+    refetchInterval: (q: any) => (q?.state?.status === "error" ? false : (q?.state?.data?.status === "executando" || !q?.state?.data ? 3000 : false)),
   });
 
   const enviar = useMutation({
@@ -93,11 +94,13 @@ export default function InutilizacaoNF() {
 
   // Lote no servidor: todas as faixas do grupo, com pausa entre pedidos e divisão
   // automática quando a SEFAZ acusa número já usado/inutilizado dentro da faixa.
+  const [iniciando, setIniciando] = useState(false);
   async function iniciarLote() {
-    if (!confLote) return;
+    if (!confLote || iniciando) return;
     const { g, just, palavra } = confLote;
     if (palavra.trim().toUpperCase() !== "INUTILIZAR") return toast({ title: "Confirmação", description: "Digite INUTILIZAR para confirmar.", variant: "destructive" });
     if (just.trim().length < 15) return toast({ title: "Justificativa curta", description: "Mínimo de 15 caracteres.", variant: "destructive" });
+    setIniciando(true);
     try {
       const j = await jfetch("/api/fiscal/inutilizacao/lote", { method: "POST", body: JSON.stringify({ cnpj: g.cnpj, modelo: g.modelo, serie: g.serie, desde, justificativa: just, confirmacao: palavra }) });
       setLoteId(j.id);
@@ -105,6 +108,8 @@ export default function InutilizacaoNF() {
       toast({ title: "Lote iniciado", description: `${j.faixasPrevistas} faixas · ${Number(j.numerosPrevistos).toLocaleString("pt-BR")} números` });
     } catch (e: any) {
       toast({ title: "Não iniciou", description: e.message, variant: "destructive" });
+    } finally {
+      setIniciando(false);
     }
   }
   async function pararLote() {
@@ -261,7 +266,7 @@ export default function InutilizacaoNF() {
             <p className="text-xs text-red-700">Definitivo: números inutilizados nunca mais poderão ser usados.</p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfLote(null)}>Cancelar</Button>
-              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={iniciarLote}>Iniciar lote</Button>
+              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={iniciarLote} disabled={iniciando}>{iniciando ? "Iniciando..." : "Iniciar lote"}</Button>
             </div>
           </div>
         </div>

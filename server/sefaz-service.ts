@@ -2954,7 +2954,8 @@ export class SefazService {
         // inutilização da faixa ser recusada. Observação: o 302 (irregularidade do
         // destinatário) hoje é REJEIÇÃO comum — não consome número — e segue abaixo.
         if (CSTAT_DENEGACAO.has(errorCodeStr)) {
-          const infProt: any = result.nfeProc?.protNFe?.infProt || {};
+          const _prot: any = result.nfeProc?.protNFe;
+          const infProt: any = (Array.isArray(_prot) ? _prot[0]?.infProt : _prot?.infProt) || {};
           const chDen = String(infProt.chNFe || '');
           await storage.updateFiscalInvoice(invoiceId, {
             status: 'denied',

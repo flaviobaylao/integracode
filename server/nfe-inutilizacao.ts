@@ -130,9 +130,12 @@ export async function levantarLacunas(filtro: { cnpj?: string; desde?: string })
     ORDER BY 2,3,4,6`);
   const rows: any[] = r.rows || r;
 
+  // Homologadas + números ISOLADOS pelo lote em que a SEFAZ respondeu 241 (já usado —
+  // nota fora do Integra: vai para "conferir") ou 256 (já inutilizado — nada a fazer).
   const inut: any = await db.execute(sql`
-    SELECT cnpj, modelo, serie, numero_inicial, numero_final FROM fiscal_inutilizacoes
-    WHERE status = 'homologada' AND ambiente = 'producao'`);
+    SELECT cnpj, modelo, serie, numero_inicial, numero_final, status, c_stat FROM fiscal_inutilizacoes
+    WHERE ambiente = 'producao'
+      AND (status = 'homologada' OR (status = 'rejeitada' AND c_stat IN ('241','256') AND numero_inicial = numero_final))`);
   const inutRows: any[] = inut.rows || inut;
 
   // Notas do Integra que TÊM número mas não consumiram (rejeitada/erro/rascunho) — explica a lacuna.
@@ -176,6 +179,13 @@ export async function levantarLacunas(filtro: { cnpj?: string; desde?: string })
           // número — nunca inutilizar esse número.
           .concat(presasRows.filter((x) => (x.recente || x.suspeita) && x.c === row.c && x.m === row.m && Number(x.s) === Number(row.s))
             .map((x) => ({ ini: Number(x.n), fim: Number(x.n) }))));
+      for (const i of inutRows) {
+        if (i.status === "rejeitada" && String(i.c_stat) === "241" && i.cnpj === row.c && i.modelo === row.m && Number(i.serie) === Number(row.s)
+            && Number(i.numero_inicial) >= Number(row.ini) && Number(i.numero_inicial) <= Number(row.fim)
+            && !g.conferir.some((y: any) => y.numero === Number(i.numero_inicial))) {
+          g.conferir.push({ numero: Number(i.numero_inicial), motivo: "SEFAZ: número já usado (241) — nota fora do Integra", statusIntegra: "—", cliente: null, invoiceId: null });
+        }
+      }
       for (const x of presasRows) {
         if (x.suspeita && x.c === row.c && x.m === row.m && Number(x.s) === Number(row.s) && Number(x.n) >= Number(row.ini) && Number(x.n) <= Number(row.fim)
             && !g.conferir.some((y: any) => y.numero === Number(x.n))) {
@@ -267,7 +277,7 @@ export function registerInutilizacaoRoutes(app: Express) {
 
   // ── LOTE NO SERVIDOR ──────────────────────────────────────────────────────
   // Envia todas as faixas de um CNPJ/modelo/série. Exige confirmacao = "INUTILIZAR".
-  app.post("/api/fiscal/inutilizacao/lote", authenticateUser, requireRole(["admin"]), async (req: any, res) => {
+  app.post("/api/fiscal/inutilizacao/lote", authenticateUser, rolesEnvio, async (req: any, res) => {
     try {
       const b = req.body || {};
       if (String(b.confirmacao || "").trim().toUpperCase() !== "INUTILIZAR") return res.status(400).json({ error: 'Digite INUTILIZAR para confirmar.' });
@@ -289,7 +299,7 @@ export function registerInutilizacaoRoutes(app: Express) {
     if (!j) return res.status(404).json({ error: "lote não encontrado (o servidor pode ter reiniciado — o que já foi homologado está no histórico)" });
     res.json(j);
   });
-  app.post("/api/fiscal/inutilizacao/lote/:id/parar", authenticateUser, requireRole(["admin"]), async (req, res) => {
+  app.post("/api/fiscal/inutilizacao/lote/:id/parar", authenticateUser, rolesEnvio, async (req, res) => {
     const j = LOTES.get(String(req.params.id));
     if (!j) return res.status(404).json({ error: "lote não encontrado" });
     j.pararPedido = true;
@@ -350,10 +360,13 @@ export async function enviarFaixa(b: EnvioFaixa, quem: string | null, loteId: st
   }
 
   const r = await inutilizarNumeracao({ cnpj, uf, modelo, serie, ano, numeroInicial: ini, numeroFinal: fim, justificativa, ambiente });
-  const status = r.ok ? "homologada" : (r.cStat ? "rejeitada" : "erro");
+  // 563 = já existe inutilização com a MESMA faixa na SEFAZ → está feito; grava como homologada
+  // para a faixa sair do levantamento (senão voltaria todo dia no alerta e em cada lote).
+  const jaFeita = !r.ok && String(r.cStat || "") === "563";
+  const status = r.ok || jaFeita ? "homologada" : (r.cStat ? "rejeitada" : "erro");
 
   let marcadas = 0;
-  if (r.ok && ambiente === "producao") {
+  if ((r.ok || jaFeita) && ambiente === "producao") {
     const up: any = await db.execute(sql`
       UPDATE fiscal_invoices SET status = 'inutilizada', updated_at = now()
       WHERE environment = 'producao'
@@ -374,7 +387,7 @@ export async function enviarFaixa(b: EnvioFaixa, quem: string | null, loteId: st
     RETURNING id`);
   const id = (ins.rows || ins)[0]?.id;
   console.log(`[INUTILIZACAO] ${cnpj} mod ${modelo} serie ${serie} ${ini}-${fim} (${ambiente}) → ${status} cStat=${r.cStat} ${r.xMotivo || r.error || ""}`);
-  return { http: r.ok ? 200 : 422, id, status, ok: r.ok, cStat: r.cStat, xMotivo: r.xMotivo, protocolo: r.protocolo, error: r.error, notasMarcadas: marcadas };
+  return { http: r.ok || jaFeita ? 200 : 422, id, status, ok: r.ok || jaFeita, cStat: r.cStat, xMotivo: r.xMotivo, protocolo: r.protocolo, error: r.error, notasMarcadas: marcadas };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -404,6 +417,10 @@ const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function iniciarLote(p: { cnpj: string; modelo: string; serie: number; desde: string; justificativa: string; ate: number | null }, quem: string | null) {
   if (loteEmExecucao) throw Object.assign(new Error(`Já há um lote em execução (${loteEmExecucao}). Aguarde ou pare-o.`), { status: 409 });
   if (String(p.justificativa).trim().length < 15) throw Object.assign(new Error("Justificativa com menos de 15 caracteres."), { status: 400 });
+  // Reserva a trava ANTES do primeiro await (duplo clique não abre dois lotes).
+  loteEmExecucao = "reservando";
+  let iniciou = false;
+  try {
   const lev = await levantarLacunas({ cnpj: p.cnpj, desde: p.desde });
   const g: any = lev.grupos.find((x: any) => x.cnpj === p.cnpj && x.modelo === p.modelo && Number(x.serie) === Number(p.serie));
   if (!g) throw Object.assign(new Error("Grupo (CNPJ/modelo/série) não encontrado no levantamento."), { status: 404 });
@@ -419,13 +436,18 @@ async function iniciarLote(p: { cnpj: string; modelo: string; serie: number; des
   };
   LOTES.set(id, job);
   loteEmExecucao = id;
+  iniciou = true;
   void rodarLote(job, faixas, g.uf, p.justificativa).finally(() => { loteEmExecucao = null; });
   return job;
+  } finally {
+    if (!iniciou) loteEmExecucao = null;
+  }
 }
 
 async function rodarLote(job: Lote, faixas: { ini: number; fim: number; ano: number }[], uf: string, just: string) {
   const fila = faixas.slice();
   let falhasSeguidas = 0;
+  let esperas656 = 0;
   try {
     while (fila.length) {
       if (job.pararPedido) { job.status = "interrompido"; job.motivoParada = "parado pelo usuário"; break; }
@@ -439,6 +461,7 @@ async function rodarLote(job: Lote, faixas: { ini: number; fim: number; ano: num
       }
       job.pedidos++;
       const cs = r.cStat ? String(r.cStat) : "";
+      if (!CSTAT_ESPERAR.has(cs)) esperas656 = 0;
       if (r.ok) {
         job.homologadas++; job.numerosInutilizados += f.fim - f.ini + 1; falhasSeguidas = 0;
       } else if (CSTAT_JA_FEITA.has(cs)) {
@@ -452,7 +475,12 @@ async function rodarLote(job: Lote, faixas: { ini: number; fim: number; ano: num
           job.usadosNaSefaz.push({ ini: f.ini, fim: f.fim, cStat: cs, xMotivo: String(r.xMotivo || "") });
         }
       } else if (CSTAT_ESPERAR.has(cs)) {
+        // Consumo indevido: a SEFAZ mantém o bloqueio enquanto recebe chamadas. 3 esperas
+        // seguidas → parar (retomar ~1 h depois; o que foi homologado já saiu do levantamento).
+        esperas656++;
+        if (esperas656 > 3) { job.status = "interrompido"; job.motivoParada = "SEFAZ bloqueou por consumo indevido (656). Aguarde 1 hora e dispare o lote de novo."; break; }
         fila.unshift(f); await dormir(65_000);
+        continue;
       } else if (r.http === 409 || r.http === 400) {
         // trava local (número usado/sobreposição) — registra e segue
         job.erros.push({ ini: f.ini, fim: f.fim, cStat: null, msg: String(r.error || "") });
