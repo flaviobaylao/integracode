@@ -613,7 +613,17 @@ export function registerNfEntradaProdutorRoutes(app: Express) {
       if (inv && inv.status !== "draft" && inv.status !== "rejected") {
         return res.status(400).json({ error: "Só rascunho ou rejeitada pode ser descartada. Nota autorizada se cancela em Notas Fiscais." });
       }
-      if (inv) await storage.deleteFiscalInvoice(inv.id);
+      // Nota de PRODUÇÃO já numerada não é apagada (abriria buraco na sequência):
+      // fica registrada como rejeitada/descartada e o número entra no levantamento
+      // da tela Inutilização de NF. Só rascunho sem número ou de homologação é apagado.
+      if (inv && inv.invoiceNumber != null && (inv as any).environment === "producao") {
+        await db.execute(sql`UPDATE fiscal_invoices SET status = 'rejected',
+            notes = COALESCE(notes,'') || ' | DESCARTADA pelo usuário em ' || to_char(now() AT TIME ZONE 'America/Sao_Paulo','DD/MM/YYYY HH24:MI') || ' — número a inutilizar na SEFAZ.',
+            updated_at = now()
+          WHERE id = ${inv.id}`);
+      } else if (inv) {
+        await storage.deleteFiscalInvoice(inv.id);
+      }
       await db.execute(sql`DELETE FROM nf_entrada_produtor WHERE id = ${link.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

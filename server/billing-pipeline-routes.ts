@@ -2854,15 +2854,15 @@ export function registerBillingPipelineRoutes(app: Express) {
       const numRef = String(item.invoiceNumber || '').replace(/\D/g, '');
       let nf: any = null;
       if (item.salesCardId) {
-        const byCard: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+        const byCard: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status NOT IN ('cancelled','cancelada','denied','inutilizada') ORDER BY created_at DESC LIMIT 1`);
         nf = (byCard?.rows ?? byCard ?? [])[0] || null;
       }
       if (!nf && numRef && item.customerId) {
-        const byNum: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} AND customer_id = ${item.customerId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+        const byNum: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE invoice_number = ${Number(numRef)} AND customer_id = ${item.customerId} AND status NOT IN ('cancelled','cancelada','denied','inutilizada') ORDER BY created_at DESC LIMIT 1`);
         nf = (byNum?.rows ?? byNum ?? [])[0] || null;
       }
       if (!nf && !item.salesCardId && item.orderNumber) {
-        const byRef: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+        const byRef: any = await db.execute(sql`SELECT id, status FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status NOT IN ('cancelled','cancelada','denied','inutilizada') ORDER BY created_at DESC LIMIT 1`);
         nf = (byRef?.rows ?? byRef ?? [])[0] || null;
       }
 
@@ -3277,10 +3277,10 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
   try {
     let __row: any = null;
     if (item.salesCardId) {
-      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE sales_card_id = ${item.salesCardId} AND status NOT IN ('cancelled','cancelada','denied','inutilizada') ORDER BY created_at DESC LIMIT 1`);
       __row = (__ex?.rows ?? __ex ?? [])[0];
     } else if (item.orderNumber) {
-      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status <> 'cancelled' AND status <> 'cancelada' ORDER BY created_at DESC LIMIT 1`);
+      const __ex: any = await db.execute(sql`SELECT id, invoice_number FROM fiscal_invoices WHERE notes = ${'Pedido pipeline interno - ' + item.orderNumber} AND sales_card_id IS NULL AND status NOT IN ('cancelled','cancelada','denied','inutilizada') ORDER BY created_at DESC LIMIT 1`);
       __row = (__ex?.rows ?? __ex ?? [])[0];
     }
     if (__row && __row.id) {

@@ -1082,10 +1082,18 @@ export function registerNfeRoutes(app: Express) {
       if (existing.status === 'authorized') {
         return res.status(400).json({ message: 'NF-e autorizada não pode ser excluída. Use cancelamento.' });
       }
+      // Numerada em produção: excluir abriria buraco na sequência (ver storage.deleteFiscalInvoice).
+      if ((existing as any).invoiceNumber != null && (existing as any).environment === 'producao') {
+        return res.status(409).json({
+          message: `A NF-e nº ${(existing as any).invoiceNumber} já tem número de produção e não pode ser excluída.`,
+          details: 'Corrija o motivo da rejeição e retransmita a mesma nota, ou inutilize o número em Fiscal › Inutilização de NF.',
+        });
+      }
 
       await storage.deleteFiscalInvoice(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
+      if (error?.code === 'NF_NUMERADA_NAO_EXCLUI') return res.status(409).json({ message: error.message });
       res.status(500).json({ message: 'Erro ao deletar nota fiscal', error: error.message });
     }
   });
