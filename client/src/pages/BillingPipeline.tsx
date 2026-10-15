@@ -1765,6 +1765,7 @@ export default function BillingPipeline() {
                     <KanbanCard
                       item={item}
                       stage={stage}
+                      catalog={productCatalog as any[]}
                       selected={selectedIds.has(item.id)}
                       onToggleSelect={() => toggleSelect(item.id)}
                       onMoveForward={() => moveItem(item, 'forward')}
@@ -2595,6 +2596,7 @@ function KanbanCard({
   onTogglePriority,
   blockedReason,
   stockIssue,
+  catalog,
 }: {
   item: BillingPipelineItem;
   stage: typeof STAGES[number];
@@ -2617,10 +2619,24 @@ function KanbanCard({
   onTogglePriority?: () => void;
   blockedReason?: string | null;
   stockIssue?: string | null;
+  catalog?: any[];
 }) {
   const delegMarks = useDelegacaoMarks();
   const fs = (item.fiscalStatus || '').toLowerCase();
   const isBlocked = stage.key === 'bloqueado';
+  // Resumo dos itens do card: quantidade total e peso (kg) = Σ(qtd × peso bruto por unidade,
+  // do cadastro de produtos). Itens sem peso cadastrado não entram no peso (marcado com "*").
+  const _prods = Array.isArray((item as any).products) ? (item as any).products : [];
+  let _qtdTotal = 0, _pesoG = 0, _semPeso = 0;
+  for (const p of _prods as any[]) {
+    const q = parseFloat(String(p?.quantity ?? 0)) || 0;
+    _qtdTotal += q;
+    const c = (catalog || []).find((x: any) => String(x.id) === String(p?.id))
+      || (catalog || []).find((x: any) => String(x.name || '').trim().toLowerCase() === String(p?.name || '').trim().toLowerCase());
+    const pb = c ? (parseFloat(String((c as any).pesoBrutoG ?? 0)) || 0) : 0;
+    if (pb > 0) _pesoG += q * pb; else if (q > 0) _semPeso += 1;
+  }
+  const _pesoKg = _pesoG / 1000;
   // "Cancelado" é só status fiscal real — NÃO estar na coluna Bloqueados. Assim o card bloqueado
   // mostra a tag de Tipo de Operação (Venda/Amostra) registrada no pedido, não "Cancelado".
   const isRed = RED_FISCAL.includes(fs);
@@ -2700,6 +2716,17 @@ function KanbanCard({
             </Badge>
           )}
         </div>
+
+        {_qtdTotal > 0 && (
+          <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+            <span className="flex items-center gap-1" title="Quantidade total de itens">
+              <Package className="h-3 w-3" />{_qtdTotal.toLocaleString('pt-BR')} un
+            </span>
+            <span title={_semPeso > 0 ? 'Peso total (bruto) — há itens sem peso cadastrado (parcial)' : 'Peso total (bruto)'}>
+              · {_pesoKg > 0 ? `${_pesoKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg` : '—'}{_semPeso > 0 ? '*' : ''}
+            </span>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-1">
           {(() => {
