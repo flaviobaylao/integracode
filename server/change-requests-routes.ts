@@ -606,14 +606,20 @@ export function registerChangeRequestsRoutes(app: Express) {
       const cityByKey = new Map<string, string>();
       const bairroByKey = new Map<string, string>();
       const lastOrderByKey = new Map<string, string>();
+      // 15/out/2026 — Periodicidade do cliente no card: ao ler um report de não-venda o admin
+      // precisa saber de quanto em quanto tempo aquele cliente é visitado para julgar o caso
+      // (ex.: "sugestão não gera pedido mínimo" pesa diferente num mensal e num semanal).
+      // Só existe em `customers` — lead não tem periodicidade.
+      const periodicidadeByKey = new Map<string, string>();
       const repescagemSet = new Set<string>();
       if (custIds.length) {
         const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
-        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood FROM customers WHERE id IN (${inCust})`));
+        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity FROM customers WHERE id IN (${inCust})`));
         for (const c of cr) {
           if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
           if (c.city) cityByKey.set("customer:" + c.id, String(c.city));
           if (c.neighborhood) bairroByKey.set("customer:" + c.id, String(c.neighborhood));
+          if (c.visit_periodicity) periodicidadeByKey.set("customer:" + c.id, String(c.visit_periodicity));
         }
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
         const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
@@ -643,6 +649,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.city = cityByKey.get(key) || null;
         m.neighborhood = bairroByKey.get(key) || null;
         m.lastOrderAt = lastOrderByKey.get(key) || null;
+        m.periodicidade = periodicidadeByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
       // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
