@@ -64,6 +64,7 @@ interface BillingPipelineItem {
   deliveryRouteDate?: string | null;  // data programada da rota (YYYY-MM-DD)
   paymentMethod: string | null;
   operationType: string | null;
+  boletoDays?: number | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
   notes: string | null;
   trocaPhotoUrl?: string | null; // 1ª foto da troca (compatibilidade)
@@ -741,6 +742,7 @@ export default function BillingPipeline() {
       saleValue: detailItem.saleValue ?? '',
       paymentMethod: detailItem.paymentMethod ?? '',
       operationType: detailItem.operationType ?? '',
+      boletoDays: detailItem.boletoDays ?? '',
       sellerId: detailItem.sellerId ?? '',
       sellerName: detailItem.sellerName ?? '',
       invoiceNumber: detailItem.invoiceNumber ?? '',
@@ -787,7 +789,7 @@ export default function BillingPipeline() {
     // BLOQUEADO: id é do blocked_orders, não de um item do pipeline → endpoint próprio (senão a
     // edição não persiste). O valor total é recalculado pela soma dos produtos no backend.
     if (String(detailItem.stage) === 'bloqueado') {
-      updateBlockedMutation.mutate({ id: detailItem.id, data: { products: editData.products, paymentMethod: editData.paymentMethod, operationType: editData.operationType, saleValue: editData.saleValue } });
+      updateBlockedMutation.mutate({ id: detailItem.id, data: { products: editData.products, paymentMethod: editData.paymentMethod, operationType: editData.operationType, saleValue: editData.saleValue, boletoDays: editData.boletoDays } });
     } else {
       updateItemMutation.mutate({ id: detailItem.id, data });
     }
@@ -926,6 +928,7 @@ export default function BillingPipeline() {
           saleValue: b.totalAmount ?? null,
           paymentMethod: b.paymentMethod ?? null,
           operationType: b.operationType ?? null,
+          boletoDays: b.boletoDays ?? null,
           products: b.products ?? null,
           source: b.source ?? undefined,
           paidOnline: b.paidOnline ?? undefined,
@@ -1965,6 +1968,25 @@ export default function BillingPipeline() {
                       </select>
                     ) : (<p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>)}
                   </div>
+                  {/* PRAZO DO BOLETO: só aparece quando o pagamento é boleto. O admin pode alterar o
+                      prazo nos pedidos BLOQUEADOS (ex.: boleto acima de 7 dias). */}
+                  {((editMode ? editData?.paymentMethod : detailItem.paymentMethod) === 'boleto') && (
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Prazo do boleto (dias)</label>
+                      {editMode && canEdit && detailItem.stage === 'bloqueado' ? (
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={editData?.boletoDays ?? ''}
+                          onChange={(e) => setEditData((d: any) => ({ ...d, boletoDays: e.target.value }))}
+                          className="w-full border rounded px-2 py-1 text-sm"
+                          title="Prazo do boleto em dias. Alterável pelo admin nos pedidos bloqueados (ex.: boleto acima de 7 dias)."
+                          data-testid="input-boleto-days"
+                        />
+                      ) : (<p className="text-sm">{detailItem.boletoDays ? `${detailItem.boletoDays} dias` : '-'}</p>)}
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Instância</label>
                     {editMode && (canEditInstance || (canEdit && STAGES_INSTANCIA_EDITAVEL.has(String(detailItem.stage)))) ? (
