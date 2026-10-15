@@ -11270,7 +11270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch('/api/blocked-orders/:id', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { id } = req.params;
-      const { products, paymentMethod, operationType, saleValue } = req.body;
+      const { products, paymentMethod, operationType, saleValue, boletoDays } = req.body;
       const rows = await db.select().from(blockedOrders).where(eq(blockedOrders.id, id)).limit(1);
       if (rows.length === 0) return res.status(404).json({ message: 'Pedido bloqueado nao encontrado' });
       const order = rows[0];
@@ -11291,6 +11291,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (paymentMethod !== undefined) upd.paymentMethod = paymentMethod || null;
       if (operationType !== undefined) upd.operationType = operationType || null;
+      // PRAZO DO BOLETO (dias): o admin pode ajustar o prazo nos pedidos bloqueados (ex.: boleto
+      // acima de 7 dias). Vazio/0 => null. O valor corrigido viaja na liberacao (espelho no card).
+      if (boletoDays !== undefined) {
+        const _bd = (boletoDays === null || String(boletoDays) === '') ? null : (parseInt(String(boletoDays), 10) || null);
+        upd.boletoDays = _bd && _bd > 0 ? _bd : null;
+      }
       if (Object.keys(upd).length) { await db.update(blockedOrders).set({ ...upd, updatedAt: new Date() } as any).where(eq(blockedOrders.id, id)); }
       // Espelha no sales_card: a liberacao (release) monta o pedido a partir do card + snapshot,
       // entao o card tem de refletir a correcao para nao reintroduzir a quantidade/valor antigos.
@@ -11300,6 +11306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (upd.totalAmount !== undefined) cardUpd.saleValue = upd.totalAmount;
         if (paymentMethod !== undefined) cardUpd.paymentMethod = paymentMethod || null;
         if (operationType !== undefined) cardUpd.operationType = operationType || null;
+        if (upd.boletoDays !== undefined) cardUpd.boletoDays = upd.boletoDays;
         if (Object.keys(cardUpd).length && order.salesCardId) await storage.updateSalesCard(order.salesCardId, cardUpd);
       } catch (e: any) { console.warn('[BLOCKED-EDIT] espelho no card (segue):', e?.message); }
       const [updated] = await db.select().from(blockedOrders).where(eq(blockedOrders.id, id)).limit(1);
