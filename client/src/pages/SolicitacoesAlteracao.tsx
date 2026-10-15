@@ -98,6 +98,18 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
+// Periodicidade de visita do cliente, como rótulo curto para o card do Inbox.
+// 15/out/2026 — pedido do Flavio: ao ler um report de não-venda é a periodicidade que diz se
+// o caso é grave (semanal sem vender) ou esperado (mensal com estoque ainda cheio).
+const PERIODICIDADE_LABEL: Record<string, string> = {
+  semanal: "Semanal", quinzenal: "Quinzenal", mensal: "Mensal", bimestral: "Bimestral",
+};
+function fmtPeriodicidade(v?: string | null): string {
+  const k = String(v || "").trim().toLowerCase();
+  if (!k) return "";
+  return PERIODICIDADE_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1));
+}
+
 function Detalhes({ details }: { details: any }) {
   if (!details || Object.keys(details).length === 0) return null;
   return (
@@ -342,7 +354,17 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
-          {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
+          {(r.neighborhood || r.city || r.periodicidade) ? (
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {[r.neighborhood, r.city].filter(Boolean).join(" · ")}
+              {r.periodicidade && (
+                <>
+                  {(r.neighborhood || r.city) ? " · " : ""}
+                  <span className="font-medium text-foreground/80">{fmtPeriodicidade(r.periodicidade)}</span>
+                </>
+              )}
+            </div>
+          ) : null}
           {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
         </div>
       </div>
@@ -587,7 +609,17 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span>{fmtDate(r.createdAt)}</span>
           </div>
-          {(r.neighborhood || r.city) ? <div className="text-[11px] text-muted-foreground mt-0.5">{[r.neighborhood, r.city].filter(Boolean).join(" · ")}</div> : null}
+          {(r.neighborhood || r.city || r.periodicidade) ? (
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {[r.neighborhood, r.city].filter(Boolean).join(" · ")}
+              {r.periodicidade && (
+                <>
+                  {(r.neighborhood || r.city) ? " · " : ""}
+                  <span className="font-medium text-foreground/80">{fmtPeriodicidade(r.periodicidade)}</span>
+                </>
+              )}
+            </div>
+          ) : null}
           {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
           {rd?.previsaoPagamento && (
             <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
