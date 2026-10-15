@@ -2027,6 +2027,37 @@ export default function BillingPipeline() {
                     <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Data de Criação</label>
                     <p className="text-sm">{formatDate(detailItem.createdAt)}</p>
                   </div>
+                  {/* QTD TOTAL + PESO TOTAL (kg): somatório dos itens do pedido. Peso = Σ(qtd × peso
+                      bruto por unidade do cadastro), em kg. Itens sem peso cadastrado não entram no
+                      total (marcado com "*parcial"). */}
+                  {(() => {
+                    const prods = Array.isArray(detailItem.products) ? detailItem.products : [];
+                    let qtd = 0, pesoG = 0, semPeso = 0;
+                    for (const p of prods as any[]) {
+                      const q = parseFloat(String(p?.quantity ?? 0)) || 0;
+                      qtd += q;
+                      const cat = (productCatalog as any[]).find((c: any) => String(c.id) === String(p?.id))
+                        || (productCatalog as any[]).find((c: any) => String(c.name || '').trim().toLowerCase() === String(p?.name || '').trim().toLowerCase());
+                      const pb = cat ? (parseFloat(String((cat as any).pesoBrutoG ?? 0)) || 0) : 0;
+                      if (pb > 0) pesoG += q * pb; else if (q > 0) semPeso += 1;
+                    }
+                    const pesoKg = pesoG / 1000;
+                    return (
+                      <>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Qtd total de itens</label>
+                          <p className="text-sm font-semibold">{qtd.toLocaleString('pt-BR')}</p>
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">Peso total</label>
+                          <p className="text-sm font-semibold">
+                            {pesoKg > 0 ? `${pesoKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg` : '—'}
+                            {semPeso > 0 ? <span className="ml-1 text-[10px] font-normal text-gray-400" title="Há itens sem peso cadastrado — total parcial">*parcial</span> : null}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
