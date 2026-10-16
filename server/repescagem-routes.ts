@@ -35,7 +35,11 @@ const REPESCAGEM_EXCLUDED_USER_IDS = new Set<string>([
   'a0903a77-a217-4989-8e0c-7d9ca2ac36cf', // HOTSITE
   'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
   'omie-vendor-4324270246',               // Lorenna Pina
-  // Honest 1 e Honest 2 REMOVIDOS da exclusao -> agora elegiveis (telemarketing)
+  // NAO sao atendentes de repescagem (manter apenas os ativos da operacao: Leticia e Robson):
+  '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest Admin (conta Honest 1)
+  'f87166f7-0431-4bd1-8c8c-074d13b2c861', // Honest Fornecedores (conta Honest 2)
+  'omie-vendor-4317814615',               // Natalia B.
+  'omie-vendor-4323360115',               // Maria E.
 ]);
 
 // Carteiras (vendedor dono do cliente) que NAO entram em repescagem: canais/sistema
