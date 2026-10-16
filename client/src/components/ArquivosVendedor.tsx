@@ -185,7 +185,9 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto overflow-x-hidden">
+        {/* DialogContent é um grid: sem min-w-0 nos filhos, a trilha é dimensionada
+            pelo min-content do input de arquivo e estoura a largura do diálogo. */}
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto overflow-x-hidden [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FolderOpen className="h-5 w-5 text-amber-600" />
