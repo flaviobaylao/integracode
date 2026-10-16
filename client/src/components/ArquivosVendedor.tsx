@@ -185,7 +185,7 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FolderOpen className="h-5 w-5 text-amber-600" />
@@ -196,18 +196,18 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
 
           {/* ---------- Envio ---------- */}
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 min-w-0">
+              <div className="min-w-0">
                 <Label htmlFor="input-arquivo-vendedor" className="text-xs">Arquivo (até 15 MB)</Label>
                 <Input
                   id="input-arquivo-vendedor"
                   type="file"
-                  className="mt-1"
+                  className="mt-1 w-full text-xs file:mr-2"
                   onChange={(e) => setArquivo(e.target.files?.[0] || null)}
                   data-testid="input-arquivo-vendedor"
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label className="text-xs">Pasta</Label>
                 <Select value={novaCategoria} onValueChange={setNovaCategoria}>
                   <SelectTrigger className="mt-1" data-testid="select-categoria-arquivo">
@@ -220,7 +220,7 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label className="text-xs">Descrição (opcional)</Label>
                 <Input
                   className="mt-1"
@@ -230,7 +230,7 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
                   maxLength={300}
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label className="text-xs">Data de referência (opcional)</Label>
                 <Input type="date" className="mt-1" value={dataRef} onChange={(e) => setDataRef(e.target.value)} />
               </div>
@@ -250,8 +250,8 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
           </div>
 
           {/* ---------- Filtros ---------- */}
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
+          <div className="flex flex-col sm:flex-row gap-2 min-w-0">
+            <div className="relative flex-1 min-w-0">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 className="pl-8"
@@ -261,7 +261,7 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
               />
             </div>
             <Select value={categoria} onValueChange={setCategoria}>
-              <SelectTrigger className="sm:w-56"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="sm:w-56 shrink-0"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todas">Todas as pastas</SelectItem>
                 {ORDEM_CATEGORIAS.map((c) => (
@@ -298,10 +298,10 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
                     {grupo.itens.map((a) => (
                       <div
                         key={a.id}
-                        className="flex items-center gap-3 rounded-md border px-3 py-2 hover:bg-muted/40"
+                        className="flex items-center gap-2 rounded-md border px-3 py-2 hover:bg-muted/40 min-w-0"
                         data-testid={`arquivo-${a.id}`}
                       >
-                        <IconeArquivo mimetype={a.mimetype} fileName={a.fileName} />
+                        <span className="shrink-0"><IconeArquivo mimetype={a.mimetype} fileName={a.fileName} /></span>
                         <div className="min-w-0 flex-1">
                           <a
                             href={a.url}
@@ -322,7 +322,7 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
                             ].filter(Boolean).join(" · ")}
                           </div>
                         </div>
-                        <a href={`${a.url}?download=1`} title="Baixar">
+                        <a href={`${a.url}?download=1`} title="Baixar" className="shrink-0">
                           <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                             <Download className="h-4 w-4" />
                           </Button>
@@ -331,7 +331,7 @@ export default function ArquivosVendedor({ seller, open, onOpenChange }: Props) 
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            className="h-8 w-8 p-0 shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                             onClick={() => setExcluindo(a)}
                             title="Excluir"
                             data-testid={`button-excluir-arquivo-${a.id}`}
