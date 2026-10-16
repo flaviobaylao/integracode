@@ -18,7 +18,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Users, Mail, MapPin, Edit, Home, RefreshCw, Briefcase, UserX, UserCheck, Search, Plus, Trash2, Radio } from "lucide-react";
+import { Users, Mail, MapPin, Edit, Home, RefreshCw, Briefcase, UserX, UserCheck, Search, Plus, Trash2, Radio, FolderOpen } from "lucide-react";
+import ArquivosVendedor from "@/components/ArquivosVendedor";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
@@ -115,6 +116,8 @@ export default function Sellers() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<SellerForm>({ ...EMPTY_FORM });
   const [deletingSeller, setDeletingSeller] = useState<Seller | null>(null);
+  // Pasta de arquivos do vendedor (contrato, documentos, planilhas...) — 16/out/2026
+  const [arquivosSeller, setArquivosSeller] = useState<Seller | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
@@ -123,6 +126,14 @@ export default function Sellers() {
   const { data: sellers = [], isLoading } = useQuery<Seller[]>({
     queryKey: ['/api/users'],
   });
+
+  // Quantos arquivos cada vendedor tem na pasta — uma requisição para a lista
+  // inteira, em vez de uma por card.
+  const { data: resumoArquivos } = useQuery<{ porVendedor: Record<string, { total: number }> }>({
+    queryKey: ['/api/users/arquivos/resumo'],
+    enabled: canEdit,
+  });
+  const contagemArquivos = resumoArquivos?.porVendedor || {};
 
   const setField = <K extends keyof SellerForm>(key: K, value: SellerForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -483,6 +494,27 @@ export default function Sellers() {
                     </div>
                   )}
 
+                  {canEdit && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full mt-2 justify-start text-amber-700 hover:text-amber-800 hover:bg-amber-50 border-amber-200"
+                      onClick={() => setArquivosSeller(seller)}
+                      data-testid={`button-arquivos-${seller.id}`}
+                      title="Contratos, documentos, planilhas e demais arquivos deste vendedor"
+                    >
+                      <FolderOpen className="h-4 w-4 mr-2" />
+                      Arquivos
+                      {contagemArquivos[seller.id]?.total ? (
+                        <Badge variant="secondary" className="ml-auto">
+                          {contagemArquivos[seller.id].total}
+                        </Badge>
+                      ) : (
+                        <span className="ml-auto text-xs text-muted-foreground">vazia</span>
+                      )}
+                    </Button>
+                  )}
+
                   <div className="flex gap-2 mt-2">
                     {canEdit && (
                       <Button
@@ -651,6 +683,13 @@ export default function Sellers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Pasta de arquivos do vendedor */}
+      <ArquivosVendedor
+        seller={arquivosSeller}
+        open={!!arquivosSeller}
+        onOpenChange={(open) => { if (!open) setArquivosSeller(null); }}
+      />
     </div>
   );
 }
