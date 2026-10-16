@@ -109,6 +109,44 @@ function fmtPeriodicidade(v?: string | null): string {
   if (!k) return "";
   return PERIODICIDADE_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1));
 }
+// Dia(s) de rota do cadastro: ["segunda","quinta"] -> "Segunda/Quinta".
+function fmtDiasRota(v?: any): string {
+  if (!Array.isArray(v) || v.length === 0) return "";
+  return v.map((d: any) => { const k = String(d || "").trim(); return k ? k.charAt(0).toUpperCase() + k.slice(1) : ""; })
+    .filter(Boolean).join("/");
+}
+// Semana do mês em que o cliente é atendido (contada pela segunda-feira, igual ao cadastro).
+// "toda" é o padrão e não vira rótulo — a periodicidade já diz a cadência.
+const SEMANA_LABEL: Record<string, string> = {
+  impar: "1ª e 3ª sem.", par: "2ª e 4ª sem.",
+  "1": "1ª sem.", "2": "2ª sem.", "3": "3ª sem.", "4": "4ª sem.", ultima: "Última sem.",
+};
+function fmtSemanaAtendimento(v?: string | null): string {
+  const k = String(v || "").trim().toLowerCase();
+  if (!k || k === "toda") return "";
+  return SEMANA_LABEL[k] || "";
+}
+
+// Linha cinza sob o cabeçalho do card: onde fica o cliente e quando ele é visitado
+// (bairro · cidade · periodicidade · dia de rota · semana do mês). O que não existe no
+// cadastro simplesmente não aparece — lead, por exemplo, não tem nenhuma das três últimas.
+function LinhaCadastro({ r }: { r: any }) {
+  const local = [r.neighborhood, r.city].filter(Boolean).join(" · ");
+  const agenda = [fmtPeriodicidade(r.periodicidade), fmtDiasRota(r.diasRota), fmtSemanaAtendimento(r.semanaAtendimento)]
+    .filter(Boolean).join(" · ");
+  if (!local && !agenda) return null;
+  return (
+    <div className="text-[11px] text-muted-foreground mt-0.5">
+      {local}
+      {agenda && (
+        <>
+          {local ? " · " : ""}
+          <span className="font-medium text-foreground/80">{agenda}</span>
+        </>
+      )}
+    </div>
+  );
+}
 
 function Detalhes({ details }: { details: any }) {
   if (!details || Object.keys(details).length === 0) return null;
@@ -354,17 +392,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
-          {(r.neighborhood || r.city || r.periodicidade) ? (
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              {[r.neighborhood, r.city].filter(Boolean).join(" · ")}
-              {r.periodicidade && (
-                <>
-                  {(r.neighborhood || r.city) ? " · " : ""}
-                  <span className="font-medium text-foreground/80">{fmtPeriodicidade(r.periodicidade)}</span>
-                </>
-              )}
-            </div>
-          ) : null}
+          <LinhaCadastro r={r} />
           {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
         </div>
       </div>
@@ -609,17 +637,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span>{fmtDate(r.createdAt)}</span>
           </div>
-          {(r.neighborhood || r.city || r.periodicidade) ? (
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              {[r.neighborhood, r.city].filter(Boolean).join(" · ")}
-              {r.periodicidade && (
-                <>
-                  {(r.neighborhood || r.city) ? " · " : ""}
-                  <span className="font-medium text-foreground/80">{fmtPeriodicidade(r.periodicidade)}</span>
-                </>
-              )}
-            </div>
-          ) : null}
+          <LinhaCadastro r={r} />
           {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
           {rd?.previsaoPagamento && (
             <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
