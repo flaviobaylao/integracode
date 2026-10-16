@@ -611,15 +611,25 @@ export function registerChangeRequestsRoutes(app: Express) {
       // (ex.: "sugestão não gera pedido mínimo" pesa diferente num mensal e num semanal).
       // Só existe em `customers` — lead não tem periodicidade.
       const periodicidadeByKey = new Map<string, string>();
+      // 16/out/2026 — Dia de rota e semana do mês junto da periodicidade: é o trio que define
+      // QUANDO aquele cliente é visitado. Sem isso o admin lê um report de não-visita sem saber
+      // se o vendedor tinha mesmo que passar lá naquela semana.
+      const diasByKey = new Map<string, string[]>();
+      const semanaByKey = new Map<string, string>();
       const repescagemSet = new Set<string>();
       if (custIds.length) {
         const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
-        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity FROM customers WHERE id IN (${inCust})`));
+        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity, weekdays, semana_atendimento FROM customers WHERE id IN (${inCust})`));
         for (const c of cr) {
           if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
           if (c.city) cityByKey.set("customer:" + c.id, String(c.city));
           if (c.neighborhood) bairroByKey.set("customer:" + c.id, String(c.neighborhood));
           if (c.visit_periodicity) periodicidadeByKey.set("customer:" + c.id, String(c.visit_periodicity));
+          // weekdays é jsonb: pode vir como array já parseado ou como texto JSON.
+          let dias: any = c.weekdays;
+          if (typeof dias === "string") { try { dias = JSON.parse(dias); } catch { dias = null; } }
+          if (Array.isArray(dias) && dias.length) diasByKey.set("customer:" + c.id, dias.map((d: any) => String(d)).filter(Boolean));
+          if (c.semana_atendimento) semanaByKey.set("customer:" + c.id, String(c.semana_atendimento));
         }
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
         const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
@@ -650,6 +660,8 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.neighborhood = bairroByKey.get(key) || null;
         m.lastOrderAt = lastOrderByKey.get(key) || null;
         m.periodicidade = periodicidadeByKey.get(key) || null;
+        m.diasRota = diasByKey.get(key) || null;
+        m.semanaAtendimento = semanaByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
       // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
