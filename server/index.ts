@@ -80,6 +80,7 @@ import { registerIndustriaRoutes } from './industria-routes';
 import { registerRe15AssinaturaRoutes } from './re15-assinatura-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
+import { registerSellerDocumentsRoutes } from './seller-documents-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
 import { registerRelatorioInsumosRoutes } from './relatorio-insumos';
@@ -3150,6 +3151,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // AVCB, contrato social, certificado... com instancia, vigencia, status e
   // arquivo anexado — 05/set/2026. Rotas /api/industria/documentos*.
   try { registerCompanyDocumentsRoutes(app); } catch (e) { console.error('[docs-empresa]', e); }
+
+  // Pasta de arquivos do vendedor (dentro do cadastro de Vendedores): contrato,
+  // documentos pessoais, cartao CNPJ, dados bancarios, comissoes, termos de
+  // comodato... — 16/out/2026. Rotas /api/users/:id/arquivos*.
+  try { registerSellerDocumentsRoutes(app); } catch (e) { console.error('[arq-vendedor]', e); }
 
   // Check-list da industria (modelos + execucoes com foto, responsavel e
   // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
