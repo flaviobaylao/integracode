@@ -15,6 +15,7 @@ import { ptBR } from "date-fns/locale";
 import { Plus, Image, FileText, User, Clock, Trash2, Upload, X, DollarSign, ShoppingCart, Search, Calendar, Thermometer, ClipboardList } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type ServiceType = 'debito_vencido' | 'venda' | 'nao_venda' | 'prospecao' | 'solicitacao_alteracao' | 'registro';
 
@@ -28,7 +29,18 @@ const serviceTypeLabels: Record<ServiceType, { label: string; color: string; ico
 };
 
 // Flags de tipo escolhíveis no atendimento de CLIENTE (virtual). 'venda' fica no fluxo de venda.
-const CUSTOMER_SERVICE_TYPES: ServiceType[] = ['nao_venda', 'solicitacao_alteracao', 'registro'];
+// (out/2026) "Solicitação de Alteração" saiu daqui — o botão Solicitar Alteração fica abaixo das notas.
+const CUSTOMER_SERVICE_TYPES: ServiceType[] = ['nao_venda', 'registro'];
+
+// 🚫 Motivos da Não Venda — mesmas regras do formulário presencial (NoSaleModal).
+// Foto obrigatória só para cliente PRESENCIAL; virtual = opcional.
+const NAO_VENDA_MOTIVOS: Array<{ value: string; label: string; foto?: boolean; obs?: boolean }> = [
+  { value: "com_estoque", label: "Cliente com Estoque", foto: true },
+  { value: "com_debito", label: "Cliente com Débito", obs: true },
+  { value: "estab_fechado", label: "Estabelecimento Fechado", foto: true },
+  { value: "sem_retorno", label: "Sem retorno do cliente" },
+  { value: "outro_motivo", label: "Outro Motivo", obs: true },
+];
 
 interface VirtualServiceLog {
   id: string;
@@ -67,13 +79,17 @@ export default function VirtualServiceLogModal({
   serviceDate
 }: VirtualServiceLogModalProps) {
   const { toast } = useToast();
-  const [isCreating, setIsCreating] = useState(false);
+  // (out/2026) Abre DIRETO no formulário de registro (sem a tela intermediária).
+  const [isCreating, setIsCreating] = useState(true);
   const [notes, setNotes] = useState("");
   const [images, setImages] = useState<string[]>([]);
-  const effectiveDefaultType: ServiceType = entityType === 'lead'
+  // Cliente: o tipo de atendimento é de escolha OBRIGATÓRIA (nada pré-selecionado, salvo um
+  // default explícito válido vindo da tela que abriu). Lead: só existe "Prospecção".
+  const effectiveDefaultType: ServiceType | null = entityType === 'lead'
     ? 'prospecao'
-    : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'registro');
-  const [serviceType, setServiceType] = useState<ServiceType>(effectiveDefaultType);
+    : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : null);
+  const [serviceType, setServiceType] = useState<ServiceType | null>(effectiveDefaultType);
+  const [noSaleReason, setNoSaleReason] = useState<string>("");
   const [uploadingImage, setUploadingImage] = useState(false);
   const [nextContactDate, setNextContactDate] = useState<string>("");
   const [temperature, setTemperature] = useState<string>("");
@@ -83,12 +99,24 @@ export default function VirtualServiceLogModal({
   // Reset serviceType when modal opens with a new defaultServiceType
   useEffect(() => {
     if (open) {
-      const newDefault: ServiceType = entityType === 'lead'
+      const newDefault: ServiceType | null = entityType === 'lead'
         ? 'prospecao'
-        : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : 'registro');
+        : (defaultServiceType && CUSTOMER_SERVICE_TYPES.includes(defaultServiceType) ? defaultServiceType : null);
       setServiceType(newDefault);
+      setNoSaleReason("");
+      setIsCreating(true);
     }
   }, [open, defaultServiceType, entityType]);
+
+  // Cliente presencial x virtual (define se a foto da Não Venda é obrigatória).
+  const { data: customerInfo } = useQuery<any>({
+    queryKey: [`/api/customers/${customerId}`],
+    enabled: open && entityType === 'customer' && !!customerId,
+  });
+  const ehVirtual = customerInfo?.virtualService === true;
+  const motivoNV = serviceType === 'nao_venda' ? NAO_VENDA_MOTIVOS.find((m) => m.value === noSaleReason) : undefined;
+  const nvExigeFoto = !!motivoNV?.foto && !ehVirtual;
+  const nvExigeObs = !!motivoNV?.obs;
 
   const { data: logs, isLoading } = useQuery<VirtualServiceLog[]>({
     queryKey: [`/api/service-logs/${entityType}/${customerId}`],
@@ -96,7 +124,7 @@ export default function VirtualServiceLogModal({
   });
 
   const createLogMutation = useMutation({
-    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; nextContactDate?: string; temperature?: string; attendanceDate?: string }) => {
+    mutationFn: async (data: { notes: string; images: string[]; serviceType: ServiceType; noSaleReason?: string; nextContactDate?: string; temperature?: string; attendanceDate?: string }) => {
       return await apiRequest("POST", `/api/service-logs/${entityType}/${customerId}`, data);
     },
     onSuccess: () => {
@@ -105,18 +133,15 @@ export default function VirtualServiceLogModal({
       queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/lead"] });
       queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
-      setNotes("");
-      setImages([]);
-      setServiceType(effectiveDefaultType);
-      setNextContactDate("");
-      setTemperature("");
-      setIsCreating(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/count/customer"] });
       toast({
         title: "Atendimento registrado",
         description: "O registro foi salvo com sucesso.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
       onSuccess?.();
+      // Registrou → fecha e volta para a tela anterior.
+      handleClose();
     },
     onError: (error: any) => {
       toast({
@@ -294,6 +319,26 @@ export default function VirtualServiceLogModal({
   };
 
   const handleSubmit = () => {
+    if (!serviceType) {
+      toast({ title: "Tipo de atendimento obrigatório", description: "Escolha o tipo de atendimento.", variant: "destructive" });
+      return;
+    }
+    if (serviceType === 'nao_venda' && entityType === 'customer') {
+      if (!noSaleReason) {
+        toast({ title: "Motivo obrigatório", description: "Selecione o motivo da Não Venda.", variant: "destructive" });
+        return;
+      }
+      if (nvExigeObs && !notes.trim()) {
+        toast({ title: "Observação obrigatória", description: `Para "${motivoNV?.label}" descreva o atendimento nas notas.`, variant: "destructive" });
+        return;
+      }
+      if (nvExigeFoto && images.length === 0) {
+        toast({ title: "Foto obrigatória", description: `Para "${motivoNV?.label}" (cliente presencial) anexe a foto.`, variant: "destructive" });
+        return;
+      }
+      createLogMutation.mutate({ notes, images, serviceType, noSaleReason, attendanceDate: serviceDate || undefined });
+      return;
+    }
     if (!notes && images.length === 0) {
       toast({
         title: "Dados incompletos",
@@ -312,9 +357,10 @@ export default function VirtualServiceLogModal({
   };
 
   const handleClose = () => {
-    setIsCreating(false);
+    setIsCreating(true);
     setNotes("");
     setImages([]);
+    setNoSaleReason("");
     setServiceType(effectiveDefaultType);
     setNextContactDate("");
     setTemperature("");
@@ -347,7 +393,7 @@ export default function VirtualServiceLogModal({
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <Label>Tipo de Atendimento</Label>
+                  <Label>Tipo de Atendimento *</Label>
                 <div className="mt-2 flex gap-2 flex-wrap">
                   {entityType === 'customer' ? (
                     CUSTOMER_SERVICE_TYPES.map((type) => {
@@ -358,12 +404,13 @@ export default function VirtualServiceLogModal({
                         <button
                           key={type}
                           type="button"
-                          onClick={() => setServiceType(type)}
+                          onClick={() => { setServiceType(type); if (type !== 'nao_venda') setNoSaleReason(""); }}
                           className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
                             isSelected
                               ? `${config.color} border-current font-medium shadow-sm`
                               : 'border-gray-200 hover:border-gray-300 text-gray-600 hover:text-gray-800'
                           }`}
+                          data-testid={`vsl-type-${type}`}
                         >
                           <Icon className="h-4 w-4" />
                           {config.label}
@@ -395,10 +442,36 @@ export default function VirtualServiceLogModal({
                       })
                   )}
                 </div>
+                {entityType === 'customer' && !serviceType && (
+                  <p className="text-xs text-red-600 mt-1">Escolha o tipo de atendimento.</p>
+                )}
                 </div>
+
+                {entityType === 'customer' && serviceType === 'nao_venda' && (
+                  <div className="space-y-2">
+                    <Label>Motivo da Não Venda *</Label>
+                    <Select value={noSaleReason} onValueChange={setNoSaleReason}>
+                      <SelectTrigger data-testid="vsl-select-no-sale-reason">
+                        <SelectValue placeholder="Selecione o motivo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {NAO_VENDA_MOTIVOS.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {motivoNV && (
+                      <p className="text-xs rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300 px-2 py-1">
+                        Motivo selecionado: {motivoNV.label}
+                        {nvExigeFoto ? " — foto obrigatória" : nvExigeObs ? " — observação obrigatória" : ""}
+                        {motivoNV.foto && ehVirtual ? " — cliente virtual: foto opcional" : ""}
+                      </p>
+                    )}
+                  </div>
+                )}
                 
                 <div>
-                  <Label htmlFor="notes">Notas do Atendimento</Label>
+                  <Label htmlFor="notes">Notas do Atendimento{nvExigeObs ? " *" : ""}</Label>
                   <Textarea
                     id="notes"
                     placeholder="Descreva o que foi tratado no atendimento... (Você pode colar imagens aqui com Ctrl+V)"
@@ -445,7 +518,7 @@ export default function VirtualServiceLogModal({
                   </div>
                 )}
                 <div>
-                  <Label>Imagens</Label>
+                  <Label>{nvExigeFoto ? "Foto (obrigatória)" : "Imagens"}</Label>
                   <div className="mt-1 flex flex-wrap gap-2">
                     {images.map((img, index) => (
                       <div key={index} className="relative group">
@@ -507,12 +580,13 @@ export default function VirtualServiceLogModal({
                 )}
 
                 <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setIsCreating(false)}>
+                  <Button variant="outline" onClick={handleClose}>
                     Cancelar
                   </Button>
                   <Button 
                     onClick={handleSubmit} 
-                    disabled={createLogMutation.isPending}
+                    disabled={createLogMutation.isPending || !serviceType || (serviceType === 'nao_venda' && entityType === 'customer' && (!noSaleReason || (nvExigeObs && !notes.trim()) || (nvExigeFoto && images.length === 0)))}
+                    data-testid="vsl-save"
                   >
                     {createLogMutation.isPending ? "Salvando..." : "Salvar Atendimento"}
                   </Button>
