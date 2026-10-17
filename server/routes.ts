@@ -7532,7 +7532,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if ((data as any).status === 'no_sale') {
         const _r = String((data as any).noSaleReason || '');
         if (['com_estoque', 'estab_fechado'].includes(_r) && !_noSalePhotoUrl) {
-          return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto.' });
+          // Foto obrigatória SÓ para cliente PRESENCIAL — atendimento virtual não exige foto.
+          let _ehVirtual = false;
+          try {
+            const _cardNs: any = await storage.getSalesCard(id);
+            const _custNs: any = _cardNs?.customerId ? await storage.getCustomer(String(_cardNs.customerId)) : null;
+            _ehVirtual = _custNs?.virtualService === true;
+          } catch (_e) { /* na dúvida, trata como presencial */ }
+          if (!_ehVirtual) return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto (cliente presencial).' });
         }
         if (['com_debito', 'outro_motivo'].includes(_r) && !String((data as any).notes || '').trim()) {
           return res.status(400).json({ message: 'Para este motivo é obrigatório preencher as Observações Adicionais.' });
