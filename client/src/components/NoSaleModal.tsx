@@ -38,7 +38,9 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
   const queryClient = useQueryClient();
 
   const motivo = MOTIVOS.find((m) => m.value === reason);
-  const exigeFoto = !!motivo?.foto;
+  // Foto obrigatória só para cliente PRESENCIAL; no atendimento VIRTUAL a foto é opcional.
+  const ehVirtual = (card as any)?.customer?.virtualService === true;
+  const exigeFoto = !!motivo?.foto && !ehVirtual;
   const exigeObs = !!motivo?.obs;
   const podeConfirmar = !!reason && (!exigeFoto || !!photo) && (!exigeObs || !!notes.trim());
 
@@ -151,13 +153,14 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
               <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
                 Motivo selecionado: {motivo.label}
                 {exigeFoto ? " — foto obrigatória" : exigeObs ? " — observação obrigatória" : ""}
+                {motivo.foto && ehVirtual ? " — cliente virtual: foto opcional" : ""}
               </p>
             </div>
           )}
 
-          {exigeFoto && (
+          {motivo?.foto && (
             <div className="rounded-md border p-3 space-y-2">
-              <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto (obrigatória)</span>
+              <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto {exigeFoto ? "(obrigatória)" : "(opcional)"}</span>
               {photoPreview ? (
                 <div className="space-y-2">
                   <img src={photoPreview} alt="Foto da não venda" className="w-full max-h-48 object-contain rounded border" />
