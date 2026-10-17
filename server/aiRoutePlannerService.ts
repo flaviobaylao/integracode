@@ -28,6 +28,7 @@
 // sem dependência nova), com tool-use FORÇADO para garantir saída estruturada.
 // ============================================================================
 
+import { parseJanelas, formatarJanelas } from '../shared/janelas-entrega';
 import type { DatabaseStorage } from './storage';
 import { calculateDistance } from './routeOptimizationService';
 import {
@@ -387,14 +388,14 @@ function buildBriefing(
       local,
       `${dist.toFixed(1)}km base, setor ${setor}`,
       fmtMoney(o.saleValue),
-      `${o.averageDeliveryTime || 30}min`,
+      `${o.averageDeliveryTime || 5}min entrega${o.tempoEntregaMedido ? ' (medido)' : ' (estimado)'}`,
     ];
     if (o.exclusiveVehicle && Array.isArray(o.vehicleTypes) && o.vehicleTypes.length > 0) {
       partes.push(`veíc: ${o.vehicleTypes.join('/')}`);
     }
     if (o.isUrgent) partes.push('PRIORIDADE');
-    const slots = Array.isArray(o.deliveryTimeSlots) ? o.deliveryTimeSlots.filter(Boolean) : [];
-    if (slots.length) partes.push(`janela ${slots.join(',')}`);
+    const janelaTxt = formatarJanelas(o.janelas || parseJanelas(o.deliveryTimeSlots));
+    if (janelaTxt) partes.push(`recebe das ${janelaTxt}`);
     const rw = weekdaysToText(o.receivingWeekdays);
     if (rw) partes.push(`recebe ${rw}${warnIds.has(o.id) ? ' ⚠NÃO-HOJE' : ''}`);
     partes.push(`vizinhos ${neighborsOf.get(o.id) || '-'}`);
@@ -551,14 +552,14 @@ function applyAndRepair(
       if (assignments.get(idx)!.length >= cota) return false;
     }
     // Viabilidade da jornada: atendimento + deslocamento estimado até o cluster.
-    const custo = (o.averageDeliveryTime || 30) + deslocamentoEstimado(idx, o);
+    const custo = (o.averageDeliveryTime || 5) + deslocamentoEstimado(idx, o);
     if (workload.get(idx)! + custo > availableMinutes(idx)) return false;
     return true;
   };
 
   const place = (idx: number, o: DeliveryOrder) => {
     // Calcula o deslocamento ANTES do push (a parada nova não pode ser sua própria vizinha).
-    const custo = (o.averageDeliveryTime || 30) + deslocamentoEstimado(idx, o);
+    const custo = (o.averageDeliveryTime || 5) + deslocamentoEstimado(idx, o);
     assignments.get(idx)!.push(o);
     workload.set(idx, workload.get(idx)! + custo);
   };
@@ -750,8 +751,8 @@ function diagnosticarVizinhosSeparados(
         // e não os 15 min fixos de antes, que inventavam "janela cheia".
         const disp = timeToMinutes(v2.timeWindowEnd) - timeToMinutes(v2.timeWindowStart);
         const lista = assignments.get(destino)!;
-        const usados = 30 + lista.reduce((s, x) => s + (x.averageDeliveryTime || 30) + 6, 0);
-        if (usados + (o.averageDeliveryTime || 30) > disp) {
+        const usados = 30 + lista.reduce((s, x) => s + (x.averageDeliveryTime || 5) + 6, 0);
+        if (usados + (o.averageDeliveryTime || 5) > disp) {
           motivos.push(`${nomeVeic(destino)} não tem janela livre para mais uma parada`);
         }
       };
@@ -900,7 +901,7 @@ export async function planDeliveryRoutesWithAI(
   workload = new Map<number, number>();
   vehicles.forEach((_, idx) => {
     const list = assignments.get(idx) || [];
-    workload.set(idx, 30 + list.reduce((s, o) => s + (o.averageDeliveryTime || 30) + 15, 0));
+    workload.set(idx, 30 + list.reduce((s, o) => s + (o.averageDeliveryTime || 5) + 15, 0));
   });
   meta.resumo = 'Distribuição automática por proximidade (sem agente de IA nesta execução).';
   meta.ajustes = [];
@@ -982,7 +983,7 @@ function recuperarComFolgaReal(
 
       // Custo marginal: ida e volta do desvio + atendimento. Conservador de propósito.
       const desvio = (d / 40) * 60 * 2;
-      const custo = desvio + (o.averageDeliveryTime || 30);
+      const custo = desvio + (o.averageDeliveryTime || 5);
       const disp = timeToMinutes(v.timeWindowEnd) - timeToMinutes(v.timeWindowStart);
       const usadoReal = (duracaoReal.get(idx) ?? 0) + ALMOCO_MIN;
       if (usadoReal + custo > disp) return; // sem folga real — respeita a jornada
@@ -1071,6 +1072,11 @@ async function finish(
     } catch (e: any) {
       console.warn('[ROTA-IA] Falha no diagnóstico de vizinhos:', e?.message);
     }
+  }
+
+  // Horário de recebimento: paradas que, mesmo reordenadas, chegam fora do horário.
+  for (const r of routes) {
+    for (const a of (r.alertasJanela || [])) meta.alertas.push(a);
   }
 
   const allUnassigned = [...unassigned, ...invalidOrders.map((i) => i.order)];

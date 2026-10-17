@@ -4,6 +4,8 @@ import { nanoid } from 'nanoid';
 import { db } from './db';
 import { deliveryHistory } from '../shared/schema';
 import { eq, desc, and } from 'drizzle-orm';
+import { parseJanelas, formatarJanelas, minParaHHMM, type JanelaMin } from '../shared/janelas-entrega';
+import { sequenciarComJanelas, TEMPO_ENTREGA_PADRAO_MIN, type ParadaSeq } from './sequenciamento-janelas';
 
 // ==================== Data Structures ====================
 
@@ -16,7 +18,8 @@ export interface DeliveryOrder {
   customerAddress: string;
   customerLatitude: number;
   customerLongitude: number;
-  averageDeliveryTime: number; // em minutos
+  averageDeliveryTime: number; // em minutos — MEDIDO no cronômetro do entregador, ou 5 min estimados
+  tempoEntregaMedido?: boolean; // true = veio da média das entregas cronometradas do cliente
   exclusiveVehicle: boolean;
   vehicleTypes: ('caminhao' | 'carro' | 'moto')[];
   isUrgent: boolean;
@@ -27,7 +30,8 @@ export interface DeliveryOrder {
   paymentMethod: string;
   operationType: string;
   customerWeekdays?: string; // JSON array com dias da semana permitidos
-  deliveryTimeSlots?: string[]; // Array com horários permitidos (ex: ["08:00-12:00"])
+  deliveryTimeSlots?: string[]; // Horários de recebimento do DIA DA ROTA (checkboxes de hora cheia ou "08:00-12:00")
+  janelas?: JanelaMin[]; // deliveryTimeSlots já convertidos em intervalos (minutos do dia)
   // ▼ Campos usados pela roteirização com IA (opcionais; ausentes no fluxo legado)
   receivingWeekdays?: string[] | string | null; // Dias em que o cliente aceita RECEBER
   customerCity?: string | null;
@@ -65,6 +69,13 @@ export interface RouteStop {
   stopOrder: number;
   distanceFromPrevious: number;
   isUrgent?: boolean; // prioridade marcada no card do pipeline
+  // ▼ Horário de recebimento do cliente e cumprimento dele
+  janelaTexto?: string; // "8h às 12h + 14h às 16h" ('' = sem restrição cadastrada)
+  chegadaFisica?: string; // HH:mm em que o veículo chega (antes de esperar a abertura)
+  esperaMin?: number; // minutos aguardando o cliente abrir
+  foraDaJanela?: boolean; // chega depois do horário de recebimento
+  atrasoMin?: number;
+  tempoEntregaMedido?: boolean;
 }
 
 export interface VehicleRoute {
@@ -78,10 +89,12 @@ export interface VehicleRoute {
   totalDistance: number;
   totalDuration: number; // em minutos
   routeDate: Date;
+  alertasJanela?: string[]; // paradas que não cabem no horário de recebimento
 }
 
 export interface RoutePlan {
   routes: VehicleRoute[];
+  alertas?: string[];
   unassignedOrders: DeliveryOrder[];
   stats: {
     totalOrders: number;
@@ -195,39 +208,14 @@ function isValidDeliveryTimeSlot(
   timeWindowStart: string,
   timeWindowEnd: string
 ): boolean {
-  // Se não houver restrição de horários, aceitar qualquer janela
-  if (!deliveryTimeSlots || deliveryTimeSlots.length === 0) {
-    return true;
-  }
-  
+  // Cada hora marcada no cadastro vale o bloco [HH:00, HH+1:00). Há compatibilidade
+  // se algum bloco de recebimento se sobrepõe à jornada do veículo.
+  const janelas = parseJanelas(deliveryTimeSlots);
+  if (janelas.length === 0) return true;
   try {
     const routeStart = timeToMinutes(timeWindowStart);
     const routeEnd = timeToMinutes(timeWindowEnd);
-    
-    // Verificar se a janela da rota se sobrepõe com algum dos horários permitidos
-    for (const slot of deliveryTimeSlots) {
-      // Se for intervalo (formato "08:00-12:00")
-      if (slot.includes('-')) {
-        const [slotStart, slotEnd] = slot.split('-');
-        const slotStartMin = timeToMinutes(slotStart);
-        const slotEndMin = timeToMinutes(slotEnd);
-        
-        // Verificar sobreposição de intervalos
-        if (routeStart < slotEndMin && routeEnd > slotStartMin) {
-          return true;
-        }
-      } else {
-        // Se for horário individual (formato "08:00"), verificar se está dentro da janela
-        const slotMin = timeToMinutes(slot);
-        
-        // Horário individual está dentro da janela do veículo?
-        if (slotMin >= routeStart && slotMin < routeEnd) {
-          return true;
-        }
-      }
-    }
-    
-    return false;
+    return janelas.some((j) => routeStart < j.fim && routeEnd > j.ini);
   } catch (error) {
     console.error('Erro ao validar horário de entrega:', error, 'slots:', deliveryTimeSlots);
     return true; // Em caso de erro, permitir para não bloquear desnecessariamente
@@ -608,70 +596,39 @@ export async function optimizeVehicleRoutes(
       console.log(`⚪ [REGULAR] Otimizados ${regularOrders.length} pedidos regulares após urgentes`);
     }
     
-    // Calcular ETAs começando do horário inicial da rota
-    const timeWindowStartMinutes = timeToMinutes(vehicle.timeWindowStart);
-    
-    // Criar data base para a rota
-    let startTime = new Date(routeDate);
-    startTime.setHours(0, 0, 0, 0);
-    
-    // Adicionar os minutos do horário inicial (ex: 480 minutos = 8 horas)
-    const hoursToAdd = Math.floor(timeWindowStartMinutes / 60);
-    const minutesToAdd = timeWindowStartMinutes % 60;
-    
-    // Criar currentTime adicionando diretamente os minutos
-    let currentTime = new Date(startTime);
-    currentTime.setHours(hoursToAdd, minutesToAdd, 0, 0);
-    
-    console.log(`⏰ [ETA-CALC] Rota ${vehicle.type} inicia às ${vehicle.timeWindowStart}, currentTime inicial: ${currentTime.toLocaleTimeString('pt-BR')}`);
-    let totalDuration = 0;
-    let totalDistance = 0;
+    // ── Horários: deslocamento + espera pela abertura do cliente + tempo de
+    // entrega MEDIDO (ou 5 min estimados). A ordem geográfica acima é só o ponto
+    // de partida: o sequenciador reordena para cumprir os horários de recebimento.
+    const inicioJornada = timeToMinutes(vehicle.timeWindowStart);
+    const fimJornada = timeToMinutes(vehicle.timeWindowEnd);
+    const orderById = new Map<string, DeliveryOrder>(orders.map((o: DeliveryOrder) => [o.id, o]));
+    const paradasSeq: ParadaSeq[] = allOptimizedPoints
+      .map((point: any) => orderById.get(point.id))
+      .filter(Boolean)
+      .map((order: any) => ({
+        id: order.id,
+        customerId: order.customerId,
+        lat: Number(order.customerLatitude),
+        lng: Number(order.customerLongitude),
+        servico: Number(order.averageDeliveryTime) > 0 ? Number(order.averageDeliveryTime) : TEMPO_ENTREGA_PADRAO_MIN,
+        janelas: order.janelas || parseJanelas(order.deliveryTimeSlots),
+        urgente: order.isUrgent === true,
+      }));
+
+    const seq = sequenciarComJanelas(
+      paradasSeq,
+      { lat: vehicle.startLatitude, lng: vehicle.startLongitude },
+      inicioJornada,
+      fimJornada,
+      calculateDistance,
+    );
 
     const stops: RouteStop[] = [];
-
-    for (let i = 0; i < allOptimizedPoints.length; i++) {
-      const point = allOptimizedPoints[i];
-      const order = orders.find((o: DeliveryOrder) => o.id === point.id)!;
-
-      console.log(`🔧 [OPTIMIZE] Processing stop for ${order.customerName}:`);
-      console.log(`   - order.customerLatitude: ${order.customerLatitude} (type: ${typeof order.customerLatitude})`);
-      console.log(`   - order.customerLongitude: ${order.customerLongitude} (type: ${typeof order.customerLongitude})`);
-      console.log(`   - Number(lat): ${Number(order.customerLatitude)}`);
-      console.log(`   - Number(lng): ${Number(order.customerLongitude)}`);
-
-      // Calcular distância do ponto anterior (ou depósito se for o primeiro)
-      let distanceFromPrevious: number;
-      if (i === 0) {
-        // Distância do depósito até primeira parada
-        distanceFromPrevious = calculateDistance(
-          vehicle.startLatitude,
-          vehicle.startLongitude,
-          point.latitude,
-          point.longitude
-        );
-      } else {
-        // Distância da parada anterior até esta
-        const prevPoint = allOptimizedPoints[i - 1];
-        distanceFromPrevious = calculateDistance(
-          prevPoint.latitude,
-          prevPoint.longitude,
-          point.latitude,
-          point.longitude
-        );
-      }
-
-      // Tempo de viagem até esta parada (assumir 40 km/h médio)
-      const travelTimeMinutes = (distanceFromPrevious / 40) * 60;
-      const arrivalTime = addMinutes(currentTime, travelTimeMinutes);
-      
-      // Tempo de serviço (entrega)
-      const serviceTime = order.averageDeliveryTime;
-      const departureTime = addMinutes(arrivalTime, serviceTime);
-
-      // Converter Times para string HH:mm
-      const arrivalStr = arrivalTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      const departureStr = departureTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
+    const alertasJanela: string[] = [];
+    seq.horarios.forEach((h, i) => {
+      const order = orderById.get(h.id)!;
+      const janelas = order.janelas || parseJanelas(order.deliveryTimeSlots);
+      const janelaTexto = formatarJanelas(janelas);
       stops.push({
         salesCardId: order.id,
         customerId: order.customerId,
@@ -679,18 +636,34 @@ export async function optimizeVehicleRoutes(
         customerAddress: order.customerAddress,
         latitude: Number(order.customerLatitude),
         longitude: Number(order.customerLongitude),
-        estimatedArrival: arrivalStr,
-        estimatedDeparture: departureStr,
-        estimatedServiceTime: serviceTime,
+        estimatedArrival: minParaHHMM(h.inicio),
+        estimatedDeparture: minParaHHMM(h.saida),
+        estimatedServiceTime: h.servico,
         stopOrder: i + 1,
-        distanceFromPrevious: distanceFromPrevious,
-        isUrgent: order.isUrgent === true
+        distanceFromPrevious: h.distanciaAnterior,
+        isUrgent: order.isUrgent === true,
+        janelaTexto,
+        chegadaFisica: minParaHHMM(h.chegada),
+        esperaMin: Math.round(h.espera),
+        foraDaJanela: h.foraDaJanela,
+        atrasoMin: Math.round(h.atraso),
+        tempoEntregaMedido: order.tempoEntregaMedido === true,
       });
-
-      currentTime = departureTime;
-      totalDuration += travelTimeMinutes + serviceTime;
-      totalDistance += distanceFromPrevious;
+      if (h.foraDaJanela) {
+        alertasJanela.push(
+          `${order.customerName}: chega às ${minParaHHMM(h.chegada)} (${vehicle.driverName || vehicle.type}), fora do horário de recebimento (${janelaTexto}). Mude de entregador ou reveja a jornada.`,
+        );
+      }
+    });
+    if (seq.horaExtra > 0) {
+      alertasJanela.push(
+        `${vehicle.driverName || vehicle.type}: a rota termina às ${minParaHHMM(seq.fim)}, ${Math.round(seq.horaExtra)} min depois do fim da jornada (${vehicle.timeWindowEnd}).`,
+      );
     }
+
+    const totalDistance = seq.distanciaTotal;
+    const totalDuration = Math.max(0, seq.fim - seq.partida);
+    console.log(`⏰ [ETA-CALC] ${vehicle.driverName || vehicle.type}: sai ${minParaHHMM(seq.partida)}, termina ${minParaHHMM(seq.fim)}, ${seq.foraDaJanela} fora do horário`);
 
     routes.push({
       vehicleType: vehicle.type,
@@ -702,7 +675,8 @@ export async function optimizeVehicleRoutes(
       stops,
       totalDistance,
       totalDuration,
-      routeDate
+      routeDate,
+      alertasJanela,
     });
   }
 
@@ -853,6 +827,7 @@ export async function planDeliveryRoutes(
 
   return {
     routes,
+    alertas: routes.flatMap((r) => r.alertasJanela || []),
     unassignedOrders: allUnassigned,
     stats: {
       totalOrders: orders.length,

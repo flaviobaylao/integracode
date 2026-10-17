@@ -4891,8 +4891,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (valid.length === 0) return res.json([]);
       const inList = valid.map((x: string) => "'" + x + "'").join(",");
       const text =
-        "SELECT id, customer_name, seller_name, order_number, invoice_number, " +
-        "sale_value, products, notes, stage FROM billing_pipeline WHERE id IN (" + inList + ")";
+        "SELECT bp.id, bp.customer_name, bp.seller_name, bp.order_number, bp.invoice_number, " +
+        "bp.sale_value, bp.products, bp.notes, bp.stage, " +
+        "c.delivery_time_slots, c.delivery_saturday_time_slots " +
+        "FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id " +
+        "WHERE bp.id IN (" + inList + ")";
       const rows = (await db.execute(sql.raw(text))).rows as any[];
       res.json(rows.map((r: any) => ({
         id: r.id,
@@ -4904,6 +4907,9 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         products: r.products,
         notes: r.notes,
         stage: r.stage,
+        // Horários de recebimento do cliente — romaneio da rota.
+        deliveryTimeSlots: r.delivery_time_slots ?? null,
+        deliverySaturdayTimeSlots: r.delivery_saturday_time_slots ?? null,
       })));
     } catch (e: any) {
       res.status(500).json({ error: (e && e.message) ? e.message : String(e) });

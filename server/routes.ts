@@ -25,6 +25,7 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
+import { parseJanelas, slotsDoDia } from '@shared/janelas-entrega';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -11943,6 +11944,151 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
+  // ============================================================================
+  // ROTEIRIZAÇÃO — carga dos pedidos (compartilhada por /plan e /resequence)
+  // ============================================================================
+  async function carregarPedidosRoteirizacao(ids: string[]): Promise<any[]> {
+    const billingsResult = await db.execute<{
+      id: string;
+      invoiceNumber: string;
+      omieOrderId: string;
+      orderNumber: string;
+      customerId: string;
+      customerName: string;
+      customerAddress: string;
+      customerLatitude: string;
+      customerLongitude: string;
+      deliveryWeekdays: any;
+      deliveryTimeSlots: any;
+      deliverySaturdayTimeSlots: any;
+      exclusiveVehicle: boolean;
+      vehicleTypes: any;
+      averageDeliveryTime: number;
+      tempoEntregaMedido: boolean;
+      isUrgent: boolean;
+      saleValue: number;
+      products: any;
+      scheduledDate: Date;
+      paymentMethod: string;
+      operationType: string;
+      pipelineStage: string;
+      customerDocument: string;
+      customerCity: string;
+      customerState: string;
+      customerNeighborhood: string;
+      receivingWeekdays: any;
+    }>(sql`
+      SELECT DISTINCT ON (bp.id)
+        bp.id,
+        bp.invoice_number as "invoiceNumber",
+        NULL as "omieOrderId",
+        bp.order_number as "orderNumber",
+        COALESCE(c.id, 'billing-' || bp.id) as "customerId",
+        -- fantasy_name VAZIO (string '') fazia o COALESCE devolver '' e o cliente
+        -- aparecia sem nome no aviso de coordenadas faltantes.
+        COALESCE(NULLIF(TRIM(c.fantasy_name), ''), NULLIF(TRIM(c.company_name), ''), NULLIF(TRIM(c.name), ''), NULLIF(TRIM(bp.customer_name), ''), 'Cliente sem nome cadastrado') as "customerName",
+        COALESCE(c.address, '') as "customerAddress",
+        c.latitude as "customerLatitude",
+        c.longitude as "customerLongitude",
+        c.delivery_weekdays as "deliveryWeekdays",
+        c.delivery_time_slots as "deliveryTimeSlots",
+        c.delivery_saturday_time_slots as "deliverySaturdayTimeSlots",
+        c.exclusive_vehicle as "exclusiveVehicle",
+        c.vehicle_types as "vehicleTypes",
+        -- Tempo de entrega MEDIDO pelo cronômetro do entregador (média do cliente);
+        -- sem medição ainda → 5 min estimados.
+        CASE WHEN COALESCE(c.entregas_cronometradas, 0) > 0 AND COALESCE(c.entrega_tempo_medio_seg, 0) > 0
+             THEN GREATEST(1, ROUND(c.entrega_tempo_medio_seg / 60.0))::int
+             ELSE 5 END as "averageDeliveryTime",
+        (COALESCE(c.entregas_cronometradas, 0) > 0 AND COALESCE(c.entrega_tempo_medio_seg, 0) > 0) as "tempoEntregaMedido",
+        COALESCE(bp.is_priority, false) as "isUrgent",
+        bp.sale_value as "saleValue",
+        bp.products,
+        bp.created_at as "scheduledDate",
+        bp.payment_method as "paymentMethod",
+        bp.operation_type as "operationType",
+        bp.stage as "pipelineStage",
+        bp.customer_document as "customerDocument",
+        c.city as "customerCity",
+        c.state as "customerState",
+        c.neighborhood as "customerNeighborhood",
+        c.receiving_weekdays as "receivingWeekdays"
+      FROM billing_pipeline bp
+      LEFT JOIN customers c ON c.id = bp.customer_id
+      WHERE bp.id = ANY(ARRAY[${sql.join(ids.map((id: string) => sql`${id}`), sql`, `)}])
+      ORDER BY bp.id, bp.created_at
+    `);
+    
+    return billingsResult.rows as any[];
+  }
+
+  function converterPedidosRoteirizacao(orders: any[], routeDateStr: string): any[] {
+    // Converter billings para formato do serviço de roteirização
+    return orders.map((o: any) => {
+      const lat = parseFloat(o.customerLatitude as string);
+      const lng = parseFloat(o.customerLongitude as string);
+      
+      // Parse JSON fields
+      const deliveryWeekdays = typeof o.deliveryWeekdays === 'string' 
+        ? JSON.parse(o.deliveryWeekdays) 
+        : (Array.isArray(o.deliveryWeekdays) ? o.deliveryWeekdays : null);
+      
+      // Horários de RECEBIMENTO do dia da rota (sábado tem cadastro próprio).
+      const deliveryTimeSlots = slotsDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
+      const janelas = parseJanelas(deliveryTimeSlots);
+      
+      const vehicleTypes = typeof o.vehicleTypes === 'string'
+        ? JSON.parse(o.vehicleTypes)
+        : (Array.isArray(o.vehicleTypes) ? o.vehicleTypes : []);
+
+      // Dias em que o CLIENTE aceita receber (usado como AVISO na roteirização com IA;
+      // só vira exclusão dura se respectReceivingWeekdays=true).
+      const receivingWeekdays = typeof o.receivingWeekdays === 'string'
+        ? (() => { try { return JSON.parse(o.receivingWeekdays as any); } catch { return null; } })()
+        : (Array.isArray(o.receivingWeekdays) ? o.receivingWeekdays : null);
+      
+      console.log(`📍 [CONVERSION] ${o.customerName}:`, {
+        lat, lng,
+        deliveryWeekdays,
+        deliveryTimeSlots,
+        exclusiveVehicle: o.exclusiveVehicle,
+        vehicleTypes
+      });
+      
+      return {
+        id: o.id,
+        customerId: o.customerId,
+        customerName: o.customerName,
+        customerAddress: o.customerAddress,
+        customerLatitude: lat,
+        customerLongitude: lng,
+        averageDeliveryTime: Number(o.averageDeliveryTime) > 0 ? Number(o.averageDeliveryTime) : 5,
+        tempoEntregaMedido: o.tempoEntregaMedido === true,
+        exclusiveVehicle: o.exclusiveVehicle || false,
+        vehicleTypes: vehicleTypes,
+        isUrgent: o.isUrgent || false,
+        saleValue: parseFloat((o.saleValue as any) || 0),
+        products: o.products,
+        scheduledDate: o.scheduledDate || null,
+        completedDate: o.scheduledDate || null,
+        paymentMethod: o.paymentMethod || null,
+        operationType: o.operationType || null,
+        customerWeekdays: deliveryWeekdays, // Dias de ENTREGA permitidos
+        deliveryTimeSlots: deliveryTimeSlots, // Horários de RECEBIMENTO do dia da rota
+        janelas,
+        // ▼ contexto extra para o agente de IA (BSB, setor, dias de recebimento)
+        receivingWeekdays,
+        customerCity: o.customerCity || null,
+        customerState: o.customerState || null,
+        customerNeighborhood: o.customerNeighborhood || null,
+        pipelineStage: o.pipelineStage || null,
+        orderNumber: o.orderNumber || null,
+        invoiceNumber: o.invoiceNumber || null,
+      };
+    });
+    
+  }
+
   // Planejar rotas de entrega para múltiplos veículos
   app.post("/api/delivery-routes/plan", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
@@ -11964,72 +12110,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar billings selecionados para roteirização
       // Como /api/deliveries retorna billing.id (não sales_card.id), 
       // precisamos buscar os billings e criar sales_cards temporários
-      const billingsResult = await db.execute<{
-        id: string;
-        invoiceNumber: string;
-        omieOrderId: string;
-        orderNumber: string;
-        customerId: string;
-        customerName: string;
-        customerAddress: string;
-        customerLatitude: string;
-        customerLongitude: string;
-        deliveryWeekdays: any;
-        deliveryTimeSlots: any;
-        deliverySaturdayTimeSlots: any;
-        exclusiveVehicle: boolean;
-        vehicleTypes: any;
-        averageDeliveryTime: number;
-        isUrgent: boolean;
-        saleValue: number;
-        products: any;
-        scheduledDate: Date;
-        paymentMethod: string;
-        operationType: string;
-        pipelineStage: string;
-        customerDocument: string;
-        customerCity: string;
-        customerState: string;
-        customerNeighborhood: string;
-        receivingWeekdays: any;
-      }>(sql`
-        SELECT DISTINCT ON (bp.id)
-          bp.id,
-          bp.invoice_number as "invoiceNumber",
-          NULL as "omieOrderId",
-          bp.order_number as "orderNumber",
-          COALESCE(c.id, 'billing-' || bp.id) as "customerId",
-          -- fantasy_name VAZIO (string '') fazia o COALESCE devolver '' e o cliente
-          -- aparecia sem nome no aviso de coordenadas faltantes.
-          COALESCE(NULLIF(TRIM(c.fantasy_name), ''), NULLIF(TRIM(c.company_name), ''), NULLIF(TRIM(c.name), ''), NULLIF(TRIM(bp.customer_name), ''), 'Cliente sem nome cadastrado') as "customerName",
-          COALESCE(c.address, '') as "customerAddress",
-          c.latitude as "customerLatitude",
-          c.longitude as "customerLongitude",
-          c.delivery_weekdays as "deliveryWeekdays",
-          c.delivery_time_slots as "deliveryTimeSlots",
-          c.delivery_saturday_time_slots as "deliverySaturdayTimeSlots",
-          c.exclusive_vehicle as "exclusiveVehicle",
-          c.vehicle_types as "vehicleTypes",
-          COALESCE(c.average_delivery_time, 30) as "averageDeliveryTime",
-          COALESCE(bp.is_priority, false) as "isUrgent",
-          bp.sale_value as "saleValue",
-          bp.products,
-          bp.created_at as "scheduledDate",
-          bp.payment_method as "paymentMethod",
-          bp.operation_type as "operationType",
-          bp.stage as "pipelineStage",
-          bp.customer_document as "customerDocument",
-          c.city as "customerCity",
-          c.state as "customerState",
-          c.neighborhood as "customerNeighborhood",
-          c.receiving_weekdays as "receivingWeekdays"
-        FROM billing_pipeline bp
-        LEFT JOIN customers c ON c.id = bp.customer_id
-        WHERE bp.id = ANY(ARRAY[${sql.join(orderIds.map((id: string) => sql`${id}`), sql`, `)}])
-        ORDER BY bp.id, bp.created_at
-      `);
-      
-      const orders = billingsResult.rows;
+      const orders = await carregarPedidosRoteirizacao(orderIds);
+
       
       console.log(`📦 [ROUTE-PLANNING] Recebidos ${orderIds.length} billing IDs, encontrados ${orders.length} billings válidos`);
 
@@ -12120,67 +12202,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Converter billings para formato do serviço de roteirização
-      const deliveryOrders = orders.map(o => {
-        const lat = parseFloat(o.customerLatitude as string);
-        const lng = parseFloat(o.customerLongitude as string);
-        
-        // Parse JSON fields
-        const deliveryWeekdays = typeof o.deliveryWeekdays === 'string' 
-          ? JSON.parse(o.deliveryWeekdays) 
-          : (Array.isArray(o.deliveryWeekdays) ? o.deliveryWeekdays : null);
-        
-        const deliveryTimeSlots = typeof o.deliveryTimeSlots === 'string'
-          ? JSON.parse(o.deliveryTimeSlots)
-          : (Array.isArray(o.deliveryTimeSlots) ? o.deliveryTimeSlots : []);
-        
-        const vehicleTypes = typeof o.vehicleTypes === 'string'
-          ? JSON.parse(o.vehicleTypes)
-          : (Array.isArray(o.vehicleTypes) ? o.vehicleTypes : []);
-
-        // Dias em que o CLIENTE aceita receber (usado como AVISO na roteirização com IA;
-        // só vira exclusão dura se respectReceivingWeekdays=true).
-        const receivingWeekdays = typeof o.receivingWeekdays === 'string'
-          ? (() => { try { return JSON.parse(o.receivingWeekdays as any); } catch { return null; } })()
-          : (Array.isArray(o.receivingWeekdays) ? o.receivingWeekdays : null);
-        
-        console.log(`📍 [CONVERSION] ${o.customerName}:`, {
-          lat, lng,
-          deliveryWeekdays,
-          deliveryTimeSlots,
-          exclusiveVehicle: o.exclusiveVehicle,
-          vehicleTypes
-        });
-        
-        return {
-          id: o.id,
-          customerId: o.customerId,
-          customerName: o.customerName,
-          customerAddress: o.customerAddress,
-          customerLatitude: lat,
-          customerLongitude: lng,
-          averageDeliveryTime: o.averageDeliveryTime || 30,
-          exclusiveVehicle: o.exclusiveVehicle || false,
-          vehicleTypes: vehicleTypes,
-          isUrgent: o.isUrgent || false,
-          saleValue: parseFloat((o.saleValue as any) || 0),
-          products: o.products,
-          scheduledDate: o.scheduledDate || null,
-          completedDate: o.scheduledDate || null,
-          paymentMethod: o.paymentMethod || null,
-          operationType: o.operationType || null,
-          customerWeekdays: deliveryWeekdays, // Dias de ENTREGA permitidos
-          deliveryTimeSlots: deliveryTimeSlots, // Horários de ENTREGA permitidos
-          // ▼ contexto extra para o agente de IA (BSB, setor, dias de recebimento)
-          receivingWeekdays,
-          customerCity: o.customerCity || null,
-          customerState: o.customerState || null,
-          customerNeighborhood: o.customerNeighborhood || null,
-          pipelineStage: o.pipelineStage || null,
-          orderNumber: o.orderNumber || null,
-          invoiceNumber: o.invoiceNumber || null,
-        };
-      });
+      const deliveryOrders = converterPedidosRoteirizacao(orders, routeDate || hojeBR());
       
       console.log(`✅ [ROUTE-PLANNING] ${deliveryOrders.length} pedidos prontos para roteirização`);
 
@@ -12208,6 +12230,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error planning delivery routes:", error);
       res.status(500).json({ message: "Failed to plan delivery routes", error: error.message });
+    }
+  });
+
+
+  // ============================================================================
+  // RE-SEQUENCIAR UMA ROTA (antes de salvar)
+  // Usado no pop-up de roteirização quando o operador migra uma entrega para
+  // outro entregador ou a exclui da rota: recalcula a ordem de visita e os
+  // horários (deslocamento + horário de recebimento + tempo de entrega medido)
+  // só do(s) veículo(s) afetado(s). Não grava nada.
+  // ============================================================================
+  app.post("/api/delivery-routes/resequence", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { orderIds, vehicle, routeDate } = req.body || {};
+      if (!vehicle || typeof vehicle !== 'object') {
+        return res.status(400).json({ message: 'Veículo obrigatório' });
+      }
+      const ids: string[] = Array.isArray(orderIds) ? orderIds.filter((x: any) => typeof x === 'string' && x) : [];
+      if (ids.length === 0) return res.json({ route: null });
+
+      const dateStr = String(routeDate || '').slice(0, 10) || hojeBR();
+      const rows = await carregarPedidosRoteirizacao(ids);
+      const pedidos = converterPedidosRoteirizacao(rows, dateStr).filter((o: any) =>
+        Number.isFinite(o.customerLatitude) && Number.isFinite(o.customerLongitude) &&
+        o.customerLatitude !== 0 && o.customerLongitude !== 0,
+      );
+      // mantém a ordem pedida (o sequenciador parte dela)
+      const pos = new Map(ids.map((id, i) => [id, i]));
+      pedidos.sort((a: any, b: any) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0));
+      if (pedidos.length === 0) return res.json({ route: null });
+
+      const v = {
+        ...vehicle,
+        startLatitude: Number(vehicle.startLatitude),
+        startLongitude: Number(vehicle.startLongitude),
+        timeWindowStart: vehicle.timeWindowStart || '08:00',
+        timeWindowEnd: vehicle.timeWindowEnd || '18:00',
+      };
+      const { optimizeVehicleRoutes } = await import('./deliveryRouteService');
+      const rotas = await optimizeVehicleRoutes(new Map([[0, pedidos as any]]), [v as any], dataCalendario(dateStr));
+      res.json({ route: rotas[0] || null });
+    } catch (error: any) {
+      console.error('Error resequencing delivery route:', error);
+      res.status(500).json({ message: 'Falha ao recalcular a rota', error: error.message });
     }
   });
 
@@ -12265,6 +12331,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/delivery-routes/save", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { routes } = req.body;
+      // Entregas que o operador EXCLUIU da proposta antes de salvar: voltam (ou
+      // permanecem) em "Aguardando Rota" no pipeline — "Aguardando Rota BSB" se já
+      // estavam lá. Só mexe em card que ainda não saiu para rota.
+      const excludedOrderIds: string[] = Array.isArray(req.body?.excludedOrderIds)
+        ? req.body.excludedOrderIds.filter((x: any) => typeof x === 'string' && x)
+        : [];
+      let devolvidosAguardando = 0;
+      if (excludedOrderIds.length > 0) {
+        try {
+          const r: any = await db.execute(sql`
+            UPDATE billing_pipeline
+               SET stage = CASE WHEN stage = 'aguardando_rota_bsb' THEN stage ELSE 'aguardando_rota' END,
+                   updated_at = NOW()
+             WHERE id IN (${sql.join(excludedOrderIds.map((bid) => sql`${bid}`), sql`, `)})
+               AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
+             RETURNING id, stage
+          `);
+          const linhas = r?.rows || [];
+          devolvidosAguardando = linhas.length;
+          try {
+            const { appendStageHistory } = await import('./deliveryPipelineSync');
+            const ator = (req as any)?.currentUser?.email || 'roteirizacao';
+            for (const l of linhas) await appendStageHistory(l.id, l.stage, `excluido-da-rota (${ator})`);
+          } catch (e: any) {
+            console.warn('[SAVE-ROUTES] Falha ao registrar stage_history das exclusões:', e?.message);
+          }
+          console.log(`↩️ [SAVE-ROUTES] ${devolvidosAguardando} entrega(s) excluída(s) da rota devolvida(s) a Aguardando Rota`);
+        } catch (e: any) {
+          console.error('[SAVE-ROUTES] Falha ao devolver exclusões para Aguardando Rota:', e?.message);
+        }
+      }
+
+      if ((!routes || !Array.isArray(routes) || routes.length === 0) && excludedOrderIds.length > 0) {
+        return res.json({ success: true, message: 'Nenhuma rota a salvar', routes: [], devolvidosAguardando });
+      }
 
       if (!routes || !Array.isArray(routes) || routes.length === 0) {
         return res.status(400).json({ message: "Routes are required" });
@@ -12387,7 +12488,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             stopOrder: index + 1,
             estimatedArrival: stop.estimatedArrival || null,  // Keep as string or null - don't convert
             estimatedDeparture: stop.estimatedDeparture || null, // Keep as string or null - don't convert
-            estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
+            estimatedServiceTime: Number.isFinite(parseInt(stop.estimatedServiceTime)) ? parseInt(stop.estimatedServiceTime) : 5,
             distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
             isPriority: stop.isUrgent || false,
             status: 'pendente'
@@ -12547,7 +12648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             stopOrder: index + 1,
             estimatedArrival: stop.estimatedArrival || null,
             estimatedDeparture: stop.estimatedDeparture || null,
-            estimatedServiceTime: parseInt(stop.estimatedServiceTime) || 30,
+            estimatedServiceTime: Number.isFinite(parseInt(stop.estimatedServiceTime)) ? parseInt(stop.estimatedServiceTime) : 5,
             distanceFromPrevious: parseFloat(stop.distanceFromPrevious) || 0,
             isPriority: stop.isUrgent || false,
             status: 'pendente'
@@ -12633,7 +12734,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         message: `${savedRoutes.length} rotas salvas com sucesso`,
-        routes: savedRoutes
+        routes: savedRoutes,
+        devolvidosAguardando
       });
     } catch (error: any) {
       console.error(`❌ [SAVE-ROUTES] ========== ERRO NO SALVAMENTO ==========`);

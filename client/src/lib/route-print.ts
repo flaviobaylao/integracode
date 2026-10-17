@@ -20,6 +20,7 @@ import {
   type RotaImpressao,
 } from './cobranca-generator';
 import type { DanfeInvoice } from './danfe-generator';
+import { janelaTextoDoDia } from '@shared/janelas-entrega';
 
 export type { RotaImpressao };
 
@@ -96,6 +97,8 @@ export async function carregarPedidosDasRotas(rotas: RotaImpressao[]): Promise<C
       boleto: ch.boleto || null,
       pix: ch.pix || null,
       danfe: danfeById.get(id) || null,
+      deliveryTimeSlots: it.deliveryTimeSlots ?? null,
+      deliverySaturdayTimeSlots: it.deliverySaturdayTimeSlots ?? null,
     } as CobrancaData;
   });
 }
@@ -109,27 +112,63 @@ function enriquecerRotas(rotas: RotaImpressao[], pedidos: CobrancaData[]): RotaI
     stops: (r.stops || []).map((s) => {
       const p = porId.get(String(s.billingId || ''));
       if (!p) return s;
+      const temJanela = typeof s.janelaTexto === 'string';
       return {
         ...s,
         invoiceNumber: s.invoiceNumber || p.invoiceNumber || null,
         saleValue: s.saleValue ?? p.saleValue ?? null,
+        products: s.products ?? p.products ?? null,
+        // Horário de recebimento: o planejamento já manda pronto; rota salva
+        // calcula a partir do cadastro do cliente para o dia da rota.
+        janelaTexto: temJanela
+          ? s.janelaTexto
+          : janelaTextoDoDia(p.deliveryTimeSlots, p.deliverySaturdayTimeSlots, String(r.routeDate || '').slice(0, 10) || new Date()),
       };
     }),
   }));
 }
 
-/** Só o romaneio: uma folha de rosto por motorista. */
-export async function imprimirFolhasDeRosto(rotas: RotaImpressao[]): Promise<number> {
-  const pedidos = await carregarPedidosDasRotas(rotas);
-  return await generateFolhasDeRostoPdf(enriquecerRotas(rotas, pedidos));
+/**
+ * Todas as rotas JÁ SALVAS nas datas das rotas impressas (todos os
+ * entregadores) — alimentam o mapa do dia do romaneio. Falha = sem mapa extra.
+ */
+async function carregarRotasDoDia(rotas: RotaImpressao[]): Promise<RotaImpressao[]> {
+  const datas = Array.from(new Set((rotas || []).map((r) => String(r.routeDate || '').slice(0, 10)).filter(Boolean)));
+  const out: RotaImpressao[] = [];
+  for (const d of datas) {
+    try {
+      const r = await fetch(`/api/delivery-routes?routeDate=${encodeURIComponent(d)}`, { credentials: 'include' });
+      if (!r.ok) continue;
+      const lista = await r.json();
+      for (const rt of (Array.isArray(lista) ? lista : [])) {
+        if (['cancelled', 'cancelada'].includes(String(rt?.status))) continue;
+        if (String(rt?.routeDate || '').slice(0, 10) !== d) continue;
+        const rs = rotaSalva(rt, rt?.stops || []);
+        if (rs.stops.length) out.push(rs);
+      }
+    } catch { /* sem mapa das demais rotas */ }
+  }
+  return out;
+}
+
+export interface OpcoesImpressao {
+  /** outras rotas do mesmo dia (ex.: as demais propostas do planejamento) para o mapa */
+  rotasDoDia?: RotaImpressao[];
+}
+
+/** Só o romaneio: uma folha de rosto por motorista (+ mapa do dia). */
+export async function imprimirFolhasDeRosto(rotas: RotaImpressao[], opts?: OpcoesImpressao): Promise<number> {
+  const [pedidos, salvas] = await Promise.all([carregarPedidosDasRotas(rotas), carregarRotasDoDia(rotas)]);
+  return await generateFolhasDeRostoPdf(enriquecerRotas(rotas, pedidos), [...(opts?.rotasDoDia || []), ...salvas]);
 }
 
 /** Folha de rosto + pacote completo de cada entrega, na ordem da rota. */
 export async function imprimirRotasCompleto(
   rotas: RotaImpressao[],
+  opts?: OpcoesImpressao,
 ): Promise<{ rotas: number; pedidos: number }> {
-  const pedidos = await carregarPedidosDasRotas(rotas);
-  return await generateRotasCompletoPdf(enriquecerRotas(rotas, pedidos), pedidos);
+  const [pedidos, salvas] = await Promise.all([carregarPedidosDasRotas(rotas), carregarRotasDoDia(rotas)]);
+  return await generateRotasCompletoPdf(enriquecerRotas(rotas, pedidos), pedidos, [...(opts?.rotasDoDia || []), ...salvas]);
 }
 
 /** Converte uma rota vinda do PLANEJAMENTO (`/api/delivery-routes/plan`). */
@@ -139,6 +178,8 @@ export function rotaDoPlano(r: any, routeDate: string, janela?: { inicio?: strin
     vehicleType: r?.vehicleType || null,
     routeDate,
     startAddress: r?.startAddress || null,
+    startLatitude: r?.startLatitude ?? null,
+    startLongitude: r?.startLongitude ?? null,
     totalDistance: r?.totalDistance ?? null,
     totalDuration: r?.totalDuration ?? null,
     timeWindowStart: janela?.inicio || null,
@@ -151,6 +192,12 @@ export function rotaDoPlano(r: any, routeDate: string, janela?: { inicio?: strin
       estimatedArrival: s?.estimatedArrival || null,
       distanceFromPrevious: s?.distanceFromPrevious ?? null,
       isPriority: !!(s?.isUrgent ?? s?.isPriority),
+      latitude: s?.latitude ?? s?.customerLatitude ?? null,
+      longitude: s?.longitude ?? s?.customerLongitude ?? null,
+      janelaTexto: typeof s?.janelaTexto === 'string' ? s.janelaTexto : undefined,
+      foraDaJanela: !!s?.foraDaJanela,
+      esperaMin: s?.esperaMin ?? null,
+      estimatedServiceTime: s?.estimatedServiceTime ?? null,
     })),
   };
 }
@@ -163,6 +210,8 @@ export function rotaSalva(route: any, stops: any[]): RotaImpressao {
     vehicleType: route?.vehicleType || null,
     routeDate: route?.routeDate ? String(route.routeDate).slice(0, 10) : null,
     startAddress: route?.startAddress || null,
+    startLatitude: route?.startLatitude ?? null,
+    startLongitude: route?.startLongitude ?? null,
     totalDistance: route?.totalDistance ?? null,
     totalDuration: route?.totalDuration ?? null,
     timeWindowStart: route?.timeWindowStart || null,
@@ -177,6 +226,9 @@ export function rotaSalva(route: any, stops: any[]): RotaImpressao {
       estimatedArrival: s?.estimatedArrival || null,
       distanceFromPrevious: s?.distanceFromPrevious ?? null,
       isPriority: !!s?.isPriority,
+      latitude: s?.customerLatitude ?? s?.latitude ?? null,
+      longitude: s?.customerLongitude ?? s?.longitude ?? null,
+      estimatedServiceTime: s?.estimatedServiceTime ?? null,
     })),
   };
 }

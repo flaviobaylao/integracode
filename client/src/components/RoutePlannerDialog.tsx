@@ -27,7 +27,7 @@ import MissingCoordinatesModal from "@/components/MissingCoordinatesModal";
 import {
   Truck, Bot, Loader2, MapPin, Clock, AlertTriangle, CheckCircle2,
   Wand2, ArrowLeft, Save, Users, Gauge, Info, Map as MapIcon, Eye, EyeOff,
-  Printer, FileText,
+  Printer, FileText, Trash2, ArrowRightLeft, Undo2, Hourglass,
 } from "lucide-react";
 import { imprimirFolhasDeRosto, imprimirRotasCompleto, rotaDoPlano } from "@/lib/route-print";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
@@ -148,6 +148,8 @@ function MapaRotas({ rotas, altura = 380 }: { rotas: Array<{ rota: any; cor: str
                     {x.s.customerAddress}<br />
                     <span style={{ fontSize: 11, color: '#666' }}>
                       Chegada {x.s.estimatedArrival} · +{Number(x.s.distanceFromPrevious || 0).toFixed(1)} km
+                      {x.s.janelaTexto ? <><br />Recebe: {x.s.janelaTexto}</> : null}
+                      {x.s.foraDaJanela ? <><br /><b style={{ color: '#b91c1c' }}>Fora do horário de recebimento</b></> : null}
                     </span>
                   </Popup>
                 </Marker>
@@ -213,6 +215,10 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   // Salvamento: o pop-up NÃO se fecha sozinho — fica aberto para a impressão.
   const [savedInfo, setSavedInfo] = useState<{ rotas: number } | null>(null);
   const [imprimindo, setImprimindo] = useState<null | 'completo' | 'rosto'>(null);
+  // Ajustes manuais antes de salvar: entregas excluídas da proposta (voltam para
+  // "Aguardando Rota" no salvar) e a parada em processamento (migração/exclusão).
+  const [excluidos, setExcluidos] = useState<Array<{ stop: any; deDriverId: string; deDriverName: string }>>([]);
+  const [ajustando, setAjustando] = useState<string | null>(null);
 
   const { data: fleet, isLoading: loadingFleet } = useQuery<{ drivers: FleetDriver[]; hasAiKey: boolean }>({
     queryKey: ['/api/delivery-routes/fleet', routeDate],
@@ -234,6 +240,8 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       setMapaDaRota({});
       setSavedInfo(null);
       setImprimindo(null);
+      setExcluidos([]);
+      setAjustando(null);
     }
   }, [open]);
 
@@ -305,6 +313,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       setSelectedRoutes(new Set((data.routes || []).map((_: any, i: number) => i)));
       setRotasNoMapa(new Set((data.routes || []).map((_: any, i: number) => i)));
       setStep('resultado');
+      setExcluidos([]);
       toast({
         title: data?.ai?.modo === 'ia' ? 'Rotas montadas pela IA' : 'Rotas montadas pelo algoritmo',
         description: `${data.stats.assignedOrders} de ${data.stats.totalOrders} pedidos em ${data.routes.length} rota(s) · ${data.stats.totalDistance.toFixed(1)} km`,
@@ -323,7 +332,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
     mutationFn: async () => {
       const routes = (plan?.routes || [])
         .map((r: any, i: number) => ({ r, i }))
-        .filter(({ i }: any) => selectedRoutes.has(i))
+        .filter(({ r, i }: any) => selectedRoutes.has(i) && (r.stops || []).length > 0)
         .map(({ r }: any) => {
           const v = selectedVehicles.find(x => x.driverId === r.driverId);
           return {
@@ -347,7 +356,11 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
             })),
           };
         });
-      return await apiRequest('POST', '/api/delivery-routes/save', { routes });
+      return await apiRequest('POST', '/api/delivery-routes/save', {
+        routes,
+        // Excluídas da proposta → voltam/permanecem em "Aguardando Rota" no pipeline.
+        excludedOrderIds: excluidos.map(e => e.stop.salesCardId).filter(Boolean),
+      });
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
@@ -356,9 +369,12 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       // ⚠️ NÃO fecha o pop-up: o operador ainda precisa imprimir os pedidos e as
       // folhas de rosto. O fechamento (e a limpeza da seleção) é sempre manual.
       setSavedInfo({ rotas: data?.routes?.length || 0 });
+      const dev = Number(data?.devolvidosAguardando || 0);
       toast({
         title: 'Rotas salvas e enviadas',
-        description: `${data?.routes?.length || 0} rota(s) gravada(s). Os cards foram para "Em Rota". Imprima os pedidos aqui ou depois, em Rotas de Entrega.`,
+        description: `${data?.routes?.length || 0} rota(s) gravada(s). Os cards foram para "Em Rota".`
+          + (excluidos.length ? ` ${dev || excluidos.length} entrega(s) excluída(s) voltaram para "Aguardando Rota".` : '')
+          + ' Imprima os pedidos aqui ou depois, em Rotas de Entrega.',
       });
     },
     onError: (error: any) => {
@@ -377,12 +393,21 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
         return rotaDoPlano(r, routeDate, { inicio: v?.timeWindowStart, fim: v?.timeWindowEnd });
       });
 
+  // Todas as rotas propostas do dia (inclusive as não marcadas) — mapa do romaneio.
+  const rotasDoDiaParaMapa = () =>
+    (plan?.routes || [])
+      .filter((r: any) => (r.stops || []).length > 0)
+      .map((r: any) => {
+        const v = selectedVehicles.find(x => x.driverId === r.driverId);
+        return rotaDoPlano(r, routeDate, { inicio: v?.timeWindowStart, fim: v?.timeWindowEnd });
+      });
+
   const handleImprimirCompleto = async () => {
-    const rotas = rotasParaImprimir();
+    const rotas = rotasParaImprimir().filter((r: any) => r.stops.length > 0);
     if (!rotas.length) { toast({ title: 'Marque ao menos uma rota', variant: 'destructive' }); return; }
     setImprimindo('completo');
     try {
-      const r = await imprimirRotasCompleto(rotas);
+      const r = await imprimirRotasCompleto(rotas, { rotasDoDia: rotasDoDiaParaMapa() });
       toast({ title: `${r.pedidos} pedido(s) impresso(s)`, description: `${r.rotas} folha(s) de rosto + pedido, DANFE e cobrança de cada entrega.` });
     } catch (e: any) {
       toast({ title: 'Erro ao imprimir', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
@@ -390,16 +415,125 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   };
 
   const handleImprimirRosto = async () => {
-    const rotas = rotasParaImprimir();
+    const rotas = rotasParaImprimir().filter((r: any) => r.stops.length > 0);
     if (!rotas.length) { toast({ title: 'Marque ao menos uma rota', variant: 'destructive' }); return; }
     setImprimindo('rosto');
     try {
-      const n = await imprimirFolhasDeRosto(rotas);
+      const n = await imprimirFolhasDeRosto(rotas, { rotasDoDia: rotasDoDiaParaMapa() });
       toast({ title: `${n} folha(s) de rosto gerada(s)` });
     } catch (e: any) {
       toast({ title: 'Erro ao imprimir', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
     } finally { setImprimindo(null); }
   };
+
+  // ── Ajuste manual antes de salvar: migrar / excluir / devolver entrega ──────
+  // Cada mudança re-sequencia SÓ os veículos afetados no servidor (mesma regra
+  // do planejamento: deslocamento + horário de recebimento + tempo de entrega).
+  const veiculoDoMotorista = (driverId: string) => buildPayloadVehicles().find(v => v.driverId === driverId);
+
+  const resequenciar = async (driverId: string, ids: string[]) => {
+    const vehicle = veiculoDoMotorista(driverId);
+    if (!vehicle) throw new Error('Entregador não está mais na frota selecionada');
+    if (ids.length === 0) return null;
+    const r: any = await apiRequest('POST', '/api/delivery-routes/resequence', { orderIds: ids, vehicle, routeDate });
+    return r?.route || null;
+  };
+
+  const aplicarRotas = (novas: Array<{ driverId: string; rota: any | null }>) => {
+    {
+      const prev = plan;
+      if (!prev) return;
+      const routes = [...(prev.routes || [])];
+      const novosIdx: number[] = [];
+      for (const { driverId, rota } of novas) {
+        const idx = routes.findIndex((r: any) => r.driverId === driverId);
+        const v = selectedVehicles.find(x => x.driverId === driverId);
+        if (idx >= 0) {
+          routes[idx] = rota
+            ? { ...routes[idx], ...rota, driverId, driverName: routes[idx].driverName || rota.driverName }
+            : { ...routes[idx], stops: [], totalDistance: 0, totalDuration: 0, alertasJanela: [] };
+        } else if (rota) {
+          routes.push({ ...rota, driverId, driverName: rota.driverName || v?.driverName, vehicleType: rota.vehicleType || v?.type });
+          novosIdx.push(routes.length - 1);
+        }
+      }
+
+      const assigned = routes.reduce((s: number, r: any) => s + (r.stops?.length || 0), 0);
+      const carga = (prev.ai?.cargaPorVeiculo || []).map((c: any) => {
+        const r = routes.find((x: any) => (x.driverName || '') === (c.motorista || ''));
+        return r ? { ...c, entregas: r.stops?.length || 0, minutosEstimados: Math.round(r.totalDuration || 0) } : c;
+      });
+      setPlan({
+        ...prev,
+        routes,
+        ai: prev.ai ? { ...prev.ai, cargaPorVeiculo: carga } : prev.ai,
+        stats: {
+          ...prev.stats,
+          assignedOrders: assigned,
+          totalDistance: routes.reduce((s: number, r: any) => s + Number(r.totalDistance || 0), 0),
+          totalVehicles: routes.filter((r: any) => (r.stops || []).length > 0).length,
+        },
+      });
+      if (novosIdx.length) {
+        setSelectedRoutes(p => { const n = new Set(p); novosIdx.forEach(i => n.add(i)); return n; });
+        setRotasNoMapa(p => { const n = new Set(p); novosIdx.forEach(i => n.add(i)); return n; });
+      }
+    }
+  };
+
+  const idsDaRota = (driverId: string) =>
+    ((plan?.routes || []).find((r: any) => r.driverId === driverId)?.stops || []).map((s: any) => s.salesCardId);
+
+  const moverParada = async (stop: any, deDriverId: string, paraDriverId: string) => {
+    if (!paraDriverId || paraDriverId === deDriverId) return;
+    setAjustando(stop.salesCardId);
+    try {
+      const origem = idsDaRota(deDriverId).filter((id: string) => id !== stop.salesCardId);
+      const destino = [...idsDaRota(paraDriverId), stop.salesCardId];
+      const [ro, rd] = await Promise.all([resequenciar(deDriverId, origem), resequenciar(paraDriverId, destino)]);
+      aplicarRotas([{ driverId: deDriverId, rota: ro }, { driverId: paraDriverId, rota: rd }]);
+      const nome = selectedVehicles.find(v => v.driverId === paraDriverId)?.driverName || 'outro entregador';
+      toast({ title: 'Entrega migrada', description: `${stop.customerName} → ${nome}. As duas rotas foram re-sequenciadas.` });
+    } catch (e: any) {
+      toast({ title: 'Não foi possível migrar a entrega', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally { setAjustando(null); }
+  };
+
+  const excluirParada = async (stop: any, deDriverId: string) => {
+    setAjustando(stop.salesCardId);
+    try {
+      const origem = idsDaRota(deDriverId).filter((id: string) => id !== stop.salesCardId);
+      const ro = await resequenciar(deDriverId, origem);
+      aplicarRotas([{ driverId: deDriverId, rota: ro }]);
+      const de = (plan?.routes || []).find((r: any) => r.driverId === deDriverId);
+      setExcluidos(prev => [...prev, { stop, deDriverId, deDriverName: de?.driverName || '' }]);
+      toast({ title: 'Entrega excluída da rota', description: `${stop.customerName} volta para "Aguardando Rota" ao salvar.` });
+    } catch (e: any) {
+      toast({ title: 'Não foi possível excluir a entrega', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally { setAjustando(null); }
+  };
+
+  const devolverParada = async (stop: any, paraDriverId: string) => {
+    if (!paraDriverId) return;
+    setAjustando(stop.salesCardId);
+    try {
+      const rd = await resequenciar(paraDriverId, [...idsDaRota(paraDriverId), stop.salesCardId]);
+      aplicarRotas([{ driverId: paraDriverId, rota: rd }]);
+      setExcluidos(prev => prev.filter(e => e.stop.salesCardId !== stop.salesCardId));
+    } catch (e: any) {
+      toast({ title: 'Não foi possível incluir a entrega', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally { setAjustando(null); }
+  };
+
+  // Alertas de horário de recebimento recalculados a cada ajuste (os do servidor
+  // ficam desatualizados depois de uma migração/exclusão).
+  const ehAlertaDeHorario = (a: string) => /fora do horário de recebimento|depois do fim da jornada/.test(String(a || ''));
+  const alertasHorario: string[] = (plan?.routes || []).flatMap((r: any) => [
+    ...(r.stops || []).filter((s: any) => s.foraDaJanela).map((s: any) =>
+      `${s.customerName}: chega às ${s.chegadaFisica || s.estimatedArrival} (${r.driverName || r.vehicleType}), fora do horário de recebimento (${s.janelaTexto || '-'}).`),
+    ...((r.alertasJanela || []).filter((a: string) => /depois do fim da jornada/.test(a))),
+  ]);
+  const rotasSalvaveis = (plan?.routes || []).filter((r: any, i: number) => selectedRoutes.has(i) && (r.stops || []).length > 0).length;
 
   const ai = plan?.ai;
   const podeGerar = orderIds.length > 0 && selectedVehicles.length > 0 && selectedVehicles.every(v => !!v.driverId);
@@ -689,11 +823,20 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                   </ul>
                 </CardContent></Card>
               )}
-              {!!ai?.alertas?.length && (
+              {!!alertasHorario.length && (
+                <Card className="border-red-200 bg-red-50/60 dark:bg-red-900/10"><CardContent className="p-3">
+                  <div className="text-xs font-semibold mb-1 flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-red-600" />Horário de recebimento</div>
+                  <ul className="text-xs text-gray-700 dark:text-gray-300 list-disc pl-5 space-y-0.5">
+                    {alertasHorario.map((a: string, i: number) => <li key={i}>{a}</li>)}
+                  </ul>
+                  <div className="text-[11px] text-gray-500 mt-1">Migre a entrega para outro entregador ou ajuste a jornada (início/fim) e gere de novo.</div>
+                </CardContent></Card>
+              )}
+              {!!(ai?.alertas || []).filter((a: string) => !ehAlertaDeHorario(a)).length && (
                 <Card className="border-amber-200 bg-amber-50/60 dark:bg-amber-900/10"><CardContent className="p-3">
                   <div className="text-xs font-semibold mb-1 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" />Atenção</div>
                   <ul className="text-xs text-gray-700 dark:text-gray-300 list-disc pl-5 space-y-0.5">
-                    {ai.alertas.map((a: string, i: number) => <li key={i}>{a}</li>)}
+                    {ai.alertas.filter((a: string) => !ehAlertaDeHorario(a)).map((a: string, i: number) => <li key={i}>{a}</li>)}
                   </ul>
                 </CardContent></Card>
               )}
@@ -737,24 +880,98 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                           <MapaRotas altura={280} rotas={[{ rota: r, cor: ROTA_CORES[idx % ROTA_CORES.length] }]} />
                         </div>
                       )}
+                      {(r.stops || []).length === 0 && (
+                        <div className="text-xs text-gray-500 py-2">Sem entregas — este entregador não será salvo.</div>
+                      )}
                       <div className="divide-y">
-                        {(r.stops || []).map((s: any, si: number) => (
-                          <div key={si} className="py-1.5 flex items-center gap-2 text-xs">
+                        {(r.stops || []).map((s: any, si: number) => {
+                          const outros = selectedVehicles.filter(v => v.driverId !== r.driverId);
+                          const ocupado = ajustando === s.salesCardId;
+                          return (
+                          <div key={s.salesCardId || si} className={`py-1.5 flex items-center gap-2 text-xs flex-wrap ${s.foraDaJanela ? 'bg-red-50/70 dark:bg-red-900/10' : ''}`}>
                             <span className={`w-6 h-6 rounded-full text-white flex items-center justify-center font-bold shrink-0 ${s.isUrgent ? 'bg-amber-500' : 'bg-emerald-600'}`}>{si + 1}</span>
-                            <span className="flex-1 truncate font-medium flex items-center gap-1">
+                            <span className="flex-1 min-w-[140px] truncate font-medium flex items-center gap-1">
                               {s.isUrgent && <span title="Entrega prioritária" className="text-amber-500">★</span>}
                               {s.customerName}
                             </span>
                             <span className="hidden md:block flex-1 truncate text-gray-500">{s.customerAddress}</span>
-                            <span className="text-gray-500 flex items-center gap-1"><Clock className="h-3 w-3" />{s.estimatedArrival}</span>
-                            <span className="w-16 text-right text-gray-400">+{Number(s.distanceFromPrevious || 0).toFixed(1)} km</span>
+                            <span
+                              className={`rounded border px-1.5 py-0.5 text-[10px] whitespace-nowrap ${s.foraDaJanela ? 'border-red-300 text-red-700 bg-red-50' : s.janelaTexto ? 'border-sky-200 text-sky-700 bg-sky-50' : 'border-gray-200 text-gray-500'}`}
+                              title={s.foraDaJanela ? `Chega às ${s.chegadaFisica} — fora do horário de recebimento` : 'Horário de recebimento do cliente'}
+                            >
+                              {s.janelaTexto ? `Recebe ${s.janelaTexto}` : 'Recebe a qualquer hora'}
+                            </span>
+                            {Number(s.esperaMin) > 0 && (
+                              <span className="text-[10px] text-amber-700 flex items-center gap-0.5" title="Chega antes de o cliente abrir e aguarda">
+                                <Hourglass className="h-3 w-3" />aguarda {s.esperaMin} min
+                              </span>
+                            )}
+                            <span className={`flex items-center gap-1 ${s.foraDaJanela ? 'text-red-700 font-semibold' : 'text-gray-500'}`}><Clock className="h-3 w-3" />{s.estimatedArrival}</span>
+                            <span className="text-[10px] text-gray-400 w-16 text-right" title={s.tempoEntregaMedido ? 'Tempo médio medido nas entregas anteriores' : 'Sem medição anterior — 5 min estimados'}>
+                              {s.estimatedServiceTime ?? 5} min {s.tempoEntregaMedido ? 'med.' : 'est.'}
+                            </span>
+                            <span className="w-14 text-right text-gray-400">+{Number(s.distanceFromPrevious || 0).toFixed(1)} km</span>
+                            {!savedInfo && (
+                              <div className="flex items-center gap-1 ml-auto">
+                                {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" /> : (
+                                  <>
+                                    {outros.length > 0 && (
+                                      <Select value="" onValueChange={(val) => moverParada(s, r.driverId, val)} disabled={!!ajustando}>
+                                        <SelectTrigger className="h-6 w-[118px] text-[10px] px-2" title="Migrar esta entrega para outro entregador">
+                                          <ArrowRightLeft className="h-3 w-3 mr-1 shrink-0" /><SelectValue placeholder="Migrar para…" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {outros.map(v => <SelectItem key={v.driverId} value={v.driverId} className="text-xs">{v.driverName}</SelectItem>)}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                      disabled={!!ajustando}
+                                      title='Excluir da rota — o pedido volta para "Aguardando Rota" ao salvar'
+                                      onClick={() => excluirParada(s, r.driverId)}>
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </CardContent>
                   </Card>
                 ))}
               </div>
+
+              {/* Excluídos manualmente */}
+              {!!excluidos.length && (
+                <Card className="border-gray-300 bg-gray-50/80 dark:bg-gray-900/30"><CardContent className="p-3">
+                  <div className="text-xs font-semibold mb-1 flex items-center gap-1">
+                    <Trash2 className="h-3.5 w-3.5 text-gray-600" />
+                    {excluidos.length} entrega(s) excluída(s) da rota — {savedInfo ? 'voltaram' : 'voltam'} para "Aguardando Rota" {savedInfo ? '' : 'ao salvar'}
+                  </div>
+                  <div className="space-y-1">
+                    {excluidos.map((e) => (
+                      <div key={e.stop.salesCardId} className="flex items-center gap-2 text-xs flex-wrap">
+                        <span className="flex-1 truncate">• {e.stop.customerName}{e.deDriverName ? <span className="text-gray-400"> (estava com {e.deDriverName})</span> : null}</span>
+                        {!savedInfo && (ajustando === e.stop.salesCardId
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                          : (
+                            <Select value="" onValueChange={(val) => devolverParada(e.stop, val)} disabled={!!ajustando}>
+                              <SelectTrigger className="h-6 w-[150px] text-[10px] px-2">
+                                <Undo2 className="h-3 w-3 mr-1 shrink-0" /><SelectValue placeholder="Devolver à rota de…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {selectedVehicles.map(v => <SelectItem key={v.driverId} value={v.driverId} className="text-xs">{v.driverName}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          ))}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent></Card>
+              )}
 
               {/* Não atribuídos */}
               {!!plan.unassignedOrders?.length && (
@@ -816,14 +1033,14 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                   </Button>
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    disabled={selectedRoutes.size === 0 || saveMutation.isPending || !!savedInfo}
+                    disabled={(rotasSalvaveis === 0 && excluidos.length === 0) || saveMutation.isPending || !!savedInfo || !!ajustando}
                     onClick={() => saveMutation.mutate()}
                   >
                     {saveMutation.isPending
                       ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</>
                       : savedInfo
                         ? <><CheckCircle2 className="h-4 w-4 mr-2" /> Rotas salvas</>
-                        : <><Save className="h-4 w-4 mr-2" /> Salvar e enviar ({selectedRoutes.size})</>}
+                        : <><Save className="h-4 w-4 mr-2" /> Salvar e enviar ({rotasSalvaveis})</>}
                   </Button>
                 </div>
               </div>

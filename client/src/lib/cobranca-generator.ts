@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import { hojeBR } from '@shared/tempo';
 import autoTable from 'jspdf-autotable';
 import { renderDanfeToDoc, type DanfeInvoice } from './danfe-generator';
+import { prepararMapaDoDia, desenharMapaDoDia, CORES_ROTAS, type RotaMapa, type MapaBase } from './mapa-rotas-pdf';
 
 export interface CobrancaData {
   itemId: string;
@@ -21,6 +22,9 @@ export interface CobrancaData {
   stopOrder?: number | null;   // nº da ordem desta entrega dentro da rota
   stopCount?: number | null;   // total de paradas da rota (ex.: "3 de 14")
   routeDate?: string | null;   // YYYY-MM-DD
+  // ▼ Horários de recebimento do cliente (cadastro) — usados no romaneio.
+  deliveryTimeSlots?: any;
+  deliverySaturdayTimeSlots?: any;
 }
 
 /** Uma rota (motorista) pronta para impressão — usada na folha de rosto. */
@@ -31,6 +35,8 @@ export interface RotaImpressao {
   licensePlate?: string | null;
   routeDate?: string | null;
   startAddress?: string | null;
+  startLatitude?: number | string | null;
+  startLongitude?: number | string | null;
   totalDistance?: number | string | null;
   totalDuration?: number | string | null;
   timeWindowStart?: string | null;
@@ -46,6 +52,15 @@ export interface RotaImpressao {
     estimatedArrival?: string | null;
     distanceFromPrevious?: number | string | null;
     isPriority?: boolean | null;
+    latitude?: number | string | null;
+    longitude?: number | string | null;
+    /** horário de recebimento do cliente no dia da rota ("8h às 12h + 14h às 16h") */
+    janelaTexto?: string | null;
+    /** chega depois do horário de recebimento */
+    foraDaJanela?: boolean | null;
+    esperaMin?: number | null;
+    estimatedServiceTime?: number | null;
+    products?: any;
   }>;
 }
 
@@ -354,7 +369,7 @@ function renderPix(doc: jsPDF, c: CobrancaData, logo: string | null) {
 // ── FOLHA DE ROSTO DO MOTORISTA (romaneio da rota) ──────────────────────────
 // Uma capa por motorista: cabeçalho com o nome dele, a lista das entregas na
 // ordem em que serão feitas e a distância ponto a ponto (trecho + acumulado).
-function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) {
+function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, mapa?: { img: string; legenda: Array<{ nome: string; cor: string; entregas: number; destaque: boolean }> } | null) {
   brandHeader(doc, logo, 'ROMANEIO');
 
   const stops = [...(rota.stops || [])].sort(
@@ -381,15 +396,33 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) 
   let y = 48; doc.setFontSize(9);
   doc.setFont('helvetica', 'bold'); doc.text('Saída / retorno:', 12, y);
   doc.setFont('helvetica', 'normal'); doc.text(String(rota.startAddress || '-').slice(0, 60), 40, y);
-  doc.setFont('helvetica', 'bold'); doc.text('Janela:', 140, y);
+  doc.setFont('helvetica', 'bold'); doc.text('Jornada:', 138, y);
   doc.setFont('helvetica', 'normal'); doc.text((rota.timeWindowStart || '--:--') + ' às ' + (rota.timeWindowEnd || '--:--'), 156, y);
   y += 6;
+
+  // Carga da rota: produtos de todas as entregas, totalizados por produto.
+  const cargaMap = new Map<string, { nome: string; qtd: number; valor: number }>();
+  for (const st of stops) {
+    for (const p of produtosDe(st.products)) {
+      const nome = String(p.name || p.productName || p.description || '-').trim();
+      const chave = String(p.productId || p.id || nome).toLowerCase();
+      const qtd = Number(p.quantity ?? p.qty ?? 0) || 0;
+      const unit = Number(p.unitPrice ?? p.price ?? p.valor_unitario ?? 0) || 0;
+      const tot = Number(p.total ?? p.totalPrice ?? p.value ?? (unit * qtd)) || 0;
+      const cur = cargaMap.get(chave) || { nome, qtd: 0, valor: 0 };
+      cur.qtd += qtd; cur.valor += tot;
+      cargaMap.set(chave, cur);
+    }
+  }
+  const carga = Array.from(cargaMap.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const totalItens = carga.reduce((s, c) => s + c.qtd, 0);
 
   const resumo: Array<[string, string]> = [
     ['Entregas', String(stops.length)],
     ['Distância total', totalKm.toFixed(1) + ' km'],
     ['Tempo estimado', totalMin > 0 ? (Math.floor(totalMin / 60) + 'h' + String(totalMin % 60).padStart(2, '0')) : '-'],
-    ['Valor total', BRL(totalVal)],
+    ['Itens na carga', totalItens ? num(totalItens).replace(/,00$/, '') : '-'],
+    ['Valor total da carga', BRL(totalVal)],
   ];
   const boxW = 186 / resumo.length;
   resumo.forEach(([label, val], i) => {
@@ -397,7 +430,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) 
     doc.setDrawColor(...GREEN); doc.setLineWidth(0.3); doc.rect(x, y, boxW, 12);
     doc.setFontSize(6.5); doc.setTextColor(110); doc.setFont('helvetica', 'normal');
     doc.text(label.toUpperCase(), x + 2, y + 4);
-    doc.setFontSize(11); doc.setTextColor(0); doc.setFont('helvetica', 'bold');
+    doc.setFontSize(val.length > 12 ? 9.5 : 11); doc.setTextColor(0); doc.setFont('helvetica', 'bold');
     doc.text(val, x + 2, y + 9.5);
   });
   doc.setLineWidth(0.2); doc.setDrawColor(0); doc.setFont('helvetica', 'normal');
@@ -415,7 +448,8 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) 
       String(s.customerName || '-').slice(0, 38),
       String(s.customerAddress || '-').slice(0, 52),
       [nf, ped].filter(Boolean).join(' / ') || '-',
-      s.estimatedArrival || '-',
+      (s.janelaTexto && String(s.janelaTexto).trim()) ? String(s.janelaTexto).replace(/ \+ /g, '\n+ ') : 'Livre',
+      (s.estimatedArrival || '-') + (s.foraDaJanela ? ' !' : ''),
       trecho.toFixed(1),
       acum.toFixed(1),
       BRL(s.saleValue),
@@ -424,9 +458,9 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) 
 
   autoTable(doc, {
     startY: y,
-    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Chegada', 'Trecho (km)', 'Acum. (km)', 'Valor']],
-    body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '']],
-    foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', totalKm.toFixed(1), '', BRL(totalVal)]],
+    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de recebimento', 'Chegada', 'Trecho (km)', 'Acum. (km)', 'Valor']],
+    body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '', '']],
+    foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', '', totalKm.toFixed(1), '', BRL(totalVal)]],
     theme: 'grid',
     // uma parada NUNCA é partida entre duas páginas (o motorista perderia a linha)
     rowPageBreak: 'avoid',
@@ -447,25 +481,50 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) 
       }
     },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 9 },
-      1: { cellWidth: 40 },
-      2: { cellWidth: 51 },
-      3: { cellWidth: 24, halign: 'center' },
-      4: { cellWidth: 15, halign: 'center' },
-      5: { cellWidth: 15, halign: 'right' },
-      6: { cellWidth: 15, halign: 'right' },
-      7: { cellWidth: 17, halign: 'right' },
+      0: { halign: 'center', cellWidth: 8 },
+      1: { cellWidth: 34 },
+      2: { cellWidth: 40 },
+      3: { cellWidth: 22, halign: 'center' },
+      4: { cellWidth: 25, halign: 'center' },
+      5: { cellWidth: 13, halign: 'center' },
+      6: { cellWidth: 13, halign: 'right' },
+      7: { cellWidth: 13, halign: 'right' },
+      8: { cellWidth: 18, halign: 'right' },
     },
     margin: { left: 12, right: 12, top: 14 },
   });
 
   let fy = (doc as any).lastAutoTable?.finalY || y + 20;
   const pageH = (doc as any).internal.pageSize.getHeight ? (doc as any).internal.pageSize.getHeight() : 297;
-  if (stops.some(s => s.isPriority)) {
-    doc.setFontSize(7); doc.setTextColor(120);
-    doc.text('* entrega prioritária', 12, fy + 4); doc.setTextColor(0);
-    fy += 4;
-  }
+  const notas: string[] = [];
+  if (stops.some(s => s.isPriority)) notas.push('* entrega prioritária');
+  if (stops.some(s => s.foraDaJanela)) notas.push('! chegada prevista fora do horário de recebimento do cliente');
+  notas.push('Chegada = início previsto da entrega (deslocamento + horário de recebimento + tempo médio de entrega do cliente).');
+  doc.setFontSize(7); doc.setTextColor(120);
+  for (const n of notas) { doc.text(n, 12, fy + 4); fy += 3.6; }
+  doc.setTextColor(0);
+
+  // ── Produtos da carga (totalizados por produto) ──
+  fy += 7;
+  if (fy + 24 > pageH - 14) { doc.addPage(); fy = 18; }
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...GREEN);
+  doc.text('PRODUTOS DA CARGA', 12, fy); doc.setTextColor(0); doc.setFont('helvetica', 'normal');
+  autoTable(doc, {
+    startY: fy + 2.5,
+    head: [['Produto', 'Quantidade', 'Valor']],
+    body: carga.length
+      ? carga.map(c => [c.nome.slice(0, 80), num(c.qtd).replace(/,00$/, ''), BRL(c.valor)])
+      : [['Sem itens informados nos pedidos', '', '']],
+    foot: [['TOTAL DA CARGA', totalItens ? num(totalItens).replace(/,00$/, '') : '-', BRL(totalVal)]],
+    theme: 'grid',
+    rowPageBreak: 'avoid',
+    styles: { fontSize: 8, cellPadding: 1.3 },
+    headStyles: { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+    footStyles: { fillColor: [235, 245, 238], textColor: 0, fontStyle: 'bold' },
+    columnStyles: { 0: { cellWidth: 126 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 32, halign: 'right' } },
+    margin: { left: 12, right: 12, top: 14 },
+  });
+  fy = (doc as any).lastAutoTable?.finalY || fy + 20;
 
   // Assinaturas (conferência da carga e recebimento pelo motorista)
   if (fy + 26 > pageH - 10) { doc.addPage(); fy = 24; }
@@ -476,15 +535,95 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null) 
   doc.text('Conferente / Expedição', 52, sigY + 4, { align: 'center' });
   doc.text('Motorista — recebi os pedidos acima', 158, sigY + 4, { align: 'center' });
   doc.setTextColor(0);
+
+  // ── Mapa com TODAS as entregas do dia (todos os entregadores) ──
+  if (mapa && mapa.img) {
+    doc.addPage();
+    brandHeader(doc, logo, 'MAPA DO DIA');
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold');
+    doc.text('Entregas do dia ' + (rota.routeDate ? fmtDate(String(rota.routeDate).slice(0, 10) + 'T12:00:00') : today()) +
+      ' — todos os entregadores', 12, 30);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90);
+    doc.text('Rota de ' + String(rota.driverName || '-').toUpperCase() + ' em destaque (linha cheia); demais entregadores em linha tracejada. S = saída/retorno.', 12, 34);
+    doc.setTextColor(0);
+    const imgW = 186, imgH = imgW * (1100 / 1600);
+    try { doc.addImage(mapa.img, 'JPEG', 12, 37, imgW, imgH); } catch (e) {}
+    let ly = 37 + imgH + 6;
+    let lx = 12;
+    doc.setFontSize(8);
+    for (const l of mapa.legenda) {
+      const txt = `${l.nome} (${l.entregas})`;
+      const w = doc.getTextWidth(txt) + 9;
+      if (lx + w > 198) { lx = 12; ly += 5; }
+      const hex = l.cor.replace('#', '');
+      doc.setFillColor(parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16));
+      doc.circle(lx + 2, ly - 1.2, 1.8, 'F');
+      doc.setFont('helvetica', l.destaque ? 'bold' : 'normal');
+      doc.text(txt, lx + 5, ly);
+      lx += w + 3;
+    }
+    doc.setFont('helvetica', 'normal');
+  }
+}
+
+function produtosDe(v: any): any[] {
+  try { return Array.isArray(v) ? v : (v ? JSON.parse(v) : []); } catch { return []; }
+}
+
+const chaveRota = (r: RotaImpressao) =>
+  String(r.routeId || '') || (String(r.driverName || '').trim().toLowerCase() + '|' + String(r.routeDate || '').slice(0, 10));
+
+function paraRotaMapa(r: RotaImpressao, i: number): RotaMapa {
+  const bl = Number(r.startLatitude), bg = Number(r.startLongitude);
+  return {
+    nome: String(r.driverName || 'Rota ' + (i + 1)),
+    cor: CORES_ROTAS[i % CORES_ROTAS.length],
+    base: Number.isFinite(bl) && Number.isFinite(bg) && bl !== 0 ? { lat: bl, lng: bg } : null,
+    paradas: [...(r.stops || [])]
+      .sort((a, b) => (Number(a.stopOrder) || 0) - (Number(b.stopOrder) || 0))
+      .map((s, j) => ({ lat: Number(s.latitude), lng: Number(s.longitude), ordem: s.stopOrder ?? j + 1 })),
+  };
+}
+
+/**
+ * Prepara o mapa do dia: devolve uma função que, para cada romaneio, gera a
+ * imagem com a rota dele em destaque. `doDia` = todas as rotas da data (de
+ * todos os entregadores); as rotas impressas que não estiverem ali entram também.
+ */
+async function prepararMapas(rotas: RotaImpressao[], doDia?: RotaImpressao[] | null) {
+  const todas: RotaImpressao[] = [];
+  const vistos = new Set<string>();
+  for (const r of [...rotas, ...(doDia || [])]) {
+    if (!r || !(r.stops || []).length) continue;
+    const k = chaveRota(r);
+    const kNome = String(r.driverName || '').trim().toLowerCase() + '|' + String(r.routeDate || '').slice(0, 10);
+    if (vistos.has(k) || vistos.has(kNome)) continue;
+    vistos.add(k); vistos.add(kNome);
+    todas.push(r);
+  }
+  const mapas = todas.map(paraRotaMapa);
+  let base: MapaBase | null = null;
+  try { base = await prepararMapaDoDia(mapas); } catch { base = null; }
+  return (rota: RotaImpressao) => {
+    if (!base) return null;
+    const idx = todas.findIndex(r => chaveRota(r) === chaveRota(rota));
+    try {
+      return {
+        img: desenharMapaDoDia(base, mapas, idx),
+        legenda: mapas.map((m, i) => ({ nome: m.nome, cor: m.cor, entregas: m.paradas.length, destaque: i === idx })),
+      };
+    } catch { return null; }
+  };
 }
 
 /** Só as folhas de rosto (romaneio) — uma página por motorista. */
-export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[]): Promise<number> {
+export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[], rotasDoDia?: RotaImpressao[] | null): Promise<number> {
   const validas = (rotas || []).filter(r => r && (r.stops || []).length > 0);
   if (validas.length === 0) return 0;
   const logo = await loadLogo();
+  const mapaDe = await prepararMapas(validas, rotasDoDia);
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  validas.forEach((r, i) => { if (i > 0) doc.addPage(); renderFolhaRosto(doc, r, logo); });
+  validas.forEach((r, i) => { if (i > 0) doc.addPage(); renderFolhaRosto(doc, r, logo, mapaDe(r)); });
   doc.save('romaneio_' + hojeBR() + '.pdf');
   return validas.length;
 }
@@ -497,6 +636,7 @@ export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[]): Promise<
 export async function generateRotasCompletoPdf(
   rotas: RotaImpressao[],
   pedidos: CobrancaData[],
+  rotasDoDia?: RotaImpressao[] | null,
 ): Promise<{ rotas: number; pedidos: number }> {
   const validas = (rotas || []).filter(r => r && (r.stops || []).length > 0);
   if (validas.length === 0) return { rotas: 0, pedidos: 0 };
@@ -504,13 +644,14 @@ export async function generateRotasCompletoPdf(
   for (const p of pedidos || []) if (p?.itemId) porId.set(String(p.itemId), p);
 
   const logo = await loadLogo();
+  const mapaDe = await prepararMapas(validas, rotasDoDia);
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   let primeira = true;
   let impressos = 0;
 
   for (const rota of validas) {
     if (!primeira) doc.addPage(); primeira = false;
-    renderFolhaRosto(doc, rota, logo);
+    renderFolhaRosto(doc, rota, logo, mapaDe(rota));
 
     const stops = [...rota.stops].sort((a, b) => (Number(a.stopOrder) || 0) - (Number(b.stopOrder) || 0));
     stops.forEach((s, i) => {
