@@ -138,13 +138,14 @@ export default function Repescagem() {
     enabled: !!historyCustomer?.id,
   });
 
-  // Atendentes CONFIGURÁVEIS de repescagem = telemarketing (recebem carteiras no painel).
-  const panelAttendants = attendants.filter(a => a.role === 'telemarketing');
-  const enabledAttendants = panelAttendants.filter(a => a.isEnabled);
-  // Vendedores externos: aparecem no painel de forma INFORMATIVA. Mantêm a regra de receberem
-  // os próprios clientes em repescagem na rota do dia (perímetro + card duplo) — não configuram
-  // carteiras aqui (o roteamento deles não muda).
-  const externalAttendants = attendants.filter(a => a.role === 'vendedor');
+  // Atendentes CONFIGURÁVEIS de repescagem: telemarketing E vendedores externos. Ambos podem
+  // receber carteiras de OUTROS vendedores (cross-carteira). Os externos, além disso, recebem
+  // sempre os próprios clientes na rota do dia (perímetro + card duplo). Telemarketing primeiro.
+  const panelAttendants = [
+    ...attendants.filter(a => a.role === 'telemarketing'),
+    ...attendants.filter(a => a.role === 'vendedor'),
+  ];
+  const enabledAttendants = attendants.filter(a => a.role === 'telemarketing' && a.isEnabled);
   const isAdmin = user?.role === 'admin';
 
   // Repescagem2: somente administradores habilitam/desabilitam atendentes.
@@ -440,34 +441,42 @@ export default function Repescagem() {
           ) : isAdmin ? (
             <>
               <p className="text-xs text-gray-500">
-                Atendentes de repescagem são o <b>telemarketing</b>. Marque as <b>carteiras</b> que cada um recebe e escolha o
-                <b> %</b> daquela carteira que ele atende (10 a 100). Quando 2+ atendentes recebem a mesma carteira, os clientes
-                são rateados conforme os <b>%</b> escolhidos. O <b>atual %</b> em cinza mostra a cobertura real de hoje (resultado do rateio).
+                Atendentes de repescagem são o <b>telemarketing</b> e os <b>vendedores externos</b>. Marque as <b>carteiras</b>
+                que cada um recebe e escolha o <b>%</b> daquela carteira que ele atende (10 a 100). Quando 2+ atendentes
+                recebem a mesma carteira, os clientes são rateados conforme os <b>%</b> escolhidos. O <b>atual %</b> em cinza
+                mostra a cobertura real de hoje (resultado do rateio).
               </p>
               <p className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md px-2 py-1.5">
-                O telemarketing atende as carteiras marcadas abaixo (o dono também vê o cliente na rota pelo
-                <b> card duplo</b>). Os <b>vendedores externos</b> aparecem mais abaixo, só para referência: eles
-                recebem os <b>próprios clientes</b> em repescagem na <b>rota do dia</b> (perímetro) — não precisam
-                de carteira aqui e o roteamento deles não muda.
+                O dono da carteira também vê o cliente na rota pelo <b>card duplo</b>. Os <b>vendedores externos</b> recebem
+                sempre os <b>próprios clientes</b> em repescagem na <b>rota do dia</b> (perímetro) — e, se você marcar carteiras
+                de outros vendedores para eles, também passam a atendê-las, igual ao telemarketing.
               </p>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {panelAttendants.map(a => {
                   const sel = a.carteiras || [];
+                  const isExt = a.role === 'vendedor';
+                  // Externo é sempre "ativo" (recebe os próprios clientes na rota). Telemarketing só com carteira.
+                  const active = isExt || sel.length > 0;
                   const covById = new Map((a.coverage || []).map(c => [c.sellerId, c]));
                   const available = carteiras.filter(c => !sel.includes(c.sellerId));
                   return (
                   <div
                     key={a.userId}
-                    className={`rounded-md border p-2 ${sel.length > 0 ? 'bg-green-50 border-green-300 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-800'}`}
+                    className={`rounded-md border p-2 ${active ? 'bg-green-50 border-green-300 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-800'}`}
                     data-testid={`attendant-row-${a.userId}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{a.name}</p>
                         <p className="text-[11px] text-gray-500">
-                          {a.role === 'vendedor' ? 'Externo' : a.role === 'telemarketing' ? 'Telemarketing' : a.role}
-                          {sel.length > 0 ? ` · ${sel.length} carteira(s)` : ' · sem carteiras'}
+                          {isExt ? 'Externo' : a.role === 'telemarketing' ? 'Telemarketing' : a.role}
+                          {sel.length > 0 ? ` · ${sel.length} carteira(s)` : (isExt ? '' : ' · sem carteiras')}
                         </p>
+                        {isExt && (
+                          <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                            Recebe os próprios clientes na rota do dia (perímetro). Marque carteiras de outros vendedores para ele também atendê-las.
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -514,7 +523,11 @@ export default function Repescagem() {
                           </span>
                         );
                       })}
-                      {sel.length === 0 && <span className="text-[11px] text-gray-400">Nenhuma carteira — não recebe repescagem.</span>}
+                      {sel.length === 0 && (
+                        <span className="text-[11px] text-gray-400">
+                          {isExt ? 'Sem carteiras de outros vendedores (recebe apenas os próprios clientes na rota).' : 'Nenhuma carteira — não recebe repescagem.'}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-2">
                       <Select
@@ -541,30 +554,6 @@ export default function Repescagem() {
                   <span className="text-xs text-gray-500">Nenhum atendente elegível.</span>
                 )}
               </div>
-
-              {/* Vendedores externos — informativo. Recebem os próprios clientes na rota do dia. */}
-              {externalAttendants.length > 0 && (
-                <div className="pt-1">
-                  <p className="text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
-                    Vendedores externos
-                    <span className="font-normal text-gray-500"> — recebem os próprios clientes em repescagem na rota do dia (perímetro). Não configuram carteira aqui.</span>
-                  </p>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                    {externalAttendants.map(a => (
-                      <div
-                        key={a.userId}
-                        className="rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 p-2"
-                        data-testid={`external-row-${a.userId}`}
-                      >
-                        <p className="text-sm font-medium truncate">{a.name}</p>
-                        <p className="text-[11px] text-gray-500">
-                          Externo · recebe os próprios clientes na <b>rota do dia</b> (perímetro / card duplo)
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </>
           ) : (
             <div className="flex flex-wrap gap-2">
