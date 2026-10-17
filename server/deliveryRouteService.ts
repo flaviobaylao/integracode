@@ -206,11 +206,12 @@ function isValidDeliveryWeekday(customerWeekdays: string | string[] | null | und
 function isValidDeliveryTimeSlot(
   deliveryTimeSlots: string[] | undefined,
   timeWindowStart: string,
-  timeWindowEnd: string
+  timeWindowEnd: string,
+  janelasProntas?: JanelaMin[]
 ): boolean {
-  // Cada hora marcada no cadastro vale o bloco [HH:00, HH+1:00). Há compatibilidade
-  // se algum bloco de recebimento se sobrepõe à jornada do veículo.
-  const janelas = parseJanelas(deliveryTimeSlots);
+  // Períodos de recebimento do cliente (já convertidos para o dia da rota quando
+  // vierem prontos). Há compatibilidade se algum período se sobrepõe à jornada.
+  const janelas = janelasProntas && janelasProntas.length ? janelasProntas : parseJanelas(deliveryTimeSlots);
   if (janelas.length === 0) return true;
   try {
     const routeStart = timeToMinutes(timeWindowStart);
@@ -352,7 +353,7 @@ export function preprocessOrders(
       
       // Validar horário de entrega (se especificado)
       if (order.deliveryTimeSlots && order.deliveryTimeSlots.length > 0) {
-        if (!isValidDeliveryTimeSlot(order.deliveryTimeSlots, vehicle.timeWindowStart, vehicle.timeWindowEnd)) {
+        if (!isValidDeliveryTimeSlot(order.deliveryTimeSlots, vehicle.timeWindowStart, vehicle.timeWindowEnd, order.janelas)) {
           return;
         }
       }

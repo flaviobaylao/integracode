@@ -1,3 +1,4 @@
+import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -1512,27 +1513,12 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   
                   {/* Dias de semana (segunda a sexta) */}
                   <div className="space-y-3">
-                    <Label className="text-sm text-gray-600">Horários de semana (Seg-Sex):</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
-                        <div key={slot} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`weekday-${slot}`}
-                            checked={selectedWeekdaySlots.includes(slot)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setSelectedWeekdaySlots(prev => [...prev, slot]);
-                              } else {
-                                setSelectedWeekdaySlots(prev => prev.filter(s => s !== slot));
-                              }
-                            }}
-                          />
-                          <Label htmlFor={`weekday-${slot}`} className="text-sm">
-                            {slot}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
+                    <Label className="text-sm text-gray-600">Horário de recebimento (Seg-Sex):</Label>
+                    <PeriodosRecebimento
+                      idPrefix="horario-semana-venda"
+                      value={selectedWeekdaySlots}
+                      onChange={setSelectedWeekdaySlots}
+                    />
                   </div>
 
                   <Separator />
@@ -1552,27 +1538,13 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                     
                     {enableSaturdayDelivery && (
                       <div className="space-y-2 pl-6">
-                        <Label className="text-sm text-gray-600">Horários aos sábados:</Label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
-                            <div key={slot} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`saturday-${slot}`}
-                                checked={selectedSaturdaySlots.includes(slot)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedSaturdaySlots(prev => [...prev, slot]);
-                                  } else {
-                                    setSelectedSaturdaySlots(prev => prev.filter(s => s !== slot));
-                                  }
-                                }}
-                              />
-                              <Label htmlFor={`saturday-${slot}`} className="text-sm">
-                                {slot}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
+                        <Label className="text-sm text-gray-600">Horário de recebimento aos sábados:</Label>
+                        <PeriodosRecebimento
+                          sabado
+                          idPrefix="horario-sabado-venda"
+                          value={selectedSaturdaySlots}
+                          onChange={setSelectedSaturdaySlots}
+                        />
                       </div>
                     )}
                   </div>

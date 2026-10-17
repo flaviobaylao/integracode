@@ -2,6 +2,7 @@ import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFIC
 import { compressJson } from "./compress-json";
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR } from '@shared/tempo';
+import { ehCadastroAntigo, intervalosDoCadastro, minParaHHMM, formatarJanelas, FIM_GRADE_ANTIGA_SEMANA, FIM_GRADE_ANTIGA_SABADO, MAX_PERIODOS_RECEBIMENTO } from '@shared/janelas-entrega';
 import { registerOfficialPanel } from "./official-panel";
 import { registerIaAtendimento } from "./ia-atendimento-panel";
 import { registerIaFinalizar } from "./ia-finalizar";
@@ -761,6 +762,74 @@ run();
       if (ADMIN_PATHS_QUALQUER_LOGADO.has(req.path)) return next();
       return requireRole(['admin', 'coordinator', 'administrative'])(req, res, next);
     });
+  });
+
+  // ── Horários de recebimento: migração das horas cheias (checkbox) para períodos ──
+  // O cadastro passou a guardar até 2 períodos livres ("08:15-11:45"). Converte os
+  // cadastros antigos (["08:00","09:00",...]) pela MESMA regra que a tela usa
+  // (intervalosDoCadastro). dryRun por padrão; aplicar guarda o valor antigo em
+  // customers_horarios_backup para poder desfazer. (17/10/2026)
+  app.post('/api/admin/customers/migrar-horarios-recebimento', async (req: Request, res: Response) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const r: any = await db.execute(sql`
+        SELECT id, name, is_active, delivery_time_slots AS sem, delivery_saturday_time_slots AS sab
+        FROM customers
+        WHERE delivery_time_slots IS NOT NULL OR delivery_saturday_time_slots IS NOT NULL`);
+      const rows: any[] = r.rows || r;
+      const paraTexto = (iv: any[]) => iv.map((j: any) => `${minParaHHMM(j.ini)}-${minParaHHMM(j.fim)}`);
+      const mudar: Array<{ id: string; name: string; ativo: boolean; antes: any; depois: any }> = [];
+      const distSem: Record<string, number> = {};
+      const distSab: Record<string, number> = {};
+      const maisDeDois: any[] = [];
+      for (const c of rows) {
+        const antigoSem = ehCadastroAntigo(c.sem);
+        const antigoSab = ehCadastroAntigo(c.sab);
+        if (!antigoSem && !antigoSab) continue;
+        const ivSem = antigoSem ? intervalosDoCadastro(c.sem, FIM_GRADE_ANTIGA_SEMANA) : null;
+        const ivSab = antigoSab ? intervalosDoCadastro(c.sab, FIM_GRADE_ANTIGA_SABADO) : null;
+        if ((ivSem && ivSem.length > MAX_PERIODOS_RECEBIMENTO) || (ivSab && ivSab.length > MAX_PERIODOS_RECEBIMENTO)) {
+          maisDeDois.push({ id: c.id, name: c.name, ativo: c.is_active, sem: ivSem ? formatarJanelas(ivSem) : null, sab: ivSab ? formatarJanelas(ivSab) : null });
+        }
+        if (ivSem) { const k = formatarJanelas(ivSem) || '(vazio)'; distSem[k] = (distSem[k] || 0) + 1; }
+        if (ivSab) { const k = formatarJanelas(ivSab) || '(vazio)'; distSab[k] = (distSab[k] || 0) + 1; }
+        mudar.push({
+          id: c.id, name: c.name, ativo: c.is_active !== false,
+          antes: { sem: c.sem, sab: c.sab },
+          depois: { sem: ivSem ? paraTexto(ivSem) : c.sem, sab: ivSab ? paraTexto(ivSab) : c.sab },
+        });
+      }
+      const top = (d: Record<string, number>) => Object.entries(d).sort((a, b) => b[1] - a[1]).slice(0, 25);
+      let aplicados = 0;
+      if (!dryRun && mudar.length) {
+        // Período a mais (3+) não é descartado: fica gravado e a rota respeita todos;
+        // a tela mostra os 2 primeiros e avisa. Só é aplicado com allowMore=true.
+        if (maisDeDois.length && req.body?.allowMore !== true) {
+          return res.status(409).json({ ok: false, message: 'Há cadastros com mais de 2 períodos. Envie allowMore:true para aplicar mesmo assim.', maisDeDois: maisDeDois.slice(0, 50) });
+        }
+        await db.execute(sql`CREATE TABLE IF NOT EXISTS customers_horarios_backup (
+          customer_id varchar NOT NULL, delivery_time_slots jsonb, delivery_saturday_time_slots jsonb,
+          migrated_at timestamp NOT NULL DEFAULT now())`);
+        for (const m of mudar) {
+          await db.execute(sql`INSERT INTO customers_horarios_backup (customer_id, delivery_time_slots, delivery_saturday_time_slots)
+            VALUES (${m.id}, ${JSON.stringify(m.antes.sem ?? null)}::jsonb, ${JSON.stringify(m.antes.sab ?? null)}::jsonb)`);
+          await db.execute(sql`UPDATE customers
+            SET delivery_time_slots = ${JSON.stringify(m.depois.sem ?? [])}::jsonb,
+                delivery_saturday_time_slots = ${JSON.stringify(m.depois.sab ?? [])}::jsonb
+            WHERE id = ${m.id}`);
+          aplicados++;
+        }
+      }
+      res.json({
+        ok: true, dryRun, totalComHorario: rows.length, aConverter: mudar.length,
+        ativosAConverter: mudar.filter((m) => m.ativo).length, aplicados,
+        maisDeDoisPeriodos: maisDeDois.length, exemplosMaisDeDois: maisDeDois.slice(0, 30),
+        distribuicaoSemana: top(distSem), distribuicaoSabado: top(distSab),
+        amostra: mudar.slice(0, 10),
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, message: e?.message || String(e) });
+    }
   });
 
   // ── Automacoes de Comunicacao: controle de modo (off/test/on) + teste ─────────

@@ -1,3 +1,4 @@
+import { formatarJanelas, intervalosDoCadastro, FIM_GRADE_ANTIGA_SEMANA, FIM_GRADE_ANTIGA_SABADO } from "@shared/janelas-entrega";
 import { useState, useEffect } from "react";
 import { safeParseWeekdays } from '@/lib/weekdayParser';
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
@@ -630,20 +631,10 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                         return <span className="text-sm text-gray-400">Não definido</span>;
                       }
 
-                      try {
-                        const slots = Array.isArray(rawSlots) ? rawSlots : JSON.parse(rawSlots);
-                        return slots.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {slots.map((slot: string) => (
-                              <Badge key={slot} variant="outline" className="bg-orange-50 text-orange-700 font-mono">
-                                {slot}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : <span className="text-sm text-gray-400">Não definido</span>;
-                      } catch {
-                        return <span className="text-sm text-gray-400">Não definido</span>;
-                      }
+                      const texto = formatarJanelas(intervalosDoCadastro(rawSlots, FIM_GRADE_ANTIGA_SEMANA));
+                      return texto ? (
+                        <Badge variant="outline" className="bg-orange-50 text-orange-700 font-mono">{texto}</Badge>
+                      ) : <span className="text-sm text-gray-400">Não definido</span>;
                     })()}
                   </div>
 
@@ -657,20 +648,10 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                         return <span className="text-sm text-gray-400">Não definido</span>;
                       }
 
-                      try {
-                        const slots = Array.isArray(rawSlots) ? rawSlots : JSON.parse(rawSlots);
-                        return slots.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {slots.map((slot: string) => (
-                              <Badge key={slot} variant="outline" className="bg-purple-50 text-purple-700 font-mono">
-                                {slot}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : <span className="text-sm text-gray-400">Não definido</span>;
-                      } catch {
-                        return <span className="text-sm text-gray-400">Não definido</span>;
-                      }
+                      const texto = formatarJanelas(intervalosDoCadastro(rawSlots, FIM_GRADE_ANTIGA_SABADO));
+                      return texto ? (
+                        <Badge variant="outline" className="bg-purple-50 text-purple-700 font-mono">{texto}</Badge>
+                      ) : <span className="text-sm text-gray-400">Não definido</span>;
                     })()}
                   </div>
                 </CardContent>

@@ -25,7 +25,7 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
-import { parseJanelas, slotsDoDia } from '@shared/janelas-entrega';
+import { parseJanelas, slotsDoDia, janelasDoDia } from '@shared/janelas-entrega';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -12035,7 +12035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Horários de RECEBIMENTO do dia da rota (sábado tem cadastro próprio).
       const deliveryTimeSlots = slotsDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
-      const janelas = parseJanelas(deliveryTimeSlots);
+      const janelas = janelasDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
       
       const vehicleTypes = typeof o.vehicleTypes === 'string'
         ? JSON.parse(o.vehicleTypes)

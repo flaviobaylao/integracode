@@ -48,6 +48,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDeliveryDays } from "@shared/deliveryDaysCalculator";
+import { formatarJanelas, intervalosDoCadastro, FIM_GRADE_ANTIGA_SEMANA, FIM_GRADE_ANTIGA_SABADO } from "@shared/janelas-entrega";
+import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 
 // Função para ordenar horários em ordem crescente (HH:MM)
 function sortTimeSlots(slots: string[]): string[] {
@@ -1087,7 +1089,7 @@ export default function DeliveryManagement() {
                               <div className="text-xs font-semibold text-amber-900 mb-1">⏰ Horários (Seg-Sex):</div>
                               <div className="text-sm font-bold text-amber-700">
                                 {order.deliveryTimeSlots?.length > 0
-                                  ? sortTimeSlots(order.deliveryTimeSlots).join(', ')
+                                  ? formatarJanelas(intervalosDoCadastro(order.deliveryTimeSlots, FIM_GRADE_ANTIGA_SEMANA))
                                   : <span className="text-gray-400">Não configurado</span>
                                 }
                               </div>
@@ -1098,7 +1100,7 @@ export default function DeliveryManagement() {
                               <div className="text-xs font-semibold text-purple-900 mb-1">⏰ Horários (Sábado):</div>
                               <div className="text-sm font-bold text-purple-700">
                                 {order.deliverySaturdayTimeSlots?.length > 0
-                                  ? sortTimeSlots(order.deliverySaturdayTimeSlots).join(', ')
+                                  ? formatarJanelas(intervalosDoCadastro(order.deliverySaturdayTimeSlots, FIM_GRADE_ANTIGA_SABADO))
                                   : <span className="text-gray-400">Não configurado</span>
                                 }
                               </div>
@@ -1911,21 +1913,11 @@ export default function DeliveryManagement() {
                 <Label className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</Label>
               </div>
               
-              <div className="grid grid-cols-4 gap-3">
-                {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
-                  <div key={slot} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`time-slot-${slot}`}
-                      checked={deliveryConfigForm.deliveryTimeSlots.includes(slot)}
-                      onCheckedChange={() => toggleDeliveryTimeSlot(slot)}
-                      data-testid={`checkbox-time-slot-${slot}`}
-                    />
-                    <Label htmlFor={`time-slot-${slot}`} className="text-sm cursor-pointer">
-                      {slot}
-                    </Label>
-                  </div>
-                ))}
-              </div>
+              <PeriodosRecebimento
+                idPrefix="horario-semana-entrega"
+                value={deliveryConfigForm.deliveryTimeSlots}
+                onChange={(slots) => setDeliveryConfigForm(prev => ({ ...prev, deliveryTimeSlots: slots }))}
+              />
             </div>
 
             {/* Horários de Recebimento aos Sábados */}
@@ -1935,21 +1927,12 @@ export default function DeliveryManagement() {
                 <Label className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</Label>
               </div>
               
-              <div className="grid grid-cols-4 gap-3">
-                {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
-                  <div key={slot} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`saturday-slot-${slot}`}
-                      checked={deliveryConfigForm.deliverySaturdayTimeSlots.includes(slot)}
-                      onCheckedChange={() => toggleSaturdayTimeSlot(slot)}
-                      data-testid={`checkbox-saturday-slot-${slot}`}
-                    />
-                    <Label htmlFor={`saturday-slot-${slot}`} className="text-sm cursor-pointer">
-                      {slot}
-                    </Label>
-                  </div>
-                ))}
-              </div>
+              <PeriodosRecebimento
+                sabado
+                idPrefix="horario-sabado-entrega"
+                value={deliveryConfigForm.deliverySaturdayTimeSlots}
+                onChange={(slots) => setDeliveryConfigForm(prev => ({ ...prev, deliverySaturdayTimeSlots: slots }))}
+              />
             </div>
 
             {/* Coordenadas GPS */}

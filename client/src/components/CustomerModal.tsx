@@ -1,3 +1,4 @@
+import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 import { useState, useEffect } from "react";
 import { CidadePicker } from "@/components/CidadePicker";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
@@ -1854,37 +1855,18 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
 
                 {/* Horários de Recebimento (Seg-Sex) */}
                 <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg mb-4">
-                  <FormLabel className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</FormLabel>
+                  <FormLabel className="text-sm font-medium text-green-900">Horário de Recebimento (Seg-Sex)</FormLabel>
                   <AuditLine campos={['deliveryTimeSlots']} />
                   <FormField
                     control={form.control}
                     name="deliveryTimeSlots"
                     render={({ field }) => (
                       <FormItem>
-                        <div className="grid grid-cols-4 gap-3">
-                          {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
-                            <div key={slot} className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                id={`time-slot-${slot}`}
-                                checked={field.value?.includes(slot) || false}
-                                onChange={(e) => {
-                                  const currentSlots = field.value || [];
-                                  if (e.target.checked) {
-                                    field.onChange([...currentSlots, slot]);
-                                  } else {
-                                    field.onChange(currentSlots.filter(s => s !== slot));
-                                  }
-                                }}
-                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
-                                data-testid={`checkbox-time-slot-${slot}`}
-                              />
-                              <label htmlFor={`time-slot-${slot}`} className="text-sm cursor-pointer">
-                                {slot}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
+                        <PeriodosRecebimento
+                          idPrefix="horario-semana"
+                          value={field.value}
+                          onChange={(slots) => field.onChange(slots)}
+                        />
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1893,37 +1875,19 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
 
                 {/* Horários de Recebimento aos Sábados */}
                 <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
-                  <FormLabel className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</FormLabel>
+                  <FormLabel className="text-sm font-medium text-purple-900">Horário de Recebimento aos Sábados</FormLabel>
                   <AuditLine campos={['deliverySaturdayTimeSlots']} />
                   <FormField
                     control={form.control}
                     name="deliverySaturdayTimeSlots"
                     render={({ field }) => (
                       <FormItem>
-                        <div className="grid grid-cols-4 gap-3">
-                          {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
-                            <div key={slot} className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                id={`saturday-slot-${slot}`}
-                                checked={field.value?.includes(slot) || false}
-                                onChange={(e) => {
-                                  const currentSlots = field.value || [];
-                                  if (e.target.checked) {
-                                    field.onChange([...currentSlots, slot]);
-                                  } else {
-                                    field.onChange(currentSlots.filter(s => s !== slot));
-                                  }
-                                }}
-                                className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
-                                data-testid={`checkbox-saturday-slot-${slot}`}
-                              />
-                              <label htmlFor={`saturday-slot-${slot}`} className="text-sm cursor-pointer">
-                                {slot}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
+                        <PeriodosRecebimento
+                          sabado
+                          idPrefix="horario-sabado"
+                          value={field.value}
+                          onChange={(slots) => field.onChange(slots)}
+                        />
                         <FormMessage />
                       </FormItem>
                     )}

@@ -1,3 +1,4 @@
+import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 import { useState, useEffect, useRef } from "react";
 import { CidadePicker } from "@/components/CidadePicker";
 import ParticularidadesField from "@/components/ParticularidadesField";
@@ -1348,46 +1349,27 @@ export default function CustomerEditModal({
 
             {/* Horários de Recebimento (Seg-Sex) */}
             <div className="space-y-3 border border-green-200 bg-green-50 p-4 rounded-lg">
-              <Label className="text-sm font-medium text-green-900">Horários de Recebimento (Seg-Sex)</Label>
+              <Label className="text-sm font-medium text-green-900">Horário de Recebimento (Seg-Sex)</Label>
               <AuditLine campos={['deliveryTimeSlots']} />
               
-              <div className="grid grid-cols-4 gap-3">
-                {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map((slot) => (
-                  <div key={slot} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`time-slot-customer-${slot}`}
-                      checked={formData.deliveryTimeSlots.includes(slot)}
-                      onCheckedChange={() => toggleDeliveryTimeSlot(slot)}
-                      data-testid={`checkbox-time-slot-customer-${slot}`}
-                    />
-                    <label htmlFor={`time-slot-customer-${slot}`} className="text-sm cursor-pointer">
-                      {slot}
-                    </label>
-                  </div>
-                ))}
-              </div>
+              <PeriodosRecebimento
+                idPrefix="horario-semana-cliente"
+                value={formData.deliveryTimeSlots}
+                onChange={(slots) => setFormData((prev) => ({ ...prev, deliveryTimeSlots: slots }))}
+              />
             </div>
 
             {/* Horários de Recebimento aos Sábados */}
             <div className="space-y-3 border border-purple-200 bg-purple-50 p-4 rounded-lg">
-              <Label className="text-sm font-medium text-purple-900">Horários de Recebimento aos Sábados</Label>
+              <Label className="text-sm font-medium text-purple-900">Horário de Recebimento aos Sábados</Label>
               <AuditLine campos={['deliverySaturdayTimeSlots']} />
               
-              <div className="grid grid-cols-4 gap-3">
-                {['08:00', '09:00', '10:00', '11:00', '12:00'].map((slot) => (
-                  <div key={slot} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`saturday-slot-customer-${slot}`}
-                      checked={formData.deliverySaturdayTimeSlots.includes(slot)}
-                      onCheckedChange={() => toggleSaturdayTimeSlot(slot)}
-                      data-testid={`checkbox-saturday-slot-customer-${slot}`}
-                    />
-                    <label htmlFor={`saturday-slot-customer-${slot}`} className="text-sm cursor-pointer">
-                      {slot}
-                    </label>
-                  </div>
-                ))}
-              </div>
+              <PeriodosRecebimento
+                sabado
+                idPrefix="horario-sabado-cliente"
+                value={formData.deliverySaturdayTimeSlots}
+                onChange={(slots) => setFormData((prev) => ({ ...prev, deliverySaturdayTimeSlots: slots }))}
+              />
             </div>
           </div>
 
