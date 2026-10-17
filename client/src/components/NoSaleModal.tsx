@@ -1,14 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { XCircle, AlertTriangle } from "lucide-react";
+import { XCircle, AlertTriangle, Camera } from "lucide-react";
+import { ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
 import type { SalesCardWithRelations } from "@shared/schema";
 
 interface NoSaleModalProps {
@@ -17,117 +18,107 @@ interface NoSaleModalProps {
   card: SalesCardWithRelations | null;
 }
 
+// 🚫 Motivos da Não Venda (out/2026) e o que cada um exige.
+// Toda Não Venda gera notificação no Inbox do admin (servidor).
+const MOTIVOS: Array<{ value: string; label: string; foto?: boolean; obs?: boolean }> = [
+  { value: "com_estoque", label: "Cliente com Estoque", foto: true },
+  { value: "com_debito", label: "Cliente com Débito", obs: true },
+  { value: "estab_fechado", label: "Estabelecimento Fechado", foto: true },
+  { value: "sem_retorno", label: "Sem retorno do cliente" },
+  { value: "outro_motivo", label: "Outro Motivo", obs: true },
+];
+
 export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps) {
-  const [reason, setReason] = useState('');
-  const [notes, setNotes] = useState('');
-  const [phone, setPhone] = useState('');
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Initialize phone when card opens
-  useEffect(() => {
-    if (card?.customer?.phone) {
-      setPhone(card.customer.phone);
-    }
-  }, [card?.customer?.phone, isOpen]);
-
-  const updateCardMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      await apiRequest('PUT', `/api/sales-cards/${id}`, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
-      // Não Venda também conta como registro de atendimento virtual (Rota do Dia)
-      queryClient.invalidateQueries({ queryKey: ['/api/service-logs/count/customer'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
-      toast({
-        title: "Sucesso",
-        description: "Card marcado como 'Venda Não Realizada' com sucesso!",
-      });
-      onClose();
-      resetForm();
-    },
-    onError: (error) => {
-      toast({
-        title: "Erro",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const updateCustomerMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      await apiRequest('PUT', `/api/customers/${id}`, data);
-    },
-    onError: (error) => {
-      console.warn("Aviso ao atualizar telefone:", error.message);
-    },
-  });
+  const motivo = MOTIVOS.find((m) => m.value === reason);
+  const exigeFoto = !!motivo?.foto;
+  const exigeObs = !!motivo?.obs;
+  const podeConfirmar = !!reason && (!exigeFoto || !!photo) && (!exigeObs || !!notes.trim());
 
   const resetForm = () => {
-    setReason('');
-    setNotes('');
-    setPhone('');
+    setReason("");
+    setNotes("");
+    setPhoto(null);
+    setPhotoPreview(null);
     setIsSubmitting(false);
   };
 
+  const fechar = () => { onClose(); resetForm(); };
+
+  const updateCardMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      await apiRequest("PUT", `/api/sales-cards/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sales-cards"] });
+      // Não Venda também conta como registro de atendimento virtual (Rota do Dia)
+      queryClient.invalidateQueries({ queryKey: ["/api/service-logs/count/customer"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/daily-routes"] });
+      toast({ title: "Não Venda registrada", description: "O admin foi notificado no Inbox." });
+      fechar();
+    },
+    onError: (error: any) => {
+      toast({ title: "Erro", description: error?.message || "Falha ao registrar a Não Venda.", variant: "destructive" });
+    },
+  });
+
+  // Envia a foto (mesmo endpoint de imagens do app) e devolve a URL salva.
+  const enviarFoto = async (file: File): Promise<string> => {
+    const fd = new FormData();
+    fd.append("image", file);
+    const resp = await fetch("/api/upload-image", { method: "POST", body: fd, credentials: "include" });
+    const j: any = await resp.json().catch(() => ({}));
+    if (!resp.ok || !j?.url) throw new Error(j?.message || "Falha ao enviar a foto.");
+    return String(j.url);
+  };
+
   const handleSubmit = async () => {
+    if (!card) return;
     if (!reason) {
-      toast({
-        title: "Erro",
-        description: "Selecione um motivo para a não venda.",
-        variant: "destructive",
-      });
+      toast({ title: "Motivo obrigatório", description: "Selecione o motivo da não venda.", variant: "destructive" });
       return;
     }
-
-    if (!card) return;
-
+    if (exigeFoto && !photo) {
+      toast({ title: "Foto obrigatória", description: `Para "${motivo?.label}" é obrigatório anexar a foto.`, variant: "destructive" });
+      return;
+    }
+    if (exigeObs && !notes.trim()) {
+      toast({ title: "Observação obrigatória", description: `Para "${motivo?.label}" preencha as Observações Adicionais.`, variant: "destructive" });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      // Se o telefone foi alterado, atualizar no cliente
-      if (phone && phone !== card.customer?.phone) {
-        await updateCustomerMutation.mutateAsync({
-          id: card.customerId,
-          data: { phone: phone }
-        });
-      }
-
+      let noSalePhotoUrl: string | null = null;
+      if (photo) noSalePhotoUrl = await enviarFoto(photo);
       await updateCardMutation.mutateAsync({
         id: card.id,
         data: {
-          status: 'no_sale',
+          status: "no_sale",
           noSaleReason: reason,
-          notes: notes,
-          completedDate: new Date()
-        }
+          notes: notes.trim(),
+          completedDate: new Date(),
+          noSalePhotoUrl,
+        },
       });
+    } catch (e: any) {
+      toast({ title: "Erro", description: e?.message || "Falha ao registrar a Não Venda.", variant: "destructive" });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const getReasonLabel = (reasonValue: string) => {
-    const reasons = {
-      'sem_interesse': 'Cliente sem interesse',
-      'sem_dinheiro': 'Cliente sem dinheiro',
-      'fechado': 'Estabelecimento fechado',
-      'outro_fornecedor': 'Já possui fornecedor',
-      'produto_inadequado': 'Produto inadequado',
-      'preco_alto': 'Preço muito alto',
-      'nao_atendeu': 'Cliente não atendeu',
-      'reagendado': 'Reagendado para outra data',
-      'outro': 'Outro motivo'
-    };
-    return reasons[reasonValue as keyof typeof reasons] || reasonValue;
-  };
-
   if (!card) return null;
+  const nomeCliente = card.customer?.fantasyName || card.customer?.name || "";
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(o) => { if (!o) fechar(); }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2">
@@ -136,125 +127,116 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-6">
-          {/* Informações do Cliente */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center space-x-2">
-                <AlertTriangle className="h-5 w-5 text-orange-500" />
-                <span>Registrar Motivo da Não Venda</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg space-y-2">
-                <p className="font-semibold">{card.customer.fantasyName || card.customer.name}</p>
-                <div>
-                  <label className="text-xs font-medium text-gray-600">Telefone:</label>
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="(00) 00000-0000"
-                    className="w-full text-sm border rounded px-2 py-1 mt-1"
-                  />
-                </div>
-                <p className="text-sm text-gray-600">{card.customer.address}</p>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="space-y-5">
+          <p className="text-sm font-medium flex items-center gap-2 text-gray-700 dark:text-gray-300">
+            <AlertTriangle className="h-4 w-4 text-orange-500" /> Registrar Motivo da Não Venda
+          </p>
 
-          {/* Formulário de Não Venda */}
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="reason">Motivo da Não Venda *</Label>
-              <Select value={reason} onValueChange={setReason}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o motivo" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sem_interesse">Cliente sem interesse</SelectItem>
-                  <SelectItem value="sem_dinheiro">Cliente sem dinheiro</SelectItem>
-                  <SelectItem value="fechado">Estabelecimento fechado</SelectItem>
-                  <SelectItem value="outro_fornecedor">Já possui fornecedor</SelectItem>
-                  <SelectItem value="produto_inadequado">Produto inadequado</SelectItem>
-                  <SelectItem value="preco_alto">Preço muito alto</SelectItem>
-                  <SelectItem value="nao_atendeu">Cliente não atendeu</SelectItem>
-                  <SelectItem value="reagendado">Reagendado para outra data</SelectItem>
-                  <SelectItem value="outro">Outro motivo</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {reason && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-medium text-blue-800">
-                  Motivo selecionado: {getReasonLabel(reason)}
-                </p>
-              </div>
-            )}
-
-            <div>
-              <Label htmlFor="notes">Observações Adicionais</Label>
-              <Textarea
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Descreva detalhes sobre o motivo da não venda..."
-                rows={4}
-                className="resize-none"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Opcional: Adicione informações que possam ajudar em futuras abordagens
-              </p>
-            </div>
+          <div>
+            <Label htmlFor="reason">Motivo da Não Venda *</Label>
+            <Select value={reason} onValueChange={(v) => { setReason(v); }}>
+              <SelectTrigger id="reason" data-testid="select-no-sale-reason">
+                <SelectValue placeholder="Selecione o motivo" />
+              </SelectTrigger>
+              <SelectContent>
+                {MOTIVOS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          {/* Informações Importantes */}
-          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-            <div className="flex items-start space-x-2">
-              <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
-              <div>
-                <p className="font-medium text-red-800">Importante:</p>
-                <ul className="text-sm text-red-700 mt-1 space-y-1">
-                  <li>• Este card será marcado como "Venda Não Realizada"</li>
-                  <li>• As informações serão utilizadas para análise e melhorias</li>
-                  <li>• Você pode reagendar uma nova visita posteriormente</li>
-                </ul>
-              </div>
+          {motivo && (
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                Motivo selecionado: {motivo.label}
+                {exigeFoto ? " — foto obrigatória" : exigeObs ? " — observação obrigatória" : ""}
+              </p>
             </div>
+          )}
+
+          {exigeFoto && (
+            <div className="rounded-md border p-3 space-y-2">
+              <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto (obrigatória)</span>
+              {photoPreview ? (
+                <div className="space-y-2">
+                  <img src={photoPreview} alt="Foto da não venda" className="w-full max-h-48 object-contain rounded border" />
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setPhoto(null); setPhotoPreview(null); }} data-testid="button-no-sale-photo-remove">Trocar foto</Button>
+                </div>
+              ) : (
+                <Input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setPhoto(f);
+                    const rd = new FileReader();
+                    rd.onload = (ev) => setPhotoPreview(ev.target?.result as string);
+                    rd.readAsDataURL(f);
+                  }}
+                  data-testid="input-no-sale-photo"
+                />
+              )}
+            </div>
+          )}
+
+          <div>
+            <Label htmlFor="notes">Observações Adicionais{exigeObs ? " *" : ""}</Label>
+            <Textarea
+              id="notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Descreva detalhes sobre o motivo da não venda..."
+              rows={4}
+              className="resize-none"
+              data-testid="textarea-no-sale-notes"
+            />
+            {exigeObs && !notes.trim() && (
+              <p className="text-xs text-red-600 mt-1">Obrigatório para este motivo.</p>
+            )}
           </div>
         </div>
 
         {/* Botões de Ação */}
-        <div className="flex justify-end space-x-3 pt-6 border-t">
-          <Button 
-            variant="outline" 
-            onClick={() => {
-              onClose();
-              resetForm();
-            }}
-            disabled={isSubmitting}
-          >
-            Cancelar
-          </Button>
-          
-          <Button 
-            onClick={handleSubmit}
-            disabled={isSubmitting || !reason}
-            className="bg-red-500 hover:bg-red-600"
-          >
-            {isSubmitting ? (
-              <>
-                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                Registrando...
-              </>
-            ) : (
-              <>
-                <XCircle className="h-4 w-4 mr-2" />
-                Confirmar Não Venda
-              </>
+        <div className="flex items-center justify-between gap-3 pt-6 border-t flex-wrap">
+          {/* Solicitar Alteração: abre o card de escolha da alteração; ao enviar, volta para esta tela. */}
+          <div>
+            {card.customerId && (
+              <ChangeRequestControl
+                entityType="customer"
+                entityId={String(card.customerId)}
+                customerId={String(card.customerId)}
+                entityName={nomeCliente}
+                sellerId={card.sellerId ? String(card.sellerId) : null}
+                className="justify-start"
+              />
             )}
-          </Button>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={fechar} disabled={isSubmitting}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={isSubmitting || !podeConfirmar}
+              className="bg-red-500 hover:bg-red-600"
+              data-testid="button-confirm-no-sale"
+            >
+              {isSubmitting ? (
+                <>
+                  <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                  Registrando...
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Confirmar Não Venda
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -606,7 +606,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
               {card.noSaleReason && (
                 <div>
                   <p className="text-sm text-gray-600">Motivo da Não Venda</p>
-                  <p className="font-medium text-red-600">{card.noSaleReason}</p>
+                  <p className="font-medium text-red-600">{({ com_estoque: 'Cliente com Estoque', com_debito: 'Cliente com Débito', estab_fechado: 'Estabelecimento Fechado', sem_retorno: 'Sem retorno do cliente', outro_motivo: 'Outro Motivo' } as Record<string, string>)[String(card.noSaleReason)] || card.noSaleReason}</p>
                 </div>
               )}
 
