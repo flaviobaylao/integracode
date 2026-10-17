@@ -4100,11 +4100,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { entityType, entityId } = req.params;
       const user = req.currentUser;
-      const { notes, images, serviceType, nextContactDate: userNextContactDate, temperature, attendanceDate } = req.body;
+      const { images, serviceType, nextContactDate: userNextContactDate, temperature, attendanceDate } = req.body;
+      let { notes } = req.body;
 
       const validEntityTypes = ['customer', 'lead'];
       if (!validEntityTypes.includes(entityType)) {
         return res.status(400).json({ message: "Tipo de entidade inválido" });
+      }
+
+      // 🚫 NÃO VENDA no atendimento virtual (out/2026): mesmo pick list e regras do presencial.
+      // Foto obrigatória só para cliente PRESENCIAL (com_estoque / estab_fechado); observação
+      // obrigatória em com_debito / outro_motivo. O motivo entra no início das notas do registro.
+      const NV_LABEL: Record<string, string> = { com_estoque: 'Cliente com Estoque', com_debito: 'Cliente com Débito', estab_fechado: 'Estabelecimento Fechado', sem_retorno: 'Sem retorno do cliente', outro_motivo: 'Outro Motivo' };
+      const _nvReason = typeof req.body?.noSaleReason === 'string' ? req.body.noSaleReason : '';
+      let _nvObs = '';
+      if (entityType === 'customer' && serviceType === 'nao_venda' && _nvReason) {
+        if (!NV_LABEL[_nvReason]) return res.status(400).json({ message: 'Motivo da Não Venda inválido.' });
+        _nvObs = String(notes || '').trim();
+        if (['com_debito', 'outro_motivo'].includes(_nvReason) && !_nvObs) {
+          return res.status(400).json({ message: 'Para este motivo é obrigatório descrever o atendimento.' });
+        }
+        if (['com_estoque', 'estab_fechado'].includes(_nvReason) && (!Array.isArray(images) || images.length === 0)) {
+          let _virt = false;
+          try { const _c: any = await storage.getCustomer(String(entityId)); _virt = _c?.virtualService === true; } catch (_e) {}
+          if (!_virt) return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto (cliente presencial).' });
+        }
+        notes = `Não Venda — ${NV_LABEL[_nvReason]}${_nvObs ? `\n${_nvObs}` : ''}`;
       }
 
       if (!notes && (!images || images.length === 0)) {
@@ -4173,7 +4194,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       //   - flag "Solicitação de Alteração" → cria uma SOLICITAÇÃO real (vai pras Pendentes do admin).
       //   - demais tipos (Não Venda / Registro / Débito / Prospecção) → viram REPORT (marcado como lido).
       try {
-        if (String(notes || '').trim()) {
+        // Não Venda com motivo (pick list): SEMPRE notifica o admin, com o motivo e a observação.
+        if (entityType === 'customer' && finalServiceType === 'nao_venda' && _nvReason && NV_LABEL[_nvReason]) {
+          const { registrarReportInbox } = await import('./change-requests-routes');
+          await registrarReportInbox({
+            entityType: 'customer',
+            entityId: String(entityId),
+            customerId: String(entityId),
+            sellerId: String(user?.id || ''),
+            sellerName: user?.name || (user?.email ? String(user.email).split('@')[0] : null),
+            reportKind: 'nao_venda',
+            motivo: `Não Venda (virtual) — ${NV_LABEL[_nvReason]}`,
+            texto: _nvObs,
+            sempre: true,
+          });
+        } else if (String(notes || '').trim()) {
           const ST_LABEL: Record<string, string> = { debito_vencido: 'Débito vencido', venda: 'Venda', nao_venda: 'Não-venda', prospecao: 'Prospecção', solicitacao_alteracao: 'Solicitação de Alteração', registro: 'Registro' };
           const _sellerName = user?.name || (user?.email ? String(user.email).split('@')[0] : null);
           if (finalServiceType === 'solicitacao_alteracao') {
