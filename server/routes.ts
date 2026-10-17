@@ -7524,6 +7524,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertSalesCardSchema.partial().parse(req.body);
       
       console.log(`   ✅ Após parse - data.routeDay:`, data.routeDay);
+
+      // 🚫 NÃO VENDA (out/2026): motivos novos com exigências. Foto obrigatória em "Cliente com
+      // Estoque" e "Estabelecimento Fechado"; observação obrigatória em "Cliente com Débito" e
+      // "Outro Motivo". A foto chega como URL já salva (POST /api/upload-image) em noSalePhotoUrl.
+      const _noSalePhotoUrl = typeof req.body?.noSalePhotoUrl === 'string' && req.body.noSalePhotoUrl.trim() ? String(req.body.noSalePhotoUrl).trim() : null;
+      if ((data as any).status === 'no_sale') {
+        const _r = String((data as any).noSaleReason || '');
+        if (['com_estoque', 'estab_fechado'].includes(_r) && !_noSalePhotoUrl) {
+          return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto.' });
+        }
+        if (['com_debito', 'outro_motivo'].includes(_r) && !String((data as any).notes || '').trim()) {
+          return res.status(400).json({ message: 'Para este motivo é obrigatório preencher as Observações Adicionais.' });
+        }
+      }
       
       // ✅ Boleto com prazo > 7 dias: permitir salvar, bloqueio será aplicado na finalização
       if (data.paymentMethod === 'boleto' && data.boletoDays && Number(data.boletoDays) > 7) {
@@ -8009,18 +8023,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         salesCard = cardAfter!; // Atualizar salesCard para retornar o valor mais recente
       }
       
-      // 🗂️ REPORT → INBOX: "Venda Não Realizada" com motivo + observação ESCRITA vira report no Inbox.
+      // 🗂️ REPORT → INBOX: TODA "Venda Não Realizada" vira report no Inbox do admin (out/2026),
+      // com o motivo, a observação (se houver) e a foto anexada (se houver).
       try {
-        if ((data as any).status === 'no_sale' && (data as any).noSaleReason && String((data as any).notes || '').trim()) {
-          const NO_SALE_LABEL: Record<string, string> = { sem_interesse: 'Cliente sem interesse', sem_dinheiro: 'Cliente sem dinheiro', fechado: 'Estabelecimento fechado', outro_fornecedor: 'Já possui fornecedor', produto_inadequado: 'Produto inadequado', preco_alto: 'Preço muito alto', nao_atendeu: 'Cliente não atendeu', reagendado: 'Reagendado para outra data', outro: 'Outro motivo' };
+        if ((data as any).status === 'no_sale') {
+          const NO_SALE_LABEL: Record<string, string> = {
+            com_estoque: 'Cliente com Estoque', com_debito: 'Cliente com Débito', estab_fechado: 'Estabelecimento Fechado',
+            sem_retorno: 'Sem retorno do cliente', outro_motivo: 'Outro Motivo',
+            sem_interesse: 'Cliente sem interesse', sem_dinheiro: 'Cliente sem dinheiro', fechado: 'Estabelecimento fechado', outro_fornecedor: 'Já possui fornecedor', produto_inadequado: 'Produto inadequado', preco_alto: 'Preço muito alto', nao_atendeu: 'Cliente não atendeu', reagendado: 'Reagendado para outra data', outro: 'Outro motivo',
+          };
           const _cid = String(salesCard?.customerId || cardBefore?.customerId || '');
+          const _reason = String((data as any).noSaleReason || '');
+          // Foto da Não Venda vira a foto do card (ícone 📷 na Rota do Dia) quando o card ainda não tem foto.
+          if (_noSalePhotoUrl && !(cardBefore as any)?.checkInPhotoUrl) {
+            try { await storage.updateSalesCard(id, { checkInPhotoUrl: _noSalePhotoUrl } as any); } catch (_pe) { /* segue */ }
+          }
           const { registrarReportInbox } = await import('./change-requests-routes');
           await registrarReportInbox({
             entityType: 'customer', entityId: _cid, customerId: _cid,
             sellerId: String(salesCard?.sellerId || cardBefore?.sellerId || userId || ''),
             reportKind: 'nao_venda',
-            motivo: NO_SALE_LABEL[String((data as any).noSaleReason)] || String((data as any).noSaleReason),
+            motivo: _reason ? (NO_SALE_LABEL[_reason] || _reason) : 'Não Venda',
             texto: String((data as any).notes || ''),
+            sempre: true,
+            fotoUrl: _noSalePhotoUrl,
           });
         }
       } catch (_e: any) { console.warn('[REPORT-INBOX] no_sale:', _e?.message); }

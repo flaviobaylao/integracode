@@ -194,10 +194,13 @@ export async function registrarReportInbox(p: {
   reportKind: string;      // 'nao_venda' | 'justificativa' | 'debito' | 'atendimento_virtual' | 'lead_desfecho'
   motivo?: string | null;  // rótulo do motivo/opção selecionada
   texto: string;           // observação escrita (obrigatória — só cria se tiver conteúdo)
+  sempre?: boolean;        // true = registra mesmo sem texto (usa o motivo como texto). Ex.: Não Venda.
+  fotoUrl?: string | null; // foto anexada pelo vendedor (exibida no Inbox)
 }): Promise<void> {
   try {
-    const texto = String(p?.texto || "").trim();
-    if (!texto) return; // ➜ só vai pro Inbox se o vendedor escreveu algo
+    let texto = String(p?.texto || "").trim();
+    if (!texto && p?.sempre) texto = String(p?.motivo || "").trim() || "Registro sem observação";
+    if (!texto) return; // ➜ só vai pro Inbox se o vendedor escreveu algo (ou se 'sempre')
     if (!p?.entityId) return;
     await ensureTables();
     // Descobre nomes (cliente/lead e vendedor) quando não vieram prontos.
@@ -226,7 +229,8 @@ export async function registrarReportInbox(p: {
     } catch {}
     const motivoLabel = p.motivo ? String(p.motivo).slice(0, 200) : "";
     const catLabel = REPORT_KIND_LABEL[p.reportKind] || "Report";
-    const details = { reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000) };
+    const details: any = { reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000) };
+    if (p.fotoUrl) details.fotoUrl = String(p.fotoUrl).slice(0, 500);
     const seedMsg = {
       id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
       text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
