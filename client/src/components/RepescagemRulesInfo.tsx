@@ -61,7 +61,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
             </div>
             <div>
               <p className="font-semibold mb-1">Para quem vai (roteamento) — cada cliente também aparece na rota do próprio dono (card duplo)</p>
-              <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">O roteamento especial (carteira → atendente) é <b>configurável no painel “Atendentes e carteiras de repescagem”</b>. Os atendentes são o <b>telemarketing</b>; para cada carteira que recebem, escolhe-se o <b>% (10 a 100)</b> que aquele atendente atende. Quando 2+ atendentes recebem a mesma carteira, os clientes são <b>rateados conforme os %</b> escolhidos. Os <b>vendedores externos</b> não aparecem no painel: já recebem os próprios clientes na <b>rota do dia</b> (perímetro). Os padrões espelham o de hoje:</p>
+              <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">O roteamento especial (carteira → atendente) é <b>configurável no painel “Atendentes e carteiras de repescagem”</b>. Os atendentes são o <b>telemarketing</b> e os <b>vendedores externos</b>; para cada carteira que recebem, escolhe-se o <b>% (10 a 100)</b> que aquele atendente atende. Quando 2+ atendentes recebem a mesma carteira, os clientes são <b>rateados conforme os %</b> escolhidos. Os <b>vendedores externos</b> aparecem no painel: recebem sempre os próprios clientes na <b>rota do dia</b> (perímetro) e, se marcados com carteiras de outros vendedores, também passam a atendê-las (igual ao telemarketing). Os padrões espelham o de hoje:</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Carlos T. e Radilton → <b>Letícia</b></li>
                 <li>Jhonatan e Cleber → <b>Robson</b></li>
