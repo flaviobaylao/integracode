@@ -21,6 +21,10 @@ const brlCurto = (n: number) => {
   if (v >= 1000) return "R$ " + (v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " mil";
   return "R$ " + Math.round(v).toLocaleString("pt-BR");
 };
+// Percentual calculado sobre o valor entregue (pedido do Flavio, 17/10/2026).
+export const PERCENTUAL_ENTREGA = 0.065;
+const PERC_ROTULO = "6,5%";
+const pct = (v: number) => Math.round((Number(v) || 0) * PERCENTUAL_ENTREGA * 100) / 100;
 const dm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const rotuloSemana = (s: Semana) => `${dm(s.inicio)} a ${dm(s.fim)}`;
 
@@ -88,7 +92,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
           {modo === "gestao" ? "Valor entregue por semana (seg a dom)" : "Valor entregue na semana"}
         </CardTitle>
         <p className="text-xs text-gray-500">
-          Entregas concluídas (efetuadas), somando o valor dos pedidos. Semana de segunda a domingo; semana atual em verde e as 8 anteriores.
+          Entregas concluídas (efetuadas), somando o valor dos pedidos. Semana de segunda a domingo; semana atual em verde e as 8 anteriores. Em laranja, {PERC_ROTULO} sobre o valor entregue.
         </p>
       </CardHeader>
       <CardContent>
@@ -102,10 +106,14 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                 <div className="text-2xl font-bold text-emerald-700" data-testid="valor-semana-atual">{brl(atual?.total || 0)}</div>
                 <div className="text-xs text-gray-500">{atual?.entregas || 0} entrega(s)</div>
               </div>
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5">
+                <div className="text-xs text-amber-800">{PERC_ROTULO} da semana atual</div>
+                <div className="text-xl font-bold text-amber-700" data-testid="percentual-semana-atual">{brl(pct(atual?.total || 0))}</div>
+              </div>
               <div className="text-xs text-gray-600 space-y-0.5">
-                <div>Semana passada: <strong>{brl(anterior?.total || 0)}</strong></div>
-                <div>Média das 8 anteriores: <strong>{brl(mediaAnteriores)}</strong></div>
-                <div>Total das 9 semanas: <strong>{brl(totalPeriodo)}</strong></div>
+                <div>Semana passada: <strong>{brl(anterior?.total || 0)}</strong> <span className="text-amber-700">({PERC_ROTULO}: {brl(pct(anterior?.total || 0))})</span></div>
+                <div>Média das 8 anteriores: <strong>{brl(mediaAnteriores)}</strong> <span className="text-amber-700">({PERC_ROTULO}: {brl(pct(mediaAnteriores))})</span></div>
+                <div>Total das 9 semanas: <strong>{brl(totalPeriodo)}</strong> <span className="text-amber-700">({PERC_ROTULO}: {brl(pct(totalPeriodo))})</span></div>
               </div>
             </div>
 
@@ -113,7 +121,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
 
             {semana && (
               <div className="mt-2 text-xs text-gray-600" data-testid="semana-selecionada">
-                Selecionada: <strong>{rotuloSemana(semana)}</strong> — {brl(semana.total)} · {semana.entregas} entrega(s)
+                Selecionada: <strong>{rotuloSemana(semana)}</strong> — {brl(semana.total)} · {semana.entregas} entrega(s) · <span className="text-amber-700">{PERC_ROTULO}: {brl(pct(semana.total))}</span>
                 {semana.atual ? " (semana atual, em andamento)" : ""}
               </div>
             )}
@@ -128,6 +136,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                     <span className="text-right">
                       <span className="font-semibold">{brl(s.total)}</span>
                       <span className="text-xs text-gray-500 ml-2">{s.entregas} ent.</span>
+                      <span className="block text-xs text-amber-700">{PERC_ROTULO}: {brl(pct(s.total))}</span>
                     </span>
                   </div>
                 ))}
@@ -163,20 +172,34 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                           {semanas.map((s) => {
                             const v = valorDe(s, e.email, e.nome);
                             return (
-                              <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "bg-emerald-50/60" : ""}`} title={v ? `${v.entregas} entrega(s)` : ""}>
-                                {v ? brlCurto(v.total) : <span className="text-gray-300">—</span>}
+                              <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "bg-emerald-50/60" : ""}`} title={v ? `${v.entregas} entrega(s) · ${PERC_ROTULO}: ${brl(pct(v.total))}` : ""}>
+                                {v ? (
+                                  <>
+                                    <div>{brlCurto(v.total)}</div>
+                                    <div className="text-[10px] text-amber-700">{brl(pct(v.total))}</div>
+                                  </>
+                                ) : <span className="text-gray-300">—</span>}
                               </td>
                             );
                           })}
-                          <td className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">{brl(e.total)}</td>
+                          <td className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">
+                            <div>{brl(e.total)}</div>
+                            <div className="text-[10px] text-amber-700">{PERC_ROTULO}: {brl(pct(e.total))}</div>
+                          </td>
                         </tr>
                       ))}
                       <tr className="bg-gray-100 font-semibold">
                         <td className="py-1.5 px-2 sticky left-0 bg-gray-100">Total</td>
                         {semanas.map((s) => (
-                          <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "text-emerald-800" : ""}`}>{brlCurto(s.total)}</td>
+                          <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "text-emerald-800" : ""}`}>
+                            <div>{brlCurto(s.total)}</div>
+                            <div className="text-[10px] text-amber-700">{brl(pct(s.total))}</div>
+                          </td>
                         ))}
-                        <td className="text-right py-1.5 px-2 whitespace-nowrap">{brl(totalPeriodo)}</td>
+                        <td className="text-right py-1.5 px-2 whitespace-nowrap">
+                          <div>{brl(totalPeriodo)}</div>
+                          <div className="text-[10px] text-amber-700">{PERC_ROTULO}: {brl(pct(totalPeriodo))}</div>
+                        </td>
                       </tr>
                     </tbody>
                   </table>
