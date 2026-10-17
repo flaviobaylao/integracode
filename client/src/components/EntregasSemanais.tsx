@@ -1,19 +1,38 @@
 // ============================================================================
 // VALOR ENTREGUE POR SEMANA (segunda a domingo) — semana atual + 8 anteriores
+// + COMISSÃO DE ENTREGA (regra de 17/10/2026, ver shared/comissao-entrega.ts)
 // ----------------------------------------------------------------------------
-// modo "motorista": tela Minhas Entregas — só as entregas do próprio entregador.
-// modo "gestao":    Dashboard — total por semana + abertura por entregador.
+// modo "motorista": tela Minhas Entregas — só as entregas do próprio entregador
+//                   e a cota de comissão dele (se for participante).
+// modo "gestao":    Dashboard — total por semana, abertura por entregador,
+//                   comissão por semana e (admin) configuração dos participantes.
 // Fonte: GET /api/delivery-routes/entregas-semanais (paradas 'efetuada').
 // ============================================================================
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Truck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Truck, Settings2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { queryClient } from "@/lib/queryClient";
 
 interface PorEntregador { nome: string; email: string; total: number; entregas: number }
-interface Semana { inicio: string; fim: string; atual: boolean; total: number; entregas: number; porEntregador: PorEntregador[] }
-interface Resposta { escopo: "meu" | "todos"; hoje: string; semanas: Semana[]; entregadores: PorEntregador[] }
+interface Cota { chave: string; nome: string; peso: number; dias: number; pontos: number; entregue: number; valor: number }
+interface ComissaoGestao { percentual: number; base: number; total: number; pontos: number; cotas: Cota[] }
+interface ComissaoMotorista { percentual: number; participa: boolean; cota: Cota | null }
+interface Semana {
+  inicio: string; fim: string; atual: boolean; total: number; entregas: number;
+  porEntregador: PorEntregador[];
+  comissao?: ComissaoGestao | ComissaoMotorista;
+}
+interface Participante { chave: string; nome: string; peso: number }
+interface Resposta {
+  escopo: "meu" | "todos"; hoje: string; semanas: Semana[]; entregadores: PorEntregador[];
+  comissaoConfig?: { percentual: number; participantes?: Participante[]; participa?: boolean };
+}
 
 const brl = (n: any) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(n) || 0);
 const brlCurto = (n: number) => {
@@ -21,12 +40,11 @@ const brlCurto = (n: number) => {
   if (v >= 1000) return "R$ " + (v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " mil";
   return "R$ " + Math.round(v).toLocaleString("pt-BR");
 };
-// Percentual calculado sobre o valor entregue (pedido do Flavio, 17/10/2026).
-export const PERCENTUAL_ENTREGA = 0.065;
-const PERC_ROTULO = "6,5%";
-const pct = (v: number) => Math.round((Number(v) || 0) * PERCENTUAL_ENTREGA * 100) / 100;
+const pctTxt = (p: number) => `${(Number(p) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
 const dm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const rotuloSemana = (s: Semana) => `${dm(s.inicio)} a ${dm(s.fim)}`;
+const chaveDe = (e: { email?: string; nome?: string }) => String(e.email || "").trim().toLowerCase() || String(e.nome || "").trim().toLowerCase();
+const pesoTxt = (p: number) => Number(p).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 
 function Barras({ semanas, selecionada, onSelect }: { semanas: Semana[]; selecionada: number; onSelect: (i: number) => void }) {
   const max = Math.max(1, ...semanas.map((s) => s.total));
@@ -57,7 +75,105 @@ function Barras({ semanas, selecionada, onSelect }: { semanas: Semana[]; selecio
   );
 }
 
+// ---------------------------------------------------------------------------
+// Configuração da comissão (somente administrador)
+// ---------------------------------------------------------------------------
+function ConfigComissao({ onClose }: { onClose: () => void }) {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<{ config: { percentual: number; participantes: Participante[] }; entregadores: Array<{ chave: string; nome: string; ativo: boolean }> }>({
+    queryKey: ["comissao-entrega-config"],
+    queryFn: async () => {
+      const r = await fetch("/api/delivery-routes/comissao-config", { credentials: "include" });
+      if (!r.ok) throw new Error(`Erro ${r.status}`);
+      return r.json();
+    },
+  });
+  const [sel, setSel] = useState<Record<string, { on: boolean; peso: string; nome: string }>>({});
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (!data) return;
+    const m: Record<string, { on: boolean; peso: string; nome: string }> = {};
+    for (const e of data.entregadores) m[e.chave] = { on: false, peso: "1", nome: e.nome };
+    for (const p of data.config.participantes) m[p.chave] = { on: true, peso: String(p.peso).replace(".", ","), nome: p.nome || m[p.chave]?.nome || p.chave };
+    setSel(m);
+  }, [data]);
+
+  const salvar = async () => {
+    const participantes: Participante[] = [];
+    for (const [chave, v] of Object.entries(sel)) {
+      if (!v.on) continue;
+      const peso = Number(String(v.peso).replace(",", "."));
+      if (!Number.isFinite(peso) || peso <= 0) {
+        toast({ title: "Peso inválido", description: `Informe um peso maior que zero para ${v.nome}.`, variant: "destructive" });
+        return;
+      }
+      participantes.push({ chave, nome: v.nome, peso });
+    }
+    setSalvando(true);
+    try {
+      const r = await fetch("/api/delivery-routes/comissao-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ percentual: data?.config.percentual ?? 0.065, participantes }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `Erro ${r.status}`);
+      toast({ title: "Comissão de entrega salva", description: `${participantes.length} entregador(es) participando.` });
+      queryClient.invalidateQueries({ queryKey: ["entregas-semanais"] });
+      queryClient.invalidateQueries({ queryKey: ["comissao-entrega-config"] });
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Não foi possível salvar", description: e.message, variant: "destructive" });
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/60 p-3 space-y-2" data-testid="config-comissao-entrega">
+      <div className="text-sm font-semibold text-amber-900">Configurar comissão de entrega</div>
+      <p className="text-xs text-amber-900/80">
+        Marque quem participa e o peso do dia de trabalho de cada um. A comissão da semana ({pctTxt(data?.config.percentual ?? 0.065)} sobre
+        a soma das entregas dos participantes) é dividida por <strong>dias trabalhados × peso</strong>. Ex.: peso 2 para o Marcelo e 1 para o
+        VIRSON → um dia do Marcelo vale dois dias do VIRSON.
+      </p>
+      {isLoading && <p className="text-xs text-gray-500">Carregando…</p>}
+      <div className="divide-y rounded border bg-white">
+        {Object.entries(sel).sort((a, b) => a[1].nome.localeCompare(b[1].nome, "pt-BR")).map(([chave, v]) => (
+          <label key={chave} className="flex items-center gap-3 px-3 py-1.5 text-sm">
+            <input
+              type="checkbox"
+              checked={v.on}
+              onChange={(e) => setSel((prev) => ({ ...prev, [chave]: { ...prev[chave], on: e.target.checked } }))}
+              data-testid={`comissao-participa-${chave}`}
+            />
+            <span className="flex-1">{v.nome} <span className="text-xs text-gray-400">{chave.includes("@") ? chave : ""}</span></span>
+            <span className="text-xs text-gray-500">peso do dia</span>
+            <Input
+              value={v.peso}
+              disabled={!v.on}
+              onChange={(e) => setSel((prev) => ({ ...prev, [chave]: { ...prev[chave], peso: e.target.value } }))}
+              className="w-16 h-7 text-right"
+              inputMode="decimal"
+              data-testid={`comissao-peso-${chave}`}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="flex gap-2 justify-end">
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
+        <Button type="button" size="sm" onClick={salvar} disabled={salvando || isLoading} data-testid="comissao-salvar">
+          {salvando ? "Salvando…" : "Salvar"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao" }) {
+  const { user } = useAuth();
+  const isAdmin = (user as any)?.role === "admin";
   const escopo = modo === "gestao" ? "todos" : "meu";
   const { data, isLoading, error } = useQuery<Resposta>({
     queryKey: ["entregas-semanais", escopo],
@@ -68,6 +184,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
     },
     refetchInterval: 5 * 60 * 1000,
   });
+  const [config, setConfig] = useState(false);
 
   const semanas = data?.semanas || [];
   const [sel, setSel] = useState<number | null>(null);
@@ -79,21 +196,38 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
   const anteriores = semanas.filter((s) => !s.atual);
   const mediaAnteriores = anteriores.length ? anteriores.reduce((a, s) => a + s.total, 0) / anteriores.length : 0;
 
-  // Gestão: entregadores × semanas
+  const percentual = data?.comissaoConfig?.percentual ?? 0.065;
+  const participantes = data?.comissaoConfig?.participantes || [];
+  const gestaoCom = (s?: Semana) => (s?.comissao && "cotas" in s.comissao ? (s.comissao as ComissaoGestao) : null);
+  const motoCom = (s?: Semana) => (s?.comissao && "participa" in s.comissao ? (s.comissao as ComissaoMotorista) : null);
+  const participaMotorista = modo === "motorista" && !!data?.comissaoConfig?.participa;
+  const comissaoPeriodo = semanas.reduce((a, s) => a + (gestaoCom(s)?.total || 0), 0);
+  const minhaComissaoPeriodo = semanas.reduce((a, s) => a + (motoCom(s)?.cota?.valor || 0), 0);
+
   const entregadores = useMemo(() => (data?.entregadores || []).slice(), [data]);
-  const valorDe = (s: Semana, email: string, nome: string) =>
-    s.porEntregador.find((p) => (p.email || p.nome).toLowerCase() === (email || nome).toLowerCase());
+  const valorDe = (s: Semana, e: PorEntregador) => s.porEntregador.find((p) => chaveDe(p) === chaveDe(e));
+  const cotaDe = (s: Semana, e: PorEntregador) => gestaoCom(s)?.cotas.find((c) => c.chave === chaveDe(e));
+  const comissaoTotalDe = (e: PorEntregador) => semanas.reduce((a, s) => a + (cotaDe(s, e)?.valor || 0), 0);
+  const ehParticipante = (e: PorEntregador) => participantes.some((p) => p.chave === chaveDe(e));
 
   return (
     <Card data-testid={`entregas-semanais-${modo}`}>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Truck className="h-4 w-4 text-emerald-600" />
-          {modo === "gestao" ? "Valor entregue por semana (seg a dom)" : "Valor entregue na semana"}
-        </CardTitle>
+        <div className="flex items-start justify-between gap-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Truck className="h-4 w-4 text-emerald-600" />
+            {modo === "gestao" ? "Valor entregue por semana (seg a dom)" : "Valor entregue na semana"}
+          </CardTitle>
+          {modo === "gestao" && isAdmin && (
+            <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => setConfig((c) => !c)} data-testid="botao-config-comissao">
+              <Settings2 className="h-3.5 w-3.5 mr-1" /> Comissão
+            </Button>
+          )}
+        </div>
         <p className="text-xs text-gray-500">
-          Entregas concluídas (efetuadas), somando o valor dos pedidos. Semana de segunda a domingo; semana atual em verde e as 8 anteriores. Em laranja, {PERC_ROTULO} sobre o valor entregue.
+          Entregas concluídas (efetuadas), somando o valor dos pedidos. Semana de segunda a domingo; semana atual em verde e as 8 anteriores.
         </p>
+        {modo === "gestao" && isAdmin && config && <ConfigComissao onClose={() => setConfig(false)} />}
       </CardHeader>
       <CardContent>
         {isLoading && <p className="text-sm text-gray-500">Carregando…</p>}
@@ -106,23 +240,62 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                 <div className="text-2xl font-bold text-emerald-700" data-testid="valor-semana-atual">{brl(atual?.total || 0)}</div>
                 <div className="text-xs text-gray-500">{atual?.entregas || 0} entrega(s)</div>
               </div>
-              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5">
-                <div className="text-xs text-amber-800">{PERC_ROTULO} da semana atual</div>
-                <div className="text-xl font-bold text-amber-700" data-testid="percentual-semana-atual">{brl(pct(atual?.total || 0))}</div>
-              </div>
+
+              {modo === "gestao" && participantes.length > 0 && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5">
+                  <div className="text-xs text-amber-800">Comissão de entrega ({pctTxt(percentual)}) — semana atual</div>
+                  <div className="text-xl font-bold text-amber-700" data-testid="comissao-semana-atual">{brl(gestaoCom(atual)?.total || 0)}</div>
+                  <div className="text-[11px] text-amber-800/80">sobre {brl(gestaoCom(atual)?.base || 0)} dos participantes</div>
+                </div>
+              )}
+              {modo === "motorista" && participaMotorista && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5">
+                  <div className="text-xs text-amber-800">Sua comissão — semana atual</div>
+                  <div className="text-xl font-bold text-amber-700" data-testid="comissao-semana-atual">{brl(motoCom(atual)?.cota?.valor || 0)}</div>
+                  <div className="text-[11px] text-amber-800/80">{motoCom(atual)?.cota?.dias || 0} dia(s) de entrega na semana</div>
+                </div>
+              )}
+
               <div className="text-xs text-gray-600 space-y-0.5">
-                <div>Semana passada: <strong>{brl(anterior?.total || 0)}</strong> <span className="text-amber-700">({PERC_ROTULO}: {brl(pct(anterior?.total || 0))})</span></div>
-                <div>Média das 8 anteriores: <strong>{brl(mediaAnteriores)}</strong> <span className="text-amber-700">({PERC_ROTULO}: {brl(pct(mediaAnteriores))})</span></div>
-                <div>Total das 9 semanas: <strong>{brl(totalPeriodo)}</strong> <span className="text-amber-700">({PERC_ROTULO}: {brl(pct(totalPeriodo))})</span></div>
+                <div>Semana passada: <strong>{brl(anterior?.total || 0)}</strong></div>
+                <div>Média das 8 anteriores: <strong>{brl(mediaAnteriores)}</strong></div>
+                <div>Total das 9 semanas: <strong>{brl(totalPeriodo)}</strong></div>
+                {modo === "gestao" && participantes.length > 0 && <div className="text-amber-700">Comissão nas 9 semanas: <strong>{brl(comissaoPeriodo)}</strong></div>}
+                {participaMotorista && <div className="text-amber-700">Sua comissão nas 9 semanas: <strong>{brl(minhaComissaoPeriodo)}</strong></div>}
               </div>
             </div>
+
+            {modo === "gestao" && participantes.length === 0 && (
+              <p className="mt-2 text-xs text-amber-700">
+                Comissão de entrega: nenhum entregador participando.{isAdmin ? " Use o botão Comissão para escolher." : ""}
+              </p>
+            )}
 
             <Barras semanas={semanas} selecionada={idx} onSelect={setSel} />
 
             {semana && (
               <div className="mt-2 text-xs text-gray-600" data-testid="semana-selecionada">
-                Selecionada: <strong>{rotuloSemana(semana)}</strong> — {brl(semana.total)} · {semana.entregas} entrega(s) · <span className="text-amber-700">{PERC_ROTULO}: {brl(pct(semana.total))}</span>
+                Selecionada: <strong>{rotuloSemana(semana)}</strong> — {brl(semana.total)} · {semana.entregas} entrega(s)
                 {semana.atual ? " (semana atual, em andamento)" : ""}
+                {participaMotorista && motoCom(semana)?.cota && (
+                  <span className="text-amber-700"> · sua comissão {brl(motoCom(semana)!.cota!.valor)} ({motoCom(semana)!.cota!.dias} dia(s))</span>
+                )}
+              </div>
+            )}
+
+            {modo === "gestao" && gestaoCom(semana) && participantes.length > 0 && (
+              <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs" data-testid="divisao-comissao">
+                <div className="font-semibold text-amber-900">
+                  Comissão da semana {rotuloSemana(semana!)}: {brl(gestaoCom(semana)!.total)} ({pctTxt(percentual)} de {brl(gestaoCom(semana)!.base)})
+                </div>
+                <div className="mt-1 grid gap-0.5">
+                  {gestaoCom(semana)!.cotas.map((c) => (
+                    <div key={c.chave} className="flex justify-between gap-3">
+                      <span>{c.nome}: {c.dias} dia(s) × peso {pesoTxt(c.peso)} = {pesoTxt(c.pontos)} ponto(s){gestaoCom(semana)!.pontos > 0 ? ` (${Math.round((c.pontos / gestaoCom(semana)!.pontos) * 1000) / 10}%)` : ""}</span>
+                      <strong className="text-amber-800">{brl(c.valor)}</strong>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -136,7 +309,9 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                     <span className="text-right">
                       <span className="font-semibold">{brl(s.total)}</span>
                       <span className="text-xs text-gray-500 ml-2">{s.entregas} ent.</span>
-                      <span className="block text-xs text-amber-700">{PERC_ROTULO}: {brl(pct(s.total))}</span>
+                      {participaMotorista && (
+                        <span className="block text-xs text-amber-700">comissão {brl(motoCom(s)?.cota?.valor || 0)} · {motoCom(s)?.cota?.dias || 0} dia(s)</span>
+                      )}
                     </span>
                   </div>
                 ))}
@@ -166,43 +341,52 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                       </tr>
                     </thead>
                     <tbody>
-                      {entregadores.map((e) => (
-                        <tr key={e.email || e.nome} className="border-b hover:bg-gray-50">
-                          <td className="py-1.5 px-2 font-medium sticky left-0 bg-white whitespace-nowrap">{e.nome}</td>
-                          {semanas.map((s) => {
-                            const v = valorDe(s, e.email, e.nome);
-                            return (
-                              <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "bg-emerald-50/60" : ""}`} title={v ? `${v.entregas} entrega(s) · ${PERC_ROTULO}: ${brl(pct(v.total))}` : ""}>
-                                {v ? (
-                                  <>
-                                    <div>{brlCurto(v.total)}</div>
-                                    <div className="text-[10px] text-amber-700">{brl(pct(v.total))}</div>
-                                  </>
-                                ) : <span className="text-gray-300">—</span>}
-                              </td>
-                            );
-                          })}
-                          <td className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">
-                            <div>{brl(e.total)}</div>
-                            <div className="text-[10px] text-amber-700">{PERC_ROTULO}: {brl(pct(e.total))}</div>
-                          </td>
-                        </tr>
-                      ))}
+                      {entregadores.map((e) => {
+                        const part = ehParticipante(e);
+                        return (
+                          <tr key={e.email || e.nome} className="border-b hover:bg-gray-50">
+                            <td className="py-1.5 px-2 font-medium sticky left-0 bg-white whitespace-nowrap">
+                              {e.nome}
+                              {part && <span className="ml-1 text-[10px] text-amber-700">comissão</span>}
+                            </td>
+                            {semanas.map((s) => {
+                              const v = valorDe(s, e);
+                              const c = part ? cotaDe(s, e) : undefined;
+                              return (
+                                <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "bg-emerald-50/60" : ""}`} title={v ? `${v.entregas} entrega(s)${c ? ` · ${c.dias} dia(s) · comissão ${brl(c.valor)}` : ""}` : ""}>
+                                  {v ? <div>{brlCurto(v.total)}</div> : <div className="text-gray-300">—</div>}
+                                  {c && c.valor > 0 && <div className="text-[10px] text-amber-700">{brl(c.valor)}</div>}
+                                </td>
+                              );
+                            })}
+                            <td className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">
+                              <div>{brl(e.total)}</div>
+                              {part && <div className="text-[10px] text-amber-700">comissão {brl(comissaoTotalDe(e))}</div>}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       <tr className="bg-gray-100 font-semibold">
                         <td className="py-1.5 px-2 sticky left-0 bg-gray-100">Total</td>
                         {semanas.map((s) => (
                           <td key={s.inicio} className={`text-right py-1.5 px-2 whitespace-nowrap ${s.atual ? "text-emerald-800" : ""}`}>
                             <div>{brlCurto(s.total)}</div>
-                            <div className="text-[10px] text-amber-700">{brl(pct(s.total))}</div>
+                            {participantes.length > 0 && <div className="text-[10px] text-amber-700">{brl(gestaoCom(s)?.total || 0)}</div>}
                           </td>
                         ))}
                         <td className="text-right py-1.5 px-2 whitespace-nowrap">
                           <div>{brl(totalPeriodo)}</div>
-                          <div className="text-[10px] text-amber-700">{PERC_ROTULO}: {brl(pct(totalPeriodo))}</div>
+                          {participantes.length > 0 && <div className="text-[10px] text-amber-700">comissão {brl(comissaoPeriodo)}</div>}
                         </td>
                       </tr>
                     </tbody>
                   </table>
+                )}
+                {participantes.length > 0 && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Em laranja: comissão de entrega ({pctTxt(percentual)} sobre a soma das entregas dos participantes, dividida por dias × peso).
+                    Participantes: {participantes.map((p) => `${p.nome} (peso ${pesoTxt(p.peso)})`).join(", ")}.
+                  </p>
                 )}
               </div>
             )}

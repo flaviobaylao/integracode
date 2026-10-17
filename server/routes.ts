@@ -25,6 +25,7 @@ import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
+import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from '@shared/comissao-entrega';
 import { parseJanelas, slotsDoDia, janelasDoDia } from '@shared/janelas-entrega';
 import OpenAI from 'openai';
 import {
@@ -12882,6 +12883,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== ENDPOINTS PARA MOTORISTAS ENTREGADORES ==========
   
   // Buscar rotas do motorista autenticado por EMAIL + DATA
+  // 💸 COMISSÃO DE ENTREGA — configuração (quais entregadores participam e o peso
+  // do dia de cada um; percentual padrão 6,5%). Guardada em system_settings.
+  const CHAVE_CONFIG_COMISSAO = 'comissao_entrega_config';
+  async function lerConfigComissaoEntrega() {
+    try {
+      const q: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = ${CHAVE_CONFIG_COMISSAO} LIMIT 1`);
+      const v = (q.rows || q)[0]?.value;
+      return normalizarConfigComissao(v ? JSON.parse(v) : null);
+    } catch {
+      return normalizarConfigComissao(null);
+    }
+  }
+
+  app.get("/api/delivery-routes/comissao-config", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      const cfg = await lerConfigComissaoEntrega();
+      // Entregadores conhecidos: cadastro de motoristas + quem já aparece em rotas.
+      const q: any = await db.execute(sql`
+        SELECT LOWER(COALESCE(NULLIF(TRIM(email), ''), name)) AS chave, name AS nome, is_active AS ativo FROM delivery_drivers
+        UNION
+        SELECT DISTINCT LOWER(COALESCE(NULLIF(TRIM(driver_email), ''), driver_name)) AS chave, driver_name AS nome, true AS ativo
+        FROM delivery_routes WHERE route_date >= (CURRENT_DATE - INTERVAL '120 days')`);
+      const mapa = new Map<string, { chave: string; nome: string; ativo: boolean }>();
+      for (const row of (q.rows || q)) {
+        const chave = String(row.chave || '').trim();
+        if (!chave) continue;
+        const atual = mapa.get(chave);
+        if (!atual || (row.ativo && !atual.ativo)) mapa.set(chave, { chave, nome: row.nome || chave, ativo: !!row.ativo });
+      }
+      for (const p of cfg.participantes) if (!mapa.has(p.chave)) mapa.set(p.chave, { chave: p.chave, nome: p.nome, ativo: true });
+      res.json({ config: cfg, entregadores: Array.from(mapa.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')) });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'Erro ao ler configuração da comissão' });
+    }
+  });
+
+  app.put("/api/delivery-routes/comissao-config", authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const cfg = normalizarConfigComissao(req.body);
+      const quem = String((req as any).currentUser?.email || 'admin');
+      await db.execute(sql`
+        INSERT INTO system_settings (key, value, description, updated_by, updated_at)
+        VALUES (${CHAVE_CONFIG_COMISSAO}, ${JSON.stringify(cfg)}, 'Comissão de entrega: participantes, peso do dia e percentual', ${quem}, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`);
+      res.json({ ok: true, config: cfg });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'Erro ao salvar configuração da comissão' });
+    }
+  });
+
   // 💰 VALOR ENTREGUE POR SEMANA (segunda a domingo, fuso de Brasília)
   // Semana atual + N anteriores (padrão 8). Entregador vê só as próprias entregas;
   // gestão (admin/coordenação/administrativo) vê o total e a abertura por entregador.
@@ -12909,7 +12960,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const iniStr = iso(ini);
       const fimStr = iso(fim);
 
-      const filtroMotorista = escopo === 'meu' ? sql`AND LOWER(r.driver_email) = LOWER(${email})` : sql``;
+      // Sempre lê as entregas de todos: a comissão é um bolo único dos participantes.
+      // O que cada perfil VÊ é filtrado abaixo.
       const r: any = await db.execute(sql`
         SELECT * FROM (
           SELECT
@@ -12932,10 +12984,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           LEFT JOIN sales_cards sc ON bp.id IS NULL AND b.id IS NULL AND sc.id = s.sales_card_id
           WHERE s.status = 'efetuada'
             AND COALESCE(r.status, '') NOT IN ('cancelada', 'cancelled')
-            ${filtroMotorista}
         ) x
         WHERE x.dia BETWEEN ${iniStr}::date AND ${fimStr}::date`);
-      const rows: any[] = r.rows || r;
+      const todas: any[] = r.rows || r;
+      const minhaChave = chaveEntregador(email, '');
+      const rows = escopo === 'meu' ? todas.filter((x) => chaveEntregador(x.email, x.nome) === minhaChave) : todas;
+      const cfgComissao = await lerConfigComissaoEntrega();
 
       const semanas: Array<{ inicio: string; fim: string; atual: boolean; total: number; entregas: number; porEntregador: Record<string, { nome: string; email: string; total: number; entregas: number }> }> = [];
       for (let k = 0; k <= n; k++) {
@@ -12959,13 +13013,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         te.total += valor; te.entregas += 1;
       }
       const arred = (v: number) => Math.round(v * 100) / 100;
+
+      // Comissão por semana: bolo dos participantes, dividido por dias × peso.
+      const entregasPorSemana: Array<Array<{ chave: string; dia: string; valor: number }>> = semanas.map(() => []);
+      for (const row of todas) {
+        const dia = typeof row.dia === 'string' ? row.dia.slice(0, 10) : iso(new Date(row.dia));
+        const idx = Math.floor((Date.parse(`${dia}T12:00:00Z`) - Date.parse(`${iniStr}T12:00:00Z`)) / (7 * 86400000));
+        if (!entregasPorSemana[idx]) continue;
+        entregasPorSemana[idx].push({ chave: chaveEntregador(row.email, row.nome), dia, valor: Number(row.valor) || 0 });
+      }
+      const comissoes = entregasPorSemana.map((lista) => calcularComissaoSemana(lista, cfgComissao));
+      // Entregador vê só a própria cota (não vê o bolo nem a cota dos colegas).
+      const comissaoVisivel = (c: ReturnType<typeof calcularComissaoSemana>) => {
+        if (escopo === 'todos') return c;
+        const minha = c.cotas.find((q) => q.chave === minhaChave);
+        return minha ? { percentual: c.percentual, participa: true, cota: minha } : { percentual: c.percentual, participa: false, cota: null };
+      };
+
       res.json({
         escopo,
         hoje,
-        semanas: semanas.map((s2) => ({
+        comissaoConfig: escopo === 'todos' ? cfgComissao : { percentual: cfgComissao.percentual, participa: cfgComissao.participantes.some((p) => p.chave === minhaChave) },
+        semanas: semanas.map((s2, i) => ({
           inicio: s2.inicio, fim: s2.fim, atual: s2.atual,
           total: arred(s2.total), entregas: s2.entregas,
           porEntregador: Object.values(s2.porEntregador).map((e) => ({ ...e, total: arred(e.total) })).sort((a, b) => b.total - a.total),
+          comissao: comissaoVisivel(comissoes[i]),
         })),
         entregadores: Object.values(entregadores).map((e) => ({ ...e, total: arred(e.total) })).sort((a, b) => b.total - a.total),
       });
