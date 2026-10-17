@@ -19,6 +19,7 @@ import DashboardHistory from "./DashboardHistory";
 import DailyHistory from "./DailyHistory";
 import ClientesAtivos from "./ClientesAtivos";
 import CampanhaOutubro from "./CampanhaOutubro";
+import EntregasSemanais from "./EntregasSemanais";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
@@ -176,6 +177,7 @@ export default function Dashboard() {
   const [histView, setHistView] = useState<"painel" | "historico" | "diario" | "clientes" | "campanha" | "producao">("painel");
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === "admin";
+  const podeVerEntregas = ["admin", "coordinator", "administrative", "industria"].includes(String((user as any)?.role || ""));
 
   const stats = data?.stats || {};
   const ov = data?.ordersOverview || {};
@@ -514,6 +516,8 @@ export default function Dashboard() {
           <div className="text-[11px] font-medium text-indigo-500 whitespace-nowrap" title="Projeção linear: realizado do mês (incluindo domingos) dividido pelos dias úteis (seg-sex) já decorridos, multiplicado pelo total de dias úteis do mês.">Linear (dias úteis seg-sex): {brl(projLinear)}</div>
         </div>
       </div>
+
+      {podeVerEntregas && <EntregasSemanais modo="gestao" />}
 
       <Card>
         <CardHeader>

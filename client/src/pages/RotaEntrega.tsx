@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { Truck, MapPin, CheckCircle, Clock, Navigation, Package, Calendar, PlayCircle, AlertCircle, Camera, RotateCcw, Thermometer } from "lucide-react";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
+import EntregasSemanais from "@/components/EntregasSemanais";
 import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -505,6 +506,11 @@ export default function RotaEntrega() {
         <p className="text-gray-500 text-sm mt-1">
           Olá, {user?.firstName || user?.email}
         </p>
+      </div>
+
+      {/* Valor entregue na semana (seg-dom) + 8 semanas anteriores */}
+      <div className="mb-4">
+        <EntregasSemanais modo="motorista" />
       </div>
 
       {/* Date Selector */}

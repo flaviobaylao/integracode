@@ -12882,6 +12882,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== ENDPOINTS PARA MOTORISTAS ENTREGADORES ==========
   
   // Buscar rotas do motorista autenticado por EMAIL + DATA
+  // 💰 VALOR ENTREGUE POR SEMANA (segunda a domingo, fuso de Brasília)
+  // Semana atual + N anteriores (padrão 8). Entregador vê só as próprias entregas;
+  // gestão (admin/coordenação/administrativo) vê o total e a abertura por entregador.
+  // Entrega = parada com status 'efetuada'; dia = conclusão (completed_at, ou
+  // check-out, ou a data da rota); valor = pedido do pipeline (ou billing legado,
+  // ou card de venda). Rotas canceladas não contam. (17/10/2026)
+  app.get("/api/delivery-routes/entregas-semanais", authenticateUser, async (req: any, res) => {
+    try {
+      const u = (req as any).currentUser || {};
+      const role = String(u.role || '');
+      const gestor = ['admin', 'coordinator', 'administrative', 'industria'].includes(role);
+      const escopo = gestor && String(req.query.escopo || 'todos') === 'todos' ? 'todos' : 'meu';
+      const email = String(u.email || '').trim();
+      if (escopo === 'meu' && !email) return res.status(401).json({ message: 'Usuário sem e-mail' });
+      const n = Math.min(52, Math.max(1, parseInt(String(req.query.semanas || '8'), 10) || 8));
+
+      // Segunda-feira da semana atual (Brasília) e a primeira segunda do período.
+      const hoje = hojeBR();
+      const d = new Date(`${hoje}T12:00:00Z`);
+      const dow = (d.getUTCDay() + 6) % 7; // 0 = segunda
+      const segAtual = new Date(d); segAtual.setUTCDate(d.getUTCDate() - dow);
+      const ini = new Date(segAtual); ini.setUTCDate(segAtual.getUTCDate() - 7 * n);
+      const fim = new Date(segAtual); fim.setUTCDate(segAtual.getUTCDate() + 6);
+      const iso = (x: Date) => x.toISOString().slice(0, 10);
+      const iniStr = iso(ini);
+      const fimStr = iso(fim);
+
+      const filtroMotorista = escopo === 'meu' ? sql`AND LOWER(r.driver_email) = LOWER(${email})` : sql``;
+      const r: any = await db.execute(sql`
+        SELECT * FROM (
+          SELECT
+            r.driver_email AS email,
+            r.driver_name AS nome,
+            COALESCE(
+              NULLIF(bp.sale_value::text, '')::numeric,
+              NULLIF(b.total_value::text, '')::numeric,
+              NULLIF(sc.sale_value::text, '')::numeric,
+              0
+            ) AS valor,
+            COALESCE(
+              (COALESCE(s.completed_at, s.check_out_time) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date,
+              r.route_date::date
+            ) AS dia
+          FROM delivery_route_stops s
+          JOIN delivery_routes r ON r.id = s.route_id
+          LEFT JOIN billing_pipeline bp ON bp.id = s.billing_id
+          LEFT JOIN billings b ON bp.id IS NULL AND b.id = s.billing_id
+          LEFT JOIN sales_cards sc ON bp.id IS NULL AND b.id IS NULL AND sc.id = s.sales_card_id
+          WHERE s.status = 'efetuada'
+            AND COALESCE(r.status, '') NOT IN ('cancelada', 'cancelled')
+            ${filtroMotorista}
+        ) x
+        WHERE x.dia BETWEEN ${iniStr}::date AND ${fimStr}::date`);
+      const rows: any[] = r.rows || r;
+
+      const semanas: Array<{ inicio: string; fim: string; atual: boolean; total: number; entregas: number; porEntregador: Record<string, { nome: string; email: string; total: number; entregas: number }> }> = [];
+      for (let k = 0; k <= n; k++) {
+        const a = new Date(ini); a.setUTCDate(ini.getUTCDate() + 7 * k);
+        const b2 = new Date(a); b2.setUTCDate(a.getUTCDate() + 6);
+        semanas.push({ inicio: iso(a), fim: iso(b2), atual: k === n, total: 0, entregas: 0, porEntregador: {} });
+      }
+      const entregadores: Record<string, { nome: string; email: string; total: number; entregas: number }> = {};
+      for (const row of rows) {
+        const dia = typeof row.dia === 'string' ? row.dia.slice(0, 10) : iso(new Date(row.dia));
+        const idx = Math.floor((Date.parse(`${dia}T12:00:00Z`) - Date.parse(`${iniStr}T12:00:00Z`)) / (7 * 86400000));
+        const sem = semanas[idx];
+        if (!sem) continue;
+        const valor = Number(row.valor) || 0;
+        const chave = String(row.email || row.nome || '?').toLowerCase();
+        sem.total += valor;
+        sem.entregas += 1;
+        const pe = sem.porEntregador[chave] || (sem.porEntregador[chave] = { nome: row.nome || row.email || '—', email: row.email || '', total: 0, entregas: 0 });
+        pe.total += valor; pe.entregas += 1;
+        const te = entregadores[chave] || (entregadores[chave] = { nome: row.nome || row.email || '—', email: row.email || '', total: 0, entregas: 0 });
+        te.total += valor; te.entregas += 1;
+      }
+      const arred = (v: number) => Math.round(v * 100) / 100;
+      res.json({
+        escopo,
+        hoje,
+        semanas: semanas.map((s2) => ({
+          inicio: s2.inicio, fim: s2.fim, atual: s2.atual,
+          total: arred(s2.total), entregas: s2.entregas,
+          porEntregador: Object.values(s2.porEntregador).map((e) => ({ ...e, total: arred(e.total) })).sort((a, b) => b.total - a.total),
+        })),
+        entregadores: Object.values(entregadores).map((e) => ({ ...e, total: arred(e.total) })).sort((a, b) => b.total - a.total),
+      });
+    } catch (e: any) {
+      console.error('[ENTREGAS-SEMANAIS]', e);
+      res.status(500).json({ message: e?.message || 'Erro ao calcular entregas da semana' });
+    }
+  });
+
   app.get("/api/delivery-routes/driver/my-routes", authenticateUser, async (req: any, res) => {
     try {
       console.log(`🚀🚀🚀 [DRIVER-ROUTES] ENDPOINT CHAMADO! 🚀🚀🚀`);
