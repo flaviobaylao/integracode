@@ -138,10 +138,13 @@ export default function Repescagem() {
     enabled: !!historyCustomer?.id,
   });
 
-  // Atendentes de repescagem = SOMENTE telemarketing. Os vendedores externos já recebem os
-  // próprios clientes na rota do dia (perímetro), então não entram no painel nem nos seletores.
+  // Atendentes CONFIGURÁVEIS de repescagem = telemarketing (recebem carteiras no painel).
   const panelAttendants = attendants.filter(a => a.role === 'telemarketing');
   const enabledAttendants = panelAttendants.filter(a => a.isEnabled);
+  // Vendedores externos: aparecem no painel de forma INFORMATIVA. Mantêm a regra de receberem
+  // os próprios clientes em repescagem na rota do dia (perímetro + card duplo) — não configuram
+  // carteiras aqui (o roteamento deles não muda).
+  const externalAttendants = attendants.filter(a => a.role === 'vendedor');
   const isAdmin = user?.role === 'admin';
 
   // Repescagem2: somente administradores habilitam/desabilitam atendentes.
@@ -442,9 +445,10 @@ export default function Repescagem() {
                 são rateados conforme os <b>%</b> escolhidos. O <b>atual %</b> em cinza mostra a cobertura real de hoje (resultado do rateio).
               </p>
               <p className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md px-2 py-1.5">
-                Os <b>vendedores externos</b> não aparecem aqui: eles já recebem os próprios clientes em repescagem na
-                <b> rota do dia</b> (perímetro). O telemarketing atende as carteiras marcadas abaixo (o dono também vê o
-                cliente na rota pelo <b>card duplo</b>).
+                O telemarketing atende as carteiras marcadas abaixo (o dono também vê o cliente na rota pelo
+                <b> card duplo</b>). Os <b>vendedores externos</b> aparecem mais abaixo, só para referência: eles
+                recebem os <b>próprios clientes</b> em repescagem na <b>rota do dia</b> (perímetro) — não precisam
+                de carteira aqui e o roteamento deles não muda.
               </p>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {panelAttendants.map(a => {
@@ -537,6 +541,30 @@ export default function Repescagem() {
                   <span className="text-xs text-gray-500">Nenhum atendente elegível.</span>
                 )}
               </div>
+
+              {/* Vendedores externos — informativo. Recebem os próprios clientes na rota do dia. */}
+              {externalAttendants.length > 0 && (
+                <div className="pt-1">
+                  <p className="text-[11px] font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Vendedores externos
+                    <span className="font-normal text-gray-500"> — recebem os próprios clientes em repescagem na rota do dia (perímetro). Não configuram carteira aqui.</span>
+                  </p>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                    {externalAttendants.map(a => (
+                      <div
+                        key={a.userId}
+                        className="rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 p-2"
+                        data-testid={`external-row-${a.userId}`}
+                      >
+                        <p className="text-sm font-medium truncate">{a.name}</p>
+                        <p className="text-[11px] text-gray-500">
+                          Externo · recebe os próprios clientes na <b>rota do dia</b> (perímetro / card duplo)
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="flex flex-wrap gap-2">
