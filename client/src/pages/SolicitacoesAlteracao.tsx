@@ -411,6 +411,14 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               <div className="whitespace-pre-wrap break-words">{rd.texto}</div>
             </div>
           )}
+          {rd.fotoUrl && (
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Foto</div>
+              <a href={rd.fotoUrl} target="_blank" rel="noreferrer" data-testid={`cr-foto-${r.id}`}>
+                <img src={rd.fotoUrl} alt="Foto anexada pelo vendedor" className="mt-1 max-h-40 rounded border object-contain" />
+              </a>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -652,6 +660,9 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
         <div className="rounded-md bg-muted/50 border p-2.5 text-sm space-y-1">
           {rd.motivo && <div><span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Motivo: </span>{rd.motivo}</div>}
           {rd.texto && <div className="whitespace-pre-wrap break-words">{rd.texto}</div>}
+          {rd.fotoUrl && (
+            <a href={rd.fotoUrl} target="_blank" rel="noreferrer"><img src={rd.fotoUrl} alt="Foto anexada pelo vendedor" className="mt-1 max-h-32 rounded border object-contain" /></a>
+          )}
         </div>
       ) : (<>
       <div className="flex flex-wrap gap-1">
