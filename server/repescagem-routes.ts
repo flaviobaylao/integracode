@@ -876,9 +876,10 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // Escolhe o alvo de um candidato: Fase A (externo por perimetro, dono primeiro,
   // teto EXTERNAL_MAX_PER_SELLER) -> Fase B (telemarketing por menor carga).
   function chooseTarget(customerId: string): { userId: string; phase: 'external' | 'telemarketing' } | null {
-    // Roteamento especial (Gilmar/Jhonatan/Carlos até 3 dias) tem prioridade, se o alvo estiver habilitado.
+    // Roteamento especial (carteira -> atendente configurado no painel) tem prioridade, se o alvo
+    // estiver habilitado. O alvo pode ser TELEMARKETING ou VENDEDOR EXTERNO (cross-carteira).
     const spTarget = specialTargetFor(customerId);
-    if (spTarget && internalSet.has(spTarget)) return { userId: spTarget, phase: 'telemarketing' };
+    if (spTarget && enabledSet.has(spTarget)) return { userId: spTarget, phase: externalSet.has(spTarget) ? 'external' : 'telemarketing' };
     if (isExternalPortfolio(customerId)) {
       const ownerId = coordById.get(customerId)?.sellerId || null;
       const qualifying = externalIds.filter(extId =>
@@ -917,7 +918,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   const pinnedSpecial = new Set<string>();
   for (const cand of candidates) {
     const target = specialTargetFor(cand.customerId);
-    if (target && internalSet.has(target)) pinnedSpecial.add(cand.customerId);
+    if (target && enabledSet.has(target)) pinnedSpecial.add(cand.customerId);
   }
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId) || !pinnedSpecial.has(a.customerId)) continue;
@@ -925,8 +926,9 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     const target = specialTargetFor(a.customerId)!;
     if (a.assignedUserId !== target) {
       const oldUser = a.assignedUserId;
+      const targetIsExternal = externalSet.has(target);
       await db.update(repescagemAssignments).set({
-        assignedUserId: target, phase: 'telemarketing', locked: false, lockedDate: null, assignedAt: new Date(), updatedAt: new Date(),
+        assignedUserId: target, phase: targetIsExternal ? 'external' : 'telemarketing', locked: false, lockedDate: null, assignedAt: new Date(), updatedAt: new Date(),
       }).where(eq(repescagemAssignments.id, a.id));
       await db.insert(repescagemAssignmentHistory).values({
         assignmentId: a.id, customerId: a.customerId, fromUserId: oldUser, toUserId: target,
@@ -934,7 +936,8 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       });
       if (externalSet.has(oldUser)) externalLoad.set(oldUser, Math.max(0, (externalLoad.get(oldUser) || 0) - 1));
       else if (internalSet.has(oldUser)) internalLoad.set(oldUser, Math.max(0, (internalLoad.get(oldUser) || 0) - 1));
-      internalLoad.set(target, (internalLoad.get(target) || 0) + 1);
+      if (targetIsExternal) externalLoad.set(target, (externalLoad.get(target) || 0) + 1);
+      else internalLoad.set(target, (internalLoad.get(target) || 0) + 1);
       validPendingByCustomer.set(a.customerId, { ...a, assignedUserId: target } as any);
     }
     // (removida a trava automatica das carteiras especiais — as linhas ficam livres;
@@ -1396,20 +1399,23 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     }
   } catch (e) { console.error('[runDailyDraw] lockedSurvivors:', (e as any)?.message); }
 
-  // ROTEAMENTO ESPECIAL (rota do dia): carteiras Gilmar/Jhonatan/Carlos dentro de 3 dias vão
-  // para Letícia/Robson (telemarketing) e travadas — não entram na alocação por perímetro.
+  // ROTEAMENTO ESPECIAL (carteira -> atendente configurado no painel): o alvo pode ser
+  // TELEMARKETING ou VENDEDOR EXTERNO (cross-carteira). Tem prioridade sobre o perímetro.
   const teleSet = new Set(telemarketers);
+  const extSellerSet = new Set(externalSellers);
   const crossReceiversDraw = await loadSpecialCrossReceivers();
   const splitLRDraw = repescagemSplitLR(candidates as any, (id) => coordById.get(id)?.sellerId || null, crossReceiversDraw);
   for (const cand of candidates) {
     if (allocated.has(cand.customerId)) continue; // já preservado (travado) ou alocado
     const owner = coordById.get(cand.customerId)?.sellerId || null;
     const target = repescagemSpecialTarget(owner, crossReceiversDraw, splitLRDraw.get(cand.customerId));
-    if (!target || !teleSet.has(target)) continue;
+    if (!target || (!teleSet.has(target) && !extSellerSet.has(target))) continue;
+    const targetIsExternal = extSellerSet.has(target);
     allocated.add(cand.customerId);
-    preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
+    if (targetIsExternal) extLoad.set(target, (extLoad.get(target) || 0) + 1);
+    else preTeleLoad.set(target, (preTeleLoad.get(target) || 0) + 1);
     rows.push({ customerId: cand.customerId, lastRedDate: cand.lastRedDate, assignedUserId: target,
-      carteiraSellerId: owner, phase: 'telemarketing', drawDate, status: 'in_route',
+      carteiraSellerId: owner, phase: targetIsExternal ? 'external' : 'telemarketing', drawDate, status: 'in_route',
       locked: false, lockedDate: null });
   }
 
