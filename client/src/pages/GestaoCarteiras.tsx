@@ -403,6 +403,22 @@ export default function GestaoCarteiras() {
   // olhamos o customerId no mapa de quarentena (cache de /api/customers).
   const [quarentenaSel, setQuarentenaSel] = useState<string>(""); // "", "sim", "nao"
   const qMap = useQuarentenaMap();
+  // Filtro de REPESCAGEM (Flavio, 18/10/2026). "Em repescagem" e' o estado de
+  // AGORA, a mesma regra da tag "Em Repescagem" dos cards de cliente — a regua
+  // mora em server/repescagem-ativa.ts, e por isso as duas telas nunca discordam.
+  // O cliente sai da lista assim que for atendido (visita, atendimento virtual
+  // ou pedido), sem esperar o fechamento automatico da repescagem.
+  const [repescagemSel, setRepescagemSel] = useState<string>(""); // "", "sim", "nao"
+  const { data: repAtiva } = useQuery<{ ids: string[] }>({
+    queryKey: ["/api/repescagem/em-repescagem"],
+    queryFn: async () => {
+      const r = await fetch("/api/repescagem/em-repescagem", { credentials: "include" });
+      if (!r.ok) throw new Error("falha ao ler repescagem");
+      return r.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const repSet = useMemo(() => new Set((repAtiva?.ids || []).map(String)), [repAtiva]);
   const [acaoCliente, setAcaoCliente] = useState<{ id: string; name: string } | null>(null);
   // Como o filtro aparece em varias frases: 1 vendedor mostra o nome, mais de um
   // vira "nas N carteiras selecionadas".
@@ -431,7 +447,8 @@ export default function GestaoCarteiras() {
   const filtrarTipo = tipoPessoa !== "";
   const filtrarCidade = cidades.length > 0;
   const filtrarQuarentena = quarentenaSel !== "";
-  const filtrando = filtrarVend || filtrarTipo || filtrarCidade || filtrarQuarentena;
+  const filtrarRepescagem = repescagemSel !== "";
+  const filtrando = filtrarVend || filtrarTipo || filtrarCidade || filtrarQuarentena || filtrarRepescagem;
   const clientes = useMemo(() => {
     let out = filtrarVend ? todos.filter((c) => nomesSel.has(c.vendedor)) : todos;
     if (filtrarTipo) out = out.filter((c) => c.tipo === tipoPessoa);
@@ -445,8 +462,14 @@ export default function GestaoCarteiras() {
         return quarentenaSel === "sim" ? emQ : !emQ;
       });
     }
+    if (filtrarRepescagem) {
+      out = out.filter((c) => {
+        const emR = !!c.customerId && repSet.has(String(c.customerId));
+        return repescagemSel === "sim" ? emR : !emR;
+      });
+    }
     return out;
-  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa, filtrarCidade, cidades, cidadePadrao, filtrarQuarentena, quarentenaSel, qMap]);
+  }, [todos, nomesSel, filtrarVend, filtrarTipo, tipoPessoa, filtrarCidade, cidades, cidadePadrao, filtrarQuarentena, quarentenaSel, qMap, filtrarRepescagem, repescagemSel, repSet]);
 
   /** Complemento de frase quando há cidade escolhida. */
   const rotuloCidade = !filtrarCidade
@@ -1144,6 +1167,19 @@ export default function GestaoCarteiras() {
                 <SelectItem value="todos">Todos</SelectItem>
                 <SelectItem value="sim">Em quarentena</SelectItem>
                 <SelectItem value="nao">Fora de quarentena</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Repescagem</label>
+            <Select value={repescagemSel || "todos"} onValueChange={(v) => setRepescagemSel(v === "todos" ? "" : v)}>
+              <SelectTrigger className="w-[180px]" data-testid="select-repescagem">
+                <SelectValue placeholder="Repescagem" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="sim">Em repescagem{repAtiva ? ` (${repSet.size})` : ""}</SelectItem>
+                <SelectItem value="nao">Fora da repescagem</SelectItem>
               </SelectContent>
             </Select>
           </div>
