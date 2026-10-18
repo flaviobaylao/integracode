@@ -146,14 +146,14 @@ function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, l
   );
 }
 
-// Abas do Dashboard com fundo colorido (uma cor por aba; a ativa fica solida).
+// Abas do Dashboard em tons de cinza (um tom por aba; a ativa fica escura).
 const TAB_CORES: Record<string, { on: string; off: string }> = {
-  painel: { on: "bg-indigo-600 text-white border-indigo-600 shadow-sm", off: "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100" },
-  historico: { on: "bg-sky-600 text-white border-sky-600 shadow-sm", off: "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100" },
-  diario: { on: "bg-violet-600 text-white border-violet-600 shadow-sm", off: "bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100" },
-  clientes: { on: "bg-amber-500 text-white border-amber-500 shadow-sm", off: "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100" },
-  campanha: { on: "bg-emerald-600 text-white border-emerald-600 shadow-sm", off: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" },
-  producao: { on: "bg-rose-600 text-white border-rose-600 shadow-sm", off: "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100" },
+  painel: { on: "bg-slate-700 text-white border-slate-700 shadow-sm", off: "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200" },
+  historico: { on: "bg-gray-700 text-white border-gray-700 shadow-sm", off: "bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200" },
+  diario: { on: "bg-zinc-700 text-white border-zinc-700 shadow-sm", off: "bg-zinc-200 text-zinc-700 border-zinc-300 hover:bg-zinc-300" },
+  clientes: { on: "bg-neutral-700 text-white border-neutral-700 shadow-sm", off: "bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200" },
+  campanha: { on: "bg-stone-700 text-white border-stone-700 shadow-sm", off: "bg-stone-200 text-stone-700 border-stone-300 hover:bg-stone-300" },
+  producao: { on: "bg-gray-800 text-white border-gray-800 shadow-sm", off: "bg-gray-200 text-gray-800 border-gray-300 hover:bg-gray-300" },
 };
 const tabCls = (k: string, atual: string) => "px-4 py-2 text-sm font-medium rounded-md border transition-colors " + (atual === k ? TAB_CORES[k].on : TAB_CORES[k].off);
 
