@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import { fireAutomation, fireOrderAutomation } from './automation-engine';
 import { ensureEntregaTempoSchema, registrarTempoEntregaCliente, notifyRotaIniciada, notifyEntregaFinalizada, testarNotificacoesRota } from './rota-entrega-notificacoes';
+import { ensureHorariosPrefSchema, atualizarHorariosPreferenciaisCliente, recalcularHorariosPreferenciaisTodos, lerHorariosPreferenciais } from './horarios-preferenciais';
 import { createServer, type Server } from "http";
 import { nfVendaWhere, nfVendaFrom, nfData, PIPELINE_POR_NF, VIGENCIA_REGRA_OFICIAL } from "./faturamento-oficial";
 import { storage, customersBoughtInCycle } from "./storage";
@@ -781,6 +782,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   try {
     await ensureEntregaTempoSchema();
   } catch (e: any) { console.warn('⚠️ ensureEntregaTempoSchema:', e?.message); }
+  try { await ensureHorariosPrefSchema(); } catch (e: any) { console.warn('⚠️ ensureHorariosPrefSchema:', e?.message); }
+
+  // ── Horários preferenciais de entrega do cliente (calculados das entregas efetuadas) ──
+  app.get("/api/customers/:id/horarios-preferenciais", authenticateUser, async (req: any, res) => {
+    try {
+      const pref = await lerHorariosPreferenciais(String(req.params.id));
+      res.json(pref || null);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'Erro ao ler horários preferenciais' });
+    }
+  });
+  app.post("/api/customers/:id/horarios-preferenciais/recalcular", authenticateUser, async (req: any, res) => {
+    const pref = await atualizarHorariosPreferenciaisCliente(String(req.params.id));
+    res.json(pref || null);
+  });
+  app.post("/api/admin/customers/recalcular-horarios-preferenciais", authenticateUser, requireRole(['admin']), async (_req: any, res) => {
+    try {
+      res.json(await recalcularHorariosPreferenciaisTodos());
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'Erro ao recalcular' });
+    }
+  });
 
   // Configure Evolution API for WhatsApp
   const evolutionBaseUrl = process.env.EVOLUTION_API_BASE_URL;
@@ -14144,6 +14167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(eq(deliveryRouteStops.id, stopId))
         .returning();
+      if (stop[0]?.customerId) atualizarHorariosPreferenciaisCliente(String(stop[0].customerId)).catch(() => {});
       
       // (E4) Bloco de troca de etapa "Entregue" no Omie removido — Omie desligado (omieOrderId sempre NULL).
       
@@ -14279,6 +14303,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (duracaoSeg != null && stop[0].customerId) {
         registrarTempoEntregaCliente(String(stop[0].customerId), duracaoSeg, now).catch(() => {});
       }
+      // 🕘 Horários preferenciais do cliente (a partir das entregas efetuadas). Fire-and-forget.
+      if (stop[0].customerId) atualizarHorariosPreferenciaisCliente(String(stop[0].customerId)).catch(() => {});
 
       // 📲 Aviso de WhatsApp: entrega efetuada (com início/fim/tempo) + PRÓXIMA entrega da rota.
       // Substitui a automação antiga 'entrega.finalizada'. Fire-and-forget.
@@ -14535,6 +14561,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const { processarEntregaNoPipeline } = await import('./deliveryPipelineSync');
         const st = updatedStop?.[0] || stop?.[0];
+        if (st && status === 'efetuada' && st.customerId) atualizarHorariosPreferenciaisCliente(String(st.customerId)).catch(() => {});
         if (st && (status === 'efetuada' || status === 'devolvida')) {
           const ph = Array.isArray(st.photos) ? st.photos : [];
           await processarEntregaNoPipeline({

@@ -1,4 +1,5 @@
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
+import HorariosPreferenciaisCliente from "@/components/HorariosPreferenciaisCliente";
 import { useState, useEffect, useRef } from "react";
 import { CidadePicker } from "@/components/CidadePicker";
 import ParticularidadesField from "@/components/ParticularidadesField";
@@ -1118,6 +1119,12 @@ export default function CustomerEditModal({
                 <p className="text-xs text-sky-700">Cronometrado pelo entregador (Iniciar Entrega → foto do comprovante). Somente leitura — será usado na montagem das rotas de entrega.</p>
               </div>
             )}
+            {/* 🕘 Horários preferenciais (calculados das entregas efetuadas) */}
+            <HorariosPreferenciaisCliente
+              customerId={(customer as any)?.id}
+              onUsarSemana={(slots) => setFormData((prev) => ({ ...prev, deliveryTimeSlots: slots }))}
+              onUsarSabado={(slots) => setFormData((prev) => ({ ...prev, deliverySaturdayTimeSlots: slots }))}
+            />
 
             {/* Dados de Pagamento Padrão (condição de pagamento do cliente) */}
             <div className="space-y-3 border border-emerald-200 bg-emerald-50 p-4 rounded-lg">
