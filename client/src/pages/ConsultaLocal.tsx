@@ -25,6 +25,7 @@ type UltimoPedido = {
 type DadosCliente = {
   whatsapp?: string | null;        // só dígitos, com 55
   whatsConfirmado?: boolean;       // número atual confirmado pelo link do WhatsApp
+  emRepescagem?: boolean;          // cliente ativo (não PF) em repescagem agora — some quando atendido
   ultimoPedido?: UltimoPedido;
 };
 
@@ -85,7 +86,7 @@ type Fase = "idle" | "localizando" | "buscando" | "pronto" | "erro";
 type NovosFase = "idle" | "buscando" | "pronto" | "erro" | "disabled";
 type FotoFase = "idle" | "lendo" | "pronto" | "erro" | "disabled";
 
-const RAIO_PADRAO = 100;
+const RAIO_PADRAO = 300; // raio inicial da aba No Integra (ampliável para 500 m)
 const RAIO_INTERNO = 300; // interno (telemarketing/administrativo) consulta a região do cliente de referência em 300 m
 
 type ClienteRef = {
@@ -663,7 +664,10 @@ export default function ConsultaLocal() {
                                 <HistoricoOcorrencias leadId={m.id} nome={m.nome} atrasado={m.atrasado} diasAtraso={m.diasAtraso} />
                               )}
                             </div>
-                            <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{est.rotulo}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{est.rotulo}</span>
+                              {m.tipo === "cliente" && m.emRepescagem && <span className="inline-block mt-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#b89b5e] text-white" data-testid="tag-em-repescagem">Em Repescagem</span>}
+                            </div>
                           </div>
                         </div>
                         <div className="text-xs text-muted-foreground space-y-1 pl-7">
@@ -755,8 +759,7 @@ export default function ConsultaLocal() {
                   <p className="font-medium">Nenhum cadastro em até {raioUsado} m</p>
                   <p className="text-muted-foreground">Este ponto não parece estar no Integra. Veja a aba <strong>Novos pontos</strong> ou amplie o raio.</p>
                   <div className="flex gap-2 justify-center pt-2">
-                    {raioUsado < 300 && <Button variant="outline" size="sm" onClick={() => ampliar(300)}>Ampliar para 300 m</Button>}
-                    {raioUsado < 500 && raioUsado >= 300 && <Button variant="outline" size="sm" onClick={() => ampliar(500)}>Ampliar para 500 m</Button>}
+                    {raioUsado < 500 && <Button variant="outline" size="sm" onClick={() => ampliar(500)} data-testid="button-ampliar-integra">Ampliar para 500 m</Button>}
                   </div>
                 </CardContent>
               </Card>
@@ -778,7 +781,10 @@ export default function ConsultaLocal() {
                                   <HistoricoOcorrencias leadId={r.id} nome={r.nome} atrasado={r.atrasado} diasAtraso={r.diasAtraso} />
                                 )}
                               </div>
-                              <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{r.tipo === "lead" && r.descartado ? "Lead já visitado — não convertido" : r.statusLabel}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${est.tag}`}>{r.tipo === "lead" && r.descartado ? "Lead já visitado — não convertido" : r.statusLabel}</span>
+                                {r.tipo === "cliente" && r.emRepescagem && <span className="inline-block mt-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#b89b5e] text-white" data-testid="tag-em-repescagem">Em Repescagem</span>}
+                              </div>
                             </div>
                           </div>
                           <Badge variant="secondary" className="shrink-0 whitespace-nowrap">{r.distancia} m</Badge>
@@ -807,7 +813,7 @@ export default function ConsultaLocal() {
                 })}
                 {raioUsado < 500 && (
                   <div className="flex justify-center pt-1">
-                    <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => ampliar(raioUsado < 300 ? 300 : 500)}>Ampliar busca para {raioUsado < 300 ? 300 : 500} m</Button>
+                    <Button variant="outline" size="sm" onClick={() => ampliar(500)} data-testid="button-ampliar-integra"><Crosshair className="h-4 w-4 mr-2" /> Ampliar busca para 500 m</Button>
                   </div>
                 )}
               </div>
