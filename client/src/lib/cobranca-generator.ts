@@ -459,7 +459,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
     const serv = s.estimatedServiceTime == null || s.estimatedServiceTime === ('' as any) ? null : Number(s.estimatedServiceTime);
     const ant = i > 0 ? stops[i - 1] : null;
     const junto = serv === 0 && !!ant && trecho < 0.05;
-    const entregaTxt = serv == null || !Number.isFinite(serv) ? '-' : junto ? `junto c/ ${ant!.stopOrder ?? i}` : `${Math.round(serv)} min`;
+    const entregaTxt = serv == null || !Number.isFinite(serv) ? '-' : junto ? `c/ #${ant!.stopOrder ?? i}` : `${Math.round(serv)} min`;
     const ini = hhmm(s.estimatedArrival);
     const saidaTxt = s.estimatedDeparture && hhmm(s.estimatedDeparture) != null
       ? String(s.estimatedDeparture).slice(0, 5)
@@ -483,7 +483,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
 
   autoTable(doc, {
     startY: y,
-    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de recebimento', 'Chegada', 'Tempo de entrega', 'Saída', 'Trecho (km)', 'Acum. (km)', 'Valor']],
+    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de recebimento', 'Chegada', 'Entrega', 'Saída', 'Trecho (km)', 'Acum. (km)', 'Valor']],
     body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '', '', '', '']],
     foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', '', totalServico > 0 ? `${Math.round(totalServico)} min` : '', '', totalKm.toFixed(1), '', BRL(totalVal)]],
     theme: 'grid',
@@ -507,16 +507,16 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
     },
     columnStyles: {
       0: { halign: 'center', cellWidth: 7 },
-      1: { cellWidth: 29 },
-      2: { cellWidth: 33 },
+      1: { cellWidth: 28 },
+      2: { cellWidth: 31 },
       3: { cellWidth: 20, halign: 'center' },
       4: { cellWidth: 22, halign: 'center' },
-      5: { cellWidth: 12, halign: 'center' },
-      6: { cellWidth: 12, halign: 'center' },
+      5: { cellWidth: 13.5, halign: 'center' },
+      6: { cellWidth: 12.5, halign: 'center' },
       7: { cellWidth: 11, halign: 'center' },
       8: { cellWidth: 11, halign: 'right' },
       9: { cellWidth: 11, halign: 'right' },
-      10: { cellWidth: 18, halign: 'right' },
+      10: { cellWidth: 19, halign: 'right' },
     },
     margin: { left: 12, right: 12, top: 14 },
   });
@@ -526,7 +526,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
   const notas: string[] = [];
   if (stops.some(s => s.isPriority)) notas.push('* entrega prioritária');
   if (stops.some(s => s.foraDaJanela)) notas.push('! chegada prevista fora do horário de recebimento do cliente');
-  notas.push('Chegada = início previsto da entrega (deslocamento + espera pelo horário de recebimento). Tempo de entrega = média cronometrada do cliente (5 min se ainda não medido). Saída = chegada + tempo de entrega.');
+  notas.push('Chegada = início previsto da entrega (deslocamento + espera pelo horário de recebimento). Entrega = tempo de entrega do cliente (média cronometrada; 5 min se ainda não medido; "c/ #N" = descarrega junto com a parada N, mesmo cliente). Saída = chegada + entrega.');
   doc.setFontSize(7); doc.setTextColor(120);
   for (const n of notas) { const ls = doc.splitTextToSize(n, 186); doc.text(ls, 12, fy + 4); fy += 3.2 * ls.length + 0.4; }
   doc.setTextColor(0);
