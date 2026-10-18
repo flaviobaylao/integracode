@@ -1522,6 +1522,56 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // POST /api/admin/buscar-nome-ids — SOMENTE LEITURA, diagnóstico.
+  //   Recebe { ids: [...] } e procura um nome para cada id em TODO o banco: varre o
+  //   catálogo atrás de qualquer tabela que tenha uma coluna referenciando o id
+  //   (customer_id, lead_id, entity_id, id) e alguma coluna de texto com "name"/"nome"
+  //   no nome. Serve para recuperar o nome de cadastros que foram apagados e só
+  //   sobraram como id solto em pedidos, visitas e recebíveis.
+  // --------------------------------------------------------------------------
+  app.post("/api/admin/buscar-nome-ids", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 200);
+    if (ids.length === 0) return res.status(400).json({ error: "Informe ids." });
+    const inIds = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+    const pares = rowsOf(await db.execute(sql`
+      SELECT ref.table_name AS t, ref.column_name AS refcol, nome.column_name AS nomecol
+        FROM information_schema.columns ref
+        JOIN information_schema.columns nome
+          ON nome.table_schema = ref.table_schema AND nome.table_name = ref.table_name
+       WHERE ref.table_schema = 'public'
+         AND ref.column_name IN ('customer_id','lead_id','entity_id','id')
+         AND nome.data_type IN ('text','character varying','character')
+         AND (nome.column_name LIKE '%name%' OR nome.column_name LIKE '%nome%')
+         AND nome.column_name <> ref.column_name
+       ORDER BY ref.table_name, nome.column_name
+       LIMIT 400`));
+    const achados: Record<string, any[]> = {};
+    let consultas = 0;
+    for (const p of pares) {
+      if (consultas++ > 400) break;
+      try {
+        const r = rowsOf(await db.execute(sql`
+          SELECT DISTINCT ${sql.raw(`"${p.refcol}"`)}::text AS id, ${sql.raw(`"${p.nomecol}"`)}::text AS nome
+            FROM ${sql.raw(`"${p.t}"`)}
+           WHERE ${sql.raw(`"${p.refcol}"`)}::text IN (${inIds})
+             AND NULLIF(btrim(${sql.raw(`"${p.nomecol}"`)}::text),'') IS NOT NULL
+           LIMIT 200`));
+        for (const row of r) {
+          const k = String(row.id);
+          if (!achados[k]) achados[k] = [];
+          if (!achados[k].some((a: any) => a.nome === row.nome))
+            achados[k].push({ nome: row.nome, fonte: `${p.t}.${p.nomecol}` });
+        }
+      } catch { /* tabela/coluna inacessível — ignora e segue */ }
+    }
+    res.json({
+      ok: true, idsConsultados: ids.length, tabelasVarridas: pares.length,
+      comNome: Object.keys(achados).length,
+      resultado: ids.map((id) => ({ id, nomes: achados[id] || [] })),
+    });
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/admin/regularize-orphans — regulariza o PASSIVO de órfãos (cliente
   // inexistente): cancela sales_cards pendentes, rejeita pedidos bloqueados e faz
   // soft-cancel (deleted_at) dos recebíveis em aberto órfãos. dryRun por padrão.
