@@ -185,16 +185,10 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
     refetchInterval: 5 * 60 * 1000,
   });
   const [config, setConfig] = useState(false);
-  // Recolher/expandir: recolhida mostra so o cabecalho e os indicadores. Lembra a escolha no navegador.
-  const chaveAberto = "entregas-semanais-aberto-" + modo;
-  const [aberto, setAberto] = useState<boolean>(() => {
-    try { return localStorage.getItem(chaveAberto) !== "0"; } catch { return true; }
-  });
-  const alternarAberto = () => setAberto((v) => {
-    const nv = !v;
-    try { localStorage.setItem(chaveAberto, nv ? "1" : "0"); } catch {}
-    return nv;
-  });
+  // Recolher/expandir: recolhida mostra so o cabecalho e os indicadores. Sempre abre EXPANDIDA
+  // (com o grafico e a planilha por entregador); o recolher vale so enquanto a tela esta aberta.
+  const [aberto, setAberto] = useState(true);
+  const alternarAberto = () => setAberto((v) => !v);
   const [info, setInfo] = useState(false);
 
   const semanas = data?.semanas || [];
