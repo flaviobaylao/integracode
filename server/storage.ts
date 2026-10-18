@@ -3564,12 +3564,13 @@ export class DatabaseStorage implements IStorage {
   async createDeliveryDriver(data: any): Promise<any> {
     const isActive = data.isActive !== undefined ? data.isActive : true;
     const result = await db.execute(sql`
-      INSERT INTO delivery_drivers (name, phone, vehicle_type, license_plate, is_active, current_location)
-      VALUES (${data.name}, ${data.phone}, ${data.vehicleType}, ${data.licensePlate}, ${isActive}, ${data.currentLocation || null})
+      INSERT INTO delivery_drivers (name, phone, email, vehicle_type, license_plate, is_active, current_location)
+      VALUES (${data.name}, ${data.phone ?? ''}, ${data.email ? String(data.email).toLowerCase().trim() : null}, ${data.vehicleType ?? null}, ${data.licensePlate ?? null}, ${isActive}, ${data.currentLocation || null})
       RETURNING 
         id,
         name,
         phone,
+        email,
         vehicle_type as "vehicleType",
         license_plate as "licensePlate",
         is_active as "isActive",
