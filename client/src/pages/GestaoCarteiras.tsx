@@ -690,8 +690,12 @@ export default function GestaoCarteiras() {
     return `${NUM(n)} ${n === 1 ? "cliente" : "clientes"}${filtrarVend ? " no filtro" : " da carteira"}`;
   }, [clienteDaSerie, redeDaSerie, clientes, todos, filtrarVend]);
 
+  // Os KPIs do topo seguem QUALQUER filtro, nao so' o de vendedor. Ate 18/10/2026
+  // a condicao era `filtrarVend`: com Tipo, Cidade, Quarentena ou Repescagem
+  // ligados, a tabela mostrava o recorte e o topo continuava com o total da
+  // carteira inteira — 18 clientes embaixo e 1.886 em cima na mesma tela.
   const kpis = useMemo(() => {
-    if (!filtrarVend) return d?.kpis || {};
+    if (!filtrando) return d?.kpis || {};
     const tot = clientes.reduce((s, c) => s + c.total, 0);
     const ult = serie[serie.length - 1];
     const pen = serie.length > 1 ? serie[serie.length - 2] : null;
@@ -705,7 +709,7 @@ export default function GestaoCarteiras() {
       mesAnterior: pen?.valor || 0,
       varPct: pen && pen.valor > 0 && ult ? ((ult.valor - pen.valor) / pen.valor) * 100 : null,
     };
-  }, [d, clientes, serie, meses, filtrarVend]);
+  }, [d, clientes, serie, meses, filtrando]);
 
   // Contagem por letra da classe dentro do recorte atual (vendedor/PJ-PF), para os chips.
   const porLetra = useMemo(() => {
