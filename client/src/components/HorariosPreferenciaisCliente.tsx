@@ -23,13 +23,22 @@ function Distribuicao({ porHora }: { porHora: number[] }) {
   const horas = porHora.slice(ini, fim + 1);
   const max = Math.max(1, ...horas);
   return (
-    <div className="flex items-end gap-[2px] h-8 mt-1" aria-label="Entregas por hora do dia">
-      {horas.map((n, i) => (
-        <div key={i} className="flex flex-col items-center flex-1 min-w-0" title={`${ini + i}h: ${n} entrega(s)`}>
-          <div className={`w-full rounded-sm ${n ? "bg-indigo-500" : "bg-indigo-100"}`} style={{ height: `${n ? Math.max(12, (n / max) * 100) : 6}%` }} />
-          {(ini + i) % 2 === 0 && <span className="text-[9px] leading-none text-indigo-700 mt-0.5">{ini + i}</span>}
-        </div>
-      ))}
+    <div className="mt-1.5" aria-label="Entregas por hora do dia">
+      <div className="flex items-end gap-[2px] h-7">
+        {horas.map((n, i) => (
+          <div
+            key={i}
+            className={`flex-1 min-w-0 rounded-sm ${n ? "bg-indigo-500" : "bg-indigo-100"}`}
+            style={{ height: n ? `${Math.max(4, Math.round((n / max) * 28))}px` : "2px" }}
+            title={`${ini + i}h: ${n} entrega(s)`}
+          />
+        ))}
+      </div>
+      <div className="flex gap-[2px] mt-0.5">
+        {horas.map((_, i) => (
+          <span key={i} className="flex-1 min-w-0 text-center text-[9px] leading-none text-indigo-700">{(ini + i) % 2 === 0 ? ini + i : ""}</span>
+        ))}
+      </div>
     </div>
   );
 }
