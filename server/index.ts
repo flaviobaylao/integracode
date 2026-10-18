@@ -75,6 +75,7 @@ import { registerLeadCapture } from "./lead-capture";
 import { sql } from "drizzle-orm";
 import { whereDebitoVivoSql } from "./divida-viva";
 import { registerRepescagemRoutes } from './repescagem-routes';
+import { registerRepescagemAtiva } from './repescagem-ativa';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole, gone } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
@@ -876,6 +877,8 @@ run();
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   try { registerRepescagemRoutes(app, { authenticateUser, requireRole }); } catch (e) { console.error('[repescagem routes]', e); }
+  // Quem esta em repescagem AGORA (tag dos cards + filtro da Gestao de Carteiras).
+  try { registerRepescagemAtiva(app); } catch (e) { console.error('[repescagem ativa]', e); }
 
   // ==========================================================================
   // TRAVA DE ACESSO DAS ROTAS DE SYNC (06/ago/2026)
