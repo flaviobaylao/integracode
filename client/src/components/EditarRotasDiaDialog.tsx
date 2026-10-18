@@ -186,7 +186,7 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!salvando) onOpenChange(v); }}>
-      <DialogContent className="max-w-[96vw] w-[1400px] max-h-[92vh] flex flex-col" data-testid="dialog-editar-rotas-dia">
+      <DialogContent className="!max-w-[min(96vw,1500px)] !w-[96vw] max-h-[92vh] flex flex-col" data-testid="dialog-editar-rotas-dia">
         <DialogHeader>
           <DialogTitle>Editar rotas de {dataBR}</DialogTitle>
           <DialogDescription>
