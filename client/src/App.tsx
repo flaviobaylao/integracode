@@ -37,6 +37,7 @@ import UserManagementPage from "@/pages/UserManagementPage";
 import OverdueDebtsPage from "@/pages/OverdueDebts";
 import ExtratoClientePage from "@/pages/ExtratoCliente";
 import SalesGoalsPage from "@/pages/SalesGoals";
+import ResumoRecebiveis from "@/pages/ResumoRecebiveis";
 import CheckInPhotos from "@/pages/CheckInPhotos";
 import HRManagement from "@/pages/HRManagement";
 import CheckInAudit from "@/pages/CheckInAudit";
@@ -274,6 +275,7 @@ function Router() {
           <Route path="/sales-schedule" component={SalesSchedule} />
           <Route path="/billings" component={Billings} />
           <Route path="/sales-goals" component={SalesGoalsPage} />
+          <Route path="/resumo-recebiveis" component={ResumoRecebiveis} />
           <Route path="/blocked-orders" component={BlockedOrdersPage} />
           <Route path="/overdue-debts" component={OverdueDebtsPage} />
           <Route path="/extrato-cliente" component={ExtratoClientePage} />
