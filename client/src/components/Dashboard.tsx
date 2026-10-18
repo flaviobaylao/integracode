@@ -146,6 +146,17 @@ function MiniBars({ values, highlight, color = "#10b981", height = 40, labels, l
   );
 }
 
+// Abas do Dashboard com fundo colorido (uma cor por aba; a ativa fica solida).
+const TAB_CORES: Record<string, { on: string; off: string }> = {
+  painel: { on: "bg-indigo-600 text-white border-indigo-600 shadow-sm", off: "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100" },
+  historico: { on: "bg-sky-600 text-white border-sky-600 shadow-sm", off: "bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100" },
+  diario: { on: "bg-violet-600 text-white border-violet-600 shadow-sm", off: "bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100" },
+  clientes: { on: "bg-amber-500 text-white border-amber-500 shadow-sm", off: "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100" },
+  campanha: { on: "bg-emerald-600 text-white border-emerald-600 shadow-sm", off: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" },
+  producao: { on: "bg-rose-600 text-white border-rose-600 shadow-sm", off: "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100" },
+};
+const tabCls = (k: string, atual: string) => "px-4 py-2 text-sm font-medium rounded-md border transition-colors " + (atual === k ? TAB_CORES[k].on : TAB_CORES[k].off);
+
 export default function Dashboard() {
   // PERFORMANCE (06/10/2026): o servidor cacheia /api/dashboard2/full por 60 s por escopo, entao
   // staleTime 0 + refetch a cada foco so gerava requisicoes repetidas (e, no incidente de 06/10,
@@ -428,13 +439,13 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 p-4">
-      <div className="flex gap-1 border-b border-gray-200 mb-4">
-        <button type="button" onClick={() => setHistView("painel")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "painel" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Painel</button>
-        <button type="button" onClick={() => setHistView("historico")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "historico" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Histórico</button>
-        <button type="button" onClick={() => setHistView("diario")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "diario" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Histórico Diário</button>
-        <button type="button" onClick={() => setHistView("clientes")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "clientes" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Variação de Vendas</button>
-        <button type="button" onClick={() => setHistView("campanha")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "campanha" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Campanha de Outubro</button>
-        {isAdmin && <button type="button" onClick={() => setHistView("producao")} className={"px-4 py-2 text-sm font-medium border-b-2 -mb-px " + (histView === "producao" ? "border-indigo-600 text-indigo-700" : "border-transparent text-gray-500 hover:text-gray-700")}>Produção &amp; Faturamento</button>}
+      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-3 mb-4">
+        <button type="button" onClick={() => setHistView("painel")} className={tabCls("painel", histView)}>Painel</button>
+        <button type="button" onClick={() => setHistView("historico")} className={tabCls("historico", histView)}>Histórico</button>
+        <button type="button" onClick={() => setHistView("diario")} className={tabCls("diario", histView)}>Histórico Diário</button>
+        <button type="button" onClick={() => setHistView("clientes")} className={tabCls("clientes", histView)}>Variação de Vendas</button>
+        <button type="button" onClick={() => setHistView("campanha")} className={tabCls("campanha", histView)}>Campanha de Outubro</button>
+        {isAdmin && <button type="button" onClick={() => setHistView("producao")} className={tabCls("producao", histView)}>Produção &amp; Faturamento</button>}
       </div>
       {histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "campanha" ? <CampanhaOutubro /> : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
