@@ -12964,6 +12964,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // Dias com rotas salvas (atalho da tela "Rotas de Entrega" para abrir, alterar
+  // e reimprimir rotas de dias anteriores). Ignora rotas canceladas.
+  app.get("/api/delivery-routes/dias-salvos", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const dias = Math.min(Math.max(parseInt(String(req.query.dias || '45'), 10) || 45, 1), 365);
+      const q: any = await db.execute(sql`
+        SELECT to_char(route_date, 'YYYY-MM-DD') AS data,
+               COUNT(*)::int AS rotas,
+               COALESCE(SUM(total_deliveries), 0)::int AS paradas,
+               string_agg(DISTINCT driver_name, ', ') AS entregadores
+        FROM delivery_routes
+        WHERE COALESCE(status, '') NOT IN ('cancelled', 'cancelada')
+          AND route_date >= (CURRENT_DATE - (${dias} * INTERVAL '1 day'))
+        GROUP BY route_date
+        ORDER BY route_date DESC`);
+      res.json((q.rows || q).map((r: any) => ({ data: r.data, rotas: Number(r.rotas) || 0, paradas: Number(r.paradas) || 0, entregadores: r.entregadores || '' })));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'Erro ao listar dias com rotas' });
+    }
+  });
+
   app.get("/api/delivery-routes/comissao-config", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
     try {
       const cfg = await lerConfigComissaoEntrega();

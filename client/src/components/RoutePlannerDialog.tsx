@@ -374,7 +374,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
         title: 'Rotas salvas e enviadas',
         description: `${data?.routes?.length || 0} rota(s) gravada(s). Os cards foram para "Em Rota".`
           + (excluidos.length ? ` ${dev || excluidos.length} entrega(s) excluída(s) voltaram para "Aguardando Rota".` : '')
-          + ' Imprima os pedidos aqui ou depois, em Rotas de Entrega.',
+          + ' Imprima os pedidos aqui ou depois, em Rotas de Entrega (botão "Rotas salvas" do Pipeline).',
       });
     },
     onError: (error: any) => {
@@ -996,7 +996,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                       {savedInfo.rotas} rota(s) salva(s) e enviada(s) aos motoristas.
                     </span>
                     <span className="text-xs text-gray-600 dark:text-gray-400">
-                      Imprima agora ou depois, na tela <b>Rotas de Entrega</b>.
+                      Imprima agora ou depois, na tela <b>Rotas de Entrega</b> (botão "Rotas salvas" do Pipeline), onde também dá para alterar a rota.
                     </span>
                   </div>
                 </CardContent></Card>

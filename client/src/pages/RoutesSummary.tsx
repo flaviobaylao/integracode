@@ -31,8 +31,13 @@ import {
   MessageCircle,
   RefreshCw,
   Save,
-  Send
+  Send,
+  Printer,
+  Loader2,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
+import { imprimirFolhasDeRosto, imprimirRotasCompleto, rotaSalva } from "@/lib/route-print";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline } from "react-leaflet";
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -109,7 +114,14 @@ interface StopForTransfer {
 }
 
 export default function RoutesSummary() {
-  const [selectedDate, setSelectedDate] = useState(getBrazilDateISO());
+  // ?date=AAAA-MM-DD abre direto no dia (atalho do Pipeline / links).
+  const [selectedDate, setSelectedDate] = useState(() => {
+    try {
+      const d = new URLSearchParams(window.location.search).get('date') || '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    } catch { /* sem parâmetro */ }
+    return getBrazilDateISO();
+  });
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [showAddOrders, setShowAddOrders] = useState(false);
@@ -537,122 +549,59 @@ export default function RoutesSummary() {
 
   const selectedRouteData = routes.find(r => r.id === selectedRoute);
 
-  const generateRoutePDF = async () => {
-    if (!selectedRouteData) return;
-    
+  // ── REIMPRESSÃO (mesmo romaneio do pop-up "Gerar Rotas IA") ────────────────
+  // Folha de rosto do motorista (ordem, horário de recebimento, produtos, carga
+  // total, mapa do dia) e, no "Completo", pedido + DANFE + cobrança de cada
+  // entrega, na ordem da rota. Usa as paradas COMO ESTÃO AGORA (após ajustes).
+  const [imprimindo, setImprimindo] = useState<string | null>(null);
+  const rotasImprimiveis = routes.filter(r => !['cancelled', 'cancelada'].includes(String(r.status)) && (r.stops?.length || 0) > 0);
+
+  const imprimir = async (alvo: DeliveryRoute[], tipo: 'completo' | 'rosto', chave: string) => {
+    const rotas = alvo
+      .filter(r => !['cancelled', 'cancelada'].includes(String(r.status)))
+      .map(r => rotaSalva(r, [...(r.stops || [])].sort((a, b) => (a.stopOrder || 0) - (b.stopOrder || 0))))
+      .filter(r => r.stops.length > 0);
+    if (rotas.length === 0) { toast({ title: 'Nenhuma rota com entregas para imprimir', variant: 'destructive' }); return; }
+    setImprimindo(chave);
     try {
-      // Importar jsPDF dinamicamente
-      const { jsPDF } = await import('jspdf');
-      const doc = new jsPDF();
-      
-      // Cores
-      const primaryColor = [34, 197, 94]; // green-600
-      const textColor = [0, 0, 0];
-      const lightGray = [242, 242, 242];
-      
-      // Título
-      doc.setFontSize(20);
-      doc.setTextColor(...primaryColor);
-      doc.text('RESUMO DA ROTA DE ENTREGA', 14, 20);
-      
-      // Data de geração
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR', { timeZone: BRAZIL_TZ })}`, 14, 28);
-      
-      // Seção 1: Informações Gerais
-      doc.setFontSize(12);
-      doc.setTextColor(...primaryColor);
-      doc.text('INFORMAÇÕES GERAIS', 14, 38);
-      
-      doc.setFontSize(10);
-      doc.setTextColor(...textColor);
-      const infoY = 45;
-      doc.text(`Rota: ${selectedRouteData.routeName}`, 14, infoY);
-      doc.text(`Motorista: ${selectedRouteData.driverName}`, 14, infoY + 7);
-      doc.text(`Data: ${format(parseISO(selectedRouteData.routeDate), 'dd/MM/yyyy')}`, 14, infoY + 14);
-      doc.text(`Veículo: ${selectedRouteData.vehicleType === 'caminhao' ? 'Caminhão' : selectedRouteData.vehicleType === 'carro' ? 'Carro' : selectedRouteData.vehicleType === 'baruc' ? 'Baruc' : 'Moto'}`, 14, infoY + 21);
-      
-      // Seção 2: Métricas
-      doc.setFontSize(12);
-      doc.setTextColor(...primaryColor);
-      doc.text('MÉTRICAS', 14, 80);
-      
-      doc.setFontSize(10);
-      doc.setTextColor(...textColor);
-      const metricsY = 87;
-      doc.text(`Total de Paradas: ${selectedRouteData.totalDeliveries}`, 14, metricsY);
-      doc.text(`Distância Total: ${parseFloat(selectedRouteData.totalDistance).toFixed(1)} km`, 14, metricsY + 7);
-      doc.text(`Duração Estimada: ${Math.round(selectedRouteData.totalDuration)} minutos`, 14, metricsY + 14);
-      doc.text(`Status: ${selectedRouteData.status.toUpperCase()}`, 14, metricsY + 21);
-      
-      // Seção 3: Paradas
-      doc.setFontSize(12);
-      doc.setTextColor(...primaryColor);
-      doc.text('PARADAS DA ROTA', 14, 125);
-      
-      let yPosition = 132;
-      const pageHeight = doc.internal.pageSize.getHeight();
-      
-      if (selectedRouteData.stops && selectedRouteData.stops.length > 0) {
-        doc.setFontSize(9);
-        
-        selectedRouteData.stops.forEach((stop, index) => {
-          // Verificar se precisa de nova página
-          if (yPosition > pageHeight - 20) {
-            doc.addPage();
-            yPosition = 14;
-          }
-          
-          doc.setTextColor(34, 197, 94);
-          doc.text(`${index + 1}. ${stop.customerName}`, 14, yPosition);
-          
-          doc.setTextColor(...textColor);
-          doc.setFontSize(8);
-          doc.text(`Endereço: ${stop.customerAddress}`, 18, yPosition + 5);
-          doc.text(`Ordem: ${stop.stopOrder} | Status: ${stop.status.toUpperCase()}${stop.orderNumber ? ` | Pedido: ${stop.orderNumber}` : ''}`, 18, yPosition + 9);
-          
-          yPosition += 15;
-        });
+      if (tipo === 'rosto') {
+        const n = await imprimirFolhasDeRosto(rotas);
+        toast({ title: `${n} folha(s) de rosto gerada(s)` });
+      } else {
+        const res = await imprimirRotasCompleto(rotas);
+        toast({ title: `${res.pedidos} pedido(s) impresso(s)`, description: `${res.rotas} rota(s) no PDF.` });
       }
-      
-      // Rodapé
-      const totalPages = doc.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150, 150, 150);
-        doc.text(
-          `Página ${i} de ${totalPages}`,
-          doc.internal.pageSize.getWidth() / 2,
-          doc.internal.pageSize.getHeight() - 10,
-          { align: 'center' }
-        );
-      }
-      
-      // Salvar PDF
-      doc.save(`Rota_${selectedRouteData.routeName}_${format(parseISO(selectedRouteData.routeDate), 'dd-MM-yyyy')}.pdf`);
-      
-      toast({
-        title: "PDF Gerado com Sucesso",
-        description: `O resumo da rota foi salvo como: Rota_${selectedRouteData.routeName}.pdf`,
-      });
-    } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      toast({
-        title: "Erro ao Gerar PDF",
-        description: "Não foi possível gerar o PDF da rota",
-        variant: "destructive",
-      });
+    } catch (e: any) {
+      toast({ title: 'Erro ao imprimir', description: e?.message || 'Erro desconhecido', variant: 'destructive' });
+    } finally {
+      setImprimindo(null);
     }
+  };
+
+  // Dias com rotas salvas (últimos 45 dias e próximos) — atalho para abrir.
+  const { data: diasSalvos = [] } = useQuery<Array<{ data: string; rotas: number; paradas: number; entregadores: string }>>({
+    queryKey: ['/api/delivery-routes/dias-salvos'],
+    queryFn: () => apiRequest('GET', '/api/delivery-routes/dias-salvos?dias=45'),
+    staleTime: 60 * 1000,
+  });
+  const mudarDia = (delta: number) => {
+    const d = new Date(selectedDate + 'T12:00:00');
+    d.setDate(d.getDate() + delta);
+    setSelectedRoute(null);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
+  const diaCurto = (iso: string) => {
+    const d = new Date(iso + 'T12:00:00');
+    const sem = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][d.getDay()];
+    return `${sem} ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
   };
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Resumo das Rotas</h1>
-          <p className="text-muted-foreground">Visualize e acompanhe as rotas de entrega</p>
+          <h1 className="text-3xl font-bold">Rotas de Entrega</h1>
+          <p className="text-muted-foreground">Abra as rotas salvas de qualquer dia para acompanhar, alterar e reimprimir</p>
         </div>
         <BackToDashboardButton />
       </div>
@@ -665,7 +614,32 @@ export default function RoutesSummary() {
               <Filter className="h-5 w-5 mr-2" />
               Filtros
             </CardTitle>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 justify-end">
+              {rotasImprimiveis.length > 0 && (
+                <>
+                  <Button
+                    variant="outline"
+                    disabled={!!imprimindo}
+                    onClick={() => imprimir(rotasImprimiveis, 'rosto', 'dia-rosto')}
+                    className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                    data-testid="button-reprint-cover-day"
+                    title="Uma folha de rosto por motorista, de todas as rotas do dia"
+                  >
+                    {imprimindo === 'dia-rosto' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+                    Folhas de rosto do dia ({rotasImprimiveis.length})
+                  </Button>
+                  <Button
+                    disabled={!!imprimindo}
+                    onClick={() => imprimir(rotasImprimiveis, 'completo', 'dia-completo')}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                    data-testid="button-reprint-complete-day"
+                    title="Folhas de rosto + pedido, DANFE e cobrança de todas as entregas do dia"
+                  >
+                    {imprimindo === 'dia-completo' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+                    Reimprimir dia completo ({rotasImprimiveis.length})
+                  </Button>
+                </>
+              )}
               {routes.filter(r => r.status === 'planejada').length > 0 && (
                 <Button 
                   onClick={() => saveRoutesMutation.mutate()}
@@ -713,12 +687,20 @@ export default function RoutesSummary() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Data</Label>
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                data-testid="input-route-date"
-              />
+              <div className="flex items-center gap-1">
+                <Button type="button" variant="outline" size="icon" onClick={() => mudarDia(-1)} title="Dia anterior" data-testid="button-prev-day">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => { setSelectedRoute(null); setSelectedDate(e.target.value); }}
+                  data-testid="input-route-date"
+                />
+                <Button type="button" variant="outline" size="icon" onClick={() => mudarDia(1)} title="Próximo dia" data-testid="button-next-day">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Entregador</Label>
@@ -737,6 +719,25 @@ export default function RoutesSummary() {
               </Select>
             </div>
           </div>
+          {diasSalvos.length > 0 && (
+            <div className="space-y-1" data-testid="dias-com-rotas">
+              <Label className="text-xs text-muted-foreground">Dias com rotas salvas</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {diasSalvos.map((d) => (
+                  <button
+                    key={d.data}
+                    type="button"
+                    onClick={() => { setSelectedRoute(null); setSelectedDate(d.data); }}
+                    title={`${d.rotas} rota(s), ${d.paradas} entrega(s): ${d.entregadores}`}
+                    className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${d.data === selectedDate ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white hover:bg-blue-50 border-gray-300 text-gray-700'}`}
+                    data-testid={`dia-rotas-${d.data}`}
+                  >
+                    {diaCurto(d.data)} · {d.rotas} rota{d.rotas === 1 ? '' : 's'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {routes.length > 0 && (
             <div className="pt-4 border-t">
               <Button
@@ -862,12 +863,25 @@ export default function RoutesSummary() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={generateRoutePDF}
-                data-testid="button-generate-pdf-route"
-                className="bg-green-50 hover:bg-green-100"
+                disabled={!!imprimindo}
+                onClick={() => imprimir([selectedRouteData], 'rosto', `rosto-${selectedRouteData.id}`)}
+                data-testid="button-reprint-cover-route"
+                className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                title="Folha de rosto do motorista: ordem das entregas, horários de recebimento, produtos, carga total e mapa"
               >
-                <FileText className="h-4 w-4 mr-2" />
-                📄 Gerar PDF
+                {imprimindo === `rosto-${selectedRouteData.id}` ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+                Reimprimir folha de rosto
+              </Button>
+              <Button
+                size="sm"
+                disabled={!!imprimindo}
+                onClick={() => imprimir([selectedRouteData], 'completo', `completo-${selectedRouteData.id}`)}
+                data-testid="button-reprint-complete-route"
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                title="Folha de rosto + pedido, DANFE e cobrança de cada entrega, na ordem da rota"
+              >
+                {imprimindo === `completo-${selectedRouteData.id}` ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+                Reimprimir completo
               </Button>
               {(selectedRouteData.status === 'rota salva' || selectedRouteData.status === 'pending') && (
                 <Button

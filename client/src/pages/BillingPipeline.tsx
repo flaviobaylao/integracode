@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import RoutePlannerDialog from "@/components/RoutePlannerDialog";
+import { Link } from 'wouter';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateDanfePdf, generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
@@ -1343,6 +1344,20 @@ export default function BillingPipeline() {
                 )}
                 {modeStatus?.active ? 'Desativar Interno' : 'Faturar Interno'}
               </Button>
+            )}
+            {canEdit && (
+              <Link href="/delivery-routes">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+                  title="Abrir rotas já salvas de qualquer dia para alterar e reimprimir"
+                  data-testid="button-rotas-salvas"
+                >
+                  <Truck className="h-4 w-4 mr-1" />
+                  Rotas salvas
+                </Button>
+              </Link>
             )}
             {podePedidoGynServ && (
               <Button
