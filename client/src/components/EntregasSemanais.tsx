@@ -15,7 +15,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Truck, Settings2 } from "lucide-react";
+import { Truck, Settings2, Info, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 
@@ -185,6 +185,17 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
     refetchInterval: 5 * 60 * 1000,
   });
   const [config, setConfig] = useState(false);
+  // Recolher/expandir: recolhida mostra so o cabecalho e os indicadores. Lembra a escolha no navegador.
+  const chaveAberto = "entregas-semanais-aberto-" + modo;
+  const [aberto, setAberto] = useState<boolean>(() => {
+    try { return localStorage.getItem(chaveAberto) !== "0"; } catch { return true; }
+  });
+  const alternarAberto = () => setAberto((v) => {
+    const nv = !v;
+    try { localStorage.setItem(chaveAberto, nv ? "1" : "0"); } catch {}
+    return nv;
+  });
+  const [info, setInfo] = useState(false);
 
   const semanas = data?.semanas || [];
   const [sel, setSel] = useState<number | null>(null);
@@ -218,15 +229,34 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
             <Truck className="h-4 w-4 text-emerald-600" />
             {modo === "gestao" ? "Valor entregue por semana (seg a dom)" : "Valor entregue na semana"}
           </CardTitle>
-          {modo === "gestao" && isAdmin && (
-            <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => setConfig((c) => !c)} data-testid="botao-config-comissao">
-              <Settings2 className="h-3.5 w-3.5 mr-1" /> Comissão
-            </Button>
-          )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button type="button" onClick={() => setInfo((v) => !v)} title="Como ler este quadro" aria-label="Como ler este quadro" aria-expanded={info}
+              className={"h-7 w-7 inline-flex items-center justify-center rounded-md border " + (info ? "bg-sky-100 border-sky-300 text-sky-700" : "border-gray-200 text-gray-500 hover:bg-gray-50")} data-testid="botao-info-entregas">
+              <Info className="h-4 w-4" />
+            </button>
+            {modo === "gestao" && isAdmin && (
+              <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => setConfig((c) => !c)} data-testid="botao-config-comissao">
+                <Settings2 className="h-3.5 w-3.5 mr-1" /> Comissão
+              </Button>
+            )}
+            <button type="button" onClick={alternarAberto} title={aberto ? "Recolher" : "Expandir"} aria-label={aberto ? "Recolher" : "Expandir"} aria-expanded={aberto}
+              className="h-7 inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 text-xs text-gray-600 hover:bg-gray-50" data-testid="botao-recolher-entregas">
+              {aberto ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {aberto ? "Recolher" : "Expandir"}
+            </button>
+          </div>
         </div>
         <p className="text-xs text-gray-500">
           Entregas concluídas (efetuadas), somando o valor dos pedidos. Semana de segunda a domingo; semana atual em verde e as 8 anteriores.
         </p>
+        {info && (
+          <div className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 space-y-1" data-testid="info-entregas">
+            <div><b>O que é:</b> a soma do valor dos pedidos com entrega <b>concluída</b> em cada semana (segunda a domingo). Pedido faturado mas ainda não entregue não entra.</div>
+            <div><b>Como ler:</b> a barra verde é a semana atual, ainda em andamento. Clique numa barra{modo === "gestao" ? " ou no cabeçalho de uma coluna da tabela" : ""} para ver os detalhes daquela semana.</div>
+            <div><b>Comparação:</b> "Semana passada", "Média das 8 anteriores" e "Total das 9 semanas" mostram se o ritmo de entregas está acima ou abaixo do normal.</div>
+            <div><b>Comissão de entrega:</b> {pctTxt(percentual)} sobre a soma das entregas dos entregadores participantes, dividida entre eles pelos dias com entrega × o peso de cada um{modo === "gestao" ? " (definidos no botão Comissão). Na tabela, o valor em laranja é a comissão de cada entregador" : ""}.</div>
+          </div>
+        )}
         {modo === "gestao" && isAdmin && config && <ConfigComissao onClose={() => setConfig(false)} />}
       </CardHeader>
       <CardContent>
@@ -265,6 +295,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
               </div>
             </div>
 
+            {aberto && (<>
             {modo === "gestao" && participantes.length === 0 && (
               <p className="mt-2 text-xs text-amber-700">
                 Comissão de entrega: nenhum entregador participando.{isAdmin ? " Use o botão Comissão para escolher." : ""}
@@ -390,6 +421,8 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
                 )}
               </div>
             )}
+            </>)}
+            {!aberto && <p className="mt-2 text-[11px] text-gray-400">Quadro recolhido — clique em Expandir para ver o gráfico por semana{modo === "gestao" ? " e a tabela por entregador" : ""}.</p>}
           </>
         )}
       </CardContent>
