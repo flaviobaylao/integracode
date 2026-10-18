@@ -5114,6 +5114,9 @@ export class DatabaseStorage implements IStorage {
     if (data.licensePlate !== undefined) updateData.licensePlate = data.licensePlate;
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
     if (data.currentLocation !== undefined) updateData.currentLocation = data.currentLocation;
+    // Base de saída do entregador (usada ao criar rota nova no ajuste do dia)
+    if (data.homeLatitude !== undefined) updateData.homeLatitude = data.homeLatitude === '' ? null : data.homeLatitude;
+    if (data.homeLongitude !== undefined) updateData.homeLongitude = data.homeLongitude === '' ? null : data.homeLongitude;
     
     updateData.updatedAt = agora();
     
