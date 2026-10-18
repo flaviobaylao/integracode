@@ -12446,6 +12446,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!r.routeId && !r.driverId) return res.status(400).json({ message: 'Entregador obrigatório para a nova rota.' });
       }
 
+      // Entrega finalizada não muda de rota nem sai dela (checado ANTES de criar qualquer rota)
+      for (const r of rotasIn) {
+        const alvo = r.routeId || rotasDia.find((x: any) => x.driverId === r.driverId)?.id || '__nova';
+        for (const id of (r.stopIds || [])) {
+          const p = paradaPorId.get(String(id));
+          if (FINAIS.has(String(p.status)) && p.routeId !== alvo) {
+            return res.status(400).json({ message: `${p.customerName}: entrega já ${p.status}, não pode mudar de entregador.` });
+          }
+        }
+      }
+      for (const id of removidas) {
+        const p = paradaPorId.get(id);
+        if (FINAIS.has(String(p.status))) return res.status(400).json({ message: `${p.customerName}: entrega já ${p.status}, não pode sair da rota.` });
+      }
+
       // Resolve a rota de destino de cada grupo (existente ou nova)
       const destinos: Array<{ routeId: string; stopIds: string[]; nova: boolean }> = [];
       for (const r of rotasIn) {
@@ -12490,20 +12505,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           continue;
         }
         destinos.push({ routeId, stopIds, nova: false });
-      }
-
-      // Entrega finalizada não muda de rota nem sai dela
-      for (const d of destinos) {
-        for (const id of d.stopIds) {
-          const p = paradaPorId.get(id);
-          if (FINAIS.has(String(p.status)) && p.routeId !== d.routeId) {
-            return res.status(400).json({ message: `${p.customerName}: entrega já ${p.status}, não pode mudar de entregador.` });
-          }
-        }
-      }
-      for (const id of removidas) {
-        const p = paradaPorId.get(id);
-        if (FINAIS.has(String(p.status))) return res.status(400).json({ message: `${p.customerName}: entrega já ${p.status}, não pode sair da rota.` });
       }
 
       // O que mudou em cada rota (para decidir recálculo / reordenação)
