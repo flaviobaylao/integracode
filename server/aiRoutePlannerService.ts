@@ -395,7 +395,7 @@ function buildBriefing(
     }
     if (o.isUrgent) partes.push('PRIORIDADE');
     const janelaTxt = formatarJanelas(o.janelas || parseJanelas(o.deliveryTimeSlots));
-    if (janelaTxt) partes.push(`recebe das ${janelaTxt}`);
+    if (janelaTxt) partes.push((o as any).origemJanela === 'preferencial' ? `entregar das ${janelaTxt} (horário preferencial)` : `recebe das ${janelaTxt}`);
     const rw = weekdaysToText(o.receivingWeekdays);
     if (rw) partes.push(`recebe ${rw}${warnIds.has(o.id) ? ' ⚠NÃO-HOJE' : ''}`);
     partes.push(`vizinhos ${neighborsOf.get(o.id) || '-'}`);

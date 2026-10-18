@@ -4968,7 +4968,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const text =
         "SELECT bp.id, bp.customer_name, bp.seller_name, bp.order_number, bp.invoice_number, " +
         "bp.sale_value, bp.products, bp.notes, bp.stage, " +
-        "c.delivery_time_slots, c.delivery_saturday_time_slots " +
+        "c.delivery_time_slots, c.delivery_saturday_time_slots, c.entrega_horarios_pref " +
         "FROM billing_pipeline bp LEFT JOIN customers c ON c.id = bp.customer_id " +
         "WHERE bp.id IN (" + inList + ")";
       const rows = (await db.execute(sql.raw(text))).rows as any[];
@@ -4985,6 +4985,8 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         // Horários de recebimento do cliente — romaneio da rota.
         deliveryTimeSlots: r.delivery_time_slots ?? null,
         deliverySaturdayTimeSlots: r.delivery_saturday_time_slots ?? null,
+        // Horário preferencial (entregas anteriores) — tem prioridade no romaneio/rota.
+        horariosPref: r.entrega_horarios_pref ?? null,
       })));
     } catch (e: any) {
       res.status(500).json({ error: (e && e.message) ? e.message : String(e) });

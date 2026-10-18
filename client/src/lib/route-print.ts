@@ -20,7 +20,7 @@ import {
   type RotaImpressao,
 } from './cobranca-generator';
 import type { DanfeInvoice } from './danfe-generator';
-import { janelaTextoDoDia } from '@shared/janelas-entrega';
+import { textoJanelaRoteirizacao } from '@shared/janelas-entrega';
 
 export type { RotaImpressao };
 
@@ -99,6 +99,7 @@ export async function carregarPedidosDasRotas(rotas: RotaImpressao[]): Promise<C
       danfe: danfeById.get(id) || null,
       deliveryTimeSlots: it.deliveryTimeSlots ?? null,
       deliverySaturdayTimeSlots: it.deliverySaturdayTimeSlots ?? null,
+      horariosPref: it.horariosPref ?? null,
     } as CobrancaData;
   });
 }
@@ -122,7 +123,7 @@ function enriquecerRotas(rotas: RotaImpressao[], pedidos: CobrancaData[]): RotaI
         // calcula a partir do cadastro do cliente para o dia da rota.
         janelaTexto: temJanela
           ? s.janelaTexto
-          : janelaTextoDoDia(p.deliveryTimeSlots, p.deliverySaturdayTimeSlots, String(r.routeDate || '').slice(0, 10) || new Date()),
+          : textoJanelaRoteirizacao(p.deliveryTimeSlots, p.deliverySaturdayTimeSlots, (p as any).horariosPref, String(r.routeDate || '').slice(0, 10) || new Date()),
       };
     }),
   }));

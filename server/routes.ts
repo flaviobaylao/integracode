@@ -27,7 +27,7 @@ import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYea
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
 import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from '@shared/comissao-entrega';
-import { parseJanelas, slotsDoDia, janelasDoDia } from '@shared/janelas-entrega';
+import { parseJanelas, slotsDoDia, janelasDoDia, janelasRoteirizacao, janelasParaSlots } from '@shared/janelas-entrega';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -12085,6 +12085,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         c.delivery_weekdays as "deliveryWeekdays",
         c.delivery_time_slots as "deliveryTimeSlots",
         c.delivery_saturday_time_slots as "deliverySaturdayTimeSlots",
+        c.entrega_horarios_pref as "horariosPref",
         c.exclusive_vehicle as "exclusiveVehicle",
         c.vehicle_types as "vehicleTypes",
         -- Tempo de entrega MEDIDO pelo cronômetro do entregador (média do cliente);
@@ -12125,9 +12126,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? JSON.parse(o.deliveryWeekdays) 
         : (Array.isArray(o.deliveryWeekdays) ? o.deliveryWeekdays : null);
       
-      // Horários de RECEBIMENTO do dia da rota (sábado tem cadastro próprio).
-      const deliveryTimeSlots = slotsDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
-      const janelas = janelasDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
+      // Janelas do dia da rota: HORÁRIO PREFERENCIAL (entregas anteriores) quando
+      // existir — dentro do horário de recebimento, se os dois se cruzarem —;
+      // senão o horário de recebimento cadastrado (sábado tem cadastro próprio).
+      const jr = janelasRoteirizacao(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, o.horariosPref, routeDateStr);
+      const janelas = jr.janelas;
+      const origemJanela = jr.origem;
+      const deliveryTimeSlots = origemJanela === 'preferencial'
+        ? janelasParaSlots(janelas)
+        : slotsDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
       
       const vehicleTypes = typeof o.vehicleTypes === 'string'
         ? JSON.parse(o.vehicleTypes)
@@ -12166,8 +12173,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: o.paymentMethod || null,
         operationType: o.operationType || null,
         customerWeekdays: deliveryWeekdays, // Dias de ENTREGA permitidos
-        deliveryTimeSlots: deliveryTimeSlots, // Horários de RECEBIMENTO do dia da rota
+        deliveryTimeSlots: deliveryTimeSlots, // Horários do dia da rota (preferencial ou recebimento)
         janelas,
+        origemJanela,
         // ▼ contexto extra para o agente de IA (BSB, setor, dias de recebimento)
         receivingWeekdays,
         customerCity: o.customerCity || null,
@@ -12353,7 +12361,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sq: any = await db.execute(sql`
         SELECT s.id, s.stop_order, s.customer_latitude AS lat, s.customer_longitude AS lng, COALESCE(s.is_priority, false) AS prioridade,
                COALESCE(c.id, NULLIF(s.customer_id, '')) AS cliente,
-               c.delivery_time_slots AS slots, c.delivery_saturday_time_slots AS slots_sab,
+               c.delivery_time_slots AS slots, c.delivery_saturday_time_slots AS slots_sab, c.entrega_horarios_pref AS pref,
                CASE WHEN COALESCE(c.entregas_cronometradas, 0) > 0 AND COALESCE(c.entrega_tempo_medio_seg, 0) > 0
                     THEN GREATEST(1, ROUND(c.entrega_tempo_medio_seg / 60.0))::int ELSE NULL END AS servico_medido
         FROM delivery_route_stops s
@@ -12373,7 +12381,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lat: Number(l.lat),
         lng: Number(l.lng),
         servico: Number(l.servico_medido) > 0 ? Number(l.servico_medido) : TEMPO_ENTREGA_PADRAO_MIN,
-        janelas: janelasDoDia(l.slots, l.slots_sab, dataRota),
+        janelas: janelasRoteirizacao(l.slots, l.slots_sab, l.pref, dataRota).janelas,
         urgente: l.prioridade === true,
       }));
       const hm = (t: any, pad: string) => {

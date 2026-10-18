@@ -238,3 +238,77 @@ export function janelasDoDia(semana: any, sabado: any, data: string | Date): Jan
   if (diaDaSemana(data) === 6 && paraLista(sabado).length) return intervalosDoCadastro(sabado, FIM_GRADE_ANTIGA_SABADO);
   return intervalosDoCadastro(semana, FIM_GRADE_ANTIGA_SEMANA);
 }
+
+// ----------------------------------------------------------------------------
+// HORÁRIO PREFERENCIAL × HORÁRIO DE RECEBIMENTO NA ROTEIRIZAÇÃO (18/out/2026)
+// ----------------------------------------------------------------------------
+// Regra do Flavio: quando o cliente tem HORÁRIO PREFERENCIAL (calculado das
+// entregas efetuadas — customers.entrega_horarios_pref, ver
+// server/horarios-preferenciais.ts), ele é o usado para montar a rota.
+//   • preferencial + recebimento cadastrado → a parte do preferencial que cai
+//     dentro do recebimento; se não se cruzarem, vale o preferencial (é o
+//     horário em que o cliente de fato tem recebido);
+//   • só recebimento → recebimento;  • nenhum → livre.
+// Sábado usa os períodos de sábado; os demais dias, os de seg–sex.
+// ----------------------------------------------------------------------------
+
+export type OrigemJanela = 'preferencial' | 'recebimento' | 'livre';
+
+function lerPref(pref: any): any {
+  if (!pref) return null;
+  if (typeof pref === 'string') { try { return JSON.parse(pref); } catch { return null; } }
+  return pref;
+}
+
+/** Períodos preferenciais (minutos) para a data da rota. */
+export function janelasPreferenciaisDoDia(pref: any, data: string | Date): JanelaMin[] {
+  const p = lerPref(pref);
+  if (!p) return [];
+  const grupo = diaDaSemana(data) === 6 ? p.sabado : p.semana;
+  const out: JanelaMin[] = [];
+  for (const per of (Array.isArray(grupo?.periodos) ? grupo.periodos : [])) {
+    const ini = hhmmParaMin(per?.ini);
+    const fim = hhmmParaMin(per?.fim);
+    if (ini != null && fim != null && fim > ini) out.push({ ini, fim });
+  }
+  return out.sort((a, b) => a.ini - b.ini);
+}
+
+function intersecao(a: JanelaMin[], b: JanelaMin[], minimo = 15): JanelaMin[] {
+  const out: JanelaMin[] = [];
+  for (const x of a) for (const y of b) {
+    const ini = Math.max(x.ini, y.ini);
+    const fim = Math.min(x.fim, y.fim);
+    if (fim - ini >= minimo) out.push({ ini, fim });
+  }
+  return out.sort((p, q) => p.ini - q.ini);
+}
+
+/** Janelas que a roteirização deve usar para o cliente na data da rota. */
+export function janelasRoteirizacao(
+  semana: any,
+  sabado: any,
+  pref: any,
+  data: string | Date,
+): { janelas: JanelaMin[]; origem: OrigemJanela; recebimento: JanelaMin[]; preferencial: JanelaMin[] } {
+  const recebimento = janelasDoDia(semana, sabado, data);
+  const preferencial = janelasPreferenciaisDoDia(pref, data);
+  if (preferencial.length) {
+    const dentro = recebimento.length ? intersecao(preferencial, recebimento) : [];
+    return { janelas: dentro.length ? dentro : preferencial, origem: 'preferencial', recebimento, preferencial };
+  }
+  if (recebimento.length) return { janelas: recebimento, origem: 'recebimento', recebimento, preferencial };
+  return { janelas: [], origem: 'livre', recebimento, preferencial };
+}
+
+/** Texto para tela/romaneio: "9h às 12h15 (pref.)". Vazio = livre. */
+export function textoJanelaRoteirizacao(semana: any, sabado: any, pref: any, data: string | Date): string {
+  const r = janelasRoteirizacao(semana, sabado, pref, data);
+  const t = formatarJanelas(r.janelas);
+  return t && r.origem === 'preferencial' ? `${t} (pref.)` : t;
+}
+
+/** Janelas → slots "HH:MM-HH:MM" (formato do cadastro). */
+export function janelasParaSlots(j: JanelaMin[]): string[] {
+  return (j || []).map((x) => `${minParaHHMM(x.ini)}-${minParaHHMM(x.fim)}`);
+}

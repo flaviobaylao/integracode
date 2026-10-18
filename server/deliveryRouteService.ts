@@ -32,6 +32,7 @@ export interface DeliveryOrder {
   customerWeekdays?: string; // JSON array com dias da semana permitidos
   deliveryTimeSlots?: string[]; // Horários de recebimento do DIA DA ROTA (checkboxes de hora cheia ou "08:00-12:00")
   janelas?: JanelaMin[]; // deliveryTimeSlots já convertidos em intervalos (minutos do dia)
+  origemJanela?: 'preferencial' | 'recebimento' | 'livre'; // de onde vieram as janelas (18/out/2026)
   // ▼ Campos usados pela roteirização com IA (opcionais; ausentes no fluxo legado)
   receivingWeekdays?: string[] | string | null; // Dias em que o cliente aceita RECEBER
   customerCity?: string | null;
@@ -629,7 +630,8 @@ export async function optimizeVehicleRoutes(
     seq.horarios.forEach((h, i) => {
       const order = orderById.get(h.id)!;
       const janelas = order.janelas || parseJanelas(order.deliveryTimeSlots);
-      const janelaTexto = formatarJanelas(janelas);
+      const preferencial = (order as any).origemJanela === 'preferencial';
+      const janelaTexto = formatarJanelas(janelas) + (preferencial && janelas.length ? ' (pref.)' : '');
       stops.push({
         salesCardId: order.id,
         customerId: order.customerId,
@@ -652,7 +654,7 @@ export async function optimizeVehicleRoutes(
       });
       if (h.foraDaJanela) {
         alertasJanela.push(
-          `${order.customerName}: chega às ${minParaHHMM(h.chegada)} (${vehicle.driverName || vehicle.type}), fora do horário de recebimento (${janelaTexto}). Mude de entregador ou reveja a jornada.`,
+          `${order.customerName}: chega às ${minParaHHMM(h.chegada)} (${vehicle.driverName || vehicle.type}), fora do horário ${preferencial ? 'preferencial' : 'de recebimento'} (${janelaTexto}). Mude de entregador ou reveja a jornada.`,
         );
       }
     });
