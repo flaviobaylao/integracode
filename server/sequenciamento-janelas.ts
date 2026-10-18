@@ -248,3 +248,28 @@ export function sequenciarComJanelas(
   }
   return res;
 }
+
+/**
+ * Horários de uma ordem JÁ DEFINIDA (rota salva que o operador ajustou à mão):
+ * não reordena nada — só recalcula chegada, espera, tempo de entrega e saída
+ * com as mesmas regras do planejamento. Se o motorista esperaria na primeira
+ * parada, a saída da base é adiada (sem fazer outra parada perder o horário).
+ */
+export function horariosNaOrdem(
+  seq: ParadaSeq[],
+  base: { lat: number; lng: number },
+  inicioJornada: number,
+  fimJornada: number,
+  dist: Dist,
+): ResultadoSequencia {
+  if (seq.length === 0) {
+    return { ordem: [], horarios: [], partida: inicioJornada, fim: inicioJornada, distanciaTotal: 0, foraDaJanela: 0, horaExtra: 0 };
+  }
+  let res = avaliar(seq, base, inicioJornada, fimJornada, dist, true).res!;
+  const esperaPrimeira = res.horarios[0]?.espera || 0;
+  if (esperaPrimeira > 0.5) {
+    const adiada = avaliar(seq, base, inicioJornada + esperaPrimeira, fimJornada, dist, true).res!;
+    if (adiada.foraDaJanela <= res.foraDaJanela) res = adiada;
+  }
+  return res;
+}

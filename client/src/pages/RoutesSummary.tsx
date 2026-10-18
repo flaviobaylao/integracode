@@ -279,6 +279,15 @@ export default function RoutesSummary() {
   });
 
   // Mutation para otimizar/reorganizar ordem das paradas
+  const recalcularMutation = useMutation({
+    mutationFn: async (routeId: string) => apiRequest('POST', `/api/delivery-routes/${routeId}/recalcular-horarios`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
+      toast({ title: 'Horários recalculados', description: 'Deslocamento, horário de recebimento e tempo de entrega de cada cliente, na ordem atual.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro ao recalcular', description: e?.message, variant: 'destructive' }),
+  });
+
   const optimizeRouteMutation = useMutation({
     mutationFn: async (routeId: string) => {
       return await apiRequest('POST', `/api/delivery-routes/${routeId}/optimize`);
@@ -863,6 +872,17 @@ export default function RoutesSummary() {
               <Button
                 variant="outline"
                 size="sm"
+                disabled={recalcularMutation.isPending}
+                onClick={() => recalcularMutation.mutate(selectedRouteData.id)}
+                data-testid="button-recalc-times-route"
+                title="Refaz os horários na ordem atual: deslocamento + espera pelo horário de recebimento + tempo de entrega de cada cliente"
+              >
+                {recalcularMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Clock className="h-4 w-4 mr-2" />}
+                Recalcular horários
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 disabled={!!imprimindo}
                 onClick={() => imprimir([selectedRouteData], 'rosto', `rosto-${selectedRouteData.id}`)}
                 data-testid="button-reprint-cover-route"
@@ -1119,9 +1139,16 @@ export default function RoutesSummary() {
                             {/* Informações de Tempo */}
                             <div className="grid grid-cols-2 gap-4 text-sm border-t pt-2">
                               <div>
-                                <div className="text-muted-foreground">ETA</div>
-                                <div className="font-medium">
-                                  {new Date(stop.estimatedArrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRAZIL_TZ })}
+                                <div className="text-muted-foreground">Previsto</div>
+                                <div className="font-medium" data-testid={`previsto-${stop.id}`}>
+                                  {/^\d{1,2}:\d{2}/.test(String(stop.estimatedArrival || ''))
+                                    ? String(stop.estimatedArrival).slice(0, 5)
+                                    : stop.estimatedArrival
+                                      ? (() => { const d = new Date(stop.estimatedArrival); return isNaN(d.getTime()) ? '-' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRAZIL_TZ }); })()
+                                      : '-'}
+                                  {' · entrega '}
+                                  {Number(stop.estimatedServiceTime) > 0 ? `${stop.estimatedServiceTime} min` : 'junto c/ anterior'}
+                                  {stop.estimatedDeparture && /^\d{1,2}:\d{2}/.test(String(stop.estimatedDeparture)) ? ` · sai ${String(stop.estimatedDeparture).slice(0, 5)}` : ''}
                                 </div>
                               </div>
                               {stop.checkInTime && (

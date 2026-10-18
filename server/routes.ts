@@ -12310,6 +12310,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // horários (deslocamento + horário de recebimento + tempo de entrega medido)
   // só do(s) veículo(s) afetado(s). Não grava nada.
   // ============================================================================
+  // ============================================================================
+  // RECÁLCULO DOS HORÁRIOS DE UMA ROTA JÁ SALVA (18/out/2026)
+  // Depois de qualquer ajuste na rota salva (mover parada, trocar de motorista,
+  // excluir, adicionar, reorganizar) os horários são refeitos NA ORDEM ATUAL com
+  // as mesmas regras do planejamento: deslocamento a 40 km/h, espera pelo
+  // horário de recebimento do cliente e TEMPO DE ENTREGA (medido pelo
+  // cronômetro do entregador ou 5 min estimados; duas entregas seguidas no
+  // mesmo cliente contam o tempo uma vez). Atualiza também km e duração da rota.
+  // ============================================================================
+  async function recalcularHorariosRota(routeId: string, opts?: { reordenar?: boolean }): Promise<{ distancia: number; duracao: number } | null> {
+    try {
+      const { horariosNaOrdem, sequenciarComJanelas, TEMPO_ENTREGA_PADRAO_MIN } = await import('./sequenciamento-janelas');
+      const { calculateDistance } = await import('./routeOptimizationService');
+      const { minParaHHMM } = await import('@shared/janelas-entrega');
+      const rq: any = await db.execute(sql`SELECT id, route_date::text AS route_date, start_latitude, start_longitude, time_window_start, time_window_end FROM delivery_routes WHERE id = ${routeId}`);
+      const rota = (rq.rows || rq)[0];
+      if (!rota) return null;
+      const sq: any = await db.execute(sql`
+        SELECT s.id, s.stop_order, s.customer_latitude AS lat, s.customer_longitude AS lng, COALESCE(s.is_priority, false) AS prioridade,
+               COALESCE(c.id, NULLIF(s.customer_id, '')) AS cliente,
+               c.delivery_time_slots AS slots, c.delivery_saturday_time_slots AS slots_sab,
+               CASE WHEN COALESCE(c.entregas_cronometradas, 0) > 0 AND COALESCE(c.entrega_tempo_medio_seg, 0) > 0
+                    THEN GREATEST(1, ROUND(c.entrega_tempo_medio_seg / 60.0))::int ELSE NULL END AS servico_medido
+        FROM delivery_route_stops s
+        LEFT JOIN billing_pipeline bp ON bp.id = COALESCE(s.billing_id, s.sales_card_id)
+        LEFT JOIN customers c ON c.id = COALESCE(bp.customer_id, NULLIF(s.customer_id, ''))
+        WHERE s.route_id = ${routeId}
+        ORDER BY s.stop_order, s.id`);
+      const linhas: any[] = (sq.rows || sq);
+      if (linhas.length === 0) {
+        await db.execute(sql`UPDATE delivery_routes SET total_deliveries = 0, total_distance = 0, total_duration = 0, updated_at = NOW() WHERE id = ${routeId}`);
+        return { distancia: 0, duracao: 0 };
+      }
+      const dataRota = String(rota.route_date || '').slice(0, 10) || hojeBR();
+      const paradas = linhas.map((l) => ({
+        id: String(l.id),
+        customerId: l.cliente ? String(l.cliente) : null,
+        lat: Number(l.lat),
+        lng: Number(l.lng),
+        servico: Number(l.servico_medido) > 0 ? Number(l.servico_medido) : TEMPO_ENTREGA_PADRAO_MIN,
+        janelas: janelasDoDia(l.slots, l.slots_sab, dataRota),
+        urgente: l.prioridade === true,
+      }));
+      const hm = (t: any, pad: string) => {
+        const m = /^(\d{1,2}):(\d{2})/.exec(String(t || pad));
+        return m ? Number(m[1]) * 60 + Number(m[2]) : (Number(pad.slice(0, 2)) * 60 + Number(pad.slice(3, 5)));
+      };
+      const baseLat = Number(rota.start_latitude);
+      const baseLng = Number(rota.start_longitude);
+      const base = Number.isFinite(baseLat) && Number.isFinite(baseLng) && (baseLat !== 0 || baseLng !== 0)
+        ? { lat: baseLat, lng: baseLng }
+        : { lat: paradas[0].lat, lng: paradas[0].lng };
+      // reordenar=true ("Reorganizar Rota"): a ordem atual é só o ponto de partida —
+      // o sequenciador do planejamento busca a melhor ordem cumprindo os horários.
+      const res = opts?.reordenar
+        ? sequenciarComJanelas(paradas, base, hm(rota.time_window_start, '08:00'), hm(rota.time_window_end, '18:00'), calculateDistance)
+        : horariosNaOrdem(paradas, base, hm(rota.time_window_start, '08:00'), hm(rota.time_window_end, '18:00'), calculateDistance);
+      for (let i = 0; i < res.horarios.length; i++) {
+        const h = res.horarios[i];
+        await db.execute(sql`
+          UPDATE delivery_route_stops
+          SET stop_order = ${i + 1},
+              estimated_arrival = ${minParaHHMM(h.inicio)},
+              estimated_departure = ${minParaHHMM(h.saida)},
+              estimated_service_time = ${Math.round(h.servico)},
+              distance_from_previous = ${Math.round(h.distanciaAnterior * 100) / 100}
+          WHERE id = ${h.id}`);
+      }
+      // Volta à base: mesma régua do planejamento (só a ida até a última parada).
+      await db.execute(sql`
+        UPDATE delivery_routes
+        SET total_deliveries = ${res.horarios.length},
+            total_distance = ${Math.round(res.distanciaTotal * 100) / 100},
+            total_duration = ${Math.max(0, Math.round(res.fim - res.partida))},
+            updated_at = NOW()
+        WHERE id = ${routeId}`);
+      console.log(`⏱️ [RECALC-ROTA] ${routeId}: ${res.horarios.length} parada(s), sai ${minParaHHMM(res.partida)}, termina ${minParaHHMM(res.fim)}`);
+      return { distancia: Math.round(res.distanciaTotal * 100) / 100, duracao: Math.max(0, Math.round(res.fim - res.partida)) };
+    } catch (e: any) {
+      console.error(`[RECALC-ROTA] Falha ao recalcular horários da rota ${routeId}:`, e?.message);
+      return null;
+    }
+  }
+
+  // Recalcular manualmente (botão na tela Rotas de Entrega).
+  app.post("/api/delivery-routes/:routeId/recalcular-horarios", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    await recalcularHorariosRota(req.params.routeId);
+    const stops = await storage.getDeliveryRouteStops(req.params.routeId);
+    res.json({ ok: true, stops });
+  });
+
   app.post("/api/delivery-routes/resequence", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { orderIds, vehicle, routeDate } = req.body || {};
@@ -14437,6 +14528,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const nextPosition = newPosition || (currentMaxOrder + 1);
       console.log(`📊 [TRANSFER-STOP] Próxima posição: ${nextPosition}`);
       
+      // Posição pedida: abre espaço empurrando as paradas daquela posição em diante.
+      if (newPosition && Number(newPosition) <= currentMaxOrder) {
+        await db.execute(sql`UPDATE delivery_route_stops SET stop_order = stop_order + 1 WHERE route_id = ${toRouteId} AND stop_order >= ${Number(newPosition)}`);
+      }
+
       // Criar nova parada na rota destino
       const newStopId = nanoid();
       let insertedStops: any;
@@ -14499,6 +14595,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error(`⚠️ [TRANSFER-STOP] Erro ao atualizar contagens (não crítico):`, countErr);
       }
 
+      // Horários refeitos nas duas rotas (deslocamento + recebimento + tempo de entrega).
+      await recalcularHorariosRota(toRouteId);
+      if (fromRouteId && fromRouteId !== toRouteId) await recalcularHorariosRota(fromRouteId);
+
       console.log(`✅ [TRANSFER-STOP] ✅ SUCESSO: ${stopId} → ${toRouteId}`);
       res.json({ 
         message: "Parada transferida com sucesso",
@@ -14526,6 +14626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`↔️ [REORDER-STOP] Reordenando parada ${stopId} na rota ${routeId} para posição ${newPosition}`);
 
       const updatedStop = await storage.reorderStop(stopId, routeId, newPosition);
+      await recalcularHorariosRota(routeId);
 
       console.log(`✅ [REORDER-STOP] Parada ${stopId} movida para posição ${newPosition}`);
       res.json({ 
@@ -14591,6 +14692,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      if (routeId) await recalcularHorariosRota(routeId as string);
       console.log(`✅ [DELETE-STOP] Parada ${stopId} excluída da rota ${routeId}`);
       res.json({ 
         message: "Parada excluída com sucesso",
@@ -14841,13 +14943,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(eq(deliveryRoutes.id, routeId));
       
-      console.log(`✅ [OPTIMIZE-ROUTE] Rota ${routeId} otimizada: ${totalDistanceKm.toFixed(2)}km, ${totalDurationMinutes}min`);
+      // Ordem final e horários: mesmas regras do planejamento (horário de
+      // recebimento + tempo de entrega), partindo da ordem geográfica acima.
+      const recalc = await recalcularHorariosRota(routeId, { reordenar: true });
+      const distFinal = recalc ? recalc.distancia : Number(totalDistanceKm.toFixed(2));
+      const durFinal = recalc ? recalc.duracao : totalDurationMinutes;
+      console.log(`✅ [OPTIMIZE-ROUTE] Rota ${routeId} otimizada: ${distFinal}km, ${durFinal}min`);
       
       res.json({ 
         message: "Rota otimizada com sucesso",
         totalStops: stops.length,
-        newDistance: totalDistanceKm.toFixed(2),
-        newDuration: totalDurationMinutes,
+        newDistance: Number(distFinal).toFixed(2),
+        newDuration: durFinal,
         optimizedOrder: optimizedLocations.map(l => l.id)
       });
     } catch (error: any) {
@@ -14994,6 +15101,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('[ADD-STOP] Falha ao sincronizar pipeline:', e?.message);
       }
 
+      await recalcularHorariosRota(routeId);
       console.log(`✅ [ADD-STOP] Parada adicionada com sucesso à rota ${routeId}`);
       res.json({ 
         message: "Parada adicionada com sucesso",

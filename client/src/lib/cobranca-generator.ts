@@ -60,6 +60,9 @@ export interface RotaImpressao {
     foraDaJanela?: boolean | null;
     esperaMin?: number | null;
     estimatedServiceTime?: number | null;
+    /** saída prevista do cliente (chegada + tempo de entrega) */
+    estimatedDeparture?: string | null;
+    customerId?: string | null;
     products?: any;
   }>;
 }
@@ -393,6 +396,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
   const totalKm = Number(rota.totalDistance) || stops.reduce((s, x) => s + (Number(x.distanceFromPrevious) || 0), 0);
   const totalMin = Math.round(Number(rota.totalDuration) || 0);
   const totalVal = stops.reduce((s, x) => s + (Number(x.saleValue) || 0), 0);
+  const totalServico = stops.reduce((s, x) => s + (Number(x.estimatedServiceTime) || 0), 0);
   let y = 48; doc.setFontSize(9);
   doc.setFont('helvetica', 'bold'); doc.text('Saída / retorno:', 12, y);
   doc.setFont('helvetica', 'normal'); doc.text(String(rota.startAddress || '-').slice(0, 60), 40, y);
@@ -432,15 +436,34 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
     doc.text(label.toUpperCase(), x + 2, y + 4);
     doc.setFontSize(val.length > 12 ? 9.5 : 11); doc.setTextColor(0); doc.setFont('helvetica', 'bold');
     doc.text(val, x + 2, y + 9.5);
+    // Quanto do tempo estimado é parado no cliente (tempo de entrega somado).
+    if (label === 'Tempo estimado' && totalServico > 0) {
+      const w = doc.getTextWidth(val);
+      doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(90);
+      doc.text(`${Math.round(totalServico)} min de entrega`, x + 2 + w + 1.5, y + 9.5);
+      doc.setTextColor(0);
+    }
   });
   doc.setLineWidth(0.2); doc.setDrawColor(0); doc.setFont('helvetica', 'normal');
   y += 17;
 
   // Tabela das paradas, com distância do trecho e acumulada
+  const hhmm = (t: any): number | null => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const paraHHMM = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(Math.round(m) % 60).padStart(2, '0')}`;
   let acum = 0;
   const body = stops.map((s, i) => {
     const trecho = Number(s.distanceFromPrevious) || 0;
     acum += trecho;
+    // Tempo de entrega da parada. 0 logo depois de outra entrega no mesmo
+    // cliente = descarregam juntas (o tempo foi contado na anterior).
+    const serv = s.estimatedServiceTime == null || s.estimatedServiceTime === ('' as any) ? null : Number(s.estimatedServiceTime);
+    const ant = i > 0 ? stops[i - 1] : null;
+    const junto = serv === 0 && !!ant && trecho < 0.05;
+    const entregaTxt = serv == null || !Number.isFinite(serv) ? '-' : junto ? `junto c/ ${ant!.stopOrder ?? i}` : `${Math.round(serv)} min`;
+    const ini = hhmm(s.estimatedArrival);
+    const saidaTxt = s.estimatedDeparture && hhmm(s.estimatedDeparture) != null
+      ? String(s.estimatedDeparture).slice(0, 5)
+      : ini != null && serv != null && Number.isFinite(serv) ? paraHHMM(ini + serv) : '-';
     const nf = (s.invoiceNumber || '').toString().trim();
     const ped = (s.orderNumber || '').toString().trim();
     return [
@@ -450,6 +473,8 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
       [nf, ped].filter(Boolean).join(' / ') || '-',
       (s.janelaTexto && String(s.janelaTexto).trim()) ? String(s.janelaTexto).replace(/ \+ /g, '\n+ ') : 'Livre',
       (s.estimatedArrival || '-') + (s.foraDaJanela ? ' !' : ''),
+      entregaTxt,
+      saidaTxt,
       trecho.toFixed(1),
       acum.toFixed(1),
       BRL(s.saleValue),
@@ -458,9 +483,9 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
 
   autoTable(doc, {
     startY: y,
-    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de recebimento', 'Chegada', 'Trecho (km)', 'Acum. (km)', 'Valor']],
-    body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '', '']],
-    foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', '', totalKm.toFixed(1), '', BRL(totalVal)]],
+    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de recebimento', 'Chegada', 'Tempo de entrega', 'Saída', 'Trecho (km)', 'Acum. (km)', 'Valor']],
+    body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '', '', '', '']],
+    foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', '', totalServico > 0 ? `${Math.round(totalServico)} min` : '', '', totalKm.toFixed(1), '', BRL(totalVal)]],
     theme: 'grid',
     // uma parada NUNCA é partida entre duas páginas (o motorista perderia a linha)
     rowPageBreak: 'avoid',
@@ -481,15 +506,17 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
       }
     },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 8 },
-      1: { cellWidth: 34 },
-      2: { cellWidth: 40 },
-      3: { cellWidth: 22, halign: 'center' },
-      4: { cellWidth: 25, halign: 'center' },
-      5: { cellWidth: 13, halign: 'center' },
-      6: { cellWidth: 13, halign: 'right' },
-      7: { cellWidth: 13, halign: 'right' },
-      8: { cellWidth: 18, halign: 'right' },
+      0: { halign: 'center', cellWidth: 7 },
+      1: { cellWidth: 29 },
+      2: { cellWidth: 33 },
+      3: { cellWidth: 20, halign: 'center' },
+      4: { cellWidth: 22, halign: 'center' },
+      5: { cellWidth: 12, halign: 'center' },
+      6: { cellWidth: 12, halign: 'center' },
+      7: { cellWidth: 11, halign: 'center' },
+      8: { cellWidth: 11, halign: 'right' },
+      9: { cellWidth: 11, halign: 'right' },
+      10: { cellWidth: 18, halign: 'right' },
     },
     margin: { left: 12, right: 12, top: 14 },
   });
@@ -499,9 +526,9 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
   const notas: string[] = [];
   if (stops.some(s => s.isPriority)) notas.push('* entrega prioritária');
   if (stops.some(s => s.foraDaJanela)) notas.push('! chegada prevista fora do horário de recebimento do cliente');
-  notas.push('Chegada = início previsto da entrega (deslocamento + horário de recebimento + tempo médio de entrega do cliente).');
+  notas.push('Chegada = início previsto da entrega (deslocamento + espera pelo horário de recebimento). Tempo de entrega = média cronometrada do cliente (5 min se ainda não medido). Saída = chegada + tempo de entrega.');
   doc.setFontSize(7); doc.setTextColor(120);
-  for (const n of notas) { doc.text(n, 12, fy + 4); fy += 3.6; }
+  for (const n of notas) { const ls = doc.splitTextToSize(n, 186); doc.text(ls, 12, fy + 4); fy += 3.2 * ls.length + 0.4; }
   doc.setTextColor(0);
 
   // ── Produtos da carga (totalizados por produto) ──

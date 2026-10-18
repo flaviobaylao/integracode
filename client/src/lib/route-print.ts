@@ -198,6 +198,8 @@ export function rotaDoPlano(r: any, routeDate: string, janela?: { inicio?: strin
       foraDaJanela: !!s?.foraDaJanela,
       esperaMin: s?.esperaMin ?? null,
       estimatedServiceTime: s?.estimatedServiceTime ?? null,
+      estimatedDeparture: s?.estimatedDeparture || null,
+      customerId: s?.customerId || null,
     })),
   };
 }
@@ -229,6 +231,8 @@ export function rotaSalva(route: any, stops: any[]): RotaImpressao {
       latitude: s?.customerLatitude ?? s?.latitude ?? null,
       longitude: s?.customerLongitude ?? s?.longitude ?? null,
       estimatedServiceTime: s?.estimatedServiceTime ?? null,
+      estimatedDeparture: s?.estimatedDeparture || null,
+      customerId: s?.customerId || null,
     })),
   };
 }
