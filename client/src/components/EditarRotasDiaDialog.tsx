@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowDown, ArrowUp, Loader2, Lock, Truck, Undo2, UserPlus, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, useQuery } from "@/lib/queryClient";
 
 interface Parada {
   id: string;
@@ -31,6 +31,8 @@ interface Parada {
   status: string;
   estimatedArrival?: string | null;
   isPriority?: boolean;
+  billingId?: string | null;
+  salesCardId?: string | null;
 }
 interface Rota {
   id: string;
@@ -50,6 +52,16 @@ interface Coluna {
 }
 
 const FINAIS = new Set(["efetuada", "devolvida"]);
+const BRL = (v: number) => "R$ " + (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const qtdTxt = (n: number) => (Number(n) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+/** Itens do pedido (products vem como array ou JSON em texto). */
+function contarItens(products: any): number {
+  let lista: any = products;
+  if (typeof lista === "string") { try { lista = JSON.parse(lista); } catch { lista = []; } }
+  if (!Array.isArray(lista)) return 0;
+  return lista.reduce((s: number, p: any) => s + (Number(p?.quantity ?? p?.qty ?? 0) || 0), 0);
+}
+const idPedido = (p: Parada) => String(p.billingId || p.salesCardId || "");
 const veiculo = (v?: string) => (v === "caminhao" ? "Caminhão" : v === "carro" ? "Carro" : v === "baruc" ? "Baruc" : v === "moto" ? "Moto" : v || "");
 
 interface Props {
@@ -86,6 +98,35 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
       })),
     [rotasValidas],
   );
+  // Valor (NF) e itens de cada entrega — atualiza os totais das colunas a cada migração.
+  const idsPedidos = useMemo(
+    () => Array.from(new Set(inicial.flatMap((c) => c.paradas.map(idPedido)).filter(Boolean))).sort(),
+    [inicial],
+  );
+  const { data: pedidos = [], isLoading: carregandoValores } = useQuery<any[]>({
+    queryKey: ["editar-rotas-dia-valores", routeDate, idsPedidos.join(",")],
+    queryFn: () => apiRequest("POST", "/api/billing-pipeline/items-by-ids", { ids: idsPedidos }),
+    enabled: open && idsPedidos.length > 0,
+    staleTime: 60 * 1000,
+  });
+  const infoPedido = useMemo(() => {
+    const m = new Map<string, { valor: number; itens: number; nf: string }>();
+    for (const it of (Array.isArray(pedidos) ? pedidos : [])) {
+      m.set(String(it.id), { valor: Number(it.saleValue) || 0, itens: contarItens(it.products), nf: String(it.invoiceNumber || "").trim() });
+    }
+    return m;
+  }, [pedidos]);
+  const totaisDe = (ps: Parada[]) => ps.reduce(
+    (acc, p) => { const i = infoPedido.get(idPedido(p)); if (i) { acc.valor += i.valor; acc.itens += i.itens; } return acc; },
+    { valor: 0, itens: 0 },
+  );
+  const totalAntes = useMemo(() => {
+    const m = new Map<string, number>();
+    inicial.forEach((c) => m.set(c.chave, totaisDe(c.paradas).valor));
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inicial, infoPedido]);
+
   useEffect(() => {
     if (open) {
       setColunas(inicial.map((c) => ({ ...c, paradas: [...c.paradas] })));
@@ -178,6 +219,7 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
         removidas: removidas.map((x) => x.parada.id),
       });
       const mudaram = (r?.rotas || []).filter((x: any) => x.mudou).length;
+      queryClient.invalidateQueries({ queryKey: ["editar-rotas-dia-valores"] });
       toast({
         title: "Rotas salvas",
         description: `${mudaram} rota(s) alterada(s)${r?.removidas ? `, ${r.removidas} entrega(s) de volta para Aguardando Rota` : ""}. Horários recalculados — reimprima as rotas alteradas.`,
@@ -202,6 +244,11 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
           <DialogTitle>Editar rotas de {dataBR}</DialogTitle>
           <DialogDescription>
             Migre entregas entre entregadores, mude a ordem ou tire da rota. Nada é gravado até você clicar em <b>Salvar alterações</b>.
+            {" "}
+            {carregandoValores ? "Carregando valores…" : (() => {
+              const t = totaisDe(colunas.flatMap((c) => c.paradas));
+              return <span className="text-gray-700">Total nas rotas: <b>{BRL(t.valor)}</b> · {qtdTxt(t.itens)} itens.</span>;
+            })()}
           </DialogDescription>
         </DialogHeader>
 
@@ -218,6 +265,22 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
                       </span>
                       <Badge variant="outline" className="text-xs">{c.paradas.length} entrega(s)</Badge>
                     </div>
+                    {(() => {
+                      const t = totaisDe(c.paradas);
+                      const antes = totalAntes.get(c.chave) ?? 0;
+                      const delta = Math.round((t.valor - antes) * 100) / 100;
+                      return (
+                        <div className="text-sm mt-1 flex items-baseline gap-2 flex-wrap" data-testid={`total-coluna-${c.chave}`}>
+                          <b className="text-gray-900">{BRL(t.valor)}</b>
+                          <span className="text-xs text-gray-500">{qtdTxt(t.itens)} itens</span>
+                          {delta !== 0 && (
+                            <span className={`text-xs font-medium ${delta > 0 ? "text-green-700" : "text-red-700"}`}>
+                              {delta > 0 ? "+" : "−"}{BRL(Math.abs(delta))}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <div className="text-xs text-gray-500 mt-0.5">
                       {veiculo(c.vehicleType)}
                       {!c.routeId && <span className="ml-1 text-blue-700">· rota nova (criada ao salvar)</span>}
@@ -247,7 +310,16 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
                               </div>
                               <div className="text-gray-500 truncate" title={p.customerAddress}>{p.customerAddress}</div>
                               <div className="text-gray-400">
-                                {p.orderNumber ? `Pedido ${p.orderNumber} · ` : ""}
+                                {(() => {
+                                  const inf = infoPedido.get(idPedido(p));
+                                  if (!inf) return p.orderNumber ? `Pedido ${p.orderNumber} · ` : "";
+                                  return (
+                                    <span className="text-gray-700">
+                                      {inf.nf ? `${inf.nf} · ` : p.orderNumber ? `Pedido ${p.orderNumber} · ` : ""}
+                                      <b>{BRL(inf.valor)}</b>{inf.itens ? ` · ${qtdTxt(inf.itens)} itens` : ""}{" · "}
+                                    </span>
+                                  );
+                                })()}
                                 {travada ? <span className="text-green-700 font-medium">{p.status}</span> : (p.estimatedArrival ? `previsto ${String(p.estimatedArrival).slice(0, 5)}` : "")}
                                 {veioDeOutra && <span className="text-blue-700"> · migrada</span>}
                               </div>
