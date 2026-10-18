@@ -85,6 +85,11 @@ const CFG_PADRAO: Cfg = {
   vigenciaYm: null,
 };
 
+// O driver nao aceita array JS como bind de ANY(); literal ARRAY[...]::varchar[]
+// e o idioma usado no resto do servidor (ver arraySql em contabilidade-insumos.ts).
+const arraySql = (xs: string[]) =>
+  sql.raw(`ARRAY[${xs.map((i) => `'${String(i).replace(/'/g, "''")}'`).join(",")}]::varchar[]`);
+
 const n = (v: any) => {
   const x = Number(v);
   return Number.isFinite(x) ? x : 0;
@@ -187,7 +192,7 @@ async function semearRegrasAtuais(): Promise<void> {
 
   const u: any = await db.execute(sql`
     SELECT id, LOWER(SPLIT_PART(TRIM(COALESCE(first_name, '')), ' ', 1)) AS primeiro
-    FROM users WHERE is_active = true AND role::text = ANY(${PAPEIS})`);
+    FROM users WHERE is_active = true AND role::text = ANY(${arraySql(PAPEIS)})`);
 
   for (const row of u.rows || []) {
     const primeiro = String(row.primeiro || "")
@@ -231,7 +236,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const colabs: any = admin
         ? await db.execute(sql`
             SELECT id, first_name, last_name, email, role, seller_type
-            FROM users WHERE is_active = true AND role::text = ANY(${PAPEIS})
+            FROM users WHERE is_active = true AND role::text = ANY(${arraySql(PAPEIS)})
             ORDER BY role, first_name, last_name`)
         : await db.execute(sql`
             SELECT id, first_name, last_name, email, role, seller_type
@@ -256,7 +261,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         SELECT seller_id, revenue_goal, challenge_goal, challenge_bonus
         FROM sales_goals
         WHERE month = ${mes} AND year = ${ano} AND is_active = true
-          AND seller_id = ANY(${ids})`);
+          AND seller_id = ANY(${arraySql(ids)})`);
       for (const r of mt.rows || []) {
         metaMap[String(r.seller_id)] = {
           meta: n(r.revenue_goal),
@@ -270,7 +275,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const km: any = await db.execute(sql`
         SELECT seller_id, SUM(COALESCE(total_actual_distance::numeric, 0)) AS km
         FROM daily_routes
-        WHERE seller_id = ANY(${ids})
+        WHERE seller_id = ANY(${arraySql(ids)})
           AND route_date >= ${ini}::date AND route_date < ${fim}::date
         GROUP BY seller_id`);
       for (const r of km.rows || []) kmMap[String(r.seller_id)] = n(r.km);
@@ -311,7 +316,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const lancMap: Record<string, Array<{ id: string; descricao: string; valor: number }>> = {};
       const lc: any = await db.execute(sql`
         SELECT id, user_id, descricao, valor FROM collab_bonus_lancamentos
-        WHERE ym = ${ym} AND user_id = ANY(${ids}) ORDER BY created_at`);
+        WHERE ym = ${ym} AND user_id = ANY(${arraySql(ids)}) ORDER BY created_at`);
       for (const r of lc.rows || []) {
         const k = String(r.user_id);
         (lancMap[k] = lancMap[k] || []).push({ id: r.id, descricao: r.descricao, valor: n(r.valor) });
@@ -324,7 +329,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
                comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta,
                faixa_tipo, paga_km, observacao
         FROM collab_remuneracao_config
-        WHERE user_id = ANY(${ids}) AND vigencia_ym <= ${ym}
+        WHERE user_id = ANY(${arraySql(ids)}) AND vigencia_ym <= ${ym}
         ORDER BY user_id, vigencia_ym DESC`);
       for (const r of cf.rows || []) {
         cfgMap[String(r.user_id)] = {
@@ -427,7 +432,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         ORDER BY nome, c.vigencia_ym DESC`);
       const colabs: any = await db.execute(sql`
         SELECT id, COALESCE(NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')), ''), email) AS nome, role, seller_type
-        FROM users WHERE is_active = true AND role::text = ANY(${PAPEIS})
+        FROM users WHERE is_active = true AND role::text = ANY(${arraySql(PAPEIS)})
         ORDER BY role, first_name, last_name`);
       res.json({ configs: r.rows || [], colaboradores: colabs.rows || [] });
     } catch (e: any) {
