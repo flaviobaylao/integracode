@@ -94,17 +94,28 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
     }
   }, [open, inicial]);
 
-  // Quantas entregas mudaram de rota/posição ou saíram.
-  const alteracoes = useMemo(() => {
-    const antes = new Map<string, { chave: string; pos: number }>();
-    inicial.forEach((c) => c.paradas.forEach((p, i) => antes.set(p.id, { chave: c.chave, pos: i })));
-    let n = removidas.length;
-    colunas.forEach((c) => c.paradas.forEach((p, i) => {
-      const a = antes.get(p.id);
-      if (!a || a.chave !== c.chave || a.pos !== i) n++;
-    }));
-    return n;
+  // O que mudou: entregas migradas, retiradas e rotas com a ordem mexida à mão.
+  const resumo = useMemo(() => {
+    const origem = new Map<string, string>();
+    inicial.forEach((c) => c.paradas.forEach((p) => origem.set(p.id, c.chave)));
+    let migradas = 0;
+    let reordenadas = 0;
+    for (const c of colunas) {
+      migradas += c.paradas.filter((p) => origem.get(p.id) !== c.chave).length;
+      const ini = inicial.find((x) => x.chave === c.chave);
+      if (!ini) continue;
+      const ficaram = new Set(c.paradas.map((p) => p.id));
+      const ordemAntes = ini.paradas.map((p) => p.id).filter((id) => ficaram.has(id));
+      const ordemAgora = c.paradas.map((p) => p.id).filter((id) => origem.get(id) === c.chave);
+      if (ordemAntes.join('|') !== ordemAgora.join('|')) reordenadas++;
+    }
+    const partes: string[] = [];
+    if (migradas) partes.push(`${migradas} migrada${migradas > 1 ? 's' : ''}`);
+    if (removidas.length) partes.push(`${removidas.length} retirada${removidas.length > 1 ? 's' : ''}`);
+    if (reordenadas) partes.push(`${reordenadas} rota${reordenadas > 1 ? 's' : ''} reordenada${reordenadas > 1 ? 's' : ''}`);
+    return { total: migradas + removidas.length + reordenadas, texto: partes.join(' · ') };
   }, [colunas, removidas, inicial]);
+  const alteracoes = resumo.total;
 
   const origemDe = useMemo(() => {
     const m = new Map<string, string>();
@@ -322,7 +333,7 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
             </Button>
             <Button onClick={salvar} disabled={salvando || alteracoes === 0} className="bg-green-600 hover:bg-green-700" data-testid="button-salvar-ajustes">
               {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-              Salvar alterações{alteracoes ? ` (${alteracoes})` : ""}
+              Salvar alterações{resumo.texto ? ` (${resumo.texto})` : ""}
             </Button>
           </div>
         </DialogFooter>
