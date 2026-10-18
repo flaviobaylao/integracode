@@ -617,6 +617,13 @@ async function prepararMapas(rotas: RotaImpressao[], doDia?: RotaImpressao[] | n
 }
 
 /** Só as folhas de rosto (romaneio) — uma página por motorista. */
+/** Data das rotas para o nome do arquivo (reimpressão de outro dia sai com a data da rota). */
+function dataDasRotas(rotas: RotaImpressao[]): string {
+  const datas = Array.from(new Set((rotas || []).map(r => String(r?.routeDate || '').slice(0, 10)).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))).sort();
+  if (datas.length === 0) return hojeBR();
+  return datas.length === 1 ? datas[0] : `${datas[0]}_a_${datas[datas.length - 1]}`;
+}
+
 export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[], rotasDoDia?: RotaImpressao[] | null): Promise<number> {
   const validas = (rotas || []).filter(r => r && (r.stops || []).length > 0);
   if (validas.length === 0) return 0;
@@ -624,7 +631,7 @@ export async function generateFolhasDeRostoPdf(rotas: RotaImpressao[], rotasDoDi
   const mapaDe = await prepararMapas(validas, rotasDoDia);
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   validas.forEach((r, i) => { if (i > 0) doc.addPage(); renderFolhaRosto(doc, r, logo, mapaDe(r)); });
-  doc.save('romaneio_' + hojeBR() + '.pdf');
+  doc.save('romaneio_' + dataDasRotas(validas) + '.pdf');
   return validas.length;
 }
 
@@ -677,7 +684,7 @@ export async function generateRotasCompletoPdf(
     });
   }
 
-  doc.save('rotas_completo_' + hojeBR() + '.pdf');
+  doc.save('rotas_completo_' + dataDasRotas(validas) + '.pdf');
   return { rotas: validas.length, pedidos: impressos };
 }
 
