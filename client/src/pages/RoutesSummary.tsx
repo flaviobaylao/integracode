@@ -38,6 +38,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { imprimirFolhasDeRosto, imprimirRotasCompleto, rotaSalva } from "@/lib/route-print";
+import EditarRotasDiaDialog from "@/components/EditarRotasDiaDialog";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline } from "react-leaflet";
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -563,6 +564,18 @@ export default function RoutesSummary() {
   // total, mapa do dia) e, no "Completo", pedido + DANFE + cobrança de cada
   // entrega, na ordem da rota. Usa as paradas COMO ESTÃO AGORA (após ajustes).
   const [imprimindo, setImprimindo] = useState<string | null>(null);
+  // Editor do dia: precisa de TODAS as rotas da data (mesmo com filtro de entregador).
+  const [editarDia, setEditarDia] = useState(false);
+  const { data: rotasDoDiaTodas = [] } = useQuery<DeliveryRoute[]>({
+    queryKey: ['/api/delivery-routes', { routeDate: selectedDate, driverId: undefined }],
+    queryFn: async () => {
+      const r = await fetch(`/api/delivery-routes?routeDate=${selectedDate}`, { credentials: 'include' });
+      if (!r.ok) throw new Error('Falha ao carregar as rotas do dia');
+      return r.json();
+    },
+    enabled: editarDia && !!selectedDate,
+    staleTime: 0,
+  });
   const rotasImprimiveis = routes.filter(r => !['cancelled', 'cancelada'].includes(String(r.status)) && (r.stops?.length || 0) > 0);
 
   const imprimir = async (alvo: DeliveryRoute[], tipo: 'completo' | 'rosto', chave: string) => {
@@ -624,6 +637,18 @@ export default function RoutesSummary() {
               Filtros
             </CardTitle>
             <div className="flex flex-wrap gap-2 justify-end">
+              {rotasImprimiveis.length > 0 && (
+                <Button
+                  variant="outline"
+                  onClick={() => setEditarDia(true)}
+                  className="border-green-400 text-green-800 hover:bg-green-50"
+                  data-testid="button-editar-rotas-dia"
+                  title="Migrar entregas entre entregadores, mudar a ordem ou tirar da rota, e salvar de novo"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Editar rotas do dia
+                </Button>
+              )}
               {rotasImprimiveis.length > 0 && (
                 <>
                   <Button
@@ -761,6 +786,14 @@ export default function RoutesSummary() {
           )}
         </CardContent>
       </Card>
+
+      <EditarRotasDiaDialog
+        open={editarDia}
+        onOpenChange={setEditarDia}
+        routeDate={selectedDate}
+        routes={(rotasDoDiaTodas.length ? rotasDoDiaTodas : routes) as any}
+        drivers={drivers as any}
+      />
 
       {/* Lista de Rotas */}
       {isLoading ? (

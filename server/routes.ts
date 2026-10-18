@@ -12401,6 +12401,179 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ ok: true, stops });
   });
 
+  // ============================================================================
+  // AJUSTAR ROTAS JÁ SALVAS DE UM DIA (18/out/2026)
+  // Tela "Rotas de Entrega" → "Editar rotas do dia": o operador migra entregas
+  // entre entregadores (inclusive para quem ainda não tem rota no dia), muda a
+  // ordem e tira entregas da rota; tudo é gravado de uma vez aqui.
+  // Body: { routeDate, reorganizar, rotas: [{ routeId?, driverId, stopIds[] }], removidas: stopIds[] }
+  //  • a parada MANTÉM o id (fotos, status e histórico vão junto);
+  //  • entrega já efetuada/devolvida não sai da rota onde aconteceu;
+  //  • removida → volta para "Aguardando Rota" (status legado + card do pipeline);
+  //  • rota que ficou vazia é excluída;
+  //  • horários refeitos (deslocamento + recebimento + tempo de entrega). Com
+  //    reorganizar=true, rotas que ganharam/perderam entregas são reordenadas
+  //    pelo sequenciador; as demais mantêm a ordem informada.
+  // ============================================================================
+  app.post("/api/delivery-routes/ajustar-dia", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
+    try {
+      const { routeDate, reorganizar = true } = req.body || {};
+      const dataStr = String(routeDate || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dataStr)) return res.status(400).json({ message: 'Data da rota inválida' });
+      const rotasIn: Array<{ routeId?: string | null; driverId: string; stopIds: string[] }> = Array.isArray(req.body?.rotas) ? req.body.rotas : [];
+      const removidas: string[] = Array.isArray(req.body?.removidas) ? req.body.removidas.map(String) : [];
+      const ator = req.currentUser?.email || 'ajuste-rotas';
+
+      // Rotas e paradas do dia (não canceladas)
+      const rotasDia = await db.select().from(deliveryRoutes)
+        .where(and(eq(deliveryRoutes.routeDate, dataStr), sql`COALESCE(${deliveryRoutes.status}, '') NOT IN ('cancelled', 'cancelada')`));
+      const idsRotasDia = new Set(rotasDia.map((r: any) => r.id));
+      const paradasDia = idsRotasDia.size
+        ? await db.select().from(deliveryRouteStops).where(inArray(deliveryRouteStops.routeId, Array.from(idsRotasDia)))
+        : [];
+      const paradaPorId = new Map<string, any>(paradasDia.map((s: any) => [s.id, s]));
+      const FINAIS = new Set(['efetuada', 'devolvida']);
+
+      // Validação
+      const vistos = new Set<string>();
+      for (const id of [...rotasIn.flatMap((r) => r.stopIds || []), ...removidas]) {
+        if (!paradaPorId.has(id)) return res.status(400).json({ message: `Entrega ${id} não pertence às rotas de ${dataStr}. Atualize a tela e tente de novo.` });
+        if (vistos.has(id)) return res.status(400).json({ message: 'Uma entrega apareceu em duas rotas. Atualize a tela e tente de novo.' });
+        vistos.add(id);
+      }
+      for (const r of rotasIn) {
+        if (r.routeId && !idsRotasDia.has(r.routeId)) return res.status(400).json({ message: 'Uma das rotas não existe mais neste dia. Atualize a tela.' });
+        if (!r.routeId && !r.driverId) return res.status(400).json({ message: 'Entregador obrigatório para a nova rota.' });
+      }
+
+      // Resolve a rota de destino de cada grupo (existente ou nova)
+      const destinos: Array<{ routeId: string; stopIds: string[]; nova: boolean }> = [];
+      for (const r of rotasIn) {
+        const stopIds = (r.stopIds || []).map(String);
+        let routeId = r.routeId || null;
+        if (!routeId) {
+          const jaTem = rotasDia.find((x: any) => x.driverId === r.driverId);
+          if (jaTem) routeId = jaTem.id;
+        }
+        if (!routeId) {
+          if (stopIds.length === 0) continue; // entregador adicionado sem entregas: nada a criar
+          const [drv] = await db.select().from(deliveryDrivers).where(eq(deliveryDrivers.id, r.driverId)).limit(1);
+          if (!drv) return res.status(400).json({ message: 'Entregador não encontrado no cadastro.' });
+          const nome = String(drv.name || '').trim();
+          let email = String(drv.email || '').toLowerCase().trim();
+          if (!email && nome) email = `${nome.toLowerCase().replace(/\s+/g, '')}@bebahonest.com.br`;
+          const ref: any = rotasDia[0] || null;
+          const primeira = paradaPorId.get(stopIds[0]);
+          const lat = Number(drv.homeLatitude) || Number(ref?.startLatitude) || Number(primeira?.customerLatitude) || 0;
+          const lng = Number(drv.homeLongitude) || Number(ref?.startLongitude) || Number(primeira?.customerLongitude) || 0;
+          routeId = nanoid();
+          await db.insert(deliveryRoutes).values({
+            id: routeId,
+            routeName: `ROTA-${dataStr}-${nome.toUpperCase() || 'ENTREGADOR'}-1`,
+            routeDate: dataStr,
+            driverId: r.driverId,
+            driverName: nome || 'Entregador',
+            driverEmail: email,
+            vehicleType: drv.vehicleType || 'carro',
+            startLatitude: String(lat) as any,
+            startLongitude: String(lng) as any,
+            totalDistance: '0' as any,
+            totalDeliveries: stopIds.length,
+            totalDuration: 0,
+            timeWindowStart: ref?.timeWindowStart || '08:00',
+            timeWindowEnd: ref?.timeWindowEnd || '18:00',
+            status: 'rota_enviada',
+            sentToDriverAt: agora(),
+          } as any);
+          idsRotasDia.add(routeId);
+          destinos.push({ routeId, stopIds, nova: true });
+          continue;
+        }
+        destinos.push({ routeId, stopIds, nova: false });
+      }
+
+      // Entrega finalizada não muda de rota nem sai dela
+      for (const d of destinos) {
+        for (const id of d.stopIds) {
+          const p = paradaPorId.get(id);
+          if (FINAIS.has(String(p.status)) && p.routeId !== d.routeId) {
+            return res.status(400).json({ message: `${p.customerName}: entrega já ${p.status}, não pode mudar de entregador.` });
+          }
+        }
+      }
+      for (const id of removidas) {
+        const p = paradaPorId.get(id);
+        if (FINAIS.has(String(p.status))) return res.status(400).json({ message: `${p.customerName}: entrega já ${p.status}, não pode sair da rota.` });
+      }
+
+      // O que mudou em cada rota (para decidir recálculo / reordenação)
+      const antesPorRota = new Map<string, string[]>();
+      for (const s of [...paradasDia].sort((a: any, b: any) => (a.stopOrder || 0) - (b.stopOrder || 0))) {
+        const l = antesPorRota.get(s.routeId) || [];
+        l.push(s.id);
+        antesPorRota.set(s.routeId, l);
+      }
+
+      await db.transaction(async (tx: any) => {
+        for (const d of destinos) {
+          for (let i = 0; i < d.stopIds.length; i++) {
+            await tx.update(deliveryRouteStops)
+              .set({ routeId: d.routeId, stopOrder: i + 1 })
+              .where(eq(deliveryRouteStops.id, d.stopIds[i]));
+          }
+        }
+        if (removidas.length) {
+          await tx.delete(deliveryRouteStops).where(inArray(deliveryRouteStops.id, removidas));
+        }
+      });
+
+      // Removidas voltam para "Aguardando Rota"
+      for (const id of removidas) {
+        const p = paradaPorId.get(id);
+        if (!p?.billingId) continue;
+        try {
+          await storage.updateBillingsStatus([p.billingId], 'Aguardando Rota');
+          const { moverCardParaAguardandoRota } = await import('./deliveryPipelineSync');
+          const rotaOrig: any = rotasDia.find((x: any) => x.id === p.routeId);
+          await moverCardParaAguardandoRota(p.billingId, `parada-removida no ajuste do dia (${ator})`, {
+            vehicleType: rotaOrig?.vehicleType ?? null,
+            motivo: `rota ${p.routeId}`,
+          });
+        } catch (e: any) {
+          console.error('[AJUSTAR-DIA] Falha ao devolver para Aguardando Rota:', e?.message);
+        }
+      }
+
+      // Recalcula as rotas afetadas e exclui as que ficaram vazias
+      const depois: any = await db.execute(sql`
+        SELECT r.id, COALESCE(array_agg(s.id ORDER BY s.stop_order) FILTER (WHERE s.id IS NOT NULL), '{}') AS stops
+        FROM delivery_routes r LEFT JOIN delivery_route_stops s ON s.route_id = r.id
+        WHERE r.id = ANY(ARRAY[${sql.join(Array.from(idsRotasDia).map((id) => sql`${id}`), sql`, `)}]::varchar[])
+        GROUP BY r.id`);
+      const resumo: Array<{ routeId: string; entregas: number; mudou: boolean; excluida?: boolean }> = [];
+      for (const row of (depois.rows || depois)) {
+        const atual: string[] = Array.isArray(row.stops) ? row.stops : [];
+        const antes = antesPorRota.get(row.id) || [];
+        const mesmasEntregas = atual.length === antes.length && atual.every((id) => antes.includes(id));
+        const mesmaOrdem = mesmasEntregas && atual.every((id, i) => antes[i] === id);
+        if (mesmaOrdem) { resumo.push({ routeId: row.id, entregas: atual.length, mudou: false }); continue; }
+        if (atual.length === 0) {
+          await db.delete(deliveryRoutes).where(eq(deliveryRoutes.id, row.id));
+          resumo.push({ routeId: row.id, entregas: 0, mudou: true, excluida: true });
+          continue;
+        }
+        await recalcularHorariosRota(row.id, { reordenar: !!reorganizar && !mesmasEntregas });
+        resumo.push({ routeId: row.id, entregas: atual.length, mudou: true });
+      }
+
+      console.log(`🔀 [AJUSTAR-DIA] ${dataStr} por ${ator}: ${resumo.filter((r) => r.mudou).length} rota(s) alterada(s), ${removidas.length} removida(s)`);
+      res.json({ ok: true, rotas: resumo, removidas: removidas.length });
+    } catch (error: any) {
+      console.error('Error adjusting day routes:', error);
+      res.status(500).json({ message: 'Falha ao salvar os ajustes das rotas', error: error.message });
+    }
+  });
+
   app.post("/api/delivery-routes/resequence", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { orderIds, vehicle, routeDate } = req.body || {};
