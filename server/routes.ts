@@ -678,6 +678,43 @@ async function __enriquecerClientesConsulta(lista: any[]): Promise<void> {
     `);
     for (const v of (r2?.rows || []) as any[]) confirmados.add(`${v.customer_id}|${v.phone_digits}`);
   } catch (_e) { /* tabela criada sob demanda — pode não existir ainda */ }
+  // 🎣 EM REPESCAGEM: mesma fonte da tela de Repescagem — alocação ativa ('pending', ou 'in_route'
+  // do sorteio de HOJE) de cliente ATIVO e NÃO PF (PF = tem CPF e não tem CNPJ). A tag SOME assim
+  // que o atendimento é satisfeito, com os MESMOS sinais que concluem a repescagem
+  // (closeAndExpireRepescagem): atendimento virtual, check-in de rota ou pedido a partir do dia da
+  // alocação — sem esperar o fechamento automático (throttled) rodar.
+  const emRepescagem = new Set<string>();
+  try {
+    const hojeRep = hojeBR();
+    const r3: any = await db.execute(sql`
+      SELECT DISTINCT ra.customer_id
+      FROM repescagem_assignments ra
+      JOIN customers c ON c.id = ra.customer_id
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(NULLIF(ra.draw_date, '')::date,
+                        (ra.assigned_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) AS desde
+      ) j
+      WHERE ra.customer_id IN (${inIds})
+        AND (ra.status = 'pending' OR (ra.status = 'in_route' AND ra.draw_date = ${hojeRep}))
+        AND c.is_active = true
+        AND NOT (COALESCE(regexp_replace(c.cnpj, '[^0-9]', '', 'g'), '') = ''
+                 AND length(COALESCE(regexp_replace(c.cpf, '[^0-9]', '', 'g'), '')) = 11)
+        AND NOT EXISTS (
+          SELECT 1 FROM virtual_service_logs vl
+          WHERE vl.customer_id = ra.customer_id
+            AND (vl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= j.desde)
+        AND NOT EXISTS (
+          SELECT 1 FROM route_checkpoints rc
+          WHERE rc.customer_id = ra.customer_id AND rc.checkpoint_type = 'check_in'
+            AND (rc.checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date >= j.desde)
+        AND NOT EXISTS (
+          SELECT 1 FROM billing_pipeline bp
+          WHERE bp.customer_id = ra.customer_id
+            AND COALESCE(bp.scheduled_billing_date::date,
+                         (bp.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) >= j.desde)
+    `);
+    for (const x of (r3?.rows || []) as any[]) emRepescagem.add(String(x.customer_id));
+  } catch (e: any) { console.warn('[consulta-local] status de repescagem indisponível:', e?.message || e); }
   const ETAPA: Record<string, string> = {
     agendado: 'Agendado', pedido: 'Pedido', a_faturar: 'A faturar', faturado: 'Faturado', impresso: 'Impresso',
     aguardando_rota: 'Aguardando rota', em_rota: 'Em rota', entregue: 'Entregue',
@@ -697,6 +734,7 @@ async function __enriquecerClientesConsulta(lista: any[]): Promise<void> {
     const digitos = String(c.telefone || '').replace(/\D/g, '');
     c.whatsapp = numeroWhats(c.telefone);
     c.whatsConfirmado = !!(digitos && confirmados.has(`${c.id}|${digitos}`));
+    c.emRepescagem = emRepescagem.has(String(c.id));
     const p = ultimo[String(c.id)];
     if (p) {
       const nf = String(p.invoice_number || '').trim();
@@ -24910,7 +24948,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) {
         return res.status(400).json({ ok: false, message: 'Coordenadas inválidas.' });
       }
-      const raio = Math.min(Math.max(Number(req.body?.raio) || 100, 20), 2000);
+      const raio = Math.min(Math.max(Number(req.body?.raio) || 300, 20), 2000); // padrão 300 m (ampliável p/ 500 m na tela)
       // Pré-filtro por bounding box no banco (margem de ~30% sobre o raio); precisão fina via Haversine em JS.
       const latDelta = (raio * 1.3) / 111320;
       const lngDelta = (raio * 1.3) / ((111320 * Math.cos((lat * Math.PI) / 180)) || 1);
