@@ -82,6 +82,7 @@ import { registerRe15AssinaturaRoutes } from './re15-assinatura-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registerSellerDocumentsRoutes } from './seller-documents-routes';
+import { registerResumoRecebiveisRoutes } from './resumo-recebiveis-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
 import { registerRelatorioInsumosRoutes } from './relatorio-insumos';
@@ -3225,6 +3226,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // documentos pessoais, cartao CNPJ, dados bancarios, comissoes, termos de
   // comodato... — 16/out/2026. Rotas /api/users/:id/arquivos*.
   try { registerSellerDocumentsRoutes(app); } catch (e) { console.error('[arq-vendedor]', e); }
+
+  // Resumo Recebiveis Colaborador (modulo de Vendas): fixo, meta, faturamento,
+  // comissao, bonus e km por colaborador no mes — 18/out/2026.
+  // Rotas /api/resumo-recebiveis*.
+  try { registerResumoRecebiveisRoutes(app); } catch (e) { console.error('[resumo-receb]', e); }
 
   // Check-list da industria (modelos + execucoes com foto, responsavel e
   // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
