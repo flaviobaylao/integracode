@@ -13,7 +13,8 @@
 //   3. ficam os 2 grupos com mais entregas; em grupo com 10+ entregas as pontas
 //      são aparadas (10% de cada lado) para uma entrega fora da curva não
 //      esticar o período; arredonda para 15 min (mínimo 30 min de largura).
-// Usa as últimas 40 entregas de cada grupo nos últimos 365 dias. Com menos de
+// Usa as últimas 40 visitas de cada grupo nos últimos 365 dias (vários pedidos
+// entregues no mesmo dia contam como uma visita, no horário da primeira). Com menos de
 // 3 entregas no grupo, mostra só a contagem/mediana (sem período sugerido).
 //
 // Gravado em customers.entrega_horarios_pref (jsonb) — coluna criada aqui, fora
@@ -127,11 +128,17 @@ async function carregarAmostras(customerId?: string): Promise<any[]> {
         AND COALESCE(s.delivery_started_at, s.check_in_time, s.completed_at, s.check_out_time) >= NOW() - INTERVAL '365 days'
         ${filtro}
     )
+    , visitas AS (
+      -- Vários pedidos entregues no mesmo dia = uma visita (vale o 1º horário do dia).
+      SELECT DISTINCT ON (cliente, t::date) cliente, t
+      FROM e
+      WHERE cliente IS NOT NULL AND cliente NOT LIKE 'billing-%'
+      ORDER BY cliente, t::date, t
+    )
     SELECT cliente, EXTRACT(DOW FROM t)::int AS dow,
            (EXTRACT(HOUR FROM t) * 60 + EXTRACT(MINUTE FROM t))::int AS minuto,
            to_char(t, 'YYYY-MM-DD"T"HH24:MI') AS quando
-    FROM e
-    WHERE cliente IS NOT NULL AND cliente NOT LIKE 'billing-%'
+    FROM visitas
     ORDER BY cliente, t DESC`);
   return (r.rows || r) as any[];
 }

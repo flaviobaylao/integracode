@@ -115,7 +115,7 @@ export default function HorariosPreferenciaisCliente({ customerId, onUsarSemana,
         <Grupo titulo="Sábado" g={data.sabado} onUsar={onUsarSabado} />
       </div>
       <p className="text-xs text-indigo-700">
-        Horário em que o entregador iniciou cada entrega efetuada (últimas 40 de cada grupo, último ano). Atualiza sozinho a cada entrega.
+        Horário em que o entregador iniciou cada entrega efetuada (uma visita por dia; últimas 40 de cada grupo, último ano). Atualiza sozinho a cada entrega.
         {data.ultimaEntrega ? ` Última entrega: ${data.ultimaEntrega.slice(8, 10)}/${data.ultimaEntrega.slice(5, 7)}/${data.ultimaEntrega.slice(0, 4)} às ${data.ultimaEntrega.slice(11, 16)}.` : ""}
       </p>
     </div>
