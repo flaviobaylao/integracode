@@ -728,6 +728,10 @@ export function registerGeocodeAnalyze(app: Express) {
       const offset = Math.max(Number(body.offset) || 0, 0);
       const lista = await listarAproximados(body.todos !== true);
       const lote = lista.slice(offset, offset + limit);
+      // Deslocamento grande merece olho humano antes de virar rota: acima do limite
+      // a correção só é SUGERIDA (não grava). Padrão 3 km — o erro típico de um
+      // ponto de bairro na grade de ~2 km é até ~1,5 km.
+      const maxKm = Number(body.maxDeslocamentoKm) > 0 ? Number(body.maxDeslocamentoKm) : 3;
       const itens: any[] = [];
       let gravados = 0;
       for (const c of lote) {
@@ -742,15 +746,17 @@ export function registerGeocodeAnalyze(app: Express) {
         // Trava em grade = GPS impreciso no check-in: destrava (o próximo check-in
         // com GPS preciso grava e trava de novo). Outras travas são respeitadas.
         const podeMexer = !c.travada || c.motivo === "grade";
+        const longeDemais = coord && item.deslocamentoKm != null && item.deslocamentoKm > maxKm;
+        if (longeDemais) item.revisar = `muda ${item.deslocamentoKm} km — confira antes de aplicar`;
         if (aplicar && podeMexer) {
           try {
-            if (coord) {
+            if (coord && !longeDemais) {
               await db.execute(sql`
                 UPDATE customers SET latitude = ${coord.lat}, longitude = ${coord.lon}, coordinates_locked = false
                 WHERE id = ${c.id}`);
               item.gravado = true;
               gravados++;
-            } else if (c.travada) {
+            } else if (c.travada && !coord) {
               await db.execute(sql`UPDATE customers SET coordinates_locked = false WHERE id = ${c.id}`);
               item.destravado = true;
             }
@@ -764,6 +770,8 @@ export function registerGeocodeAnalyze(app: Express) {
       res.json({
         aplicado: aplicar, totalAproximados: lista.length, offset, processados: lote.length,
         comCorrecao: itens.filter((i) => i.para).length, gravados,
+        paraRevisar: itens.filter((i) => i.revisar).map((i) => ({ id: i.id, nome: i.nome, endereco: i.endereco, deslocamentoKm: i.deslocamentoKm, de: i.de, para: i.para })),
+        destravados: itens.filter((i) => i.destravado).length,
         semSolucao: itens.filter((i) => !i.para).length,
         proximoOffset: offset + lote.length < lista.length ? offset + lote.length : null,
         itens,
