@@ -62,6 +62,7 @@ interface BillingPipelineItem {
   pontoEntregaCidade?: string | null;
   pontoEntregaUf?: string | null;
   deliveryDriverName?: string | null; // entregador da rota (cards em_rota/em_rota_bsb)
+  deliveryRouteRascunho?: boolean; // card em "Aguardando Rota" que já está num rascunho de rota
   deliveryRouteDate?: string | null;  // data programada da rota (YYYY-MM-DD)
   paymentMethod: string | null;
   operationType: string | null;
@@ -2889,8 +2890,13 @@ function KanbanCard({
         </div>
 
         {item.deliveryDriverName && (
-          <div className="flex items-center gap-1 text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5" title="Entregador e data programada da rota" data-testid={`rota-info-${item.id}`}>
+          <div
+            className={`flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5 border ${item.deliveryRouteRascunho ? 'text-amber-900 bg-amber-50 border-amber-300' : 'text-indigo-800 bg-indigo-50 border-indigo-200'}`}
+            title={item.deliveryRouteRascunho ? 'Já está num RASCUNHO de rota (salva sem enviar). Vai para "Em Rota" quando a rota for enviada.' : 'Entregador e data programada da rota'}
+            data-testid={`rota-info-${item.id}`}
+          >
             <Truck className="h-3 w-3 flex-shrink-0" />
+            {item.deliveryRouteRascunho && <span className="font-semibold uppercase text-[9px] tracking-wide">rascunho</span>}
             <span className="font-semibold truncate">{item.deliveryDriverName}</span>
             {item.deliveryRouteDate && (
               <span className="ml-auto whitespace-nowrap">{String(item.deliveryRouteDate).slice(0, 10).split('-').reverse().join('/')}</span>

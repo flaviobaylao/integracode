@@ -27,7 +27,7 @@ import MissingCoordinatesModal from "@/components/MissingCoordinatesModal";
 import {
   Truck, Bot, Loader2, MapPin, Clock, AlertTriangle, CheckCircle2,
   Wand2, ArrowLeft, Save, Users, Gauge, Info, Map as MapIcon, Eye, EyeOff,
-  Printer, FileText, Trash2, ArrowRightLeft, Undo2, Hourglass,
+  Printer, FileText, Trash2, ArrowRightLeft, Undo2, Hourglass, Send,
 } from "lucide-react";
 import { imprimirFolhasDeRosto, imprimirRotasCompleto, rotaDoPlano } from "@/lib/route-print";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
@@ -213,7 +213,9 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   const [rotasNoMapa, setRotasNoMapa] = useState<Set<number>>(new Set());
   const [mapaDaRota, setMapaDaRota] = useState<Record<number, boolean>>({});
   // Salvamento: o pop-up NÃO se fecha sozinho — fica aberto para a impressão.
-  const [savedInfo, setSavedInfo] = useState<{ rotas: number } | null>(null);
+  const [savedInfo, setSavedInfo] = useState<{ rotas: number; enviada: boolean } | null>(null);
+  // Rascunho salvo continua editável aqui; só a rota ENVIADA trava os ajustes.
+  const enviadas = !!savedInfo?.enviada;
   const [imprimindo, setImprimindo] = useState<null | 'completo' | 'rosto'>(null);
   // Ajustes manuais antes de salvar: entregas excluídas da proposta (voltam para
   // "Aguardando Rota" no salvar) e a parada em processamento (migração/exclusão).
@@ -329,7 +331,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   });
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (enviar: boolean) => {
       const routes = (plan?.routes || [])
         .map((r: any, i: number) => ({ r, i }))
         .filter(({ r, i }: any) => selectedRoutes.has(i) && (r.stops || []).length > 0)
@@ -358,6 +360,8 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
         });
       return await apiRequest('POST', '/api/delivery-routes/save', {
         routes,
+        // false = RASCUNHO: não vai ao entregador e os pedidos ficam em "Aguardando Rota"
+        enviar,
         // Excluídas da proposta → voltam/permanecem em "Aguardando Rota" no pipeline.
         excludedOrderIds: excluidos.map(e => e.stop.salesCardId).filter(Boolean),
       });
@@ -368,8 +372,17 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       queryClient.invalidateQueries({ queryKey: ['/api/delivery-routes'] });
       // ⚠️ NÃO fecha o pop-up: o operador ainda precisa imprimir os pedidos e as
       // folhas de rosto. O fechamento (e a limpeza da seleção) é sempre manual.
-      setSavedInfo({ rotas: data?.routes?.length || 0 });
+      const enviada = data?.enviada !== false;
+      setSavedInfo({ rotas: data?.routes?.length || 0, enviada });
       const dev = Number(data?.devolvidosAguardando || 0);
+      if (!enviada) {
+        toast({
+          title: 'Rascunho salvo',
+          description: `${data?.routes?.length || 0} rota(s) gravada(s) sem enviar. Os pedidos continuam em "Aguardando Rota". `
+            + 'Abra depois em Rotas de Entrega → Editar rotas do dia, ajuste e use "Salvar e enviar".',
+        });
+        return;
+      }
       toast({
         title: 'Rotas salvas e enviadas',
         description: `${data?.routes?.length || 0} rota(s) gravada(s). Os cards foram para "Em Rota".`
@@ -576,7 +589,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
             <DialogDescription>
               {step === 'frota'
                 ? 'Marque os motoristas e veículos disponíveis para hoje. O agente distribui os pedidos e o algoritmo otimiza a sequência.'
-                : 'Confira a proposta antes de salvar. Ao salvar, as rotas vão para os motoristas e os cards avançam para "Em Rota".'}
+                : 'Confira a proposta. "Salvar rascunho" grava sem enviar e sem mudar a etapa dos pedidos; "Salvar e enviar" manda aos motoristas e os cards avançam para "Em Rota".'}
             </DialogDescription>
           </DialogHeader>
 
@@ -950,7 +963,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                               {s.estimatedServiceTime ?? 5} min {s.tempoEntregaMedido ? 'med.' : 'est.'}
                             </span>
                             <span className="w-14 text-right text-gray-400">+{Number(s.distanceFromPrevious || 0).toFixed(1)} km</span>
-                            {!savedInfo && (
+                            {!enviadas && (
                               <div className="flex items-center gap-1 ml-auto">
                                 {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" /> : (
                                   <>
@@ -988,13 +1001,13 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                 <Card className="border-gray-300 bg-gray-50/80 dark:bg-gray-900/30"><CardContent className="p-3">
                   <div className="text-xs font-semibold mb-1 flex items-center gap-1">
                     <Trash2 className="h-3.5 w-3.5 text-gray-600" />
-                    {excluidos.length} entrega(s) excluída(s) da rota — {savedInfo ? 'voltaram' : 'voltam'} para "Aguardando Rota" {savedInfo ? '' : 'ao salvar'}
+                    {excluidos.length} entrega(s) excluída(s) da rota — {enviadas ? 'voltaram' : 'voltam'} para "Aguardando Rota" {enviadas ? '' : 'ao salvar'}
                   </div>
                   <div className="space-y-1">
                     {excluidos.map((e) => (
                       <div key={e.stop.salesCardId} className="flex items-center gap-2 text-xs flex-wrap">
                         <span className="flex-1 truncate">• {e.stop.customerName}{e.deDriverName ? <span className="text-gray-400"> (estava com {e.deDriverName})</span> : null}</span>
-                        {!savedInfo && (ajustando === e.stop.salesCardId
+                        {!enviadas && (ajustando === e.stop.salesCardId
                           ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
                           : (
                             <Select value="" onValueChange={(val) => devolverParada(e.stop, val)} disabled={!!ajustando}>
@@ -1027,7 +1040,20 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
               )}
 
               {/* Confirmação do salvamento — o pop-up continua aberto de propósito */}
-              {savedInfo && (
+              {savedInfo && !savedInfo.enviada && (
+                <Card className="border-amber-300 bg-amber-50/70 dark:bg-amber-900/10"><CardContent className="p-3">
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <Save className="h-4 w-4 text-amber-700 shrink-0" />
+                    <span className="font-semibold text-amber-900 dark:text-amber-300">
+                      Rascunho salvo: {savedInfo.rotas} rota(s), ainda NÃO enviada(s).
+                    </span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      Os pedidos continuam em "Aguardando Rota" e os motoristas não recebem nada. Ajuste aqui ou depois em <b>Rotas de Entrega → Editar rotas do dia</b>, e use <b>Salvar e enviar</b>.
+                    </span>
+                  </div>
+                </CardContent></Card>
+              )}
+              {savedInfo && savedInfo.enviada && (
                 <Card className="border-emerald-300 bg-emerald-50/70 dark:bg-emerald-900/10"><CardContent className="p-3">
                   <div className="flex items-center gap-2 text-sm">
                     <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
@@ -1070,16 +1096,30 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                   <Button variant="outline" onClick={() => fecharDialog(false)}>
                     {savedInfo ? 'Fechar' : 'Fechar sem salvar'}
                   </Button>
+                  {!enviadas && (
+                    <Button
+                      variant="outline"
+                      className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                      disabled={rotasSalvaveis === 0 || saveMutation.isPending || !!ajustando}
+                      onClick={() => saveMutation.mutate(false)}
+                      title="Grava as rotas sem enviar aos motoristas e sem mudar a etapa dos pedidos. Dá para abrir e editar depois."
+                      data-testid="button-salvar-rascunho"
+                    >
+                      {saveMutation.isPending && saveMutation.variables === false
+                        ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</>
+                        : <><Save className="h-4 w-4 mr-2" /> {savedInfo ? 'Salvar rascunho de novo' : 'Salvar rascunho'} ({rotasSalvaveis})</>}
+                    </Button>
+                  )}
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    disabled={(rotasSalvaveis === 0 && excluidos.length === 0) || saveMutation.isPending || !!savedInfo || !!ajustando}
-                    onClick={() => saveMutation.mutate()}
+                    disabled={(rotasSalvaveis === 0 && excluidos.length === 0) || saveMutation.isPending || enviadas || !!ajustando}
+                    onClick={() => saveMutation.mutate(true)}
                   >
-                    {saveMutation.isPending
+                    {saveMutation.isPending && saveMutation.variables === true
                       ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</>
-                      : savedInfo
-                        ? <><CheckCircle2 className="h-4 w-4 mr-2" /> Rotas salvas</>
-                        : <><Save className="h-4 w-4 mr-2" /> Salvar e enviar ({rotasSalvaveis})</>}
+                      : enviadas
+                        ? <><CheckCircle2 className="h-4 w-4 mr-2" /> Rotas enviadas</>
+                        : <><Send className="h-4 w-4 mr-2" /> Salvar e enviar ({rotasSalvaveis})</>}
                   </Button>
                 </div>
               </div>

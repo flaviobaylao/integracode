@@ -8920,6 +8920,29 @@ export class DatabaseStorage implements IStorage {
           }
         }
       }
+      // Cards ainda em "Aguardando Rota" que já estão num RASCUNHO de rota
+      // (salva sem enviar): mostra entregador/data com a marca "rascunho".
+      const aguardandoIds = rowsC
+        .filter(r => ['aguardando_rota', 'aguardando_rota_bsb', 'impresso'].includes(String(r.stage || '')))
+        .map(r => String(r.id));
+      if (aguardandoIds.length) {
+        const idList = sql.join(aguardandoIds.map((i: string) => sql`${i}`), sql`, `);
+        const q: any = await db.execute(sql`
+          SELECT DISTINCT ON (s.billing_id)
+                 s.billing_id AS bid, r.driver_name AS driver, r.route_date::text AS rdate
+          FROM delivery_route_stops s
+          JOIN delivery_routes r ON r.id = s.route_id
+          WHERE s.billing_id IN (${idList})
+            AND r.status IN ('rota salva', 'pending', 'planejada')
+          ORDER BY s.billing_id, s.created_at DESC NULLS LAST`);
+        for (const x of (q.rows || q) as any[]) {
+          const r = rowsC.find(y => String(y.id) === String(x.bid));
+          if (!r) continue;
+          (r as any).deliveryDriverName = x.driver || null;
+          (r as any).deliveryRouteDate = x.rdate || null;
+          (r as any).deliveryRouteRascunho = true;
+        }
+      }
     } catch {}
     // Enriquece com os dados de LOCALIZACAO do cadastro do cliente (usado pelo modulo
     // "Fluxo de Entregas": coluna Coordenadas "latitude, longitude" + endereco/cidade).

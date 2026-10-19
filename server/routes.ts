@@ -12454,9 +12454,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //    reorganizar=true, rotas que ganharam/perderam entregas são reordenadas
   //    pelo sequenciador; as demais mantêm a ordem informada.
   // ============================================================================
+  // ============================================================================
+  // RASCUNHO DE ROTA (19/out/2026)
+  // Rota salva SEM enviar = status 'rota salva' (o mesmo "Salva (Não Enviada)"
+  // que a tela Rotas de Entrega já conhecia). Rascunho não aparece no app do
+  // entregador (my-routes só lista enviada/em andamento/concluída) e NÃO mexe na
+  // etapa dos pedidos: eles continuam em "Aguardando Rota" até o envio.
+  // Ao enviar (Salvar e enviar no planejamento, Editar rotas do dia, ou os
+  // botões Enviar da tela Rotas de Entrega) a rota vira 'rota_enviada' e os
+  // cards vão para "Em Rota" / "Em Rota BSB" — tudo por enviarRotas().
+  // ============================================================================
+  const STATUS_RASCUNHO = ['rota salva', 'pending', 'planejada'];
+  const ehRascunho = (status: any) => STATUS_RASCUNHO.includes(String(status || ''));
+
+  /** Move os cards (ids de billing_pipeline) para Em Rota / Em Rota BSB. Idempotente. */
+  async function moverPedidosParaEmRota(billingIds: string[], bsbIds: string[], ator: string): Promise<number> {
+    const todos = Array.from(new Set(billingIds.filter(Boolean)));
+    if (!todos.length) return 0;
+    await storage.updateBillingsStatus(todos, 'Em Rota');
+    const bsbSet = new Set(bsbIds);
+    const grupos: Array<[string, string[]]> = [
+      ['em_rota_bsb', todos.filter((b) => bsbSet.has(b))],
+      ['em_rota', todos.filter((b) => !bsbSet.has(b))],
+    ];
+    let movidos = 0;
+    for (const [etapa, ids] of grupos) {
+      if (!ids.length) continue;
+      const r: any = await db.execute(sql`
+        UPDATE billing_pipeline
+           SET stage = ${etapa}, updated_at = NOW()
+         WHERE id IN (${sql.join(ids.map((bid) => sql`${bid}`), sql`, `)})
+           AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
+         RETURNING id`);
+      const linhas = r?.rows || [];
+      movidos += linhas.length;
+      try {
+        const { appendStageHistory } = await import('./deliveryPipelineSync');
+        for (const l of linhas) await appendStageHistory(l.id, etapa, `rota-confirmada (${ator})`);
+      } catch (e: any) {
+        console.warn('[EM-ROTA] Falha ao registrar stage_history:', e?.message);
+      }
+    }
+    return movidos;
+  }
+
+  /** Envia rotas aos entregadores: status 'rota_enviada' + pedidos para Em Rota. */
+  async function enviarRotas(routeIds: string[], ator: string): Promise<{ enviadas: number; pedidos: number }> {
+    const ids = Array.from(new Set(routeIds.filter(Boolean)));
+    if (!ids.length) return { enviadas: 0, pedidos: 0 };
+    const rotas = await db.select().from(deliveryRoutes).where(inArray(deliveryRoutes.id, ids));
+    const vivas = rotas.filter((r: any) => !['cancelled', 'cancelada'].includes(String(r.status || '')));
+    if (!vivas.length) return { enviadas: 0, pedidos: 0 };
+    const paraEnviar = vivas.filter((r: any) => ehRascunho(r.status)).map((r: any) => r.id);
+    if (paraEnviar.length) {
+      await db.update(deliveryRoutes)
+        .set({ status: 'rota_enviada', sentToDriverAt: agora(), updatedAt: agora() })
+        .where(inArray(deliveryRoutes.id, paraEnviar));
+    }
+    const paradas = await db.select({ billingId: deliveryRouteStops.billingId, routeId: deliveryRouteStops.routeId })
+      .from(deliveryRouteStops).where(inArray(deliveryRouteStops.routeId, vivas.map((r: any) => r.id)));
+    const bsbRotas = new Set(vivas.filter((r: any) => String(r.vehicleType || '').toLowerCase() === 'baruc').map((r: any) => r.id));
+    const bids = paradas.map((p: any) => String(p.billingId || '')).filter(Boolean);
+    const bsb = paradas.filter((p: any) => p.billingId && bsbRotas.has(p.routeId)).map((p: any) => String(p.billingId));
+    const pedidos = await moverPedidosParaEmRota(bids, bsb, ator);
+    console.log(`📤 [ENVIAR-ROTAS] ${paraEnviar.length} rota(s) enviada(s), ${pedidos} pedido(s) para Em Rota (${ator})`);
+    return { enviadas: paraEnviar.length, pedidos };
+  }
+
+  /**
+   * Tira os pedidos de qualquer RASCUNHO em que estejam (o pedido foi para outra
+   * rota). Rascunhos que ficam vazios são excluídos; os demais têm os horários
+   * refeitos. Rotas enviadas não são tocadas.
+   */
+  async function retirarDeRascunhos(billingIds: string[], ator: string): Promise<number> {
+    const ids = Array.from(new Set(billingIds.filter(Boolean)));
+    if (!ids.length) return 0;
+    const r: any = await db.execute(sql`
+      DELETE FROM delivery_route_stops s
+       USING delivery_routes r
+       WHERE r.id = s.route_id
+         AND r.status IN ('rota salva', 'pending', 'planejada')
+         AND s.billing_id IN (${sql.join(ids.map((b) => sql`${b}`), sql`, `)})
+       RETURNING s.route_id`);
+    const afetadas = Array.from(new Set(((r?.rows || []) as any[]).map((x) => String(x.route_id))));
+    for (const rid of afetadas) {
+      const q: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM delivery_route_stops WHERE route_id = ${rid}`);
+      const n = Number((q.rows || q)[0]?.n) || 0;
+      if (n === 0) {
+        await db.delete(deliveryRoutes).where(eq(deliveryRoutes.id, rid));
+      } else {
+        const seq: any = await db.execute(sql`SELECT id FROM delivery_route_stops WHERE route_id = ${rid} ORDER BY stop_order`);
+        let i = 1;
+        for (const s of (seq.rows || seq) as any[]) await db.update(deliveryRouteStops).set({ stopOrder: i++ }).where(eq(deliveryRouteStops.id, s.id));
+        await db.update(deliveryRoutes).set({ totalDeliveries: n, updatedAt: agora() }).where(eq(deliveryRoutes.id, rid));
+        try { await recalcularHorariosRota(rid, { reordenar: false }); } catch {}
+      }
+    }
+    const removidas = (r?.rows || []).length;
+    if (removidas) console.log(`🧹 [RASCUNHO] ${removidas} pedido(s) retirados de ${afetadas.length} rascunho(s) (${ator})`);
+    return removidas;
+  }
+
   app.post("/api/delivery-routes/ajustar-dia", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { routeDate, reorganizar = true } = req.body || {};
+      // enviar=true → depois de ajustar, envia os rascunhos do dia (Salvar e enviar)
+      const enviar = req.body?.enviar === true;
       const dataStr = String(routeDate || '').slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dataStr)) return res.status(400).json({ message: 'Data da rota inválida' });
       const rotasIn: Array<{ routeId?: string | null; driverId: string; stopIds: string[] }> = Array.isArray(req.body?.rotas) ? req.body.rotas : [];
@@ -12536,9 +12639,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalDuration: 0,
             timeWindowStart: ref?.timeWindowStart || '08:00',
             timeWindowEnd: ref?.timeWindowEnd || '18:00',
-            status: 'rota_enviada',
-            sentToDriverAt: agora(),
+            // Dia em rascunho: rota nova também nasce rascunho (só vai ao entregador no envio)
+            ...(!enviar && rotasDia.some((x: any) => ehRascunho(x.status))
+              ? { status: 'rota salva', sentToDriverAt: null }
+              : { status: 'rota_enviada', sentToDriverAt: agora() }),
           } as any);
+          rotasDia.push({ id: routeId, driverId: r.driverId, status: (!enviar && rotasDia.some((x: any) => ehRascunho(x.status))) ? 'rota salva' : 'rota_enviada', vehicleType: drv.vehicleType } as any);
           idsRotasDia.add(routeId);
           destinos.push({ routeId, stopIds, nova: true });
           continue;
@@ -12567,10 +12673,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
 
-      // Removidas voltam para "Aguardando Rota"
+      // Removidas voltam para "Aguardando Rota" (de rascunho já estavam lá)
       for (const id of removidas) {
         const p = paradaPorId.get(id);
         if (!p?.billingId) continue;
+        if (ehRascunho(rotasDia.find((x: any) => x.id === p.routeId)?.status)) continue;
         try {
           await storage.updateBillingsStatus([p.billingId], 'Aguardando Rota');
           const { moverCardParaAguardandoRota } = await import('./deliveryPipelineSync');
@@ -12606,8 +12713,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resumo.push({ routeId: row.id, entregas: atual.length, mudou: true });
       }
 
+      // Pedido que saiu de um rascunho para uma rota JÁ ENVIADA vai para Em Rota.
+      const statusRota = new Map<string, string>(rotasDia.map((x: any) => [x.id, String(x.status || '')]));
+      const vehRota = new Map<string, string>(rotasDia.map((x: any) => [x.id, String(x.vehicleType || '').toLowerCase()]));
+      const paraEmRota: string[] = [];
+      const paraEmRotaBsb: string[] = [];
+      for (const d of destinos) {
+        if (ehRascunho(statusRota.get(d.routeId))) continue;
+        for (const sid of d.stopIds) {
+          const p = paradaPorId.get(sid);
+          if (!p?.billingId || !ehRascunho(statusRota.get(p.routeId))) continue;
+          paraEmRota.push(p.billingId);
+          if (vehRota.get(d.routeId) === 'baruc') paraEmRotaBsb.push(p.billingId);
+        }
+      }
+      if (paraEmRota.length) await moverPedidosParaEmRota(paraEmRota, paraEmRotaBsb, ator);
+
+      // Salvar e enviar: todos os rascunhos que sobraram no dia vão para os entregadores.
+      let envio = { enviadas: 0, pedidos: 0 };
+      if (enviar) {
+        const excluidas = new Set(resumo.filter((x) => x.excluida).map((x) => x.routeId));
+        const rascunhos = rotasDia.filter((x: any) => ehRascunho(x.status) && !excluidas.has(x.id)).map((x: any) => x.id);
+        envio = await enviarRotas(rascunhos, ator);
+      }
+
       console.log(`🔀 [AJUSTAR-DIA] ${dataStr} por ${ator}: ${resumo.filter((r) => r.mudou).length} rota(s) alterada(s), ${removidas.length} removida(s)`);
-      res.json({ ok: true, rotas: resumo, removidas: removidas.length });
+      res.json({ ok: true, rotas: resumo, removidas: removidas.length, enviadas: envio.enviadas, pedidosEmRota: envio.pedidos });
     } catch (error: any) {
       console.error('Error adjusting day routes:', error);
       res.status(500).json({ message: 'Falha ao salvar os ajustes das rotas', error: error.message });
@@ -12704,6 +12835,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/delivery-routes/save", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       const { routes } = req.body;
+      // enviar=false → RASCUNHO: grava a rota sem mandar ao entregador e sem mexer
+      // na etapa dos pedidos (continuam em "Aguardando Rota"). Padrão: envia.
+      const enviar = req.body?.enviar !== false;
+      const atorSave = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-salva';
       // Entregas que o operador EXCLUIU da proposta antes de salvar: voltam (ou
       // permanecem) em "Aguardando Rota" no pipeline — "Aguardando Rota BSB" se já
       // estavam lá. Só mexe em card que ainda não saiu para rota.
@@ -12711,7 +12846,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? req.body.excludedOrderIds.filter((x: any) => typeof x === 'string' && x)
         : [];
       let devolvidosAguardando = 0;
+      // Excluída da proposta também sai de qualquer rascunho em que estivesse.
       if (excludedOrderIds.length > 0) {
+        try { await retirarDeRascunhos(excludedOrderIds, atorSave); } catch (e: any) { console.warn('[SAVE-ROUTES] retirarDeRascunhos (excluídas):', e?.message); }
+      }
+      if (enviar && excludedOrderIds.length > 0) {
         try {
           const r: any = await db.execute(sql`
             UPDATE billing_pipeline
@@ -12789,6 +12928,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
         }
+      }
+
+      // Rascunho não pode sobrescrever rota JÁ ENVIADA (o entregador já recebeu).
+      if (!enviar) {
+        for (const routePlan of routes) {
+          const rr = routePlan.route;
+          const ds = String(rr.routeDate || '').slice(0, 10);
+          const ja: any = await db.execute(sql`
+            SELECT id, status FROM delivery_routes
+             WHERE driver_id = ${rr.driverId} AND route_date::text = ${ds}
+               AND COALESCE(status, '') NOT IN ('cancelled', 'concluida', 'cancelada', 'rota salva', 'pending', 'planejada')
+             LIMIT 1`);
+          if ((ja.rows || ja).length) {
+            return res.status(409).json({ message: `${rr.driverName} já tem rota ENVIADA em ${ds.split('-').reverse().join('/')}. Para não tirar a rota do app do entregador, use "Salvar e enviar" ou ajuste em Editar rotas do dia.` });
+          }
+        }
+      }
+
+      // O pedido vai para esta rota: sai de qualquer outro rascunho (evita pedido em duas rotas).
+      try {
+        const bidsPayload = routes.flatMap((rp: any) => (rp.stops || []).map((s: any) => s.billingId)).filter(Boolean);
+        await retirarDeRascunhos(bidsPayload, atorSave);
+      } catch (e: any) {
+        console.warn('[SAVE-ROUTES] retirarDeRascunhos:', e?.message);
       }
 
       const savedRoutes = [];
@@ -12901,8 +13064,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               totalDistance: parseFloat(route.totalDistance) || 0,
               totalDeliveries: stops.length,
               totalDuration: parseInt(route.totalDuration) || 0,
-              status: 'rota_enviada', // Enviada automaticamente para o motorista
-              sentToDriverAt: agora(),
+              // Enviada ao motorista, ou rascunho ("rota salva", não aparece no app dele)
+              status: enviar ? 'rota_enviada' : 'rota salva',
+              sentToDriverAt: enviar ? agora() : null,
               updatedAt: agora()
             })
             .where(eq(deliveryRoutes.id, routeToUpdate.id))
@@ -12955,8 +13119,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             totalDuration: parseInt(route.totalDuration) || 0,
             timeWindowStart: route.timeWindowStart || '08:00',
             timeWindowEnd: route.timeWindowEnd || '18:00',
-            status: 'rota_enviada', // Enviada automaticamente para o motorista
-            sentToDriverAt: agora()
+            status: enviar ? 'rota_enviada' : 'rota salva', // rascunho não vai ao motorista
+            sentToDriverAt: enviar ? agora() : null
           };
 
           // Buscar orderNumber dos billings para cada parada
@@ -13048,57 +13212,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (String(route.vehicleType || '').toLowerCase() === 'baruc') bsbBillingIds.push(...billingIds);
       }
 
-      // Atualizar status dos billings para "Em Rota"
-      if (allBillingIds.length > 0) {
-        await storage.updateBillingsStatus(allBillingIds, 'Em Rota');
-        console.log(`📦 [SAVE-ROUTES] ${allBillingIds.length} billings atualizados para "Em Rota"`);
-
-        // ✅ Mover os CARDS DO PIPELINE (Kanban) para a fase "Em Rota" (allBillingIds são ids de billing_pipeline).
-        // Sem isto o card permanecia em "Aguardando Rota" mesmo após planejar/salvar a rota.
+      // Etapas só mudam no ENVIO. Rascunho deixa os pedidos em "Aguardando Rota".
+      if (enviar && allBillingIds.length > 0) {
         try {
-          // Cada card vai para "em_rota_bsb" se a rota for do BARUC (Brasília), senão "em_rota".
-          // Mesma origem de sempre (impresso/aguardando_rota/aguardando_rota_bsb); só muda a coluna de destino.
-          const bsbSet = new Set(bsbBillingIds);
-          const nonBsbIds = allBillingIds.filter((bid) => !bsbSet.has(bid));
-          let movedCount = 0;
-          if (bsbBillingIds.length > 0) {
-            const r: any = await db.execute(sql`
-              UPDATE billing_pipeline
-              SET stage = 'em_rota_bsb', updated_at = NOW()
-              WHERE id IN (${sql.join(bsbBillingIds.map((bid) => sql`${bid}`), sql`, `)})
-                AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
-            `);
-            movedCount += r?.rowCount ?? r?.rows?.length ?? 0;
-          }
-          if (nonBsbIds.length > 0) {
-            const r: any = await db.execute(sql`
-              UPDATE billing_pipeline
-              SET stage = 'em_rota', updated_at = NOW()
-              WHERE id IN (${sql.join(nonBsbIds.map((bid) => sql`${bid}`), sql`, `)})
-                AND stage IN ('impresso', 'aguardando_rota', 'aguardando_rota_bsb')
-            `);
-            movedCount += r?.rowCount ?? r?.rows?.length ?? 0;
-          }
-          console.log(`🚚 [SAVE-ROUTES] ${movedCount} card(s) do pipeline movidos (BSB/BARUC=${bsbBillingIds.length} → em_rota_bsb; demais → em_rota)`);
-
-          // Registrar no stage_history de cada card (o UPDATE acima nao gravava
-          // histórico). É o que permite descobrir a etapa de ORIGEM se o pedido
-          // for devolvido pelo entregador mais tarde.
-          try {
-            const { appendStageHistory } = await import('./deliveryPipelineSync');
-            const ator = (req as any)?.currentUser?.email || (req as any)?.user?.email || 'rota-salva';
-            for (const bid of allBillingIds) {
-              await appendStageHistory(bid, bsbSet.has(bid) ? 'em_rota_bsb' : 'em_rota', `rota-confirmada (${ator})`);
-            }
-          } catch (e: any) {
-            console.warn('[SAVE-ROUTES] Falha ao registrar stage_history:', e?.message);
-          }
+          const movidos = await moverPedidosParaEmRota(allBillingIds, bsbBillingIds, atorSave);
+          console.log(`🚚 [SAVE-ROUTES] ${movidos} card(s) do pipeline movidos (BSB/BARUC=${bsbBillingIds.length} → em_rota_bsb; demais → em_rota)`);
         } catch (e: any) {
           console.error('[SAVE-ROUTES] Falha ao mover cards do pipeline para em_rota/em_rota_bsb:', e?.message);
         }
-
-
-        // (E4) Bloco [OMIE-SYNC] de "Em Rota" removido — Omie desligado, omieOrderId sempre NULL.
       }
 
       console.log(`✅ [SAVE-ROUTES] ${savedRoutes.length} rotas salvas com sucesso`);
@@ -13108,7 +13229,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         message: `${savedRoutes.length} rotas salvas com sucesso`,
         routes: savedRoutes,
-        devolvidosAguardando
+        devolvidosAguardando,
+        enviada: enviar,
       });
     } catch (error: any) {
       console.error(`❌ [SAVE-ROUTES] ========== ERRO NO SALVAMENTO ==========`);
@@ -13835,22 +13957,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Rota não encontrada" });
       }
       
-      // (E4) Bloco de sincronização de etapa "Em Rota" no Omie removido — Omie desligado.
-      
-      // Atualizar status da rota para 'rota_enviada'
-      const updatedRoute = await db.update(deliveryRoutes)
-        .set({ 
-          status: 'rota_enviada', 
-          sentToDriverAt: agora(),
-          updatedAt: agora() 
-        })
-        .where(eq(deliveryRoutes.id, routeId))
-        .returning();
-      
+      // Envia (status + pedidos para "Em Rota") — mesma rotina do "Salvar e enviar".
+      const ator = req.currentUser?.email || 'enviar-rota';
+      const envio = await enviarRotas([routeId], ator);
+      const [updatedRoute] = await db.select().from(deliveryRoutes).where(eq(deliveryRoutes.id, routeId)).limit(1);
+
       console.log(`✅ [SEND-ROUTE] Rota ${routeId} enviada para o motorista`);
       res.json({ 
         message: "Rota enviada para o motorista com sucesso", 
-        route: updatedRoute[0],
+        route: updatedRoute,
+        pedidosEmRota: envio.pedidos,
         omieUpdates: null
       });
     } catch (error: any) {
@@ -13873,7 +13989,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             sql`CAST(${deliveryRoutes.routeDate} AS DATE) = CAST(${targetDate} AS DATE)`,
-            sql`${deliveryRoutes.status} IN ('rota salva', 'pending')`
+            sql`${deliveryRoutes.status} IN ('rota salva', 'pending', 'planejada')`
           )
         );
       
@@ -13881,22 +13997,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ message: "Nenhuma rota para enviar", sent: 0 });
       }
       
-      // Atualizar todas para 'rota_enviada'
+      // Envia todas (status + pedidos para "Em Rota")
       const routeIds = routesToSend.map(r => r.id);
-      await db.update(deliveryRoutes)
-        .set({ 
-          status: 'rota_enviada', 
-          sentToDriverAt: agora(),
-          updatedAt: agora() 
-        })
-        .where(inArray(deliveryRoutes.id, routeIds));
-      
-      // (E4) Bloco de sincronização de etapa "Em Rota" no Omie removido — Omie desligado.
+      const envio = await enviarRotas(routeIds, req.currentUser?.email || 'enviar-todas');
       
       console.log(`✅ [SEND-ALL-ROUTES] ${routesToSend.length} rotas enviadas`);
       res.json({ 
         message: `${routesToSend.length} rotas enviadas para os motoristas`,
         sent: routesToSend.length,
+        pedidosEmRota: envio.pedidos,
         omieUpdates: null
       });
     } catch (error: any) {
@@ -15302,6 +15411,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         omieOrderId: billing.omieOrderId || null,
       });
 
+      // Rascunho: o pedido só vai para "Em Rota" quando a rota for enviada.
+      // Antes disso, tira-o de outro rascunho em que estivesse.
+      if (ehRascunho((route as any)?.status)) {
+        await db.execute(sql`DELETE FROM delivery_route_stops s USING delivery_routes r
+          WHERE r.id = s.route_id AND r.status IN ('rota salva', 'pending', 'planejada')
+            AND s.billing_id = ${billingId} AND s.route_id <> ${routeId}`);
+      } else {
       // Atualizar status do billing para "Em Rota"
       await storage.updateBillingsStatus([billingId], 'Em Rota');
 
@@ -15316,6 +15432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (e: any) {
         console.error('[ADD-STOP] Falha ao sincronizar pipeline:', e?.message);
+      }
       }
 
       await recalcularHorariosRota(routeId);

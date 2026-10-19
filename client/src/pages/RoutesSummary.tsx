@@ -469,7 +469,7 @@ export default function RoutesSummary() {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Rota enviada com sucesso! 📤",
-        description: "O motorista agora pode ver a rota no app.",
+        description: 'O motorista agora vê a rota no app e os pedidos foram para "Em Rota".',
       });
     },
     onError: (error: any) => {
@@ -491,7 +491,7 @@ export default function RoutesSummary() {
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       toast({
         title: "Rotas enviadas com sucesso! 📤",
-        description: data.message || "Todas as rotas foram enviadas aos motoristas.",
+        description: (data.message || "Todas as rotas foram enviadas aos motoristas.") + (data?.pedidosEmRota ? ` ${data.pedidosEmRota} pedido(s) foram para "Em Rota".` : ''),
       });
     },
     onError: (error: any) => {
@@ -513,8 +513,8 @@ export default function RoutesSummary() {
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: any; label: string; className?: string }> = {
-      'pending': { variant: 'secondary', label: 'Pendente (Não Enviada)', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
-      'rota salva': { variant: 'secondary', label: 'Salva (Não Enviada)', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
+      'pending': { variant: 'secondary', label: 'Rascunho (não enviada)', className: 'bg-amber-100 text-amber-900 border-amber-300' },
+      'rota salva': { variant: 'secondary', label: 'Rascunho (não enviada)', className: 'bg-amber-100 text-amber-900 border-amber-300' },
       'rota_enviada': { variant: 'default', label: 'Enviada', className: 'bg-blue-500 text-white' },
       planejada: { variant: 'secondary', label: 'Planejada' },
       em_andamento: { variant: 'default', label: 'Em Andamento', className: 'bg-green-500 text-white' },

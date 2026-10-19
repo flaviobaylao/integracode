@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowDown, ArrowUp, Loader2, Lock, Truck, Undo2, UserPlus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Loader2, Lock, Truck, Undo2, UserPlus, X, Send } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, useQuery } from "@/lib/queryClient";
 
@@ -84,6 +84,10 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
     () => (routes || []).filter((r) => !["cancelled", "cancelada"].includes(String(r.status))),
     [routes],
   );
+
+  // Rascunho = rota salva sem enviar (não está no app do entregador; pedidos em "Aguardando Rota").
+  const ehRascunho = (st?: string) => ["rota salva", "pending", "planejada"].includes(String(st || ""));
+  const rascunhos = rotasValidas.filter((r) => ehRascunho(r.status)).length;
 
   // Estado inicial = rotas como estão salvas (refeito a cada abertura).
   const inicial = useMemo<Coluna[]>(
@@ -209,20 +213,24 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
     setNovoEntregador("");
   };
 
-  const salvar = async () => {
+  const salvar = async (enviar = false) => {
     setSalvando(true);
     try {
       const r = await apiRequest("POST", "/api/delivery-routes/ajustar-dia", {
         routeDate,
         reorganizar,
+        enviar,
         rotas: colunas.map((c) => ({ routeId: c.routeId, driverId: c.driverId, stopIds: c.paradas.map((p) => p.id) })),
         removidas: removidas.map((x) => x.parada.id),
       });
       const mudaram = (r?.rotas || []).filter((x: any) => x.mudou).length;
       queryClient.invalidateQueries({ queryKey: ["editar-rotas-dia-valores"] });
       toast({
-        title: "Rotas salvas",
-        description: `${mudaram} rota(s) alterada(s)${r?.removidas ? `, ${r.removidas} entrega(s) de volta para Aguardando Rota` : ""}. Horários recalculados — reimprima as rotas alteradas.`,
+        title: enviar ? "Rotas salvas e enviadas" : rascunhos ? "Rascunho salvo" : "Rotas salvas",
+        description: enviar
+          ? `${r?.enviadas || 0} rota(s) enviada(s) aos entregadores; ${r?.pedidosEmRota || 0} pedido(s) foram para "Em Rota".${mudaram ? ` ${mudaram} rota(s) alterada(s) — reimprima.` : ""}`
+          : `${mudaram} rota(s) alterada(s)${r?.removidas ? `, ${r.removidas} entrega(s) de volta para Aguardando Rota` : ""}. Horários recalculados — reimprima as rotas alteradas.`
+            + (rascunhos ? ' Rascunho continua sem enviar e os pedidos em "Aguardando Rota".' : ""),
       });
       queryClient.invalidateQueries({ queryKey: ["/api/delivery-routes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/delivery-routes/dias-salvos"] });
@@ -243,7 +251,8 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
         <DialogHeader>
           <DialogTitle>Editar rotas de {dataBR}</DialogTitle>
           <DialogDescription>
-            Migre entregas entre entregadores, mude a ordem ou tire da rota. Nada é gravado até você clicar em <b>Salvar alterações</b>.
+            Migre entregas entre entregadores, mude a ordem ou tire da rota. Nada é gravado até você clicar em <b>{rascunhos ? "Salvar rascunho" : "Salvar alterações"}</b>.
+            {rascunhos > 0 && <> <b className="text-amber-800">{rascunhos} rota(s) em rascunho</b> — os entregadores só recebem e os pedidos só vão para "Em Rota" em <b>Salvar e enviar</b>.</>}
             {" "}
             {carregandoValores ? "Carregando valores…" : (() => {
               const t = totaisDe(colunas.flatMap((c) => c.paradas));
@@ -256,6 +265,7 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
           <div className="flex gap-3 items-start pb-2">
             {colunas.map((c) => {
               const sent = rotasValidas.find((r) => r.id === c.routeId)?.status === "rota_enviada";
+              const rasc = ehRascunho(rotasValidas.find((r) => r.id === c.routeId)?.status) || (!c.routeId && rascunhos > 0);
               return (
                 <div key={c.chave} className="w-[320px] shrink-0 rounded-lg border bg-gray-50" data-testid={`coluna-${c.chave}`}>
                   <div className="px-3 py-2 border-b bg-white rounded-t-lg">
@@ -285,6 +295,7 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
                       {veiculo(c.vehicleType)}
                       {!c.routeId && <span className="ml-1 text-blue-700">· rota nova (criada ao salvar)</span>}
                       {sent && <span className="ml-1 text-amber-700">· já enviada: o app do entregador atualiza</span>}
+                      {rasc && <span className="ml-1 font-semibold text-amber-800">· RASCUNHO (não enviada)</span>}
                     </div>
                   </div>
                   <div className="p-2 space-y-1.5">
@@ -403,10 +414,28 @@ export default function EditarRotasDiaDialog({ open, onOpenChange, routeDate, ro
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={salvando}>
               <X className="h-4 w-4 mr-1" /> Cancelar
             </Button>
-            <Button onClick={salvar} disabled={salvando || alteracoes === 0} className="bg-green-600 hover:bg-green-700" data-testid="button-salvar-ajustes">
+            <Button
+              onClick={() => salvar(false)}
+              disabled={salvando || alteracoes === 0}
+              variant={rascunhos ? "outline" : "default"}
+              className={rascunhos ? "border-amber-400 text-amber-800 hover:bg-amber-50" : "bg-green-600 hover:bg-green-700"}
+              data-testid="button-salvar-ajustes"
+            >
               {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-              Salvar alterações{resumo.texto ? ` (${resumo.texto})` : ""}
+              {rascunhos ? "Salvar rascunho" : "Salvar alterações"}{resumo.texto ? ` (${resumo.texto})` : ""}
             </Button>
+            {rascunhos > 0 && (
+              <Button
+                onClick={() => salvar(true)}
+                disabled={salvando}
+                className="bg-green-600 hover:bg-green-700"
+                title="Grava os ajustes, manda as rotas aos entregadores e move os pedidos para Em Rota"
+                data-testid="button-salvar-enviar"
+              >
+                {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
+                Salvar e enviar ({rascunhos})
+              </Button>
+            )}
           </div>
         </DialogFooter>
       </DialogContent>
