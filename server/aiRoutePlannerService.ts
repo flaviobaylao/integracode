@@ -31,6 +31,7 @@
 import { parseJanelas, formatarJanelas } from '../shared/janelas-entrega';
 import type { DatabaseStorage } from './storage';
 import { calculateDistance } from './routeOptimizationService';
+import { dividirPorRegiao, melhorarFronteira, medirSobreposicao, TOLERANCIA_REGIAO, type FaixaParadas } from './regionalizacao-rotas';
 import {
   preprocessOrders,
   assignOrdersToVehicles,
@@ -61,7 +62,7 @@ function resolveModel(m?: string): string {
 // ==================== Tipos públicos ====================
 
 export interface AIRouteMeta {
-  modo: 'ia' | 'deterministico';
+  modo: 'ia' | 'deterministico' | 'regional';
   modelo?: string;
   resumo: string;
   /** Justificativa da IA por veículo (o "porquê" da distribuição). */
@@ -83,6 +84,9 @@ export interface AIRouteMeta {
     cota: number;
     /** true quando a cota veio de capacidade cadastrada no veículo. */
     cotaCadastrada: boolean;
+    /** faixa aceita de paradas (região primeiro; quantidade é faixa) */
+    faixaMin?: number;
+    faixaMax?: number;
     minutosEstimados: number;
     minutosDisponiveis: number;
     utilizacaoPct: number;
@@ -99,6 +103,12 @@ export interface AIRouteMeta {
     motivo: string;
   }>;
   motivoFallback?: string;
+  /**
+   * Sobreposição entre entregadores (19/out/2026): entregas cujo vizinho mais
+   * próximo ficou com OUTRO entregador. `regional` = o mesmo número na divisão
+   * puramente regional, para comparação; `origem` diz qual divisão foi usada.
+   */
+  sobreposicao?: { separados: number; total: number; regional: number; origem: 'ia' | 'regional' };
   tokens?: { input: number; output: number };
   duracaoMs?: number;
 }
@@ -202,19 +212,23 @@ async function callAnthropic(
 const SYSTEM_PROMPT = `Você é o roteirizador da Honest Sucos (distribuidora de sucos e polpas em Goiânia-GO e Brasília-DF).
 Sua tarefa é DISTRIBUIR os pedidos do dia entre os veículos/motoristas disponíveis. Você NÃO define a ordem das paradas — um algoritmo de otimização (Nearest-Neighbor + 2-opt com distâncias reais de rua) cuida disso depois.
 
-OBJETIVO, nesta ordem de importância:
+OBJETIVO, nesta ordem de importância (regra do Flavio, 19/out/2026):
 1. Nenhuma restrição dura violada.
-2. Cada veículo atende uma REGIÃO COESA (pedidos vizinhos entre si, mesmo setor), com o MENOR deslocamento possível. Evite rotas que se cruzam e territórios sobrepostos entre motoristas.
-3. Respeitar a COTA de paradas de cada veículo (campo "cota" na lista de veículos). A cota é a ÚNICA regra de divisão que existe.
+2. REGIONALIZAÇÃO: cada veículo atende uma ÁREA DISTINTA e contígua. Entregadores NÃO podem frequentar as mesmas áreas — sobreposição só quando for inevitável (restrição dura). Evite rotas que se cruzam.
+3. Quantidade de paradas dentro da FAIXA de cada veículo (campo "faixa" na lista de veículos). A faixa é um limite, não uma meta exata: dentro dela, vale a região.
+
+DIVISÃO REGIONAL SUGERIDA (use como base):
+- Cada pedido vem com "região sugerida Vx", calculada por um algoritmo geográfico que já separa as áreas e respeita a faixa.
+- SIGA a sugestão. Só mude um pedido de veículo por restrição dura (veículo exclusivo, BSB, capacidade, jornada) ou quando ele claramente pertence à área do outro veículo — e diga o motivo.
+- Não troque pedidos para "igualar" quantidades: dentro da faixa, a região manda.
 
 NÃO FAÇA BALANCEAMENTO DE CARGA (regra dura):
 - É PROIBIDO equalizar entre os motoristas: minutos de rota, percentual de jornada, quilometragem, valor em R$, peso ou "esforço".
 - Nenhuma dessas grandezas pode ser critério de atribuição nem justificativa para separar pedidos.
-- A divisão é por QUANTIDADE de paradas e só: cada veículo recebe exatamente a sua "cota". Se a cota já está cheia, o pedido vai para o veículo elegível mais próximo — e é isso que você escreve como motivo.
 - Nunca escreva "equilíbrio de carga", "balanceamento" ou "distribuir o tempo" nas justificativas.
 
 REGRA DE VIZINHANÇA (importante):
-- Dois pedidos a menos de 2 km um do outro devem ficar no MESMO veículo, salvo restrição dura ou cota cheia.
+- Dois pedidos a menos de 2 km um do outro devem ficar no MESMO veículo, salvo restrição dura ou faixa máxima atingida.
 - Pedidos no mesmo endereço (vizinhos 0.0km) SEMPRE no mesmo veículo — são uma parada só.
 - Use a lista "vizinhos" de cada pedido: se os vizinhos de um pedido foram para outro veículo, revise.
 
@@ -222,11 +236,11 @@ PRIORIDADE — VOCÊ NÃO CRIA PRIORIDADE (regra dura):
 - Prioritário é SOMENTE o pedido que já vem marcado "PRIORIDADE" na lista. Essa marca é um campo do banco, colocada à mão pela operação.
 - É PROIBIDO inferir, derivar ou atribuir prioridade/urgência por qualquer outro motivo: janela de horário, horário de fechamento do cliente, valor do pedido, tamanho do cliente, perecibilidade, pedido antigo, atraso, distância ou isolamento geográfico.
 - "janela" é RESTRIÇÃO DE SEQUENCIAMENTO, não prioridade: significa apenas que a parada precisa acontecer dentro daquele intervalo. Descreva como "janela: atender até 17h" — nunca como "urgente" ou "prioritário".
-- A prioridade não muda a atribuição de veículo nem a cota; ela só faz o algoritmo colocar a parada no início da rota, e isso já acontece automaticamente.
+- A prioridade não muda a atribuição de veículo nem a faixa; ela só faz o algoritmo colocar a parada no início da rota, e isso já acontece automaticamente.
 - As palavras "prioridade", "prioritário" e "urgente" só podem aparecer no seu texto quando o pedido tem a marca PRIORIDADE.
 
 RESTRIÇÕES DURAS (nunca viole):
-- Cota de paradas de cada veículo (campo "cota").
+- Máximo da faixa de paradas de cada veículo (campo "faixa").
 - Capacidade máxima de entregas de cada veículo, quando cadastrada.
 - Minutos disponíveis do veículo (janela de trabalho menos 30 min de almoço). Use ~15 min de deslocamento entre paradas + o tempo de atendimento do pedido. Isso é viabilidade da jornada, NÃO é critério de equilíbrio.
 - "veíc:" no pedido indica exigência de tipo de veículo — só pode ir em veículo de tipo compatível.
@@ -250,7 +264,7 @@ const TOOL_DEF = {
     properties: {
       resumo: {
         type: 'string',
-        description: 'Resumo em 1–3 frases da estratégia adotada (regiões atendidas por cada veículo, cotas, exceções). Não fale em equilíbrio de carga.',
+        description: 'Resumo em 1–3 frases da estratégia adotada (área atendida por cada veículo e exceções). Não fale em equilíbrio de carga.',
       },
       atribuicoes: {
         type: 'array',
@@ -358,6 +372,7 @@ function buildBriefing(
   routeDate: Date,
   weekdayWarnings: Array<{ order: DeliveryOrder; reason: string }>,
   quotas: Map<number, number>,
+  regiao?: { porPedido: Map<string, number>; faixa: FaixaParadas },
 ): string {
   const depotLat = vehicles[0]?.startLatitude ?? 0;
   const depotLon = vehicles[0]?.startLongitude ?? 0;
@@ -399,6 +414,7 @@ function buildBriefing(
     const rw = weekdaysToText(o.receivingWeekdays);
     if (rw) partes.push(`recebe ${rw}${warnIds.has(o.id) ? ' ⚠NÃO-HOJE' : ''}`);
     partes.push(`vizinhos ${neighborsOf.get(o.id) || '-'}`);
+    if (regiao?.porPedido.has(o.id)) partes.push(`região sugerida V${regiao.porPedido.get(o.id)}`);
     return partes.join(' | ');
   });
 
@@ -411,7 +427,9 @@ function buildBriefing(
       `motorista ${v.driverName || 's/ nome'}${v.licensePlate ? ` placa ${v.licensePlate}` : ''}`,
       `base ${v.startAddress || `${v.startLatitude},${v.startLongitude}`}`,
       `${v.timeWindowStart}-${v.timeWindowEnd} (~${disp}min úteis — só viabilidade, não é meta de equilíbrio)`,
-      `cota ${quotas.get(idx) ?? 0} paradas${Number(v.capacity) > 0 ? ' (capacidade cadastrada — teto duro)' : ' (divisão igualitária por quantidade)'}`,
+      regiao
+        ? `faixa ${regiao.faixa.min.get(idx) ?? 0}–${regiao.faixa.max.get(idx) ?? 0} paradas${Number(v.capacity) > 0 ? ' (capacidade cadastrada — teto duro)' : ''}; região sugerida: ${Array.from(regiao.porPedido.values()).filter((x) => x === idx).length} pedidos`
+        : `cota ${quotas.get(idx) ?? 0} paradas${Number(v.capacity) > 0 ? ' (capacidade cadastrada — teto duro)' : ' (divisão igualitária por quantidade)'}`,
       `elegíveis: ${elegiveis.length === orders.length ? 'todos' : (elegiveis.join(',') || 'nenhum')}`,
     ];
     return partes.join(' | ');
@@ -429,7 +447,9 @@ function buildBriefing(
     `PEDIDOS A DISTRIBUIR (${orders.length}):`,
     ...linhasPedidos,
     '',
-    'Lembretes: respeite a "cota" de cada veículo (é a única regra de divisão); distribua por proximidade geográfica; não equilibre carga/tempo; e só trate como prioritário o pedido marcado PRIORIDADE.',
+    regiao
+      ? 'Lembretes: siga a "região sugerida" (áreas distintas por veículo, sem sobreposição); fique dentro da "faixa" de cada veículo; não equilibre carga/tempo; e só trate como prioritário o pedido marcado PRIORIDADE.'
+      : 'Lembretes: respeite a "cota" de cada veículo; distribua por proximidade geográfica; não equilibre carga/tempo; e só trate como prioritário o pedido marcado PRIORIDADE.',
     'Distribua todos os pedidos chamando distribuir_entregas.',
   ].join('\n');
 }
@@ -633,7 +653,7 @@ function applyAndRepair(
         : (vehicles[idx].capacity && assignments.get(idx)!.length >= (vehicles[idx].capacity as number))
           ? 'capacidade máxima do veículo atingida'
           : (assignments.get(idx)!.length >= (ctx.quotas.get(idx) ?? Infinity))
-            ? `cota de ${ctx.quotas.get(idx)} paradas do veículo já completa`
+            ? `faixa máxima de ${ctx.quotas.get(idx)} paradas do veículo atingida`
             : 'janela/compatibilidade do veículo';
       ajustes.push(`${o.customerName}: movido de V${idx} para V${alt} (${motivo}).`);
     } else {
@@ -670,7 +690,7 @@ function applyAndRepair(
     if (idx < 0) {
       idx = bestAlternative(o, true);
       if (idx >= 0) {
-        ajustes.push(`${o.customerName}: nenhum veículo com cota livre — alocado no mais próximo (${vehicles[idx].driverName || `V${idx}`}), 1 parada acima da cota.`);
+        ajustes.push(`${o.customerName}: nenhum veículo com espaço na faixa — alocado no mais próximo (${vehicles[idx].driverName || `V${idx}`}), 1 parada acima do máximo.`);
       }
     }
     if (idx >= 0) place(idx, o);
@@ -744,7 +764,7 @@ function diagnosticarVizinhosSeparados(
         }
         const cota = quotas.get(destino);
         if (cota != null && carga >= cota) {
-          motivos.push(`a cota de ${cota} paradas de ${nomeVeic(destino)} já estava completa`);
+          motivos.push(`${nomeVeic(destino)} já estava no máximo da faixa (${cota} paradas)`);
           return;
         }
         // Mesmo modelo de deslocamento usado na atribuição (distância real / 40 km/h),
@@ -798,12 +818,34 @@ export async function planDeliveryRoutesWithAI(
 
   const validOrders = [...urgentOrders, ...regularOrders];
 
-  // COTA por veículo: teto cadastrado, ou divisão igualitária por quantidade.
-  // É a única regra de divisão — não existe balanceamento de carga.
-  const quotas = computeQuotas(validOrders, vehicles);
+  // REGIÃO PRIMEIRO (19/out/2026): alvo = cota igualitária/capacidade, mas a
+  // quantidade vira FAIXA e a divisão base é geográfica (áreas distintas).
+  const alvo = computeQuotas(validOrders, vehicles);
+  let regional: ReturnType<typeof dividirPorRegiao> | null = null;
+  try {
+    regional = dividirPorRegiao(validOrders, vehicles, eligibleByVehicle, alvo);
+  } catch (e: any) {
+    console.error('❌ [ROTA-IA] divisão regional falhou:', e?.message);
+  }
+  // `quotas` (máximo da faixa) é o teto usado pela camada de reparo.
+  const quotas = regional ? regional.faixa.max : alvo;
   console.log(
-    `📦 [ROTA-IA] cotas de paradas: ${vehicles.map((v, i) => `${v.driverName || `V${i}`}=${quotas.get(i)}${Number(v.capacity) > 0 ? '(cap)' : ''}`).join(' · ')}`,
+    `📦 [ROTA-IA] alvo ${vehicles.map((v, i) => `${v.driverName || `V${i}`}=${alvo.get(i)}`).join(' · ')}`
+    + (regional ? ` | regional (±${Math.round(regional.tolerancia * 100)}%): ${vehicles.map((v, i) => `${v.driverName || `V${i}`}=${regional!.assignments.get(i)?.length || 0}`).join(' · ')}, ${regional.sobreposicao.separados}/${regional.sobreposicao.total} com vizinho em outro entregador` : ''),
   );
+  const regiaoPorPedido = new Map<string, number>();
+  if (regional) for (const [idx, lista] of Array.from(regional.assignments.entries())) for (const o of lista) regiaoPorPedido.set(o.id, idx);
+  const propostaRegional = (): AIProposal => {
+    const codigo = new Map(validOrders.map((o, i) => [o.id, `P${i + 1}`]));
+    return { atribuicoes: Array.from(regiaoPorPedido.entries()).map(([id, v]) => ({ pedido: codigo.get(id)!, veiculo: v })) };
+  };
+  const codigosPadrao = new Map(validOrders.map((o, i) => [`P${i + 1}`, o.id]));
+  /** Carga estimada (minutos) só para exibição de viabilidade. */
+  const cargaDe = (a: Map<number, DeliveryOrder[]>) => {
+    const w = new Map<number, number>();
+    vehicles.forEach((_, i) => w.set(i, 30 + (a.get(i) || []).reduce((s, o) => s + (o.averageDeliveryTime || 5) + 6, 0)));
+    return w;
+  };
   const alertas: string[] = weekdayWarnings.map((w) => `${w.order.customerName}: ${w.reason}`);
 
   // Pedido do DF sem veículo BSB escalado (ou o contrário) fica sem rota — avisa em vez de sumir.
@@ -849,7 +891,8 @@ export async function planDeliveryRoutesWithAI(
     });
 
     try {
-      const briefing = buildBriefing(validOrders, codeByOrderId, vehicles, eligibleByVehicle, routeDate, weekdayWarnings, quotas);
+      const briefing = buildBriefing(validOrders, codeByOrderId, vehicles, eligibleByVehicle, routeDate, weekdayWarnings, quotas,
+        regional ? { porPedido: regiaoPorPedido, faixa: regional.faixa } : undefined);
       console.log(`🤖 [ROTA-IA] ${validOrders.length} pedidos × ${vehicles.length} veículos → ${modelo} (briefing ${briefing.length} chars)`);
       const { ok, status, j } = await callAnthropic(modelo, SYSTEM_PROMPT, briefing, TOOL_DEF);
       if (!ok) {
@@ -879,6 +922,27 @@ export async function planDeliveryRoutesWithAI(
       unassigned = rep.unassigned;
       ajustes = rep.ajustes;
       meta.modo = 'ia';
+      // Fronteira + guarda de regionalização: se a proposta da IA (já ajustada na
+      // borda) cruza mais as áreas do que a divisão regional, vale a regional.
+      if (regional) {
+        const ajustada = melhorarFronteira(assignments, vehicles, eligibleByVehicle, regional.faixa);
+        const sIa = medirSobreposicao(ajustada);
+        const repReg = applyAndRepair(propostaRegional(), { orders: validOrders, vehicles, eligibleByVehicle, quotas }, codigosPadrao);
+        const sReg = medirSobreposicao(repReg.assignments);
+        if (sIa.separados > sReg.separados + 1 && repReg.unassigned.length <= unassigned.length) {
+          ajustes.push(`Divisão da IA deixava ${sIa.separados} entrega(s) com o vizinho mais próximo em outro entregador; mantida a divisão por região (${sReg.separados}).`);
+          assignments = repReg.assignments;
+          workload = repReg.workload;
+          unassigned = repReg.unassigned;
+          meta.sobreposicao = { separados: sReg.separados, total: sReg.total, regional: sReg.separados, origem: 'regional' };
+        } else {
+          const antes = medirSobreposicao(assignments).separados;
+          if (sIa.separados < antes) ajustes.push(`Ajuste de fronteira: ${antes - sIa.separados} entrega(s) trocada(s) de entregador para não cruzar regiões.`);
+          assignments = ajustada;
+          workload = cargaDe(ajustada);
+          meta.sobreposicao = { separados: sIa.separados, total: sIa.total, regional: sReg.separados, origem: 'ia' };
+        }
+      }
       meta.resumo = String(proposal.resumo || '').trim();
       meta.alertas = [...alertas, ...((proposal.alertas || []).map((a) => String(a)))];
       meta.ajustes = ajustes;
@@ -889,12 +953,23 @@ export async function planDeliveryRoutesWithAI(
           texto: String(x.texto || ''),
         }));
 
-      const plan = await finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle, quotas);
+      const plan = await finish(storage, assignments, workload, unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle, quotas, regional?.faixa);
       return plan;
     }
   }
 
-  // FASE 2 (fallback) — distribuidor guloso original
+  // FASE 2 (sem IA) — DIVISÃO POR REGIÃO, validada pela camada de reparo
+  if (regional) {
+    const repReg = applyAndRepair(propostaRegional(), { orders: validOrders, vehicles, eligibleByVehicle, quotas }, codigosPadrao);
+    const sReg = medirSobreposicao(repReg.assignments);
+    meta.modo = 'regional';
+    meta.resumo = `Distribuição por região (sem agente de IA nesta execução): cada entregador atende uma área distinta; quantidade dentro da faixa de ±${Math.round(TOLERANCIA_REGIAO * 100)}%.`;
+    meta.ajustes = repReg.ajustes;
+    meta.sobreposicao = { separados: sReg.separados, total: sReg.total, regional: sReg.separados, origem: 'regional' };
+    return finish(storage, repReg.assignments, repReg.workload, repReg.unassigned, invalidOrders, vehicles, routeDate, orders, meta, t0, eligibleByVehicle, quotas, regional.faixa);
+  }
+
+  // FASE 2 (último recurso) — distribuidor guloso original
   const greedy = assignOrdersToVehicles(urgentOrders, regularOrders, vehicles, eligibleByVehicle);
   assignments = greedy.assignments;
   unassigned = greedy.unassigned;
@@ -1025,6 +1100,7 @@ async function finish(
   t0: number,
   eligibleByVehicle?: Map<number, DeliveryOrder[]>,
   quotas?: Map<number, number>,
+  faixa?: FaixaParadas,
 ): Promise<AIRoutePlan> {
   // FASE 3 — sequência ótima por veículo (NN + 2-opt + OSRM), reaproveitando o motor atual
   let routes: VehicleRoute[] = await optimizeVehicleRoutes(assignments, vehicles, routeDate);
@@ -1048,13 +1124,15 @@ async function finish(
     const list = assignments.get(idx) || [];
     const disp = timeToMinutes(v.timeWindowEnd) - timeToMinutes(v.timeWindowStart);
     const usados = workload.get(idx) ?? 30;
-    const cota = quotas?.get(idx) ?? list.length;
+    const cota = faixa?.alvo.get(idx) ?? quotas?.get(idx) ?? list.length;
     return {
       veiculo: `V${idx} · ${v.type}`,
       motorista: v.driverName,
       entregas: list.length,
       cota,
       cotaCadastrada: Number(v.capacity) > 0,
+      faixaMin: faixa?.min.get(idx),
+      faixaMax: faixa?.max.get(idx),
       minutosEstimados: Math.round(usados),
       minutosDisponiveis: disp,
       utilizacaoPct: cota > 0 ? Math.round((list.length / cota) * 1000) / 10 : 0,

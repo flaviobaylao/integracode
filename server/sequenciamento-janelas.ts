@@ -66,6 +66,15 @@ export interface ResultadoSequencia {
 type Dist = (lat1: number, lng1: number, lat2: number, lng2: number) => number;
 
 const MESMO_LOCAL_KM = 0.05;
+/**
+ * Peso dos QUILÔMETROS no custo (minutos equivalentes por km) — 19/out/2026.
+ * Antes o custo só somava deslocamento + espera: com horários apertados o tempo
+ * ganho ao agrupar virava espera no cliente seguinte e o sequenciador via
+ * "empate", deixando a rota ir e voltar entre bairros (ex.: voltar ao mesmo
+ * supermercado 20 min depois). Com km no custo, de dois roteiros que cumprem os
+ * mesmos horários vence o que roda menos.
+ */
+export const PESO_KM = Number(process.env.ROUTE_PESO_KM || 3);
 
 function avaliar(
   seq: ParadaSeq[],
@@ -121,7 +130,7 @@ function avaliar(
   }
 
   const horaExtra = Math.max(0, t - fimJornada);
-  const custo = fora * 1e7 + atrasoTot * 1e4 + inversoes * 2e3 + horaExtra * 50 + viagemEspera;
+  const custo = fora * 1e7 + atrasoTot * 1e4 + inversoes * 2e3 + horaExtra * 50 + viagemEspera + distTotal * PESO_KM;
   if (!detalhar) return { custo };
   return {
     custo,
@@ -228,12 +237,15 @@ export function sequenciarComJanelas(
   if (ordemGeografica.length === 0) {
     return { ordem: [], horarios: [], partida: inicioJornada, fim: inicioJornada, distanciaTotal: 0, foraDaJanela: 0, horaExtra: 0 };
   }
-  const temJanela = ordemGeografica.some((p) => p.janelas.length > 0);
+  // Pedidos do MESMO cliente no mesmo local viram UMA visita (sequenciada como
+  // uma parada só e expandida no fim) — nunca mais "volta ao mesmo cliente".
+  const { grupos, extras } = agruparMesmoCliente(ordemGeografica, dist);
+  const temJanela = grupos.some((p) => p.janelas.length > 0);
 
-  let melhorSeq = ordemGeografica.slice();
-  if (temJanela) {
-    const a = buscaLocal(ordemGeografica, base, inicioJornada, fimJornada, dist);
-    const b = buscaLocal(ordemPorFechamento(ordemGeografica, base, dist), base, inicioJornada, fimJornada, dist);
+  let melhorSeq = grupos.slice();
+  if (temJanela || grupos.length !== ordemGeografica.length) {
+    const a = buscaLocal(grupos, base, inicioJornada, fimJornada, dist);
+    const b = buscaLocal(ordemPorFechamento(grupos, base, dist), base, inicioJornada, fimJornada, dist);
     melhorSeq = (b.custo < a.custo ? b : a).seq;
   }
 
@@ -246,7 +258,44 @@ export function sequenciarComJanelas(
     const adiada = avaliar(melhorSeq, base, inicioJornada + esperaPrimeira, fimJornada, dist, true).res!;
     if (adiada.foraDaJanela <= res.foraDaJanela) res = adiada;
   }
-  return res;
+  return expandirGrupos(res, extras);
+}
+
+/**
+ * Junta pedidos do mesmo cliente (mesmo customerId, a menos de 50 m) numa parada
+ * representante. O tempo de entrega é o do primeiro pedido (os demais
+ * descarregam junto — mesma regra de antes para pedidos consecutivos).
+ */
+function agruparMesmoCliente(ps: ParadaSeq[], dist: Dist): { grupos: ParadaSeq[]; extras: Map<string, ParadaSeq[]> } {
+  const grupos: ParadaSeq[] = [];
+  const extras = new Map<string, ParadaSeq[]>();
+  for (const p of ps) {
+    const g = p.customerId
+      ? grupos.find((x) => x.customerId === p.customerId && dist(x.lat, x.lng, p.lat, p.lng) < MESMO_LOCAL_KM)
+      : undefined;
+    if (!g) { grupos.push({ ...p }); continue; }
+    if (p.urgente) g.urgente = true;
+    const l = extras.get(g.id) || [];
+    l.push(p);
+    extras.set(g.id, l);
+  }
+  return { grupos, extras };
+}
+
+/** Recoloca os pedidos agrupados logo depois do representante (descarregam junto). */
+function expandirGrupos(res: ResultadoSequencia, extras: Map<string, ParadaSeq[]>): ResultadoSequencia {
+  if (!extras.size) return res;
+  const horarios: HorarioParada[] = [];
+  for (const h of res.horarios) {
+    horarios.push(h);
+    for (const m of extras.get(h.id) || []) {
+      horarios.push({
+        id: m.id, chegada: h.saida, inicio: h.saida, saida: h.saida, espera: 0,
+        atraso: h.atraso, foraDaJanela: h.foraDaJanela, distanciaAnterior: 0, servico: 0,
+      });
+    }
+  }
+  return { ...res, horarios, ordem: horarios.map((h) => h.id) };
 }
 
 /**

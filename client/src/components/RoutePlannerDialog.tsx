@@ -315,7 +315,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
       setStep('resultado');
       setExcluidos([]);
       toast({
-        title: data?.ai?.modo === 'ia' ? 'Rotas montadas pela IA' : 'Rotas montadas pelo algoritmo',
+        title: data?.ai?.modo === 'ia' ? 'Rotas montadas pela IA' : data?.ai?.modo === 'regional' ? 'Rotas montadas por região' : 'Rotas montadas pelo algoritmo',
         description: `${data.stats.assignedOrders} de ${data.stats.totalOrders} pedidos em ${data.routes.length} rota(s) · ${data.stats.totalDistance.toFixed(1)} km`,
       });
     },
@@ -527,7 +527,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
 
   // Alertas de horário de recebimento recalculados a cada ajuste (os do servidor
   // ficam desatualizados depois de uma migração/exclusão).
-  const ehAlertaDeHorario = (a: string) => /fora do horário de recebimento|depois do fim da jornada/.test(String(a || ''));
+  const ehAlertaDeHorario = (a: string) => /fora do horário (de recebimento|preferencial)|depois do fim da jornada/.test(String(a || ''));
   const alertasHorario: string[] = (plan?.routes || []).flatMap((r: any) => [
     ...(r.stops || []).filter((s: any) => s.foraDaJanela).map((s: any) =>
       `${s.customerName}: chega às ${s.chegadaFisica || s.estimatedArrival} (${r.driverName || r.vehicleType}), fora do horário de recebimento (${s.janelaTexto || '-'}).`),
@@ -536,6 +536,31 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
   const rotasSalvaveis = (plan?.routes || []).filter((r: any, i: number) => selectedRoutes.has(i) && (r.stops || []).length > 0).length;
 
   const ai = plan?.ai;
+
+  // SOBREPOSIÇÃO ENTRE ENTREGADORES (19/out/2026) — recalculada a cada migração:
+  // entrega cujo vizinho mais próximo (outro local) ficou com OUTRO entregador.
+  const sobreposicao = (() => {
+    const pts: Array<{ r: number; lat: number; lng: number; nome: string }> = [];
+    (plan?.routes || []).forEach((r: any, ri: number) => (r.stops || []).forEach((st: any) => {
+      const lat = Number(st.latitude ?? st.customerLatitude), lng = Number(st.longitude ?? st.customerLongitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) pts.push({ r: ri, lat, lng, nome: st.customerName });
+    }));
+    if ((plan?.routes || []).filter((r: any) => (r.stops || []).length).length < 2 || pts.length < 2) return null;
+    const km = (a: any, b: any) => {
+      const R = 6371, rad = Math.PI / 180;
+      const dl = (b.lat - a.lat) * rad, dn = (b.lng - a.lng) * rad;
+      const h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dn / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    let separados = 0;
+    for (const a of pts) {
+      let best: any = null, bd = Infinity;
+      for (const b of pts) { if (a === b) continue; const d = km(a, b); if (d < 0.05) continue; if (d < bd) { bd = d; best = b; } }
+      if (best && best.r !== a.r) separados++;
+    }
+    return { separados, total: pts.length, pct: Math.round((separados / pts.length) * 100) };
+  })();
+
   const podeGerar = orderIds.length > 0 && selectedVehicles.length > 0 && selectedVehicles.every(v => !!v.driverId);
 
   return (
@@ -684,7 +709,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                   <div className="flex items-center gap-2">
                     <Bot className="h-4 w-4 text-purple-600" />
                     <span className="text-sm font-semibold">
-                      {ai?.modo === 'ia' ? `Distribuição pelo agente (${ai?.modelo || 'claude'})` : 'Distribuição pelo algoritmo'}
+                      {ai?.modo === 'ia' ? `Distribuição pelo agente (${ai?.modelo || 'claude'})` : ai?.modo === 'regional' ? 'Distribuição por região' : 'Distribuição pelo algoritmo'}
                     </span>
                     {ai?.duracaoMs != null && <Badge variant="outline" className="text-[10px]">{(ai.duracaoMs / 1000).toFixed(1)}s</Badge>}
                     {ai?.tokens && <Badge variant="outline" className="text-[10px]">{ai.tokens.input}→{ai.tokens.output} tokens</Badge>}
@@ -771,14 +796,28 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
 
               {/* Ocupação por veículo — a métrica é QUANTIDADE (entregas/cota).
                   Não há balanceamento de carga: minutos são só viabilidade da jornada. */}
+              {sobreposicao && (
+                <div
+                  className={`rounded-md border px-3 py-2 text-xs flex flex-wrap items-center gap-x-3 gap-y-1 ${sobreposicao.pct <= 8 ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : sobreposicao.pct <= 20 ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-red-200 bg-red-50 text-red-900'}`}
+                  data-testid="indicador-sobreposicao"
+                >
+                  <b>Sobreposição entre entregadores: {sobreposicao.separados} de {sobreposicao.total} entregas</b>
+                  <span>têm o cliente mais próximo com outro entregador ({sobreposicao.pct}%).</span>
+                  <span className="opacity-80">
+                    {sobreposicao.pct <= 8 ? 'Áreas bem separadas.' : 'Confira no mapa — dá para migrar as entregas da fronteira.'}
+                    {ai?.sobreposicao?.origem === 'regional' && ' A divisão por região foi mantida porque a da IA cruzava mais as áreas.'}
+                  </span>
+                </div>
+              )}
+
               {!!ai?.cargaPorVeiculo?.length && (
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     <Gauge className="h-4 w-4 text-gray-500" />Paradas por veículo
-                    <span className="font-normal text-[11px] text-gray-400">(cota de quantidade — sem equilíbrio de carga)</span>
+                    <span className="font-normal text-[11px] text-gray-400">(a região vem primeiro; a quantidade só precisa ficar dentro da faixa)</span>
                   </div>
                   {ai.cargaPorVeiculo.filter((c: any) => c.entregas > 0).map((c: any, i: number) => {
-                    const cota = c.cota ?? c.entregas;
+                    const cota = c.faixaMax ?? c.cota ?? c.entregas;
                     const pct = cota > 0 ? (c.entregas / cota) * 100 : 0;
                     return (
                       <div key={i} className="flex items-center gap-2 text-xs">
@@ -788,7 +827,7 @@ export default function RoutePlannerDialog({ open, onOpenChange, orderIds, onSav
                             style={{ width: `${Math.min(100, pct)}%` }} />
                         </div>
                         <span className="w-52 text-right text-gray-500">
-                          {c.entregas}/{cota} paradas{c.cotaCadastrada ? ' (cap.)' : ''} · {c.minutosEstimados}/{c.minutosDisponiveis} min
+                          {c.entregas} paradas{c.faixaMin != null && c.faixaMax != null ? ` (faixa ${c.faixaMin}–${c.faixaMax})` : `/${cota}`}{c.cotaCadastrada ? ' (cap.)' : ''} · {c.minutosEstimados}/{c.minutosDisponiveis} min
                         </span>
                       </div>
                     );
