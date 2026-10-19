@@ -25,6 +25,7 @@ import {
   MapPin, Crosshair,
 } from "lucide-react";
 import { exportToExcel } from "@/lib/tableTools";
+import { AJUDA_SEMANA_ATENDIMENTO, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 
 type ClienteRede = {
   id: string; nome: string; doc: string | null; cidade: string; bairro: string;
@@ -32,6 +33,12 @@ type ClienteRede = {
   vendedor: string; sellerId: string;
   /** 'destinatario' | 'entrega' | 'nenhum' — papel do integrante na NF-e. */
   papel?: string;
+  /** Ritmo de atendimento do cadastro: 'semanal' | 'quinzenal' | 'mensal'. */
+  periodicidade?: string;
+  /** Semana do mes ('toda','impar','par','1'..'4','ultima'). */
+  semana?: string;
+  /** Dias de rota ('Seg','Qua'...). */
+  dias?: string[];
   fatMes: number; fatMesAnt: number; fatMesAnoAnt: number; fatAno: number; fatAnoAnt: number; debito: number;
 };
 /** Endereço de entrega SEM CNPJ pendurado na rede — não é cliente, não tem carteira. */
@@ -64,6 +71,23 @@ const labelMes = (m: string) => {
   const [a, b] = String(m || "").split("-");
   return b ? `${MES_ABREV[Number(b) - 1]}/${a.slice(2)}` : m;
 };
+// ── Ritmo de atendimento ────────────────────────────────────────────────────
+// A coluna e' estreita e fica no meio de uma tabela de dinheiro, entao a semana
+// do mes vai ABREVIADA ("1ª e 3ª"); o nome por extenso mora no title da celula
+// e no "i" do cabecalho, que repete a mesma ajuda do cadastro do cliente.
+const PERIODICIDADE_ROTULO: Record<string, string> = {
+  semanal: "Semanal", quinzenal: "Quinzenal", mensal: "Mensal",
+};
+const SEMANA_CURTA: Record<string, string> = {
+  toda: "Toda semana", impar: "1ª e 3ª", par: "2ª e 4ª",
+  "1": "1ª do mês", "2": "2ª do mês", "3": "3ª do mês", "4": "4ª do mês", ultima: "Última",
+};
+const periodicidadeBR = (p: any) => PERIODICIDADE_ROTULO[String(p || "").toLowerCase()] || "—";
+const semanaCurta = (s: any) => SEMANA_CURTA[normalizarSemana(s)];
+const semanaLonga = (s: any) => ROTULO_SEMANA[normalizarSemana(s)];
+/** "Seg, Qua" — vazio quando o cadastro nao tem dia de rota legivel. */
+const diasBR = (d: any) => (Array.isArray(d) && d.length ? d.join(", ") : "");
+
 const dataBR = (d: any) => {
   const m = String(d || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : "—";
@@ -173,6 +197,9 @@ export default function RedeClientes() {
           Rede: r.nome, Cliente: c.nome, "CPF/CNPJ": c.doc || "", Cidade: c.cidade, Bairro: c.bairro,
           Status: c.ativo ? "Ativo" : "Inativo", "Data da conquista": c.conquista ? dataBR(c.conquista) : "",
           Vendedor: c.vendedor,
+          Periodicidade: periodicidadeBR(c.periodicidade),
+          "Semana do mês": semanaLonga(c.semana),
+          "Dias de rota": diasBR(c.dias),
           [`Faturamento ${labelMes(mesAnoAnt)}`]: Number(c.fatMesAnoAnt.toFixed(2)),
           [`Faturamento ${labelMes(mesAnt)}`]: Number(c.fatMesAnt.toFixed(2)),
           [`Faturamento ${labelMes(mes)}`]: Number(c.fatMes.toFixed(2)),
@@ -186,6 +213,7 @@ export default function RedeClientes() {
       linhas.push({
         Rede: r.nome, Cliente: `TOTAL — ${r.totais.clientes} clientes`, "CPF/CNPJ": "", Cidade: "", Bairro: "",
         Status: `${r.totais.ativos} ativos / ${r.totais.inativos} inativos`, "Data da conquista": "", Vendedor: "",
+        Periodicidade: "", "Semana do mês": "", "Dias de rota": "",
         [`Faturamento ${labelMes(mesAnoAnt)}`]: Number(r.totais.fatMesAnoAnt.toFixed(2)),
         [`Faturamento ${labelMes(mesAnt)}`]: Number(r.totais.fatMesAnt.toFixed(2)),
         [`Faturamento ${labelMes(mes)}`]: Number(r.totais.fatMes.toFixed(2)),
@@ -420,6 +448,16 @@ export default function RedeClientes() {
                               </span>
                             </TableHead>
                             <TableHead className="w-32 whitespace-nowrap">Data da conquista</TableHead>
+                            <TableHead className="w-36 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1">
+                                Periodicidade / Semana
+                                <span
+                                  title={`Ritmo de atendimento do cadastro de cada unidade — numa rede, filial nem sempre segue o ritmo da matriz.\n\n${AJUDA_SEMANA_ATENDIMENTO}`}
+                                  aria-label="O que cada opção faz"
+                                  className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle"
+                                >i</span>
+                              </span>
+                            </TableHead>
                             <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnoAnt)}</TableHead>
                             <TableHead className="text-right whitespace-nowrap text-muted-foreground">Fat. {labelMes(mesAnt)}</TableHead>
                             <TableHead className="text-right whitespace-nowrap">Fat. {labelMes(mes)}</TableHead>
@@ -472,7 +510,24 @@ export default function RedeClientes() {
                                   </Button>
                                 </div>
                               </TableCell>
-                              <TableCell className="text-sm whitespace-nowrap">{dataBR(c.conquista)}</TableCell>
+                              <TableCell className="text-sm whitespace-nowrap leading-tight">
+                                {/* Periodicidade em cima, semana do mes embaixo. Os dias de rota
+                                    ficam no title: ajudam a entender o "quando", mas alargariam
+                                    demais uma coluna encaixada entre colunas de dinheiro. */}
+                                <span
+                                  title={[
+                                    `Periodicidade: ${periodicidadeBR(c.periodicidade)}`,
+                                    `Semana do mês: ${semanaLonga(c.semana)}`,
+                                    diasBR(c.dias) ? `Dias de rota: ${diasBR(c.dias)}` : "Sem dia de rota no cadastro",
+                                  ].join("\n")}
+                                  className="cursor-help"
+                                >
+                                  {periodicidadeBR(c.periodicidade)}
+                                  <span className="block text-[11px] text-muted-foreground">
+                                    {semanaCurta(c.semana)}{diasBR(c.dias) ? ` · ${diasBR(c.dias)}` : ""}
+                                  </span>
+                                </span>
+                              </TableCell>
                               <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(c.fatMesAnoAnt)}</TableCell>
                               <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(c.fatMesAnt)}</TableCell>
                               <TableCell className="text-right whitespace-nowrap">
@@ -501,6 +556,28 @@ export default function RedeClientes() {
                             </TableCell>
                             <TableCell />
                             <TableCell />
+                            {/* Rede inteira no mesmo ritmo ou nao. E' a pergunta que a coluna
+                                existe para responder: filial fora do compasso da matriz vira
+                                visita perdida e pedido que nao fecha junto. */}
+                            <TableCell className="text-xs font-normal whitespace-nowrap">
+                              {(() => {
+                                const combos = new Set(r.clientes.map((c) => `${String(c.periodicidade || "")}|${normalizarSemana(c.semana)}`));
+                                if (!r.clientes.length) return <span className="text-muted-foreground">—</span>;
+                                if (combos.size === 1) {
+                                  const c0 = r.clientes[0];
+                                  return (
+                                    <span className="text-muted-foreground">
+                                      {periodicidadeBR(c0.periodicidade)} · {semanaCurta(c0.semana)}
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="text-amber-700" title="As unidades desta rede têm ritmos de atendimento diferentes.">
+                                    {combos.size} ritmos diferentes
+                                  </span>
+                                );
+                              })()}
+                            </TableCell>
                             <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(r.totais.fatMesAnoAnt)}</TableCell>
                             <TableCell className="text-right whitespace-nowrap text-muted-foreground">{BRL(r.totais.fatMesAnt)}</TableCell>
                             <TableCell className="text-right whitespace-nowrap">{BRL(r.totais.fatMes)}</TableCell>
