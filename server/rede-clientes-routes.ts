@@ -23,8 +23,24 @@ import { nfVendaWhere } from "./faturamento-oficial";
 import { cteFaturamento, descricaoFonte } from "./faturamento-carteira";
 import { authenticateUser } from "./authMiddleware";
 import { normalizeUf, ufFromCep } from "./cep-uf";
+import { normalizarSemana } from "@shared/visitSchedule";
+import { normalizeWeekdayInput } from "@shared/schema";
 
 const TZ = "America/Sao_Paulo";
+
+/**
+ * Dias de rota do cadastro, em 'Seg','Qua'... `customers.weekdays` guarda um
+ * JSON em varchar e aceita meia duzia de grafias ('segunda', 'Seg', 'terça').
+ * `normalizeWeekdayInput` ESTOURA no que nao reconhece — aqui isso nao pode
+ * derrubar a lista da rede inteira, entao cadastro torto vira lista vazia.
+ */
+function diasDaRota(v: any): string[] {
+  try {
+    return normalizeWeekdayInput(v) as unknown as string[];
+  } catch {
+    return [];
+  }
+}
 
 /** 'YYYY-MM' do mes corrente em horario de Brasilia. */
 function mesCorrente(): string {
@@ -417,6 +433,13 @@ export function registerRedesClientes(app: Express) {
         SELECT m.rede_id, COALESCE(m.papel,'nenhum') AS papel, c.id, c.name, c.fantasy_name, c.city, c.neighborhood,
                c.is_active, c.seller_id, c.created_at::date::text AS cadastro_em,
                c.inactivated_at::date::text AS inativado_em,
+               c.visit_periodicity::text AS periodicidade,
+               -- semana_atendimento nasceu depois, por ALTER TABLE. Lida pelo
+               -- to_jsonb da linha, a consulta sobrevive num ambiente onde o
+               -- ALTER ainda nao rodou (devolve NULL -> 'toda') em vez de
+               -- estourar e derrubar a aba Rede de Cliente inteira.
+               COALESCE(NULLIF(to_jsonb(c) ->> 'semana_atendimento',''),'toda') AS semana,
+               c.weekdays AS weekdays,
                NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS doc,
                ${CHAVE_CADASTRO} AS chave,
                COALESCE(vend.nome,'Sem vendedor') AS vendedor
@@ -504,6 +527,12 @@ export function registerRedesClientes(app: Express) {
           inativadoEm: m.inativado_em || null,
           vendedor: String(m.vendedor || "Sem vendedor"),
           sellerId: String(m.seller_id || ""),
+          // Ritmo de atendimento do CADASTRO de cada unidade. Numa rede, filial
+          // que nem sempre segue o ritmo da matriz — por isso vai por linha, e
+          // nao um numero so' da rede.
+          periodicidade: String(m.periodicidade || "semanal"),
+          semana: normalizarSemana(m.semana),
+          dias: diasDaRota(m.weekdays),
           fatMes: Number(f.fat_mes || 0),
           fatMesAnt: Number(f.fat_mes_ant || 0),
           fatMesAnoAnt: Number(f.fat_mes_ano_ant || 0),
