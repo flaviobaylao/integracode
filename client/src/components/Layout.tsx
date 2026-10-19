@@ -1015,7 +1015,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
             alt="Honest Sucos - Sistema Integra"
             className="w-10 h-10"
           />
-          <div>
+          <div className="hidden sm:block">
             <h1 className="text-lg md:text-xl font-bold text-gray-800">Sistema Integra</h1>
             {user?.route && (
               <p className="text-xs md:text-sm text-gray-600">Rota: {user.route}</p>
@@ -1111,7 +1111,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-3">
-            <div className="text-right">
+            <div className="text-right hidden sm:block">
               <p className="text-sm font-medium text-gray-800">
                 {user?.firstName} {user?.lastName}
               </p>
