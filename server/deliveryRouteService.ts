@@ -7,6 +7,9 @@ import { eq, desc, and } from 'drizzle-orm';
 import { parseJanelas, formatarJanelas, minParaHHMM, textoJanelaComPreferencia, type JanelaMin } from '../shared/janelas-entrega';
 import { sequenciarComJanelas, TEMPO_ENTREGA_PADRAO_MIN, type ParadaSeq } from './sequenciamento-janelas';
 
+/** Espera (min) pela abertura do cliente a partir da qual o planejamento avisa. */
+const ESPERA_LONGA_MIN = 45;
+
 // ==================== Data Structures ====================
 
 export type VehicleType = 'caminhao' | 'carro' | 'moto' | 'baruc';
@@ -653,6 +656,14 @@ export async function optimizeVehicleRoutes(
         atrasoMin: Math.round(h.atraso),
         tempoEntregaMedido: order.tempoEntregaMedido === true,
       });
+      // Espera longa = entregador parado esperando o cliente abrir (ex.: pizzaria
+      // que só recebe 16h–18h numa rota que acaba ao meio-dia). O sequenciador
+      // já evita quando dá; se sobrou, é decisão de escala — avisa.
+      if (!h.foraDaJanela && h.espera >= ESPERA_LONGA_MIN) {
+        alertasJanela.push(
+          `${order.customerName}: só recebe ${formatarJanelas(janelas)} — ${vehicle.driverName || vehicle.type} chega às ${minParaHHMM(h.chegada)} e fica ${Math.round(h.espera)} min parado esperando abrir. Considere outro dia/entregador ou um retorno à tarde.`,
+        );
+      }
       if (h.foraDaJanela) {
         alertasJanela.push(
           `${order.customerName}: chega às ${minParaHHMM(h.chegada)} (${vehicle.driverName || vehicle.type}), fora do horário de recebimento (${formatarJanelas(janelas)}). Mude de entregador ou reveja a jornada.`,

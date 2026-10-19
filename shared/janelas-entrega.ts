@@ -250,9 +250,9 @@ export function janelasDoDia(semana: any, sabado: any, data: string | Date): Jan
 // vez de sair junto do vizinho IGM. O preferencial descreve o HÁBITO da rota,
 // não uma restrição do cliente. Regra atual:
 //   • OBRIGATÓRIO = horário de recebimento cadastrado (sem cadastro = livre);
-//   • PREFERENCIAL = preferência suave: o sequenciador tenta cumprir quando não
-//     custa desvio (pequena penalidade por minuto fora — PESO_PREF), nunca
-//     espera nem marca "fora do horário" por causa dele.
+//   • PREFERENCIAL = só desempate: entre roteiros praticamente iguais em km,
+//     fica o que cumpre o preferencial (PESO_PREF mínimo); nunca espera, nunca
+//     faz a rota voltar a um bairro e nunca marca "fora do horário" por ele.
 // Sábado usa os períodos de sábado; os demais dias, os de seg–sex.
 // ----------------------------------------------------------------------------
 

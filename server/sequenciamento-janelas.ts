@@ -79,10 +79,13 @@ const MESMO_LOCAL_KM = 0.05;
 export const PESO_KM = Number(process.env.ROUTE_PESO_KM || 3);
 /**
  * Peso do horário PREFERENCIAL (min equivalentes por minuto fora) — 19/out/2026.
- * Pequeno de propósito: 1 h fora do preferencial "custa" 6 min ≈ 2 km. Serve de
- * desempate; não faz a rota voltar ao bairro (caso Bella Milão × IGM).
+ * Só DESEMPATE: 1 h fora do preferencial "custa" 0,3 min ≈ 0,1 km. A geografia
+ * sempre manda; o preferencial só escolhe entre roteiros praticamente iguais.
+ * 19/out (2ª revisão): com 0,1 (1 h ≈ 2 km) a soma dos preferenciais de ~20
+ * paradas ainda puxava a rota de volta a bairros já visitados — Delícias de Paris
+ * ficou em 21º, ao lado da Arena Ensino Médio (5º); VIRSON 43,7 km → 33,5 km.
  */
-export const PESO_PREF = Number(process.env.ROUTE_PESO_PREF || 0.1);
+export const PESO_PREF = Number(process.env.ROUTE_PESO_PREF || 0.005);
 
 function avaliar(
   seq: ParadaSeq[],
@@ -211,6 +214,45 @@ function buscaLocal(
   return { seq, custo: melhor };
 }
 
+/**
+ * Busca local iterada (19/out/2026). A busca local só aceita UM movimento que
+ * melhore; quando há vários clientes de janela curta (8h–10h), puxar um vizinho
+ * para junto do outro empurra alguém para fora da janela e o movimento é
+ * recusado — a rota fica presa (ex.: IGM ao lado da Bella Milão, mas 25º da
+ * fila). Aqui a melhor rota é "chacoalhada" (blocos de 1–3 paradas mudam de
+ * lugar) e a busca local roda de novo; fica a melhor. Semente fixa = mesmo
+ * resultado para os mesmos pedidos. Limite de tempo por veículo.
+ */
+function perturbarEMelhorar(
+  inicial: { seq: ParadaSeq[]; custo: number },
+  base: { lat: number; lng: number },
+  partida: number,
+  fimJornada: number,
+  dist: Dist,
+): { seq: ParadaSeq[]; custo: number } {
+  const n = inicial.seq.length;
+  if (n < 6) return inicial;
+  let semente = 1234567;
+  const rnd = () => { semente = (semente * 1103515245 + 12345) % 2147483648; return semente / 2147483648; };
+  const iteracoes = n > 60 ? 8 : n > 40 ? 20 : 40;
+  const limite = Date.now() + (n > 60 ? 1500 : 800);
+  let melhor = inicial;
+  for (let it = 0; it < iteracoes && Date.now() < limite; it++) {
+    const cand = melhor.seq.slice();
+    const movimentos = 2 + Math.floor(rnd() * 3);
+    for (let m = 0; m < movimentos; m++) {
+      const tam = 1 + Math.floor(rnd() * 3);
+      const i = Math.floor(rnd() * (cand.length - tam + 1));
+      const bloco = cand.splice(i, tam);
+      const j = Math.floor(rnd() * (cand.length + 1));
+      cand.splice(j, 0, ...bloco);
+    }
+    const r = buscaLocal(cand, base, partida, fimJornada, dist);
+    if (r.custo < melhor.custo - 1e-6) melhor = r;
+  }
+  return melhor;
+}
+
 /** Ordem inicial alternativa: prioridade, depois quem fecha mais cedo, vizinho mais próximo no empate. */
 function ordemPorFechamento(paradas: ParadaSeq[], base: { lat: number; lng: number }, dist: Dist): ParadaSeq[] {
   const fechamento = (p: ParadaSeq) => (p.janelas.length ? p.janelas[0].fim : 24 * 60 + 1);
@@ -259,7 +301,9 @@ export function sequenciarComJanelas(
   if (temJanela || grupos.length !== ordemGeografica.length) {
     const a = buscaLocal(grupos, base, inicioJornada, fimJornada, dist);
     const b = buscaLocal(ordemPorFechamento(grupos, base, dist), base, inicioJornada, fimJornada, dist);
-    melhorSeq = (b.custo < a.custo ? b : a).seq;
+    let melhor = b.custo < a.custo ? b : a;
+    melhor = perturbarEMelhorar(melhor, base, inicioJornada, fimJornada, dist);
+    melhorSeq = melhor.seq;
   }
 
   let res = avaliar(melhorSeq, base, inicioJornada, fimJornada, dist, true).res!;
