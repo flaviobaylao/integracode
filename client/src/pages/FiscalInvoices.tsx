@@ -315,7 +315,7 @@ const CFOP_VENDA = new Set(['5101','5102','5103','5104','5105','5106','5401','54
 const CFOP_AMOSTRA = new Set(['5911','6911']);
 const CFOP_BONIFICACAO = new Set(['5910','6910','5936','6936']);
 const CFOP_TRANSFERENCIA = new Set(['5151','5152','6151','6152','5408','5409','6408','6409']);
-const CFOP_DEVOLUCAO = new Set(['1201','1202','2201','2202','5201','5202','5208','5209','6201','6202','6208','6209']);
+const CFOP_DEVOLUCAO = new Set(['1201','1202','2201','2202','1208','1209','2208','2209','1409','2409','5201','5202','5208','5209','6201','6202','6208','6209']);
 const CFOP_REMESSA = new Set(['5901','5902','5905','5908','5915','5920','6901','6902','6905','6915','6554']);
 
 export function tipoFaturamento(inv: any): TipoFaturamento {

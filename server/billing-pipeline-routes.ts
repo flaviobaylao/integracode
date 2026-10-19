@@ -17,6 +17,7 @@ import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
 import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
+import { escolherCenarioTransferencia } from './cfop-transferencia';
 import { runSnapshotClasses } from './carteira-routes';
 import {
   instanciaSemControleDeEstoque, verificarEstoqueEmUso, baixarEstoqueEmUso, baixaVigenteDoPedido, lotesJaBaixados, ultimoEstornoDoPedido,
@@ -3395,19 +3396,16 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
     // Transferência entre filiais: usa o CENÁRIO FISCAL de transferência
     // (CFOP/CST/natureza configurados em Cenários Fiscais), preferindo o cenário
     // da instância emitente. A NF é criada como rascunho para conferência antes de emitir.
-    natureOfOperation = 'Transferência de mercadoria';
-    cfop = isWithinState ? '5152' : '6152';
-    try {
-      const _scen = await storage.getFiscalScenarios();
-      const _inst = item.omieInstanceId || null;
-      const _t = (_scen || []).find((s: any) => s.operationType === 'transferencia' && _inst && s.omieInstanceId === _inst)
-              || (_scen || []).find((s: any) => s.operationType === 'transferencia');
-      if (_t) {
-        fiscalScenarioId = _t.id;
-        if (_t.cfop) cfop = _t.cfop;
-        if (_t.natureOfOperation) natureOfOperation = _t.natureOfOperation;
-      }
-    } catch { /* mantém CFOP/natureza padrão de transferência */ }
+    // Flavio 19/out/2026: o cenário é escolhido pela DIREÇÃO REAL da operação
+    // (dentro de GO = 5151; GO -> DF/BSB = 6409). Antes caía em "qualquer cenário
+    // de transferência" — só existia o do BSB (6409) e a nota IND -> GYN saía 5409.
+    const _escolha = escolherCenarioTransferencia(
+      await storage.getFiscalScenarios().catch(() => [] as any[]),
+      isWithinState,
+    );
+    cfop = _escolha.cfop;
+    natureOfOperation = _escolha.natureOfOperation;
+    fiscalScenarioId = _escolha.fiscalScenarioId;
   }
 
   // BSB (CNPJ 28295493000315, filial DF, Simples Nacional sob ST): a VENDA
