@@ -185,9 +185,9 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
     refetchInterval: 5 * 60 * 1000,
   });
   const [config, setConfig] = useState(false);
-  // Recolher/expandir: recolhida mostra so o cabecalho e os indicadores. Sempre abre EXPANDIDA
-  // (com o grafico e a planilha por entregador); o recolher vale so enquanto a tela esta aberta.
-  const [aberto, setAberto] = useState(true);
+  // Recolher/expandir: recolhida mostra so o cabecalho e os indicadores. Abre RECOLHIDA por padrao;
+  // o botao Expandir mostra o grafico e a planilha por entregador.
+  const [aberto, setAberto] = useState(false);
   const alternarAberto = () => setAberto((v) => !v);
   const [info, setInfo] = useState(false);
 
