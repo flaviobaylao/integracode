@@ -675,21 +675,26 @@ function resumir(linhas: any[]) {
 
 const lerEscopo = (body: any): Escopo => (body?.escopo === "todos" ? "todos" : "duplicados");
 
-/** Clientes (não fornecedores, sem trava de coordenada) com coordenada aproximada. */
+/**
+ * Clientes (não fornecedores) com coordenada aproximada.
+ * Entram os TRAVADOS em grade: a trava veio do check-in do vendedor com o GPS do
+ * aparelho em "localização aproximada" (ponto de bairro numa grade de ~2 km) —
+ * não é uma posição confirmada. Empilhados travados ficam de fora (podem ser
+ * lojas do mesmo prédio confirmadas por GPS).
+ */
 async function listarAproximados(somenteAtivos: boolean): Promise<any[]> {
   const sel: any = await db.execute(sql`
     SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code,
-           c.latitude, c.longitude, c.is_active
+           c.latitude, c.longitude, c.is_active, COALESCE(c.coordinates_locked, false) AS travada
     FROM customers c
     WHERE (c.is_supplier IS NOT TRUE)
-      AND (c.coordinates_locked IS NOT TRUE)
       AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
       ${somenteAtivos ? sql`AND c.is_active = true` : sql``}
   `);
   const todos = (sel.rows || sel) as any[];
   const marcas = marcarAproximadas(todos, (c) => c.latitude, (c) => c.longitude, (c) => String(c.id));
   return todos
-    .filter((c) => marcas.has(c))
+    .filter((c) => marcas.has(c) && (!c.travada || marcas.get(c) === "grade"))
     .map((c) => ({ ...c, motivo: marcas.get(c) }))
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
 }
@@ -707,7 +712,8 @@ export function registerGeocodeAnalyze(app: Express) {
         total: lista.length,
         grade: lista.filter((c) => c.motivo === "grade").length,
         empilhados: lista.filter((c) => c.motivo === "empilhado").length,
-        clientes: lista.map((c) => ({ id: c.id, nome: c.fantasy_name || c.name, endereco: c.address, bairro: c.neighborhood, cidade: c.city, cep: c.zip_code, lat: c.latitude, lng: c.longitude, motivo: c.motivo, ativo: c.is_active })),
+        travadas: lista.filter((c) => c.travada).length,
+        clientes: lista.map((c) => ({ id: c.id, nome: c.fantasy_name || c.name, endereco: c.address, bairro: c.neighborhood, cidade: c.city, cep: c.zip_code, lat: c.latitude, lng: c.longitude, motivo: c.motivo, travada: !!c.travada, ativo: c.is_active })),
       });
     } catch (e: any) {
       res.status(500).json({ error: String(e?.message || e).slice(0, 200) });
@@ -728,18 +734,26 @@ export function registerGeocodeAnalyze(app: Express) {
         const linha = await avaliarCliente(c, true);
         const coord = linha.coordenada;
         const item: any = {
-          id: c.id, nome: c.fantasy_name || c.name, endereco: c.address, motivo: c.motivo,
+          id: c.id, nome: c.fantasy_name || c.name, endereco: c.address, motivo: c.motivo, travada: !!c.travada,
           veredito: linha.veredito, de: { lat: c.latitude, lng: c.longitude },
           para: coord ? { lat: coord.lat, lng: coord.lon, origem: coord.origem, precisao: coord.precisao } : null,
           deslocamentoKm: linha.gravadoDivergeKm ?? null, gravado: false,
         };
-        if (coord && aplicar) {
+        // Trava em grade = GPS impreciso no check-in: destrava (o próximo check-in
+        // com GPS preciso grava e trava de novo). Outras travas são respeitadas.
+        const podeMexer = !c.travada || c.motivo === "grade";
+        if (aplicar && podeMexer) {
           try {
-            await db.execute(sql`
-              UPDATE customers SET latitude = ${coord.lat}, longitude = ${coord.lon}
-              WHERE id = ${c.id} AND (coordinates_locked IS NOT TRUE)`);
-            item.gravado = true;
-            gravados++;
+            if (coord) {
+              await db.execute(sql`
+                UPDATE customers SET latitude = ${coord.lat}, longitude = ${coord.lon}, coordinates_locked = false
+                WHERE id = ${c.id}`);
+              item.gravado = true;
+              gravados++;
+            } else if (c.travada) {
+              await db.execute(sql`UPDATE customers SET coordinates_locked = false WHERE id = ${c.id}`);
+              item.destravado = true;
+            }
           } catch (e: any) {
             item.erro = String(e?.message || e).slice(0, 120);
           }

@@ -102,9 +102,13 @@ export default function CheckInModal({
         position = await getPos({ enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
       }
 
-      const loc = {
+      // Precisão do GPS (m): com "localização precisa" desligada o aparelho manda
+      // um ponto de bairro (~2 km); o servidor só grava/trava a coordenada do
+      // cliente quando a leitura é precisa.
+      const loc: any = {
         latitude: position.coords.latitude,
-        longitude: position.coords.longitude
+        longitude: position.coords.longitude,
+        accuracy: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
       };
       setLocation(loc);
 
@@ -272,6 +276,7 @@ export default function CheckInModal({
       if (location) {
         formData.append('latitude', location.latitude.toString());
         formData.append('longitude', location.longitude.toString());
+        if ((location as any).accuracy != null) formData.append('accuracy', String((location as any).accuracy));
       }
       if (notes.trim()) {
         formData.append('notes', notes.trim());
@@ -284,7 +289,7 @@ export default function CheckInModal({
       if (!navigator.onLine) {
         await enfileirar({ clientUuid, cardId, customerId: customerId || null, customerNome: null,
           deviceTime, lat: location ? location.latitude : null, lng: location ? location.longitude : null,
-          accuracyM: null, notes: notes.trim(), photo: blob });
+          accuracyM: location ? ((location as any).accuracy ?? null) : null, notes: notes.trim(), photo: blob });
         toast({
           title: "Check-in salvo no aparelho",
           description: "Sem internet agora. Ele sobe sozinho quando a conexão voltar — mantenha o app aberto.",
@@ -306,7 +311,7 @@ export default function CheckInModal({
         if (checkInResponse.status >= 500) {
           await enfileirar({ clientUuid, cardId, customerId: customerId || null, customerNome: null,
             deviceTime, lat: location ? location.latitude : null, lng: location ? location.longitude : null,
-            accuracyM: null, notes: notes.trim(), photo: blob });
+            accuracyM: location ? ((location as any).accuracy ?? null) : null, notes: notes.trim(), photo: blob });
           toast({
             title: "Check-in salvo no aparelho",
             description: "O sistema não respondeu agora. Ele será enviado automaticamente.",
@@ -348,7 +353,7 @@ export default function CheckInModal({
           const blob = await (await fetch(photoData)).blob();
           await enfileirar({ clientUuid, cardId, customerId: customerId || null, customerNome: null,
             deviceTime, lat: location ? location.latitude : null, lng: location ? location.longitude : null,
-            accuracyM: null, notes: notes.trim(), photo: blob });
+            accuracyM: location ? ((location as any).accuracy ?? null) : null, notes: notes.trim(), photo: blob });
           toast({
             title: "Check-in salvo no aparelho",
             description: "A conexão falhou no envio. Ele sobe sozinho quando a internet voltar.",

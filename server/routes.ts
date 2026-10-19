@@ -15949,7 +15949,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const actingRole = req.currentUser?.role;
         const gLat = parseFloat(String(latitude));
         const gLng = parseFloat(String(longitude));
-        if (actingRole === 'vendedor' && currentCard.customerId && !isNaN(gLat) && !isNaN(gLng)) {
+        // Só grava/trava com leitura PRECISA (19/out/2026): aparelho com "localização
+        // precisa" desligada manda ponto de bairro numa grade de ~2 km — foi o que
+        // travou coordenadas erradas e bagunçou a divisão das rotas por região.
+        const { latitudeEmGrade } = await import('@shared/coordenadas-aproximadas');
+        const leituraGrosseira = latitudeEmGrade(gLat) || (_accuracy != null && Number.isFinite(_accuracy) && _accuracy > 100);
+        if (leituraGrosseira && actingRole === 'vendedor') {
+          console.log(`📍 [CHECKIN-COORD] Cliente ${currentCard.customerId}: GPS impreciso (${_accuracy != null ? `±${Math.round(_accuracy)} m` : 'grade de ~2 km'}) — coordenada do cadastro NÃO alterada`);
+        }
+        if (actingRole === 'vendedor' && currentCard.customerId && !isNaN(gLat) && !isNaN(gLng) && !leituraGrosseira) {
           const cust: any = await storage.getCustomer(currentCard.customerId);
           const isLocked = !!(cust && cust.coordinatesLocked);
           if (!isLocked) {
