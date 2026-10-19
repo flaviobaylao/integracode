@@ -1,4 +1,5 @@
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
+import { latitudeEmGrade } from "@shared/coordenadas-aproximadas";
 import HorariosPreferenciaisCliente from "@/components/HorariosPreferenciaisCliente";
 import { useState, useEffect } from "react";
 import { CidadePicker } from "@/components/CidadePicker";
@@ -1161,6 +1162,11 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                     </div>
                   </div>
                   
+                  {latitudeEmGrade(form.watch('latitude' as any)) && (
+                    <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-2 py-1 mb-2" data-testid="aviso-coordenada-aproximada">
+                      ⚠️ Coordenada aproximada (ponto do bairro, não do endereço). Ela atrapalha a divisão das rotas por região — confira endereço e CEP e corrija a localização.
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <FormField
                       control={form.control}

@@ -28,6 +28,7 @@ import { authenticateUser, requireRole } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provider";
+import { marcarAproximadas } from "../shared/coordenadas-aproximadas";
 
 const PLACES_KEY = () => String(process.env.GOOGLE_PLACES_API_KEY || "").trim();
 
@@ -501,7 +502,10 @@ async function selecionarClientes(escopo: Escopo, limit: number, offset: number)
 async function avaliarCliente(c: any, incluirPlaces: boolean): Promise<any> {
   const cidade = String(c.city || "");
   const uf = String(c.state || "");
-  const sufixo = [c.neighborhood, cidade, uf, "Brasil"].filter(Boolean).join(", ");
+  // CEP no fim da consulta (19/out/2026): ajuda o geocodificador a não cair no
+  // centro do bairro quando o logradouro é vago ("T44", "RUA 9-A").
+  const cepFmt = String(c.zip_code || "").replace(/\D/g, "").replace(/^(\d{5})(\d{3})$/, "$1-$2");
+  const sufixo = [c.neighborhood, cidade, uf, cepFmt.length === 9 ? cepFmt : "", "Brasil"].filter(Boolean).join(", ");
   const original = String(c.address || "");
   const limpo = limparEndereco(original);
   const fantasia = String(c.fantasy_name || "");
@@ -671,7 +675,90 @@ function resumir(linhas: any[]) {
 
 const lerEscopo = (body: any): Escopo => (body?.escopo === "todos" ? "todos" : "duplicados");
 
+/** Clientes (não fornecedores, sem trava de coordenada) com coordenada aproximada. */
+async function listarAproximados(somenteAtivos: boolean): Promise<any[]> {
+  const sel: any = await db.execute(sql`
+    SELECT c.id, c.name, c.fantasy_name, c.cnpj, c.address, c.neighborhood, c.city, c.state, c.zip_code,
+           c.latitude, c.longitude, c.is_active
+    FROM customers c
+    WHERE (c.is_supplier IS NOT TRUE)
+      AND (c.coordinates_locked IS NOT TRUE)
+      AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+      ${somenteAtivos ? sql`AND c.is_active = true` : sql``}
+  `);
+  const todos = (sel.rows || sel) as any[];
+  const marcas = marcarAproximadas(todos, (c) => c.latitude, (c) => c.longitude, (c) => String(c.id));
+  return todos
+    .filter((c) => marcas.has(c))
+    .map((c) => ({ ...c, motivo: marcas.get(c) }))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+}
+
 export function registerGeocodeAnalyze(app: Express) {
+  // ─── COORDENADAS APROXIMADAS (19/out/2026) ─────────────────────────────────
+  // GET  /api/admin/customers/coordenadas-aproximadas?todos=1   lista (só leitura)
+  // POST /api/admin/customers/coordenadas-aproximadas/corrigir  { aplicar?, limit?, offset?, todos? }
+  //   Mesmo funil do places-apply (endereço + CEP → endereço limpo → Places com
+  //   trava), mas só para quem está marcado como aproximado. SIMULA por padrão.
+  app.get("/api/admin/customers/coordenadas-aproximadas", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), async (req: Request, res: Response) => {
+    try {
+      const lista = await listarAproximados(String((req.query as any)?.todos || "") !== "1");
+      res.json({
+        total: lista.length,
+        grade: lista.filter((c) => c.motivo === "grade").length,
+        empilhados: lista.filter((c) => c.motivo === "empilhado").length,
+        clientes: lista.map((c) => ({ id: c.id, nome: c.fantasy_name || c.name, endereco: c.address, bairro: c.neighborhood, cidade: c.city, cep: c.zip_code, lat: c.latitude, lng: c.longitude, motivo: c.motivo, ativo: c.is_active })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 200) });
+    }
+  });
+
+  app.post("/api/admin/customers/coordenadas-aproximadas/corrigir", authenticateUser, requireRole(["admin"]), async (req: Request, res: Response) => {
+    try {
+      const body: any = req.body || {};
+      const aplicar = body.aplicar === true;
+      const limit = Math.min(Math.max(Number(body.limit) || 40, 1), 120);
+      const offset = Math.max(Number(body.offset) || 0, 0);
+      const lista = await listarAproximados(body.todos !== true);
+      const lote = lista.slice(offset, offset + limit);
+      const itens: any[] = [];
+      let gravados = 0;
+      for (const c of lote) {
+        const linha = await avaliarCliente(c, true);
+        const coord = linha.coordenada;
+        const item: any = {
+          id: c.id, nome: c.fantasy_name || c.name, endereco: c.address, motivo: c.motivo,
+          veredito: linha.veredito, de: { lat: c.latitude, lng: c.longitude },
+          para: coord ? { lat: coord.lat, lng: coord.lon, origem: coord.origem, precisao: coord.precisao } : null,
+          deslocamentoKm: linha.gravadoDivergeKm ?? null, gravado: false,
+        };
+        if (coord && aplicar) {
+          try {
+            await db.execute(sql`
+              UPDATE customers SET latitude = ${coord.lat}, longitude = ${coord.lon}
+              WHERE id = ${c.id} AND (coordinates_locked IS NOT TRUE)`);
+            item.gravado = true;
+            gravados++;
+          } catch (e: any) {
+            item.erro = String(e?.message || e).slice(0, 120);
+          }
+        }
+        itens.push(item);
+        await esperar();
+      }
+      res.json({
+        aplicado: aplicar, totalAproximados: lista.length, offset, processados: lote.length,
+        comCorrecao: itens.filter((i) => i.para).length, gravados,
+        semSolucao: itens.filter((i) => !i.para).length,
+        proximoOffset: offset + lote.length < lista.length ? offset + lote.length : null,
+        itens,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e).slice(0, 200) });
+    }
+  });
+
   // ─── ANALISE ───────────────────────────────────────────────────────────────
   // POST /api/admin/customers/geocode-analyze
   //   { limit?, offset?, escopo?: "duplicados"|"todos", incluirPlaces?: boolean }

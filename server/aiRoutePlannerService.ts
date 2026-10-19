@@ -29,6 +29,7 @@
 // ============================================================================
 
 import { parseJanelas, formatarJanelas } from '../shared/janelas-entrega';
+import { marcarAproximadas } from '../shared/coordenadas-aproximadas';
 import type { DatabaseStorage } from './storage';
 import { calculateDistance } from './routeOptimizationService';
 import { dividirPorRegiao, melhorarFronteira, medirSobreposicao, TOLERANCIA_REGIAO, type FaixaParadas } from './regionalizacao-rotas';
@@ -847,6 +848,22 @@ export async function planDeliveryRoutesWithAI(
     return w;
   };
   const alertas: string[] = weekdayWarnings.map((w) => `${w.order.customerName}: ${w.reason}`);
+
+  // Coordenadas aproximadas (ponto de bairro, não do endereço) — enganam a
+  // divisão por região na fronteira. Avisa com os nomes para corrigir o cadastro.
+  try {
+    const aprox = marcarAproximadas(validOrders, (o) => o.customerLatitude, (o) => o.customerLongitude, (o) => String(o.customerId || o.id));
+    const nomes = Array.from(new Set(Array.from(aprox.keys()).map((o) => o.customerName)));
+    if (nomes.length) {
+      alertas.push(
+        `${nomes.length} cliente(s) com coordenada aproximada (ponto do bairro, não do endereço) — a divisão por região pode errar na fronteira: `
+        + nomes.slice(0, 12).join(', ') + (nomes.length > 12 ? ` e mais ${nomes.length - 12}` : '')
+        + '. Corrija o endereço/CEP no cadastro ou rode a correção de coordenadas.',
+      );
+    }
+  } catch (e: any) {
+    console.warn('[ROTA-IA] verificação de coordenadas aproximadas falhou:', e?.message);
+  }
 
   // Pedido do DF sem veículo BSB escalado (ou o contrário) fica sem rota — avisa em vez de sumir.
   const semVeiculo = validOrders.filter((o) => !vehicles.some((_, idx) => (eligibleByVehicle.get(idx) || []).some((x) => x.id === o.id)));

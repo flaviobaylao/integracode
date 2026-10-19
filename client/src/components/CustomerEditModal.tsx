@@ -1,4 +1,5 @@
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
+import { latitudeEmGrade } from "@shared/coordenadas-aproximadas";
 import HorariosPreferenciaisCliente from "@/components/HorariosPreferenciaisCliente";
 import { useState, useEffect, useRef } from "react";
 import { CidadePicker } from "@/components/CidadePicker";
@@ -845,6 +846,11 @@ export default function CustomerEditModal({
           </div>
 
           {/* Coordenadas Geográficas */}
+          {latitudeEmGrade(formData.latitude) && (
+            <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-2 py-1" data-testid="aviso-coordenada-aproximada">
+              ⚠️ Coordenada aproximada (ponto do bairro, não do endereço). Ela atrapalha a divisão das rotas por região — confira endereço e CEP e corrija a localização.
+            </p>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="latitude">Latitude</Label>
