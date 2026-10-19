@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid';
 import { db } from './db';
 import { deliveryHistory } from '../shared/schema';
 import { eq, desc, and } from 'drizzle-orm';
-import { parseJanelas, formatarJanelas, minParaHHMM, type JanelaMin } from '../shared/janelas-entrega';
+import { parseJanelas, formatarJanelas, minParaHHMM, textoJanelaComPreferencia, type JanelaMin } from '../shared/janelas-entrega';
 import { sequenciarComJanelas, TEMPO_ENTREGA_PADRAO_MIN, type ParadaSeq } from './sequenciamento-janelas';
 
 // ==================== Data Structures ====================
@@ -33,6 +33,7 @@ export interface DeliveryOrder {
   deliveryTimeSlots?: string[]; // Horários de recebimento do DIA DA ROTA (checkboxes de hora cheia ou "08:00-12:00")
   janelas?: JanelaMin[]; // deliveryTimeSlots já convertidos em intervalos (minutos do dia)
   origemJanela?: 'preferencial' | 'recebimento' | 'livre'; // de onde vieram as janelas (18/out/2026)
+  preferencial?: JanelaMin[]; // horário preferencial (suave) — 19/out/2026
   // ▼ Campos usados pela roteirização com IA (opcionais; ausentes no fluxo legado)
   receivingWeekdays?: string[] | string | null; // Dias em que o cliente aceita RECEBER
   customerCity?: string | null;
@@ -614,6 +615,7 @@ export async function optimizeVehicleRoutes(
         lng: Number(order.customerLongitude),
         servico: Number(order.averageDeliveryTime) > 0 ? Number(order.averageDeliveryTime) : TEMPO_ENTREGA_PADRAO_MIN,
         janelas: order.janelas || parseJanelas(order.deliveryTimeSlots),
+        preferencial: order.preferencial || [],
         urgente: order.isUrgent === true,
       }));
 
@@ -630,8 +632,7 @@ export async function optimizeVehicleRoutes(
     seq.horarios.forEach((h, i) => {
       const order = orderById.get(h.id)!;
       const janelas = order.janelas || parseJanelas(order.deliveryTimeSlots);
-      const preferencial = (order as any).origemJanela === 'preferencial';
-      const janelaTexto = formatarJanelas(janelas) + (preferencial && janelas.length ? ' (pref.)' : '');
+      const janelaTexto = textoJanelaComPreferencia(janelas, order.preferencial);
       stops.push({
         salesCardId: order.id,
         customerId: order.customerId,
@@ -654,7 +655,7 @@ export async function optimizeVehicleRoutes(
       });
       if (h.foraDaJanela) {
         alertasJanela.push(
-          `${order.customerName}: chega às ${minParaHHMM(h.chegada)} (${vehicle.driverName || vehicle.type}), fora do horário ${preferencial ? 'preferencial' : 'de recebimento'} (${janelaTexto}). Mude de entregador ou reveja a jornada.`,
+          `${order.customerName}: chega às ${minParaHHMM(h.chegada)} (${vehicle.driverName || vehicle.type}), fora do horário de recebimento (${formatarJanelas(janelas)}). Mude de entregador ou reveja a jornada.`,
         );
       }
     });

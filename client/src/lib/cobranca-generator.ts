@@ -473,7 +473,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
       String(s.customerName || '-').slice(0, 38),
       String(s.customerAddress || '-').slice(0, 52),
       [nf, ped].filter(Boolean).join(' / ') || '-',
-      (s.janelaTexto && String(s.janelaTexto).trim()) ? String(s.janelaTexto).replace(/ \+ /g, '\n+ ') : 'Livre',
+      (s.janelaTexto && String(s.janelaTexto).trim()) ? String(s.janelaTexto).replace(/ \+ /g, '\n+ ').replace(/ · pref\. /, '\npref. ') : 'Livre',
       (s.estimatedArrival || '-') + (s.foraDaJanela ? ' !' : ''),
       entregaTxt,
       saidaTxt,
@@ -485,7 +485,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
 
   autoTable(doc, {
     startY: y,
-    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de entrega', 'Chegada', 'Entrega', 'Saída', 'Trecho (km)', 'Acum. (km)', 'Valor']],
+    head: [['#', 'Cliente', 'Endereço', 'NF / Pedido', 'Horário de recebimento', 'Chegada', 'Entrega', 'Saída', 'Trecho (km)', 'Acum. (km)', 'Valor']],
     body: body.length ? body : [['-', 'Rota sem paradas', '', '', '', '', '', '', '', '', '']],
     foot: [['', 'TOTAL', '', String(stops.length) + ' entrega(s)', '', '', totalServico > 0 ? `${Math.round(totalServico)} min` : '', '', totalKm.toFixed(1), '', BRL(totalVal)]],
     theme: 'grid',
@@ -528,7 +528,7 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
   const notas: string[] = [];
   if (stops.some(s => s.isPriority)) notas.push('* entrega prioritária');
   if (stops.some(s => s.foraDaJanela)) notas.push('! chegada prevista fora do horário de recebimento do cliente');
-  notas.push('Horário de entrega: "(pref.)" = horário preferencial do cliente, tirado das entregas anteriores; sem a marca = horário de recebimento cadastrado. Chegada = início previsto da entrega (deslocamento + espera pelo horário). Entrega = tempo de entrega do cliente (média cronometrada; 5 min se ainda não medido; "c/ #N" = descarrega junto com a parada N, mesmo cliente). Saída = chegada + entrega.');
+  notas.push('Horário de recebimento = cadastro do cliente (obrigatório); "pref." = horário em que o cliente costuma receber, tirado das entregas anteriores (só preferência). Chegada = início previsto da entrega (deslocamento + espera pelo horário de recebimento). Entrega = tempo de entrega do cliente (média cronometrada; 5 min se ainda não medido; "c/ #N" = descarrega junto com a parada N, mesmo cliente). Saída = chegada + entrega.');
   doc.setFontSize(7); doc.setTextColor(120);
   for (const n of notas) { const ls = doc.splitTextToSize(n, 186); doc.text(ls, 12, fy + 4); fy += 3.2 * ls.length + 0.4; }
   doc.setTextColor(0);

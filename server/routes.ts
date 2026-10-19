@@ -28,7 +28,7 @@ import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYea
 import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
 import { idsEmRepescagem } from './repescagem-ativa';
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from '@shared/comissao-entrega';
-import { parseJanelas, slotsDoDia, janelasDoDia, janelasRoteirizacao, janelasParaSlots } from '@shared/janelas-entrega';
+import { parseJanelas, slotsDoDia, janelasDoDia, janelasRoteirizacao } from '@shared/janelas-entrega';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -12135,12 +12135,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Janelas do dia da rota: HORÁRIO PREFERENCIAL (entregas anteriores) quando
       // existir — dentro do horário de recebimento, se os dois se cruzarem —;
       // senão o horário de recebimento cadastrado (sábado tem cadastro próprio).
+      // Recebimento cadastrado = OBRIGATÓRIO; preferencial (entregas anteriores) =
+      // preferência suave do sequenciador (19/out/2026, caso Bella Milão).
       const jr = janelasRoteirizacao(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, o.horariosPref, routeDateStr);
       const janelas = jr.janelas;
       const origemJanela = jr.origem;
-      const deliveryTimeSlots = origemJanela === 'preferencial'
-        ? janelasParaSlots(janelas)
-        : slotsDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
+      const preferencial = jr.preferencial;
+      const deliveryTimeSlots = slotsDoDia(o.deliveryTimeSlots, o.deliverySaturdayTimeSlots, routeDateStr);
       
       const vehicleTypes = typeof o.vehicleTypes === 'string'
         ? JSON.parse(o.vehicleTypes)
@@ -12182,6 +12183,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveryTimeSlots: deliveryTimeSlots, // Horários do dia da rota (preferencial ou recebimento)
         janelas,
         origemJanela,
+        preferencial,
         // ▼ contexto extra para o agente de IA (BSB, setor, dias de recebimento)
         receivingWeekdays,
         customerCity: o.customerCity || null,
@@ -12387,7 +12389,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lat: Number(l.lat),
         lng: Number(l.lng),
         servico: Number(l.servico_medido) > 0 ? Number(l.servico_medido) : TEMPO_ENTREGA_PADRAO_MIN,
-        janelas: janelasRoteirizacao(l.slots, l.slots_sab, l.pref, dataRota).janelas,
+        ...(() => { const jr = janelasRoteirizacao(l.slots, l.slots_sab, l.pref, dataRota); return { janelas: jr.janelas, preferencial: jr.preferencial }; })(),
         urgente: l.prioridade === true,
       }));
       const hm = (t: any, pad: string) => {

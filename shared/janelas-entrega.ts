@@ -240,15 +240,19 @@ export function janelasDoDia(semana: any, sabado: any, data: string | Date): Jan
 }
 
 // ----------------------------------------------------------------------------
-// HORÁRIO PREFERENCIAL × HORÁRIO DE RECEBIMENTO NA ROTEIRIZAÇÃO (18/out/2026)
+// HORÁRIO PREFERENCIAL × HORÁRIO DE RECEBIMENTO NA ROTEIRIZAÇÃO
 // ----------------------------------------------------------------------------
-// Regra do Flavio: quando o cliente tem HORÁRIO PREFERENCIAL (calculado das
-// entregas efetuadas — customers.entrega_horarios_pref, ver
-// server/horarios-preferenciais.ts), ele é o usado para montar a rota.
-//   • preferencial + recebimento cadastrado → a parte do preferencial que cai
-//     dentro do recebimento; se não se cruzarem, vale o preferencial (é o
-//     horário em que o cliente de fato tem recebido);
-//   • só recebimento → recebimento;  • nenhum → livre.
+// 18/out: o preferencial (calculado das entregas efetuadas —
+// customers.entrega_horarios_pref, ver server/horarios-preferenciais.ts) virou
+// janela OBRIGATÓRIA (∩ recebimento). 19/out (caso BELLA MILÃO, VIRSON): isso
+// cortou a manhã de um cliente que recebe 8h–11h e 14h–18h só porque, no
+// passado, a rota passava lá à tarde — e a entrega foi para a 21ª posição em
+// vez de sair junto do vizinho IGM. O preferencial descreve o HÁBITO da rota,
+// não uma restrição do cliente. Regra atual:
+//   • OBRIGATÓRIO = horário de recebimento cadastrado (sem cadastro = livre);
+//   • PREFERENCIAL = preferência suave: o sequenciador tenta cumprir quando não
+//     custa desvio (pequena penalidade por minuto fora — PESO_PREF), nunca
+//     espera nem marca "fora do horário" por causa dele.
 // Sábado usa os períodos de sábado; os demais dias, os de seg–sex.
 // ----------------------------------------------------------------------------
 
@@ -284,7 +288,11 @@ function intersecao(a: JanelaMin[], b: JanelaMin[], minimo = 15): JanelaMin[] {
   return out.sort((p, q) => p.ini - q.ini);
 }
 
-/** Janelas que a roteirização deve usar para o cliente na data da rota. */
+/**
+ * Janelas da roteirização para o cliente na data da rota.
+ * `janelas` = OBRIGATÓRIAS (recebimento cadastrado). `preferencial` = suave
+ * (só dentro do recebimento, quando há cadastro; senão o preferencial todo).
+ */
 export function janelasRoteirizacao(
   semana: any,
   sabado: any,
@@ -292,20 +300,22 @@ export function janelasRoteirizacao(
   data: string | Date,
 ): { janelas: JanelaMin[]; origem: OrigemJanela; recebimento: JanelaMin[]; preferencial: JanelaMin[] } {
   const recebimento = janelasDoDia(semana, sabado, data);
-  const preferencial = janelasPreferenciaisDoDia(pref, data);
-  if (preferencial.length) {
-    const dentro = recebimento.length ? intersecao(preferencial, recebimento) : [];
-    return { janelas: dentro.length ? dentro : preferencial, origem: 'preferencial', recebimento, preferencial };
-  }
-  if (recebimento.length) return { janelas: recebimento, origem: 'recebimento', recebimento, preferencial };
-  return { janelas: [], origem: 'livre', recebimento, preferencial };
+  const prefBruto = janelasPreferenciaisDoDia(pref, data);
+  const preferencial = recebimento.length ? intersecao(prefBruto, recebimento) : prefBruto;
+  return { janelas: recebimento, origem: recebimento.length ? 'recebimento' : 'livre', recebimento, preferencial };
 }
 
-/** Texto para tela/romaneio: "9h às 12h15 (pref.)". Vazio = livre. */
+/** Texto para tela/romaneio: "8h às 11h + 14h às 18h · pref. 14h às 16h30". Vazio = livre sem preferência. */
 export function textoJanelaRoteirizacao(semana: any, sabado: any, pref: any, data: string | Date): string {
   const r = janelasRoteirizacao(semana, sabado, pref, data);
-  const t = formatarJanelas(r.janelas);
-  return t && r.origem === 'preferencial' ? `${t} (pref.)` : t;
+  return textoJanelaComPreferencia(r.janelas, r.preferencial);
+}
+
+export function textoJanelaComPreferencia(janelas: JanelaMin[], preferencial?: JanelaMin[] | null): string {
+  const t = formatarJanelas(janelas || []);
+  const p = preferencial && preferencial.length ? formatarJanelas(preferencial) : '';
+  if (!p) return t;
+  return `${t || 'Livre'} · pref. ${p}`;
 }
 
 /** Janelas → slots "HH:MM-HH:MM" (formato do cadastro). */

@@ -34,6 +34,8 @@ export interface ParadaSeq {
   /** minutos de atendimento no cliente */
   servico: number;
   janelas: JanelaMin[];
+  /** horário PREFERENCIAL (suave): penalidade pequena por minuto fora, nunca espera */
+  preferencial?: JanelaMin[];
   urgente?: boolean;
 }
 
@@ -75,6 +77,12 @@ const MESMO_LOCAL_KM = 0.05;
  * mesmos horários vence o que roda menos.
  */
 export const PESO_KM = Number(process.env.ROUTE_PESO_KM || 3);
+/**
+ * Peso do horário PREFERENCIAL (min equivalentes por minuto fora) — 19/out/2026.
+ * Pequeno de propósito: 1 h fora do preferencial "custa" 6 min ≈ 2 km. Serve de
+ * desempate; não faz a rota voltar ao bairro (caso Bella Milão × IGM).
+ */
+export const PESO_PREF = Number(process.env.ROUTE_PESO_PREF || 0.1);
 
 function avaliar(
   seq: ParadaSeq[],
@@ -92,6 +100,7 @@ function avaliar(
   let fora = 0;
   let atrasoTot = 0;
   let viagemEspera = 0;
+  let prefDesvio = 0;
   let inversoes = 0;
   let regularVisto = false;
   const horarios: HorarioParada[] = [];
@@ -114,6 +123,10 @@ function avaliar(
     }
     const espera = inicio - chegada;
     const saida = inicio + servico;
+    if (p.preferencial && p.preferencial.length && servico > 0) {
+      const dentro = p.preferencial.some((j) => inicio >= j.ini && inicio < j.fim);
+      if (!dentro) prefDesvio += Math.min(...p.preferencial.map((j) => (inicio < j.ini ? j.ini - inicio : inicio - j.fim)));
+    }
 
     if (atraso > 0) { fora++; atrasoTot += atraso; }
     if (p.urgente) { if (regularVisto) inversoes++; } else regularVisto = true;
@@ -130,7 +143,7 @@ function avaliar(
   }
 
   const horaExtra = Math.max(0, t - fimJornada);
-  const custo = fora * 1e7 + atrasoTot * 1e4 + inversoes * 2e3 + horaExtra * 50 + viagemEspera + distTotal * PESO_KM;
+  const custo = fora * 1e7 + atrasoTot * 1e4 + inversoes * 2e3 + horaExtra * 50 + viagemEspera + distTotal * PESO_KM + prefDesvio * PESO_PREF;
   if (!detalhar) return { custo };
   return {
     custo,
