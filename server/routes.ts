@@ -2838,25 +2838,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (_wantsActivate && _isDriver) {
         return res.status(403).json({ message: "Seu perfil (entrega) não pode alterar a situação do cliente." });
       }
-      const phoneContactAllowedFields = ['phone', 'contact'];
+      // 📇 Nome Fantasia, Telefone/Contato e ENDEREÇO completo são liberados a TODOS os perfis
+      // (dentro da PRÓPRIA carteira — ver checagem de carteira abaixo). Os demais campos do cadastro
+      // seguem restritos aos gestores e a vendedor/telemarketing.
+      const camposBasicosLiberados = ['fantasyName', 'phone', 'contact', 'address', 'neighborhood', 'city', 'state', 'zipCode', 'latitude', 'longitude'];
       if (!_isManager) {
         if (_isCadastroEditor) {
           // Vendedor/telemarketing: editam TODOS os campos do cadastro. Inativar já foi barrado acima
           // (só Admin); ativar/reativar é permitido. Nenhum campo é removido aqui.
         } else {
           const requestedFields = Object.keys(req.body);
-          const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
+          const disallowedFields = requestedFields.filter(field => !camposBasicosLiberados.includes(field));
           if (disallowedFields.length > 0) {
             return res.status(403).json({
-              message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
+              message: "Sem permissão para editar estes dados do cliente. Você pode atualizar nome fantasia, telefone/contato e endereço.",
               disallowedFields
             });
           }
         }
       }
 
-      // CARTEIRA: vendedor/telemarketing so editam clientes da PROPRIA carteira (sellerId == seu id).
-      if (_isCadastroEditor && !id.startsWith('billing-')) {
+      // CARTEIRA: edição (inclusive dos campos básicos liberados) só nos clientes da PRÓPRIA carteira
+      // (sellerId == seu id). Vale para todos os não-gestores. Gestores (admin/coord/administrative)
+      // editam qualquer cliente.
+      if (!_isManager && !id.startsWith('billing-')) {
         const _own = await storage.getCustomer(id);
         if (_own && String((_own as any).sellerId || '') !== String(user.id)) {
           return res.status(403).json({ message: "Você só pode editar clientes da sua própria carteira (este cliente é de outro vendedor)." });
@@ -3635,17 +3640,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (_wantsActivate && _isDriver) {
         return res.status(403).json({ message: "Seu perfil (entrega) não pode alterar a situação do cliente." });
       }
-      const phoneContactAllowedFields = ['phone', 'contact'];
+      // 📇 Nome Fantasia, Telefone/Contato e ENDEREÇO completo liberados a TODOS os perfis
+      // (dentro da PRÓPRIA carteira — ver checagem abaixo). Demais campos: só gestores e vendedor/telemarketing.
+      const camposBasicosLiberados = ['fantasyName', 'phone', 'contact', 'address', 'neighborhood', 'city', 'state', 'zipCode', 'latitude', 'longitude'];
       if (!_isManager) {
         if (_isCadastroEditor) {
           // Vendedor/telemarketing: editam TODOS os campos do cadastro. Inativar já foi barrado acima
           // (só Admin); ativar/reativar é permitido. Nenhum campo é removido aqui.
         } else {
           const requestedFields = Object.keys(req.body);
-          const disallowedFields = requestedFields.filter(field => !phoneContactAllowedFields.includes(field));
+          const disallowedFields = requestedFields.filter(field => !camposBasicosLiberados.includes(field));
           if (disallowedFields.length > 0) {
             return res.status(403).json({
-              message: "Sem permissão para editar estes dados do cliente. Você pode atualizar apenas telefone e contato.",
+              message: "Sem permissão para editar estes dados do cliente. Você pode atualizar nome fantasia, telefone/contato e endereço.",
               disallowedFields
             });
           }
@@ -3656,8 +3663,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       {
         const existingForGuard = await storage.getCustomer(id);
         if (existingForGuard) guardVisitFieldsAlteration(req, existingForGuard);
-        // CARTEIRA: vendedor/telemarketing so editam clientes da PROPRIA carteira.
-        if (_isCadastroEditor && existingForGuard && String((existingForGuard as any).sellerId || '') !== String(user.id)) {
+        // CARTEIRA: edição (inclusive dos campos básicos liberados) só nos clientes da PRÓPRIA carteira.
+        // Vale para todos os não-gestores; gestores editam qualquer cliente.
+        if (!_isManager && existingForGuard && String((existingForGuard as any).sellerId || '') !== String(user.id)) {
           return res.status(403).json({ message: "Você só pode editar clientes da sua própria carteira (este cliente é de outro vendedor)." });
         }
       }
