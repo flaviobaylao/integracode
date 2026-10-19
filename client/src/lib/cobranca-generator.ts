@@ -565,15 +565,15 @@ function renderFolhaRosto(doc: jsPDF, rota: RotaImpressao, logo: string | null, 
   doc.text('Motorista — recebi os pedidos acima', 158, sigY + 4, { align: 'center' });
   doc.setTextColor(0);
 
-  // ── Mapa com TODAS as entregas do dia (todos os entregadores) ──
+  // ── Mapa com as entregas do dia da mesma praça (Goiânia, Brasília…) ──
   if (mapa && mapa.img) {
     doc.addPage();
     brandHeader(doc, logo, 'MAPA DO DIA');
     doc.setFontSize(9); doc.setFont('helvetica', 'bold');
     doc.text('Entregas do dia ' + (rota.routeDate ? fmtDate(String(rota.routeDate).slice(0, 10) + 'T12:00:00') : today()) +
-      ' — todos os entregadores', 12, 30);
+      ' — entregadores da mesma praça', 12, 30);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90);
-    doc.text('Rota de ' + String(rota.driverName || '-').toUpperCase() + ' em destaque (linha cheia); demais entregadores em linha tracejada. S = saída/retorno.', 12, 34);
+    doc.text('Rota de ' + String(rota.driverName || '-').toUpperCase() + ' em destaque (linha cheia); demais entregadores da mesma praça em linha tracejada. S = saída/retorno.', 12, 34);
     doc.setTextColor(0);
     const imgW = 186, imgH = imgW * (1100 / 1600);
     try { doc.addImage(mapa.img, 'JPEG', 12, 37, imgW, imgH); } catch (e) {}
@@ -614,10 +614,33 @@ function paraRotaMapa(r: RotaImpressao, i: number): RotaMapa {
   };
 }
 
+/** Ponto que representa onde a rota opera: mediana das entregas (base como reserva). */
+function centroRota(m: RotaMapa): { lat: number; lng: number } | null {
+  const ps = m.paradas.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng) && p.lat !== 0 && p.lng !== 0);
+  if (ps.length) {
+    const med = (v: number[]) => { const o = v.slice().sort((a, b) => a - b); return o[Math.floor(o.length / 2)]; };
+    return { lat: med(ps.map(p => p.lat)), lng: med(ps.map(p => p.lng)) };
+  }
+  return m.base ?? null;
+}
+
+/** Rotas a menos disto (km) uma da outra são da mesma praça (Goiânia, Brasília…). */
+const RAIO_PRACA_KM = 80;
+
+function distKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371, rad = (x: number) => (x * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
 /**
  * Prepara o mapa do dia: devolve uma função que, para cada romaneio, gera a
  * imagem com a rota dele em destaque. `doDia` = todas as rotas da data (de
  * todos os entregadores); as rotas impressas que não estiverem ali entram também.
+ * 19/out/2026: o mapa mostra só as rotas da MESMA PRAÇA da rota impressa
+ * (romaneio de Goiânia não mostra Brasília e vice-versa) — senão o zoom abre
+ * para cobrir as duas cidades e as entregas viram um borrão.
  */
 async function prepararMapas(rotas: RotaImpressao[], doDia?: RotaImpressao[] | null) {
   const todas: RotaImpressao[] = [];
@@ -631,15 +654,42 @@ async function prepararMapas(rotas: RotaImpressao[], doDia?: RotaImpressao[] | n
     todas.push(r);
   }
   const mapas = todas.map(paraRotaMapa);
-  let base: MapaBase | null = null;
-  try { base = await prepararMapaDoDia(mapas); } catch { base = null; }
+  const centros = mapas.map(centroRota);
+
+  // Agrupa por praça (ligação simples: perto de qualquer rota do grupo).
+  const praca: number[] = mapas.map((_, i) => i);
+  const raiz = (i: number): number => (praca[i] === i ? i : (praca[i] = raiz(praca[i])));
+  for (let i = 0; i < mapas.length; i++) {
+    for (let j = i + 1; j < mapas.length; j++) {
+      const a = centros[i], b = centros[j];
+      if (a && b && distKm(a, b) <= RAIO_PRACA_KM) praca[raiz(j)] = raiz(i);
+    }
+  }
+  const bases = new Map<number, Promise<MapaBase | null>>();
+  const baseDa = (g: number, membros: RotaMapa[]) => {
+    if (!bases.has(g)) bases.set(g, prepararMapaDoDia(membros).catch(() => null));
+    return bases.get(g)!;
+  };
+  const grupos = new Map<number, number[]>();
+  mapas.forEach((_, i) => { const g = raiz(i); grupos.set(g, [...(grupos.get(g) || []), i]); });
+  // prepara (baixa os tiles) de cada praça uma vez só
+  const prontas = new Map<number, MapaBase | null>();
+  for (const [g, idxs] of Array.from(grupos.entries())) {
+    prontas.set(g, await baseDa(g, idxs.map(i => mapas[i])));
+  }
+
   return (rota: RotaImpressao) => {
-    if (!base) return null;
     const idx = todas.findIndex(r => chaveRota(r) === chaveRota(rota));
+    if (idx < 0) return null;
+    const g = raiz(idx);
+    const base = prontas.get(g);
+    if (!base) return null;
+    const idxs = grupos.get(g) || [idx];
+    const doGrupo = idxs.map(i => mapas[i]);
     try {
       return {
-        img: desenharMapaDoDia(base, mapas, idx),
-        legenda: mapas.map((m, i) => ({ nome: m.nome, cor: m.cor, entregas: m.paradas.length, destaque: i === idx })),
+        img: desenharMapaDoDia(base, doGrupo, idxs.indexOf(idx)),
+        legenda: doGrupo.map((m, k) => ({ nome: m.nome, cor: m.cor, entregas: m.paradas.length, destaque: idxs[k] === idx })),
       };
     } catch { return null; }
   };
