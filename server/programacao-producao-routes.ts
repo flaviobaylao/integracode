@@ -228,7 +228,7 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
           AND m.created_at >= (${inicioConsulta}::date::timestamp + INTERVAL '3 hours')
           AND LOWER(COALESCE(bp.operation_type, '')) <> 'transferencia'
           -- estorno/cancelamento de NF de TRANSFERÊNCIA (source = fiscal_invoices, sem card) também não é demanda
-          AND NOT (fi.id IS NOT NULL AND (UPPER(COALESCE(fi.nature_of_operation, '')) LIKE '%TRANSFER%' OR fi.cfop IN ('5152', '6152', '5409', '6409')))
+          AND NOT (fi.id IS NOT NULL AND (UPPER(COALESCE(fi.nature_of_operation, '')) LIKE '%TRANSFER%' OR fi.cfop IN ('5151', '6151', '5152', '6152', '5409', '6409')))
         GROUP BY 1, 2, 3, 4, 5, 6`);
 
       // 1b) SAÍDAS POR NF SEM MOVIMENTO DE ESTOQUE (qualquer instância, qualquer
@@ -260,7 +260,7 @@ export function registerProgramacaoProducaoRoutes(app: Express) {
           AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%DEVOL%'
           AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%REMESSA%'
           AND UPPER(COALESCE(fi.nature_of_operation, '')) NOT LIKE '%SUCATA%'
-          AND COALESCE(fi.cfop, '') NOT IN ('5152', '6152', '5409', '6409')
+          AND COALESCE(fi.cfop, '') NOT IN ('5151', '6151', '5152', '6152', '5409', '6409')
           AND NOT EXISTS (SELECT 1 FROM inventory_movements m WHERE m.source_type = 'invoice' AND m.source_id::text = fi.id::text)
           AND NOT EXISTS (SELECT 1 FROM inventory_movements m JOIN billing_pipeline bp ON bp.id::text = m.source_id::text
                           WHERE m.source_type = 'invoice' AND fi.sales_card_id IS NOT NULL AND bp.sales_card_id = fi.sales_card_id)

@@ -36,6 +36,7 @@ import { sql } from "drizzle-orm";
 import * as xmlJs from "xml-js";
 import { storage } from "./storage";
 import { agora } from "@shared/tempo";
+import { garantirCenarioTransferenciaGO } from "./cfop-transferencia";
 
 const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
 const dig = (v: any) => String(v ?? "").replace(/\D/g, "");
@@ -344,6 +345,7 @@ export async function estornarEfeitosDevolucaoCompra(fiscalInvoiceId: string, by
 // ── Rotas ────────────────────────────────────────────────────────────────────
 export function registerDevolucaoCompraRoutes(app: Express) {
   garantirEstruturaDevolucaoCompra().catch(() => {});
+  garantirCenarioTransferenciaGO().catch(() => {});
   const ROLES = ["admin", "coordinator", "administrative"];
 
   // Prévia: itens da NF de entrada com saldo devolvível, fornecedor, CFOP sugerido
