@@ -2476,6 +2476,39 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       }
 
+      // HISTÓRICO: toda alteração de CAMPO do card entra no "Histórico de Etapas" (quem alterou,
+      // quando e QUAIS campos). Só grava quando houve mudança REAL de valor (compara antes/depois).
+      try {
+        const _before: any = await storage.getBillingPipelineItem(req.params.id);
+        if (_before) {
+          const _labels: Record<string, string> = {
+            saleValue: 'Valor', paymentMethod: 'Forma de pagamento', operationType: 'Operação',
+            sellerName: 'Vendedor', invoiceNumber: 'Nota fiscal', omieInstanceName: 'Instância',
+            products: 'Produtos', customerName: 'Cliente', customerDocument: 'CPF/CNPJ',
+            scheduledBillingDate: 'Faturar em', notes: 'Observações',
+          };
+          const _norm = (k: string, v: any): string => {
+            if (v == null) return '';
+            if (k === 'products') { try { return JSON.stringify((Array.isArray(v) ? v : []).map((p: any) => ({ n: p?.name, q: p?.quantity, u: p?.unitPrice }))); } catch { return String(v); } }
+            if (k === 'scheduledBillingDate') { try { return new Date(v).toISOString().slice(0, 10); } catch { return String(v).slice(0, 10); } }
+            if (k === 'saleValue') return (parseFloat(String(v)) || 0).toFixed(2);
+            return String(v);
+          };
+          const _mudou: string[] = [];
+          for (const k of Object.keys(_labels)) {
+            if ((updates as any)[k] === undefined) continue;
+            if (_norm(k, (_before as any)[k]) !== _norm(k, (updates as any)[k])) _mudou.push(_labels[k]);
+          }
+          if (_mudou.length) {
+            const _quem = _u?.email || (`${_u?.firstName || ''} ${_u?.lastName || ''}`.trim()) || 'edição';
+            const _edit: any = { stage: 'edicao', changedAt: paredeBR(agora()), changedBy: String(_quem), detalhe: _mudou.join(', ') };
+            const _hist = Array.isArray((updates as any).stageHistory) ? (updates as any).stageHistory
+              : (Array.isArray((_before as any).stageHistory) ? (_before as any).stageHistory : []);
+            (updates as any).stageHistory = [..._hist, _edit];
+          }
+        }
+      } catch (e: any) { console.warn('[BILLING-PIPELINE] historico de edicao (segue):', e?.message); }
+
       const updated = await storage.updateBillingPipelineItem(req.params.id, updates);
       res.json(updated);
     } catch (error: any) {
