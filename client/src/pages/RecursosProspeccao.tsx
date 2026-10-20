@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera, ShieldCheck, Info } from "lucide-react";
+import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera, ShieldCheck, Info , Phone } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -20,6 +20,7 @@ type Uso = {
   custoRadarUSD?: number; custoFotoUSD?: number;
   fotoTotal?: number; fotoCobravel?: number; fotoCota?: number; fotoPreco?: number; fotoPrecoBRL?: number; fotoPago?: number;
   fichaCobravel?: number; fichaCota?: number;
+  telefoneTotal?: number; telefoneCobravel?: number; telefoneCota?: number; telefonePreco?: number; custoTelefoneUSD?: number; limiteTelefone?: number;
   blindagem?: boolean; margem?: number;
   limites?: { radar: number; foto: number; ficha: number };
   autoOff?: { radar: boolean; foto: boolean; ficha: boolean };
@@ -121,6 +122,11 @@ export default function RecursosProspeccao() {
   const fichaCotaN = uso?.fichaCota ?? Number(cfg?.ficha_cota_gratis) ?? 1000;
   const fichaCobravelN = uso?.fichaCobravel ?? uso?.fichaTotal ?? 0;
   const fichaPct = uso && fichaCotaN > 0 ? Math.min(100, Math.round((fichaCobravelN / fichaCotaN) * 100)) : 0;
+  const telCotaN = uso?.telefoneCota ?? (Number(cfg?.telefone_cota_gratis) || 1000);
+  const telTotalN = uso?.telefoneTotal ?? 0;
+  const telCobravelN = uso?.telefoneCobravel ?? 0;
+  const telPct = uso && telCotaN > 0 ? Math.min(100, Math.round((telCobravelN / telCotaN) * 100)) : 0;
+  const custoTelBRL = uso ? ((uso.custoTelefoneUSD ?? 0) * cambio) : 0;
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
@@ -158,6 +164,7 @@ export default function RecursosProspeccao() {
                   <div><strong>Radar</strong> — por <strong>busca</strong>: cada vez que o vendedor consulta o GPS e a busca chama o Google conta 1 (e já traz até 20 locais de uma vez). Buscas repetidas na mesma região saem do cache e <strong>não</strong> contam. US$ 32 / 1.000 · 5.000 grátis/mês.</div>
                   <div><strong>Busca por foto</strong> — por <strong>foto</strong>: cada imagem lida (OCR) conta 1. US$ 1,50 / 1.000 · 1.000 grátis/mês.</div>
                   <div><strong>Ficha Google</strong> — por <strong>lead</strong>: cada lead que recebe os dados do Google conta 1. US$ 32 / 1.000 · 1.000 grátis/mês.</div>
+                  <div><strong>Telefone dos Novos pontos</strong> — por <strong>toque em "Ver telefone"</strong>: só conta quando o vendedor pede o número de um ponto; o mesmo ponto fica guardado e não é cobrado de novo. US$ 20 / 1.000 · 1.000 grátis/mês.</div>
                   <div className="text-muted-foreground pt-1">Os valores em R$ usam o câmbio configurado abaixo. A <strong>blindagem de custo</strong> desliga cada recurso antes de passar da cota grátis, então no uso normal o custo fica em R$ 0,00.</div>
                 </div>
               )}
@@ -302,6 +309,7 @@ export default function RecursosProspeccao() {
                 <div>• Radar: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.radar_cota_gratis) || 5000) - (Number(cfg.auto_off_margem) || 0))}</span> buscas/mês</div>
                 <div>• Busca por foto: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.foto_cota_gratis) || 1000) - (Number(cfg.auto_off_margem) || 0))}</span> fotos/mês</div>
                 <div>• Ficha Google: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.ficha_cota_gratis) || 1000) - (Number(cfg.auto_off_margem) || 0))}</span> consultas/mês</div>
+                <div>• Telefone dos Novos pontos: <span className="font-semibold text-foreground">{Math.max(0, (Number(cfg.telefone_cota_gratis) || 1000) - (Number(cfg.auto_off_margem) || 0))}</span> consultas/mês (o botão "Ver telefone" para até o dia 1º)</div>
               </div>
               <Button onClick={salvar} disabled={saving} variant="outline">
                 {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando…</> : <><Save className="h-4 w-4 mr-2" /> Salvar</>}
@@ -365,6 +373,14 @@ export default function RecursosProspeccao() {
                       <span className="text-muted-foreground">{fichaCobravelN} / {fichaCotaN} grátis</span>
                     </div>
                     <Progress value={fichaPct} className="h-2" />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-muted-foreground flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> Telefone dos Novos pontos</span>
+                      <span className="text-muted-foreground">{telTotalN} consulta{telTotalN === 1 ? "" : "s"} · {telCobravelN} / {telCotaN} grátis · {custoTelBRL > 0 ? brl(custoTelBRL) : "R$ 0,00"}</span>
+                    </div>
+                    <Progress value={telPct} className="h-2" />
                   </div>
 
                   <div>

@@ -61,6 +61,8 @@ type NovoPonto = {
   businessStatus: string;
   jaVisitado?: boolean;
   disponivel?: boolean; // lead de Novos Pontos liberado (sem vendedor) — qualquer vendedor pode pegar
+  telefone?: string | null;       // telefone do Google já consultado (cache)
+  telefoneConsultado?: boolean;   // true = já consultado (pode não ter telefone)
   leadId?: string | null;
   lat: number;
   lng: number;
@@ -147,12 +149,20 @@ function numerosTelefone(t: string | null | undefined): string[] {
 
 // Telefone clicável: tocar ABRE A CONVERSA NO WHATSAPP com o cliente/lead (um link por número).
 // Só cai para "ligar" quando o número não tem DDD (não dá para montar o link do WhatsApp).
-function TelefoneWhats({ telefone, contato, confirmado }: { telefone: string; contato?: string | null; confirmado?: boolean }) {
+// Celular brasileiro (DDD + 9 dígitos começando com 9) — compatível com WhatsApp.
+const ehCelular = (d: string) => d.length === 11 && d[2] === "9";
+
+function TelefoneWhats({ telefone, contato, confirmado, soCelular }: { telefone: string; contato?: string | null; confirmado?: boolean; soCelular?: boolean }) {
   const nums = numerosTelefone(telefone);
   return (
     <div className="flex items-center gap-2 flex-wrap">
       {nums.length > 0 ? (
-        nums.map((d) => (
+        nums.map((d) => (soCelular && !ehCelular(d)) ? (
+          // fixo: normalmente não tem WhatsApp → toque liga
+          <a key={d} href={`tel:${d}`} className="inline-flex items-center gap-1.5 text-blue-600 font-medium hover:underline" data-testid="link-telefone-fixo">
+            <Phone className="h-3.5 w-3.5" /> {fmtTelefone(d)} <span className="text-[10px] font-normal text-muted-foreground">(fixo)</span>
+          </a>
+        ) : (
           <a key={d} href={`https://wa.me/55${d}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium hover:underline" data-testid="link-whatsapp">
             <MessageCircle className="h-3.5 w-3.5" /> {fmtTelefone(d)}
           </a>
@@ -162,7 +172,7 @@ function TelefoneWhats({ telefone, contato, confirmado }: { telefone: string; co
       )}
       {confirmado && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">✓ confirmado</span>}
       {contato && <span className="text-muted-foreground">· {contato}</span>}
-      {nums.length > 0 && <a href={`tel:${nums[0]}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline" aria-label="Ligar"><Phone className="h-3 w-3" /> ligar</a>}
+      {nums.length > 0 && !(soCelular && !ehCelular(nums[0])) && <a href={`tel:${nums[0]}`} className="inline-flex items-center gap-1 text-blue-600 hover:underline" aria-label="Ligar"><Phone className="h-3 w-3" /> ligar</a>}
     </div>
   );
 }
@@ -243,6 +253,8 @@ export default function ConsultaLocal() {
   // Resgate de leads descartados (não convertidos) direto da consulta — chave = leadId.
   // Estados: "resgatando" → "resgatado" (habilita Gravar) → "gravando" → "gravado".
   const [resgate, setResgate] = useState<Record<string, "resgatando" | "resgatado" | "gravando" | "gravado">>({});
+  // Telefone dos Novos pontos, consultado SOB DEMANDA no Google (botão "Ver telefone") — chave = placeId.
+  const [telefones, setTelefones] = useState<Record<string, { st: "loading" | "ok" | "sem" | "erro"; num?: string | null; msg?: string }>>({});
 
   // ----- interno (telemarketing/administrativo): consulta pela região de um CLIENTE DE REFERÊNCIA -----
   const isInterno = ((user as any)?.role === "telemarketing" || (user as any)?.role === "administrative");
@@ -413,6 +425,40 @@ export default function ConsultaLocal() {
       toast({ title: "Erro ao cadastrar", description: String((e && e.message) || e), variant: "destructive" });
     }
   }, [toast, user]);
+
+  // 📞 "Ver telefone": consulta o telefone do ponto no Google só neste toque (cache no servidor).
+  const verTelefone = useCallback(async (p: NovoPonto) => {
+    if (!p.placeId) return;
+    setTelefones((m) => ({ ...m, [p.placeId]: { st: "loading" } }));
+    try {
+      const r: any = await apiRequest("POST", "/api/radar/telefone", { placeId: p.placeId });
+      if (r && r.ok) {
+        setTelefones((m) => ({ ...m, [p.placeId]: r.telefone ? { st: "ok", num: r.telefone } : { st: "sem" } }));
+      } else {
+        setTelefones((m) => ({ ...m, [p.placeId]: { st: "erro", msg: (r && r.message) || "Não foi possível consultar." } }));
+      }
+    } catch (e: any) {
+      setTelefones((m) => ({ ...m, [p.placeId]: { st: "erro", msg: String((e && e.message) || e) } }));
+    }
+  }, []);
+
+  // Bloco do telefone no card do Novo ponto: número (WhatsApp se celular), "sem telefone" ou botão.
+  const renderTelefonePonto = (p: NovoPonto) => {
+    const t = telefones[p.placeId];
+    const num = t?.st === "ok" ? t.num : (p.telefoneConsultado ? p.telefone : undefined);
+    if (num) return <div className="text-xs pl-7"><TelefoneWhats telefone={num} soCelular /></div>;
+    if (t?.st === "sem" || (p.telefoneConsultado && !p.telefone)) {
+      return <div className="text-xs text-muted-foreground pl-7 flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> Sem telefone no Google</div>;
+    }
+    return (
+      <div className="text-xs pl-7 flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={() => verTelefone(p)} disabled={t?.st === "loading"} className="inline-flex items-center gap-1.5 text-blue-600 hover:underline disabled:opacity-60" data-testid="button-ver-telefone">
+          {t?.st === "loading" ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando telefone…</> : <><Phone className="h-3.5 w-3.5" /> Ver telefone</>}
+        </button>
+        {t?.st === "erro" && <span className="text-red-600">{t.msg}</span>}
+      </div>
+    );
+  };
 
   // Resgatar um lead descartado (não convertido): volta à condição de lead novo.
   const resgatarLead = useCallback(async (leadId: string) => {
@@ -870,6 +916,7 @@ export default function ConsultaLocal() {
                           {p.distancia != null && <Badge variant="secondary" className="shrink-0 whitespace-nowrap">{p.distancia} m</Badge>}
                         </div>
                         {p.endereco && <div className="text-xs text-muted-foreground pl-7 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{p.endereco}</div>}
+                        {renderTelefonePonto(p)}
                         <div className="pl-7 pt-1 flex items-center gap-3 flex-wrap">
                           {p.disponivel ? (
                             renderPegar(p.leadId)
