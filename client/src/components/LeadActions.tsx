@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
+import FotoPicker from "@/components/FotoPicker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle, XCircle, Clock, FileText, MapPin, Camera, UserCheck } from "lucide-react";
 
@@ -553,7 +554,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
                   <Button type="button" size="sm" variant="outline" onClick={() => { setAtendPhoto(null); setAtendPhotoUrl(null); setAtendUsaPrevio(false); }} data-testid={`button-lead-atend-photo-remove-${leadId}`}>Trocar foto</Button>
                 </div>
               ) : (
-                <Input type="file" accept="image/*" capture="environment" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; setAtendPhoto(f); const rd = new FileReader(); rd.onload = (ev) => setAtendPhotoUrl(ev.target?.result as string); rd.readAsDataURL(f); }} data-testid={`input-lead-atend-photo-${leadId}`} />
+                <FotoPicker testId={`lead-atend-photo-${leadId}`} onFile={(f) => { setAtendPhoto(f); const rd = new FileReader(); rd.onload = (ev) => setAtendPhotoUrl(ev.target?.result as string); rd.readAsDataURL(f); }} />
               )}
             </div>
             <div>

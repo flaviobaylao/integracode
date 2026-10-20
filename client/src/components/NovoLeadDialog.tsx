@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Navigation } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import FotoPicker, { fotoParaDataUrl } from "@/components/FotoPicker";
 
 // "Cadastrar Lead" — formulario rapido na Rota do Dia: Nome, Capturar localizacao (coordenada)
 // e Observacao. Cria o lead (POST /api/leads) e devolve via onCreated para ja incluir na rota.
@@ -18,7 +19,7 @@ export default function NovoLeadDialog(props: {
   onCreated: (lead: any) => void;
 }) {
   const { toast } = useToast();
-  const empty = { fantasyName: "", latitude: "", longitude: "", observation: "" };
+  const empty = { fantasyName: "", latitude: "", longitude: "", observation: "", photo: "" };
   const [form, setForm] = useState({ ...empty });
   const reset = () => setForm({ ...empty });
 
@@ -48,6 +49,7 @@ export default function NovoLeadDialog(props: {
         observation: form.observation,
         status: "scheduled",
       };
+      if (form.photo) payload.photo = form.photo;
       if (props.defaultAssignedTo) payload.assignedTo = props.defaultAssignedTo;
       return await apiRequest("POST", "/api/leads", payload);
     },
@@ -65,7 +67,7 @@ export default function NovoLeadDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => { if (!o) { reset(); props.onClose(); } }}>
-      <DialogContent className="max-w-md z-[10000]">
+      <DialogContent className="max-w-md z-[10000] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Cadastrar Lead</DialogTitle>
         </DialogHeader>
@@ -91,6 +93,19 @@ export default function NovoLeadDialog(props: {
             ) : (
               <p className="text-xs text-muted-foreground">Toque em "Capturar Localização" para registrar o ponto do lead.</p>
             )}
+          </div>
+
+          <div>
+            <Label>Foto (opcional)</Label>
+            {form.photo ? (
+              <div className="space-y-2">
+                <img src={form.photo} alt="Foto do lead" className="w-full max-h-40 object-contain rounded border" />
+                <Button type="button" size="sm" variant="outline" onClick={() => setForm({ ...form, photo: "" })} data-testid="cl-remover-foto">Remover / trocar foto</Button>
+              </div>
+            ) : (
+              <FotoPicker testId="cl-foto" onFile={async (f) => { try { const url = await fotoParaDataUrl(f); setForm((p) => ({ ...p, photo: url })); } catch { toast({ title: "Foto inválida", variant: "destructive" }); } }} />
+            )}
+            <p className="text-xs text-muted-foreground mt-1">Tire a foto na hora ou envie da galeria/arquivo.</p>
           </div>
 
           <div>
