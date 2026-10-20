@@ -74,7 +74,7 @@ interface BillingPipelineItem {
   omieInstanceId: string | null;
   omieInstanceName: string | null;
   scheduledBillingDate: string | null;
-  stageHistory: Array<{ stage: string; changedAt: string; changedBy: string }>;
+  stageHistory: Array<{ stage: string; changedAt: string; changedBy: string; detalhe?: string }>;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -102,6 +102,7 @@ const STAGES = [
 // Ex.: liberação de um pedido que estava em Bloqueados — registra quem liberou e quando.
 const HISTORY_EVENT_LABELS: Record<string, { label: string; badgeColor: string }> = {
   liberado: { label: 'Liberado de Bloqueados', badgeColor: 'bg-red-100 text-red-800' },
+  edicao: { label: 'Alteração', badgeColor: 'bg-blue-100 text-blue-800' },
 };
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -2259,9 +2260,14 @@ export default function BillingPipeline() {
                       const stageInfo = STAGES.find(s => s.key === h.stage);
                       const evt = HISTORY_EVENT_LABELS[h.stage as string];
                       return (
-                        <div key={i} className="flex items-center justify-between text-xs bg-gray-50 dark:bg-gray-800 p-2.5 rounded-lg">
-                          <Badge className={stageInfo?.badgeColor || evt?.badgeColor || 'bg-gray-100'}>{stageInfo?.label || evt?.label || h.stage}</Badge>
-                          <span className="text-gray-500">{h.changedBy} - {formatDate(h.changedAt)}</span>
+                        <div key={i} className="text-xs bg-gray-50 dark:bg-gray-800 p-2.5 rounded-lg">
+                          <div className="flex items-center justify-between">
+                            <Badge className={stageInfo?.badgeColor || evt?.badgeColor || 'bg-gray-100'}>{stageInfo?.label || evt?.label || h.stage}</Badge>
+                            <span className="text-gray-500">{h.changedBy} - {formatDate(h.changedAt)}</span>
+                          </div>
+                          {(h as any).detalhe && (
+                            <p className="mt-1 text-[11px] text-gray-600 dark:text-gray-300">Campos: {(h as any).detalhe}</p>
+                          )}
                         </div>
                       );
                     })}
