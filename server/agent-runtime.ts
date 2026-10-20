@@ -313,7 +313,7 @@ async function respostaADisparo(conversationId: string, phone: string): Promise<
 export async function limparPausa(conversationId?: string): Promise<number> {
   try {
     if (conversationId) {
-      await db.execute(sql`DELETE FROM system_settings WHERE key = ${'chat_ai_paused:' + conversationId}`);
+      await db.execute(sql`DELETE FROM system_settings WHERE key IN (${'chat_ai_paused:' + conversationId}, ${'ia_robo_avisado:' + conversationId})`);
       return 1;
     }
     const r: any = await db.execute(sql`DELETE FROM system_settings WHERE key LIKE 'chat_ai_paused:%' AND value = '1' RETURNING key`);
@@ -1299,6 +1299,17 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
         }
       }
     } catch (e: any) { console.error('[FASE0] opt-out:', e?.message || e); }
+
+    // DO OUTRO LADO TEM ROBO (robo-detector): porta dura, antes de qualquer excecao.
+    // Em 20/10/2026 o detector marcou a conversa da Bella Milao e pausou a IA, mas a
+    // excecao "resposta a disparo" logo abaixo reabriu a IA (havia pedido_confirmado
+    // na janela de 48h e nenhum humano escreveu) e o sweep do takeover tambem chamava
+    // aqui direto — 87 mensagens bot x bot. A marca so sai ao finalizar a conversa,
+    // ao humano assumir ou pelo /retomar.
+    try {
+      const { roboDetectado } = await import('./robo-detector');
+      if (await roboDetectado(opts.conversationId)) { await _t('agente:robo_detectado'); return; }
+    } catch {}
 
     // se a conversa foi transferida p/ humano, não responder mais (expira em ia_pausa_horas).
     // EXCECAO: o cliente esta respondendo a um DISPARO nosso. Quem recebe "recebemos seu

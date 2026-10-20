@@ -410,6 +410,8 @@ async function selectTakeover(mins: number, teto: number, limit: number): Promis
       AND m.created_at < now() - make_interval(mins => ${mins})
       AND m.created_at > now() - make_interval(mins => ${teto})
       AND NOT EXISTS (SELECT 1 FROM system_settings s WHERE s.key = ${'chat_ai_paused:'} || c.id AND s.value = '1')
+      -- do outro lado tem robo: o sweep nao reabre (robo-detector.ts)
+      AND NOT EXISTS (SELECT 1 FROM system_settings s3 WHERE s3.key = ${'ia_robo_avisado:'} || c.id)
     ORDER BY m.created_at ASC
     LIMIT ${limit}`);
   return (q.rows || []) as any;

@@ -6296,7 +6296,7 @@ export class DatabaseStorage implements IStorage {
       // 🤖 Libera a IA nas conversas encerradas (mesma regra da finalizacao manual).
       for (const conv of result) {
         try {
-          await db.execute(sql`DELETE FROM system_settings WHERE key IN (${'chat_ai_paused:' + conv.id}, ${'ia_transferida:' + conv.id}, ${'ia_lembrete_ts:' + conv.id})`);
+          await db.execute(sql`DELETE FROM system_settings WHERE key IN (${'chat_ai_paused:' + conv.id}, ${'ia_transferida:' + conv.id}, ${'ia_lembrete_ts:' + conv.id}, ${'ia_robo_avisado:' + conv.id})`);
         } catch { /* noop */ }
       }
       // 🏷️ Remove as etiquetas (inclui a etiqueta pessoal do atendente) das conversas finalizadas por inatividade
