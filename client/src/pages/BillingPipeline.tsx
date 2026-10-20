@@ -966,14 +966,15 @@ export default function BillingPipeline() {
     return m;
   }, [blockedOrders]);
 
-  // Conjunto de customerIds que têm pelo menos um card na etapa 'pedido' (raia "Pedido").
-  // Usado para pintar de VERMELHO o nome das TROCAS que estão em Bloqueados do MESMO cliente:
-  // avisa que já entrou um novo pedido desse cliente e a troca precisa ser avaliada/liberada.
-  // Reativo: quando a troca é liberada (sai de Bloqueados) ou o pedido muda de etapa, volta ao preto.
-  const customersComPedido = useMemo(() => {
+  // Conjunto de customerIds que têm um PEDIDO DE VENDA (operationType 'venda') em QUALQUER etapa
+  // do pipeline (qualquer status). Usado para pintar de VERMELHO o nome das TROCAS/AMOSTRAS que
+  // estão em Bloqueados do MESMO cliente: sinaliza que há uma venda no pipeline e a troca/amostra
+  // precisa ser avaliada/liberada. Reativo: some quando a troca/amostra é liberada (sai de
+  // Bloqueados) ou quando a venda sai do funil.
+  const customersComVendaNoFunil = useMemo(() => {
     const s = new Set<string>();
     for (const it of (items as any[])) {
-      if (String(it?.stage) === 'pedido') { const c = String(it?.customerId || ''); if (c) s.add(c); }
+      if (String(it?.operationType || '').toLowerCase() === 'venda') { const c = String(it?.customerId || ''); if (c) s.add(c); }
     }
     return s;
   }, [items]);
@@ -1809,12 +1810,14 @@ export default function BillingPipeline() {
                       onTogglePriority={() => priorityMutation.mutate({ id: item.id, isPriority: !item.isPriority })}
                       blockedReason={
                         stage.key === 'bloqueado'
-                          // TROCA ou AMOSTRA em Bloqueados fica em vermelho quando o MESMO cliente já
-                          // tem um card na raia "Pedido". Volta ao preto ao liberar (sai de
-                          // Bloqueados) ou quando o pedido muda de etapa.
-                          ? ((['troca', 'amostra'].includes(String(item.operationType)) && customersComPedido.has(String(item.customerId || '')))
-                              ? 'Novo pedido deste cliente na etapa "Pedido" — avalie/libere a troca/amostra'
+                          // TROCA ou AMOSTRA em Bloqueados fica em vermelho quando o MESMO cliente tem
+                          // um PEDIDO DE VENDA no pipeline (qualquer status). Volta ao preto ao liberar
+                          // o bloqueado (sai de Bloqueados) ou quando a venda sai do funil.
+                          ? ((['troca', 'amostra'].includes(String(item.operationType)) && customersComVendaNoFunil.has(String(item.customerId || '')))
+                              ? 'Cliente tem pedido de venda no pipeline — avalie/libere a troca/amostra'
                               : null)
+                          // Demais cards do funil: vermelho quando o MESMO cliente tem algo em
+                          // Bloqueados (inclui a VENDA quando há troca/amostra bloqueada do cliente).
                           : (STAGES_ALERTA_BLOQUEIO.has(String(item.stage)) ? (blockedCustomerReason.get(String(item.customerId || '')) || null) : null)
                       }
                       stockIssue={stockStatus[item.id] && !stockStatus[item.id].ok ? (stockStatus[item.id].details || 'Estoque em uso insuficiente') : null}
@@ -2404,7 +2407,7 @@ export default function BillingPipeline() {
             <div>
               <p className="font-semibold mb-1">Nome do cliente em <span className="text-red-600">vermelho</span></p>
               <p className="text-xs text-gray-600 dark:text-gray-300">O cliente tem um card em <b>Bloqueados</b> e, ao mesmo tempo, um card em outra etapa do funil. Passe o cursor sobre o nome para ver o motivo do bloqueio. Resolvido o bloqueio, o nome volta ao preto.</p>
-              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">Também vale o inverso: uma <b>Troca ou Amostra em Bloqueados</b> fica em vermelho quando o mesmo cliente já tem um pedido na raia <b>Pedido</b> — sinal para avaliar/liberar. Volta ao preto ao liberar ou quando o pedido muda de etapa.</p>
+              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">Também vale o inverso: uma <b>Troca ou Amostra em Bloqueados</b> fica em vermelho quando o mesmo cliente tem um <b>pedido de venda no pipeline</b> (em qualquer status) — e o card dessa venda também fica vermelho. Os dois voltam ao preto quando o pedido bloqueado é liberado.</p>
             </div>
             <div>
               <p className="font-semibold mb-1">Atraso na entrega (de Faturado até a entrega)</p>
