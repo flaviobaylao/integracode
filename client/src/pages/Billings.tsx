@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
-import { Calendar, Download, Filter, RefreshCw, Search, TrendingUp, Home, FileText, ArrowUp, ArrowDown, ArrowUpDown, Archive } from 'lucide-react';
+import { Calendar, Download, Filter, RefreshCw, Search, TrendingUp, Home, FileText, ArrowUp, ArrowDown, ArrowUpDown, Archive, Layers } from 'lucide-react';
+import ItensPorEtapaPipeline from '@/components/ItensPorEtapaPipeline';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import OmieInstanceBadge from '@/components/OmieInstanceBadge';
@@ -381,14 +382,22 @@ export default function Billings() {
       </div>
 
       <Tabs defaultValue="faturamentos" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid w-full max-w-2xl grid-cols-3">
           <TabsTrigger value="faturamentos" className="flex items-center gap-2">
             <Download className="h-4 w-4" />Faturamentos
+          </TabsTrigger>
+          <TabsTrigger value="itens-etapa" className="flex items-center gap-2" data-testid="tab-itens-etapa">
+            <Layers className="h-4 w-4" />Itens por Etapa
           </TabsTrigger>
           <TabsTrigger value="cenarios" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />Cenários Fiscais
           </TabsTrigger>
         </TabsList>
+
+        {/* Relatório dinâmico: itens por produto em cada etapa do Pipeline de Faturamento (20/out/2026) */}
+        <TabsContent value="itens-etapa" className="mt-4">
+          <ItensPorEtapaPipeline />
+        </TabsContent>
 
         <TabsContent value="cenarios" className="mt-4">
           <FiscalScenariosTab />

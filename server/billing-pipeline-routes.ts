@@ -1819,6 +1819,79 @@ export function registerBillingPipelineRoutes(app: Express) {
     res.json({ active: internalBillingModeActive, activatedBy: internalBillingActivatedBy });
   });
 
+  // RELATÓRIO "ITENS POR ETAPA" (20/out/2026) — quantidade de itens, por produto, somada sobre
+  // TODOS os pedidos de cada etapa do pipeline. Devolve linhas já agregadas no grão
+  // (etapa × produto × instância × vendedor × tipo de operação) e o front pivota/filtra à vontade.
+  //   - billing_pipeline: todas as etapas, exceto Lixeira. 'entregue' só entra com ?diasEntregue=N
+  //     (janela por updated_at), porque é 98% da tabela e não é "pedido em andamento".
+  //   - blocked_orders (status='blocked'): entram como etapa 'bloqueado', igual ao board do Pipeline.
+  //   - Produto agrupado pelo NOME gravado na linha do pedido (products jsonb), normalizado.
+  // Vendedor vê só o próprio escopo (seller_id). Registrada ANTES de /:id.
+  app.get('/api/billing-pipeline/itens-por-etapa', authenticateUser, isPipelineViewer, async (req: any, res) => {
+    try {
+      const user = req.currentUser || req.user;
+      const diasEntregue = Math.max(0, Math.min(365, parseInt(String(req.query.diasEntregue || '0'), 10) || 0));
+      const escopoVendedor = user?.role === 'vendedor' ? String(user.id) : null;
+      const r: any = await db.execute(sql`
+        WITH base AS (
+          SELECT bp.stage::text AS stage,
+                 COALESCE(bp.omie_instance_id, '') AS inst_id,
+                 COALESCE(NULLIF(bp.omie_instance_name, ''), oi.display_name, '') AS inst_name,
+                 COALESCE(NULLIF(TRIM(bp.seller_name), ''), '') AS seller,
+                 COALESCE(bp.operation_type, '') AS op,
+                 bp.id AS card_id,
+                 bp.products AS products
+            FROM billing_pipeline bp
+            LEFT JOIN omie_instances oi ON oi.id = bp.omie_instance_id
+           WHERE bp.stage::text <> 'lixeira'
+             AND (bp.stage::text <> 'entregue'
+                  OR (${diasEntregue} > 0 AND COALESCE(bp.updated_at, bp.created_at) >= NOW() - (${diasEntregue} * INTERVAL '1 day')))
+             AND (${escopoVendedor}::text IS NULL OR bp.seller_id = ${escopoVendedor}::text)
+          UNION ALL
+          SELECT 'bloqueado' AS stage,
+                 COALESCE(c.omie_instance_id, '') AS inst_id,
+                 COALESCE(oi.display_name, '') AS inst_name,
+                 COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), '') AS seller,
+                 COALESCE(bo.operation_type::text, '') AS op,
+                 bo.id AS card_id,
+                 bo.products AS products
+            FROM blocked_orders bo
+            LEFT JOIN customers c ON c.id = bo.customer_id
+            LEFT JOIN omie_instances oi ON oi.id = c.omie_instance_id
+            LEFT JOIN users u ON u.id = bo.seller_id
+           WHERE bo.status = 'blocked'
+             AND (${escopoVendedor}::text IS NULL OR bo.seller_id = ${escopoVendedor}::text)
+        )
+        SELECT b.stage, b.inst_id, b.inst_name, b.seller, b.op,
+               MAX(p->>'id') AS product_id,
+               MAX(TRIM(p->>'name')) AS product_name,
+               SUM(COALESCE(NULLIF(p->>'quantity', '')::numeric, 0)) AS qty,
+               SUM(COALESCE(NULLIF(p->>'totalPrice', '')::numeric, 0)) AS valor,
+               COUNT(DISTINCT b.card_id) AS pedidos
+          FROM base b, LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(b.products) = 'array' THEN b.products ELSE '[]'::jsonb END) p
+         WHERE COALESCE(TRIM(p->>'name'), '') <> ''
+         GROUP BY b.stage, b.inst_id, b.inst_name, b.seller, b.op, LOWER(TRIM(p->>'name'))
+         ORDER BY product_name, b.stage
+      `);
+      const rows = ((r.rows || r) as any[]).map(x => ({
+        stage: String(x.stage),
+        instId: String(x.inst_id || ''),
+        instName: String(x.inst_name || ''),
+        seller: String(x.seller || ''),
+        op: String(x.op || ''),
+        productId: x.product_id ? String(x.product_id) : null,
+        productName: String(x.product_name || ''),
+        qty: Number(x.qty || 0),
+        valor: Number(x.valor || 0),
+        pedidos: Number(x.pedidos || 0),
+      }));
+      res.json({ geradoEm: new Date().toISOString(), diasEntregue, rows });
+    } catch (error: any) {
+      console.error('❌ [BILLING-PIPELINE] itens-por-etapa:', error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // Rascunhos para o painel do pipeline (agrupados por vendedor no front).
   // ACESSO: admin (role) + 3 admins + Lanucy veem TODOS; vendedor ve so os seus.
   // Registrada ANTES de /:id para nao ser capturada como :id='drafts'.
