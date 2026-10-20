@@ -6,14 +6,15 @@ import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check } from "lucide-react";
+import FotoPicker, { fotoParaDataUrl } from "@/components/FotoPicker";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check, Camera } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,17 @@ export default function LeadsManagement() {
   const [selectedLeadForVisitHistory, setSelectedLeadForVisitHistory] = useState<Lead | null>(null);
   // Menu de ações do lead (Registro, Converter, Não Convertido, Prorrogar) — usado por vendedor/telemarketing.
   const [acoesLead, setAcoesLead] = useState<Lead | null>(null);
+  // 📷 Foto do lead direto pelo card (câmera ou galeria/arquivo) → PATCH leads.photo
+  const [fotoLead, setFotoLead] = useState<Lead | null>(null);
+  const [fotoNova, setFotoNova] = useState<string>("");
+  const [fotoProcessando, setFotoProcessando] = useState(false);
+  const [fotoAtual, setFotoAtual] = useState<string>("");
+  const abrirFotoLead = (l: Lead) => {
+    setFotoNova(""); setFotoAtual((l as any).photo || ""); setFotoLead(l);
+    if (!(l as any).photo && (l as any).hasPhoto) {
+      apiRequest('GET', `/api/leads/${l.id}`).then((full: any) => { if (full && full.photo) setFotoAtual(full.photo); }).catch(() => {});
+    }
+  };
   // Seleção em massa de leads (admin): alteração de vendedor, status, próximo contato e alocação de rota.
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -427,6 +439,21 @@ export default function LeadsManagement() {
 
   // Bloco reutilizável com as 4 ações do lead (Registro, Converter, Não Convertido, Prorrogar).
   // Usado dentro do "Editar" (admin) e no menu "Ações" (vendedor/telemarketing). onDone fecha o contêiner.
+  const salvarFotoMut = useMutation({
+    mutationFn: async ({ id, photo }: { id: string; photo: string }) => apiRequest('PATCH', `/api/leads/${id}`, { photo }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+      toast({ title: "Foto salva", description: "A foto do lead foi atualizada." });
+      setFotoLead(null); setFotoNova("");
+    },
+    onError: (e: any) => toast({ title: "Erro ao salvar foto", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const escolherFotoLead = async (f: File) => {
+    setFotoProcessando(true);
+    try { setFotoNova(await fotoParaDataUrl(f)); }
+    catch (e: any) { toast({ title: "Foto inválida", description: e?.message || "Não foi possível ler a imagem.", variant: "destructive" }); }
+    finally { setFotoProcessando(false); }
+  };
   const renderAcoesLead = (lead: Lead, onDone: () => void) => {
     const run = (fn: (l: Lead) => void) => { onDone(); setTimeout(() => fn(lead), 60); };
     const pp = Number((lead as any).postponementCount || 0) >= 1;
@@ -443,6 +470,9 @@ export default function LeadsManagement() {
         </Button>
         <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 flex-1 min-w-[46%]" disabled={pp && !isAdmin} onClick={() => run(openProrrogar)} data-testid={`acao-prorrogar-${lead.id}`}>
           <Clock className="h-4 w-4 mr-1" /> {pp ? "Prorrogado" : "Prorrogar"}
+        </Button>
+        <Button size="sm" variant="outline" className="border-slate-400 text-slate-700 dark:text-slate-200 flex-1 min-w-[46%]" onClick={() => run(abrirFotoLead)} data-testid={`acao-foto-${lead.id}`}>
+          <Camera className="h-4 w-4 mr-1" /> Foto
         </Button>
       </div>
     );
@@ -632,6 +662,12 @@ export default function LeadsManagement() {
       nextContactDate: lead.nextContactDate ? diaCalendario(lead.nextContactDate as any) : "",
       periodicity: (lead as any).periodicity || "semanal",
     });
+    // A lista não traz a foto (só hasPhoto) → busca o lead completo para mostrar a foto atual.
+    if (!(lead as any).photo && (lead as any).hasPhoto) {
+      apiRequest('GET', `/api/leads/${lead.id}`).then((full: any) => {
+        if (full && full.photo) setFormData((prev) => (prev.photo ? prev : { ...prev, photo: full.photo }));
+      }).catch(() => {});
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -1472,6 +1508,9 @@ export default function LeadsManagement() {
                             <Button size="sm" variant="ghost" className="text-red-600 flex-1 min-w-[46%]" onClick={() => handleDelete(lead.id)} data-testid={`button-delete-lead-m-${lead.id}`}>
                               <Trash2 className="h-4 w-4 mr-1" /> Excluir
                             </Button>
+                            <Button size="sm" variant="outline" className="flex-1 min-w-[46%]" onClick={() => abrirFotoLead(lead)} data-testid={`button-foto-lead-m-${lead.id}`}>
+                              <Camera className="h-4 w-4 mr-1" /> Foto
+                            </Button>
                           </>
                         )}
                       </div>
@@ -1666,9 +1705,9 @@ export default function LeadsManagement() {
                   </Button>
                 </div>
               ) : (
-                <Input type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} data-testid="input-photo" />
+                <FotoPicker testId="photo" onFile={(f) => handlePhotoChange({ target: { files: [f] } })} />
               )}
-              <p className="text-xs text-muted-foreground mt-1">Tire a foto na hora (câmera) ou envie um arquivo.</p>
+              <p className="text-xs text-muted-foreground mt-1">Tire a foto na hora (Câmera) ou envie da galeria/arquivo do celular.</p>
             </div>
 
             <div>
@@ -1776,6 +1815,31 @@ export default function LeadsManagement() {
             <DialogTitle className="text-base truncate">{acoesLead?.fantasyName || 'Ações do lead'}</DialogTitle>
           </DialogHeader>
           {acoesLead && renderAcoesLead(acoesLead, () => setAcoesLead(null))}
+        </DialogContent>
+      </Dialog>
+
+      {/* 📷 Foto do lead (câmera ou galeria/arquivo) */}
+      <Dialog open={!!fotoLead} onOpenChange={(open) => { if (!open) { setFotoLead(null); setFotoNova(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base truncate">Foto · {fotoLead?.fantasyName || 'Lead'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {(fotoNova || fotoAtual) ? (
+              <img src={fotoNova || fotoAtual} alt="Foto do lead" className="w-full max-h-64 object-contain rounded border" data-testid="img-foto-lead" />
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4 border rounded">{(fotoLead as any)?.hasPhoto ? "Carregando foto atual…" : "Este lead ainda não tem foto."}</p>
+            )}
+            {fotoNova && <p className="text-xs text-emerald-700 dark:text-emerald-400">Nova foto selecionada — toque em Salvar.</p>}
+            <FotoPicker testId="foto-lead" disabled={fotoProcessando || salvarFotoMut.isPending} onFile={escolherFotoLead} />
+            <p className="text-xs text-muted-foreground">Tire a foto na hora ou envie da galeria/arquivo do celular.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setFotoLead(null); setFotoNova(""); }}>Cancelar</Button>
+            <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={!fotoNova || salvarFotoMut.isPending} onClick={() => fotoLead && salvarFotoMut.mutate({ id: fotoLead.id, photo: fotoNova })} data-testid="button-salvar-foto-lead">
+              {salvarFotoMut.isPending ? "Salvando..." : "Salvar foto"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

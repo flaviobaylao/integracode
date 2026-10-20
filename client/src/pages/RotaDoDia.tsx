@@ -24,6 +24,7 @@ import type { DailyRouteResponse } from "@shared/schema";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
 import LeadActions from "@/components/LeadActions";
+import FotoPicker from "@/components/FotoPicker";
 import NovoLeadDialog from "@/components/NovoLeadDialog";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
@@ -3658,22 +3659,16 @@ export default function RotaDoDia() {
                     </Button>
                   </div>
                 ) : (
-                  <Input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setLeadCheckInPhoto(file);
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          setLeadCheckInPhotoUrl(event.target?.result as string);
-                        };
-                        reader.readAsDataURL(file);
-                      }
+                  <FotoPicker
+                    testId="lead-checkin-photo"
+                    onFile={(file) => {
+                      setLeadCheckInPhoto(file);
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        setLeadCheckInPhotoUrl(event.target?.result as string);
+                      };
+                      reader.readAsDataURL(file);
                     }}
-                    data-testid="input-lead-checkin-photo"
                   />
                 )}
               </div>

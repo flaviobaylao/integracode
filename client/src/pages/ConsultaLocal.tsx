@@ -12,6 +12,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
+import FotoPicker, { fotoParaDataUrl } from "@/components/FotoPicker";
 
 // Último pedido implantado (Pipeline de Faturamento) — vem só nos cards de CLIENTE.
 type UltimoPedido = {
@@ -151,6 +152,18 @@ function numerosTelefone(t: string | null | undefined): string[] {
 // Só cai para "ligar" quando o número não tem DDD (não dá para montar o link do WhatsApp).
 // Celular brasileiro (DDD + 9 dígitos começando com 9) — compatível com WhatsApp.
 const ehCelular = (d: string) => d.length === 11 && d[2] === "9";
+// Alguns cadastros do Google vêm SEM DDD (ex.: "98564-0002"). Completa com o DDD da região do
+// endereço (DF → 61; padrão Goiânia/GO → 62) para o link do WhatsApp funcionar.
+const completaDDD = (num: string, endereco?: string | null): string => {
+  let d = String(num || "").replace(/\D/g, "");
+  if ((d.length === 12 || d.length === 13) && d.startsWith("55")) d = d.slice(2);
+  if (d.length === 10 && d.startsWith("0")) d = d.slice(1);
+  if (d.length === 8 || d.length === 9) {
+    const ddd = /\bDF\b|Bras[ií]lia/i.test(endereco || "") ? "61" : "62";
+    return ddd + d;
+  }
+  return d.length >= 10 ? d : num;
+};
 
 function TelefoneWhats({ telefone, contato, confirmado, soCelular }: { telefone: string; contato?: string | null; confirmado?: boolean; soCelular?: boolean }) {
   const nums = numerosTelefone(telefone);
@@ -250,6 +263,9 @@ export default function ConsultaLocal() {
   const [novosMsg, setNovosMsg] = useState<string>("");
   const [novosRaio, setNovosRaio] = useState<number>(300);
   const [cadastrados, setCadastrados] = useState<Record<string, "ok" | "loading">>({});
+  // 📷 Foto do lead recém-registrado nos Novos pontos (câmera ou galeria) → PATCH leads.photo
+  const [leadIdPorPonto, setLeadIdPorPonto] = useState<Record<string, string>>({});
+  const [fotoPonto, setFotoPonto] = useState<Record<string, "enviando" | "ok">>({});
   // Resgate de leads descartados (não convertidos) direto da consulta — chave = leadId.
   // Estados: "resgatando" → "resgatado" (habilita Gravar) → "gravando" → "gravado".
   const [resgate, setResgate] = useState<Record<string, "resgatando" | "resgatado" | "gravando" | "gravado">>({});
@@ -415,6 +431,7 @@ export default function ConsultaLocal() {
       const res: any = await apiRequest("POST", "/api/leads", payload);
       if (res && (res.id || res.ok !== false)) {
         setCadastrados((m) => ({ ...m, [p.placeId]: "ok" }));
+        if (res && res.id) setLeadIdPorPonto((m) => ({ ...m, [p.placeId]: String(res.id) }));
         toast({ title: "Lead registrado", description: `${p.nome} · na sua rota em 7 dias. Sem atendimento, dá p/ renovar só mais 1 vez — depois ele é liberado.` });
       } else {
         setCadastrados((m) => { const n = { ...m }; delete n[p.placeId]; return n; });
@@ -446,7 +463,7 @@ export default function ConsultaLocal() {
   const renderTelefonePonto = (p: NovoPonto) => {
     const t = telefones[p.placeId];
     const num = t?.st === "ok" ? t.num : (p.telefoneConsultado ? p.telefone : undefined);
-    if (num) return <div className="text-xs pl-7"><TelefoneWhats telefone={num} soCelular /></div>;
+    if (num) return <div className="text-xs pl-7"><TelefoneWhats telefone={completaDDD(num, p.endereco)} soCelular /></div>;
     if (t?.st === "sem" || (p.telefoneConsultado && !p.telefone)) {
       return <div className="text-xs text-muted-foreground pl-7 flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> Sem telefone no Google</div>;
     }
@@ -524,6 +541,19 @@ export default function ConsultaLocal() {
       setFotoMsg(String((e && e.message) || e));
     }
   }, []);
+
+  const enviarFotoPonto = useCallback(async (placeId: string, leadId: string, f: File) => {
+    setFotoPonto((m) => ({ ...m, [placeId]: "enviando" }));
+    try {
+      const photo = await fotoParaDataUrl(f);
+      await apiRequest("PATCH", `/api/leads/${leadId}`, { photo });
+      setFotoPonto((m) => ({ ...m, [placeId]: "ok" }));
+      toast({ title: "Foto salva no lead" });
+    } catch (e: any) {
+      setFotoPonto((m) => { const n = { ...m }; delete n[placeId]; return n; });
+      toast({ title: "Erro ao salvar foto", description: String((e && e.message) || e), variant: "destructive" });
+    }
+  }, [toast]);
 
   // Bloco de ações para um lead já visitado e não convertido (Resgatar → Gravar como Lead).
   const renderResgate = (leadId: string | null | undefined) => {
@@ -928,6 +958,20 @@ export default function ConsultaLocal() {
                               <Button size="sm" variant="outline" className="border-emerald-400 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30" onClick={() => navigate("/rota-do-dia")} data-testid="button-voltar-rota">
                                 <ArrowLeft className="h-4 w-4 mr-1.5" /> Voltar para Rota
                               </Button>
+                              {leadIdPorPonto[p.placeId] && (
+                                <div className="basis-full">
+                                  {fotoPonto[p.placeId] === "ok" ? (
+                                    <span className="text-xs text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" /> Foto salva no lead</span>
+                                  ) : fotoPonto[p.placeId] === "enviando" ? (
+                                    <span className="text-xs text-muted-foreground inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enviando foto…</span>
+                                  ) : (
+                                    <>
+                                      <p className="text-xs text-muted-foreground mb-1">Foto da fachada (opcional):</p>
+                                      <FotoPicker testId="foto-novo-ponto" onFile={(f) => enviarFotoPonto(p.placeId, leadIdPorPonto[p.placeId], f)} />
+                                    </>
+                                  )}
+                                </div>
+                              )}
                             </>
                           ) : (
                             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={st === "loading"} onClick={() => cadastrarLead(p)} data-testid="button-cadastrar-lead">
