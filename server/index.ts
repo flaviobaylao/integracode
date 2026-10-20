@@ -69,6 +69,7 @@ import { geocodeOne, geocodeProvider, geocodeThrottleMs } from "./geocode-provid
 import { registerGeocodeAnalyze } from "./geocode-analyze";
 import { registerReconciliation } from "./reconciliation-routes";
 import { initConferenciaAlerta } from "./conferencia-alerta";
+import { initAuditoriaEstoque, ensureAuditoriaEstoqueSchema } from "./auditoria-estoque";
 import { registerChargeGuarantee } from "./charge-guarantee-routes";
 import { registerInstagram } from "./instagram-routes";
 import { registerLeadCapture } from "./lead-capture";
@@ -944,6 +945,7 @@ run();
   registerGeocodeAnalyze(app);
   registerReconciliation(app);
   initConferenciaAlerta(app); // Etapa 5 — alerta diario dos furos de gravidade alta
+  initAuditoriaEstoque(app); // Auditoria de movimentações de estoque (20/out/2026): rotas + cron horário + alerta 07:40
   registerChargeGuarantee(app);
   registerInstagram(app);
   registerLeadCapture(app);
@@ -3375,6 +3377,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone varchar`).catch(() => {});
   // FASE 1a — trilha de auditoria financeira: cria financial_audit_log + colunas updated_by/deleted_by/deleted_at (aditivo, idempotente).
   ensureFinancialAuditSchema().catch(() => {});
+  ensureAuditoriaEstoqueSchema().catch(() => {}); // inventory_audit_runs / inventory_audit_findings + índices (aditivo)
   db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state_registration varchar`).catch(() => {});
   // Ajuste admin de check-in/out na Rota do Dia (marca card roxo + tag "Adm - email"). Mapa por customerId.
   db.execute(sql`ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS admin_adjustments jsonb DEFAULT '{}'::jsonb`).catch(() => {});
