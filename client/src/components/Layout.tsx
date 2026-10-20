@@ -31,7 +31,7 @@ const MENU_CARD: Record<string, string> = {
   "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas", "temperatura-entregas": "Temperatura das Entregas",
   products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   "gestao-debito-vendas": "Débito e Variação de Vendas", "painel-atendimento": "Painel de Atendimento",
-  estoque: "Gestão de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores", comodatos: "Contratos de Comodato",
+  estoque: "Gestão de Estoque", "auditoria-estoque": "Auditoria de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores", comodatos: "Contratos de Comodato",
   billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "inutilizacao-nf": "Inutilização de NF", contabilidade: "Contabilidade", "contabilidade-fiscal": "Fiscal", "contabilidade-contabil": "Contábil", "billing-pipeline": "Pipeline Faturamento",
   "recuperacao-faturamento": "Recuperação de Faturamento",
   "fin-receivables": "Contas a Receber", "fin-payables": "Contas a Pagar", "fin-overdue": "Débitos Vencidos",
@@ -338,6 +338,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         // sao dois publicos com modelos mentais diferentes.
         { id: 'hotsite-pricing', label: 'Preços de Venda', icon: 'fas fa-tags', available: canAccessReports, badge: null },
         { id: 'estoque', label: 'Gestão de Estoque', icon: 'fas fa-boxes', available: canAccessReports, badge: null },
+        { id: 'auditoria-estoque', label: 'Auditoria de Estoque', icon: 'fas fa-magnifying-glass-chart', available: canAccessReports, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         // Cupons de Desconto passou a viver dentro de Canais > Hotsite (04/ago/2026).
         // A rota /cupons continua valendo para links salvos.
@@ -652,7 +653,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira'];
+    const routePages = ['resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');
