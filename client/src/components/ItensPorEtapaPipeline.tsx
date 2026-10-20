@@ -149,7 +149,13 @@ export default function ItensPorEtapaPipeline() {
       o["Total"] = metrica === "valor" ? l.total.valor : metrica === "pedidos" ? l.total.pedidos : l.total.qty;
       return o;
     });
-    exportToExcel(linhas, `itens-por-etapa-${metrica}`);
+    // Formato FORÇADO por coluna: o detector do padrão Excel decide pelo título, e aqui os títulos
+    // são nomes de etapa — "Pedido" cairia na regra de texto (nº de pedido) e "Faturado" na de
+    // dinheiro. Tudo número: inteiro para itens/pedidos, moeda para R$.
+    const formato = metrica === "valor" ? "moeda" : "inteiro";
+    const formatos: Record<string, "inteiro" | "moeda" | "texto"> = { Produto: "texto", Total: formato };
+    for (const c of pivo.colunas) formatos[c.label] = formato;
+    exportToExcel(linhas, `itens-por-etapa-${metrica}`, { formatos });
   };
 
   const limpar = () => { setEtapas([]); setInstancias([]); setVendedores([]); setTipos([]); setBusca(""); };
