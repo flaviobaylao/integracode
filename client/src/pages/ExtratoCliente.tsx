@@ -44,6 +44,9 @@ type Linha = {
   saldoNota?: number;
   situacao: string | null;
   origem: string;
+  natureza?: string | null;
+  informativa?: boolean;
+  duplicado?: boolean;
   cancelada?: boolean;
   diasAtraso?: number | null;
   formaPagamento?: string | null;
@@ -75,6 +78,8 @@ type DetalheNota = {
   parcelasQtd: number;
   origem?: string | null;
   situacao: string | null;
+  natureza?: string | null;
+  duplicado?: boolean;
   cancelada?: boolean;
   parcelas: DetalheParcela[];
   implantadoPor?: string | null;
@@ -118,14 +123,12 @@ type Extrato = {
     atrasoMedioDias: number | null;
     notasCanceladas: number;
     baixasEstimadas: number;
-    notasNaoVenda?: number;
-    valorNaoVenda?: number;
+    notasInformativas?: number;
+    valorInformativas?: number;
     titulosFantasma?: number;
     valorFantasma?: number;
     duplicadasComBaixa?: number;
     valorDuplicadasComBaixa?: number;
-    notasTituloExcluido?: number;
-    valorTituloExcluido?: number;
   };
   linhas: Linha[];
   totalLinhas: number;
@@ -155,6 +158,14 @@ const SIT_COR: Record<string, string> = {
   Vencida: "bg-red-100 text-red-800 border-red-200",
   Cancelada: "bg-gray-200 text-gray-600 border-gray-300",
   Recebido: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  // Ocorrências que não são venda: aparecem no histórico, fora dos totais de venda.
+  Duplicado: "bg-gray-200 text-gray-600 border-gray-300",
+  "Outra praça": "bg-violet-100 text-violet-800 border-violet-200",
+  "Transferência": "bg-violet-100 text-violet-800 border-violet-200",
+  "Devolução": "bg-sky-100 text-sky-800 border-sky-200",
+  Troca: "bg-sky-100 text-sky-800 border-sky-200",
+  Amostra: "bg-sky-100 text-sky-800 border-sky-200",
+  "Outra saída": "bg-sky-100 text-sky-800 border-sky-200",
 };
 
 const ORIGEM_LABEL: Record<string, string> = {
@@ -379,7 +390,7 @@ export default function ExtratoCliente() {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold">Extrato do Cliente</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Histórico completo: uma linha por nota faturada e uma linha por pagamento, com saldo acumulado.
+            Espelho do Contas a Receber: uma linha por nota faturada e uma linha por pagamento, com saldo acumulado.
           </p>
         </div>
         <BackToDashboardButton />
@@ -487,6 +498,13 @@ export default function ExtratoCliente() {
                 <option value="Quitada">Quitada</option>
                 <option value="Recebido">Recebido</option>
                 <option value="Cancelada">Cancelada</option>
+                <option value="Duplicado">Duplicado</option>
+                <option value="Outra praça">Outra praça</option>
+                <option value="Transferência">Transferência</option>
+                <option value="Devolução">Devolução</option>
+                <option value="Troca">Troca</option>
+                <option value="Amostra">Amostra</option>
+                <option value="Outra saída">Outra saída</option>
                 <option value="__sem__">Sem situação</option>
               </select>
             </div>
@@ -564,31 +582,25 @@ export default function ExtratoCliente() {
                   de vencimento e aparecem marcadas como <em>data estimada</em>.
                 </div>
               ) : null}
-              {(r?.notasNaoVenda || 0) > 0 ? (
+              {(r?.notasInformativas || 0) > 0 ? (
                 <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                  {r?.notasNaoVenda} nota(s) de {fmtBRL(r?.valorNaoVenda)} ficaram <strong>fora do extrato</strong>: transferência
-                  entre estabelecimentos ou faturamento de outra praça/empresa do grupo ([GYN], [BSB], [IND], [SERV]) — não são
-                  venda para este cliente.
+                  {r?.notasInformativas} lançamento(s) de {fmtBRL(r?.valorInformativas)} aparecem no histórico mas{" "}
+                  <strong>não são venda deste cliente</strong>: devolução, troca, amostra, CFOP 5949, transferência entre
+                  estabelecimentos ou faturamento de outra praça ([GYN], [BSB], [IND], [SERV]). Cada um leva o nome da ocorrência
+                  na coluna Situação e fica fora do faturado, do saldo devedor e do vencido.
                 </div>
               ) : null}
               {(r?.titulosFantasma || 0) > 0 ? (
                 <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                  {r?.titulosFantasma} título(s) duplicado(s) de {fmtBRL(r?.valorFantasma)} foram <strong>ignorados</strong>: a
-                  mesma NF já tem título ligado à nota fiscal, e estes nasceram depois, sem NF-e e sem pedido — nem aparecem na
-                  lista nem entram nas somas.
+                  {r?.titulosFantasma} título(s) de {fmtBRL(r?.valorFantasma)} aparecem marcados como <strong>Duplicado</strong>: a
+                  mesma NF já tem título ligado à nota fiscal, e estes nasceram depois, sem NF-e e sem pedido. Ficam na lista para
+                  conferência com o Contas a Receber, com débito zero e fora das somas.
                 </div>
               ) : null}
               {(r?.duplicadasComBaixa || 0) > 0 ? (
                 <div className="mt-2 text-[11px] text-red-700 dark:text-red-300">
                   ⚠ {r?.duplicadasComBaixa} título(s) com cara de duplicata <strong>têm baixa</strong> ({fmtBRL(r?.valorDuplicadasComBaixa)}
                   {" "}recebidos) e por isso continuam na lista. Confira se houve recebimento em duplicidade.
-                </div>
-              ) : null}
-              {(r?.notasTituloExcluido || 0) > 0 ? (
-                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                  {r?.notasTituloExcluido} nota(s) de {fmtBRL(r?.valorTituloExcluido)} ficaram <strong>fora do extrato</strong>: o
-                  título correspondente foi <strong>excluído do Contas a Receber</strong>. O pedido continua faturado, mas a nota
-                  não é recriada aqui — se a cobrança existe, o caminho é restaurar o título no financeiro.
                 </div>
               ) : null}
             </CardContent>
