@@ -62,6 +62,8 @@ export async function liberarIA(conversationId: string): Promise<void> {
   if (!conversationId) return;
   try {
     await db.execute(sql`DELETE FROM system_settings WHERE key IN (${'chat_ai_paused:' + conversationId}, ${'ia_transferida:' + conversationId}, ${'ia_lembrete_ts:' + conversationId})`);
+    // ia_robo_avisado NAO e limpo aqui de proposito: a conversa reaberta pelo bot do
+    // cliente e a mesma conversa, e a IA precisa continuar muda nela (robo-detector.ts).
   } catch { /* noop */ }
   try {
     await db.execute(sql`DELETE FROM ia_handoff WHERE conversation_id = ${conversationId}`);

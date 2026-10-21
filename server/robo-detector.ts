@@ -44,7 +44,53 @@ const FRASES_ROBO = [
   'sua mensagem foi recebida e sera respondida',
   'estamos fora do horario de atendimento',
   'nosso horario de atendimento e',
+  // 20/10/2026 — bot "Thera" (farmacia) conversou 87 mensagens com a nossa IA variando
+  // o texto a cada volta; nenhuma frase acima casava. Trechos tipicos de assistente LLM:
+  'estou aqui para ajudar por favor informe',
+  'informe o que voce gostaria de saber',
+  'como posso lhe ajudar hoje',
+  'fico feliz em saber que voce',
+  'sou a assistente virtual',
+  'sou o assistente virtual',
+  'a assistente virtual da',
+  'o assistente virtual da',
+  'aguarde a interacao de um humano',
 ];
+
+// Laco bot x bot sem frase conhecida: nos ultimos `ia_robo_laco_min` minutos o "cliente"
+// mandou >= `ia_robo_laco_qtd` mensagens, a nossa IA respondeu >= a mesma quantidade e
+// NENHUM humano nosso escreveu. Gente nao troca 5 mensagens com uma IA em 40 min sem
+// que a IA resolva ou transfira; quando acontece, e robo dos dois lados.
+async function lacoSemHumano(conversationId: string): Promise<boolean> {
+  try {
+    const min = Math.max(5, parseInt(await getSetting('ia_robo_laco_min', '40'), 10) || 40);
+    const qtd = Math.max(3, parseInt(await getSetting('ia_robo_laco_qtd', '5'), 10) || 5);
+    const r: any = await db.execute(sql`
+      SELECT count(*) FILTER (WHERE sender_type = 'customer') AS cli,
+             count(*) FILTER (WHERE sender_type <> 'customer'
+                                AND (COALESCE(sender_id,'') LIKE 'agent:%' OR COALESCE(sender_id,'') = 'system')) AS ia,
+             count(*) FILTER (WHERE sender_type <> 'customer'
+                                AND COALESCE(sender_id,'') NOT LIKE 'agent:%'
+                                AND COALESCE(sender_id,'') <> 'system') AS humano
+      FROM chat_messages
+      WHERE conversation_id = ${conversationId}
+        AND created_at > now() - make_interval(mins => ${min})`);
+    const x = r.rows?.[0] || {};
+    return Number(x.humano || 0) === 0 && Number(x.cli || 0) >= qtd && Number(x.ia || 0) >= qtd;
+  } catch { return false; }
+}
+
+/** A conversa ja foi marcada como "do outro lado tem robo"? (ia_robo_avisado:<id>) */
+export async function roboDetectado(conversationId: string): Promise<boolean> {
+  if (!conversationId) return false;
+  return (await getSetting('ia_robo_avisado:' + conversationId, '')) !== '';
+}
+
+/** Limpa a marca de robo (conversa finalizada, humano assumiu, IA retomada). */
+export async function limparRobo(conversationId: string): Promise<void> {
+  if (!conversationId) return;
+  try { await db.execute(sql`DELETE FROM system_settings WHERE key = ${'ia_robo_avisado:' + conversationId}`); } catch {}
+}
 
 export function pareceRobo(texto: string): boolean {
   const t = normalizar(texto);
@@ -72,8 +118,9 @@ export async function respostaDeRobo(conversationId: string, texto: string): Pro
         ORDER BY created_at DESC LIMIT 3`);
       const ultimas = (r.rows || []).map((x: any) => normalizar(x.content));
       const atual = normalizar(texto);
-      if (atual.length > 15 && ultimas.filter(x => x === atual).length >= 2) motivo = 'cliente repetindo a mesma mensagem';
+      if (atual.length > 15 && ultimas.filter((x: string) => x === atual).length >= 2) motivo = 'cliente repetindo a mesma mensagem';
     }
+    if (!motivo && await lacoSemHumano(conversationId)) motivo = 'troca automatica sem humano (laco bot x bot)';
     if (!motivo) return null;
 
     // Avisa UMA vez por conversa: sem isso, dois robos trocariam o mesmo aviso sem fim.
@@ -87,14 +134,18 @@ export async function respostaDeRobo(conversationId: string, texto: string): Pro
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
 
     // Tira a IA da conversa e chama gente: quem responde robo e humano.
+    // Valor '1' (legado, sem vencimento) de proposito: a pausa com data era ignorada
+    // pelo sweep do takeover (so exclui value = '1') e pela excecao "resposta a disparo"
+    // em maybeRunAgent — foi assim que o laco de 20/10/2026 atravessou a pausa.
+    // A marca ia_robo_avisado e conferida em maybeRunAgent ANTES de qualquer excecao.
     try {
       await db.execute(sql`INSERT INTO system_settings (key, value, updated_by)
-        VALUES (${'chat_ai_paused:' + conversationId}, ${new Date().toISOString()}, 'robo-detector')
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+        VALUES (${'chat_ai_paused:' + conversationId}, '1', 'robo-detector')
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = 'robo-detector'`);
     } catch {}
     try {
       const { marcarAguardando } = await import('./ia-fila');
-      await marcarAguardando(conversationId);
+      await marcarAguardando(conversationId, `🤖 Do outro lado parece haver um robô (${motivo}). A IA parou de responder nesta conversa — um atendente precisa assumir.`);
     } catch { /* etiqueta e melhor esforco */ }
 
     console.log(`[ROBO] ${conversationId}: ${motivo} — IA parou e marcou para atendimento humano`);
