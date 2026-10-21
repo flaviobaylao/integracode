@@ -1841,6 +1841,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // cadastrados (fonte única). (E2-C) is_active é a ÚNICA regra de ativo: a resposta vai como está.
       const incluirInativos = String(req.query.incluirInativos || '') === 'true';
       const customers = await storage.getCustomers(sellerId, { incluirInativos });
+      // 🗂️ Anexa status_reason / is_excluded (colunas fora do schema Drizzle) p/ a coluna Motivo e o badge "Excluído".
+      try {
+        const ex: any = await db.execute(sql`SELECT id, status_reason, is_excluded FROM customers WHERE status_reason IS NOT NULL OR is_excluded = true`);
+        const exMap = new Map<string, any>();
+        for (const r of ((ex.rows || ex) as any[])) exMap.set(String(r.id), r);
+        for (const c of (customers as any[])) { const e = exMap.get(String(c.id)); (c as any).statusReason = e ? (e.status_reason || null) : null; (c as any).isExcluded = e ? (e.is_excluded === true) : false; }
+      } catch (_e) { /* colunas ainda não existem (ALTER do boot) → segue sem motivo */ }
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);
@@ -2830,9 +2837,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete req.body.omieStatus;
       const _wantsInactivate = req.body.isActive === false;
       const _wantsActivate = req.body.isActive === true;
+      // 📝 MOTIVO só circula à parte (nunca é coluna do cadastro): remove do payload antes de gravar.
+      const _motivoStatus = String(req.body?.motivo || '').trim();
+      delete req.body.motivo;
       // 🔒 INATIVAR cliente é exclusivo do Admin (nem coordinator/administrative inativam pelo cadastro).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
+      }
+      // 📝 Inativar pela edição também exige motivo (vai para a coluna status_reason).
+      if (_wantsInactivate && _motivoStatus.length < 5) {
+        return res.status(400).json({ message: "Informe o motivo da inativação (mínimo 5 caracteres)." });
       }
       // ✅ ATIVAR/REATIVAR: liberado a todos os papéis, EXCETO entrega (motorista/entregador).
       if (_wantsActivate && _isDriver) {
@@ -3053,6 +3067,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update customer
       const __auditBefore = await storage.getCustomer(id).catch(() => null);
       const updatedCustomer = await storage.updateCustomer(id, cleanedData);
+      // 🗂️ Inativação/Reativação pela edição: grava/limpa o MOTIVO (status_reason). Reativar também
+      // tira a marca de Excluído. (A lixeira é outra rota e marca is_excluded=true.)
+      if (_wantsInactivate) {
+        try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
+        try { await db.execute(sql`UPDATE customers SET status_reason = ${_motivoStatus}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
+        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
+      } else if (_wantsActivate) {
+        try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
+        try { await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id = ${id}`); } catch (_e) {}
+      }
       // 📜 Histórico de alterações do cliente (rezoneamento, periodicidade, etc.)
       try { await logCustomerChanges({ customerId: id, before: __auditBefore, changes: cleanedData, actor: { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }, source: 'edit' }); } catch (_e) {}
       // 📲 Confirmacao de telefone quando o numero muda
@@ -3185,14 +3209,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Cliente já está inativo" });
       }
       
+      // 📝 MOTIVO obrigatório (vai para a coluna status_reason e para o histórico).
+      const motivo = String(req.body?.motivo || '').trim();
+      if (motivo.length < 5) {
+        return res.status(400).json({ message: "Informe o motivo da inativação (mínimo 5 caracteres)." });
+      }
       // Inactivate customer and delete future cards
       const result = await storage.inactivateCustomer(id, cardId);
+      try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
+      try { await db.execute(sql`UPDATE customers SET status_reason = ${motivo}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
       // 📜 (E1, 05/set/2026) Trilha — este caminho não registrava nada no histórico.
       try {
         const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email };
         await logCustomerChanges({ customerId: id, before: { isActive: existingCustomer.isActive }, changes: { isActive: false }, actor, source: 'inactivate' });
-        const motivo = String(req.body?.motivo || '').trim();
-        if (motivo) await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: motivo, actor, source: 'inactivate' });
+        await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: motivo, actor, source: 'inactivate' });
       } catch (_e) {}
       
       // Build success message
@@ -3632,9 +3662,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete req.body.omieStatus;
       const _wantsInactivate = req.body.isActive === false;
       const _wantsActivate = req.body.isActive === true;
+      const _motivoStatus = String(req.body?.motivo || '').trim();
+      delete req.body.motivo;
       // 🔒 INATIVAR cliente é exclusivo do Admin (mesma regra do PATCH).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
+      }
+      if (_wantsInactivate && _motivoStatus.length < 5) {
+        return res.status(400).json({ message: "Informe o motivo da inativação (mínimo 5 caracteres)." });
       }
       // ✅ ATIVAR/REATIVAR: liberado a todos os papéis, EXCETO entrega (motorista/entregador).
       if (_wantsActivate && _isDriver) {
@@ -3864,6 +3899,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const __auditBeforePut = await storage.getCustomer(id).catch(() => null);
       const customer = await storage.updateCustomer(id, data);
+      // 🗂️ Inativação/Reativação pela edição (PUT): grava/limpa MOTIVO (status_reason) e marca de Excluído.
+      if (_wantsInactivate) {
+        try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
+        try { await db.execute(sql`UPDATE customers SET status_reason = ${_motivoStatus}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
+        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
+      } else if (_wantsActivate) {
+        try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
+        try { await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id = ${id}`); } catch (_e) {}
+      }
       // 📜 Histórico de alterações do cliente (rezoneamento, periodicidade, etc.)
       try { await logCustomerChanges({ customerId: id, before: __auditBeforePut, changes: data, actor: { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }, source: 'edit' }); } catch (_e) {}
       // 📲 Confirmacao de telefone quando o numero muda
@@ -3939,6 +3983,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const before = await storage.getCustomer(id);
       if (!before) return res.status(404).json({ message: "Cliente não encontrado" });
       await storage.deleteCustomer(id);
+      // 🗑️ Status EXCLUÍDO: a lixeira NÃO apaga — marca is_excluded=true e grava o MOTIVO na coluna
+      // status_reason (exibida em Gestão de Clientes). Inativar é diferente (is_excluded continua false).
+      try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
+      try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
+      try { await db.execute(sql`UPDATE customers SET is_excluded = true, status_reason = ${motivo} WHERE id = ${id}`); } catch (_e) {}
       const u = req.currentUser;
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
       try { await logCustomerChanges({ customerId: id, before: { isActive: before.isActive }, changes: { isActive: false }, actor, source: 'delete' }); } catch (_e) {}
@@ -5016,15 +5065,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { ids, motivo } = req.body || {};
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
+      const motivoTxt = String(motivo || '').trim();
+      if (motivoTxt.length < 5) return res.status(400).json({ message: "Informe o motivo da inativação (mínimo 5 caracteres)." });
       const result = await storage.bulkInactivateCustomers(ids.map((x: any) => String(x)));
-      // 📜 Auditoria: registra "Ativo: Sim → Não" para os que estavam ativos (+ motivo, E1 05/set/2026 —
-      // o front já enviava `motivo` e o servidor descartava)
+      // 🗂️ Grava o MOTIVO na coluna status_reason dos que foram inativados (inativação ≠ exclusão).
+      try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
+      try {
+        const okIds = (result.inactivatedIds || []).map((x: any) => String(x));
+        if (okIds.length) await db.execute(sql`UPDATE customers SET status_reason = ${motivoTxt}, is_excluded = false WHERE id IN (${sql.join(okIds.map((x: string) => sql`${x}`), sql`, `)})`);
+      } catch (_e) {}
+      // 📜 Auditoria: registra "Ativo: Sim → Não" para os que estavam ativos.
       const u = req.currentUser;
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
-      const motivoTxt = String(motivo || '').trim();
       for (const cid of (result.inactivatedIds || [])) {
         try { await logCustomerChanges({ customerId: cid, before: { isActive: true }, changes: { isActive: false }, actor, source: 'bulk' }); } catch (_e) {}
-        if (motivoTxt) { try { await logCustomerNote({ customerId: cid, label: 'Motivo da inativação', text: motivoTxt, actor, source: 'bulk' }); } catch (_e) {} }
+        try { await logCustomerNote({ customerId: cid, label: 'Motivo da inativação', text: motivoTxt, actor, source: 'bulk' }); } catch (_e) {}
       }
       res.json({ ok: true, ...result });
     } catch (error: any) {
@@ -5033,13 +5088,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ✅ Reativação em massa — liberada a TODOS os papéis, EXCETO entrega (motorista/entregador).
-  // customers.isActive=true, volta para a lista de Clientes Ativos.
-  app.post('/api/customers/bulk-reactivate', authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing']), async (req: any, res) => {
+  // ✅ Reativação em massa — liberada a QUALQUER usuário autenticado (regra: só inativar/excluir é de admin).
+  // customers.isActive=true, volta para a lista de Clientes Ativos e limpa a marca de Excluído + motivo.
+  app.post('/api/customers/bulk-reactivate', authenticateUser, async (req: any, res) => {
     try {
       const { ids } = req.body || {};
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids[] obrigatório" });
       const result = await storage.bulkReactivateCustomers(ids.map((x: any) => String(x)));
+      // 🧹 Reativar limpa o status "Excluído" e o motivo (cliente volta a ser um ativo normal).
+      try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
+      try {
+        const okIds = (result.reactivatedIds || []).map((x: any) => String(x));
+        if (okIds.length) await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id IN (${sql.join(okIds.map((x: string) => sql`${x}`), sql`, `)})`);
+      } catch (_e) {}
       // 📜 Auditoria: registra "Ativo: Não → Sim" para os que estavam inativos
       const u = req.currentUser;
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
@@ -25217,9 +25278,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     foto_preco_mil: '1.50',
     foto_cota_gratis: '1000',
     ficha_cota_gratis: '1000',
-    // 📞 Telefone dos Novos pontos (Place Details Enterprise, sob demanda): US$ 20 / 1.000 · 1.000 grátis/mês.
-    telefone_preco_mil: '20',
-    telefone_cota_gratis: '1000',
     auto_off_enabled: 'true',
     auto_off_margem: '5',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
@@ -25251,7 +25309,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
   function _limiteFeature(cfg: Record<string, string>, feature: string): number {
     const margem = Math.max(0, Number(cfg.auto_off_margem) || 0);
-    const cotaKey = feature === 'radar' ? 'radar_cota_gratis' : feature === 'foto' ? 'foto_cota_gratis' : feature === 'telefone' ? 'telefone_cota_gratis' : 'ficha_cota_gratis';
+    const cotaKey = feature === 'radar' ? 'radar_cota_gratis' : feature === 'foto' ? 'foto_cota_gratis' : 'ficha_cota_gratis';
     const cotaDefault = feature === 'radar' ? 5000 : 1000;
     const cota = Number(cfg[cotaKey]) || cotaDefault;
     return Math.max(0, cota - margem);
@@ -25299,7 +25357,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'telefone_cota_gratis', 'telefone_preco_mil', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
@@ -25355,9 +25413,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                COUNT(*) FILTER (WHERE feature = 'foto') AS foto_total,
                COUNT(*) FILTER (WHERE feature = 'foto' AND billable) AS foto_cobravel,
                COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total,
-               COUNT(*) FILTER (WHERE feature = 'ficha' AND billable) AS ficha_cobravel,
-               COUNT(*) FILTER (WHERE feature = 'telefone') AS telefone_total,
-               COUNT(*) FILTER (WHERE feature = 'telefone' AND billable) AS telefone_cobravel
+               COUNT(*) FILTER (WHERE feature = 'ficha' AND billable) AS ficha_cobravel
         FROM places_usage WHERE date_trunc('month', (created_at AT TIME ZONE 'America/Sao_Paulo')) = date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))
       `);
       const t = ((tot?.rows || []) as any[])[0] || {};
@@ -25368,12 +25424,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const fotoCobravel = Number(t.foto_cobravel || 0);
       const fotoPago = Math.max(0, fotoCobravel - fotoCota);
       const custoFotoUSD = (fotoPago / 1000) * fotoPreco;
-      const telefoneTotal = Number(t.telefone_total || 0);
-      const telefoneCobravel = Number(t.telefone_cobravel || 0);
-      const telefoneCota = Number(cfg.telefone_cota_gratis) || 1000;
-      const telefonePreco = Number(cfg.telefone_preco_mil) || 20;
-      const custoTelefoneUSD = (Math.max(0, telefoneCobravel - telefoneCota) / 1000) * telefonePreco;
-      const custoUSD = custoRadarUSD + custoFotoUSD + custoTelefoneUSD;
+      const custoUSD = custoRadarUSD + custoFotoUSD;
       const custoBRL = custoUSD * cambio;
       const precoBRL = preco * cambio;
       const fotoPrecoBRL = fotoPreco * cambio;
@@ -25385,7 +25436,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         custoRadarUSD, custoFotoUSD,
         fotoTotal, fotoCobravel, fotoCota, fotoPreco, fotoPrecoBRL, fotoPago,
         fichaTotal: Number(t.ficha_total || 0), fichaCobravel: Number(t.ficha_cobravel || 0), fichaCota: Number(cfg.ficha_cota_gratis) || 1000,
-        telefoneTotal, telefoneCobravel, telefoneCota, telefonePreco, custoTelefoneUSD, limiteTelefone: _limiteFeature(cfg, 'telefone'),
         blindagem, margem,
         limites: { radar: _limiteFeature(cfg, 'radar'), foto: _limiteFeature(cfg, 'foto'), ficha: _limiteFeature(cfg, 'ficha') },
         autoOff: { radar: cfg.radar_auto_off_mes === mesAtual, foto: cfg.foto_auto_off_mes === mesAtual, ficha: cfg.ficha_auto_off_mes === mesAtual },
@@ -25397,60 +25447,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
       });
     } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
-  });
-
-  // 📞 Telefone de um Novo ponto, SOB DEMANDA (botão "Ver telefone"). O radar segue na faixa Pro
-  // (barata); só este toque usa Place Details Enterprise (US$ 20/1.000, 1.000 grátis/mês), pedindo
-  // APENAS o telefone. Cache permanente por placeId (90 dias): o mesmo ponto nunca é cobrado 2x.
-  // Blindagem: para em (cota − margem) consultas no mês; volta no dia 1º. Segue o liga/desliga do radar.
-  let __telCacheOk = false;
-  async function _ensureTelefoneCache(): Promise<void> {
-    if (__telCacheOk) return;
-    await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS places_phone_cache (
-      place_id varchar PRIMARY KEY, national_phone varchar, international_phone varchar, created_at timestamp DEFAULT now())`));
-    __telCacheOk = true;
-  }
-  app.post('/api/radar/telefone', authenticateUser, async (req: any, res) => {
-    try {
-      const placeId = String(req.body?.placeId || '').trim();
-      if (!/^[A-Za-z0-9_-]{10,300}$/.test(placeId)) return res.status(400).json({ ok: false, message: 'Local inválido.' });
-      await _ensureRecursosSchema;
-      await _ensureTelefoneCache();
-      const uid = req.currentUser?.id || null;
-      const uname = req.currentUser?.name || req.currentUser?.email || null;
-      // 1) Cache (grátis)
-      const c: any = await db.execute(sql`SELECT national_phone, international_phone FROM places_phone_cache WHERE place_id = ${placeId} AND created_at > now() - interval '90 days' LIMIT 1`);
-      const hit = ((c?.rows || []) as any[])[0];
-      if (hit) {
-        try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('telefone', ${uid}, ${uname}, false, ${hit.national_phone ? 1 : 0}, NULL, NULL)`); } catch (_e) {}
-        return res.json({ ok: true, telefone: hit.national_phone || null, internacional: hit.international_phone || null, semTelefone: !hit.national_phone, fromCache: true });
-      }
-      // 2) Liga/desliga + blindagem de custo
-      const cfg = await _getRecursos();
-      await _autoResetRecursos(cfg);
-      if (String(cfg.radar_enabled) !== 'true') return res.json({ ok: false, disabled: true, message: 'Recurso de prospecção desativado.' });
-      if (String(cfg.auto_off_enabled) === 'true') {
-        const limite = _limiteFeature(cfg, 'telefone');
-        const usados = await _billableMes('telefone');
-        if (usados >= limite) return res.json({ ok: false, disabled: true, autoOff: true, message: `Limite grátis de consultas de telefone do mês atingido (${limite}). Volta no dia 1º.` });
-      }
-      const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
-      if (!key) return res.status(400).json({ ok: false, message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.' });
-      // 3) Google — só os campos de telefone
-      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?languageCode=pt-BR&regionCode=BR`, {
-        headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'nationalPhoneNumber,internationalPhoneNumber' },
-        signal: AbortSignal.timeout(12000),
-      });
-      const js: any = await resp.json().catch(() => ({}));
-      if (!resp.ok) return res.status(502).json({ ok: false, message: js?.error?.message || ('Google HTTP ' + resp.status) });
-      const nacional = js?.nationalPhoneNumber || null;
-      const internacional = js?.internationalPhoneNumber || null;
-      try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('telefone', ${uid}, ${uname}, true, ${nacional ? 1 : 0}, NULL, NULL)`); } catch (_e) {}
-      // guarda também "sem telefone", para não pagar de novo pelo mesmo ponto
-      try { await db.execute(sql`INSERT INTO places_phone_cache (place_id, national_phone, international_phone, created_at) VALUES (${placeId}, ${nacional}, ${internacional}, now())
-        ON CONFLICT (place_id) DO UPDATE SET national_phone = EXCLUDED.national_phone, international_phone = EXCLUDED.international_phone, created_at = now()`); } catch (_e) {}
-      return res.json({ ok: true, telefone: nacional, internacional, semTelefone: !nacional, fromCache: false });
-    } catch (e: any) { console.error('[radar-telefone] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
   // 📡 Radar de novos pontos — Places Nearby (Pro), cache por região, dedup com o Integra.
@@ -25586,20 +25582,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lat: pLat, lng: pLng, placeId: p.id || '',
         });
       }
-      // 📞 Telefones já consultados (cache, sem custo): o card já mostra o número, sem novo toque.
-      try {
-        const _pids = novos.map((n) => n.placeId).filter(Boolean);
-        if (_pids.length) {
-          await _ensureTelefoneCache();
-          const tc: any = await db.execute(sql`SELECT place_id, national_phone FROM places_phone_cache
-            WHERE place_id IN (${sql.join(_pids.map((x: string) => sql`${x}`), sql`, `)}) AND created_at > now() - interval '90 days'`);
-          const telBy = new Map<string, string | null>();
-          for (const r of (tc?.rows || []) as any[]) telBy.set(String(r.place_id), r.national_phone || null);
-          for (const n of novos) {
-            if (telBy.has(n.placeId)) { n.telefoneConsultado = true; n.telefone = telBy.get(n.placeId); }
-          }
-        }
-      } catch (_e) { /* cache de telefone é complementar */ }
       // Ordena primeiro os de tipo primário (por distância), depois os de tipo secundário (por distância).
       novos.sort((a, b) => (a.match === 'primario' ? 0 : 1) - (b.match === 'primario' ? 0 : 1) || (a.distancia ?? 9999) - (b.distancia ?? 9999));
       const nPrim = novos.filter((n) => n.match === 'primario').length;

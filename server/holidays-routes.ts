@@ -87,6 +87,9 @@ const DDL: string[] = [
    );`,
   // Exceção de regra por cliente: 'post' | 'ant' | 'none' | NULL (= usa a regra da periodicidade).
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS holiday_rule varchar;`,
+  // Inativação/Exclusão (out/2026): motivo obrigatório + status "Excluído".
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text;`,
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false;`,
   // Regra fixa por REGIÃO: amarra uma direção à macro (UF) ou micro-região (cidade).
   `CREATE TABLE IF NOT EXISTS holiday_region_rules (
      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
