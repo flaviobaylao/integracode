@@ -2778,10 +2778,55 @@ export default function RotaDoDia() {
                             </div>
 
                             {isExpanded && (<>
+                            {!isLead && (
                             <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
                               <MapPin className="h-3 w-3" />
                               {[visit.customerAddress, customerInfo?.cities?.[visit.customerId || (visit as any).entityId || (visit as any).leadId]].filter(Boolean).join(' - ') || 'Endereço não informado'}
                             </p>
+                            )}
+
+                            {/* 🎯 Dados do LEAD no card (telefone, setor/bairro, coordenada, ficha do Google) */}
+                            {isLead && (() => {
+                              const lv: any = visit as any;
+                              const g: any = lv.leadGooglePlace || null;
+                              const lat = lv.customerLatitude != null ? Number(lv.customerLatitude) : NaN;
+                              const lng = lv.customerLongitude != null ? Number(lv.customerLongitude) : NaN;
+                              const temCoord = Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
+                              const local = [lv.leadNeighborhood, lv.leadCity || customerInfo?.cities?.[lv.entityId || lv.leadId]].filter(Boolean).join(' - ');
+                              return (
+                                <div className="text-xs text-gray-600 dark:text-gray-300 mb-2 space-y-0.5" data-testid={`lead-info-${lv.entityId || lv.leadId}`}>
+                                  <p className="flex items-center gap-1">
+                                    <MapPin className="h-3 w-3 text-gray-400" />
+                                    <span className="font-medium">Setor/Bairro:</span> {local || 'não informado'}
+                                  </p>
+                                  <p className="flex items-center gap-1 flex-wrap">
+                                    <Phone className="h-3 w-3 text-gray-400" />
+                                    <span className="font-medium">Telefone:</span>{' '}
+                                    {lv.leadPhone ? (
+                                      <a href={`tel:${String(lv.leadPhone).replace(/[^0-9+]/g, '')}`} className="text-blue-600 dark:text-blue-400 hover:underline" onClick={(e) => e.stopPropagation()}>{lv.leadPhone}</a>
+                                    ) : 'não informado'}
+                                    {lv.leadContact ? <span className="text-gray-500">· Contato: {lv.leadContact}</span> : null}
+                                  </p>
+                                  <p className="flex items-center gap-1 flex-wrap">
+                                    <Crosshair className="h-3 w-3 text-gray-400" />
+                                    <span className="font-medium">Coordenada:</span>{' '}
+                                    {temCoord ? (
+                                      <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline" onClick={(e) => e.stopPropagation()}>{lat.toFixed(6)}, {lng.toFixed(6)}</a>
+                                    ) : 'não capturada'}
+                                  </p>
+                                  <p className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-amber-500">⭐</span>
+                                    <span className="font-medium">Google:</span>{' '}
+                                    {g ? (
+                                      <>
+                                        nota {g.nota != null ? g.nota : '—'} ({g.avaliacoes || 0} avaliações)
+                                        {typeof g.score === 'number' && <span className="ml-1 rounded-full bg-lime-100 dark:bg-lime-900/40 text-lime-800 dark:text-lime-300 px-1.5">Score de atratividade {g.score}/100</span>}
+                                      </>
+                                    ) : 'sem ficha do Google'}
+                                  </p>
+                                </div>
+                              );
+                            })()}
 
                             {visit.customerId && (
                               <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
