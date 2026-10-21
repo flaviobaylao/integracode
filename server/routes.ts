@@ -18812,6 +18812,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       leadsData.forEach(lead => {
         leadsByLeadId.set(lead.id, lead);
       });
+      // ⭐ Ficha do Google (nota, avaliações, score de atratividade) dos leads — coluna aditiva
+      // google_place (fora do schema Drizzle), lida à parte para o card do lead na rota.
+      const leadGoogleById = new Map<string, any>();
+      if (leadIds.length > 0) {
+        try {
+          const _gp: any = await db.execute(sql`SELECT id, google_place FROM leads WHERE id = ANY(string_to_array(${leadIds.join(',')}, ',')) AND google_place IS NOT NULL`);
+          for (const r of (_gp?.rows || [])) leadGoogleById.set(String((r as any).id), (r as any).google_place);
+        } catch (_e) { /* coluna ainda não criada: segue sem a ficha */ }
+      }
       
       // Buscar dados de visit_agenda para obter isAutoCheckout e visitDuration
       // Incluindo tanto customerIds quanto leadIds
@@ -18917,6 +18926,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               leadNextContactDate: lead.nextContactDate,
               leadPostponementCount: lead.postponementCount,
               leadNonConversionReason: lead.nonConversionReason,
+              // Dados do lead para o card da Rota do Dia (out/2026): telefone, contato, bairro/setor,
+              // cidade, observação e a ficha do Google (nota e score de atratividade).
+              leadPhone: lead.phone || null,
+              leadContact: lead.contact || null,
+              leadNeighborhood: lead.neighborhood || null,
+              leadCity: lead.city || null,
+              observation: lead.observation || null,
+              leadGooglePlace: leadGoogleById.get(String(lead.id)) || null,
             };
           }
         })
