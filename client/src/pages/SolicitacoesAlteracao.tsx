@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
 import ClientActionsModal from "@/components/ClientActionsModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
+import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -181,6 +182,7 @@ function motivoInativacaoDe(note: string, details: any): string {
 
 function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; selected?: boolean; onToggleSelect?: (id: string) => void; onAbrirAcoes?: (id: string, name: string) => void; onAbrirHistoricoLead?: (id: string, name: string) => void }) {
   const { toast } = useToast();
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
   const [note, setNote] = useState("");
   // Item 4: ao retornar "Efetuadas", a rota do dia do vendedor é reotimizada automaticamente.
   // Para "Parcial"/"Rejeitadas" não há otimização automática.
@@ -209,13 +211,12 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   });
   // Item 2 — botão Inativar direto no Inbox: inativa o cliente e fecha a solicitação.
   const inativarMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (motivo: string) => {
       const cid = r.customerId || r.entityId;
-      const motivo = motivoInativacaoDe(note, r.details);
       await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo });
       return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, {
         status: "efetuadas",
-        note: (note.trim() ? note.trim() + " • " : "") + "Cliente inativado via Inbox.",
+        note: (motivo ? motivo + " • " : "") + "Cliente inativado via Inbox.",
       });
     },
     onSuccess: () => {
@@ -246,9 +247,9 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   // 🚫 Inativar Cliente (no card de report): mesma ação/regras/impactos do "Inativar" do Integra
   // (POST /api/customers/bulk-inactivate, com auditoria) e, em seguida, fecha o report (status "lido").
   const inativarReportMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (motivo: string) => {
       const cid = r.customerId || r.entityId;
-      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo: motivoInativacaoDe(note, r.details) });
+      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo });
       return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
     },
     onSuccess: () => {
@@ -375,6 +376,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
 
   return (
     <Card className="p-4 space-y-3">
+      {MotivoModal}
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-semibold flex items-center gap-1.5">
@@ -482,7 +484,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               {forcarRepescagemMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Repescagem</>}
             </Button>
             <Button size="sm" variant="outline" className="border-red-400 text-red-700 hover:bg-red-50" disabled={busy}
-              onClick={() => { if (window.confirm("Inativar este cliente? Ele sai dos Clientes Ativos (mesmas regras da inativação) e o report vai para Resolvidas.")) inativarReportMut.mutate(); }}>
+              onClick={async () => { const m = await pedirMotivo({ titulo: `Inativar ${r.entityName || "cliente"}`, descricao: "Ele sai dos Clientes Ativos e o report vai para Resolvidas. Informe/confirme o motivo (mín. 5 caracteres) — aparece na coluna Motivo.", valorInicial: motivoInativacaoDe(note, r.details) }); if (m) inativarReportMut.mutate(m); }}>
               {inativarReportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar Cliente</>}
             </Button>
             <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 hover:bg-amber-50" disabled={busy} onClick={() => setQuarentenaOpen((o) => !o)}>
@@ -521,7 +523,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             className="border-red-400 text-red-700 hover:bg-red-50"
             disabled={busy}
             onClick={() => {
-              if (window.confirm("Inativar este cliente? Ele sai dos Clientes Ativos e esta solicitação será fechada como Efetuada.")) inativarMut.mutate();
+              pedirMotivo({ titulo: `Inativar ${r.entityName || "cliente"}`, descricao: "Ele sai dos Clientes Ativos e a solicitação é fechada como Efetuada. Informe/confirme o motivo (mín. 5 caracteres) — aparece na coluna Motivo.", valorInicial: motivoInativacaoDe(note, r.details) }).then((m) => { if (m) inativarMut.mutate(m); });
             }}
           >
             {inativarMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar cliente</>}

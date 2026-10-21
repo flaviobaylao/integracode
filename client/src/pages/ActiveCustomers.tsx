@@ -79,6 +79,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 import { format, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -242,6 +243,7 @@ export default function ActiveCustomers() {
   const [actionHistoryCustomer, setActionHistoryCustomer] = useState<{id: string; name: string} | null>(null);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const [customerToInactivate, setCustomerToInactivate] = useState<{id: string; name: string; activeCustomerId: string} | null>(null);
+  const [motivoInativacao, setMotivoInativacao] = useState("");
   const [showLastOrderModal, setShowLastOrderModal] = useState(false);
   const [lastOrderCustomerId, setLastOrderCustomerId] = useState<string | null>(null);
   const [lastOrderData, setLastOrderData] = useState<any>(null);
@@ -261,6 +263,7 @@ export default function ActiveCustomers() {
   const [bulkGeocode, setBulkGeocode] = useState(false);
   const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["4","4ª do mês"],["ultima","Última do mês"]];
   const { toast } = useToast();
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
 
   const updatePhoneMutation = useMutation({
     mutationFn: async ({ customerId, phone, contact }: { customerId: string; phone: string; contact: string }) => {
@@ -288,8 +291,8 @@ export default function ActiveCustomers() {
     // (E2-C: is_active é a única regra de ativo), tira o cliente da lista de Clientes Ativos E muda a situação para
     // "Inativo" na Gestão de Clientes. Antes este caminho usava /inactivate (exigia cardId) e só
     // atualizava a lista de ativos, deixando a Gestão desatualizada (mostrando "Ativo").
-    mutationFn: async ({ customerId }: { customerId: string; activeCustomerId?: string }) => {
-      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids: [customerId] });
+    mutationFn: async ({ customerId, motivo }: { customerId: string; activeCustomerId?: string; motivo: string }) => {
+      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids: [customerId], motivo });
       return (r ?? {});
     },
     onSuccess: (data: any) => {
@@ -311,6 +314,7 @@ export default function ActiveCustomers() {
   const handleInactivateCustomer = (e: React.MouseEvent, customerId: string, customerName: string, activeCustomerId: string) => {
     e.stopPropagation();
     setCustomerToInactivate({ id: customerId, name: customerName, activeCustomerId });
+    setMotivoInativacao("");
     setShowInactivateDialog(true);
   };
 
@@ -357,9 +361,14 @@ export default function ActiveCustomers() {
 
   const confirmInactivate = () => {
     if (customerToInactivate) {
-      inactivateMutation.mutate({ 
-        customerId: customerToInactivate.id, 
-        activeCustomerId: customerToInactivate.activeCustomerId 
+      if (motivoInativacao.trim().length < 5) {
+        toast({ variant: "destructive", title: "Motivo obrigatório", description: "Informe ao menos 5 caracteres." });
+        return;
+      }
+      inactivateMutation.mutate({
+        customerId: customerToInactivate.id,
+        activeCustomerId: customerToInactivate.activeCustomerId,
+        motivo: motivoInativacao.trim(),
       });
     }
   };
@@ -893,9 +902,9 @@ export default function ActiveCustomers() {
   });
 
   const bulkInactivateMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (motivo: string) => {
       const ids = Array.from(selectedCustomerIds);
-      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids });
+      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids, motivo });
       return (r ?? {});
     },
     onSuccess: (res: any) => {
@@ -964,6 +973,7 @@ export default function ActiveCustomers() {
 
   return (
     <div className="container mx-auto p-4 space-y-6">
+      {MotivoModal}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <div className="flex items-center gap-3 mb-2">
@@ -1283,7 +1293,7 @@ export default function ActiveCustomers() {
                 <Button
                   size="sm"
                   className="bg-red-600 hover:bg-red-700 text-white h-9"
-                  onClick={() => { if (window.confirm(`Inativar ${selectedCustomerIds.size} cliente(s) selecionado(s)?\n\nEles sairão da lista de Clientes Ativos e seus agendamentos futuros pendentes serão removidos.`)) bulkInactivateMutation.mutate(); }}
+                  onClick={async () => { const m = await pedirMotivo({ titulo: `Inativar ${selectedCustomerIds.size} cliente(s)`, descricao: "Eles sairão da lista de Clientes Ativos e seus agendamentos futuros pendentes serão removidos. Informe o motivo (mín. 5 caracteres) — ele aparece na coluna Motivo." }); if (m) bulkInactivateMutation.mutate(m); }}
                   disabled={bulkInactivateMutation.isPending}
                   data-testid="button-bulk-inactivate"
                 >
@@ -2141,17 +2151,29 @@ export default function ActiveCustomers() {
             <AlertDialogDescription>
               Tem certeza que deseja inativar o cliente <strong>{customerToInactivate?.name}</strong>?
               <br /><br />
-              Esta ação irá remover o cliente da lista de clientes ativos. O cliente poderá ser reativado posteriormente através de um novo upload de planilha.
+              Esta ação remove o cliente da lista de Clientes Ativos e o marca como Inativo na Gestão de Clientes.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Motivo da inativação <span className="text-red-600">*</span></label>
+            <textarea
+              value={motivoInativacao}
+              onChange={(e) => setMotivoInativacao(e.target.value)}
+              rows={3}
+              placeholder="Informe o motivo (mín. 5 caracteres) — aparece na coluna Motivo da Gestão de Clientes"
+              className="w-full rounded-md border px-2.5 py-1.5 text-sm bg-background"
+              data-testid="input-motivo-inativacao"
+            />
+            {motivoInativacao.trim().length < 5 && <p className="text-xs text-muted-foreground">Mínimo de 5 caracteres.</p>}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setCustomerToInactivate(null)}>
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={confirmInactivate}
+              onClick={(e) => { e.preventDefault(); confirmInactivate(); }}
               className="bg-red-600 hover:bg-red-700"
-              disabled={inactivateMutation.isPending}
+              disabled={inactivateMutation.isPending || motivoInativacao.trim().length < 5}
             >
               {inactivateMutation.isPending ? "Inativando..." : "Inativar Cliente"}
             </AlertDialogAction>

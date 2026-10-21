@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { QuarentenaTag, useQuarentenaMap } from "@/components/QuarentenaTag";
 import ClientActionsModal from "@/components/ClientActionsModal";
+import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -267,6 +268,7 @@ function RelogioAnotacoes(props: { chave: string; nome: string; balde: string; n
 }
 
 export default function GestaoCarteiras() {
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
   const hoje = new Date();
   const mesHoje = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
   const [inicio, setInicio] = useState("2025-01");
@@ -943,13 +945,11 @@ export default function GestaoCarteiras() {
   async function inativarEmMassa() {
     const ids = Array.from(selecionados);
     if (!ids.length) return;
-    const motivo = window.prompt(`Inativar ${ids.length} cliente(s). Qual o motivo?`);
-    if (motivo === null) return;
-    if (!motivo.trim()) { alert("O motivo é obrigatório para inativar."); return; }
-    if (!window.confirm(`Confirma inativar ${ids.length} cliente(s)? Os cards de venda futuros deles são apagados.`)) return;
+    const motivo = await pedirMotivo({ titulo: `Inativar ${ids.length} cliente(s)`, descricao: "Os cards de venda futuros deles são apagados. Informe o motivo (mín. 5 caracteres) — ele aparece na coluna Motivo da Gestão de Clientes." });
+    if (!motivo) return;
     setAplicando(true);
     try {
-      const r: any = await apiRequest("POST", "/api/customers/bulk-inactivate", { ids, motivo: motivo.trim() });
+      const r: any = await apiRequest("POST", "/api/customers/bulk-inactivate", { ids, motivo });
       const j = typeof r?.json === "function" ? await r.json() : r;
       alert(
         `${j?.inactivated ?? 0} cliente(s) inativado(s).`
@@ -1063,6 +1063,7 @@ export default function GestaoCarteiras() {
 
   return (
     <div className="p-6 space-y-6">
+      {MotivoModal}
       <BackToDashboardButton />
 
       <div className="flex items-center gap-3">
