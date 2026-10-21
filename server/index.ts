@@ -415,6 +415,7 @@ run();
   // index.html do SPA ("Failed to parse JSON response"). Re-registrado. (29/jul/2026)
   registerChangeRequestsRoutes(app);
   try { registerHolidaysRoutes(app); } catch (e) { console.error('[feriados]', e); }
+  try { const { registerPresentialMonthlyJob } = await import('./presential-monthly-job'); registerPresentialMonthlyJob(app); } catch (e) { console.error('[visita-mensal]', e); }
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }

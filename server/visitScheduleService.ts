@@ -280,6 +280,29 @@ async function __flagCadastroIncompletoInbox(c: any, faltando: string[]): Promis
 // da regeneração de telemarketing), que já respeita o serviceStartDate como âncora.
 // SEM dia de rota → alocação pela "regra dos leads" (coordenada + semanal) + flag Inbox.
 // Retorna a quantidade de visitas criadas (0 = nada gerado).
+/**
+ * Lê os flags de VISITA PRESENCIAL MENSAL do cliente (presential_monthly /
+ * presential_monthly_weekday). Esses campos vivem fora do schema.ts (só ALTER no
+ * boot + SQL cru, como status_reason) para não quebrar db.select().from(customers).
+ * weekday: 0=Dom..6=Sab, ou null (= automático pela região). Nunca lança.
+ */
+async function __getPresentialMonthly(customerId: string): Promise<{ enabled: boolean; weekday: number | null }> {
+  try {
+    const r: any = await db.execute(sql`SELECT presential_monthly AS pm, presential_monthly_weekday AS wd FROM customers WHERE id = ${customerId} LIMIT 1`);
+    const row = ((r.rows || r) as any[])[0];
+    if (!row || row.pm !== true) return { enabled: false, weekday: null };
+    const DIA: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
+    let wd: number | null = null;
+    const raw = row.wd;
+    if (raw != null && String(raw).trim() !== '') {
+      const s = String(raw).trim().toLowerCase().slice(0, 3);
+      if (s in DIA) wd = DIA[s];
+      else if (/^[0-6]$/.test(String(raw).trim())) wd = Number(String(raw).trim());
+    }
+    return { enabled: true, weekday: wd };
+  } catch { return { enabled: false, weekday: null }; }
+}
+
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
   const { calculateNextVisitDate, datasPelaRegra, normalizarSemana } = await import('../shared/visitSchedule');
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
@@ -340,6 +363,57 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     if (wd === null) return 0; // sem coordenada/vendedor/região → aguarda regularização (Inbox)
     targetWeekdays = [['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][wd]];
     periodicity = 'semanal'; // regra dos leads
+  }
+
+  // ========================================================================
+  // 🏢 VISITA PRESENCIAL MENSAL (cliente virtual híbrido de vendedor externo)
+  // O cliente virtual recebe ≥1 visita PRESENCIAL/mês (is_virtual=false) no dia
+  // da REGIÃO (clientes vizinhos do vendedor), ou no dia fixado pelo admin
+  // (presential_monthly_weekday). A semana do mês segue o semanaAtendimento do
+  // cliente; sem regra fixa, cai na 1ª semana (garante exatamente 1/mês). Se o
+  // cliente foi DEMOVIDO (virtualService=false, por falta de check-in na visita
+  // do dia), gera SOMENTE essa visita presencial — não adensa a rota. Se continua
+  // virtual (virtualService=true), segue também a cadência virtual normal abaixo.
+  // ========================================================================
+  const pm = await __getPresentialMonthly(customerId);
+  if (pm.enabled) {
+    let pmWd: number | null = pm.weekday;
+    if (pmWd === null) {
+      const platM = Number(c.latitude), plngM = Number(c.longitude);
+      if (Number.isFinite(platM) && Number.isFinite(plngM) && !(platM === 0 && plngM === 0) && c.sellerId) {
+        try {
+          const scM = await __agendaSellerCustomers(String(c.sellerId), customerId);
+          const rwM = __agendaRegionWeekday(scM, platM, plngM);
+          if (rwM !== null) pmWd = rwM;
+        } catch { /* noop */ }
+      }
+    }
+    // Fallback: dia de rota do próprio cadastro (1ª útil), se a região não resolveu.
+    if ((pmWd === null || pmWd < 1 || pmWd > 5) && weekdayNums.length) {
+      const wuM = weekdayNums.find((n) => n >= 1 && n <= 5);
+      if (wuM !== undefined) pmWd = wuM;
+    }
+    let pmCreated = 0;
+    if (pmWd !== null && pmWd >= 1 && pmWd <= 5) {
+      const semanaPM0 = normalizarSemana(c.semanaAtendimento);
+      const semanaPM = (semanaPM0 === 'toda' ? '1' : semanaPM0) as any;
+      const fimPM = new Date(today); fimPM.setMonth(fimPM.getMonth() + 4);
+      let pmDates = datasPelaRegra(today, fimPM, [pmWd], semanaPM)
+        .filter((d) => !serviceStart || d >= serviceStart);
+      // Exatamente 1 por mês-calendário (a data mais cedo) — garante "pelo menos 1/mês"
+      // mesmo quando a regra (ex.: 'impar') produziria 2 ocorrências no mês.
+      const porMesPM = new Map<string, Date>();
+      for (const d of pmDates) { const k = `${d.getFullYear()}-${d.getMonth()}`; if (!porMesPM.has(k)) porMesPM.set(k, d); }
+      pmDates = Array.from(porMesPM.values()).sort((a, b) => a.getTime() - b.getTime()).slice(0, 4);
+      if (pmDates.length) {
+        // Força is_virtual=false reaproveitando o gravador (clone com virtualService=false).
+        pmCreated = await __gravarAgendaDatas({ ...c, virtualService: false }, 'mensal', pmDates);
+      }
+    }
+    // DEMOVIDO (virtualService=false): só a visita presencial mensal — não cai na
+    // cadência presencial completa abaixo (que adensaria a rota).
+    if (c.virtualService !== true) return pmCreated;
+    // Caso contrário (virtualService=true), segue a geração virtual normal abaixo.
   }
 
   // 🏙️ BRASÍLIA (DF): a âncora do agendamento é a ÚLTIMA ENTREGA (swimlane "Entregue" do

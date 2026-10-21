@@ -721,6 +721,49 @@ async function __enriquecerClientesConsulta(lista: any[]): Promise<void> {
   }
 }
 
+/**
+ * VISITA PRESENCIAL MENSAL — captura/persiste os campos presentialMonthly /
+ * presentialMonthlyWeekday do payload de edição do cliente. Esses campos vivem
+ * fora do schema Drizzle (ALTER no boot + SQL cru), então são removidos de req.body
+ * antes do update normal e gravados à parte. O TOGGLE é restrito a gestores; o DIA
+ * fixo (override manual) é exclusivo do Admin (null = automático pela região).
+ * Toda alteração entra no histórico do cliente. Retorna { changed } p/ o handler
+ * decidir regenerar a agenda. Nunca lança.
+ */
+async function __applyPresentialMonthly(
+  req: any, id: string, user: any, isManager: boolean, isAdmin: boolean,
+): Promise<{ ok: boolean; status?: number; message?: string; changed: boolean }> {
+  const b = req.body || {};
+  const pmHas = Object.prototype.hasOwnProperty.call(b, 'presentialMonthly');
+  const wdHas = Object.prototype.hasOwnProperty.call(b, 'presentialMonthlyWeekday');
+  const pmFlag = pmHas ? (b.presentialMonthly === true || b.presentialMonthly === 'true') : undefined;
+  let pmWd: string | null | undefined = undefined;
+  if (wdHas) { const raw = b.presentialMonthlyWeekday; pmWd = (raw === null || raw === '' || raw === undefined) ? null : String(raw).trim(); }
+  delete req.body.presentialMonthly;
+  delete req.body.presentialMonthlyWeekday;
+  if (!pmHas && !wdHas) return { ok: true, changed: false };
+  if (!isManager) return { ok: false, status: 403, message: "Somente gestores podem alterar a Visita Presencial Mensal.", changed: false };
+  if (wdHas && !isAdmin) return { ok: false, status: 403, message: "Somente o Admin pode fixar o dia da visita presencial mensal.", changed: false };
+  let changed = false;
+  try {
+    const cur: any = await db.execute(sql`SELECT COALESCE(presential_monthly,false) AS pm, presential_monthly_weekday AS wd FROM customers WHERE id = ${id} LIMIT 1`);
+    const crow = ((cur.rows || cur) as any[])[0] || {};
+    const oldPm = crow.pm === true; const oldWd = crow.wd ?? null;
+    const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email };
+    if (pmHas && pmFlag !== oldPm) {
+      await db.execute(sql`UPDATE customers SET presential_monthly = ${pmFlag} WHERE id = ${id}`);
+      try { await logCustomerNote({ customerId: id, label: 'Visita presencial mensal', text: pmFlag ? 'Ativada: cliente virtual passa a receber ao menos 1 visita presencial por mês (dia da região, salvo override do admin).' : 'Desativada.', actor, source: 'edit' }); } catch { /* noop */ }
+      changed = true;
+    }
+    if (wdHas && String(oldWd ?? '') !== String(pmWd ?? '')) {
+      await db.execute(sql`UPDATE customers SET presential_monthly_weekday = ${pmWd} WHERE id = ${id}`);
+      try { await logCustomerNote({ customerId: id, label: 'Dia da visita presencial mensal', text: pmWd ? `Fixado manualmente pelo admin: ${pmWd}.` : 'Voltou a ser automático (pela região).', actor, source: 'edit' }); } catch { /* noop */ }
+      changed = true;
+    }
+  } catch (e: any) { console.warn('[visita-mensal] persist falhou:', e?.message); }
+  return { ok: true, changed };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -1848,6 +1891,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const r of ((ex.rows || ex) as any[])) exMap.set(String(r.id), r);
         for (const c of (customers as any[])) { const e = exMap.get(String(c.id)); (c as any).statusReason = e ? (e.status_reason || null) : null; (c as any).isExcluded = e ? (e.is_excluded === true) : false; }
       } catch (_e) { /* colunas ainda não existem (ALTER do boot) → segue sem motivo */ }
+      // 🏢 Anexa presential_monthly / presential_monthly_weekday (visita presencial mensal — fora do schema).
+      try {
+        const pmx: any = await db.execute(sql`SELECT id, presential_monthly, presential_monthly_weekday FROM customers WHERE presential_monthly = true`);
+        const pmMap = new Map<string, any>();
+        for (const r of ((pmx.rows || pmx) as any[])) pmMap.set(String(r.id), r);
+        for (const c of (customers as any[])) { const p = pmMap.get(String(c.id)); (c as any).presentialMonthly = p ? (p.presential_monthly === true) : false; (c as any).presentialMonthlyWeekday = p ? (p.presential_monthly_weekday || null) : null; }
+      } catch (_e) { /* colunas ainda não existem (ALTER do boot) → segue sem */ }
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);
@@ -2840,6 +2890,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 📝 MOTIVO só circula à parte (nunca é coluna do cadastro): remove do payload antes de gravar.
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
+      // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
+      const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
+      if (!_pmRes.ok) return res.status(_pmRes.status || 403).json({ message: _pmRes.message });
+      const __pmChanged = _pmRes.changed;
       // 🔒 INATIVAR cliente é exclusivo do Admin (nem coordinator/administrative inativam pelo cadastro).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
@@ -3160,7 +3214,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           String((_b as any).semanaAtendimento || 'toda') !== String((_a as any).semanaAtendimento || 'toda') ||
           _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
         const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
-        if (_mudou && _elegivel) {
+        if ((_mudou || (typeof __pmChanged !== "undefined" && __pmChanged)) && _elegivel) {
           const _n = await regenerateCustomerAgenda(String(id));
           console.log(`🗓️ [CUSTOMER-UPDATE] Agenda regenerada (${_n} visita(s)) após mudança de vendedor/dia/periodicidade/início do cliente ${id}`);
         }
@@ -3664,6 +3718,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _wantsActivate = req.body.isActive === true;
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
+      // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
+      const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
+      if (!_pmRes.ok) return res.status(_pmRes.status || 403).json({ message: _pmRes.message });
+      const __pmChanged = _pmRes.changed;
       // 🔒 INATIVAR cliente é exclusivo do Admin (mesma regra do PATCH).
       if (_wantsInactivate && !_isAdmin) {
         return res.status(403).json({ message: "Somente o Admin pode inativar clientes." });
@@ -3944,7 +4002,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           String((_b as any).semanaAtendimento || 'toda') !== String((_a as any).semanaAtendimento || 'toda') ||
           _ts(_b.serviceStartDate) !== _ts(_a.serviceStartDate);
         const _elegivel = _a.isActive !== false && _a.isSupplier !== true && _a.isLead !== true;
-        if (_mudou && _elegivel) {
+        if ((_mudou || (typeof __pmChanged !== "undefined" && __pmChanged)) && _elegivel) {
           const _n = await regenerateCustomerAgenda(String(id));
           console.log(`🗓️ [CUSTOMER-UPDATE-PUT] Agenda regenerada (${_n} visita(s)) após mudança de vendedor/dia/periodicidade/início do cliente ${id}`);
         }

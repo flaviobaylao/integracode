@@ -90,6 +90,13 @@ const DDL: string[] = [
   // Inativação/Exclusão (out/2026): motivo obrigatório + status "Excluído".
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text;`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false;`,
+  // Visita presencial mensal obrigatória (cliente virtual híbrido de vendedor externo) — out/2026.
+  // presential_monthly=true: além dos contatos virtuais, o cliente recebe ≥1 visita PRESENCIAL/mês
+  // no dia da região (ou no dia definido em presential_monthly_weekday, override do admin: token
+  // 'Seg'..'Sex' ou NULL=automático pela região). O job noturno converte p/ presencial quem não
+  // tiver check-in na visita do dia e devolve a virtual quem tiver. Fora do schema.ts (raw SQL).
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS presential_monthly boolean DEFAULT false;`,
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS presential_monthly_weekday varchar;`,
   // Regra fixa por REGIÃO: amarra uma direção à macro (UF) ou micro-região (cidade).
   `CREATE TABLE IF NOT EXISTS holiday_region_rules (
      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
