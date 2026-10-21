@@ -131,6 +131,12 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   // Inativação é ação de gestor. Telemarketing e Vendedor editam o cadastro, mas NÃO inativam clientes.
   const canInactivateCustomer = (user?.role === 'admin'); // Inativar é exclusivo do Admin
 
+  // 🏢 VISITA PRESENCIAL MENSAL (cliente virtual híbrido): o toggle é de gestor; o DIA fixo é do Admin.
+  const canManagePresentialMonthly = ['admin', 'coordinator', 'administrative'].includes(user?.role || '');
+  const isAdminUser = user?.role === 'admin';
+  const [pmEnabled, setPmEnabled] = useState<boolean>(false);
+  const [pmWeekday, setPmWeekday] = useState<string>(''); // '' = automático pela região; 'Seg'..'Sex' = fixo
+
   // 🔒 Dias/Periodicidade de visita: QUALQUER usuário pode INCLUIR (quando o campo está vazio);
   // ALTERAR um valor já preenchido é permitido só a estes administradores (Cinthia e Flávio).
   const VISIT_ALTER_ADMINS = ['cinthiamarque90@gmail.com', 'flavio@bebahonest.com.br', 'flaviobaylao@gmail.com'];
@@ -225,6 +231,8 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
     if (customer) {
       const type = (customer as any).customerType || 'pessoa_fisica';
       setCustomerType(type);
+      setPmEnabled((customer as any).presentialMonthly === true);
+      setPmWeekday((customer as any).presentialMonthlyWeekday ? String((customer as any).presentialMonthlyWeekday) : '');
       
       // Normalizar weekdays para o formato padrão abreviado
       const normalizedWeekdays = normalizeWeekdays(customer.weekdays || '[]');
@@ -275,6 +283,8 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       });
     } else {
       setCustomerType('pessoa_fisica');
+      setPmEnabled(false);
+      setPmWeekday('');
       form.reset({
         customerType: 'pessoa_fisica',
         name: '',
@@ -615,6 +625,12 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         });
         return;
       }
+    }
+    // 🏢 VISITA PRESENCIAL MENSAL — campos fora do schema, injetados no payload só na EDIÇÃO
+    // e apenas por quem tem permissão (o backend também valida). Evita 403 em perfis sem acesso.
+    if (customer && canManagePresentialMonthly) {
+      (data as any).presentialMonthly = pmEnabled;
+      if (isAdminUser) (data as any).presentialMonthlyWeekday = pmWeekday || null;
     }
     customerMutation.mutate(data);
   };
@@ -1521,6 +1537,68 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                         </FormItem>
                       )}
                     />
+                  </div>
+                )}
+
+                {/* Visita Presencial Mensal — cliente virtual híbrido de vendedor externo */}
+                {canManagePresentialMonthly && (
+                  <div className="mt-4">
+                    <div className="rounded-lg border p-4 space-y-3">
+                      <div className="flex flex-row items-center justify-between">
+                        <div className="space-y-0.5">
+                          <div className="text-base flex items-center space-x-2 font-medium">
+                            <i className="fas fa-store text-emerald-600"></i>
+                            <span>Visita presencial mensal obrigatória</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Cliente virtual que deve receber ao menos 1 visita <strong>presencial</strong> por mês,
+                            no dia da região (vizinhos do vendedor). Se a visita do dia não tiver check-in, o cliente
+                            passa a presencial automaticamente; volta a virtual quando a visita presencial ocorrer.
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="checkbox"
+                            checked={pmEnabled}
+                            onChange={(e) => setPmEnabled(e.target.checked)}
+                            className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                            data-testid="checkbox-presential-monthly"
+                          />
+                        </div>
+                      </div>
+                      {pmEnabled && (
+                        <div className="pt-1 border-t">
+                          <label className="text-sm font-medium flex items-center space-x-2 mt-2">
+                            <i className="fas fa-calendar-day text-emerald-600"></i>
+                            <span>Dia da visita presencial</span>
+                          </label>
+                          {isAdminUser ? (
+                            <>
+                              <select
+                                value={pmWeekday}
+                                onChange={(e) => setPmWeekday(e.target.value)}
+                                className="mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm bg-background"
+                                data-testid="select-presential-monthly-weekday"
+                              >
+                                <option value="">Automático (pela região)</option>
+                                <option value="Seg">Segunda-feira</option>
+                                <option value="Ter">Terça-feira</option>
+                                <option value="Qua">Quarta-feira</option>
+                                <option value="Qui">Quinta-feira</option>
+                                <option value="Sex">Sexta-feira</option>
+                              </select>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Deixe em "Automático" para o sistema escolher pelo dia de rota da região. A semana do mês segue a Semana de Atendimento do cliente.
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {pmWeekday ? `Dia fixado pelo admin: ${pmWeekday}.` : 'Automático (pela região).'} Somente o Admin pode alterar o dia.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
