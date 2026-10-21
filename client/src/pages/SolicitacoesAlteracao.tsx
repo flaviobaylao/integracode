@@ -167,6 +167,8 @@ function Detalhes({ details }: { details: any }) {
 // pelo admin (note) + os textos da própria solicitação (motivo do inativar, "outro", motivo/texto
 // do report). Assim o botão "Inativar" não falha na exigência de motivo (mín. 5 caracteres) e o
 // que foi escrito nas observações vira o motivo registrado. (out/2026)
+// 21/out/2026 — Redeploy: o build de 0470787 (este helper) não chegou à produção e o botão
+// Inativar seguia mandando a inativação sem motivo, caindo no erro "mínimo 5 caracteres".
 function motivoInativacaoDe(note: string, details: any): string {
   const d = details || {};
   const cand = [note, d?.inativar, d?.outro, d?.motivo, d?.texto, d?.observacao]
