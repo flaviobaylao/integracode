@@ -20,7 +20,6 @@ import { type Express } from "express";
 import { authenticateUser } from "./authMiddleware";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { foraDaDivida, naoEVenda } from "./divida-viva";
 
 // Decisão do Flavio (04/ago/2026): o Extrato é uma tela de CONSULTA (só GET, nada
 // editável) e fica liberada para TODOS os perfis, sem filtro de carteira —
@@ -221,42 +220,6 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const receivables: any[] = recRes?.rows || recRes || [];
       const recIds = receivables.map((r) => r.id);
 
-      // 1b) TÍTULOS EXCLUÍDOS — a NF não pode voltar pela porta dos fundos
-      // ------------------------------------------------------------------
-      // Caso real (ESQUINAO CONVENIENCIA, 30/set/2026): os títulos NF-104147 e
-      // NF-104158 foram excluídos à mão em 23/jul. Sumiram do Contas a Receber —
-      // mas as etapas 3 (NF-e) e 4 (pedido faturado), que existem para fechar
-      // buracos do histórico, viram "NF sem título no financeiro" e RECRIARAM as
-      // duas notas a partir do card do pipeline, com vencimento novo e situação
-      // Vencida. R$ 504,00 de dívida inexistente no faturado, no vencido e no
-      // saldo devedor, divergindo da tela de títulos.
-      //
-      // Decisão do Flavio (30/set/2026): se a NF JÁ TEVE título e ele foi
-      // excluído, o Extrato não recria a nota. Buraco de histórico continua
-      // sendo fechado normalmente para NF que NUNCA teve título.
-      //
-      // Só vale quando TODOS os títulos daquela NF estão excluídos: se sobrou um
-      // vivo, ele entra pelo caminho normal e a NF já está em `nfSeen`.
-      const excRes: any = await db.execute(sql`
-        SELECT r.id, r.title_number, r.notes, r.amount, r.billing_pipeline_id, r.deleted_at
-        FROM receivables r
-        WHERE r.deleted_at IS NOT NULL
-          AND (r.customer_id = ${customerId} ${docCond})
-      `);
-      const excluidos: any[] = excRes?.rows || excRes || [];
-      const nfExcluidas = new Set<string>();
-      const bpExcluidos = new Set<string>();
-      const valorPorNfExcluida = new Map<string, number>();
-      for (const r of excluidos) {
-        const nf = nfKeyOf(noteVal(r.notes, "nf")) || nfKeyOf(r.title_number);
-        if (nf) {
-          nfExcluidas.add(nf);
-          valorPorNfExcluida.set(nf, (valorPorNfExcluida.get(nf) || 0) + num(r.amount));
-        }
-        if (r.billing_pipeline_id) bpExcluidos.add(String(r.billing_pipeline_id));
-      }
-      const notasTituloExcluido: Array<{ nf: string; valor: number }> = [];
-
       // 2) Baixas com data real
       let payments: any[] = [];
       if (recIds.length) {
@@ -319,23 +282,47 @@ export function registerCustomerStatementRoutes(app: Express): void {
         if (!isFinite(nasceu) || !isFinite(ancNasceu)) return false;
         return nasceu - ancNasceu > 86400000; // mais de 1 dia depois
       };
+      // ESPELHO DO CONTAS A RECEBER (21/out/2026, decisão do Flavio): o Extrato é o
+      // histórico de OCORRÊNCIAS financeiras do cliente — nota faturada, paga,
+      // vencida, troca, devolução. Nada mais é escondido: todo título que a tela de
+      // Contas a Receber mostra aparece aqui. O que muda é a LEITURA de cada linha,
+      // não a sua existência.
+      //
+      // O título fantasma (duplicata de reparo de órfãos) continua visível, mas em
+      // LINHA PRÓPRIA e com débito ZERO: se entrasse na mesma NF da nota verdadeira,
+      // a linha somaria o valor duas vezes. Fica marcado como "Duplicado".
       const fantasmasIgnorados: any[] = [];
       const duplicadasComBaixa: any[] = [];
-      const receivablesUteis = receivables.filter((r) => {
-        if (!ehDuplicata(r)) return true;
-        if (temDinheiro(r)) { duplicadasComBaixa.push(r); return true; }
+      const idsFantasma = new Set<string>();
+      for (const r of receivables) {
+        if (!ehDuplicata(r)) continue;
+        if (temDinheiro(r)) { duplicadasComBaixa.push(r); continue; }
         fantasmasIgnorados.push(r);
-        return false;
-      });
+        idsFantasma.add(String(r.id));
+      }
+      const receivablesUteis = receivables;
       if (fantasmasIgnorados.length) {
         console.log(
-          `[extrato-cliente] ${fantasmasIgnorados.length} titulo(s) fantasma ignorado(s) p/ cliente ${customerId}: ` +
+          `[extrato-cliente] ${fantasmasIgnorados.length} titulo(s) duplicado(s) marcado(s) p/ cliente ${customerId}: ` +
             fantasmasIgnorados.map((r) => `${r.title_number}=${r.amount}`).join(", ")
         );
       }
 
+      // NATUREZA DA OCORRÊNCIA — o rótulo que explica a linha quando ela não é uma
+      // venda comum. Mesmos marcadores de divida-viva.ts, só que agora para EXIBIR
+      // em vez de esconder. Operação informativa não entra no saldo devedor.
+      const naturezaDe = (desc: any): string | null => {
+        const t = String(desc || "");
+        if (/\[GYN\]|\[BSB\]|\[IND\]|\[SERV\]/i.test(t)) return "Outra praça";
+        if (/TRANSFER/i.test(t)) return "Transferência";
+        if (/DEVOLU/i.test(t)) return "Devolução";
+        if (/TROCA/i.test(t)) return "Troca";
+        if (/AMOSTRA/i.test(t)) return "Amostra";
+        if (/OUTRAS?\s+SA[IÍ]DAS?/i.test(t)) return "Outra saída";
+        return null;
+      };
+
       // ── Monta as notas (agrupando parcelas do mesmo número de NF) ───────────
-      // (o log das notas barradas por título excluído sai depois da etapa 4)
       type NotaAgg = {
         key: string;
         nf: string;
@@ -348,6 +335,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
         parcelas: number;
         origem: string;
         descricao: string;
+        /** description + category de TODAS as parcelas: é onde mora o marcador. */
+        marcadores: string;
+        fantasma?: boolean;
         titulos: any[];
         bpId?: string | null;
         scId?: string | null;
@@ -365,7 +355,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
         // A chave inclui a instância Omie: duas empresas do grupo podem emitir
         // NFs com o mesmo número, e elas não podem ser fundidas na mesma linha.
         const inst = String(r.omie_instance_id || "");
-        const key = nf ? `NF:${inst}:${nf}` : `TIT:${r.id}`;
+        const fantasma = idsFantasma.has(String(r.id));
+        // Duplicata fica em linha própria: fundida na NF verdadeira ela dobraria o valor.
+        const key = fantasma ? `FANT:${r.id}` : nf ? `NF:${inst}:${nf}` : `TIT:${r.id}`;
         const cancelado = String(r.status || "") === "cancelada";
         const pago = cancelado ? 0 : num(r.amount_paid);
 
@@ -383,6 +375,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
             parcelas: 1,
             origem: "financeiro",
             descricao: r.description || r.category || "",
+            marcadores: `${r.description || ""} ${r.category || ""}`,
+            fantasma,
             titulos: cancelado ? [] : [r],
             bpId: r.billing_pipeline_id || null,
             scId: r.sales_card_id || null,
@@ -396,104 +390,13 @@ export function registerCustomerStatementRoutes(app: Express): void {
           if (dataNota && (!cur.data || dataNota < cur.data)) cur.data = dataNota;
           const venc = toISO(r.due_date);
           if (venc && (!cur.vencimento || venc > cur.vencimento)) cur.vencimento = venc;
+          cur.marcadores += ` ${r.description || ""} ${r.category || ""}`;
           if (!cur.pedido && pedido) cur.pedido = pedido;
           if (!cur.bpId && r.billing_pipeline_id) cur.bpId = r.billing_pipeline_id;
           if (!cur.scId && r.sales_card_id) cur.scId = r.sales_card_id;
           if (!cur.fiId && r.fiscal_invoice_id) cur.fiId = r.fiscal_invoice_id;
         }
         if (nf) nfSeen.add(nf);
-      }
-
-      // 3) NF-e emitidas no sistema que não apareceram no financeiro
-      const nfeRes: any = await db.execute(sql`
-        SELECT f.id, f.invoice_number, f.series, f.status, f.total_invoice,
-               f.emission_date, f.authorization_date, f.cancellation_date,
-               f.nature_of_operation, f.payment_method
-        FROM fiscal_invoices f
-        WHERE (f.customer_id = ${customerId}
-               ${doc.length >= 11 ? sql` OR REGEXP_REPLACE(COALESCE(f.customer_cnpj_cpf,''), '\\D', '', 'g') = ${doc}` : sql``})
-          AND f.status IN ('authorized','cancelled','cancelada')
-        ORDER BY f.emission_date ASC
-      `);
-      const nfeRows: any[] = nfeRes?.rows || nfeRes || [];
-      const canceladas: any[] = [];
-      for (const f of nfeRows) {
-        const nf = nfKeyOf(f.invoice_number);
-        if (f.status === "cancelled" || f.status === "cancelada") {
-          if (nf) canceladas.push({ nf, data: toISO(f.cancellation_date || f.emission_date), valor: num(f.total_invoice) });
-          continue;
-        }
-        if (nf && nfSeen.has(nf)) continue; // já veio pelo financeiro
-        if (nf && nfExcluidas.has(nf)) { // título excluído: não ressuscita (ver 1b)
-          notasTituloExcluido.push({ nf, valor: valorPorNfExcluida.get(nf) || num(f.total_invoice) });
-          nfSeen.add(nf);
-          continue;
-        }
-        const key = nf ? `NF:${nf}` : `NFE:${f.id}`;
-        if (notas.has(key)) continue;
-        notas.set(key, {
-          key,
-          nf: nf || "—",
-          pedido: "",
-          data: toISO(f.authorization_date || f.emission_date),
-          vencimento: toISO(f.emission_date),
-          valor: num(f.total_invoice),
-          valorCancelado: 0,
-          pago: 0,
-          parcelas: 1,
-          origem: "nfe",
-          descricao: f.nature_of_operation || "NF-e emitida",
-          titulos: [],
-          fiId: f.id,
-        });
-        if (nf) nfSeen.add(nf);
-      }
-      const canceladasSet = new Set(canceladas.map((c) => c.nf));
-
-      // 4) Pedidos faturados sem contrapartida (fecha buracos do histórico)
-      const bpRes: any = await db.execute(sql`
-        SELECT b.id, b.order_number, b.invoice_number, b.sale_value, b.stage,
-               b.payment_method, b.created_at, b.updated_at, b.seller_name
-        FROM billing_pipeline b
-        WHERE b.customer_id = ${customerId}
-          AND b.invoice_number IS NOT NULL AND b.invoice_number <> ''
-        ORDER BY b.created_at ASC
-      `);
-      const bpRows: any[] = bpRes?.rows || bpRes || [];
-      for (const b of bpRows) {
-        const nf = nfKeyOf(b.invoice_number);
-        if (!nf || nfSeen.has(nf)) continue;
-        if (nfExcluidas.has(nf) || bpExcluidos.has(String(b.id))) { // título excluído (ver 1b)
-          notasTituloExcluido.push({ nf, valor: valorPorNfExcluida.get(nf) || num(b.sale_value) });
-          nfSeen.add(nf);
-          continue;
-        }
-        const key = `NF:${nf}`;
-        if (notas.has(key)) continue;
-        notas.set(key, {
-          key,
-          nf,
-          pedido: String(b.order_number || ""),
-          data: toISO(b.updated_at || b.created_at),
-          vencimento: toISO(b.updated_at || b.created_at),
-          valor: num(b.sale_value),
-          valorCancelado: 0,
-          pago: 0,
-          parcelas: 1,
-          origem: "pedido",
-          descricao: `Pedido ${b.order_number || ""}`.trim(),
-          titulos: [],
-          bpId: b.id,
-        });
-        nfSeen.add(nf);
-      }
-
-      if (notasTituloExcluido.length) {
-        console.log(
-          `[extrato-cliente] ${notasTituloExcluido.length} nota(s) NAO recriada(s) p/ cliente ${customerId} ` +
-            `(titulo excluido do financeiro): ` +
-            notasTituloExcluido.map((x) => `NF ${x.nf}=${x.valor}`).join(", ")
-        );
       }
 
       // ── Produtos faturados por nota ─────────────────────────────────────────
@@ -624,34 +527,22 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const hojeDia = hojeBR(); // dia de hoje em America/Sao_Paulo (YYYY-MM-DD)
       const linhas: any[] = [];
 
-      // SÓ NOTA FISCAL DE VENDA (16/set/2026): transferência entre estabelecimentos
-      // e faturamento de outra praça/empresa do grupo ([GYN]/[BSB]/[IND]/[SERV])
-      // não são venda para este cliente — somem da lista e de TODOS os totais,
-      // junto com os pagamentos ligados a elas. Ver divida-viva.ts.
-      const naoVenda: Array<{ nf: string; valor: number }> = [];
-      for (const [chave, nota] of Array.from(notas.entries())) {
-        if (naoEVenda(nota.descricao)) {
-          naoVenda.push({ nf: nota.nf, valor: nota.valor });
-          notas.delete(chave);
-        }
-      }
-      if (naoVenda.length) {
-        console.log(`[extrato-cliente] ${naoVenda.length} nota(s) fora do extrato (transferencia/outra praca) p/ cliente ${customerId}`);
-      }
-
       // Operações informativas (não são dívida): DEVOLUÇÃO, outra praça
-      // ([GYN]/[BSB]/[IND]), TROCA, AMOSTRA e CFOP 5949/6949. A regra mora em
-      // divida-viva.ts e vale também no badge da rota, no bloqueio de crédito e
-      // no alerta — não ganham tag de situação e o valor NÃO entra no saldo
-      // devedor / vencido / a vencer.
+      // ([GYN]/[BSB]/[IND]/[SERV]), TRANSFERÊNCIA, TROCA, AMOSTRA e CFOP 5949/6949.
+      // A regra mora em divida-viva.ts e vale também no badge da rota, no bloqueio
+      // de crédito e no alerta. Desde 21/out/2026 elas APARECEM no extrato (é um
+      // histórico de ocorrências), levando o nome da ocorrência no lugar da tag de
+      // situação; o valor continua FORA do saldo devedor / vencido / a vencer.
 
       for (const n of Array.from(notas.values())) {
-        const cancelada = canceladasSet.has(n.nf) || (n.valor <= 0.009 && n.valorCancelado > 0.009);
+        const cancelada = n.valor <= 0.009 && n.valorCancelado > 0.009;
         const saldoTitulo = Math.max(0, n.valor - n.pago);
-        const vencido = !cancelada && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
-        const semTag = foraDaDivida(n.descricao);
-        const situacao = semTag
-          ? null
+        const vencido = !cancelada && !n.fantasma && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
+        const natureza = naturezaDe(n.marcadores);
+        const situacao = n.fantasma
+          ? "Duplicado"
+          : natureza
+          ? natureza
           : cancelada
           ? "Cancelada"
           : saldoTitulo <= 0.009
@@ -697,13 +588,16 @@ export function registerCustomerStatementRoutes(app: Express): void {
           descricao: n.descricao || null,
           vencimento: n.vencimento,
           parcelas: n.parcelas,
-          debito: cancelada ? 0 : n.valor,
+          debito: cancelada || n.fantasma ? 0 : n.valor,
           credito: 0,
           valorNota: n.valor,
           pagoNota: n.pago,
           saldoNota: saldoTitulo,
           situacao,
           origem: n.origem,
+          natureza,
+          informativa: natureza !== null,
+          duplicado: !!n.fantasma,
           cancelada,
           diasAtraso: vencido ? diffDias(hojeDia, diaUTC(n.vencimento)) : null,
           formaPagamento: null,
@@ -720,6 +614,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
             parcelasQtd: n.parcelas,
             origem: ORIGEM_LABEL[n.origem] || n.origem,
             situacao,
+            natureza,
+            duplicado: !!n.fantasma,
             cancelada,
             parcelas: detParcelas,
             pagamentos: detPagsNota,
@@ -749,6 +645,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
                 credito: num(p.amount),
                 situacao: "Recebido",
                 origem: "baixa",
+                natureza,
+                informativa: natureza !== null,
                 formaPagamento: PM_LABEL[p.payment_method] || p.payment_method || null,
                 conta: p.account_name || null,
                 estimado: false,
@@ -833,18 +731,22 @@ export function registerCustomerStatementRoutes(app: Express): void {
       });
 
       // ── Resumo (vida inteira, independente do filtro de período) ───────────
-      const notasArr = Array.from(notas.values()).filter(
-        (n) => !canceladasSet.has(n.nf) && !(n.valor <= 0.009 && n.valorCancelado > 0.009)
+      // A LISTA é espelho do Contas a Receber; os KPIs continuam sendo de VENDA.
+      // Ficam fora das somas: a nota cancelada, o título duplicado (marcado na lista
+      // com débito zero) e a operação informativa — devolução, troca, amostra,
+      // CFOP 5949, transferência entre estabelecimentos e faturamento de outra praça.
+      // Elas aparecem no histórico, mas não são compra nem dívida deste cliente.
+      const notasVivas = Array.from(notas.values()).filter(
+        (n) => !n.fantasma && !(n.valor <= 0.009 && n.valorCancelado > 0.009)
       );
+      const ehInformativa = (n: NotaAgg) => naturezaDe(n.marcadores) !== null;
+      const notasArr = notasVivas.filter((n) => !ehInformativa(n));
+      const informativas = notasVivas.filter(ehInformativa);
       const totalFaturado = notasArr.reduce((s, n) => s + n.valor, 0);
-      const totalPago = linhas.filter((l) => l.tipo === "PAGAMENTO").reduce((s, l) => s + l.credito, 0);
-      // DEVOLUÇÃO / [GYN] / TROCA / AMOSTRA / OUTRA SAÍDA não entram na dívida:
-      // ficam fora do saldo devedor, do vencido e do a vencer.
-      const notasDivida = notasArr.filter((n) => !foraDaDivida(n.descricao));
-      const saldoDevGyn = notasArr
-        .filter((n) => foraDaDivida(n.descricao))
-        .reduce((s, n) => s + (n.valor - n.pago), 0);
-      const abertos = notasDivida.filter((n) => n.valor - n.pago > 0.009);
+      const totalPago = linhas
+        .filter((l) => l.tipo === "PAGAMENTO" && !l.informativa)
+        .reduce((s, l) => s + l.credito, 0);
+      const abertos = notasArr.filter((n) => n.valor - n.pago > 0.009);
       const vencidos = abertos.filter((n) => estaVencido(n.vencimento, hojeDia));
       const datas = notasArr.map((n) => n.data).filter(Boolean).sort() as string[];
       const atrasos = linhas
@@ -854,7 +756,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const resumo = {
         totalFaturado: Math.round(totalFaturado * 100) / 100,
         totalPago: Math.round(totalPago * 100) / 100,
-        saldoDevedor: Math.round((totalFaturado - totalPago - saldoDevGyn) * 100) / 100,
+        saldoDevedor: Math.round((totalFaturado - totalPago) * 100) / 100,
         totalVencido: Math.round(vencidos.reduce((s, n) => s + (n.valor - n.pago), 0) * 100) / 100,
         totalAVencer:
           Math.round(
@@ -868,26 +770,20 @@ export function registerCustomerStatementRoutes(app: Express): void {
         ultimaCompra: datas[datas.length - 1] || null,
         diasSemComprar: datas.length ? diffDays(hoje.toISOString(), datas[datas.length - 1]) : null,
         atrasoMedioDias: atrasos.length ? Math.round(atrasos.reduce((s, d) => s + d, 0) / atrasos.length) : null,
-        notasCanceladas:
-          canceladas.length +
-          Array.from(notas.values()).filter((n) => !canceladasSet.has(n.nf) && n.valor <= 0.009 && n.valorCancelado > 0.009).length,
+        notasCanceladas: Array.from(notas.values()).filter(
+          (n) => !n.fantasma && n.valor <= 0.009 && n.valorCancelado > 0.009
+        ).length,
         baixasEstimadas: linhas.filter((l) => l.estimado).length,
-        // Duplicatas de reparo de órfãos: as sem baixa foram REMOVIDAS do extrato;
-        // as com baixa continuam visíveis e só são sinalizadas.
-        // Notas que nem entram no extrato (transferencia / outra praca / outra empresa).
-        notasNaoVenda: naoVenda.length,
-        valorNaoVenda: Math.round(naoVenda.reduce((s2, x) => s2 + x.valor, 0) * 100) / 100,
+        // Operações informativas: VISÍVEIS na lista, fora dos KPIs de venda.
+        notasInformativas: informativas.length,
+        valorInformativas: Math.round(informativas.reduce((s2, n) => s2 + n.valor, 0) * 100) / 100,
+        // Duplicatas de reparo de órfãos: visíveis, marcadas e com débito zero.
         titulosFantasma: fantasmasIgnorados.length,
         valorFantasma:
           Math.round(fantasmasIgnorados.reduce((s2, r) => s2 + num(r.amount), 0) * 100) / 100,
         duplicadasComBaixa: duplicadasComBaixa.length,
         valorDuplicadasComBaixa:
           Math.round(duplicadasComBaixa.reduce((s2, r) => s2 + num(r.amount_paid), 0) * 100) / 100,
-        // NF cujo título foi excluído do financeiro: não é recriada a partir do
-        // pedido nem da NF-e (ver 1b).
-        notasTituloExcluido: notasTituloExcluido.length,
-        valorTituloExcluido:
-          Math.round(notasTituloExcluido.reduce((s2, x) => s2 + x.valor, 0) * 100) / 100,
       };
 
       res.json({
