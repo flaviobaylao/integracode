@@ -951,6 +951,8 @@ run();
   registerInstagram(app);
   registerLeadCapture(app);
   registerDelegationRoutes(app);
+  // CHAMADOS (21/out/2026): solicitações internas com numeração, inbox por destino e consulta entre setores. Rotas /api/chamados*.
+  try { const { registerChamados } = await import('./chamados-routes'); registerChamados(app); } catch (e: any) { console.error('[chamados]', e?.message || e); }
 
 
 

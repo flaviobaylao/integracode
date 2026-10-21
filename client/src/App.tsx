@@ -107,6 +107,7 @@ import FecharRota from "@/pages/FecharRota";
 import FechamentoPainel from "@/pages/FechamentoPainel";
 import ProgramaIndicacao from "@/pages/ProgramaIndicacao";
 import AgentesIA from "@/pages/AgentesIA";
+import Chamados from "@/pages/Chamados";
 import AcessosEDelegacoes from "@/pages/AcessosEDelegacoes";
 import SolicitacoesAlteracao from "@/pages/SolicitacoesAlteracao";
 import FeriadosAdmin from "@/pages/FeriadosAdmin";
@@ -328,6 +329,7 @@ function Router() {
           {/* alias legado (E7 remove) */}
           <Route path="/admin/sync-monitor" component={AmbienteFiscal} />
           <Route path="/admin/agentes" component={AgentesIA} />
+          <Route path="/chamados" component={Chamados} />
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/admin/solicitacoes-alteracao" component={SolicitacoesAlteracao} />
           <Route path="/admin/feriados" component={FeriadosAdmin} />
