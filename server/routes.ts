@@ -15910,10 +15910,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { key } = req.params;
       const { value, description } = req.body;
-      const userId = req.userId;
+      // authenticateUser preenche req.currentUser (req.userId não existe → antes dava sempre 403)
+      const user: any = req.currentUser || (req.userId ? await storage.getUser(req.userId) : null);
+      const userId = user?.id;
       
       // Only admin can update system settings
-      const user = await storage.getUser(userId);
       if (!['admin', 'industria'].includes(user?.role || '')) {
         return res.status(403).json({ message: "Access denied" });
       }
