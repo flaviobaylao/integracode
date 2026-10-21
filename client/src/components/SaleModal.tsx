@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar, Phone, AlertTriangle } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Receipt, Check, CreditCard, MapPin, FileText, MessageCircle, Truck, Calendar, Phone, AlertTriangle, Camera, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import WhatsAppButton from "./WhatsAppButton";
 import PaymentLinkDialog from "./PaymentLinkDialog";
@@ -52,6 +52,9 @@ function fmtRascunhoSalvoEm(value: any): string {
   }
 }
 
+// Troca: nº máximo de fotos dos produtos (mesma regra do SaleEditModal).
+const TROCA_MAX_FOTOS = 3;
+
 export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -69,6 +72,9 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const [linkPedido, setLinkPedido] = useState<{ id: string; nome?: string | null; total: number } | null>(null);
   const [operationType, setOperationType] = useState<OperationType>('venda');
   const [boletoDays, setBoletoDays] = useState<number>(7);
+  // Troca: fotos dos produtos (câmera OU galeria/arquivos), até TROCA_MAX_FOTOS. Obrigatória.
+  const [trocaPhotos, setTrocaPhotos] = useState<string[]>([]);
+  const [uploadingTrocaPhoto, setUploadingTrocaPhoto] = useState(false);
   
   // Estados dos horários de entrega
   const [enableSaturdayDelivery, setEnableSaturdayDelivery] = useState(false);
@@ -596,6 +602,64 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   };
 
   // Finalizar venda
+  // ── TROCA: captura/compressão/upload das fotos (mesma lógica do SaleEditModal) ──
+  const compressTrocaImage = (src: string, maxSide = 1280, quality = 0.72): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h && w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; }
+        else if (h >= w && h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; }
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const cx = c.getContext('2d'); if (!cx) { resolve(src); return; }
+        cx.drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(src);
+      img.src = src;
+    });
+  const lerArquivoTroca = (f: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev: any) => resolve(ev?.target?.result as string);
+      reader.onerror = () => reject(new Error('leitura falhou'));
+      reader.readAsDataURL(f);
+    });
+  const handleTrocaPhotoChange = async (e: any) => {
+    const arquivos: File[] = Array.from(e?.target?.files || []);
+    if (e?.target) e.target.value = '';
+    if (!arquivos.length) return;
+    const espaco = TROCA_MAX_FOTOS - trocaPhotos.length;
+    if (espaco <= 0) {
+      toast({ title: `Máximo de ${TROCA_MAX_FOTOS} fotos`, description: 'Remova uma das fotos anexadas para colocar outra no lugar.', variant: 'destructive' });
+      return;
+    }
+    const aceitos = arquivos.filter((f) => String(f.type || '').startsWith('image/')).slice(0, espaco);
+    if (!aceitos.length) { toast({ title: 'Arquivo inválido', description: 'Selecione imagens (JPG, PNG ou WEBP).', variant: 'destructive' }); return; }
+    try {
+      const novas: string[] = [];
+      for (const f of aceitos) novas.push(await compressTrocaImage(await lerArquivoTroca(f)));
+      setTrocaPhotos((atuais) => [...atuais, ...novas].slice(0, TROCA_MAX_FOTOS));
+    } catch {
+      toast({ title: 'Não foi possível ler a imagem', description: 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
+    }
+  };
+  const removerTrocaPhoto = (i: number) => setTrocaPhotos((atuais) => atuais.filter((_, k) => k !== i));
+  const uploadTrocaPhotos = async (cardId: string, dataUrls: string[]): Promise<boolean> => {
+    try {
+      setUploadingTrocaPhoto(true);
+      for (let i = 0; i < dataUrls.length; i++) {
+        const blob = await (await fetch(dataUrls[i])).blob();
+        const fd = new FormData();
+        fd.append('photo', blob, `troca-${i + 1}.jpg`);
+        const resp = await fetch(`/api/sales-cards/${cardId}/troca-photo`, { method: 'POST', credentials: 'include', body: fd });
+        if (!resp.ok) throw new Error('upload falhou');
+      }
+      return true;
+    } catch { return false; }
+    finally { setUploadingTrocaPhoto(false); }
+  };
+
   const handleFinalizeSale = () => {
     if (saleItems.length === 0) {
       toast({
@@ -621,6 +685,16 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
         title: "Erro de Validação",
         description: "Selecione no máximo 2 tipos de veículos",
         variant: "destructive"
+      });
+      return;
+    }
+
+    // 🔒 TRAVA Troca: foto dos produtos obrigatória (mesma regra do SaleEditModal).
+    if (operationType === 'troca' && trocaPhotos.length === 0) {
+      toast({
+        title: 'Foto obrigatória na Troca',
+        description: `Tire ou anexe pelo menos uma foto dos produtos da troca (até ${TROCA_MAX_FOTOS}) antes de finalizar.`,
+        variant: 'destructive',
       });
       return;
     }
@@ -813,7 +887,20 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       saveForReuse: true
     };
 
-    // Por enquanto, checkout simplesmente finaliza a venda
+    // Troca: enviar a(s) foto(s) dos produtos ANTES de finalizar (se falhar, aborta).
+    if (operationType === 'troca') {
+      if (trocaPhotos.length === 0) {
+        toast({ title: 'Foto obrigatória na Troca', description: 'Anexe pelo menos uma foto dos produtos da troca.', variant: 'destructive' });
+        return;
+      }
+      const ok = await uploadTrocaPhotos(String((salesCard as any).id), trocaPhotos);
+      if (!ok) {
+        toast({ title: trocaPhotos.length > 1 ? 'Falha ao enviar as fotos' : 'Falha ao enviar a foto', description: 'Não foi possível enviar as fotos da troca. Verifique a conexão e tente novamente.', variant: 'destructive' });
+        return;
+      }
+    }
+
+    // Checkout finaliza a venda
     finalizeSaleMutation.mutate(saleData);
   };
 
@@ -825,6 +912,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     setPaymentMethod('a_vista');
     setOperationType('venda');
     setBoletoDays(7);
+    setTrocaPhotos([]);
     setDeliveryPointId('');
     setEnableSaturdayDelivery(false);
     setSelectedSaturdaySlots([]);
@@ -1306,6 +1394,51 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Troca: fotos obrigatórias dos produtos (câmera OU galeria/arquivos, até 3) */}
+                {operationType === 'troca' && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
+                    <p className="text-sm font-medium text-red-800">
+                      <Camera className="h-4 w-4 inline mr-1" />
+                      Fotos dos produtos da troca <span className="font-bold">(obrigatória)</span>
+                      <span className="font-normal text-red-700"> — {trocaPhotos.length} de {TROCA_MAX_FOTOS}</span>
+                    </p>
+                    {trocaPhotos.length > 0 && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {trocaPhotos.map((foto, i) => (
+                          <div key={i} className="relative group">
+                            <img src={foto} alt={`Foto ${i + 1} da troca`} className="w-full h-24 object-cover rounded border bg-white" data-testid={`img-troca-photo-${i}`} />
+                            <button
+                              type="button"
+                              onClick={() => removerTrocaPhoto(i)}
+                              aria-label={`Remover foto ${i + 1}`}
+                              title="Remover esta foto"
+                              className="absolute -top-1.5 -right-1.5 h-6 w-6 rounded-full bg-red-600 text-white text-sm font-bold leading-none shadow flex items-center justify-center hover:bg-red-700"
+                              data-testid={`button-remove-troca-photo-${i}`}
+                            >×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {trocaPhotos.length < TROCA_MAX_FOTOS ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="flex items-center justify-center gap-2 cursor-pointer bg-red-100 hover:bg-red-200 border border-red-300 text-red-800 rounded-md py-2 text-sm font-medium" data-testid="label-troca-photo">
+                          <Camera className="h-4 w-4" />
+                          Tirar foto
+                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleTrocaPhotoChange} data-testid="input-troca-photo" />
+                        </label>
+                        <label className="flex items-center justify-center gap-2 cursor-pointer bg-white hover:bg-red-50 border border-red-300 text-red-800 rounded-md py-2 text-sm font-medium" data-testid="label-troca-photo-galeria">
+                          <Upload className="h-4 w-4" />
+                          Galeria / arquivos
+                          <input type="file" accept="image/*" multiple className="hidden" onChange={handleTrocaPhotoChange} data-testid="input-troca-photo-galeria" />
+                        </label>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-red-700">Limite de {TROCA_MAX_FOTOS} fotos atingido. Remova uma para anexar outra.</p>
+                    )}
+                    <p className="text-xs text-red-700">Pelo menos uma foto é obrigatória. "Tirar foto" abre a câmera no celular; "Galeria / arquivos" usa imagens já salvas.</p>
+                  </div>
+                )}
 
                 {/* PONTO DE ENTREGA sem CNPJ — só aparece para clientes que têm pontos
                     cadastrados na rede. O pedido continua no CNPJ do cliente; isto diz
