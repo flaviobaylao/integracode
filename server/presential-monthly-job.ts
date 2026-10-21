@@ -156,12 +156,18 @@ export function registerPresentialMonthlyJob(app: Express): void {
       if (dryRun) {
         return res.json({ ok: true, dryRun: true, total: alvo.length, jaMarcados: alvo.length - pendentes.length, aMarcar: pendentes.length, amostra: pendentes.slice(0, 25).map((x: any) => x.nome) });
       }
+      // ?force=true → reprocessa TODOS os já marcados (regenera a agenda), além de marcar os novos.
+      const force = req.query?.force === "true" || req.body?.force === true;
+      const lista = force ? alvo : pendentes;
       let marcados = 0, regenerados = 0;
-      for (const row of pendentes) {
+      for (const row of lista) {
         try {
-          await db.execute(sql`UPDATE customers SET presential_monthly = true WHERE id = ${row.id}`);
-          marcados++;
-          try { await logCustomerNote({ customerId: String(row.id), label: "Visita presencial mensal", text: "Ativada em massa (cliente virtual de vendedor externo).", actor: ATOR, source: "presential-monthly" }); } catch { /* noop */ }
+          // Só marca + registra no histórico quem ainda não estava marcado (evita nota duplicada no force).
+          if (row.ja !== true) {
+            await db.execute(sql`UPDATE customers SET presential_monthly = true WHERE id = ${row.id}`);
+            marcados++;
+            try { await logCustomerNote({ customerId: String(row.id), label: "Visita presencial mensal", text: "Ativada em massa (cliente virtual de vendedor externo).", actor: ATOR, source: "presential-monthly" }); } catch { /* noop */ }
+          }
           try { const n = await regenerateCustomerAgenda(String(row.id)); if (n > 0) regenerados++; } catch { /* noop */ }
         } catch (e: any) { console.error("[visita-mensal] bulk falhou", row.id, e?.message); }
       }

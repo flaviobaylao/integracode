@@ -377,21 +377,28 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
   // ========================================================================
   const pm = await __getPresentialMonthly(customerId);
   if (pm.enabled) {
-    let pmWd: number | null = pm.weekday;
+    // Override do admin (só dia útil Seg..Sex).
+    let pmWd: number | null = (pm.weekday !== null && pm.weekday >= 1 && pm.weekday <= 5) ? pm.weekday : null;
+    // 1) Dia de rota JÁ resolvido do cliente — targetWeekdays contém o dia do cadastro OU, para
+    // cliente sem dia próprio, o dia da REGIÃO definido pela "regra dos leads" acima. É a MESMA
+    // base da cadência, então a visita presencial cai no dia de rota do cliente.
+    if (pmWd === null) {
+      const DIA_TOK: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
+      for (const tk of (targetWeekdays as any[])) {
+        const n = DIA_TOK[String(tk).trim().toLowerCase().slice(0, 3)];
+        if (n !== undefined && n >= 1 && n <= 5) { pmWd = n; break; }
+      }
+    }
+    // 2) Último recurso: dia de rota da região (vizinhos do vendedor), se targetWeekdays não deu dia útil.
     if (pmWd === null) {
       const platM = Number(c.latitude), plngM = Number(c.longitude);
       if (Number.isFinite(platM) && Number.isFinite(plngM) && !(platM === 0 && plngM === 0) && c.sellerId) {
         try {
           const scM = await __agendaSellerCustomers(String(c.sellerId), customerId);
           const rwM = __agendaRegionWeekday(scM, platM, plngM);
-          if (rwM !== null) pmWd = rwM;
+          if (rwM !== null && rwM >= 1 && rwM <= 5) pmWd = rwM;
         } catch { /* noop */ }
       }
-    }
-    // Fallback: dia de rota do próprio cadastro (1ª útil), se a região não resolveu.
-    if ((pmWd === null || pmWd < 1 || pmWd > 5) && weekdayNums.length) {
-      const wuM = weekdayNums.find((n) => n >= 1 && n <= 5);
-      if (wuM !== undefined) pmWd = wuM;
     }
     let pmCreated = 0;
     if (pmWd !== null && pmWd >= 1 && pmWd <= 5) {
