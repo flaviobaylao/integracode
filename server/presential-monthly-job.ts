@@ -135,4 +135,39 @@ export function registerPresentialMonthlyJob(app: Express): void {
       res.status(500).json({ ok: false, error: e?.message || "falha" });
     }
   });
+
+  // Aplicação EM MASSA (admin): marca presential_monthly=true em todos os clientes VIRTUAIS de
+  // VENDEDOR EXTERNO (users.role='vendedor') e regenera a agenda (injeta a visita presencial mensal).
+  // ?dryRun=true apenas CONTA/lista (não grava) — use antes de aplicar de fato.
+  app.post("/api/admin/presential-monthly/apply-bulk", authenticateUser, requireRole(["admin"]), async (req, res) => {
+    try {
+      const dryRun = req.query?.dryRun === "true" || req.body?.dryRun === true;
+      const r: any = await db.execute(sql`
+        SELECT c.id, COALESCE(c.fantasy_name, c.name) AS nome, COALESCE(c.presential_monthly, false) AS ja
+          FROM customers c
+          JOIN users u ON u.id = c.seller_id
+         WHERE COALESCE(c.virtual_service, false) = true
+           AND u.role = 'vendedor'
+           AND COALESCE(c.is_active, true) = true
+           AND COALESCE(c.is_lead, false) = false
+           AND COALESCE(c.is_supplier, false) = false`);
+      const alvo = rows(r);
+      const pendentes = alvo.filter((x: any) => x.ja !== true);
+      if (dryRun) {
+        return res.json({ ok: true, dryRun: true, total: alvo.length, jaMarcados: alvo.length - pendentes.length, aMarcar: pendentes.length, amostra: pendentes.slice(0, 25).map((x: any) => x.nome) });
+      }
+      let marcados = 0, regenerados = 0;
+      for (const row of pendentes) {
+        try {
+          await db.execute(sql`UPDATE customers SET presential_monthly = true WHERE id = ${row.id}`);
+          marcados++;
+          try { await logCustomerNote({ customerId: String(row.id), label: "Visita presencial mensal", text: "Ativada em massa (cliente virtual de vendedor externo).", actor: ATOR, source: "presential-monthly" }); } catch { /* noop */ }
+          try { const n = await regenerateCustomerAgenda(String(row.id)); if (n > 0) regenerados++; } catch { /* noop */ }
+        } catch (e: any) { console.error("[visita-mensal] bulk falhou", row.id, e?.message); }
+      }
+      res.json({ ok: true, total: alvo.length, marcados, regenerados });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message || "falha" });
+    }
+  });
 }
