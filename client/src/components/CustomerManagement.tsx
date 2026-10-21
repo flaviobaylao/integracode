@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import CustomerModal from "./CustomerModal";
+import { useMotivoInativacao } from "./useMotivoInativacao";
 import CustomerDetailsModal from "./CustomerDetailsModal";
 import CustomerExcelImport from "./CustomerExcelImport";
 import WhatsAppButton from "./WhatsAppButton";
@@ -122,6 +123,7 @@ export default function CustomerManagement() {
   const [phoneFilter, setPhoneFilter] = useState('');
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
   
   const { data: user } = useQuery<User>({
     queryKey: ['/api/auth/user'],
@@ -166,9 +168,9 @@ export default function CustomerManagement() {
   const perdidoSet = useMemo(() => new Set((perdidoIds as string[]).map(String)), [perdidoIds]);
 
   const bulkInactivateMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (motivo: string) => {
       const ids = Array.from(selectedIds);
-      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids });
+      const r: any = await apiRequest('POST', '/api/customers/bulk-inactivate', { ids, motivo });
       return (r ?? {});
     },
     onSuccess: (res: any) => {
@@ -225,13 +227,11 @@ export default function CustomerManagement() {
         await apiRequest('POST', '/api/customers/bulk-reactivate', { ids });
         msg.push('reativados');
       } else if (bulkSituacao === 'inativo') {
-        const motivo = window.prompt('Informe o MOTIVO da inativação (fica no histórico de cada cliente):');
-        if (motivo === null) {
+        const motivo = await pedirMotivo({ titulo: `Inativar ${ids.length} cliente(s)`, descricao: "Informe o motivo da inativação (mín. 5 caracteres). Fica no histórico de cada cliente e aparece na coluna Motivo." });
+        if (!motivo) {
           msg.push('situação não alterada (cancelado)');
-        } else if (!motivo.trim()) {
-          alert('Motivo obrigatório para inativar — a situação não foi alterada.');
         } else {
-          await apiRequest('POST', '/api/customers/bulk-inactivate', { ids, motivo: motivo.trim() });
+          await apiRequest('POST', '/api/customers/bulk-inactivate', { ids, motivo });
           msg.push('inativados');
         }
       }
@@ -498,6 +498,7 @@ export default function CustomerManagement() {
 
   return (
     <div className="space-y-6">
+      {MotivoModal}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-800">Gestão de Clientes</h2>
         <div className="flex space-x-2">
@@ -696,7 +697,7 @@ export default function CustomerManagement() {
               <Button
                 size="sm"
                 className="bg-red-600 hover:bg-red-700 text-white h-9 ml-1"
-                onClick={() => { if (window.confirm(`Inativar ${selectedIds.size} cliente(s) selecionado(s)?\n\nEles ficarão inativos, sairão da lista de Clientes Ativos e seus agendamentos futuros pendentes serão removidos.`)) bulkInactivateMutation.mutate(); }}
+                onClick={async () => { const m = await pedirMotivo({ titulo: `Inativar ${selectedIds.size} cliente(s)`, descricao: "Eles ficarão inativos, sairão da lista de Clientes Ativos e seus agendamentos futuros pendentes serão removidos. Informe o motivo (mín. 5 caracteres) — ele aparece na coluna Motivo." }); if (m) bulkInactivateMutation.mutate(m); }}
                 disabled={bulkInactivateMutation.isPending}
                 data-testid="button-bulk-inactivate"
               >

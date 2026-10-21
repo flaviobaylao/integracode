@@ -121,6 +121,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   const [reactivating, setReactivating] = useState(false);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
+  const [motivoInativacao, setMotivoInativacao] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -564,7 +565,8 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       if (!customer) throw new Error("Cliente não encontrado");
       // Inativação INTEGRA 2.0: marca isActive=false e remove de Clientes Ativos,
       // mantendo o cliente visível na Gestão com o selo "Inativo" (não some do sistema).
-      return await apiRequest('POST', `/api/customers/bulk-inactivate`, { ids: [customer.id] });
+      // O MOTIVO (obrigatório, mín. 5 car.) vai para status_reason e aparece na coluna Motivo.
+      return await apiRequest('POST', `/api/customers/bulk-inactivate`, { ids: [customer.id], motivo: motivoInativacao.trim() });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
@@ -574,6 +576,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         description: "Cliente inativado. Continua na Gestão de Clientes com o selo Inativo e não aparece mais nas rotas de visitas.",
       });
       setShowInactivateDialog(false);
+      setMotivoInativacao("");
       onClose();
     },
     onError: (error) => {
@@ -586,6 +589,10 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   });
 
   const handleInactivate = () => {
+    if (motivoInativacao.trim().length < 5) {
+      toast({ title: "Motivo obrigatório", description: "Informe ao menos 5 caracteres.", variant: "destructive" });
+      return;
+    }
     inactivateCustomerMutation.mutate();
   };
 
@@ -2006,7 +2013,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                 <Button
                   type="button"
                   variant="destructive"
-                  onClick={() => setShowInactivateDialog(true)}
+                  onClick={() => { setMotivoInativacao(""); setShowInactivateDialog(true); }}
                   disabled={inactivateCustomerMutation.isPending}
                   data-testid="button-inactivate-customer"
                 >
@@ -2041,19 +2048,26 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Inativação de Cliente</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja inativar este cliente? Ao inativá-lo:
-              <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>Ele não aparecerá mais nas rotas de visitas</li>
-                <li>Não será considerado na carteira para fins de positivação</li>
-                <li>Você poderá reativá-lo posteriormente editando o cliente</li>
-              </ul>
+              Tem certeza que deseja inativar este cliente? Ao inativá-lo ele não aparecerá mais nas rotas de visitas, não será considerado na carteira para positivação, e poderá ser reativado depois.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Motivo da inativação <span className="text-red-600">*</span></label>
+            <textarea
+              value={motivoInativacao}
+              onChange={(e) => setMotivoInativacao(e.target.value)}
+              rows={3}
+              placeholder="Informe o motivo (mín. 5 caracteres) — aparece na coluna Motivo da Gestão de Clientes"
+              className="w-full rounded-md border px-2.5 py-1.5 text-sm bg-background"
+              data-testid="input-motivo-inativacao"
+            />
+            {motivoInativacao.trim().length < 5 && <p className="text-xs text-muted-foreground">Mínimo de 5 caracteres.</p>}
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="button-cancel-inactivate">Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleInactivate}
-              disabled={inactivateCustomerMutation.isPending}
+              onClick={(e) => { e.preventDefault(); handleInactivate(); }}
+              disabled={inactivateCustomerMutation.isPending || motivoInativacao.trim().length < 5}
               className="bg-red-600 hover:bg-red-700"
               data-testid="button-confirm-inactivate"
             >

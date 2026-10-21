@@ -9,6 +9,7 @@ import { MessageCircle, FileText, ShoppingCart, History, Pencil, UserX, Loader2 
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
+import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 
 /**
  * Caixa "Ações do Cliente" COMPARTILHADA e autossuficiente — aberta ao clicar no
@@ -38,6 +39,7 @@ export default function ClientActionsModal({
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
   const isAdmin = user?.role === "admin";
 
   const [showServiceLog, setShowServiceLog] = useState(false);
@@ -75,10 +77,11 @@ export default function ClientActionsModal({
 
   const inativar = async () => {
     if (!customerId) return;
-    if (!window.confirm(`Inativar o cliente ${nome}?\n\nEle sai da lista de Clientes Ativos e passa a "Inativo" na Gestão de Clientes.`)) return;
+    const motivo = await pedirMotivo({ titulo: `Inativar o cliente ${nome}`, descricao: 'Ele sai da lista de Clientes Ativos e passa a "Inativo" na Gestão de Clientes. Informe o motivo (mín. 5 caracteres) — ele aparece na coluna Motivo.' });
+    if (!motivo) return;
     setInativando(true);
     try {
-      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [customerId] });
+      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [customerId], motivo });
       toast({ title: "Cliente inativado!", description: "Removido dos Clientes Ativos e marcado como Inativo." });
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/active-customers"] });
@@ -93,6 +96,7 @@ export default function ClientActionsModal({
 
   return (
     <>
+      {MotivoModal}
       <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
