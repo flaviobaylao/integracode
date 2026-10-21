@@ -25337,6 +25337,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     foto_preco_mil: '1.50',
     foto_cota_gratis: '1000',
     ficha_cota_gratis: '1000',
+    // 📞 Telefone dos Novos pontos (Place Details Enterprise, sob demanda): US$ 20 / 1.000 · 1.000 grátis/mês.
+    telefone_preco_mil: '20',
+    telefone_cota_gratis: '1000',
     auto_off_enabled: 'true',
     auto_off_margem: '5',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
@@ -25368,7 +25371,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
   function _limiteFeature(cfg: Record<string, string>, feature: string): number {
     const margem = Math.max(0, Number(cfg.auto_off_margem) || 0);
-    const cotaKey = feature === 'radar' ? 'radar_cota_gratis' : feature === 'foto' ? 'foto_cota_gratis' : 'ficha_cota_gratis';
+    const cotaKey = feature === 'radar' ? 'radar_cota_gratis' : feature === 'foto' ? 'foto_cota_gratis' : feature === 'telefone' ? 'telefone_cota_gratis' : 'ficha_cota_gratis';
     const cotaDefault = feature === 'radar' ? 5000 : 1000;
     const cota = Number(cfg[cotaKey]) || cotaDefault;
     return Math.max(0, cota - margem);
@@ -25416,7 +25419,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'telefone_cota_gratis', 'telefone_preco_mil', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
@@ -25472,7 +25475,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                COUNT(*) FILTER (WHERE feature = 'foto') AS foto_total,
                COUNT(*) FILTER (WHERE feature = 'foto' AND billable) AS foto_cobravel,
                COUNT(*) FILTER (WHERE feature = 'ficha') AS ficha_total,
-               COUNT(*) FILTER (WHERE feature = 'ficha' AND billable) AS ficha_cobravel
+               COUNT(*) FILTER (WHERE feature = 'ficha' AND billable) AS ficha_cobravel,
+               COUNT(*) FILTER (WHERE feature = 'telefone') AS telefone_total,
+               COUNT(*) FILTER (WHERE feature = 'telefone' AND billable) AS telefone_cobravel
         FROM places_usage WHERE date_trunc('month', (created_at AT TIME ZONE 'America/Sao_Paulo')) = date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))
       `);
       const t = ((tot?.rows || []) as any[])[0] || {};
@@ -25483,7 +25488,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const fotoCobravel = Number(t.foto_cobravel || 0);
       const fotoPago = Math.max(0, fotoCobravel - fotoCota);
       const custoFotoUSD = (fotoPago / 1000) * fotoPreco;
-      const custoUSD = custoRadarUSD + custoFotoUSD;
+      const telefoneTotal = Number(t.telefone_total || 0);
+      const telefoneCobravel = Number(t.telefone_cobravel || 0);
+      const telefoneCota = Number(cfg.telefone_cota_gratis) || 1000;
+      const telefonePreco = Number(cfg.telefone_preco_mil) || 20;
+      const custoTelefoneUSD = (Math.max(0, telefoneCobravel - telefoneCota) / 1000) * telefonePreco;
+      const custoUSD = custoRadarUSD + custoFotoUSD + custoTelefoneUSD;
       const custoBRL = custoUSD * cambio;
       const precoBRL = preco * cambio;
       const fotoPrecoBRL = fotoPreco * cambio;
@@ -25495,6 +25505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         custoRadarUSD, custoFotoUSD,
         fotoTotal, fotoCobravel, fotoCota, fotoPreco, fotoPrecoBRL, fotoPago,
         fichaTotal: Number(t.ficha_total || 0), fichaCobravel: Number(t.ficha_cobravel || 0), fichaCota: Number(cfg.ficha_cota_gratis) || 1000,
+        telefoneTotal, telefoneCobravel, telefoneCota, telefonePreco, custoTelefoneUSD, limiteTelefone: _limiteFeature(cfg, 'telefone'),
         blindagem, margem,
         limites: { radar: _limiteFeature(cfg, 'radar'), foto: _limiteFeature(cfg, 'foto'), ficha: _limiteFeature(cfg, 'ficha') },
         autoOff: { radar: cfg.radar_auto_off_mes === mesAtual, foto: cfg.foto_auto_off_mes === mesAtual, ficha: cfg.ficha_auto_off_mes === mesAtual },
@@ -25506,6 +25517,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
       });
     } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+
+  // 📞 Telefone de um Novo ponto, SOB DEMANDA (botão "Ver telefone"). O radar segue na faixa Pro
+  // (barata); só este toque usa Place Details Enterprise (US$ 20/1.000, 1.000 grátis/mês), pedindo
+  // APENAS o telefone. Cache permanente por placeId (90 dias): o mesmo ponto nunca é cobrado 2x.
+  // Blindagem: para em (cota − margem) consultas no mês; volta no dia 1º. Segue o liga/desliga do radar.
+  let __telCacheOk = false;
+  async function _ensureTelefoneCache(): Promise<void> {
+    if (__telCacheOk) return;
+    await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS places_phone_cache (
+      place_id varchar PRIMARY KEY, national_phone varchar, international_phone varchar, created_at timestamp DEFAULT now())`));
+    __telCacheOk = true;
+  }
+  app.post('/api/radar/telefone', authenticateUser, async (req: any, res) => {
+    try {
+      const placeId = String(req.body?.placeId || '').trim();
+      if (!/^[A-Za-z0-9_-]{10,300}$/.test(placeId)) return res.status(400).json({ ok: false, message: 'Local inválido.' });
+      await _ensureRecursosSchema;
+      await _ensureTelefoneCache();
+      const uid = req.currentUser?.id || null;
+      const uname = req.currentUser?.name || req.currentUser?.email || null;
+      // 1) Cache (grátis)
+      const c: any = await db.execute(sql`SELECT national_phone, international_phone FROM places_phone_cache WHERE place_id = ${placeId} AND created_at > now() - interval '90 days' LIMIT 1`);
+      const hit = ((c?.rows || []) as any[])[0];
+      if (hit) {
+        try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('telefone', ${uid}, ${uname}, false, ${hit.national_phone ? 1 : 0}, NULL, NULL)`); } catch (_e) {}
+        return res.json({ ok: true, telefone: hit.national_phone || null, internacional: hit.international_phone || null, semTelefone: !hit.national_phone, fromCache: true });
+      }
+      // 2) Liga/desliga + blindagem de custo
+      const cfg = await _getRecursos();
+      await _autoResetRecursos(cfg);
+      if (String(cfg.radar_enabled) !== 'true') return res.json({ ok: false, disabled: true, message: 'Recurso de prospecção desativado.' });
+      if (String(cfg.auto_off_enabled) === 'true') {
+        const limite = _limiteFeature(cfg, 'telefone');
+        const usados = await _billableMes('telefone');
+        if (usados >= limite) return res.json({ ok: false, disabled: true, autoOff: true, message: `Limite grátis de consultas de telefone do mês atingido (${limite}). Volta no dia 1º.` });
+      }
+      const key = String(process.env.GOOGLE_MAPS_API_KEY || '').trim();
+      if (!key) return res.status(400).json({ ok: false, message: 'Google indisponível: GOOGLE_MAPS_API_KEY não configurada.' });
+      // 3) Google — só os campos de telefone
+      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?languageCode=pt-BR&regionCode=BR`, {
+        headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'nationalPhoneNumber,internationalPhoneNumber' },
+        signal: AbortSignal.timeout(12000),
+      });
+      const js: any = await resp.json().catch(() => ({}));
+      if (!resp.ok) return res.status(502).json({ ok: false, message: js?.error?.message || ('Google HTTP ' + resp.status) });
+      const nacional = js?.nationalPhoneNumber || null;
+      const internacional = js?.internationalPhoneNumber || null;
+      try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('telefone', ${uid}, ${uname}, true, ${nacional ? 1 : 0}, NULL, NULL)`); } catch (_e) {}
+      // guarda também "sem telefone", para não pagar de novo pelo mesmo ponto
+      try { await db.execute(sql`INSERT INTO places_phone_cache (place_id, national_phone, international_phone, created_at) VALUES (${placeId}, ${nacional}, ${internacional}, now())
+        ON CONFLICT (place_id) DO UPDATE SET national_phone = EXCLUDED.national_phone, international_phone = EXCLUDED.international_phone, created_at = now()`); } catch (_e) {}
+      return res.json({ ok: true, telefone: nacional, internacional, semTelefone: !nacional, fromCache: false });
+    } catch (e: any) { console.error('[radar-telefone] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
   // 📡 Radar de novos pontos — Places Nearby (Pro), cache por região, dedup com o Integra.
@@ -25641,6 +25706,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lat: pLat, lng: pLng, placeId: p.id || '',
         });
       }
+      // 📞 Telefones já consultados (cache, sem custo): o card já mostra o número, sem novo toque.
+      try {
+        const _pids = novos.map((n) => n.placeId).filter(Boolean);
+        if (_pids.length) {
+          await _ensureTelefoneCache();
+          const tc: any = await db.execute(sql`SELECT place_id, national_phone FROM places_phone_cache
+            WHERE place_id IN (${sql.join(_pids.map((x: string) => sql`${x}`), sql`, `)}) AND created_at > now() - interval '90 days'`);
+          const telBy = new Map<string, string | null>();
+          for (const r of (tc?.rows || []) as any[]) telBy.set(String(r.place_id), r.national_phone || null);
+          for (const n of novos) {
+            if (telBy.has(n.placeId)) { n.telefoneConsultado = true; n.telefone = telBy.get(n.placeId); }
+          }
+        }
+      } catch (_e) { /* cache de telefone é complementar */ }
       // Ordena primeiro os de tipo primário (por distância), depois os de tipo secundário (por distância).
       novos.sort((a, b) => (a.match === 'primario' ? 0 : 1) - (b.match === 'primario' ? 0 : 1) || (a.distancia ?? 9999) - (b.distancia ?? 9999));
       const nPrim = novos.filter((n) => n.match === 'primario').length;
