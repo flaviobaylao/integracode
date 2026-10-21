@@ -748,6 +748,7 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Situação</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Motivo</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Ações</th>
                 </tr>
               </thead>
@@ -832,14 +833,27 @@ export default function CustomerManagement() {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        {customer.isActive === false ? (
-                          <Badge className="bg-red-100 text-red-800" data-testid={`badge-inativo-${customer.id}`}>
+                        {(customer as any).isExcluded ? (
+                          <Badge className="bg-red-200 text-red-900" data-testid={`badge-excluido-${customer.id}`}>
+                            Excluído
+                          </Badge>
+                        ) : customer.isActive === false ? (
+                          <Badge className="bg-amber-100 text-amber-800" data-testid={`badge-inativo-${customer.id}`}>
                             Inativo
                           </Badge>
                         ) : (
                           <Badge className="bg-green-100 text-green-800" data-testid={`badge-ativo-${customer.id}`}>
                             Ativo
                           </Badge>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        {(customer.isActive === false || (customer as any).isExcluded) && (customer as any).statusReason ? (
+                          <span className="text-xs text-gray-600 block max-w-[220px] truncate" title={(customer as any).statusReason} data-testid={`motivo-${customer.id}`}>
+                            {(customer as any).statusReason}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
                         )}
                       </td>
                       <td className="px-6 py-4">
@@ -893,11 +907,11 @@ export default function CustomerManagement() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            title="Excluir (inativa com trilha; só Admin; exige motivo)"
+                            title="Excluir (marca como EXCLUÍDO com trilha; só Admin; exige motivo)"
                             onClick={() => {
                               // (E1, 05/set/2026) Antes: 1 clique, sem confirmação, sem motivo, sem trilha.
                               const nome = customer.fantasyName || customer.name || customer.id;
-                              const motivo = window.prompt(`Excluir o cliente "${nome}"?\n\nO cadastro NÃO é apagado: ele fica Inativo e o motivo vai para o histórico.\n\nInforme o MOTIVO (mín. 5 caracteres):`);
+                              const motivo = window.prompt(`Excluir o cliente "${nome}"?\n\nO cadastro NÃO é apagado: ele fica com status EXCLUÍDO e o motivo aparece na coluna Motivo.\n\nInforme o MOTIVO (mín. 5 caracteres):`);
                               if (motivo === null) return;
                               if (motivo.trim().length < 5) { toast({ title: 'Motivo obrigatório', description: 'Informe ao menos 5 caracteres.', variant: 'destructive' }); return; }
                               deleteCustomerMutation.mutate({ id: customer.id, motivo: motivo.trim() });
@@ -912,7 +926,7 @@ export default function CustomerManagement() {
                     </tr>
                     {historyOpenId === customer.id && (
                       <tr className="bg-gray-50">
-                        <td colSpan={9} className="px-6 py-1">
+                        <td colSpan={10} className="px-6 py-1">
                           <CustomerHistoryBox customerId={customer.id} />
                         </td>
                       </tr>
@@ -921,7 +935,7 @@ export default function CustomerManagement() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={10} className="px-6 py-12 text-center text-gray-500">
                       Nenhum cliente encontrado
                       {/* A busca acha o cliente, mas ele está INATIVO e o filtro padrão é "Ativo". */}
                       {statusFilter === 'active' && searchTerm.trim() && (() => {

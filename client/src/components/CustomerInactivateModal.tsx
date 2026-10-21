@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation } from "@/lib/queryClient";
 import {
   AlertDialog,
@@ -26,6 +27,7 @@ export default function CustomerInactivateModal({
   card,
 }: CustomerInactivateModalProps) {
   const { toast } = useToast();
+  const [motivo, setMotivo] = useState("");
 
   const inactivateCustomerMutation = useMutation({
     mutationFn: async () => {
@@ -33,7 +35,8 @@ export default function CustomerInactivateModal({
         throw new Error("Dados inválidos");
       }
       return await apiRequest("POST", `/api/customers/${card.customer.id}/inactivate`, {
-        cardId: card.id
+        cardId: card.id,
+        motivo: motivo.trim(),
       });
     },
     onSuccess: (data: any) => {
@@ -43,6 +46,7 @@ export default function CustomerInactivateModal({
       });
       queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+      setMotivo("");
       onClose();
     },
     onError: (error: any) => {
@@ -81,9 +85,17 @@ export default function CustomerInactivateModal({
                 <li>O card atual será mantido como último registro</li>
               </ul>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Esta ação não pode ser desfeita facilmente. Tem certeza que deseja continuar?
-            </p>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Motivo da inativação <span className="text-red-600">*</span></label>
+              <textarea
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                rows={2}
+                placeholder="Informe o motivo (mín. 5 caracteres)"
+                className="w-full rounded-md border px-2.5 py-1.5 text-sm bg-background"
+                data-testid="input-motivo-inativacao"
+              />
+            </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -96,9 +108,13 @@ export default function CustomerInactivateModal({
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();
+              if (motivo.trim().length < 5) {
+                toast({ title: "Motivo obrigatório", description: "Informe ao menos 5 caracteres.", variant: "destructive" });
+                return;
+              }
               handleConfirm();
             }}
-            disabled={inactivateCustomerMutation.isPending}
+            disabled={inactivateCustomerMutation.isPending || motivo.trim().length < 5}
             className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
             data-testid="button-confirm-inactivate"
           >
