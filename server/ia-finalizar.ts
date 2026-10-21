@@ -201,13 +201,19 @@ export async function finalizarTick(force = false): Promise<{ ran: boolean; reas
     // Ja se despediu aqui (ou no mesmo numero, ha pouco): FECHA a conversa em silencio.
     // Fechar sem mandar nada e o certo — senao a conversa fica eternamente elegivel e a
     // varredura seguinte tentaria mandar a despedida outra vez.
-    const repetida = (await jaSeDespediu(row.id)) || (await despedidaRecenteNoFone(phoneDigits, minsFone));
+    // Do outro lado tem robo (robo-detector): a despedida seria respondida pelo bot do
+    // cliente, a conversa reabriria e o laco recomecaria (20/10/2026, Bella Milao: a
+    // auto-finalizacao das 23:55 reabriu 87 mensagens de bot x bot). Fecha em silencio
+    // e a marca ia_robo_avisado FICA — so sai pelo /retomar ou por um humano.
+    let robo = false;
+    try { const { roboDetectado } = await import('./robo-detector'); robo = await roboDetectado(String(row.id)); } catch {}
+    const repetida = robo || (await jaSeDespediu(row.id)) || (await despedidaRecenteNoFone(phoneDigits, minsFone));
     if (repetida) {
       await db.execute(sql`UPDATE chat_conversations SET status = 'resolved', updated_at = now() WHERE id = ${row.id}`);
       try { const { liberarIA } = await import('./ia-fila'); await liberarIA(String(row.id)); } catch { /* noop */ }
       try { await db.execute(sql`DELETE FROM chat_conversation_labels WHERE conversation_id = ${row.id}`); } catch {}
       encerradas++; puladasRepetida++;
-      detalhes.push({ conv: row.id, phone: phoneDigits, via: '-', enviado: false, motivo: 'despedida ja enviada' });
+      detalhes.push({ conv: row.id, phone: phoneDigits, via: '-', enviado: false, motivo: robo ? 'robo do outro lado' : 'despedida ja enviada' });
       console.log(`[IA-FINALIZAR] conv=${row.id} phone=${phoneDigits} encerrada SEM despedida (ja enviada)`);
       continue;
     }

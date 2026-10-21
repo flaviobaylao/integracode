@@ -1304,8 +1304,8 @@ export async function maybeRunAgent(opts: { phone: string; conversationId: strin
     // Em 20/10/2026 o detector marcou a conversa da Bella Milao e pausou a IA, mas a
     // excecao "resposta a disparo" logo abaixo reabriu a IA (havia pedido_confirmado
     // na janela de 48h e nenhum humano escreveu) e o sweep do takeover tambem chamava
-    // aqui direto — 87 mensagens bot x bot. A marca so sai ao finalizar a conversa,
-    // ao humano assumir ou pelo /retomar.
+    // aqui direto — 87 mensagens bot x bot. Finalizar a conversa NAO limpa a marca (o bot
+    // responde a despedida e reabre a mesma conversa); so /api/admin/ia-atendimento/retomar.
     try {
       const { roboDetectado } = await import('./robo-detector');
       if (await roboDetectado(opts.conversationId)) { await _t('agente:robo_detectado'); return; }
