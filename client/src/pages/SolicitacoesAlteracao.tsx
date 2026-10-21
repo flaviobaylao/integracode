@@ -163,6 +163,20 @@ function Detalhes({ details }: { details: any }) {
   );
 }
 
+// 🗒️ Motivo da inativação pelo Inbox = TODO o texto disponível no card: a observação digitada
+// pelo admin (note) + os textos da própria solicitação (motivo do inativar, "outro", motivo/texto
+// do report). Assim o botão "Inativar" não falha na exigência de motivo (mín. 5 caracteres) e o
+// que foi escrito nas observações vira o motivo registrado. (out/2026)
+function motivoInativacaoDe(note: string, details: any): string {
+  const d = details || {};
+  const cand = [note, d?.inativar, d?.outro, d?.motivo, d?.texto, d?.observacao]
+    .map((x: any) => String(x || "").trim())
+    .filter(Boolean);
+  const uniq = cand.filter((v, i) => cand.indexOf(v) === i);
+  const txt = uniq.join(" • ").trim();
+  return txt.length >= 5 ? txt : "Cliente inativado via Inbox.";
+}
+
 function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; selected?: boolean; onToggleSelect?: (id: string) => void; onAbrirAcoes?: (id: string, name: string) => void; onAbrirHistoricoLead?: (id: string, name: string) => void }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
@@ -195,7 +209,8 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   const inativarMut = useMutation({
     mutationFn: async () => {
       const cid = r.customerId || r.entityId;
-      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid] });
+      const motivo = motivoInativacaoDe(note, r.details);
+      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo });
       return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, {
         status: "efetuadas",
         note: (note.trim() ? note.trim() + " • " : "") + "Cliente inativado via Inbox.",
@@ -231,7 +246,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   const inativarReportMut = useMutation({
     mutationFn: async () => {
       const cid = r.customerId || r.entityId;
-      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo: note.trim() || "Inativado via report do Inbox." });
+      await apiRequest("POST", "/api/customers/bulk-inactivate", { ids: [cid], motivo: motivoInativacaoDe(note, r.details) });
       return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
     },
     onSuccess: () => {
