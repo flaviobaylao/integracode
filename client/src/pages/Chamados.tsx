@@ -99,15 +99,20 @@ function Anexador({ arquivos, setArquivos, compacto }: { arquivos: File[]; setAr
   );
 }
 
-// Caixa de mensagem: Enter envia, Alt+Enter (ou Shift+Enter) quebra a linha.
+// Celular/tablet (tela de toque sem mouse): o Enter do teclado quebra a linha e só o botão envia.
+const ehToque = () => { try { return window.matchMedia("(hover: none) and (pointer: coarse)").matches; } catch { return false; } };
+
+// Caixa de mensagem: no computador Enter envia e Alt+Enter (ou Shift+Enter) quebra a linha;
+// no celular o Enter quebra a linha (comportamento normal do teclado) e envia-se pelo botão.
 function CaixaTexto({ id, valor, setValor, onEnviar, placeholder, className }: { id: string; valor: string; setValor: (v: string) => void; onEnviar: () => void; placeholder?: string; className?: string }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   return (
-    <textarea id={id} ref={ref} value={valor} rows={3} placeholder={placeholder}
+    <textarea id={id} ref={ref} value={valor} rows={3} placeholder={placeholder} enterKeyHint={ehToque() ? "enter" : "send"}
       className={className || "px-3 py-2 border rounded-lg text-sm resize-none"}
       onChange={(e) => setValor(e.target.value)}
       onKeyDown={(e) => {
         if (e.key !== "Enter" || (e.nativeEvent as any).isComposing) return;
+        if (ehToque()) return; // celular: Enter quebra a linha
         if (e.altKey || e.shiftKey) {
           e.preventDefault();
           const el = ref.current; if (!el) return;
@@ -392,7 +397,7 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   const ehDono = c.papel === "dono" || (c.papel === "admin" && perfil?.admin);
   const minhaConsultaPendente = c.papel === "consultado" && c.status !== "solucionado";
   const fechado = c.status === "solucionado";
-  const dicaTeclas = <span className="text-[11px] text-gray-500">Enter envia · Alt+Enter quebra a linha</span>;
+  const dicaTeclas = ehToque() ? null : <span className="text-[11px] text-gray-500">Enter envia · Alt+Enter quebra a linha</span>;
 
   return (
     <div className="bg-white border rounded-xl flex flex-col">
