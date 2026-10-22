@@ -17,6 +17,7 @@ import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
 import { generateDanfePdf, generateMultiDanfePdf, type DanfeInvoice } from '@/lib/danfe-generator';
 import { generateMultiCobrancaPdf, generateCompletoPdf, type CobrancaData } from '@/lib/cobranca-generator';
+import { generateOrcamentoPdf } from '@/lib/orcamento-generator';
 import {
   Package, ArrowRight, ArrowLeft, Loader2, Trash2, Eye,
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
@@ -750,6 +751,37 @@ export default function BillingPipeline() {
     },
     onError: (e: any) => toast({ title: 'Erro ao duplicar', description: e?.message || 'Não foi possível duplicar o pedido.', variant: 'destructive' }),
   });
+  // Gera o PDF do orçamento do pedido (mesmo layout do rascunho/SaleModal), a partir
+  // dos dados já salvos no item do pipeline — sem precisar abrir a tela de Cartões.
+  const handleGerarPdfPedido = (item: BillingPipelineItem | null) => {
+    if (!item) return;
+    const prods = Array.isArray(item.products) ? item.products : [];
+    if (!prods.length) {
+      toast({ title: 'Pedido sem produtos', description: 'Este pedido não tem itens para gerar o PDF.', variant: 'destructive' });
+      return;
+    }
+    try {
+      const doc = (item.customerDocument || '').replace(/\D/g, '');
+      const isCnpj = doc.length > 11;
+      const partes = String(item.sellerName || '').trim().split(/\s+/);
+      generateOrcamentoPdf({
+        customer: {
+          fantasyName: item.customerName,
+          name: item.customerName,
+          cnpj: isCnpj ? item.customerDocument : null,
+          cpf: !isCnpj && doc ? item.customerDocument : null,
+        },
+        seller: item.sellerName ? { firstName: partes[0] || '', lastName: partes.slice(1).join(' ') } : null,
+        products: prods.map((p) => ({ name: p.name, quantity: p.quantity, unitPrice: p.unitPrice, totalPrice: p.totalPrice })),
+        paymentMethod: item.paymentMethod,
+        boletoDays: item.boletoDays,
+        operationType: item.operationType,
+      });
+      toast({ title: 'PDF gerado', description: 'O PDF do pedido foi baixado.' });
+    } catch (e: any) {
+      toast({ title: 'Erro ao gerar PDF', description: String(e?.message || e), variant: 'destructive' });
+    }
+  };
   const startEdit = () => {
     if (!detailItem) return;
     setEditData({
@@ -2297,6 +2329,7 @@ export default function BillingPipeline() {
               <div className="border-t pt-4 space-y-4">
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-2 block">Ações</label>
+                  <div className="flex flex-wrap gap-1.5">
                   <Button
                     size="sm"
                     variant="outline"
@@ -2308,6 +2341,18 @@ export default function BillingPipeline() {
                     {duplicateMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Copy className="h-3 w-3 mr-1" />}
                     Duplicar Pedido
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300"
+                    onClick={() => handleGerarPdfPedido(detailItem)}
+                    title="Baixar o PDF deste pedido com os itens, cliente e forma de pagamento"
+                    data-testid="button-pdf-order"
+                  >
+                    <FileText className="h-3 w-3 mr-1" />
+                    Gerar PDF
+                  </Button>
+                  </div>
                 </div>
                 <div>
                 <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-2 block">Mover para etapa</label>
