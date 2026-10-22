@@ -333,7 +333,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
       return;
     }
     
-    const wazeUrl = `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes&zoom=17`;
+    const wazeUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
     window.open(wazeUrl, '_blank');
   };
 
@@ -511,7 +511,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
                   data-testid="button-waze"
                 >
                   <Navigation className="h-4 w-4 mr-1" />
-                  Waze
+                  Google Maps
                 </Button>
               </div>
             </CardContent>
