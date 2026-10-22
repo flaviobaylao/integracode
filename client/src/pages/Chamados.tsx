@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Button } from "@/components/ui/button";
@@ -14,15 +14,18 @@ type Consulta = { key: string; nome: string; setor: string; pendente: boolean };
 type Chamado = {
   id: string; codigo: string; numero: number; assunto: string; descricao: string | null; prioridade: string; status: string;
   autorId: string; autorNome: string; destinoKey: string; destinoNome: string; destinoSetor: string;
-  createdAt: string; updatedAt: string; papel: "autor" | "dono" | "consultado" | "admin"; naoLido: boolean;
+  createdAt: string; updatedAt: string; solucionadoEm?: string | null; papel: "autor" | "dono" | "consultado" | "admin"; naoLido: boolean;
   consultas: Consulta[]; aguardando: string[]; consultaPendenteParaMim: boolean;
 };
-type Mensagem = { id: string; tipo: "publica" | "interna" | "sistema"; autorNome: string; deKey: string | null; paraKey: string | null; texto: string; createdAt: string; minha: boolean };
+type Anexo = { id: string; nome: string; mime: string | null; tamanho: number | null };
+type Mensagem = { id: string; tipo: "publica" | "interna" | "sistema"; autorNome: string; deKey: string | null; paraKey: string | null; texto: string; createdAt: string; minha: boolean; anexos?: Anexo[] };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   novo: { label: "Novo", cls: "bg-orange-100 text-orange-800" },
   em_atendimento: { label: "Em atendimento", cls: "bg-blue-100 text-blue-800" },
   respondido: { label: "Respondido", cls: "bg-green-100 text-green-800" },
+  reaberto: { label: "Reaberto", cls: "bg-amber-100 text-amber-900" },
+  solucionado: { label: "Solucionado", cls: "bg-gray-200 text-gray-800" },
 };
 const PRIO_CLS: Record<string, string> = { Baixa: "text-gray-600", Normal: "text-blue-700", Urgente: "text-red-700" };
 
@@ -38,6 +41,115 @@ async function postJson(url: string, body: any) {
   if (!r.ok) throw new Error(j?.message || `Erro ${r.status}`);
   return j;
 }
+// Envia texto + arquivos (multipart). O servidor aceita JSON ou multipart nas mesmas rotas.
+async function postForm(url: string, campos: Record<string, any>, arquivos: File[]) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(campos)) if (v !== undefined && v !== null) fd.append(k, String(v));
+  for (const f of arquivos) fd.append("arquivos", f, f.name);
+  const r = await fetch(url, { method: "POST", credentials: "include", body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.message || `Erro ${r.status}`);
+  return j;
+}
+function tamanhoFmt(n?: number | null) {
+  if (!n) return "";
+  return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+const MAX_MB = 15;
+
+// Seletor de anexos: arquivo (qualquer tipo) ou foto pela câmera. Nunca obrigatório.
+function Anexador({ arquivos, setArquivos, compacto }: { arquivos: File[]; setArquivos: (f: File[]) => void; compacto?: boolean }) {
+  const { toast } = useToast();
+  const refArq = useRef<HTMLInputElement>(null);
+  const refCam = useRef<HTMLInputElement>(null);
+  const add = (lista: FileList | null) => {
+    if (!lista) return;
+    const novos = Array.from(lista);
+    const grandes = novos.filter((f) => f.size > MAX_MB * 1024 * 1024);
+    if (grandes.length) toast({ title: `Arquivo acima de ${MAX_MB} MB não enviado`, description: grandes.map((f) => f.name).join(", "), variant: "destructive" });
+    const total = [...arquivos, ...novos.filter((f) => f.size <= MAX_MB * 1024 * 1024)].slice(0, 10);
+    setArquivos(total);
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2 items-center">
+        <button type="button" onClick={() => refArq.current?.click()} className="h-9 px-3 rounded-lg border bg-white text-sm font-medium text-gray-700 hover:bg-gray-50" data-testid="button-anexar">
+          <i className="fas fa-paperclip mr-1.5" aria-hidden="true"></i>Anexar arquivo
+        </button>
+        <button type="button" onClick={() => refCam.current?.click()} className="h-9 px-3 rounded-lg border bg-white text-sm font-medium text-gray-700 hover:bg-gray-50" data-testid="button-camera">
+          <i className="fas fa-camera mr-1.5" aria-hidden="true"></i>Câmera
+        </button>
+        {!compacto && <span className="text-xs text-gray-500">Opcional · fotos, PDF, planilhas… até {MAX_MB} MB cada</span>}
+        <input ref={refArq} type="file" multiple className="hidden" onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+        <input ref={refCam} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+      </div>
+      {arquivos.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {arquivos.map((f, i) => (
+            <span key={i} className="inline-flex items-center gap-1.5 max-w-full pl-2.5 pr-1 h-8 rounded-full bg-gray-100 border text-xs text-gray-800">
+              <i className={`fas ${f.type.startsWith("image/") ? "fa-image" : "fa-file"} text-gray-500`} aria-hidden="true"></i>
+              <span className="truncate max-w-[180px]">{f.name}</span>
+              <span className="text-gray-500">{tamanhoFmt(f.size)}</span>
+              <button type="button" aria-label={`Remover ${f.name}`} onClick={() => setArquivos(arquivos.filter((_, j) => j !== i))} className="w-6 h-6 rounded-full hover:bg-gray-200 text-gray-600">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Caixa de mensagem: Enter envia, Alt+Enter (ou Shift+Enter) quebra a linha.
+function CaixaTexto({ id, valor, setValor, onEnviar, placeholder, className }: { id: string; valor: string; setValor: (v: string) => void; onEnviar: () => void; placeholder?: string; className?: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  return (
+    <textarea id={id} ref={ref} value={valor} rows={3} placeholder={placeholder}
+      className={className || "px-3 py-2 border rounded-lg text-sm resize-none"}
+      onChange={(e) => setValor(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" || (e.nativeEvent as any).isComposing) return;
+        if (e.altKey || e.shiftKey) {
+          e.preventDefault();
+          const el = ref.current; if (!el) return;
+          const ini = el.selectionStart ?? valor.length, fim = el.selectionEnd ?? valor.length;
+          const novo = valor.slice(0, ini) + "\n" + valor.slice(fim);
+          setValor(novo);
+          requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = ini + 1; });
+          return;
+        }
+        if (e.ctrlKey || e.metaKey) return;
+        e.preventDefault();
+        onEnviar();
+      }} />
+  );
+}
+
+function ListaAnexos({ anexos, escuro }: { anexos: Anexo[]; escuro?: boolean }) {
+  if (!anexos?.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-1">
+      {anexos.map((a) => {
+        const url = `/api/chamados/anexos/${a.id}`;
+        if ((a.mime || "").startsWith("image/")) {
+          return (
+            <a key={a.id} href={url} target="_blank" rel="noreferrer" title={a.nome} className="block">
+              <img src={url} alt={a.nome} loading="lazy" className="w-28 h-28 object-cover rounded-lg border bg-white" />
+            </a>
+          );
+        }
+        return (
+          <a key={a.id} href={url} target="_blank" rel="noreferrer"
+            className={`inline-flex items-center gap-2 h-9 px-3 rounded-lg border text-xs font-medium max-w-full ${escuro ? "bg-white/15 border-white/30 text-white" : "bg-white text-gray-800"}`}>
+            <i className={`fas ${(a.mime || "").includes("pdf") ? "fa-file-pdf" : "fa-file"}`} aria-hidden="true"></i>
+            <span className="truncate max-w-[200px]">{a.nome}</span>
+            <span className="opacity-70">{tamanhoFmt(a.tamanho)}</span>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 function dataHora(iso: string) {
   try {
     return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -84,7 +196,8 @@ export default function Chamados() {
       const q = busca.trim().toLowerCase();
       if (!q) return true;
       return (c.codigo + " " + c.assunto + " " + c.autorNome + " " + c.destinoNome + " " + (c.descricao || "")).toLowerCase().includes(q);
-    });
+    })
+    .sort((a, b) => b.numero - a.numero); // sempre Z-A: do chamado mais recente para o mais antigo
 
   const abas: [string, string, number][] = [
     ["tudo", "Todos os meus", contagem.tudo],
@@ -172,10 +285,10 @@ export default function Chamados() {
 
       {novoAberto && perfil && (
         <NovoChamado perfil={perfil} enviando={enviando} onFechar={() => setNovoAberto(false)}
-          onEnviar={async (body) => {
+          onEnviar={async (body, arquivos) => {
             setEnviando(true);
             try {
-              const r = await postJson("/api/chamados", body);
+              const r = await postForm("/api/chamados", body, arquivos);
               toast({ title: `Chamado ${r.codigo} aberto`, description: `Enviado para ${r.destino}. Você será avisado quando for respondido.` });
               setNovoAberto(false);
               setCaixa("tudo");
@@ -190,7 +303,8 @@ export default function Chamados() {
   );
 }
 
-function NovoChamado({ perfil, enviando, onFechar, onEnviar }: { perfil: Perfil; enviando: boolean; onFechar: () => void; onEnviar: (b: any) => void }) {
+function NovoChamado({ perfil, enviando, onFechar, onEnviar }: { perfil: Perfil; enviando: boolean; onFechar: () => void; onEnviar: (b: any, arquivos: File[]) => void }) {
+  const [arquivos, setArquivos] = useState<File[]>([]);
   const [destinoKey, setDestinoKey] = useState("");
   const [assunto, setAssunto] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -221,6 +335,10 @@ function NovoChamado({ perfil, enviando, onFechar, onEnviar }: { perfil: Perfil;
             placeholder="Cliente, pedido, NF, o que aconteceu…" className="px-3 py-2 border rounded-lg text-[15px] resize-none" />
         </div>
         <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-semibold">Anexos</span>
+          <Anexador arquivos={arquivos} setArquivos={setArquivos} />
+        </div>
+        <div className="flex flex-col gap-1.5">
           <span className="text-sm font-semibold">Prioridade</span>
           <div className="flex gap-2">
             {["Baixa", "Normal", "Urgente"].map((p) => (
@@ -230,7 +348,7 @@ function NovoChamado({ perfil, enviando, onFechar, onEnviar }: { perfil: Perfil;
           </div>
         </div>
         <Button disabled={!ok || enviando} className="h-12 bg-green-700 hover:bg-green-800 text-white text-base"
-          onClick={() => onEnviar({ destinoKey, assunto, descricao, prioridade })} data-testid="button-enviar-chamado">
+          onClick={() => onEnviar({ destinoKey, assunto, descricao, prioridade }, arquivos)} data-testid="button-enviar-chamado">
           {enviando ? "Enviando…" : ok ? "Enviar chamado" : "Escolha o destino e o assunto"}
         </Button>
       </div>
@@ -249,7 +367,10 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   const [texto, setTexto] = useState("");
   const [alvo, setAlvo] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setTexto(""); setAlvo(""); setModo("responder"); }, [id]);
+  const [arquivos, setArquivos] = useState<File[]>([]);
+  const fimRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setTexto(""); setAlvo(""); setModo("responder"); setArquivos([]); }, [id]);
+  useEffect(() => { fimRef.current?.scrollIntoView({ block: "nearest" }); }, [q.data?.mensagens?.length]);
   useEffect(() => { if (q.data) onMudou(); /* atualiza o "não lido" da lista */ /* eslint-disable-next-line */ }, [q.dataUpdatedAt]);
 
   if (q.isLoading) return <div className="bg-white border rounded-xl p-10 text-center text-gray-500">Carregando…</div>;
@@ -258,15 +379,20 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   const st = STATUS[c.status] || STATUS.novo;
   const destLabel = (k: string | null) => perfil?.destinos.find((d) => d.key === k)?.nome || k || "";
 
-  const acao = async (url: string, body: any, okMsg: string) => {
+  const temConteudo = !!texto.trim() || arquivos.length > 0;
+  const acao = async (url: string, body: any, okMsg: string, opts?: { exigeConteudo?: boolean }) => {
+    if (busy) return;
+    if (opts?.exigeConteudo !== false && !temConteudo) return;
     setBusy(true);
-    try { await postJson(url, body); toast({ title: okMsg }); setTexto(""); setAlvo(""); await q.refetch(); onMudou(); }
+    try { await postForm(url, body, arquivos); toast({ title: okMsg }); setTexto(""); setAlvo(""); setArquivos([]); await q.refetch(); onMudou(); }
     catch (e: any) { toast({ title: "Não foi possível", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
   };
 
   const ehDono = c.papel === "dono" || (c.papel === "admin" && perfil?.admin);
-  const minhaConsultaPendente = c.papel === "consultado";
+  const minhaConsultaPendente = c.papel === "consultado" && c.status !== "solucionado";
+  const fechado = c.status === "solucionado";
+  const dicaTeclas = <span className="text-[11px] text-gray-500">Enter envia · Alt+Enter quebra a linha</span>;
 
   return (
     <div className="bg-white border rounded-xl flex flex-col">
@@ -289,18 +415,48 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         ) : (
           <div key={m.id} className={`max-w-[85%] sm:max-w-[72%] rounded-xl px-3.5 py-2.5 flex flex-col gap-1 ${m.minha ? "self-end" : "self-start"} ${m.tipo === "interna" ? (m.minha ? "bg-purple-800 text-white" : "bg-purple-50 border border-dashed border-purple-400 text-gray-900") : (m.minha ? "bg-green-700 text-white" : "bg-white border text-gray-900")}`}>
             <span className="text-xs font-bold opacity-90">{m.tipo === "interna" ? `Interno · ${destLabel(m.deKey)} → ${destLabel(m.paraKey)}` : m.autorNome}</span>
-            <span className="text-sm leading-relaxed whitespace-pre-line">{m.texto}</span>
+            {m.texto !== "(anexo)" && <span className="text-sm leading-relaxed whitespace-pre-line">{m.texto}</span>}
+            <ListaAnexos anexos={m.anexos || []} escuro={m.minha} />
             <span className="text-[11px] opacity-75 self-end">{dataHora(m.createdAt)}</span>
           </div>
         ))}
+        <div ref={fimRef} />
       </div>
 
-      {c.papel === "autor" && (
+      {c.papel === "autor" && !fechado && (
         <div className="p-4 border-t flex flex-col gap-2">
           <label htmlFor="ch-comp" className="text-sm font-semibold">Complementar o chamado</label>
-          <textarea id="ch-comp" value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} className="px-3 py-2 border rounded-lg text-sm resize-none" placeholder="Mais informação para o responsável…" />
-          <Button disabled={busy || !texto.trim()} className="self-end h-11 bg-green-700 hover:bg-green-800 text-white"
-            onClick={() => acao(`/api/chamados/${c.id}/complementar`, { texto }, "Mensagem enviada")}>Enviar</Button>
+          <CaixaTexto id="ch-comp" valor={texto} setValor={setTexto} placeholder="Mais informação para o responsável…"
+            onEnviar={() => acao(`/api/chamados/${c.id}/complementar`, { texto }, "Mensagem enviada")} />
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <Anexador arquivos={arquivos} setArquivos={setArquivos} compacto />
+            <div className="flex items-center gap-3">
+              {dicaTeclas}
+              <Button disabled={busy || !temConteudo} className="h-11 bg-green-700 hover:bg-green-800 text-white"
+                onClick={() => acao(`/api/chamados/${c.id}/complementar`, { texto }, "Mensagem enviada")}>Enviar</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {fechado && (
+        <div className="p-4 border-t bg-gray-50 flex flex-col gap-2">
+          <span className="text-sm text-gray-700"><i className="fas fa-check-circle text-green-700 mr-1.5" aria-hidden="true"></i>
+            Chamado finalizado como <b>solucionado</b>{c.solucionadoEm ? ` em ${dataHora(c.solucionadoEm)}` : ""}.
+            {c.papel === "autor" ? " Se o problema voltou ou não foi resolvido, você pode reabrir." : ""}</span>
+          {c.papel === "autor" && (
+            <>
+              <label htmlFor="ch-reab" className="text-sm font-semibold">Motivo da reabertura (opcional)</label>
+              <CaixaTexto id="ch-reab" valor={texto} setValor={setTexto} placeholder="O que ainda falta resolver…"
+                onEnviar={() => acao(`/api/chamados/${c.id}/reabrir`, { texto }, "Chamado reaberto", { exigeConteudo: false })} />
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <Anexador arquivos={arquivos} setArquivos={setArquivos} compacto />
+                <Button disabled={busy} className="h-11 bg-amber-600 hover:bg-amber-700 text-white" data-testid="button-reabrir"
+                  onClick={() => acao(`/api/chamados/${c.id}/reabrir`, { texto }, "Chamado reaberto", { exigeConteudo: false })}>
+                  <i className="fas fa-rotate-left mr-1.5" aria-hidden="true"></i>Reabrir chamado</Button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -312,7 +468,7 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         </div>
       )}
 
-      {ehDono && c.status !== "novo" && (
+      {ehDono && c.status !== "novo" && !fechado && (
         <div className="p-4 border-t flex flex-col gap-3">
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setModo("responder")} aria-pressed={modo === "responder"}
@@ -323,13 +479,19 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
           {modo === "responder" ? (
             <>
               <label htmlFor="ch-resp" className="text-sm font-semibold">Resposta para {c.autorNome}</label>
-              <textarea id="ch-resp" value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} className="px-3 py-2 border rounded-lg text-sm resize-none" placeholder="Escreva a solução ou o encaminhamento…" />
-              <div className="flex flex-wrap justify-between items-center gap-2">
-                <span className={`text-xs ${c.aguardando.length ? "text-purple-800 font-semibold" : "text-gray-500"}`}>
-                  {c.aguardando.length ? `Atenção: ainda aguardando retorno de ${c.aguardando.join(", ")}.` : "Ao enviar: vai para o inbox do solicitante e ele recebe aviso no celular."}
-                </span>
-                <Button disabled={busy || !texto.trim()} className="h-11 bg-green-700 hover:bg-green-800 text-white" data-testid="button-responder"
-                  onClick={() => acao(`/api/chamados/${c.id}/responder`, { texto }, "Resposta enviada e solicitante avisado")}>Responder e notificar</Button>
+              <CaixaTexto id="ch-resp" valor={texto} setValor={setTexto} placeholder="Escreva a solução ou o encaminhamento…"
+                onEnviar={() => acao(`/api/chamados/${c.id}/responder`, { texto }, "Resposta enviada e solicitante avisado")} />
+              <Anexador arquivos={arquivos} setArquivos={setArquivos} compacto />
+              <span className={`text-xs ${c.aguardando.length ? "text-purple-800 font-semibold" : "text-gray-500"}`}>
+                {c.aguardando.length ? `Atenção: ainda aguardando retorno de ${c.aguardando.join(", ")}.` : "“Responder” mantém o chamado aberto. “Responder e finalizar” fecha como solucionado. O solicitante é avisado no celular nos dois casos."}
+              </span>
+              <div className="flex flex-wrap justify-end items-center gap-2">
+                {dicaTeclas}
+                <Button disabled={busy || !temConteudo} variant="outline" className="h-11 border-green-700 text-green-800" data-testid="button-responder"
+                  onClick={() => acao(`/api/chamados/${c.id}/responder`, { texto }, "Resposta enviada e solicitante avisado")}>Responder</Button>
+                <Button disabled={busy} className="h-11 bg-green-700 hover:bg-green-800 text-white" data-testid="button-finalizar"
+                  onClick={() => { if (window.confirm(`Finalizar o chamado ${c.codigo} como SOLUCIONADO?\nO solicitante poderá reabrir se precisar.`)) acao(`/api/chamados/${c.id}/responder`, { texto, finalizar: true }, "Chamado finalizado como solucionado", { exigeConteudo: false }); }}>
+                  <i className="fas fa-check-circle mr-1.5" aria-hidden="true"></i>Responder e finalizar</Button>
               </div>
             </>
           ) : (
@@ -342,11 +504,16 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
                 </select>
               </div>
               <label htmlFor="ch-cons" className="text-sm font-semibold">O que você precisa saber?</label>
-              <textarea id="ch-cons" value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} className="px-3 py-2 border rounded-lg text-sm resize-none" placeholder="Ex.: tem produção de 900 ml para entregar quinta?" />
+              <CaixaTexto id="ch-cons" valor={texto} setValor={setTexto} placeholder="Ex.: tem produção de 900 ml para entregar quinta?"
+                onEnviar={() => { if (alvo) acao(`/api/chamados/${c.id}/consultar`, { destinoKey: alvo, texto }, "Consulta enviada"); else toast({ title: "Escolha o setor a consultar" }); }} />
+              <Anexador arquivos={arquivos} setArquivos={setArquivos} compacto />
               <div className="flex flex-wrap justify-between items-center gap-2">
                 <span className="text-xs text-purple-800">Conversa interna — o solicitante só vê que o chamado foi encaminhado.</span>
-                <Button disabled={busy || !texto.trim() || !alvo} className="h-11 bg-purple-800 hover:bg-purple-900 text-white"
-                  onClick={() => acao(`/api/chamados/${c.id}/consultar`, { destinoKey: alvo, texto }, "Consulta enviada")}>Enviar consulta</Button>
+                <div className="flex items-center gap-3">
+                  {dicaTeclas}
+                  <Button disabled={busy || !temConteudo || !alvo} className="h-11 bg-purple-800 hover:bg-purple-900 text-white"
+                    onClick={() => acao(`/api/chamados/${c.id}/consultar`, { destinoKey: alvo, texto }, "Consulta enviada")}>Enviar consulta</Button>
+                </div>
               </div>
             </>
           )}
@@ -357,9 +524,17 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         <div className="p-4 border-t bg-purple-50 flex flex-col gap-2">
           <span className="text-sm text-purple-900"><b>{c.destinoNome}</b> pediu sua ajuda neste chamado. Seu retorno vai para {c.destinoNome}, não para o solicitante.</span>
           <label htmlFor="ch-ret" className="text-sm font-semibold">Retorno para {c.destinoNome}</label>
-          <textarea id="ch-ret" value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} className="px-3 py-2 border border-purple-300 rounded-lg text-sm resize-none bg-white" placeholder="Escreva a informação pedida…" />
-          <Button disabled={busy || !texto.trim()} className="self-end h-11 bg-purple-800 hover:bg-purple-900 text-white" data-testid="button-retorno"
-            onClick={() => acao(`/api/chamados/${c.id}/retorno`, { texto }, `Retorno enviado para ${c.destinoNome}`)}>Enviar retorno para {c.destinoNome}</Button>
+          <CaixaTexto id="ch-ret" valor={texto} setValor={setTexto} placeholder="Escreva a informação pedida…"
+            className="px-3 py-2 border border-purple-300 rounded-lg text-sm resize-none bg-white"
+            onEnviar={() => acao(`/api/chamados/${c.id}/retorno`, { texto }, `Retorno enviado para ${c.destinoNome}`)} />
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <Anexador arquivos={arquivos} setArquivos={setArquivos} compacto />
+            <div className="flex items-center gap-3">
+              {dicaTeclas}
+              <Button disabled={busy || !temConteudo} className="h-11 bg-purple-800 hover:bg-purple-900 text-white" data-testid="button-retorno"
+                onClick={() => acao(`/api/chamados/${c.id}/retorno`, { texto }, `Retorno enviado para ${c.destinoNome}`)}>Enviar retorno para {c.destinoNome}</Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

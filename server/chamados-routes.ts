@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
+import multer from "multer";
 
 // ===========================================================================
 // CHAMADOS (21/out/2026) — solicitações de serviço abertas por qualquer usuário
@@ -13,7 +14,11 @@ import { authenticateUser } from "./authMiddleware";
 //   naiara  – Indústria
 //   lanucy  – Adm, Logística, Financeiro
 //
-// Fluxo: Novo → (Receber) Em atendimento → (Responder) Respondido.
+// Fluxo: Novo → (Receber) Em atendimento → (Responder) Respondido → (Finalizar) Solucionado.
+// O responsável pode responder quantas vezes quiser sem fechar; "Responder e finalizar" fecha
+// como solucionado. Só quem abriu pode Reabrir um chamado solucionado. Tudo fica no histórico
+// (mensagens + linhas de sistema). Anexos (fotos/documentos) em qualquer etapa, opcionais,
+// guardados no Postgres (chamado_anexos) e servidos só a quem pode ver a mensagem.
 // O responsável pode CONSULTAR outro destino dentro do mesmo chamado; a conversa
 // entre setores é INTERNA (o autor só vê uma linha de sistema).
 //
@@ -82,6 +87,21 @@ function ensureTables(): Promise<void> {
         respondido_em timestamp,
         UNIQUE (chamado_id, destino_key)
       )`);
+      await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS solucionado_em timestamp`);
+      await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS solucionado_por varchar`);
+      await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS reaberto_em timestamp`);
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS chamado_anexos (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        chamado_id varchar NOT NULL,
+        mensagem_id varchar,
+        autor_id varchar,
+        nome varchar NOT NULL,
+        mime varchar,
+        tamanho integer,
+        dados bytea NOT NULL,
+        created_at timestamp NOT NULL DEFAULT now()
+      )`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_chamado_anexos_chamado ON chamado_anexos (chamado_id)`);
       await db.execute(sql`CREATE TABLE IF NOT EXISTS chamado_leituras (
         chamado_id varchar NOT NULL,
         user_id varchar NOT NULL,
@@ -167,6 +187,33 @@ async function avisar(userIds: string[], texto: string) {
 function avisarBg(userIds: string[], texto: string) { setTimeout(() => { avisar(userIds, texto).catch(() => {}); }, 0); }
 const trecho = (t: string, n = 120) => (t.length > n ? t.slice(0, n) + "…" : t);
 
+// ---------- anexos ----------
+const MAX_ARQ_MB = 15;
+const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ARQ_MB * 1024 * 1024, files: 10 } }).array("arquivos", 10);
+// Aceita multipart (com arquivos) ou JSON; responde 400 legível se um arquivo passar do limite.
+function comArquivos(req: any, res: Response, next: any) {
+  uploadMw(req, res, (err: any) => {
+    if (!err) return next();
+    const msg = err?.code === "LIMIT_FILE_SIZE" ? `Arquivo maior que ${MAX_ARQ_MB} MB` : err?.code === "LIMIT_FILE_COUNT" || err?.code === "LIMIT_UNEXPECTED_FILE" ? "Máximo de 10 arquivos por envio" : (err?.message || "Falha no upload");
+    res.status(400).json({ message: msg });
+  });
+}
+const arquivosDe = (req: any): any[] => (Array.isArray(req.files) ? req.files : []);
+const nomeArq = (f: any) => { try { return Buffer.from(String(f.originalname || "arquivo"), "latin1").toString("utf8"); } catch { return String(f.originalname || "arquivo"); } };
+async function salvarAnexos(chamadoId: string, mensagemId: string | null, autorId: string, files: any[]) {
+  for (const f of files) {
+    await db.execute(sql`INSERT INTO chamado_anexos (chamado_id, mensagem_id, autor_id, nome, mime, tamanho, dados)
+      VALUES (${chamadoId}, ${mensagemId}, ${autorId}, ${nomeArq(f).slice(0, 200)}, ${String(f.mimetype || "application/octet-stream")}, ${Number(f.size || 0)}, ${f.buffer})`);
+  }
+}
+// Insere mensagem e devolve o id (para ligar os anexos)
+async function inserirMsg(chamadoId: string, autorId: string, autorNome: string, tipo: string, deKey: string | null, paraKey: string | null, texto: string): Promise<string> {
+  const r = rows(await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, de_key, para_key, texto)
+    VALUES (${chamadoId}, ${autorId}, ${autorNome}, ${tipo}, ${deKey}, ${paraKey}, ${texto}) RETURNING id`));
+  return String(r[0].id);
+}
+const sufixoAnexos = (n: number) => (n ? `\n📎 ${n} anexo${n > 1 ? "s" : ""}` : "");
+
 // ---------- carga de chamados visíveis para um usuário ----------
 async function carregarVisiveis(user: any, caixa: string) {
   await ensureTables();
@@ -181,7 +228,7 @@ async function carregarVisiveis(user: any, caixa: string) {
   else filtro = sql`(c.autor_id = ${uid} OR c.destino_key IN (${keysSql})
       OR EXISTS (SELECT 1 FROM chamado_consultas q WHERE q.chamado_id = c.id AND q.destino_key IN (${keysSql})))`;
 
-  const chamados = rows(await db.execute(sql`SELECT c.* FROM chamados c WHERE ${filtro} ORDER BY c.created_at DESC LIMIT 500`));
+  const chamados = rows(await db.execute(sql`SELECT c.* FROM chamados c WHERE ${filtro} ORDER BY c.numero DESC LIMIT 500`));
   if (!chamados.length) return { chamados: [], destinos, minhasKeys, admin, uid };
 
   const ids = sql.join(chamados.map((c) => sql`${c.id}`), sql`, `);
@@ -212,7 +259,7 @@ async function carregarVisiveis(user: any, caixa: string) {
       assunto: c.assunto, descricao: c.descricao, prioridade: c.prioridade, status: c.status,
       autorId: c.autor_id, autorNome: c.autor_nome, autorPapel: c.autor_papel,
       destinoKey: c.destino_key, destinoNome: d?.nome || c.destino_key, destinoSetor: d?.setor || "",
-      createdAt: c.created_at, updatedAt: c.updated_at,
+      createdAt: c.created_at, updatedAt: c.updated_at, solucionadoEm: c.solucionado_em || null,
       papel, naoLido: ult > lido,
       consultas: cons.map((q) => ({ key: q.destino_key, nome: destMap.get(q.destino_key)?.nome || q.destino_key, setor: destMap.get(q.destino_key)?.setor || "", pendente: !!q.pendente })),
       aguardando: papel === "dono" ? pend.map((q) => destMap.get(q.destino_key)?.nome || q.destino_key) : [],
@@ -283,17 +330,36 @@ export function registerChamados(app: Express) {
       const msgs = rows(await db.execute(sql`SELECT * FROM chamado_mensagens WHERE chamado_id = ${c.id} ORDER BY created_at`));
       const uid = String(req.currentUser.id);
       const vis = c.papel === "autor" ? msgs.filter((m) => m.tipo !== "interna") : msgs;
+      const anexos = rows(await db.execute(sql`SELECT id, mensagem_id, nome, mime, tamanho FROM chamado_anexos WHERE chamado_id = ${c.id} ORDER BY created_at`));
       await db.execute(sql`INSERT INTO chamado_leituras (chamado_id, user_id, lido_em) VALUES (${c.id}, ${uid}, now())
         ON CONFLICT (chamado_id, user_id) DO UPDATE SET lido_em = now()`);
       res.json({
         chamado: { ...c, naoLido: false },
-        mensagens: vis.map((m) => ({ id: m.id, tipo: m.tipo, autorId: m.autor_id, autorNome: m.autor_nome, deKey: m.de_key, paraKey: m.para_key, texto: m.texto, createdAt: m.created_at, minha: String(m.autor_id || "") === uid })),
+        mensagens: vis.map((m) => ({ id: m.id, tipo: m.tipo, autorId: m.autor_id, autorNome: m.autor_nome, deKey: m.de_key, paraKey: m.para_key, texto: m.texto, createdAt: m.created_at, minha: String(m.autor_id || "") === uid,
+          anexos: anexos.filter((a) => String(a.mensagem_id || "") === String(m.id)).map((a) => ({ id: a.id, nome: a.nome, mime: a.mime, tamanho: a.tamanho })) })),
       });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
+  // Baixar/ver anexo — só quem enxerga o chamado; anexo de conversa interna não é servido ao autor.
+  app.get("/api/chamados/anexos/:anexoId", authenticateUser, async (req: any, res: Response) => {
+    try {
+      await ensureTables();
+      const a = rows(await db.execute(sql`SELECT a.*, m.tipo AS msg_tipo FROM chamado_anexos a LEFT JOIN chamado_mensagens m ON m.id = a.mensagem_id WHERE a.id = ${String(req.params.anexoId)}`))[0];
+      if (!a) return res.status(404).json({ message: "Anexo não encontrado" });
+      const { c } = await carregarUm(req.currentUser, String(a.chamado_id));
+      if (!c) return res.status(404).json({ message: "Anexo não encontrado" });
+      if (c.papel === "autor" && a.msg_tipo === "interna") return res.status(403).json({ message: "Sem acesso" });
+      const nome = String(a.nome || "arquivo");
+      res.setHeader("Content-Type", String(a.mime || "application/octet-stream"));
+      res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(nome)}`);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.send(Buffer.isBuffer(a.dados) ? a.dados : Buffer.from(a.dados));
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
   // Abrir chamado (qualquer usuário)
-  app.post("/api/chamados", authenticateUser, async (req: any, res: Response) => {
+  app.post("/api/chamados", authenticateUser, comArquivos, async (req: any, res: Response) => {
     try {
       await ensureTables();
       const u = req.currentUser;
@@ -310,12 +376,13 @@ export function registerChamados(app: Express) {
         VALUES (${String(u.id)}, ${autorNome}, ${String(u.role || "")}, ${destinoKey}, ${assunto}, ${descricao || null}, ${prioridade}, 'novo')
         RETURNING id, numero`));
       const novo = ins[0];
-      await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, de_key, para_key, texto)
-        VALUES (${novo.id}, ${String(u.id)}, ${autorNome}, 'publica', 'autor', ${destinoKey}, ${descricao || assunto})`);
+      const files = arquivosDe(req);
+      const msgId = await inserirMsg(novo.id, String(u.id), autorNome, "publica", "autor", destinoKey, descricao || assunto);
+      await salvarAnexos(novo.id, msgId, String(u.id), files);
       await db.execute(sql`INSERT INTO chamado_leituras (chamado_id, user_id) VALUES (${novo.id}, ${String(u.id)}) ON CONFLICT DO NOTHING`);
       const cod = numeroFmt(novo.numero);
       avisarBg(d.userIds.filter((x) => x !== String(u.id)),
-        `📩 Novo chamado ${cod}${prioridade === "Urgente" ? " (URGENTE)" : ""} de ${autorNome}\n${assunto}\n\nAbra no Integra: ${APP_URL}/chamados?id=${novo.id}`);
+        `📩 Novo chamado ${cod}${prioridade === "Urgente" ? " (URGENTE)" : ""} de ${autorNome}\n${assunto}${sufixoAnexos(files.length)}\n\nAbra no Integra: ${APP_URL}/chamados?id=${novo.id}`);
       res.json({ ok: true, id: novo.id, numero: novo.numero, codigo: cod, destino: d.label });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
@@ -335,66 +402,109 @@ export function registerChamados(app: Express) {
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
-  // Responsável responde ao autor → Respondido + aviso no celular do autor
-  app.post("/api/chamados/:id/responder", authenticateUser, async (req: any, res: Response) => {
+  // Responsável responde ao autor → Respondido (chamado continua aberto) ou, com finalizar=true,
+  // fecha como Solucionado. Aviso no celular do autor nos dois casos.
+  app.post("/api/chamados/:id/responder", authenticateUser, comArquivos, async (req: any, res: Response) => {
     try {
       const texto = String(req.body?.texto || "").trim();
-      if (!texto) return res.status(400).json({ message: "Escreva a resposta" });
+      const finalizar = req.body?.finalizar === true || req.body?.finalizar === "true";
+      const files = arquivosDe(req);
+      if (!texto && !files.length && !finalizar) return res.status(400).json({ message: "Escreva a resposta ou anexe um arquivo" });
       const { c } = await carregarUm(req.currentUser, req.params.id);
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       if (c.papel !== "dono" && !isAdminUser(req.currentUser)) return res.status(403).json({ message: "Só o responsável pode responder ao solicitante" });
+      if (c.status === "solucionado") return res.status(400).json({ message: "Chamado já finalizado. Quem abriu pode reabrir." });
+      const uid = String(req.currentUser.id);
       const nome = nomeDe(req.currentUser);
-      await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, de_key, para_key, texto)
-        VALUES (${c.id}, ${String(req.currentUser.id)}, ${nome}, 'publica', ${c.destinoKey}, 'autor', ${texto})`);
-      await db.execute(sql`UPDATE chamados SET status = 'respondido', respondido_em = now(),
-        recebido_por = coalesce(recebido_por, ${String(req.currentUser.id)}), recebido_em = coalesce(recebido_em, now()), updated_at = now() WHERE id = ${c.id}`);
-      if (String(c.autorId) !== String(req.currentUser.id)) {
-        avisarBg([String(c.autorId)], `✅ Seu chamado ${c.codigo} foi atendido por ${nome}.\n"${trecho(texto)}"\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
+      if (texto || files.length) {
+        const msgId = await inserirMsg(c.id, uid, nome, "publica", c.destinoKey, "autor", texto || "(anexo)");
+        await salvarAnexos(c.id, msgId, uid, files);
       }
+      if (finalizar) {
+        await db.execute(sql`UPDATE chamados SET status = 'solucionado', solucionado_em = now(), solucionado_por = ${uid},
+          respondido_em = coalesce(respondido_em, now()),
+          recebido_por = coalesce(recebido_por, ${uid}), recebido_em = coalesce(recebido_em, now()), updated_at = now() WHERE id = ${c.id}`);
+        await db.execute(sql`UPDATE chamado_consultas SET pendente = false WHERE chamado_id = ${c.id} AND pendente = true`);
+        await inserirMsg(c.id, uid, nome, "sistema", null, null, `${nome} finalizou o chamado como solucionado`);
+      } else {
+        await db.execute(sql`UPDATE chamados SET status = 'respondido', respondido_em = now(),
+          recebido_por = coalesce(recebido_por, ${uid}), recebido_em = coalesce(recebido_em, now()), updated_at = now() WHERE id = ${c.id}`);
+      }
+      if (String(c.autorId) !== uid) {
+        const cab = finalizar ? `✅ Seu chamado ${c.codigo} foi SOLUCIONADO e finalizado por ${nome}.` : `💬 Seu chamado ${c.codigo} foi atendido por ${nome}.`;
+        avisarBg([String(c.autorId)], `${cab}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
+      }
+      res.json({ ok: true, finalizado: finalizar });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
+  // Quem abriu reabre um chamado solucionado (motivo e anexos opcionais) → volta ao responsável
+  app.post("/api/chamados/:id/reabrir", authenticateUser, comArquivos, async (req: any, res: Response) => {
+    try {
+      const texto = String(req.body?.texto || "").trim();
+      const files = arquivosDe(req);
+      const { c, vis } = await carregarUm(req.currentUser, req.params.id);
+      if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
+      const uid = String(req.currentUser.id);
+      if (String(c.autorId) !== uid) return res.status(403).json({ message: "Só quem abriu pode reabrir" });
+      if (c.status !== "solucionado") return res.status(400).json({ message: "Só um chamado finalizado pode ser reaberto" });
+      const nome = nomeDe(req.currentUser);
+      await inserirMsg(c.id, uid, nome, "sistema", null, null, `${nome} reabriu o chamado`);
+      if (texto || files.length) {
+        const msgId = await inserirMsg(c.id, uid, nome, "publica", "autor", c.destinoKey, texto || "(anexo)");
+        await salvarAnexos(c.id, msgId, uid, files);
+      }
+      await db.execute(sql`UPDATE chamados SET status = 'reaberto', reaberto_em = now(), updated_at = now() WHERE id = ${c.id}`);
+      const dono = vis.destinos.find((x) => x.key === c.destinoKey);
+      avisarBg((dono?.userIds || []).filter((x) => x !== uid),
+        `🔁 ${nome} reabriu o chamado ${c.codigo}\n${c.assunto}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
   // Responsável consulta outro destino (interno)
-  app.post("/api/chamados/:id/consultar", authenticateUser, async (req: any, res: Response) => {
+  app.post("/api/chamados/:id/consultar", authenticateUser, comArquivos, async (req: any, res: Response) => {
     try {
       const texto = String(req.body?.texto || "").trim();
       const alvo = String(req.body?.destinoKey || "");
-      if (!texto) return res.status(400).json({ message: "Escreva o que precisa saber" });
+      const files = arquivosDe(req);
+      if (!texto && !files.length) return res.status(400).json({ message: "Escreva o que precisa saber" });
       const { c, vis } = await carregarUm(req.currentUser, req.params.id);
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       if (c.papel !== "dono" && !isAdminUser(req.currentUser)) return res.status(403).json({ message: "Só o responsável pode consultar outro setor" });
       const d = vis.destinos.find((x) => x.key === alvo);
       if (!d || alvo === c.destinoKey) return res.status(400).json({ message: "Escolha outro setor" });
+      if (c.status === "solucionado") return res.status(400).json({ message: "Chamado finalizado" });
       const nome = nomeDe(req.currentUser);
       await db.execute(sql`INSERT INTO chamado_consultas (chamado_id, destino_key, pendente, solicitado_por)
         VALUES (${c.id}, ${alvo}, true, ${String(req.currentUser.id)})
         ON CONFLICT (chamado_id, destino_key) DO UPDATE SET pendente = true, respondido_em = NULL`);
       await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, texto)
         VALUES (${c.id}, ${String(req.currentUser.id)}, ${nome}, 'sistema', ${nome + " consultou " + d.setor + " (" + d.nome + ")"})`);
-      await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, de_key, para_key, texto)
-        VALUES (${c.id}, ${String(req.currentUser.id)}, ${nome}, 'interna', ${c.destinoKey}, ${alvo}, ${texto})`);
+      const msgIdC = await inserirMsg(c.id, String(req.currentUser.id), nome, "interna", c.destinoKey, alvo, texto || "(anexo)");
+      await salvarAnexos(c.id, msgIdC, String(req.currentUser.id), files);
       await db.execute(sql`UPDATE chamados SET status = CASE WHEN status = 'novo' OR status = 'respondido' THEN 'em_atendimento' ELSE status END,
         recebido_por = coalesce(recebido_por, ${String(req.currentUser.id)}), recebido_em = coalesce(recebido_em, now()), updated_at = now() WHERE id = ${c.id}`);
       avisarBg(d.userIds.filter((x) => x !== String(req.currentUser.id)),
-        `🔎 ${nome} pediu sua ajuda no chamado ${c.codigo}\n${c.assunto}\n"${trecho(texto)}"\n\nResponder no Integra: ${APP_URL}/chamados?id=${c.id}`);
+        `🔎 ${nome} pediu sua ajuda no chamado ${c.codigo}\n${c.assunto}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nResponder no Integra: ${APP_URL}/chamados?id=${c.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
   // Setor consultado devolve o retorno ao responsável (interno)
-  app.post("/api/chamados/:id/retorno", authenticateUser, async (req: any, res: Response) => {
+  app.post("/api/chamados/:id/retorno", authenticateUser, comArquivos, async (req: any, res: Response) => {
     try {
       const texto = String(req.body?.texto || "").trim();
-      if (!texto) return res.status(400).json({ message: "Escreva o retorno" });
+      const files = arquivosDe(req);
+      if (!texto && !files.length) return res.status(400).json({ message: "Escreva o retorno" });
       const { c, vis } = await carregarUm(req.currentUser, req.params.id);
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       const meusConsultados = c.consultas.filter((q: any) => vis.minhasKeys.includes(q.key)).map((q: any) => q.key);
       if (!meusConsultados.length) return res.status(403).json({ message: "Você não foi consultado neste chamado" });
       const nome = nomeDe(req.currentUser);
       const de = meusConsultados[0];
-      await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, de_key, para_key, texto)
-        VALUES (${c.id}, ${String(req.currentUser.id)}, ${nome}, 'interna', ${de}, ${c.destinoKey}, ${texto})`);
+      const msgIdR = await inserirMsg(c.id, String(req.currentUser.id), nome, "interna", de, c.destinoKey, texto || "(anexo)");
+      await salvarAnexos(c.id, msgIdR, String(req.currentUser.id), files);
       await db.execute(sql`UPDATE chamado_consultas SET pendente = false, respondido_em = now()
         WHERE chamado_id = ${c.id} AND destino_key IN (${sql.join(meusConsultados.map((k: string) => sql`${k}`), sql`, `)})`);
       await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, texto)
@@ -402,26 +512,28 @@ export function registerChamados(app: Express) {
       await db.execute(sql`UPDATE chamados SET updated_at = now() WHERE id = ${c.id}`);
       const dono = vis.destinos.find((x) => x.key === c.destinoKey);
       avisarBg((dono?.userIds || []).filter((x) => x !== String(req.currentUser.id)),
-        `↩️ ${nome} respondeu sua consulta no chamado ${c.codigo}\n"${trecho(texto)}"\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
+        `↩️ ${nome} respondeu sua consulta no chamado ${c.codigo}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 
-  // Autor complementa / reabre
-  app.post("/api/chamados/:id/complementar", authenticateUser, async (req: any, res: Response) => {
+  // Autor complementa um chamado ainda aberto (finalizado → usar Reabrir)
+  app.post("/api/chamados/:id/complementar", authenticateUser, comArquivos, async (req: any, res: Response) => {
     try {
       const texto = String(req.body?.texto || "").trim();
-      if (!texto) return res.status(400).json({ message: "Escreva a mensagem" });
+      const files = arquivosDe(req);
+      if (!texto && !files.length) return res.status(400).json({ message: "Escreva a mensagem ou anexe um arquivo" });
       const { c, vis } = await carregarUm(req.currentUser, req.params.id);
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       if (String(c.autorId) !== String(req.currentUser.id)) return res.status(403).json({ message: "Só quem abriu pode complementar" });
+      if (c.status === "solucionado") return res.status(400).json({ message: "Chamado finalizado. Use Reabrir." });
       const nome = nomeDe(req.currentUser);
-      await db.execute(sql`INSERT INTO chamado_mensagens (chamado_id, autor_id, autor_nome, tipo, de_key, para_key, texto)
-        VALUES (${c.id}, ${String(req.currentUser.id)}, ${nome}, 'publica', 'autor', ${c.destinoKey}, ${texto})`);
+      const msgIdM = await inserirMsg(c.id, String(req.currentUser.id), nome, "publica", "autor", c.destinoKey, texto || "(anexo)");
+      await salvarAnexos(c.id, msgIdM, String(req.currentUser.id), files);
       await db.execute(sql`UPDATE chamados SET status = CASE WHEN status = 'respondido' THEN 'em_atendimento' ELSE status END, updated_at = now() WHERE id = ${c.id}`);
       const dono = vis.destinos.find((x) => x.key === c.destinoKey);
       avisarBg((dono?.userIds || []).filter((x) => x !== String(req.currentUser.id)),
-        `💬 ${nome} complementou o chamado ${c.codigo}\n"${trecho(texto)}"\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
+        `💬 ${nome} complementou o chamado ${c.codigo}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
