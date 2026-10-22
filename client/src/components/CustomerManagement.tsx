@@ -326,7 +326,7 @@ export default function CustomerManagement() {
       return;
     }
     
-    const wazeUrl = `https://waze.com/ul?ll=${customer.latitude},${customer.longitude}&navigate=yes&zoom=17`;
+    const wazeUrl = `https://www.google.com/maps/dir/?api=1&destination=${customer.latitude},${customer.longitude}`;
     window.open(wazeUrl, '_blank');
   };
 
