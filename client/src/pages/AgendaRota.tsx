@@ -20,6 +20,14 @@
 // A REGUA E A DA ROTA DO DIA: a conta sai da agenda de visitas (visit_agenda),
 // com os mesmos filtros de cliente ativo que a Rota do Dia aplica. Ver
 // server/agenda-rota-routes.ts para o detalhe de cada filtro.
+//
+// DOIS CALENDARIOS NO MESMO QUADRO (Flavio, 22/10/2026). O seletor "Mostrar"
+// troca o que cada celula exibe: CLIENTES (quantos atendimentos) ou R$ (quanto
+// esses mesmos atendimentos potencialmente compram). Nao sao duas telas nem
+// duas consultas — a mesma celula ja vem do servidor com os dois numeros, entao
+// trocar e' instantaneo e os dois calendarios falam sempre do mesmo conjunto de
+// atendimentos. O R$ de quem nunca comprou e' ZERO, nao uma estimativa, e a
+// tela diz quantos sao: um total de R$ so' se le sabendo o quanto falta nele.
 // -----------------------------------------------------------------------------
 import { Fragment, useMemo, useState } from "react";
 import type React from "react";
@@ -30,9 +38,13 @@ import { Button } from "@/components/ui/button";
 import { CalendarDays, Info, RefreshCw, Users } from "lucide-react";
 
 type Semana = { n: number; ini: string; fim: string; rotulo: string; ultima: boolean; atual: boolean };
-type Celula = {
-  semana: number; dia: string; canal: string;
-  semanal: number; quinzenal: number; mensal: number; repescagem: number; leads: number;
+/** Por tipo (semanal, quinzenal, mensal, repescagem, leads). */
+type PorTipo = { semanal: number; quinzenal: number; mensal: number; repescagem: number; leads: number };
+/** `n` = quantos clientes; `v` = quantos R$ de potencial. */
+type Celula = { semana: number; dia: string; canal: string; n: PorTipo; v: PorTipo };
+type Potencial = {
+  de: string; ate: string; dias: number;
+  clientesComTicket: number; semHistorico: number; leads: number; regra: string;
 };
 type Resposta = {
   mes: string;
@@ -42,8 +54,11 @@ type Resposta = {
   celulas: Celula[];
   vendedores: Array<{ id: string; nome: string; ativos: number }>;
   escopo: { restrito: boolean; papel: string };
+  potencial?: Potencial;
   fonte: string;
 };
+/** O que as celulas mostram. */
+type Modo = "clientes" | "valor";
 
 const DIAS = [
   { k: "seg", curto: "Segunda" },
@@ -63,6 +78,11 @@ const TIPOS = [
 ] as const;
 
 const NUM = (n: number) => (n ? new Intl.NumberFormat("pt-BR").format(n) : "");
+/** R$ sem centavos. Dentro do quadro o centavo so' atrapalha a leitura. */
+const BRL0 = (v: number) =>
+  Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+/** Numero cru arredondado, para as celulas (o R$ ja esta dito no cabecalho). */
+const INT = (v: number) => (v ? Math.round(v).toLocaleString("pt-BR") : "");
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const labelMes = (m: string) => {
   const [a, x] = String(m || "").split("-");
@@ -74,6 +94,10 @@ export default function AgendaRota() {
   const mesHoje = useMemo(() => new Date().toISOString().slice(0, 7), []);
   const [mes, setMes] = useState(mesHoje);
   const [vendedorSel, setVendedorSel] = useState("");
+  const [modo, setModo] = useState<Modo>("clientes");
+  const moeda = modo === "valor";
+  /** Como a celula escreve o numero, conforme o calendario escolhido. */
+  const fmt = (v: number) => (moeda ? INT(v) : NUM(v));
 
   const qc = useQueryClient();
   const [atualizando, setAtualizando] = useState(false);
@@ -139,14 +163,20 @@ export default function AgendaRota() {
     return m;
   }, [data]);
 
-  /** Uma medida, de uma semana (0 = o mes inteiro), somando os canais pedidos. */
+  /**
+   * Uma medida, de uma semana (0 = o mes inteiro), somando os canais pedidos.
+   * Le `n` (clientes) ou `v` (R$) conforme o calendario escolhido — e' o unico
+   * ponto da tela que decide isso, por isso tudo troca junto: celula, total do
+   * dia, total da semana, resumo do topo.
+   */
   const valor = (semana: number, dia: string, canal: "presencial" | "virtual" | "ambos", tipo: string): number => {
     const canais = canal === "ambos" ? ["presencial", "virtual"] : [canal];
     const sems = semana === 0 ? semanas.map((s) => s.n) : [semana];
+    const campo: "n" | "v" = moeda ? "v" : "n";
     let n = 0;
     for (const s of sems) for (const c of canais) {
       const cel = porCelula.get(`${s}|${dia}|${c}`);
-      if (cel) n += Number((cel as any)[tipo]) || 0;
+      if (cel) n += Number((cel[campo] as any)?.[tipo]) || 0;
     }
     return n;
   };
@@ -168,8 +198,10 @@ export default function AgendaRota() {
           <span className="text-xs text-muted-foreground ml-2">{nota}</span>
         </div>
         <span className="text-sm whitespace-nowrap">
-          <span className="text-muted-foreground text-xs mr-1">atendimentos</span>
-          <b className={destaque ? "text-blue-800" : ""}>{NUM(totalSemana(semana, "ambos")) || "0"}</b>
+          <span className="text-muted-foreground text-xs mr-1">{moeda ? "potencial" : "atendimentos"}</span>
+          <b className={destaque ? "text-blue-800" : ""}>
+            {moeda ? BRL0(totalSemana(semana, "ambos")) : NUM(totalSemana(semana, "ambos")) || "0"}
+          </b>
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -189,11 +221,11 @@ export default function AgendaRota() {
               {DIAS.map((d) => (
                 <Fragment key={d.k}>
                   {TIPOS.map((t, i) => (
-                    <th key={`${d.k}-${t.k}`} className={`px-1 py-1 font-normal text-center w-10 ${i === 0 ? "border-l" : ""}`} title={t.longo}>
+                    <th key={`${d.k}-${t.k}`} className={`px-1 py-1 font-normal text-center ${moeda ? "w-16" : "w-10"} ${i === 0 ? "border-l" : ""}`} title={t.longo}>
                       {t.curto}
                     </th>
                   ))}
-                  <th key={`${d.k}-tot`} className="px-1 py-1 font-medium text-center w-10 bg-muted/30">Tot</th>
+                  <th key={`${d.k}-tot`} className={`px-1 py-1 font-medium text-center ${moeda ? "w-16" : "w-10"} bg-muted/30`}>Tot</th>
                 </Fragment>
               ))}
               <th className="border-l bg-muted/60" />
@@ -210,17 +242,17 @@ export default function AgendaRota() {
                       return (
                         <td key={`${d.k}-${t.k}`}
                           className={`px-1 py-1 text-center tabular-nums ${i === 0 ? "border-l" : ""} ${v ? "" : "text-muted-foreground/40"}`}>
-                          {NUM(v) || "–"}
+                          {fmt(v) || "–"}
                         </td>
                       );
                     })}
                     <td key={`${d.k}-tot`} className="px-1 py-1 text-center tabular-nums font-medium bg-muted/20">
-                      {NUM(totalDia(semana, d.k, canal)) || "–"}
+                      {fmt(totalDia(semana, d.k, canal)) || "–"}
                     </td>
                   </Fragment>
                 ))}
                 <td className="px-2 py-1 text-center tabular-nums font-semibold border-l bg-muted/60">
-                  {NUM(totalSemana(semana, canal)) || "–"}
+                  {fmt(totalSemana(semana, canal)) || "–"}
                 </td>
               </tr>
             ))}
@@ -230,16 +262,16 @@ export default function AgendaRota() {
                 <Fragment key={d.k}>
                   {TIPOS.map((t, i) => (
                     <td key={`${d.k}-${t.k}`} className={`px-1 py-1 text-center tabular-nums ${i === 0 ? "border-l" : ""}`}>
-                      {NUM(valor(semana, d.k, "ambos", t.k)) || "–"}
+                      {fmt(valor(semana, d.k, "ambos", t.k)) || "–"}
                     </td>
                   ))}
                   <td key={`${d.k}-tot`} className="px-1 py-1 text-center tabular-nums bg-muted/30">
-                    {NUM(totalDia(semana, d.k, "ambos")) || "–"}
+                    {fmt(totalDia(semana, d.k, "ambos")) || "–"}
                   </td>
                 </Fragment>
               ))}
               <td className="px-2 py-1 text-center tabular-nums border-l bg-muted/60">
-                {NUM(totalSemana(semana, "ambos")) || "–"}
+                {fmt(totalSemana(semana, "ambos")) || "–"}
               </td>
             </tr>
           </tbody>
@@ -278,6 +310,30 @@ export default function AgendaRota() {
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMes(e.target.value || mesHoje)}
               data-testid="input-mes-agenda-rota"
             />
+          </div>
+          {/* Os dois calendarios. Os numeros ja vieram juntos do servidor — isto
+              nao refaz consulta, so' troca qual dos dois a celula mostra. */}
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Mostrar</label>
+            <div className="inline-flex h-9 rounded-md border overflow-hidden" role="group" aria-label="O que o quadro mostra">
+              {([
+                { k: "clientes", rotulo: "Clientes", dica: "Quantos clientes o vendedor atende em cada dia" },
+                { k: "valor", rotulo: "R$ potencial", dica: "Quanto esses mesmos atendimentos potencialmente compram" },
+              ] as const).map((o) => (
+                <button
+                  key={o.k}
+                  type="button"
+                  title={o.dica}
+                  onClick={() => setModo(o.k)}
+                  className={`px-3 text-sm whitespace-nowrap ${
+                    modo === o.k ? "bg-foreground text-background font-medium" : "bg-background hover:bg-muted"
+                  }`}
+                  data-testid={`botao-modo-${o.k}`}
+                >
+                  {o.rotulo}
+                </button>
+              ))}
+            </div>
           </div>
           <Button
             variant="outline"
@@ -318,8 +374,14 @@ export default function AgendaRota() {
                 Agenda de Rota — {labelMes(mes)}
               </CardTitle>
               <CardDescription>
-                Quantos atendimentos o vendedor tem em cada semana e no mês, por dia da rota.
-                {data?.vendedor ? ` · ${NUM(totalMes) || 0} atendimentos no mês` : ""}
+                {moeda
+                  ? "Quanto os atendimentos de cada semana e do mês potencialmente compram, por dia da rota."
+                  : "Quantos atendimentos o vendedor tem em cada semana e no mês, por dia da rota."}
+                {data?.vendedor
+                  ? moeda
+                    ? ` · ${BRL0(totalMes)} de potencial no mês`
+                    : ` · ${NUM(totalMes) || 0} atendimentos no mês`
+                  : ""}
               </CardDescription>
             </div>
             <Popover>
@@ -353,6 +415,26 @@ export default function AgendaRota() {
                   Fica de fora só o filtro “já comprou no ciclo”, que é uma decisão do dia na Rota do
                   Dia — aqui ele encolheria o passado a cada vez que a tela fosse aberta.
                 </p>
+                <p className="font-semibold pt-1">O calendário de R$ potencial</p>
+                <p className="text-muted-foreground">
+                  É o <b>mesmo quadro</b>, com os mesmos atendimentos: cada célula troca a contagem de
+                  clientes pelo que esses clientes potencialmente compram. O potencial de um
+                  atendimento é o <b>ticket ponderado por recência</b> — a média do valor das NF-e de
+                  venda daquele cliente
+                  {data?.potencial ? ` desde ${dataBR(data.potencial.de)}` : " nos últimos meses"}, dando
+                  peso maior às compras mais recentes. É a mesma conta do <b>termômetro do dia</b> no
+                  Dashboard, de propósito: o vendedor vê o mesmo número nas duas telas.
+                </p>
+                <p className="text-muted-foreground">
+                  <b>Nada é estimado.</b> Cliente sem nota de venda na janela entra como R$ 0, e lead
+                  entra sempre como R$ 0 — nunca comprou. A tela diz quantos são logo acima do
+                  primeiro quadro, para o total ser lido sabendo o quanto falta nele.
+                </p>
+                <p className="text-muted-foreground">
+                  É <b>potencial, não previsão</b>: o quadro não desconta quem já comprou no ciclo nem
+                  pondera a chance de a visita virar pedido. Serve para comparar o peso de um dia, de
+                  uma semana ou de um vendedor contra outro.
+                </p>
               </PopoverContent>
             </Popover>
           </div>
@@ -375,13 +457,32 @@ export default function AgendaRota() {
                     className={`px-2.5 py-1 rounded-md border ${s.atual ? "border-blue-400 bg-blue-50 font-semibold" : "bg-muted/40 border-transparent"}`}
                     data-testid={`resumo-semana-${s.n}`}>
                     {s.rotulo} <span className="text-muted-foreground text-xs">({dataBR(s.ini)}–{dataBR(s.fim)})</span>{" "}
-                    <b>{NUM(totalSemana(s.n, "ambos")) || 0}</b>
+                    <b>{moeda ? BRL0(totalSemana(s.n, "ambos")) : NUM(totalSemana(s.n, "ambos")) || 0}</b>
                   </span>
                 ))}
                 <span className="px-2.5 py-1 rounded-md bg-foreground text-background font-semibold" data-testid="resumo-mes">
-                  Mês {NUM(totalMes) || 0}
+                  Mês {moeda ? BRL0(totalMes) : NUM(totalMes) || 0}
                 </span>
               </div>
+
+              {/* O que falta dentro do total de R$. Sem isto o numero parece completo. */}
+              {moeda && data?.potencial ? (
+                <div className="text-xs text-amber-700" data-testid="aviso-potencial">
+                  {data.potencial.semHistorico || data.potencial.leads ? (
+                    <>
+                      Entram como <b>R$ 0</b>:{" "}
+                      {data.potencial.semHistorico
+                        ? `${NUM(data.potencial.semHistorico)} cliente(s) sem nota de venda nos últimos ${data.potencial.dias} dias`
+                        : ""}
+                      {data.potencial.semHistorico && data.potencial.leads ? " e " : ""}
+                      {data.potencial.leads ? `${NUM(data.potencial.leads)} atendimento(s) de lead` : ""}
+                      {" "}— o potencial do mês está subestimado nesta medida.
+                    </>
+                  ) : (
+                    <>Todos os clientes do quadro têm histórico de compra na janela.</>
+                  )}
+                </div>
+              ) : null}
 
               {semanas.map((s) => (
                 <div key={s.n}>
@@ -396,7 +497,10 @@ export default function AgendaRota() {
               <Quadro semana={0} titulo={`Mês de ${labelMes(mes)}`} nota="soma das semanas acima" destaque />
 
               <div className="text-xs text-muted-foreground space-y-1">
-                <p>Sem = semanal · Qui = quinzenal · Men = mensal · Rep = repescagem · Lea = leads.</p>
+                <p>
+                  Sem = semanal · Qui = quinzenal · Men = mensal · Rep = repescagem · Lea = leads.
+                  {moeda ? " Os números das células estão em reais, sem centavos." : ""}
+                </p>
                 <p>
                   <b>As últimas semanas do mês costumam aparecer mais vazias.</b> O sistema grava na
                   agenda só as próximas visitas de cada cliente (4 por vez), então a parte do mês que
