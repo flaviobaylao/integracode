@@ -122,10 +122,35 @@ const nomeDe = (u: any): string => {
 const fmtQ = (v: any) => Number(v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 
 // ---------- quem pode abrir o dia ----------
+// Responsáveis EXTRAS (fora dos destinos de Chamados). Regra do Flavio (22/out): o Robson
+// (telemarketing) também registra a abertura. Configurável em
+// system_settings 'abertura_estoque_extra' = JSON [{ emails?: [], nomeLike?: [] , userIds?: [] }]
+// (substitui o padrão quando presente).
+type Extra = { emails?: string[]; nomeLike?: string[]; userIds?: string[] };
+const EXTRAS_PADRAO: Extra[] = [{ nomeLike: ["robson"] }];
+async function responsaveisExtras(): Promise<Set<string>> {
+  let cfg: Extra[] = EXTRAS_PADRAO;
+  const raw = await getSetting("abertura_estoque_extra");
+  if (raw) { try { const p = JSON.parse(raw); if (Array.isArray(p)) cfg = p; } catch { /* padrão */ } }
+  const ids = new Set<string>();
+  if (!cfg.length) return ids;
+  const users = rows(await db.execute(sql`SELECT id, lower(coalesce(email,'')) AS email, lower(coalesce(first_name,'')) AS fn FROM users WHERE is_active = true`));
+  for (const e of cfg) {
+    for (const id of e.userIds || []) ids.add(String(id));
+    const emails = (e.emails || []).map((x) => x.toLowerCase());
+    for (const u of users) if (emails.includes(u.email)) ids.add(String(u.id));
+    for (const pat of e.nomeLike || []) {
+      const pre = pat.toLowerCase().replace(/%$/, "");
+      for (const u of users) if (u.fn.startsWith(pre) || u.email.startsWith(pre)) ids.add(String(u.id));
+    }
+  }
+  return ids;
+}
+
 async function responsaveis(): Promise<{ podeAbrir: Set<string>; destinos: any[] }> {
   const { getDestinos } = await import("./chamados-routes");
   const destinos = await getDestinos();
-  const podeAbrir = new Set<string>();
+  const podeAbrir = await responsaveisExtras();
   for (const d of destinos) if (DESTINOS_ABERTURA.includes(d.key)) for (const id of d.userIds) podeAbrir.add(String(id));
   return { podeAbrir, destinos };
 }
@@ -280,6 +305,12 @@ export async function exigirAberturaDoDia(user: any, ctx: { rota: string; pedido
 
 // ---------- rotas ----------
 export function registerAberturaEstoque(app: Express) {
+  // Leve, para o menu: este usuário pode registrar a abertura? (libera o item para
+  // responsáveis fora dos perfis de gestão, ex. telemarketing)
+  app.get("/api/abertura-estoque/acesso", authenticateUser, async (req: any, res: Response) => {
+    try { res.json({ podeAbrir: await podeAbrirDia(req.currentUser) }); } catch { res.json({ podeAbrir: false }); }
+  });
+
   // Estado do dia + linhas esperadas (para montar a tela). Qualquer usuário autenticado
   // pode VER (o pipeline precisa saber se está aberto); só responsáveis podem gravar.
   app.get("/api/abertura-estoque/hoje", authenticateUser, async (req: any, res: Response) => {

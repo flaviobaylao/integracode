@@ -224,6 +224,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     refetchInterval: 30000,
   });
   const chamadosBadge = chamadosCont?.entrada ?? Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
+  // Abertura de Estoque do Dia: responsáveis fora dos perfis de gestão (ex. Robson, telemarketing) também veem o item.
+  const { data: aberturaAcesso } = useQuery<{ podeAbrir: boolean }>({
+    queryKey: ['/api/abertura-estoque/acesso'],
+    queryFn: async () => { const r = await fetch('/api/abertura-estoque/acesso', { credentials: 'include' }); return r.ok ? r.json() : { podeAbrir: false }; },
+    staleTime: 5 * 60 * 1000,
+  });
+  const podeAbrirEstoque = !!aberturaAcesso?.podeAbrir;
 
   const { data: hotsiteOrdersData } = useQuery<{ orders: any[] }>({
     queryKey: ['/api/hotsite-orders'],
@@ -359,7 +366,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'auditoria-estoque', label: 'Auditoria de Estoque', icon: 'fas fa-magnifying-glass-chart', available: canAccessReports, badge: null },
         // Abertura de Estoque do Dia (22/out/2026): contagem física GYN+SERV obrigatória antes do 1º faturamento.
         // Visível a gestores e ao perfil indústria (Naiara é uma das responsáveis pela abertura).
-        { id: 'abertura-estoque', label: 'Abertura de Estoque do Dia', icon: 'fas fa-clipboard-check', available: canAccessReports || canAccessIndustria, badge: null },
+        { id: 'abertura-estoque', label: 'Abertura de Estoque do Dia', icon: 'fas fa-clipboard-check', available: canAccessReports || canAccessIndustria || podeAbrirEstoque, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         // Cupons de Desconto passou a viver dentro de Canais > Hotsite (04/ago/2026).
         // A rota /cupons continua valendo para links salvos.
@@ -577,7 +584,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
-  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados'];
+  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque'];
   // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
   // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
   // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
