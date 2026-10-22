@@ -4226,19 +4226,8 @@ export async function transmitirNfeAuto(invoice: any, invEnv?: string): Promise<
 // Fire-and-forget: nunca lanca, nunca bloqueia o faturamento.
 export async function generateBoletoForReceivable(receivable: any, item: any): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
   try {
-    // [06/jul] SERV (PURO SERVIÇOS, CNPJ ...0105) NÃO emite boleto por decisão — não cair no fallback do IND.
-    // GYN e BSB seguem no fallback do IND (intencional). Guard robusto a tag ("SERV") ou UUID da instância.
-    try {
-      const _ref = String(item.omieInstanceId || '');
-      const _nm = String(item.omieInstanceName || '').toUpperCase();
-      let _serv = _nm === 'SERV' || _ref.toUpperCase() === 'SERV';
-      if (!_serv && _ref && /^[0-9a-f-]{30,}$/i.test(_ref)) {
-        const _inst = await storage.getOmieInstance(_ref);
-        const _c = String((_inst as any)?.cnpj || '').replace(/\D/g, '');
-        if (_c === '52921727000105' || String((_inst as any)?.name || '').toUpperCase() === 'SERV') _serv = true;
-      }
-      if (_serv) { console.log('[BB-BOLETO] SERV nao emite boleto (decisao 06/jul) - skip'); return { ok: false, skipped: true }; }
-    } catch {}
+    // [22/out/2026] SERV (PURO SERVIÇOS, CNPJ ...0105) VOLTA a emitir boleto, pelo convenio/conta
+    // do IND (mesmo fallback de GYN e BSB) — decisao do Flavio. O guard de 06/jul foi removido.
     // ---- TRAVA ANTI-COBRANCA DUPLA -------------------------------------
     // Se o titulo JA tem cobranca viva — boleto REGISTRADO/VENCIDO (no BB o
     // vencido segue pagavel ate a baixa) ou PIX ATIVA — nao gera outra. Sem
@@ -4317,19 +4306,8 @@ export async function generateBoletoForReceivable(receivable: any, item: any): P
 // Gated por bbPixEnabled+pixKey na conta; fire-and-forget: nunca lanca, nunca bloqueia o faturamento.
 export async function generatePixForReceivable(receivable: any, item: any): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
   try {
-    // [06/jul] SERV (PURO SERVIÇOS, CNPJ ...0105) NÃO emite PIX por decisão — não cair no fallback do IND.
-    // GYN e BSB seguem no fallback do IND (intencional). Guard robusto a tag ("SERV") ou UUID da instância.
-    try {
-      const _ref = String(item.omieInstanceId || '');
-      const _nm = String(item.omieInstanceName || '').toUpperCase();
-      let _serv = _nm === 'SERV' || _ref.toUpperCase() === 'SERV';
-      if (!_serv && _ref && /^[0-9a-f-]{30,}$/i.test(_ref)) {
-        const _inst = await storage.getOmieInstance(_ref);
-        const _c = String((_inst as any)?.cnpj || '').replace(/\D/g, '');
-        if (_c === '52921727000105' || String((_inst as any)?.name || '').toUpperCase() === 'SERV') _serv = true;
-      }
-      if (_serv) { console.log('[BB-PIX] SERV nao emite PIX (decisao 06/jul) - skip'); return { ok: false, skipped: true }; }
-    } catch {}
+    // [22/out/2026] SERV (PURO SERVIÇOS, CNPJ ...0105) VOLTA a emitir PIX, pelo convenio/conta
+    // do IND (mesmo fallback de GYN e BSB) — decisao do Flavio. O guard de 06/jul foi removido.
     // ---- TRAVA ANTI-COBRANCA DUPLA -------------------------------------
     // Se o titulo JA tem cobranca viva — boleto REGISTRADO/VENCIDO (no BB o
     // vencido segue pagavel ate a baixa) ou PIX ATIVA — nao gera outra. Sem
