@@ -197,6 +197,9 @@ function paraData(v: string) {
   if (/[zZ]$|[+-]\d\d(:?\d\d)?$/.test(t)) return new Date(t.replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00"));
   return new Date(t.replace(" ", "T") + "Z");
 }
+function diaBrasilia(iso: string) {
+  try { return paraData(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; }
+}
 function dataHora(iso: string) {
   try {
     return paraData(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -209,7 +212,23 @@ export default function Chamados() {
   const idUrl = useMemo(() => new URLSearchParams(window.location.search).get("id"), []);
   const [caixa, setCaixa] = useState<string>("tudo");
   const [busca, setBusca] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [statusSel, setStatusSel] = useState<string[]>([]); // vazio = todos
+  const [statusAberto, setStatusAberto] = useState(false);
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
+  // Ordem padrão: mais antigos em cima, os novos entram embaixo (A-Z). Seletor discreto troca.
+  const [ordem, setOrdem] = useState<"asc" | "desc">(() => {
+    try { return localStorage.getItem("chamados-ordem") === "desc" ? "desc" : "asc"; } catch { return "asc"; }
+  });
+  const listaRef = useRef<HTMLDivElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { localStorage.setItem("chamados-ordem", ordem); } catch {} }, [ordem]);
+  useEffect(() => {
+    if (!statusAberto) return;
+    const fora = (e: MouseEvent) => { if (statusRef.current && !statusRef.current.contains(e.target as Node)) setStatusAberto(false); };
+    document.addEventListener("mousedown", fora);
+    return () => document.removeEventListener("mousedown", fora);
+  }, [statusAberto]);
   const [selId, setSelId] = useState<string | null>(idUrl);
   const [novoAberto, setNovoAberto] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -233,24 +252,45 @@ export default function Chamados() {
     recebidos: todos.filter((c) => c.papel === "dono" && (c.naoLido || c.status === "novo")).length,
     consultas: todos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
   };
+  const q = busca.trim().toLowerCase();
+  const pedeSolucionado = statusSel.includes("solucionado");
   const lista = todos
+    .filter((c) => {
+      // Arquivo: solucionados saem das outras abas, mas continuam aparecendo na busca
+      // (ou quando "Solucionado" é marcado no filtro de status).
+      if (caixa === "arquivados") return c.status === "solucionado";
+      if (c.status === "solucionado" && !q && !pedeSolucionado) return false;
+      return true;
+    })
     .filter((c) => {
       if (caixa === "meus") return c.autorId === uid;
       if (caixa === "recebidos") return c.papel === "dono";
       if (caixa === "consultas") return c.papel === "consultado";
       return true;
     })
+    .filter((c) => statusSel.length === 0 || caixa === "arquivados" || statusSel.includes(c.status))
     .filter((c) => {
-      if (filtroStatus === "todos") return true;
-      if (filtroStatus === "abertos") return c.status !== "solucionado";
-      return c.status === filtroStatus;
+      if (!dataDe && !dataAte) return true;
+      const d = diaBrasilia(c.createdAt);
+      if (dataDe && d < dataDe) return false;
+      if (dataAte && d > dataAte) return false;
+      return true;
     })
     .filter((c) => {
-      const q = busca.trim().toLowerCase();
       if (!q) return true;
       return (c.codigo + " " + c.assunto + " " + c.autorNome + " " + c.destinoNome + " " + (c.descricao || "")).toLowerCase().includes(q);
     })
-    .sort((a, b) => b.numero - a.numero); // sempre Z-A: do chamado mais recente para o mais antigo
+    .sort((a, b) => (ordem === "asc" ? a.numero - b.numero : b.numero - a.numero));
+  const qtdArquivados = todos.filter((c) => c.status === "solucionado").length;
+  const filtrosAtivos = statusSel.length > 0 || !!dataDe || !!dataAte;
+
+  // Em ordem crescente os novos ficam embaixo: ao abrir/trocar aba ou ordem, rola até o fim.
+  const chaveRolagem = `${caixa}|${ordem}|${listaQ.dataUpdatedAt ? 1 : 0}`;
+  useEffect(() => {
+    const el = listaRef.current;
+    if (!el) return;
+    el.scrollTop = ordem === "asc" ? el.scrollHeight : 0;
+  }, [chaveRolagem]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const abas: [string, string, number][] = [
     ["tudo", "Todos os meus", contagem.tudo],
@@ -258,6 +298,7 @@ export default function Chamados() {
   ];
   if (atendeAlgum) abas.push(["recebidos", "Recebidos", contagem.recebidos]);
   if (atendeAlgum || todos.some((c) => c.papel === "consultado")) abas.push(["consultas", "Consultas para mim", contagem.consultas]);
+  abas.push(["arquivados", `Arquivados${qtdArquivados ? ` (${qtdArquivados})` : ""}`, 0]);
   if (perfil?.admin) abas.push(["todos", "Todos (admin)", 0]);
 
   const refresh = () => {
@@ -294,22 +335,57 @@ export default function Chamados() {
 
         <div className="flex flex-col lg:flex-row gap-4 items-start">
           <div className={`w-full lg:w-[420px] lg:flex-shrink-0 bg-white border rounded-xl ${selId ? "hidden lg:block" : ""}`}>
-            <div className="p-3 border-b flex gap-2">
+            <div className="p-3 border-b flex flex-col gap-2">
               <label htmlFor="busca-chamado" className="sr-only">Buscar chamado</label>
-              <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa"
-                className="flex-1 min-w-0 h-10 px-3 border rounded-lg text-sm" />
-              <label htmlFor="filtro-status" className="sr-only">Filtrar por status</label>
-              <select id="filtro-status" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)} data-testid="filtro-status"
-                className={`h-10 px-2 border rounded-lg text-sm bg-white ${filtroStatus !== "todos" ? "border-green-700 text-green-800 font-semibold" : ""}`}>
-                <option value="todos">Todos os status</option>
-                <option value="abertos">Em aberto</option>
-                {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
+              <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa (inclui arquivados)"
+                className="w-full h-10 px-3 border rounded-lg text-sm" />
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <div className="relative" ref={statusRef}>
+                  <button type="button" onClick={() => setStatusAberto((v) => !v)} data-testid="filtro-status" aria-expanded={statusAberto}
+                    disabled={caixa === "arquivados"}
+                    className={`h-9 px-3 border rounded-lg bg-white disabled:opacity-50 ${statusSel.length ? "border-green-700 text-green-800 font-semibold" : "text-gray-700"}`}>
+                    {statusSel.length === 0 ? "Status: todos" : statusSel.length === 1 ? `Status: ${STATUS[statusSel[0]]?.label}` : `Status: ${statusSel.length} selecionados`} ▾
+                  </button>
+                  {statusAberto && (
+                    <div className="absolute z-30 mt-1 w-56 bg-white border rounded-lg shadow-lg p-2 flex flex-col">
+                      {Object.entries(STATUS).map(([k, v]) => (
+                        <label key={k} className="flex items-center gap-2 px-2 py-2 rounded hover:bg-gray-50 cursor-pointer">
+                          <input type="checkbox" className="w-4 h-4" checked={statusSel.includes(k)}
+                            onChange={(e) => setStatusSel((cur) => e.target.checked ? [...cur, k] : cur.filter((x) => x !== k))} />
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${v.cls}`}>{v.label}</span>
+                        </label>
+                      ))}
+                      <div className="flex justify-between border-t mt-1 pt-2 px-1">
+                        <button type="button" className="text-xs text-gray-600 underline" onClick={() => setStatusSel([])}>Limpar</button>
+                        <button type="button" className="text-xs text-gray-600 underline" onClick={() => setStatusSel(["novo", "em_atendimento", "respondido", "reaberto"])}>Só em aberto</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <label className="flex items-center gap-1 text-gray-600">De
+                  <input type="date" value={dataDe} max={dataAte || undefined} onChange={(e) => setDataDe(e.target.value)} data-testid="filtro-data-de"
+                    className={`h-9 px-2 border rounded-lg bg-white ${dataDe ? "border-green-700" : ""}`} />
+                </label>
+                <label className="flex items-center gap-1 text-gray-600">até
+                  <input type="date" value={dataAte} min={dataDe || undefined} onChange={(e) => setDataAte(e.target.value)} data-testid="filtro-data-ate"
+                    className={`h-9 px-2 border rounded-lg bg-white ${dataAte ? "border-green-700" : ""}`} />
+                </label>
+                {filtrosAtivos && (
+                  <button type="button" className="text-xs text-gray-600 underline" onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); }}>Limpar filtros</button>
+                )}
+              </div>
             </div>
-            <div className="max-h-[70vh] overflow-y-auto">
+            <div className="px-4 py-1.5 border-b flex justify-between items-center text-xs text-gray-500">
+              <span>{lista.length} chamado{lista.length === 1 ? "" : "s"}</span>
+              <button type="button" onClick={() => setOrdem((o) => (o === "asc" ? "desc" : "asc"))} data-testid="ordem-lista"
+                title="Trocar a ordem da lista" className="hover:text-gray-800">
+                {ordem === "asc" ? "A-Z · antigos primeiro ↓" : "Z-A · recentes primeiro ↑"}
+              </button>
+            </div>
+            <div ref={listaRef} className="max-h-[70vh] overflow-y-auto">
               {listaQ.isLoading && <div className="p-6 text-center text-gray-500 text-sm">Carregando…</div>}
               {!listaQ.isLoading && lista.length === 0 && (
-                <div className="p-8 text-center text-gray-500 text-sm">Nenhum chamado aqui. Toque em “Abrir chamado” para criar um.</div>
+                <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ainda." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
               )}
               {lista.map((c) => {
                 const st = STATUS[c.status] || STATUS.novo;
