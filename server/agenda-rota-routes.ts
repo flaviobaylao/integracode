@@ -372,10 +372,24 @@ export function registerAgendaRota(app: Express) {
       }
 
       // Devolve so' as celulas com algum numero — o resto a tela desenha zerado.
+      //
+      // O R$ sai daqui ARREDONDADO PARA REAL INTEIRO, que e' como a tela mostra.
+      // Guardar os centavos e arredondar so' na hora de desenhar fazia cada total
+      // arredondar por conta propria, e as quatro semanas somavam R$ 1 a menos
+      // que o mes (565.144 contra 565.145 em out/26). Um real de diferenca nao
+      // muda decisao nenhuma, mas poe em duvida a tela inteira: quem confere uma
+      // soma que nao fecha para de confiar no resto. Arredondando na celula — a
+      // menor coisa que aparece na tela — celula + celula fecha o dia, os dias
+      // fecham a semana e as semanas fecham o mes, exatamente.
+      const inteiro = (r: Record<Tipo, number>): Record<Tipo, number> => {
+        const fora = zeros();
+        for (const t of TIPOS) fora[t] = Math.round(r[t]);
+        return fora;
+      };
       const celulas: Array<{ semana: number; dia: string; canal: string } & Celula> = [];
       for (const [k, c] of mapa) {
         const [s, d, canal] = k.split("|");
-        celulas.push({ semana: Number(s), dia: d, canal, n: c.n, v: c.v });
+        celulas.push({ semana: Number(s), dia: d, canal, n: c.n, v: inteiro(c.v) });
       }
 
       // Clientes ativos do vendedor — o numero que vai ao lado do nome.
