@@ -1079,13 +1079,13 @@ export default function DailyRouteView() {
                             className="bg-blue-500 hover:bg-blue-600 text-white border-blue-600"
                             onClick={(e) => {
                               e.stopPropagation(); // Prevenir que abra o modal ao clicar no Waze
-                              const wazeUrl = `https://waze.com/ul?ll=${visit.customerLatitude},${visit.customerLongitude}&navigate=yes`;
+                              const wazeUrl = `https://www.google.com/maps/dir/?api=1&destination=${visit.customerLatitude},${visit.customerLongitude}`;
                               window.open(wazeUrl, '_blank');
                             }}
                             data-testid={`button-waze-${index}`}
                           >
                             <Navigation className="h-4 w-4 mr-1" />
-                            Waze
+                            Google Maps
                           </Button>
                         )}
                         {getStatusBadge(status)}
