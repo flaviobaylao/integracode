@@ -76,6 +76,11 @@ export async function runGarantirCobranca(opts: {
   // [22/out/2026] SERV voltou a emitir (pela conta do IND). Nenhuma instancia fica de fora;
   // o filtro fica como FALSE para manter o contador `naoEmitem` (sempre 0) e a estrutura.
   const NAO_EMITE = sql`(false)`;
+  // [22/out/2026] Titulo EXCLUIDO (soft-delete) nunca recebe cobranca — antes a rotina nao olhava
+  // deleted_at e contava titulos apagados como candidatos. E titulo vencido ha mais de 30 dias
+  // sem cobranca nenhuma NAO e emitido no automatico (sairia boleto vencendo HOJE para algo que
+  // pode ja ter sido acertado por fora): fica em `antigosSemCobranca` para decisao manual.
+  const RECENTE = sql`((r.due_date)::date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 30))`;
 
   const rows: any = await db.execute(sql`
     SELECT r.id, r.amount, r.due_date, r.customer_id, r.customer_name, r.customer_document,
@@ -89,6 +94,8 @@ export async function runGarantirCobranca(opts: {
       AND r.status IN ('a_vencer','vencida')
       AND (r.amount - COALESCE(r.amount_paid,0)) > 0
       AND r.created_at >= ${since}
+      AND r.deleted_at IS NULL
+      AND ${RECENTE}
       AND NOT ${NAO_EMITE}
       AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
       AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
@@ -104,11 +111,27 @@ export async function runGarantirCobranca(opts: {
       AND r.status IN ('a_vencer','vencida')
       AND (r.amount - COALESCE(r.amount_paid,0)) > 0
       AND r.created_at >= ${since}
+      AND r.deleted_at IS NULL
       AND ${NAO_EMITE}
       AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
       AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
       AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)`);
   const naoEmitem = Number(semEmissao?.rows?.[0]?.n || 0);
+
+  const antigosQ: any = await db.execute(sql`
+    SELECT r.title_number, r.customer_name, r.due_date, (r.amount - COALESCE(r.amount_paid,0))::float AS saldo
+    FROM receivables r
+    WHERE r.billing_pipeline_id IS NOT NULL
+      AND r.status IN ('a_vencer','vencida')
+      AND (r.amount - COALESCE(r.amount_paid,0)) > 0
+      AND r.created_at >= ${since}
+      AND r.deleted_at IS NULL
+      AND NOT ${RECENTE}
+      AND NOT EXISTS (SELECT 1 FROM boleto_charges b WHERE b.receivable_id = r.id)
+      AND NOT EXISTS (SELECT 1 FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id)
+      AND NOT EXISTS (SELECT 1 FROM pix_charges pc WHERE pc.receivable_id = r.id)
+    ORDER BY r.due_date ASC LIMIT 50`);
+  const antigosSemCobranca = (antigosQ?.rows || []).map((x: any) => ({ titulo: x.title_number, cliente: x.customer_name, vencimento: x.due_date, saldo: x.saldo }));
 
   // BACKOFF POR TITULO. Emissao que falha por DADO (ex.: "O CNPJ informado para o
   // pagador esta invalido") vai falhar de novo em toda rodada. Num cron de hora em
@@ -163,5 +186,5 @@ export async function runGarantirCobranca(opts: {
     await setSetting("charge_guarantee_falhas", JSON.stringify(falhas));
     await setSetting("charge_guarantee_last", JSON.stringify({ at: new Date().toISOString(), candidatos: fila.length, ok, skipped, fail, naoEmitem, bloqueados: bloqueados.length }));
   }
-  return { apply, cutoff, since, limite: limit, candidatos: fila.length, naoEmitem, bloqueados, ok, skipped, fail, detalhes: detalhes.slice(0, 50) };
+  return { apply, cutoff, since, limite: limit, candidatos: fila.length, candidatosLista: fila.slice(0, 50).map((r: any) => ({ titulo: r.title_number, cliente: r.customer_name, vencimento: r.due_date, forma: r.payment_method, valor: r.amount })), naoEmitem, antigosSemCobranca, bloqueados, ok, skipped, fail, detalhes: detalhes.slice(0, 50) };
 }
