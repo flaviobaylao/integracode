@@ -13,7 +13,7 @@ import { createImmediateCharge } from './bb-pix-service';
 import { cieloDiag } from './hotsite-card';
 import { db } from './db';
 import { sql, eq, and, gte, isNull } from 'drizzle-orm';
-import { fiscalInvoices, salesCards, blockedOrders } from '@shared/schema';
+import { fiscalInvoices, fiscalInvoiceItems, salesCards, blockedOrders } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
 import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
@@ -210,6 +210,76 @@ function ncmDoProduto(raw: unknown): string {
   if (!d) return NCM_SUCO_MISTO;
   const v = d.padStart(8, '0').slice(0, 8);
   return NCM_INVALIDOS.has(v) ? NCM_SUCO_MISTO : v;
+}
+
+// ── NF-e INCOMPLETA (22/out/2026 — NF 108095 LA FARINE SUL) ──────────────────
+// A nota era gravada assim: cabecalho (com totalProducts = soma de TODOS os
+// produtos do pedido) e depois os itens UM A UM. Se o processo caia no meio
+// (restart/deploy/erro num item), a nota ficava com so parte dos itens e o
+// total cheio -> SEFAZ rejeita 564 "Total do Produto / Servico difere do
+// somatorio dos itens". O Re-tentar reenviava a MESMA nota capenga para sempre.
+// Esta funcao compara os itens gravados com os produtos do pedido e, se nao
+// batem (quantidade de linhas OU soma), REMONTA os itens a partir do pedido.
+// So roda em nota NAO autorizada. Lotes sao regravados depois por
+// prepararEstoqueParaEmissao (a partir da baixa vigente do pedido).
+async function reconstruirItensSeIncompletos(nfId: string, item: any): Promise<boolean> {
+  const products = ((item?.products as any[]) || []).filter((p) => Number(p?.quantity) > 0);
+  if (!products.length) return false;
+  const nf: any = await storage.getFiscalInvoice(nfId);
+  if (!nf || String(nf.status) === 'authorized') return false;
+  const atuais: any[] = await storage.getFiscalInvoiceItems(nfId);
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const somaPedido = r2(products.reduce((s, p) => s + (parseFloat(String(p.totalPrice ?? 0)) || 0), 0));
+  const somaNota = r2(atuais.reduce((s, it) => s + (parseFloat(String(it.totalPrice ?? 0)) || 0), 0));
+  if (atuais.length === products.length && Math.abs(somaPedido - somaNota) < 0.01) return false;
+
+  // Campos fiscais da linha: herda de um item que ja exista (mesma regra do faturamento);
+  // sem nenhum, usa o CFOP da nota e o padrao Simples.
+  const modelo: any = atuais[0] || {};
+  const cfop = modelo.cfop || nf.cfop;
+  const csosn = modelo.csosn || '102';
+  const aliqIcms = modelo.aliqIcms ?? '0';
+  const cstIcms = modelo.cstIcms || null;
+
+  const liquido = parseFloat(String(nf.totalInvoice ?? 0)) || 0;
+  const desconto = somaPedido > 0 && liquido > 0 && somaPedido - liquido >= 0.01 ? r2(somaPedido - liquido) : 0;
+
+  const linhas: any[] = [];
+  let acc = 0;
+  for (let i = 0; i < products.length; i++) {
+    const p = products[i];
+    const pid: string | null = p.id || p.productId || null;
+    let productCode = `PROD-${i + 1}`;
+    let ncm = NCM_SUCO_MISTO;
+    if (pid) {
+      const pd: any = await storage.getProduct(pid);
+      if (pd) { productCode = pd.omieCode || pd.omieCodigo || productCode; ncm = ncmDoProduto(pd.ncm); }
+    }
+    const total = r2(parseFloat(String(p.totalPrice ?? 0)) || (Number(p.quantity) * Number(p.unitPrice)));
+    let d = 0;
+    if (desconto > 0) {
+      d = i === products.length - 1 ? r2(desconto - acc) : r2(desconto * (total / somaPedido));
+      if (d < 0) d = 0;
+      acc = r2(acc + d);
+    }
+    linhas.push({
+      invoiceId: nfId, itemNumber: i + 1, productName: p.name, productCode, productId: pid,
+      lotNumber: null, lotId: null, ncm, cfop, unit: 'UN',
+      quantity: String(p.quantity), unitPrice: String(p.unitPrice), totalPrice: total.toFixed(2),
+      discount: d.toFixed(2), csosn, aliqIcms, ...(cstIcms ? { cstIcms } : {}),
+    });
+  }
+  // Troca atomica: apaga e regrava dentro de uma transacao (nunca fica pela metade).
+  await db.transaction(async (tx: any) => {
+    await tx.delete(fiscalInvoiceItems).where(eq(fiscalInvoiceItems.invoiceId, nfId));
+    await tx.insert(fiscalInvoiceItems).values(linhas as any);
+    await tx.update(fiscalInvoices).set({
+      totalProducts: somaPedido.toFixed(2),
+      totalDiscount: desconto.toFixed(2),
+    } as any).where(eq(fiscalInvoices.id, nfId));
+  });
+  console.log(`🧩 [RETRY-NFE][ITENS] NF ${nf.invoiceNumber || nfId}: itens remontados do pedido (${atuais.length} → ${linhas.length}; R$ ${somaNota.toFixed(2)} → R$ ${somaPedido.toFixed(2)})`);
+  return true;
 }
 
 // Throttle para a promoção oportunista no GET /api/billing-pipeline (evita rodar o UPDATE a cada request).
@@ -3048,6 +3118,10 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       } catch (e: any) { console.warn('[RETRY-NFE] falha ao atualizar destinatário (segue):', e?.message); }
 
+      // 🧩 NF-e INCOMPLETA: itens gravados nao batem com o pedido -> remonta antes de retransmitir.
+      try { await reconstruirItensSeIncompletos(nf.id, item); }
+      catch (e: any) { console.warn('[RETRY-NFE][ITENS] falha ao remontar itens (segue):', e?.message); }
+
       // [DESCONTO NA NF] NFs criadas ANTES da correcao gravaram totalProducts = valor LIQUIDO
       // enquanto os itens ficaram BRUTOS e com discount '0' -> a SEFAZ rejeita
       // "Total do Produto / Servico difere do somatorio dos itens" (531) e o botao Re-tentar
@@ -3769,6 +3843,10 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
   // no ultimo item para que a soma dos vDesc feche exatamente com o vDesc do <ICMSTot>.
   let _descAcum = 0;
   const __lotesDasLinhas = distribuirLotes(lotMap, (products || []) as any[]);
+  // NF-e INCOMPLETA (22/out/2026): as linhas sao montadas em memoria e gravadas num
+  // UNICO INSERT no fim — ou entram todas, ou nenhuma. Antes cada linha era um insert
+  // separado e uma queda no meio deixava a nota com parte dos itens (rejeicao 564).
+  const __linhasNf: any[] = [];
   if (products && products.length > 0) {
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
@@ -3799,7 +3877,7 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
       const lotesDoItem = __lotesDasLinhas[i] || [];
       const lotTxt = textoLotes(lotesDoItem);
       if (lotTxt) productName = `${p.name} - ${lotTxt}`;
-      await storage.createFiscalInvoiceItem({
+      __linhasNf.push({
         invoiceId: invoice.id,
         itemNumber: i + 1,
         productName,
@@ -3817,6 +3895,23 @@ async function createInvoiceFromPipelineItem(item: any, user: any, lotMap?: Mapa
         csosn: custCsosn,
         aliqIcms: custPcred,
       });
+    }
+  }
+  if (__linhasNf.length) {
+    try {
+      await db.insert(fiscalInvoiceItems).values(__linhasNf);
+    } catch (e: any) {
+      // Nota sem itens nao pode ficar para tras como rascunho valido: registra o erro
+      // na nota (o Re-tentar remonta os itens a partir do pedido) e propaga.
+      console.error(`❌ [NFE] falha ao gravar os itens da NF ${invoice.invoiceNumber}:`, e?.message || e);
+      try {
+        await storage.createFiscalInvoiceEvent({
+          invoiceId: invoice.id, eventType: 'erro', status: 'error',
+          description: `Falha ao gravar os itens da NF-e: ${String(e?.message || e).slice(0, 300)}`,
+          createdBy: user?.email || null,
+        });
+      } catch {}
+      throw e;
     }
   }
 
