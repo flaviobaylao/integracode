@@ -764,6 +764,11 @@ export default function BillingPipeline() {
       const doc = (item.customerDocument || '').replace(/\D/g, '');
       const isCnpj = doc.length > 11;
       const partes = String(item.sellerName || '').trim().split(/\s+/);
+      // A partir de "Faturado" (e etapas seguintes), o pedido já tem NF — o PDF sai
+      // com o número da NF. Antes disso (pedido, agendado, a faturar…), sai com o
+      // número do pedido. A presença de invoiceNumber também força o modo NF.
+      const FATURADO_EM_DIANTE = new Set(['faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue']);
+      const faturado = FATURADO_EM_DIANTE.has(item.stage) || !!item.invoiceNumber;
       generateOrcamentoPdf({
         customer: {
           fantasyName: item.customerName,
@@ -776,6 +781,11 @@ export default function BillingPipeline() {
         paymentMethod: item.paymentMethod,
         boletoDays: item.boletoDays,
         operationType: item.operationType,
+        docTitle: faturado ? 'PEDIDO FATURADO' : 'PEDIDO DE VENDA',
+        numberLabel: faturado ? 'Número da NF' : 'Número do Pedido',
+        numberValue: faturado ? (item.invoiceNumber || item.orderNumber || '-') : (item.orderNumber || '-'),
+        showOrcamentoNotes: false,
+        fileNamePrefix: faturado ? 'nf' : 'pedido',
       });
       toast({ title: 'PDF gerado', description: 'O PDF do pedido foi baixado.' });
     } catch (e: any) {
