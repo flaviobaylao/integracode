@@ -168,7 +168,15 @@ export function registerAgendaRota(app: Express) {
   // GET /api/carteira/agenda-rota?sellerId=...&mes=YYYY-MM
   //
   // Devolve as semanas do mes, a matriz semana x dia x canal x tipo e o total de
-  // clientes ativos do vendedor. Sem sellerId, devolve so' a lista de vendedores.
+  // clientes ativos.
+  //
+  // SEM sellerId o quadro e' de TODOS os vendedores somados (Flavio, 22/10/2026)
+  // — a visao da operacao inteira, que e' a pergunta de quem abre a tela sem ter
+  // um vendedor em mente. "Todos" e' exatamente a soma dos vendedores que o
+  // seletor lista, nem um a mais: assim da' para somar o seletor na mao e bater
+  // com o total. Quem vir uma carteira que nao devia estar nessa conta resolve
+  // tirando o vendedor do seletor (zerando a carteira dele), nao com um filtro
+  // escondido aqui dentro.
   // ---------------------------------------------------------------------------
   app.get("/api/carteira/agenda-rota", authenticateUser, async (req: Request, res: Response) => {
     try {
@@ -203,7 +211,24 @@ export function registerAgendaRota(app: Express) {
               id: String(r.id), nome: String(r.nome || r.id), ativos: Number(r.ativos) || 0,
             }));
 
-      if (!sellerId) return res.json({ mes, semanas, vendedor: null, celulas: [], vendedores });
+      // ESCOPO DA CONSULTA. Um vendedor escolhido -> so' ele. Nenhum -> todos os
+      // do seletor. Um fragmento SQL so', usado por todas as consultas abaixo,
+      // para nao existir a chance de uma delas filtrar por um escopo e outra
+      // por outro — que e' como um total deixa de fechar com as suas partes.
+      const todos = !sellerId;
+      const idsEscopo = todos ? vendedores.map((v) => v.id) : [sellerId];
+      if (!idsEscopo.length) {
+        return res.json({ mes, semanas, vendedor: null, celulas: [], vendedores, escopo: { restrito, papel } });
+      }
+      const listaIds = sql.join(idsEscopo.map((x) => sql`${x}`), sql`, `);
+      // A unica consulta montada por texto (sql.raw, por causa do CTE) precisa
+      // da lista escapada na mao — id de usuario e' sempre [A-Za-z0-9_-], e o
+      // que nao for e' descartado em vez de escapado.
+      const listaIdsTexto = idsEscopo
+        .map((x) => String(x).replace(/[^A-Za-z0-9_-]/g, ""))
+        .filter(Boolean)
+        .map((x) => `'${x}'`)
+        .join(",") || `''`;
 
       // Janela do quadro: da segunda da 1a semana a sexta da ultima.
       const ini = semanas[0].ini;
@@ -222,7 +247,7 @@ export function registerAgendaRota(app: Express) {
         docs AS (
           SELECT DISTINCT NULLIF(regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g'),'') AS doc
           FROM customers
-          WHERE seller_id = '${sellerId}'
+          WHERE seller_id IN (${listaIdsTexto})
         ),
         pesos AS (
           -- peso = ordem cronologica da nota: a mais antiga pesa 1, a seguinte 2...
@@ -266,7 +291,7 @@ export function registerAgendaRota(app: Express) {
         WHERE v.scheduled_date::date >= ${ini}::date
           AND v.scheduled_date::date <= ${fim}::date
           AND COALESCE(v.visit_status,'pending') <> 'cancelled'
-          AND c.seller_id = ${sellerId}
+          AND c.seller_id IN (${listaIds})
           AND c.is_active = true
           AND COALESCE(c.is_supplier,false) = false
           AND COALESCE(c.is_lead,false) = false
@@ -288,7 +313,7 @@ export function registerAgendaRota(app: Express) {
           AND ra.draw_date <= ${fim}
           AND COALESCE(ra.status,'') NOT IN ('cancelled','returned')
           AND COALESCE(c.is_supplier,false) = false
-          AND ra.assigned_user_id = ${sellerId}
+          AND ra.assigned_user_id IN (${listaIds})
           AND EXTRACT(ISODOW FROM ra.draw_date::date) BETWEEN 1 AND 5`)).rows as any[];
 
       // ── 3) LEADS (sempre presencial, pela data do proximo contato) ───────
@@ -299,7 +324,7 @@ export function registerAgendaRota(app: Express) {
         FROM leads l
         WHERE l.next_contact_date::date >= ${ini}::date
           AND l.next_contact_date::date <= ${fim}::date
-          AND l.assigned_to = ${sellerId}
+          AND l.assigned_to IN (${listaIds})
           AND COALESCE(l.status::text,'pending') NOT IN ('converted','discarded')
           AND EXTRACT(ISODOW FROM l.next_contact_date) BETWEEN 1 AND 5
         GROUP BY 1,2`)).rows as any[];
@@ -352,14 +377,16 @@ export function registerAgendaRota(app: Express) {
         SELECT COUNT(*)::int AS n,
                COUNT(*) FILTER (WHERE COALESCE(virtual_service,false) = true)::int AS virtuais
         FROM customers
-        WHERE seller_id = ${sellerId}
+        WHERE seller_id IN (${listaIds})
           AND is_active = true
           AND COALESCE(is_supplier,false) = false
           AND COALESCE(is_lead,false) = false`)).rows as any[];
 
-      const nome = (await db.execute(sql`
-        SELECT NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')),'') AS nome
-        FROM users WHERE id = ${sellerId} LIMIT 1`)).rows as any[];
+      const nome = todos
+        ? []
+        : ((await db.execute(sql`
+            SELECT NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')),'') AS nome
+            FROM users WHERE id = ${sellerId} LIMIT 1`)).rows as any[]);
 
       res.json({
         mes,
@@ -370,9 +397,11 @@ export function registerAgendaRota(app: Express) {
         canais: CANAIS,
         vendedor: {
           id: sellerId,
-          nome: String(nome?.[0]?.nome || sellerId),
+          nome: todos ? `Todos os vendedores (${vendedores.length})` : String(nome?.[0]?.nome || sellerId),
           ativos: Number(ativos?.[0]?.n) || 0,
           ativosVirtuais: Number(ativos?.[0]?.virtuais) || 0,
+          /** true = o quadro e' a soma de todos os vendedores do seletor. */
+          todos,
         },
         celulas,
         vendedores,
