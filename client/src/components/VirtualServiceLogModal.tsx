@@ -450,16 +450,21 @@ export default function VirtualServiceLogModal({
                 {entityType === 'customer' && serviceType === 'nao_venda' && (
                   <div className="space-y-2">
                     <Label>Motivo da Não Venda *</Label>
-                    <Select value={noSaleReason} onValueChange={setNoSaleReason}>
-                      <SelectTrigger data-testid="vsl-select-no-sale-reason">
-                        <SelectValue placeholder="Selecione o motivo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {NAO_VENDA_MOTIVOS.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {/* Lista NATIVA (abre o seletor do próprio celular — mais confiável no mobile). */}
+                    <select
+                      value={noSaleReason}
+                      onChange={(e) => setNoSaleReason(e.target.value)}
+                      className={`w-full h-10 rounded-md border bg-background px-3 text-sm ${!noSaleReason ? 'border-red-400 text-muted-foreground' : 'border-input'}`}
+                      data-testid="vsl-select-no-sale-reason"
+                    >
+                      <option value="">Selecione o motivo</option>
+                      {NAO_VENDA_MOTIVOS.map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
+                    {!noSaleReason && (
+                      <p className="text-xs text-red-600">Selecione o motivo da Não Venda para salvar.</p>
+                    )}
                     {motivoNV && (
                       <p className="text-xs rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300 px-2 py-1">
                         Motivo selecionado: {motivoNV.label}
@@ -585,7 +590,7 @@ export default function VirtualServiceLogModal({
                   </Button>
                   <Button 
                     onClick={handleSubmit} 
-                    disabled={createLogMutation.isPending || !serviceType || (serviceType === 'nao_venda' && entityType === 'customer' && (!noSaleReason || (nvExigeObs && !notes.trim()) || (nvExigeFoto && images.length === 0)))}
+                    disabled={createLogMutation.isPending}
                     data-testid="vsl-save"
                   >
                     {createLogMutation.isPending ? "Salvando..." : "Salvar Atendimento"}

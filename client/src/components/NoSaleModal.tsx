@@ -136,16 +136,19 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
 
           <div>
             <Label htmlFor="reason">Motivo da Não Venda *</Label>
-            <Select value={reason} onValueChange={(v) => { setReason(v); }}>
-              <SelectTrigger id="reason" data-testid="select-no-sale-reason">
-                <SelectValue placeholder="Selecione o motivo" />
-              </SelectTrigger>
-              <SelectContent>
-                {MOTIVOS.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Lista NATIVA (abre o seletor do próprio celular — mais confiável no mobile). */}
+            <select
+              id="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className={`w-full h-10 rounded-md border bg-background px-3 text-sm mt-1 ${!reason ? 'border-red-400 text-muted-foreground' : 'border-input'}`}
+              data-testid="select-no-sale-reason"
+            >
+              <option value="">Selecione o motivo</option>
+              {MOTIVOS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
           </div>
 
           {motivo && (
@@ -223,7 +226,7 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={isSubmitting || !podeConfirmar}
+              disabled={isSubmitting}
               className="bg-red-500 hover:bg-red-600"
               data-testid="button-confirm-no-sale"
             >
