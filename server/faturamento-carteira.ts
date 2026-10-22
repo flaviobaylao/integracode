@@ -44,22 +44,22 @@ const LISTA_DOCS_FORA = DOCS_FORA.map((c) => `'${c}'`).join(",");
  * @param filtroVendaTitulos  o bloco `AND NOT (...)` que ja filtra os titulos
  *                            (grupo, categoria, NF invalida, lixeira)
  */
-export function cteFaturamento(iniDate: string, fimDateExcl: string, filtroVendaTitulos: string): string {
-  // Destinatario da nota: e' dele o faturamento (o local de entrega vai em
-  // <entrega> e nao muda quem comprou) — mesma regra do titulo, que nasce no
-  // CNPJ do destinatario.
-  const docNf = `NULLIF(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'')`;
-  const nomeNf = `NULLIF(UPPER(TRIM(COALESCE(fi.customer_name,''))),'')`;
-  // Grupo/BARUC tambem fora pelo lado da NF-e: venda para a propria casa nao e
-  // faturamento de carteira.
-  const grupoNf = `(COALESCE(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'') IN (${LISTA_DOCS_FORA})
+// Destinatario da nota: e' dele o faturamento (o local de entrega vai em
+// <entrega> e nao muda quem comprou) — mesma regra do titulo, que nasce no
+// CNPJ do destinatario.
+const docNf = `NULLIF(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'')`;
+const nomeNf = `NULLIF(UPPER(TRIM(COALESCE(fi.customer_name,''))),'')`;
+// Grupo/BARUC tambem fora pelo lado da NF-e: venda para a propria casa nao e
+// faturamento de carteira.
+const grupoNf = `(COALESCE(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'') IN (${LISTA_DOCS_FORA})
                     OR UPPER(COALESCE(fi.customer_name,'')) ~ '(^|[^A-Z])(PURO|BARUC)([^A-Z]|$)')`;
-  // Pedido na lixeira nunca entra em relatorio (regra 5 do faturamento oficial).
-  const lixeiraNf = `EXISTS (
+// Pedido na lixeira nunca entra em relatorio (regra 5 do faturamento oficial).
+const lixeiraNf = `EXISTS (
       SELECT 1 FROM billing_pipeline bpx
       WHERE bpx.stage = 'lixeira'
         AND NULLIF(regexp_replace(COALESCE(bpx.invoice_number,''),'[^0-9]','','g'),'')::bigint = fi.invoice_number)`;
 
+export function cteFaturamento(iniDate: string, fimDateExcl: string, filtroVendaTitulos: string): string {
   return `
         fat AS (
           -- ATE ${MES_NFE_INTEGRA}: titulo emitido (a NF-e do INTEGRA ainda nao existia)
@@ -84,6 +84,40 @@ export function cteFaturamento(iniDate: string, fimDateExcl: string, filtroVenda
                  to_char(${nfData("fi")},'YYYY-MM')                    AS mes,
                  COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0) AS v,
                  1                                                      AS n
+          FROM ${nfVendaFrom("fi")}
+          WHERE ${nfVendaWhere("fi")}
+            AND ${nfData("fi")}::date >= '${iniDate}'
+            AND ${nfData("fi")}::date <  '${fimDateExcl}'
+            AND to_char(${nfData("fi")},'YYYY-MM') >= '${MES_NFE_INTEGRA}'
+            AND COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0) > 0
+            AND NOT ${grupoNf}
+            AND NOT ${lixeiraNf}
+        )`;
+}
+
+/**
+ * CTE `notas` — UMA LINHA POR NF-e DE VENDA, com o DIA.
+ * Colunas: doc, dia ('YYYY-MM-DD'), v (total da nota).
+ *
+ * E' a metade NF-e de `cteFaturamento` (mesmos filtros, mesmas exclusoes de
+ * grupo e lixeira), so' que guardando a data em vez do mes — quem precisa
+ * ordenar nota a nota, como o ticket ponderado por recencia da Agenda de Rota,
+ * nao consegue fazer isso com a granularidade de mes.
+ *
+ * SO' SERVE DE abr/2026 EM DIANTE. Antes disso o faturamento mora em titulo e
+ * esta CTE devolve vazio — o chamador tem que limitar a janela, e nao ha porque
+ * nao limitar: a pergunta "quanto este cliente costuma comprar" se responde com
+ * os ultimos meses, nao com 2025.
+ *
+ * @param iniDate     'YYYY-MM-DD' inicio (inclusive)
+ * @param fimDateExcl 'YYYY-MM-DD' fim EXCLUSIVO
+ */
+export function cteNotasVenda(iniDate: string, fimDateExcl: string): string {
+  return `
+        notas AS (
+          SELECT ${docNf} AS doc,
+                 to_char(${nfData("fi")},'YYYY-MM-DD')                   AS dia,
+                 COALESCE(NULLIF(fi.total_invoice::text,'')::numeric,0)  AS v
           FROM ${nfVendaFrom("fi")}
           WHERE ${nfVendaWhere("fi")}
             AND ${nfData("fi")}::date >= '${iniDate}'

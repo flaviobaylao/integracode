@@ -37,13 +37,33 @@
 //
 // LEAD e' sempre PRESENCIAL (regra do Flavio, ago/2026) e entra pela data do
 // proximo contato (leads.next_contact_date).
+//
+// DOIS CALENDARIOS, UMA MATRIZ (Flavio, 22/10/2026). Cada celula carrega os
+// dois numeros ao mesmo tempo: quantos CLIENTES caem ali e quantos R$ eles
+// POTENCIALMENTE compram. A tela so' escolhe qual mostrar. Dois numeros na
+// mesma consulta e' o que garante que o calendario de R$ e o de clientes
+// estejam sempre falando do mesmo conjunto de atendimentos — se fossem duas
+// rotas, bastaria uma mudar de filtro para os totais passarem a divergir sem
+// ninguem perceber.
+//
+// POTENCIAL DE UM ATENDIMENTO = TICKET PONDERADO POR RECENCIA: media do valor
+// das NF-e de venda do cliente na janela, com peso crescente para as mais
+// recentes (a 1a nota pesa 1, a 2a pesa 2...). E' a MESMA conta do termometro
+// do dia no Dashboard (computeDailyThermometer), de proposito: o vendedor ve o
+// mesmo numero nas duas telas. Quem nao tem nota na janela entra como R$ 0 —
+// nada e' estimado — e a tela diz quantos sao, para o total ser lido sabendo o
+// quanto esta subestimado. LEAD e' sempre R$ 0: nunca comprou.
 // -----------------------------------------------------------------------------
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
+import { cteNotasVenda, MES_NFE_INTEGRA } from "./faturamento-carteira";
 
 const TZ = "America/Sao_Paulo";
+
+/** Quantos dias de historico entram no ticket ponderado. */
+const JANELA_TICKET_DIAS = 180;
 
 /** 'YYYY-MM' de hoje no horario de Brasilia. */
 function mesHoje(): string {
@@ -107,19 +127,34 @@ const CANAIS = ["presencial", "virtual"] as const;
 const TIPOS = ["semanal", "quinzenal", "mensal", "repescagem", "leads"] as const;
 export type Tipo = (typeof TIPOS)[number];
 
-type Celula = Record<Tipo, number>;
-const celulaVazia = (): Celula => ({ semanal: 0, quinzenal: 0, mensal: 0, repescagem: 0, leads: 0 });
+/** Uma celula guarda os DOIS calendarios: `n` = clientes, `v` = R$ potencial. */
+type Celula = { n: Record<Tipo, number>; v: Record<Tipo, number> };
+const zeros = (): Record<Tipo, number> => ({ semanal: 0, quinzenal: 0, mensal: 0, repescagem: 0, leads: 0 });
+const celulaVazia = (): Celula => ({ n: zeros(), v: zeros() });
 
-/** chave 'semana|dia|canal' -> contagens por tipo. */
+/** chave 'semana|dia|canal' -> contagens e valores por tipo. */
 type Mapa = Map<string, Celula>;
 const chave = (sem: number, dia: string, canal: string) => `${sem}|${dia}|${canal}`;
 
-function soma(mapa: Mapa, sem: number, dia: DiaSemana, canal: string, tipo: Tipo, n: number) {
-  if (!n) return;
+function soma(mapa: Mapa, sem: number, dia: DiaSemana, canal: string, tipo: Tipo, n: number, v: number) {
+  if (!n && !v) return;
   const k = chave(sem, dia, canal);
   const c = mapa.get(k) || celulaVazia();
-  c[tipo] += n;
+  c.n[tipo] += n;
+  c.v[tipo] += v;
   mapa.set(k, c);
+}
+
+/** 'YYYY-MM-DD' de `dias` dias antes de hoje (hoje de Brasilia). */
+function diasAtras(dias: number): string {
+  const [a, m, d] = hojeBrasilia().split("-").map(Number);
+  return iso(new Date(a, m - 1, d - dias));
+}
+
+/** 'YYYY-MM-DD' de amanha — fim EXCLUSIVO de uma janela que termina hoje. */
+function amanha(): string {
+  const [a, m, d] = hojeBrasilia().split("-").map(Number);
+  return iso(new Date(a, m - 1, d + 1));
 }
 
 /** Em que semana do mes exibido cai a data (0 = fora da janela). */
@@ -174,15 +209,58 @@ export function registerAgendaRota(app: Express) {
       const ini = semanas[0].ini;
       const fim = semanas[semanas.length - 1].fim;
 
+      // ── 0) TICKET PONDERADO POR RECENCIA, por cliente do vendedor ────────
+      // Media do valor das NF-e de venda na janela, com peso crescente para as
+      // mais recentes. Mesma conta do termometro do dia (dashboard-history.ts).
+      // A janela nunca comeca antes de abr/2026 porque antes disso o
+      // faturamento nao mora em NF-e e sim em titulo — misturar as duas fontes
+      // aqui daria um ticket que nao bate com nenhuma outra tela.
+      const iniTicket = [diasAtras(JANELA_TICKET_DIAS), `${MES_NFE_INTEGRA}-01`].sort().reverse()[0];
+      const fimTicketExcl = amanha();
+      const tickets = (await db.execute(sql.raw(`
+        WITH ${cteNotasVenda(iniTicket, fimTicketExcl)},
+        docs AS (
+          SELECT DISTINCT NULLIF(regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g'),'') AS doc
+          FROM customers
+          WHERE seller_id = '${sellerId}'
+        ),
+        pesos AS (
+          -- peso = ordem cronologica da nota: a mais antiga pesa 1, a seguinte 2...
+          -- O desempate por valor so' existe para a conta nao mudar de resultado
+          -- entre duas aberturas da tela quando o cliente tem 2 notas no mesmo dia.
+          SELECT n.doc, n.v, ROW_NUMBER() OVER (PARTITION BY n.doc ORDER BY n.dia, n.v) AS w
+          FROM notas n
+          JOIN docs d ON d.doc = n.doc
+        )
+        SELECT doc,
+               (SUM(v * w) / NULLIF(SUM(w),0))::float AS t,
+               COUNT(*)::int                          AS notas
+        FROM pesos GROUP BY doc`))).rows as any[];
+      /** doc (so' digitos) -> R$ esperado num atendimento. */
+      const ticketPorDoc = new Map<string, number>();
+      for (const r of tickets) {
+        const t = Number(r.t) || 0;
+        if (t > 0) ticketPorDoc.set(String(r.doc), t);
+      }
+      const ticketDe = (doc: any) => ticketPorDoc.get(String(doc || "")) || 0;
+
       // ── 1) CLIENTES NA AGENDA DE VISITAS ─────────────────────────────────
       // Mesma regua de storage.getCustomersForDate (Rota do Dia), menos o filtro
       // "ja comprou no ciclo", que e' decisao do dia e nao do mes.
+      //
+      // Uma linha por CLIENTE por DIA (DISTINCT), nao a contagem ja' somada: o
+      // valor de cada atendimento depende de QUAL cliente e', entao a soma tem
+      // que acontecer com o cliente na mao. O DISTINCT faz aqui o papel que o
+      // COUNT(DISTINCT c.id) fazia antes — visita duplicada no mesmo dia nao
+      // conta duas vezes, nem em cliente nem em R$.
       const visitas = (await db.execute(sql`
-        SELECT to_char(v.scheduled_date,'YYYY-MM-DD')                     AS dia,
+        SELECT DISTINCT
+               to_char(v.scheduled_date,'YYYY-MM-DD')                     AS dia,
                EXTRACT(ISODOW FROM v.scheduled_date)::int                 AS dow,
                LOWER(COALESCE(c.visit_periodicity::text,'semanal'))       AS periodicidade,
                (COALESCE(c.virtual_service,false) = true)                 AS virtual,
-               COUNT(DISTINCT c.id)::int                                  AS n
+               c.id                                                       AS cid,
+               NULLIF(regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g'),'') AS doc
         FROM visit_agenda v
         JOIN customers c ON c.id = v.customer_id
         WHERE v.scheduled_date::date >= ${ini}::date
@@ -193,16 +271,17 @@ export function registerAgendaRota(app: Express) {
           AND COALESCE(c.is_supplier,false) = false
           AND COALESCE(c.is_lead,false) = false
           AND (c.service_start_date IS NULL OR c.service_start_date::date <= v.scheduled_date::date)
-          AND EXTRACT(ISODOW FROM v.scheduled_date) BETWEEN 1 AND 5
-        GROUP BY 1,2,3,4`)).rows as any[];
+          AND EXTRACT(ISODOW FROM v.scheduled_date) BETWEEN 1 AND 5`)).rows as any[];
 
       // ── 2) REPESCAGEM (sorteio do dia) ───────────────────────────────────
       // Fase 'telemarketing' e' atendimento VIRTUAL; o resto, presencial.
       const repescagens = (await db.execute(sql`
-        SELECT ra.draw_date                                   AS dia,
+        SELECT DISTINCT
+               ra.draw_date                                   AS dia,
                EXTRACT(ISODOW FROM ra.draw_date::date)::int    AS dow,
                (COALESCE(ra.phase,'') = 'telemarketing')       AS virtual,
-               COUNT(DISTINCT ra.customer_id)::int             AS n
+               ra.customer_id                                  AS cid,
+               NULLIF(regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g'),'') AS doc
         FROM repescagem_assignments ra
         JOIN customers c ON c.id = ra.customer_id
         WHERE ra.draw_date >= ${ini}
@@ -210,8 +289,7 @@ export function registerAgendaRota(app: Express) {
           AND COALESCE(ra.status,'') NOT IN ('cancelled','returned')
           AND COALESCE(c.is_supplier,false) = false
           AND ra.assigned_user_id = ${sellerId}
-          AND EXTRACT(ISODOW FROM ra.draw_date::date) BETWEEN 1 AND 5
-        GROUP BY 1,2,3`)).rows as any[];
+          AND EXTRACT(ISODOW FROM ra.draw_date::date) BETWEEN 1 AND 5`)).rows as any[];
 
       // ── 3) LEADS (sempre presencial, pela data do proximo contato) ───────
       const leads = (await db.execute(sql`
@@ -227,33 +305,46 @@ export function registerAgendaRota(app: Express) {
         GROUP BY 1,2`)).rows as any[];
 
       // ── monta a matriz ───────────────────────────────────────────────────
+      // `semHistorico` conta CLIENTE, nao atendimento: quem aparece 4x no mes
+      // sem nota nenhuma e' um cliente faltando no total de R$, nao quatro.
       const mapa: Mapa = new Map();
+      const semHistorico = new Set<string>();
       for (const r of visitas) {
         const sem = semanaDaData(semanas, String(r.dia));
         const dia = DIA_POR_DOW[Number(r.dow)];
         if (!sem || !dia) continue;
         const per = String(r.periodicidade);
         const tipo: Tipo = per === "quinzenal" ? "quinzenal" : per === "mensal" ? "mensal" : "semanal";
-        soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", tipo, Number(r.n) || 0);
+        const t = ticketDe(r.doc);
+        if (t <= 0) semHistorico.add(String(r.cid));
+        soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", tipo, 1, t);
       }
       for (const r of repescagens) {
         const sem = semanaDaData(semanas, String(r.dia));
         const dia = DIA_POR_DOW[Number(r.dow)];
         if (!sem || !dia) continue;
-        soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", "repescagem", Number(r.n) || 0);
+        const t = ticketDe(r.doc);
+        if (t <= 0) semHistorico.add(String(r.cid));
+        soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", "repescagem", 1, t);
       }
+      let totalLeads = 0;
       for (const r of leads) {
         const sem = semanaDaData(semanas, String(r.dia));
         const dia = DIA_POR_DOW[Number(r.dow)];
         if (!sem || !dia) continue;
-        soma(mapa, sem, dia, "presencial", "leads", Number(r.n) || 0);
+        // Lead nunca comprou: entra no calendario de clientes e fica zerado no
+        // de R$. Inventar um ticket para ele seria colocar venda que nao existe
+        // dentro de um numero que o vendedor usa para se cobrar.
+        const n = Number(r.n) || 0;
+        totalLeads += n;
+        soma(mapa, sem, dia, "presencial", "leads", n, 0);
       }
 
       // Devolve so' as celulas com algum numero — o resto a tela desenha zerado.
       const celulas: Array<{ semana: number; dia: string; canal: string } & Celula> = [];
       for (const [k, c] of mapa) {
         const [s, d, canal] = k.split("|");
-        celulas.push({ semana: Number(s), dia: d, canal, ...c });
+        celulas.push({ semana: Number(s), dia: d, canal, n: c.n, v: c.v });
       }
 
       // Clientes ativos do vendedor — o numero que vai ao lado do nome.
@@ -286,6 +377,17 @@ export function registerAgendaRota(app: Express) {
         celulas,
         vendedores,
         escopo: { restrito, papel },
+        // Tudo o que a tela precisa para explicar o calendario de R$ sem que
+        // ninguem tenha que abrir o codigo para saber de onde veio o numero.
+        potencial: {
+          de: iniTicket,
+          ate: hojeBrasilia(),
+          dias: JANELA_TICKET_DIAS,
+          clientesComTicket: ticketPorDoc.size,
+          semHistorico: semHistorico.size,
+          leads: totalLeads,
+          regra: "ticket ponderado por recência: média do valor das NF-e de venda do cliente na janela, com peso maior para as mais recentes (mesma conta do termômetro do dia no Dashboard)",
+        },
         fonte: "agenda de visitas (visit_agenda), mesma régua da Rota do Dia; repescagem pelo sorteio do dia; leads pela data do próximo contato",
       });
     } catch (e: any) {
