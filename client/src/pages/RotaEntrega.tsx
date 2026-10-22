@@ -786,13 +786,13 @@ export default function RotaEntrega() {
                       className="flex-1 text-blue-600 border-blue-600 h-12"
                       onClick={() => {
                         window.open(
-                          `https://waze.com/ul?ll=${delivery.customerLatitude},${delivery.customerLongitude}&navigate=yes`,
+                          `https://www.google.com/maps/dir/?api=1&destination=${delivery.customerLatitude},${delivery.customerLongitude}`,
                           '_blank'
                         );
                       }}
                     >
                       <Navigation className="h-5 w-5 mr-2" />
-                      Waze
+                      Google Maps
                     </Button>
 
                     {/* Iniciar Entrega: obrigatório ao CHEGAR no cliente — só depois
