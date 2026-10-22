@@ -10,6 +10,7 @@ import multer from "multer";
 //
 // Destinos padrão (configuráveis em system_settings.chamados_destinos):
 //   flavio  – Administração
+//   elbber  – Administração
 //   cinthia – Comercial
 //   naiara  – Indústria
 //   lanucy  – Adm, Logística, Financeiro
@@ -35,6 +36,7 @@ type Destino = { key: string; nome: string; setor: string; userIds?: string[]; e
 
 const DESTINOS_PADRAO: Destino[] = [
   { key: "flavio", nome: "Flávio", setor: "Administração", emails: ["flavio@bebahonest.com.br", "flaviobaylao@gmail.com"] },
+  { key: "elbber", nome: "Elbber", setor: "Administração", emails: ["elbber@bebahonest.com.br"] },
   { key: "cinthia", nome: "Cinthia", setor: "Comercial", emails: ["cinthiamarque90@gmail.com"] },
   { key: "naiara", nome: "Naiara", setor: "Indústria", nomeLike: ["naiara%", "nayara%"] },
   { key: "lanucy", nome: "Lanucy", setor: "Adm, Logística, Financeiro", emails: ["lanucy@bebahonest.com.br"], nomeLike: ["lanucy%"] },
