@@ -34,6 +34,14 @@ export interface OrcamentoInput {
   paymentMethod?: string | null;
   boletoDays?: number | null;
   operationType?: string | null;
+  // Overrides opcionais para reutilizar o mesmo layout em outros documentos.
+  // Ex.: pedido do pipeline sai com "Número do Pedido"; depois de faturado, com
+  // "Número da NF". Sem esses campos, o comportamento é o do orçamento (rascunho).
+  docTitle?: string | null;       // título no topo (padrão: 'ORÇAMENTO DE VENDA')
+  numberLabel?: string | null;    // rótulo do número (padrão: 'Número do Orçamento')
+  numberValue?: string | null;    // número exibido (padrão: 'HS-{timestamp}')
+  showOrcamentoNotes?: boolean;   // bloco "validade 15 dias/preços sujeitos…" (padrão: true)
+  fileNamePrefix?: string | null; // prefixo do arquivo baixado (padrão: 'orcamento')
 }
 
 /** Gera e baixa o PDF do orçamento. Retorna o nome do arquivo gerado. */
@@ -44,7 +52,7 @@ export function generateOrcamentoPdf(input: OrcamentoInput): string {
   try { pdf.addImage(honestLogo, 'PNG', 150, 10, 40, 40); } catch (e) { /* noop */ }
 
   pdf.setFontSize(20);
-  pdf.text('ORÇAMENTO DE VENDA', 20, 30);
+  pdf.text(input.docTitle || 'ORÇAMENTO DE VENDA', 20, 30);
 
   // Cabeçalho com cursor seguro (abre nova página se não couber) — igual ao SaleModal.
   let hy = 50;
@@ -67,7 +75,7 @@ export function generateOrcamentoPdf(input: OrcamentoInput): string {
   const pm = String(input.paymentMethod || '');
   const ot = String(input.operationType || 'venda');
   const dadosPedido = [
-    `Número do Orçamento: HS-${Date.now()}`,
+    `${input.numberLabel || 'Número do Orçamento'}: ${input.numberValue || `HS-${Date.now()}`}`,
     `Data: ${new Date().toLocaleDateString('pt-BR')}`,
     `Forma de Pagamento: ${(PAYMENT_METHOD_LABELS as any)[pm] || pm || '-'}`,
   ];
@@ -102,15 +110,17 @@ export function generateOrcamentoPdf(input: OrcamentoInput): string {
   let y = ((pdf as any).lastAutoTable?.finalY || 250) + 10;
   y = writeLine(pdf, y, `TOTAL GERAL: ${brl(totalSale)}`, { size: 14, gap: 10 });
 
-  writeLine(pdf, y + 4, [
-    'Observações:',
-    '- Este orçamento tem validade de 15 dias.',
-    '- Preços sujeitos a alteração sem aviso prévio.',
-    '- Produtos naturais, sem conservantes.',
-  ], { size: 10 });
+  if (input.showOrcamentoNotes !== false) {
+    writeLine(pdf, y + 4, [
+      'Observações:',
+      '- Este orçamento tem validade de 15 dias.',
+      '- Preços sujeitos a alteração sem aviso prévio.',
+      '- Produtos naturais, sem conservantes.',
+    ], { size: 10 });
+  }
 
   const nomeCli = (customer?.fantasyName || customer?.name || 'cliente');
-  const fileName = `orcamento-${nomeCli}-${Date.now()}.pdf`;
+  const fileName = `${input.fileNamePrefix || 'orcamento'}-${nomeCli}-${Date.now()}.pdf`;
   pdf.save(fileName);
   return fileName;
 }
