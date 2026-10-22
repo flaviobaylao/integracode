@@ -191,6 +191,7 @@ const LISTA_LEITURA_POST = [
   '/api/reports/execute',
   '/api/fiscal-invoices/batch',
   '/api/billing-pipeline/charges',
+  '/api/billing-pipeline/danfes',
 ];
 
 const _cacheContador = new Map<string, { role: string; at: number }>();
