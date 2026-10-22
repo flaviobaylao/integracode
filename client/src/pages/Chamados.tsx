@@ -401,7 +401,8 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
 
   return (
     <div className="bg-white border rounded-xl flex flex-col">
-      <div className="p-4 border-b flex flex-col gap-2">
+      {/* Cabeçalho do chamado congelado: fica visível (logo abaixo do topo do Integra) ao rolar a conversa */}
+      <div className="sticky top-14 z-20 bg-white rounded-t-xl shadow-[0_1px_0_0_#e5e7eb] p-4 border-b flex flex-col gap-2">
         <button type="button" onClick={onVoltar} className="lg:hidden self-start h-10 px-3 rounded-lg bg-gray-100 text-sm font-semibold">← Voltar à lista</button>
         <div className="flex flex-wrap justify-between gap-2 items-start">
           <span className="text-xs font-bold text-gray-600">Chamado {c.codigo} · responsável: {c.destinoNome} ({c.destinoSetor})</span>
