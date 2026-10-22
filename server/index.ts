@@ -3712,18 +3712,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const recId = req.params.id;
       const resolved = await boletoParamsFromReceivable(recId);
       if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado, ja quitado ou cancelado" });
-      // SERV (PURO SERVICOS, CNPJ ...0105) nao emite PIX — mesma regra do hook de faturamento.
-      try {
-        const _ref = String(resolved.omieInstanceId || '');
-        if (_ref) {
-          const iq: any = await db.execute(sql`SELECT name, cnpj FROM omie_instances WHERE id = ${_ref} LIMIT 1`);
-          const _row = iq.rows?.[0];
-          const _c = String(_row?.cnpj || '').replace(/\D/g, '');
-          if (String(_row?.name || '').toUpperCase() === 'SERV' || _c === '52921727000105') {
-            return res.status(422).json({ error: "A instancia SERV nao emite PIX — mantenha o boleto." });
-          }
-        }
-      } catch { /* sem instancia resolvida: segue */ }
+      // [22/out/2026] SERV volta a emitir PIX pela conta do IND (guard de 06/jul removido).
       const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
       const accId = accq.rows?.[0]?.id;
       if (!accId) return res.status(422).json({ error: "nenhuma conta com PIX BB habilitado" });
@@ -3932,18 +3921,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (ex.rows?.[0]) return res.json({ ok: true, success: true, alreadyExists: true, pixChargeId: ex.rows[0].id, viewUrl: `/api/pix-view/${ex.rows[0].id}` });
       const resolved = await boletoParamsFromReceivable(recId);
       if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado, ja quitado ou cancelado" });
-      // SERV (PURO SERVICOS, CNPJ ...0105) nao emite PIX — decisao de 06/jul, a mesma do hook.
-      try {
-        const _ref = String(resolved.omieInstanceId || '');
-        if (_ref) {
-          const iq: any = await db.execute(sql`SELECT name, cnpj FROM omie_instances WHERE id = ${_ref} LIMIT 1`);
-          const _row = iq.rows?.[0];
-          const _c = String(_row?.cnpj || '').replace(/\D/g, '');
-          if (String(_row?.name || '').toUpperCase() === 'SERV' || _c === '52921727000105') {
-            return res.status(422).json({ error: "A instancia SERV nao emite PIX — gere boleto.", pixIndisponivel: true });
-          }
-        }
-      } catch { /* sem instancia resolvida: segue e deixa o BB decidir */ }
+      // [22/out/2026] SERV volta a emitir PIX pela conta do IND (guard de 06/jul removido).
       const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
       const accId = accq.rows?.[0]?.id;
       if (!accId) return res.status(422).json({ error: "nenhuma conta com PIX BB habilitado", pixIndisponivel: true });
@@ -4959,11 +4937,15 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const text =
         "SELECT bp.id AS item_id, r.id AS receivable_id, fi.id AS fiscal_invoice_id, " +
         "COALESCE((SELECT to_jsonb(b) FROM boleto_charges b WHERE b.receivable_id = r.id ORDER BY b.created_at DESC LIMIT 1), " +
+        "(SELECT to_jsonb(b) FROM boleto_charges b WHERE r.id IS NOT NULL AND b.id IN (SELECT jr.boleto_charge_id FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id) AND b.status NOT IN ('cancelado','cancelada') ORDER BY b.created_at DESC LIMIT 1), " +
         "(SELECT to_jsonb(b) FROM boleto_charges b WHERE fi.id IS NOT NULL AND b.fiscal_invoice_id = fi.id ORDER BY b.created_at DESC LIMIT 1)) AS boleto, " +
         "(SELECT to_jsonb(p) FROM pix_charges p WHERE p.receivable_id = r.id ORDER BY p.created_at DESC LIMIT 1) AS pix " +
         "FROM billing_pipeline bp " +
         "LEFT JOIN receivables r ON r.billing_pipeline_id = bp.id " +
-        "LEFT JOIN fiscal_invoices fi ON fi.invoice_number::text = regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g') " +
+        // [22/out/2026] NUNCA casar a NF so pelo numero: cada CNPJ tem numeracao propria e o mesmo
+        // numero existe em SERV/BSB/GYN — a NF-104170 da Super Box (SERV) puxou o boleto do Mercado
+        // Coqueiro (BSB). Vinculo real: o titulo (fiscal_invoice_id). Sem titulo, numero + MESMO cliente.
+        "LEFT JOIN fiscal_invoices fi ON fi.id = COALESCE(r.fiscal_invoice_id, (SELECT f2.id FROM fiscal_invoices f2 WHERE r.id IS NULL AND f2.customer_id = bp.customer_id AND f2.invoice_number::text = regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g') AND f2.status NOT IN ('cancelled','cancelada') ORDER BY f2.created_at DESC LIMIT 1)) " +
         "WHERE bp.id IN (" + inList + ")";
       const rows = (await db.execute(sql.raw(text))).rows;
       res.json(rows);
@@ -5016,7 +4998,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   // volta no card) — então a impressão "completo"/DANFE saía SEM a nota. Aqui achamos a NF
   // pelo cartão de venda (à prova de colisão de número entre emitentes/clientes), retornamos
   // no MESMO formato do /batch e AINDA cicatrizamos o card (grava o NF-xxxx que faltava).
-  app.post("/api/billing-pipeline/danfes", async (req, res) => {
+  app.post("/api/billing-pipeline/danfes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'industria']), async (req, res) => {
     try {
       const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
       const valid = ids.filter((x: any) => typeof x === "string" && /^[0-9a-fA-F-]{36}$/.test(x));
@@ -5049,7 +5031,13 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           const inv: any = await storage.getFiscalInvoice(nf.id);
           if (!inv) continue;
           const invItems = await storage.getFiscalInvoiceItems(nf.id);
-          results.push({ itemId: id, ...inv, items: invItems });
+          // FATURA/DUPLICATA espelhada nos titulos (mesma regra do /api/fiscal-invoices/batch).
+          let duplicatas: any[] = [];
+          try {
+            const dq: any = await db.execute(sql`SELECT due_date, amount, payment_method, title_number FROM receivables WHERE fiscal_invoice_id = ${nf.id} AND deleted_at IS NULL AND COALESCE(status::text,'') <> 'cancelada' ORDER BY due_date ASC, title_number ASC`);
+            duplicatas = (dq?.rows ?? dq ?? []).map((r: any, i: number) => ({ nDup: String(i + 1).padStart(3, '0'), dVenc: r.due_date ? new Date(r.due_date).toISOString().slice(0, 10) : null, vDup: Number(parseFloat(String(r.amount || '0')).toFixed(2)), paymentMethod: r.payment_method || null, titleNumber: r.title_number || null }));
+          } catch {}
+          results.push({ itemId: id, ...inv, items: invItems, duplicatas });
           // Cicatriza o card: grava o número da NF que faltava (idempotente).
           if (!item.invoiceNumber && nf.invoice_number) {
             try { await storage.updateBillingPipelineItem(id, { invoiceNumber: `NF-${nf.invoice_number}` } as any); } catch (e) {}
