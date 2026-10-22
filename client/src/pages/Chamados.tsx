@@ -14,7 +14,7 @@ type Consulta = { key: string; nome: string; setor: string; pendente: boolean };
 type Chamado = {
   id: string; codigo: string; numero: number; assunto: string; descricao: string | null; prioridade: string; status: string;
   autorId: string; autorNome: string; destinoKey: string; destinoNome: string; destinoSetor: string;
-  createdAt: string; updatedAt: string; solucionadoEm?: string | null; papel: "autor" | "dono" | "consultado" | "admin"; naoLido: boolean;
+  createdAt: string; updatedAt: string; solucionadoEm?: string | null; canceladoEm?: string | null; papel: "autor" | "dono" | "consultado" | "admin"; naoLido: boolean;
   consultas: Consulta[]; aguardando: string[]; consultaPendenteParaMim: boolean;
 };
 type Anexo = { id: string; nome: string; mime: string | null; tamanho: number | null };
@@ -26,7 +26,9 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   respondido: { label: "Respondido", cls: "bg-green-100 text-green-800" },
   reaberto: { label: "Reaberto", cls: "bg-amber-100 text-amber-900" },
   solucionado: { label: "Solucionado", cls: "bg-gray-200 text-gray-800" },
+  cancelado: { label: "Cancelado", cls: "bg-red-100 text-red-800" },
 };
+const encerrado = (st: string) => st === "solucionado" || st === "cancelado";
 const PRIO_CLS: Record<string, string> = { Baixa: "text-gray-600", Normal: "text-blue-700", Urgente: "text-red-700" };
 
 async function getJson(url: string) {
@@ -253,13 +255,13 @@ export default function Chamados() {
     consultas: todos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
   };
   const q = busca.trim().toLowerCase();
-  const pedeSolucionado = statusSel.includes("solucionado");
+  const pedeEncerrado = statusSel.some(encerrado);
   const lista = todos
     .filter((c) => {
       // Arquivo: solucionados saem das outras abas, mas continuam aparecendo na busca
       // (ou quando "Solucionado" é marcado no filtro de status).
-      if (caixa === "arquivados") return c.status === "solucionado";
-      if (c.status === "solucionado" && !q && !pedeSolucionado) return false;
+      if (caixa === "arquivados") return encerrado(c.status);
+      if (encerrado(c.status) && !q && !pedeEncerrado) return false;
       return true;
     })
     .filter((c) => {
@@ -268,7 +270,7 @@ export default function Chamados() {
       if (caixa === "consultas") return c.papel === "consultado";
       return true;
     })
-    .filter((c) => statusSel.length === 0 || caixa === "arquivados" || statusSel.includes(c.status))
+    .filter((c) => statusSel.length === 0 || statusSel.includes(c.status) || (caixa === "arquivados" && !statusSel.some(encerrado)))
     .filter((c) => {
       if (!dataDe && !dataAte) return true;
       const d = diaBrasilia(c.createdAt);
@@ -281,7 +283,7 @@ export default function Chamados() {
       return (c.codigo + " " + c.assunto + " " + c.autorNome + " " + c.destinoNome + " " + (c.descricao || "")).toLowerCase().includes(q);
     })
     .sort((a, b) => (ordem === "asc" ? a.numero - b.numero : b.numero - a.numero));
-  const qtdArquivados = todos.filter((c) => c.status === "solucionado").length;
+  const qtdArquivados = todos.filter((c) => encerrado(c.status)).length;
   const filtrosAtivos = statusSel.length > 0 || !!dataDe || !!dataAte;
 
   // Em ordem crescente os novos ficam embaixo: ao abrir/trocar aba ou ordem, rola até o fim.
@@ -342,7 +344,7 @@ export default function Chamados() {
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <div className="relative" ref={statusRef}>
                   <button type="button" onClick={() => setStatusAberto((v) => !v)} data-testid="filtro-status" aria-expanded={statusAberto}
-                    disabled={caixa === "arquivados"}
+                    
                     className={`h-9 px-3 border rounded-lg bg-white disabled:opacity-50 ${statusSel.length ? "border-green-700 text-green-800 font-semibold" : "text-gray-700"}`}>
                     {statusSel.length === 0 ? "Status: todos" : statusSel.length === 1 ? `Status: ${STATUS[statusSel[0]]?.label}` : `Status: ${statusSel.length} selecionados`} ▾
                   </button>
@@ -385,7 +387,7 @@ export default function Chamados() {
             <div ref={listaRef} className="max-h-[70vh] overflow-y-auto">
               {listaQ.isLoading && <div className="p-6 text-center text-gray-500 text-sm">Carregando…</div>}
               {!listaQ.isLoading && lista.length === 0 && (
-                <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ainda." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
+                <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ou cancelado ainda." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
               )}
               {lista.map((c) => {
                 const st = STATUS[c.status] || STATUS.novo;
@@ -526,8 +528,9 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   };
 
   const ehDono = c.papel === "dono" || (c.papel === "admin" && perfil?.admin);
-  const minhaConsultaPendente = c.papel === "consultado" && c.status !== "solucionado";
-  const fechado = c.status === "solucionado";
+  const minhaConsultaPendente = c.papel === "consultado" && !encerrado(c.status);
+  const fechado = encerrado(c.status);
+  const cancelado = c.status === "cancelado";
   const dicaTeclas = ehToque() ? null : <span className="text-[11px] text-gray-500">Enter envia · Alt+Enter quebra a linha</span>;
 
   return (
@@ -573,14 +576,29 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
                 onClick={() => acao(`/api/chamados/${c.id}/complementar`, { texto }, "Mensagem enviada")}>Enviar</Button>
             </div>
           </div>
+          <div className="flex justify-end pt-1">
+            <button type="button" disabled={busy} data-testid="button-cancelar"
+              className="text-sm text-red-700 hover:text-red-800 underline underline-offset-2 disabled:opacity-50"
+              onClick={() => {
+                if (window.confirm(`Cancelar o chamado ${c.codigo}?\n${texto.trim() ? "O texto digitado vai junto como motivo.\n" : ""}O responsável será avisado e você poderá reabrir depois, se precisar.`))
+                  acao(`/api/chamados/${c.id}/cancelar`, { texto }, "Chamado cancelado", { exigeConteudo: false });
+              }}>
+              <i className="fas fa-ban mr-1" aria-hidden="true"></i>Cancelar chamado</button>
+          </div>
         </div>
       )}
 
       {fechado && (
         <div className="p-4 border-t bg-gray-50 flex flex-col gap-2">
-          <span className="text-sm text-gray-700"><i className="fas fa-check-circle text-green-700 mr-1.5" aria-hidden="true"></i>
-            Chamado finalizado como <b>solucionado</b>{c.solucionadoEm ? ` em ${dataHora(c.solucionadoEm)}` : ""}.
-            {c.papel === "autor" ? " Se o problema voltou ou não foi resolvido, você pode reabrir." : ""}</span>
+          {cancelado ? (
+            <span className="text-sm text-gray-700"><i className="fas fa-ban text-red-700 mr-1.5" aria-hidden="true"></i>
+              Chamado <b>cancelado</b> por quem abriu{c.canceladoEm ? ` em ${dataHora(c.canceladoEm)}` : ""}.
+              {c.papel === "autor" ? " Se ainda precisar, você pode reabrir." : ""}</span>
+          ) : (
+            <span className="text-sm text-gray-700"><i className="fas fa-check-circle text-green-700 mr-1.5" aria-hidden="true"></i>
+              Chamado finalizado como <b>solucionado</b>{c.solucionadoEm ? ` em ${dataHora(c.solucionadoEm)}` : ""}.
+              {c.papel === "autor" ? " Se o problema voltou ou não foi resolvido, você pode reabrir." : ""}</span>
+          )}
           {c.papel === "autor" && (
             <>
               <label htmlFor="ch-reab" className="text-sm font-semibold">Motivo da reabertura (opcional)</label>

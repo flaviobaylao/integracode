@@ -91,6 +91,7 @@ function ensureTables(): Promise<void> {
       )`);
       await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS solucionado_em timestamp`);
       await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS solucionado_por varchar`);
+      await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS cancelado_em timestamp`);
       await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS reaberto_em timestamp`);
       await db.execute(sql`CREATE TABLE IF NOT EXISTS chamado_anexos (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -155,6 +156,7 @@ async function getDestinos(): Promise<DestinoResolvido[]> {
   return out;
 }
 
+const fechadoStatus = (st: string) => st === "solucionado" || st === "cancelado";
 function nomeDe(u: any): string {
   const n = [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim();
   return n || u?.email || "Usuário";
@@ -261,7 +263,7 @@ async function carregarVisiveis(user: any, caixa: string) {
       assunto: c.assunto, descricao: c.descricao, prioridade: c.prioridade, status: c.status,
       autorId: c.autor_id, autorNome: c.autor_nome, autorPapel: c.autor_papel,
       destinoKey: c.destino_key, destinoNome: d?.nome || c.destino_key, destinoSetor: d?.setor || "",
-      createdAt: c.created_at, updatedAt: c.updated_at, solucionadoEm: c.solucionado_em || null,
+      createdAt: c.created_at, updatedAt: c.updated_at, solucionadoEm: c.solucionado_em || null, canceladoEm: c.cancelado_em || null,
       papel, naoLido: ult > lido,
       consultas: cons.map((q) => ({ key: q.destino_key, nome: destMap.get(q.destino_key)?.nome || q.destino_key, setor: destMap.get(q.destino_key)?.setor || "", pendente: !!q.pendente })),
       aguardando: papel === "dono" ? pend.map((q) => destMap.get(q.destino_key)?.nome || q.destino_key) : [],
@@ -415,7 +417,7 @@ export function registerChamados(app: Express) {
       const { c } = await carregarUm(req.currentUser, req.params.id);
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       if (c.papel !== "dono" && !isAdminUser(req.currentUser)) return res.status(403).json({ message: "Só o responsável pode responder ao solicitante" });
-      if (c.status === "solucionado") return res.status(400).json({ message: "Chamado já finalizado. Quem abriu pode reabrir." });
+      if (fechadoStatus(c.status)) return res.status(400).json({ message: "Chamado já encerrado. Quem abriu pode reabrir." });
       const uid = String(req.currentUser.id);
       const nome = nomeDe(req.currentUser);
       if (texto || files.length) {
@@ -449,7 +451,7 @@ export function registerChamados(app: Express) {
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       const uid = String(req.currentUser.id);
       if (String(c.autorId) !== uid) return res.status(403).json({ message: "Só quem abriu pode reabrir" });
-      if (c.status !== "solucionado") return res.status(400).json({ message: "Só um chamado finalizado pode ser reaberto" });
+      if (!fechadoStatus(c.status)) return res.status(400).json({ message: "Só um chamado encerrado (solucionado ou cancelado) pode ser reaberto" });
       const nome = nomeDe(req.currentUser);
       await inserirMsg(c.id, uid, nome, "sistema", null, null, `${nome} reabriu o chamado`);
       if (texto || files.length) {
@@ -460,6 +462,31 @@ export function registerChamados(app: Express) {
       const dono = vis.destinos.find((x) => x.key === c.destinoKey);
       avisarBg((dono?.userIds || []).filter((x) => x !== uid),
         `🔁 ${nome} reabriu o chamado ${c.codigo}\n${c.assunto}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
+  // Quem abriu cancela o chamado ainda aberto (motivo opcional) → Cancelado; pode reabrir depois
+  app.post("/api/chamados/:id/cancelar", authenticateUser, comArquivos, async (req: any, res: Response) => {
+    try {
+      const texto = String(req.body?.texto || "").trim();
+      const files = arquivosDe(req);
+      const { c, vis } = await carregarUm(req.currentUser, req.params.id);
+      if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
+      const uid = String(req.currentUser.id);
+      if (String(c.autorId) !== uid) return res.status(403).json({ message: "Só quem abriu pode cancelar" });
+      if (fechadoStatus(c.status)) return res.status(400).json({ message: "Chamado já encerrado" });
+      const nome = nomeDe(req.currentUser);
+      if (texto || files.length) {
+        const msgId = await inserirMsg(c.id, uid, nome, "publica", "autor", c.destinoKey, texto || "(anexo)");
+        await salvarAnexos(c.id, msgId, uid, files);
+      }
+      await db.execute(sql`UPDATE chamados SET status = 'cancelado', cancelado_em = now(), updated_at = now() WHERE id = ${c.id}`);
+      await db.execute(sql`UPDATE chamado_consultas SET pendente = false WHERE chamado_id = ${c.id} AND pendente = true`);
+      await inserirMsg(c.id, uid, nome, "sistema", null, null, `${nome} cancelou o chamado`);
+      const dono = vis.destinos.find((x) => x.key === c.destinoKey);
+      avisarBg((dono?.userIds || []).filter((x) => x !== uid),
+        `🚫 ${nome} cancelou o chamado ${c.codigo}\n${c.assunto}${texto ? `\n"${trecho(texto)}"` : ""}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
@@ -476,7 +503,7 @@ export function registerChamados(app: Express) {
       if (c.papel !== "dono" && !isAdminUser(req.currentUser)) return res.status(403).json({ message: "Só o responsável pode consultar outro setor" });
       const d = vis.destinos.find((x) => x.key === alvo);
       if (!d || alvo === c.destinoKey) return res.status(400).json({ message: "Escolha outro setor" });
-      if (c.status === "solucionado") return res.status(400).json({ message: "Chamado finalizado" });
+      if (fechadoStatus(c.status)) return res.status(400).json({ message: "Chamado encerrado" });
       const nome = nomeDe(req.currentUser);
       await db.execute(sql`INSERT INTO chamado_consultas (chamado_id, destino_key, pendente, solicitado_por)
         VALUES (${c.id}, ${alvo}, true, ${String(req.currentUser.id)})
@@ -528,7 +555,7 @@ export function registerChamados(app: Express) {
       const { c, vis } = await carregarUm(req.currentUser, req.params.id);
       if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
       if (String(c.autorId) !== String(req.currentUser.id)) return res.status(403).json({ message: "Só quem abriu pode complementar" });
-      if (c.status === "solucionado") return res.status(400).json({ message: "Chamado finalizado. Use Reabrir." });
+      if (fechadoStatus(c.status)) return res.status(400).json({ message: "Chamado encerrado. Use Reabrir." });
       const nome = nomeDe(req.currentUser);
       const msgIdM = await inserirMsg(c.id, String(req.currentUser.id), nome, "publica", "autor", c.destinoKey, texto || "(anexo)");
       await salvarAnexos(c.id, msgIdM, String(req.currentUser.id), files);
