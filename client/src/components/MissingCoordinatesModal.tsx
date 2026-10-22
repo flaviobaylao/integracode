@@ -137,7 +137,7 @@ export default function MissingCoordinatesModal({
   };
 
   const handleOpenWaze = (address: string) => {
-    const wazeUrl = `https://www.waze.com/ul?q=${encodeURIComponent(address)}`;
+    const wazeUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
     window.open(wazeUrl, '_blank');
   };
 
@@ -254,7 +254,7 @@ export default function MissingCoordinatesModal({
                           onClick={() => handleOpenWaze(item.address)}
                           data-testid={`button-open-waze-${item.customerId}`}
                         >
-                          Abrir no Waze
+                          Rota no Maps
                         </Button>
                       )}
 
