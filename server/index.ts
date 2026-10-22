@@ -956,6 +956,8 @@ run();
   try { const { registerChamados } = await import('./chamados-routes'); registerChamados(app); } catch (e: any) { console.error('[chamados]', e?.message || e); }
   // ABERTURA DE ESTOQUE DO DIA (22/out/2026): contagem física GYN+SERV obrigatória antes do 1º faturamento;
   // bloqueio + chamados de notificação. Rotas /api/abertura-estoque*. Kill-switch: system_settings abertura_estoque_ativa='off'.
+  // Recebimento de transferência com conferência + responsável pelo desbloqueio (22/out/2026).
+  try { const { registerRecebimentoLote } = await import('./recebimento-lote'); registerRecebimentoLote(app); } catch (e: any) { console.error('[recebimento-lote]', e?.message || e); }
   try { const { registerAberturaEstoque, ensureAberturaEstoqueSchema } = await import('./abertura-estoque-routes'); registerAberturaEstoque(app); ensureAberturaEstoqueSchema().catch((e: any) => console.error('[abertura-estoque] schema', e?.message || e)); } catch (e: any) { console.error('[abertura-estoque]', e?.message || e); }
 
 

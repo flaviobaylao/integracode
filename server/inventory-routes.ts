@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { ensureCmvLoteColumns } from "./ensure-cmv-lote";
 import { attachTransferLocks, getLotTransferLock, getTransferLocks } from "./lot-lock";
 import { normalizarNumeroLote } from "./estoque-em-uso";
+import { moverTipoLote, podeReceberLote } from "./recebimento-lote";
 
 // Custo de um lote: numero ou null. NUNCA 0 por omissao — um lote sem custo
 // conhecido (entrada manual, remanejamento entre filiais) precisa aparecer como
@@ -210,7 +211,7 @@ export function registerInventoryRoutes(app: Express) {
     motivo: z.string().optional(),
   });
 
-  app.post('/api/inventory/lots/:id/mover-tipo', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+  app.post('/api/inventory/lots/:id/mover-tipo', authenticateUser, async (req: any, res) => {
     try {
       const existing = await storage.getInventoryLot(req.params.id);
       if (!existing) return res.status(404).json({ message: 'Lote não encontrado' });
@@ -220,83 +221,27 @@ export function registerInventoryRoutes(app: Express) {
         return res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.flatten().fieldErrors });
       }
       const destino = parsed.data.stockType;
-      if (destino === existing.stockType) {
-        return res.status(400).json({ message: `O lote já está ${destino === 'in_use' ? 'em uso' : 'bloqueado'}.` });
+      // Bloquear: só admin. Desbloquear: admin ou responsável pelo recebimento
+      // (Flávio, Lanucy, Robson — recebimento-lote.ts). Desbloqueio de lote que
+      // veio por transferência deve passar pela CONFERÊNCIA (POST /api/recebimento-lote/:id/receber);
+      // esta rota continua servindo o desbloqueio manual/parcial, e carimba o responsável no lote.
+      const admin = String(req.currentUser?.role) === 'admin';
+      if (destino === 'blocked' && !admin) return res.status(403).json({ message: 'Só administradores podem bloquear estoque.' });
+      if (destino === 'in_use' && !admin && !(await podeReceberLote(req.currentUser))) {
+        return res.status(403).json({ message: 'Só os responsáveis pelo recebimento (Flávio, Lanucy, Robson ou admin) podem desbloquear estoque.' });
       }
       const motivo = String(parsed.data.motivo || '').trim();
       if (motivo.length < 3) return res.status(400).json({ message: 'Informe o motivo do bloqueio/desbloqueio.' });
+      const qty = parsed.data.quantity !== undefined && String(parsed.data.quantity).trim() !== '' ? parseFloat(parsed.data.quantity) : null;
+      if (qty !== null && (!Number.isFinite(qty) || qty <= 0)) return res.status(400).json({ message: 'Quantidade a mover deve ser maior que zero.' });
 
       // Bloquear/desbloquear e permitido mesmo com pedido/NF de transferencia no
       // lote (Flavio, 05/out/2026) — a trava segue valendo so para renomear/excluir.
-      const saldo = parseFloat(existing.quantity) || 0;
-      const qty = parsed.data.quantity !== undefined && String(parsed.data.quantity).trim() !== '' ? parseFloat(parsed.data.quantity) : saldo;
-      if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ message: 'Quantidade a mover deve ser maior que zero.' });
-      if (qty - saldo > 1e-9) return res.status(400).json({ message: `Quantidade a mover (${qty}) maior que o saldo do lote (${saldo}).` });
-
-      const numLote = normalizarNumeroLote(existing.lotNumber) || 'SEM-LOTE';
-      const acao = destino === 'in_use' ? 'unblock' : 'block';
-      const rotulo = destino === 'in_use' ? 'Desbloqueio' : 'Bloqueio';
-      const quem = req.currentUser?.email || req.currentUser?.id || null;
-      const unit = lotUnitCost(existing);
-
-      const resultado = await db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'estoque-mover-tipo:' + existing.productId + ':' + existing.instanceId + ':' + numLote}))`);
-        const origem: any = ((await tx.execute(sql`SELECT * FROM inventory_lots WHERE id = ${existing.id} FOR UPDATE`)) as any).rows?.[0];
-        if (!origem) throw new Error('Lote não encontrado');
-        const prevOrigem = parseFloat(origem.quantity) || 0;
-        if (qty - prevOrigem > 1e-9) throw new Error(`Saldo do lote mudou (${prevOrigem}); tente de novo.`);
-        const novoOrigem = Math.max(0, prevOrigem - qty);
-
-        await tx.execute(sql`
-          UPDATE inventory_lots SET quantity = ${novoOrigem.toFixed(4)},
-            total_cost = ${unit != null ? (unit * novoOrigem).toFixed(2) : null},
-            updated_at = now()
-          WHERE id = ${origem.id}`);
-
-        const exist: any = ((await tx.execute(sql`
-          SELECT * FROM inventory_lots
-          WHERE product_id = ${origem.product_id} AND instance_id = ${origem.instance_id} AND stock_type = ${destino}
-            AND UPPER(REPLACE(TRIM(lot_number), ' ', '')) = ${numLote}
-          ORDER BY is_active DESC, created_at ASC LIMIT 1 FOR UPDATE`)) as any).rows?.[0];
-        let destinoId: string; let prevDestino = 0; let criado = false;
-        if (exist) {
-          destinoId = exist.id; prevDestino = parseFloat(exist.quantity) || 0;
-          const novo = prevDestino + qty;
-          await tx.execute(sql`
-            UPDATE inventory_lots SET quantity = ${novo.toFixed(4)}, is_active = true,
-              unit_cost = COALESCE(unit_cost, ${unit != null ? unit.toFixed(4) : null}),
-              total_cost = CASE WHEN COALESCE(unit_cost, ${unit != null ? unit.toFixed(4) : null}) IS NOT NULL
-                                THEN (COALESCE(unit_cost, ${unit != null ? unit.toFixed(4) : null})::numeric * ${novo.toFixed(4)}::numeric)::text ELSE total_cost END,
-              production_order_id = COALESCE(production_order_id, ${origem.production_order_id || null}),
-              updated_at = now()
-            WHERE id = ${destinoId}`);
-        } else {
-          criado = true;
-          const ins: any = await tx.execute(sql`
-            INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, min_quantity, unit_cost, total_cost, production_order_id, notes, is_active, created_at, updated_at)
-            VALUES (gen_random_uuid()::varchar, ${origem.product_id}, ${origem.instance_id}, ${destino}, ${numLote}, ${qty.toFixed(4)}, ${origem.min_quantity || '0'},
-                    ${unit != null ? unit.toFixed(4) : null}, ${unit != null ? (unit * qty).toFixed(2) : null}, ${origem.production_order_id || null},
-                    ${`${rotulo} do lote ${numLote} (${existing.stockType === 'in_use' ? 'em uso' : 'bloqueado'} → ${destino === 'in_use' ? 'em uso' : 'bloqueado'}) — ${motivo.slice(0, 200)}`}, true, now(), now())
-            RETURNING id`);
-          destinoId = ins.rows[0].id;
-        }
-
-        const nota = `${rotulo} de estoque: ${qty} un. ${existing.stockType === 'in_use' ? 'Em Uso' : 'Bloqueado'} → ${destino === 'in_use' ? 'Em Uso' : 'Bloqueado'} — ${motivo.slice(0, 300)}`;
-        await tx.execute(sql`
-          INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, quantity, previous_quantity, new_quantity, source_type, source_id, lot_number, notes, created_by, created_at)
-          VALUES (gen_random_uuid()::varchar, ${origem.id}, ${origem.product_id}, ${origem.instance_id}, ${acao}, ${(-qty).toFixed(4)}, ${prevOrigem.toFixed(4)}, ${novoOrigem.toFixed(4)},
-                  'manual', ${destinoId}, ${numLote}, ${nota + ' (saída)'}, ${quem}, now())`);
-        await tx.execute(sql`
-          INSERT INTO inventory_movements (id, lot_id, product_id, instance_id, movement_type, quantity, previous_quantity, new_quantity, source_type, source_id, lot_number, notes, created_by, created_at)
-          VALUES (gen_random_uuid()::varchar, ${destinoId}, ${origem.product_id}, ${origem.instance_id}, ${acao}, ${qty.toFixed(4)}, ${prevDestino.toFixed(4)}, ${(prevDestino + qty).toFixed(4)},
-                  'manual', ${origem.id}, ${numLote}, ${nota + ' (entrada)'}, ${quem}, now())`);
-        return { origemId: origem.id, origemSaldo: novoOrigem, destinoId, destinoSaldo: prevDestino + qty, criado };
-      });
-
-      console.log(`🔒 [ESTOQUE] ${rotulo} ${numLote}: ${qty} (${existing.stockType} → ${destino}) por ${quem || 'system'} — ${motivo}`);
-      res.json({ success: true, quantidade: qty, ...resultado });
+      const resultado = await moverTipoLote({ lotId: existing.id, destino, quantidade: qty, motivo, user: req.currentUser });
+      res.json({ success: true, quantidade: qty ?? parseFloat(existing.quantity), ...resultado });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || 'Erro ao mover estoque entre tipos' });
+      const msg = error?.message || 'Erro ao mover estoque entre tipos';
+      res.status(/não encontrado|já está|maior que o saldo|maior que zero|motivo/i.test(msg) ? 400 : 500).json({ message: msg });
     }
   });
 

@@ -65,6 +65,207 @@ function tipoNf(l: Linha): string {
 
 const fmtNum = (n: number) => (Number.isInteger(n) ? n : Math.round(n * 100) / 100).toLocaleString("pt-BR");
 const fmtData = (d: string) => (d ? new Date(d).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "");
+const fmtDT = (d: string | null | undefined) => (d ? new Date(d).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
+
+/* ------------------------------------------------------------------------ */
+/* LINHA DO TEMPO (produção → transferência → recebimento → destino)          */
+/* GET /api/rastreabilidade-lote/linha-do-tempo                               */
+/* ------------------------------------------------------------------------ */
+type Divergencia = { tipo: string; gravidade: "alta" | "media" | "info"; texto: string; ref?: any };
+type LinhaTempo = {
+  lote: string;
+  producao: Array<{ id: string; order_number: string; product_name: string; quantity: number; qtdLancada: number; instance_name: string; status: string; production_date: string | null; end_date: string | null; lot_expiry_date: string | null; created_by: string | null }>;
+  lotes: Array<{ id: string; product_name: string; instancia: string; stock_type: string; quantity: number; is_active: boolean; unit_cost: number | null; desbloqueado_por_nome: string | null; desbloqueado_em: string | null; created_at: string }>;
+  movimentos: Array<{ id: string; instancia: string; movement_type: string; quantity: number; previous_quantity: number | null; new_quantity: number | null; source_type: string | null; source_id: string | null; notes: string | null; created_by: string | null; created_at: string; lot_stock_type: string; pedido: string | null; nf_id: string | null; nf_numero: number | null; nf_status: string | null; nf_cfop: string | null; nf_natureza: string | null; nf_cliente: string | null; vivo: boolean }>;
+  notas: Array<Linha & { transferencia: boolean; instCode: string }>;
+  recebimentos: Array<{ id: string; instance_name: string; qtd_faturada: string; qtd_recebida: string; divergencia: string; observacao: string | null; recebido_por_nome: string; created_at: string; chamado_ids: string[] | null }>;
+  balanco: Array<{ instancia: string; code: string; producao: number; entradasTransferencia: number; ajustes: number; estornos: number; consumos: number; saldoRecalculado: number; saldoEmUso: number; saldoBloqueado: number; nfSaida: number; nfSaidaTransf: number; nfEntrada: number }>;
+  destinacao: { produzido: number; vendidoLiquido: number; emEstoque: number; ajustes: number; naoExplicado: number };
+  divergencias: Divergencia[];
+};
+const MOV_LABEL: Record<string, string> = { replenish: "Entrada", consume: "Baixa (NF)", adjust: "Ajuste manual", cancel_reversal: "Estorno", transfer: "Promoção bloq.→uso", block: "Bloqueio", unblock: "Desbloqueio" };
+const GRAV_CLS: Record<string, string> = { alta: "border-red-300 bg-red-50 text-red-900", media: "border-amber-300 bg-amber-50 text-amber-900", info: "border-slate-200 bg-slate-50 text-slate-700" };
+
+function LinhaDoTempo({ consulta }: { consulta: { lote: string; productId: string | null } }) {
+  const { data, isFetching, error } = useQuery<LinhaTempo>({
+    queryKey: ["/api/rastreabilidade-lote/linha-do-tempo", consulta],
+    queryFn: () => {
+      const p = new URLSearchParams({ lote: consulta.lote });
+      if (consulta.productId) p.set("productId", consulta.productId);
+      return fetch(`/api/rastreabilidade-lote/linha-do-tempo?${p}`).then(async r => {
+        if (!r.ok) throw new Error((await r.json().catch(() => null))?.message || `HTTP ${r.status}`);
+        return r.json();
+      });
+    },
+  });
+  if (error) return <Card><CardContent className="p-8 text-center text-red-600">Erro: {(error as Error).message}</CardContent></Card>;
+  if (!data || isFetching) return <Card><CardContent className="p-8 text-center text-muted-foreground">Montando a linha do tempo…</CardContent></Card>;
+  const d = data.destinacao;
+  const altas = data.divergencias.filter(x => x.gravidade === "alta").length;
+  const exportarMov = () => exportToExcel(data.movimentos.map(m => ({
+    "Data": fmtDT(m.created_at), "Instância": m.instancia, "Tipo": MOV_LABEL[m.movement_type] || m.movement_type, "Lote (tipo)": m.lot_stock_type === "in_use" ? "Em uso" : "Bloqueado",
+    "Quantidade": m.quantity, "Saldo anterior": m.previous_quantity ?? "", "Saldo novo": m.new_quantity ?? "",
+    "NF": m.nf_numero ?? "", "Status NF": m.nf_status || "", "CFOP": m.nf_cfop || "", "Cliente/Destinatário": m.nf_cliente || "", "Pedido": m.pedido || "",
+    "Vivo": m.vivo ? "sim" : "estornado", "Por": m.created_by || "", "Observação": m.notes || "",
+  })), `linha-do-tempo-${data.lote}`);
+  return (
+    <div className="space-y-4" data-testid="linha-do-tempo-lote">
+      {/* Destinação */}
+      <div className="grid gap-2 grid-cols-2 md:grid-cols-6">
+        <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Lote</div><div className="text-xl font-bold">{data.lote}</div></CardContent></Card>
+        <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Produzido (OP)</div><div className="text-xl font-bold">{fmtNum(d.produzido)}</div></CardContent></Card>
+        <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Vendido/trocado (líquido, NF)</div><div className="text-xl font-bold">{fmtNum(d.vendidoLiquido)}</div></CardContent></Card>
+        <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Em estoque (todas)</div><div className="text-xl font-bold">{fmtNum(d.emEstoque)}</div></CardContent></Card>
+        <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Ajustes manuais</div><div className="text-xl font-bold">{d.ajustes > 0 ? "+" : ""}{fmtNum(d.ajustes)}</div></CardContent></Card>
+        <Card className={`py-0 ${Math.abs(d.naoExplicado) > 0.5 ? "border-red-400" : "border-green-400"}`}><CardContent className="p-3">
+          <div className="text-[11px] text-muted-foreground">Sem destino explicado</div>
+          <div className={`text-xl font-bold ${Math.abs(d.naoExplicado) > 0.5 ? "text-red-700" : "text-green-700"}`}>{fmtNum(d.naoExplicado)}</div>
+        </CardContent></Card>
+      </div>
+
+      {/* Divergências */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2">Divergências
+          <Badge variant={altas ? "destructive" : "secondary"}>{altas} crítica(s) · {data.divergencias.length} no total</Badge></CardTitle></CardHeader>
+        <CardContent className="space-y-1.5">
+          {data.divergencias.length === 0 ? <div className="text-sm text-green-700">Nenhuma divergência: NFs, movimentos e saldos batem.</div> : data.divergencias.map((x, i) => (
+            <div key={i} className={`text-sm rounded border px-2 py-1.5 flex gap-2 ${GRAV_CLS[x.gravidade]}`}>
+              <Badge variant="outline" className="shrink-0 text-[10px] h-5">{x.tipo}</Badge>
+              <span>{x.texto}{x.ref?.invoiceId && <a className="ml-1 underline" href={`/api/contabilidade/fiscal/nota/${x.ref.invoiceId}/danfe`} target="_blank" rel="noreferrer">DANFE</a>}</span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* Balanço por instância */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Balanço por instância (unidades do lote)</CardTitle></CardHeader>
+        <CardContent className="overflow-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead><tr className="text-left border-b">
+              <th className="px-2 py-1.5">Instância</th><th className="px-2 py-1.5 text-right">Produção</th><th className="px-2 py-1.5 text-right">Entrada transf.</th>
+              <th className="px-2 py-1.5 text-right">Baixas (NF)</th><th className="px-2 py-1.5 text-right">Estornos</th><th className="px-2 py-1.5 text-right">Ajustes</th>
+              <th className="px-2 py-1.5 text-right">Saldo recalc.</th><th className="px-2 py-1.5 text-right">Em uso</th><th className="px-2 py-1.5 text-right">Bloqueado</th>
+              <th className="px-2 py-1.5 text-right">NF saída</th><th className="px-2 py-1.5 text-right">NF transf.</th><th className="px-2 py-1.5 text-right">NF entrada</th>
+            </tr></thead>
+            <tbody>{data.balanco.map(b => {
+              const ok = Math.abs(b.saldoRecalculado - (b.saldoEmUso + b.saldoBloqueado)) <= 0.001;
+              return (<tr key={b.code} className="border-b">
+                <td className="px-2 py-1.5"><Badge variant="outline">{b.instancia}</Badge></td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.producao)}</td><td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.entradasTransferencia)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.consumos)}</td><td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.estornos)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{b.ajustes > 0 ? "+" : ""}{fmtNum(b.ajustes)}</td>
+                <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${ok ? "" : "text-red-700"}`}>{fmtNum(b.saldoRecalculado)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.saldoEmUso)}</td><td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.saldoBloqueado)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.nfSaida)}</td><td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.nfSaidaTransf)}</td><td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(b.nfEntrada)}</td>
+              </tr>);
+            })}</tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Produção */}
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">1 · Produção</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {data.producao.length === 0 ? <div className="text-muted-foreground">Nenhuma ordem de produção com este lote (lote criado à mão ou importado).</div> : data.producao.map(po => (
+              <div key={po.id} className="rounded border p-2">
+                <div className="font-medium">OP {po.order_number} · {po.instance_name} · <Badge variant="outline" className="text-[10px]">{po.status}</Badge></div>
+                <div className="text-xs text-muted-foreground">{po.product_name} · produzido {fmtNum(po.quantity)} · lançado no estoque {fmtNum(po.qtdLancada)} · produção {po.production_date ? fmtData(po.production_date) : "—"} · validade {po.lot_expiry_date || "—"} · por {po.created_by || "—"}</div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        {/* Recebimentos */}
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">3 · Recebimento na filial (conferência)</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {data.recebimentos.length === 0 ? <div className="text-muted-foreground">Nenhuma conferência registrada para este lote.</div> : data.recebimentos.map(r => {
+              const dv = Number(r.divergencia) || 0;
+              return (<div key={r.id} className={`rounded border p-2 ${dv !== 0 ? "border-red-300 bg-red-50/50" : ""}`}>
+                <div className="font-medium">{r.instance_name} · {fmtDT(r.created_at)} · por {r.recebido_por_nome}</div>
+                <div className="text-xs">faturado {fmtNum(Number(r.qtd_faturada))} · recebido {fmtNum(Number(r.qtd_recebida))} · {dv === 0 ? <span className="text-green-700">sem divergência</span> : <span className="text-red-700 font-semibold">divergência {dv > 0 ? "+" : ""}{fmtNum(dv)}</span>}{r.observacao ? ` · ${r.observacao}` : ""}</div>
+                {(r.chamado_ids || []).map(id => <a key={id} className="text-xs underline text-primary" href={`/chamados?id=${id}`}>chamado DIVERGENCIA EM RECEBIMENTO</a>)}
+              </div>);
+            })}
+            <div className="pt-1 border-t text-xs text-muted-foreground">Saldos atuais:</div>
+            {data.lotes.map(l => (
+              <div key={l.id} className="text-xs flex flex-wrap gap-1 items-center">
+                <Badge variant="outline">{l.instancia}</Badge>
+                <Badge className={l.stock_type === "in_use" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}>{l.stock_type === "in_use" ? "Em uso" : "Bloqueado"}</Badge>
+                <span className="tabular-nums font-semibold">{fmtNum(l.quantity)}</span>
+                {!l.is_active && <span className="text-muted-foreground">(finalizado)</span>}
+                {l.desbloqueado_por_nome && <span className="text-muted-foreground">· desbloqueado por {l.desbloqueado_por_nome} em {fmtDT(l.desbloqueado_em)}</span>}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* NFs (todas, incl. transferência) */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">2 e 4 · Notas fiscais com o lote (inclusive transferências)</CardTitle></CardHeader>
+        <CardContent className="overflow-auto max-h-[50vh]">
+          {data.notas.length === 0 ? <div className="text-sm text-muted-foreground">Nenhuma NF com este lote.</div> : (
+            <table className="w-full text-sm border-collapse">
+              <thead className="sticky top-0 bg-background"><tr className="text-left border-b">
+                <th className="px-2 py-1.5">Data</th><th className="px-2 py-1.5">NF</th><th className="px-2 py-1.5">Instância</th><th className="px-2 py-1.5">Tipo</th><th className="px-2 py-1.5">CFOP</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Destinatário</th><th className="px-2 py-1.5 text-right">Qtd lote</th><th className="px-2 py-1.5 text-right">Qtd item</th><th className="px-2 py-1.5">Lotes no item</th><th className="px-2 py-1.5">DANFE</th>
+              </tr></thead>
+              <tbody>{data.notas.map((n, i) => {
+                const st = STATUS_LABEL[n.status] || { label: n.status, cls: "" };
+                return (<tr key={`${n.invoiceId}-${i}`} className={`border-b ${n.status === "cancelled" ? "opacity-60" : ""}`}>
+                  <td className="px-2 py-1.5 whitespace-nowrap">{fmtData(n.data)}</td>
+                  <td className="px-2 py-1.5 font-medium">{n.numero ?? "—"}{n.serie && n.serie !== "1" ? `/${n.serie}` : ""}</td>
+                  <td className="px-2 py-1.5"><Badge variant="outline">{n.instancia}</Badge></td>
+                  <td className="px-2 py-1.5 whitespace-nowrap">{n.transferencia ? <Badge className="bg-blue-100 text-blue-800 text-[10px]">Transferência</Badge> : tipoNf(n)}</td>
+                  <td className="px-2 py-1.5">{n.cfop}</td>
+                  <td className="px-2 py-1.5"><Badge className={`${st.cls} text-[11px]`}>{st.label}</Badge></td>
+                  <td className="px-2 py-1.5">{n.cliente}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${n.sinal < 0 ? "text-amber-700" : ""}`}>{n.qtdLote == null ? "?" : `${n.sinal < 0 ? "−" : ""}${fmtNum(n.qtdLote)}`}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fmtNum(n.qtdItem)}</td>
+                  <td className="px-2 py-1.5 text-xs text-muted-foreground">{n.lotesDoItem}</td>
+                  <td className="px-2 py-1.5"><a href={`/api/contabilidade/fiscal/nota/${n.invoiceId}/danfe`} target="_blank" rel="noreferrer" className="text-primary"><FileDown className="h-4 w-4" /></a></td>
+                </tr>);
+              })}</tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Movimentos */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center justify-between">Movimentos de estoque do lote ({data.movimentos.length})
+          <Button variant="outline" size="sm" onClick={exportarMov} disabled={!data.movimentos.length}><Download className="w-4 h-4 mr-2" />Exportar Excel</Button></CardTitle></CardHeader>
+        <CardContent className="overflow-auto max-h-[55vh]">
+          <table className="w-full text-sm border-collapse">
+            <thead className="sticky top-0 bg-background"><tr className="text-left border-b">
+              <th className="px-2 py-1.5">Data</th><th className="px-2 py-1.5">Instância</th><th className="px-2 py-1.5">Movimento</th><th className="px-2 py-1.5">Linha</th><th className="px-2 py-1.5 text-right">Qtd</th><th className="px-2 py-1.5 text-right">Saldo</th><th className="px-2 py-1.5">NF / pedido</th><th className="px-2 py-1.5">Por</th><th className="px-2 py-1.5">Observação</th>
+            </tr></thead>
+            <tbody>{data.movimentos.map(m => (
+              <tr key={m.id} className={`border-b ${m.vivo ? "" : "opacity-50 line-through"}`}>
+                <td className="px-2 py-1.5 whitespace-nowrap">{fmtDT(m.created_at)}</td>
+                <td className="px-2 py-1.5"><Badge variant="outline">{m.instancia}</Badge></td>
+                <td className="px-2 py-1.5 whitespace-nowrap">{MOV_LABEL[m.movement_type] || m.movement_type}</td>
+                <td className="px-2 py-1.5 text-xs">{m.lot_stock_type === "in_use" ? "Em uso" : "Bloqueado"}</td>
+                <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${m.movement_type === "consume" ? "text-red-700" : m.quantity > 0 ? "text-green-700" : ""}`}>{m.movement_type === "consume" ? "−" : ""}{fmtNum(Math.abs(m.quantity))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{m.previous_quantity != null ? `${fmtNum(m.previous_quantity)} → ${fmtNum(m.new_quantity || 0)}` : ""}</td>
+                <td className="px-2 py-1.5 text-xs whitespace-nowrap">
+                  {m.nf_numero != null ? <a className="underline text-primary" href={`/api/contabilidade/fiscal/nota/${m.nf_id}/danfe`} target="_blank" rel="noreferrer">NF-e {m.nf_numero}</a> : null}
+                  {m.nf_status && m.nf_status !== "authorized" ? <span className="ml-1 text-amber-700">[{m.nf_status}]</span> : null}
+                  {m.pedido ? <span className="ml-1 text-muted-foreground">{m.pedido}</span> : null}
+                  {m.nf_cliente ? <div className="text-muted-foreground truncate max-w-[220px]" title={m.nf_cliente}>{m.nf_cliente}</div> : null}
+                </td>
+                <td className="px-2 py-1.5 text-xs">{m.created_by || ""}</td>
+                <td className="px-2 py-1.5 text-xs text-muted-foreground max-w-[360px]" title={m.notes || ""}><div className="truncate">{m.notes}</div></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 export default function RastreabilidadeLote() {
   const [productId, setProductId] = useState<string>(TODOS);
@@ -74,6 +275,7 @@ export default function RastreabilidadeLote() {
   const [instancias, setInstancias] = useState<string[]>([]);
   const [tipos, setTipos] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
+  const [visao, setVisao] = useState<"notas" | "tempo">("notas");
 
   const pid = productId === TODOS ? null : productId;
   const { data: opcoes } = useQuery<{ produtos: Array<{ id: string; name: string }>; lotes: string[] }>({
@@ -204,6 +406,10 @@ export default function RastreabilidadeLote() {
               <Search className="w-4 h-4 mr-2" />{isFetching ? "Buscando…" : "Rastrear"}
             </Button>
           </form>
+          <div className="flex gap-1">
+            <Button type="button" size="sm" variant={visao === "notas" ? "default" : "outline"} onClick={() => setVisao("notas")} data-testid="button-visao-notas">Notas fiscais (vendas)</Button>
+            <Button type="button" size="sm" variant={visao === "tempo" ? "default" : "outline"} onClick={() => setVisao("tempo")} data-testid="button-visao-tempo">Linha do tempo: produção → destino</Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -211,6 +417,8 @@ export default function RastreabilidadeLote() {
         <Card><CardContent className="p-8 text-center text-muted-foreground flex flex-col items-center gap-2">
           <PackageSearch className="h-8 w-8" />Escolha o produto, informe o lote e clique em Rastrear.
         </CardContent></Card>
+      ) : visao === "tempo" ? (
+        <LinhaDoTempo consulta={{ lote: consulta.lote, productId: consulta.productId }} />
       ) : error ? (
         <Card><CardContent className="p-8 text-center text-red-600">Erro ao consultar: {(error as Error).message}</CardContent></Card>
       ) : isFetching && !data ? (
