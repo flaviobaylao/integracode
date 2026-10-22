@@ -1121,12 +1121,13 @@ export default function BillingPipeline() {
 
     setIsPrintingDanfe(true);
     try {
-      const invoiceNumbers = faturadoItems.map(i => i.invoiceNumber!);
-      const response = await fetch('/api/fiscal-invoices/batch', {
+      // [22/out/2026] DANFE pelo VINCULO do pedido (sales_card / numero + cliente), nunca so pelo
+      // numero: o mesmo numero existe em SERV/BSB/GYN e saia a nota de outra empresa.
+      const response = await fetch('/api/billing-pipeline/danfes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ invoiceNumbers }),
+        body: JSON.stringify({ ids: faturadoItems.map(i => i.id) }),
       });
 
       if (!response.ok) throw new Error('Erro ao buscar notas fiscais');
@@ -1179,15 +1180,13 @@ export default function BillingPipeline() {
       const rows = resp.ok ? await resp.json() : [];
       const byItem = new Map<string, any>();
       for (const r of rows) { const cur = byItem.get(r.item_id); if (!cur || ((!cur.boleto && !cur.pix) && (r.boleto || r.pix))) byItem.set(r.item_id, r); }
-      const invNums = selectedItems.filter((i) => i.invoiceNumber).map((i) => i.invoiceNumber);
-      const danfeByNum = new Map<string, DanfeInvoice>();
-      if (invNums.length) {
-        try {
-          const fr = await fetch('/api/fiscal-invoices/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ invoiceNumbers: invNums }) });
-          if (fr.ok) { const invs: DanfeInvoice[] = await fr.json(); for (const inv of invs) { danfeByNum.set(String(inv.invoiceNumber), inv); } }
-        } catch (e) {}
-      }
-      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const num = (it.invoiceNumber || '').replace(/\D/g, ''); const danfe = danfeByNum.get(num) || danfeByNum.get(String(it.invoiceNumber)) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, observation: it.notes, boleto: r.boleto, pix: r.pix, danfe }; });
+      // [22/out/2026] DANFE pelo vinculo do pedido (por item), nunca so pelo numero da NF.
+      const danfeByItem = new Map<string, DanfeInvoice>();
+      try {
+        const fr = await fetch('/api/billing-pipeline/danfes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ ids }) });
+        if (fr.ok) { const invs: any[] = await fr.json(); for (const inv of invs) { if (inv?.itemId) danfeByItem.set(String(inv.itemId), inv as DanfeInvoice); } }
+      } catch (e) {}
+      const list: CobrancaData[] = selectedItems.map((it) => { const r = byItem.get(it.id) || {}; const danfe = danfeByItem.get(it.id) || null; return { itemId: it.id, customerName: it.customerName, sellerName: it.sellerName, invoiceNumber: it.invoiceNumber, saleValue: it.saleValue, products: it.products, observation: it.notes, boleto: r.boleto, pix: r.pix, danfe }; });
       const n = await generateCompletoPdf(list);
       toast({ title: n + ' pedido(s) impresso(s)' });
     } catch (err: any) { toast({ title: 'Erro ao imprimir', description: err.message, variant: 'destructive' }); }
