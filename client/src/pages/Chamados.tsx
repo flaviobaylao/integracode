@@ -199,6 +199,60 @@ function paraData(v: string) {
   if (/[zZ]$|[+-]\d\d(:?\d\d)?$/.test(t)) return new Date(t.replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00"));
   return new Date(t.replace(" ", "T") + "Z");
 }
+// Tamanho ajustável pelo usuário de computador (arrastando), lembrado no navegador.
+function useTamanho(chave: string): [number | null, (v: number | null) => void] {
+  const [v, setV] = useState<number | null>(() => {
+    try { const n = Number(localStorage.getItem(chave)); return n > 0 ? n : null; } catch { return null; }
+  });
+  const set = (n: number | null) => {
+    setV(n);
+    try { n ? localStorage.setItem(chave, String(Math.round(n))) : localStorage.removeItem(chave); } catch {}
+  };
+  return [v, set];
+}
+
+// Alça de arrasto (só aparece em telas de computador). dir "x" = largura, "y" = altura.
+// Duplo clique volta ao tamanho padrão.
+function Puxador({ dir, alvo, setValor, min, max, rotulo }: {
+  dir: "x" | "y"; alvo: React.RefObject<HTMLElement>; setValor: (v: number | null) => void; min: number; max: () => number; rotulo: string;
+}) {
+  const inicio = (e: React.PointerEvent) => {
+    const el = alvo.current;
+    if (!el) return;
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    const base = dir === "x" ? r.width : r.height;
+    const p0 = dir === "x" ? e.clientX : e.clientY;
+    const mover = (ev: PointerEvent) => {
+      const d = (dir === "x" ? ev.clientX : ev.clientY) - p0;
+      setValor(Math.max(min, Math.min(max(), base + d)));
+    };
+    const soltar = () => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = dir === "x" ? "col-resize" : "row-resize";
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+  };
+  return dir === "x" ? (
+    <div role="separator" aria-orientation="vertical" aria-label={rotulo} title={`${rotulo} — arraste (duplo clique: tamanho padrão)`}
+      onPointerDown={inicio} onDoubleClick={() => setValor(null)}
+      className="hidden lg:flex self-stretch w-4 -mx-2 cursor-col-resize items-center justify-center group flex-shrink-0">
+      <span className="w-1 h-12 rounded-full bg-gray-300 group-hover:bg-green-600 transition-colors" />
+    </div>
+  ) : (
+    <div role="separator" aria-orientation="horizontal" aria-label={rotulo} title={`${rotulo} — arraste (duplo clique: tamanho padrão)`}
+      onPointerDown={inicio} onDoubleClick={() => setValor(null)}
+      className="hidden lg:flex h-3 cursor-row-resize items-center justify-center group border-t bg-white rounded-b-xl">
+      <span className="h-1 w-12 rounded-full bg-gray-300 group-hover:bg-green-600 transition-colors" />
+    </div>
+  );
+}
+
 function diaBrasilia(iso: string) {
   try { return paraData(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; }
 }
@@ -223,6 +277,9 @@ export default function Chamados() {
     try { return localStorage.getItem("chamados-ordem") === "desc" ? "desc" : "asc"; } catch { return "asc"; }
   });
   const listaRef = useRef<HTMLDivElement>(null);
+  const painelRef = useRef<HTMLDivElement>(null);
+  const [larguraLista, setLarguraLista] = useTamanho("chamados-largura-lista");
+  const [alturaLista, setAlturaLista] = useTamanho("chamados-altura-lista");
   const statusRef = useRef<HTMLDivElement>(null);
   useEffect(() => { try { localStorage.setItem("chamados-ordem", ordem); } catch {} }, [ordem]);
   useEffect(() => {
@@ -336,7 +393,8 @@ export default function Chamados() {
         </div>
 
         <div className="flex flex-col lg:flex-row gap-4 items-start">
-          <div className={`w-full lg:w-[420px] lg:flex-shrink-0 bg-white border rounded-xl ${selId ? "hidden lg:block" : ""}`}>
+          <div ref={painelRef} style={{ ["--lw" as any]: `${larguraLista || 420}px` }}
+            className={`w-full lg:w-[var(--lw)] lg:flex-shrink-0 bg-white border rounded-xl ${selId ? "hidden lg:block" : ""}`}>
             <div className="p-3 border-b flex flex-col gap-2">
               <label htmlFor="busca-chamado" className="sr-only">Buscar chamado</label>
               <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa (inclui arquivados)"
@@ -384,7 +442,8 @@ export default function Chamados() {
                 {ordem === "asc" ? "A-Z · antigos primeiro ↓" : "Z-A · recentes primeiro ↑"}
               </button>
             </div>
-            <div ref={listaRef} className="max-h-[70vh] overflow-y-auto">
+            <div ref={listaRef} style={{ ["--lh" as any]: alturaLista ? `${alturaLista}px` : "70vh" }}
+              className="max-h-[70vh] lg:max-h-[var(--lh)] overflow-y-auto">
               {listaQ.isLoading && <div className="p-6 text-center text-gray-500 text-sm">Carregando…</div>}
               {!listaQ.isLoading && lista.length === 0 && (
                 <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ou cancelado ainda." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
@@ -411,7 +470,10 @@ export default function Chamados() {
                 );
               })}
             </div>
+            <Puxador dir="y" alvo={listaRef} setValor={setAlturaLista} min={160} max={() => window.innerHeight * 3} rotulo="Altura da lista" />
           </div>
+
+          <Puxador dir="x" alvo={painelRef} setValor={setLarguraLista} min={320} max={() => Math.max(340, window.innerWidth - 560)} rotulo="Largura da lista" />
 
           <div className={`w-full flex-1 min-w-0 ${selId ? "" : "hidden lg:block"}`}>
             {selId
@@ -507,6 +569,8 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   const [busy, setBusy] = useState(false);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const fimRef = useRef<HTMLDivElement>(null);
+  const msgsRef = useRef<HTMLDivElement>(null);
+  const [alturaMsgs, setAlturaMsgs] = useTamanho("chamados-altura-mensagens");
   useEffect(() => { setTexto(""); setAlvo(""); setModo("responder"); setArquivos([]); }, [id]);
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "nearest" }); }, [q.data?.mensagens?.length]);
   useEffect(() => { if (q.data) onMudou(); /* atualiza o "não lido" da lista */ /* eslint-disable-next-line */ }, [q.dataUpdatedAt]);
@@ -549,7 +613,8 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         )}
       </div>
 
-      <div className="p-4 flex flex-col gap-3 bg-gray-50 max-h-[50vh] overflow-y-auto">
+      <div ref={msgsRef} style={{ ["--mh" as any]: alturaMsgs ? `${alturaMsgs}px` : "50vh" }}
+        className="p-4 flex flex-col gap-3 bg-gray-50 max-h-[50vh] lg:max-h-[var(--mh)] overflow-y-auto">
         {q.data.mensagens.map((m) => m.tipo === "sistema" ? (
           <span key={m.id} className="self-center text-center text-xs text-gray-600 bg-gray-200/70 px-3 py-1 rounded-full">{m.texto} · {dataHora(m.createdAt)}</span>
         ) : (
@@ -562,6 +627,7 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         ))}
         <div ref={fimRef} />
       </div>
+      <Puxador dir="y" alvo={msgsRef} setValor={setAlturaMsgs} min={160} max={() => window.innerHeight * 3} rotulo="Altura da conversa" />
 
       {c.papel === "autor" && !fechado && (
         <div className="p-4 border-t flex flex-col gap-2">
