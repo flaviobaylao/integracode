@@ -221,53 +221,10 @@ export function registerAgendaRota(app: Express) {
         return res.json({ mes, semanas, vendedor: null, celulas: [], vendedores, escopo: { restrito, papel } });
       }
       const listaIds = sql.join(idsEscopo.map((x) => sql`${x}`), sql`, `);
-      // A unica consulta montada por texto (sql.raw, por causa do CTE) precisa
-      // da lista escapada na mao — id de usuario e' sempre [A-Za-z0-9_-], e o
-      // que nao for e' descartado em vez de escapado.
-      const listaIdsTexto = idsEscopo
-        .map((x) => String(x).replace(/[^A-Za-z0-9_-]/g, ""))
-        .filter(Boolean)
-        .map((x) => `'${x}'`)
-        .join(",") || `''`;
 
       // Janela do quadro: da segunda da 1a semana a sexta da ultima.
       const ini = semanas[0].ini;
       const fim = semanas[semanas.length - 1].fim;
-
-      // ── 0) TICKET PONDERADO POR RECENCIA, por cliente do vendedor ────────
-      // Media do valor das NF-e de venda na janela, com peso crescente para as
-      // mais recentes. Mesma conta do termometro do dia (dashboard-history.ts).
-      // A janela nunca comeca antes de abr/2026 porque antes disso o
-      // faturamento nao mora em NF-e e sim em titulo — misturar as duas fontes
-      // aqui daria um ticket que nao bate com nenhuma outra tela.
-      const iniTicket = [diasAtras(JANELA_TICKET_DIAS), `${MES_NFE_INTEGRA}-01`].sort().reverse()[0];
-      const fimTicketExcl = amanha();
-      const tickets = (await db.execute(sql.raw(`
-        WITH ${cteNotasVenda(iniTicket, fimTicketExcl)},
-        docs AS (
-          SELECT DISTINCT NULLIF(regexp_replace(COALESCE(cnpj,cpf,''),'[^0-9]','','g'),'') AS doc
-          FROM customers
-          WHERE seller_id IN (${listaIdsTexto})
-        ),
-        pesos AS (
-          -- peso = ordem cronologica da nota: a mais antiga pesa 1, a seguinte 2...
-          -- O desempate por valor so' existe para a conta nao mudar de resultado
-          -- entre duas aberturas da tela quando o cliente tem 2 notas no mesmo dia.
-          SELECT n.doc, n.v, ROW_NUMBER() OVER (PARTITION BY n.doc ORDER BY n.dia, n.v) AS w
-          FROM notas n
-          JOIN docs d ON d.doc = n.doc
-        )
-        SELECT doc,
-               (SUM(v * w) / NULLIF(SUM(w),0))::float AS t,
-               COUNT(*)::int                          AS notas
-        FROM pesos GROUP BY doc`))).rows as any[];
-      /** doc (so' digitos) -> R$ esperado num atendimento. */
-      const ticketPorDoc = new Map<string, number>();
-      for (const r of tickets) {
-        const t = Number(r.t) || 0;
-        if (t > 0) ticketPorDoc.set(String(r.doc), t);
-      }
-      const ticketDe = (doc: any) => ticketPorDoc.get(String(doc || "")) || 0;
 
       // ── 1) CLIENTES NA AGENDA DE VISITAS ─────────────────────────────────
       // Mesma regua de storage.getCustomersForDate (Rota do Dia), menos o filtro
@@ -329,11 +286,60 @@ export function registerAgendaRota(app: Express) {
           AND EXTRACT(ISODOW FROM l.next_contact_date) BETWEEN 1 AND 5
         GROUP BY 1,2`)).rows as any[];
 
+      // ── 4) TICKET PONDERADO POR RECENCIA, dos clientes QUE ESTAO NO QUADRO ──
+      // Media do valor das NF-e de venda na janela, com peso crescente para as
+      // mais recentes. Mesma conta do termometro do dia (dashboard-history.ts).
+      // A janela nunca comeca antes de abr/2026 porque antes disso o faturamento
+      // nao mora em NF-e e sim em titulo — misturar as duas fontes aqui daria um
+      // ticket que nao bate com nenhuma outra tela.
+      //
+      // O ESCOPO SAO OS CLIENTES DO QUADRO, nao a carteira do vendedor. A conta
+      // nasceu (22/10/2026) buscando o ticket de `customers WHERE seller_id = o
+      // vendedor` — e a REPESCAGEM derrubou isso no mesmo dia: cliente sorteado
+      // para um vendedor normalmente pertence a carteira de OUTRO, entao a busca
+      // nao achava a nota dele e ele entrava no quadro como R$ 0. O vendedor via
+      // um potencial menor do que o real, e a soma de todos os vendedores nao
+      // batia com o quadro de todos (R$ 514 mil contra R$ 565 mil em out/26).
+      // Perguntando pelos docs que estao no quadro, o escopo e' o mesmo em
+      // qualquer recorte — por construcao, nao por coincidencia.
+      const iniTicket = [diasAtras(JANELA_TICKET_DIAS), `${MES_NFE_INTEGRA}-01`].sort().reverse()[0];
+      const fimTicketExcl = amanha();
+      const docsQuadro = Array.from(new Set(
+        [...visitas, ...repescagens]
+          .map((r: any) => String(r.doc || "").replace(/[^0-9]/g, ""))
+          .filter(Boolean),
+      ));
+      const listaDocs = docsQuadro.map((d) => `'${d}'`).join(",") || `''`;
+      const tickets = docsQuadro.length
+        ? ((await db.execute(sql.raw(`
+            WITH ${cteNotasVenda(iniTicket, fimTicketExcl)},
+            pesos AS (
+              -- peso = ordem cronologica da nota: a mais antiga pesa 1, a seguinte 2...
+              -- O desempate por valor so' existe para a conta nao mudar de resultado
+              -- entre duas aberturas da tela quando o cliente tem 2 notas no mesmo dia.
+              SELECT n.doc, n.v, ROW_NUMBER() OVER (PARTITION BY n.doc ORDER BY n.dia, n.v) AS w
+              FROM notas n
+              WHERE n.doc IN (${listaDocs})
+            )
+            SELECT doc,
+                   (SUM(v * w) / NULLIF(SUM(w),0))::float AS t,
+                   COUNT(*)::int                          AS notas
+            FROM pesos GROUP BY doc`))).rows as any[])
+        : [];
+      /** doc (so' digitos) -> R$ esperado num atendimento. */
+      const ticketPorDoc = new Map<string, number>();
+      for (const r of tickets) {
+        const t = Number(r.t) || 0;
+        if (t > 0) ticketPorDoc.set(String(r.doc), t);
+      }
+      const ticketDe = (doc: any) => ticketPorDoc.get(String(doc || "")) || 0;
+
       // ── monta a matriz ───────────────────────────────────────────────────
       // `semHistorico` conta CLIENTE, nao atendimento: quem aparece 4x no mes
       // sem nota nenhuma e' um cliente faltando no total de R$, nao quatro.
       const mapa: Mapa = new Map();
       const semHistorico = new Set<string>();
+      const comHistorico = new Set<string>();
       for (const r of visitas) {
         const sem = semanaDaData(semanas, String(r.dia));
         const dia = DIA_POR_DOW[Number(r.dow)];
@@ -341,7 +347,7 @@ export function registerAgendaRota(app: Express) {
         const per = String(r.periodicidade);
         const tipo: Tipo = per === "quinzenal" ? "quinzenal" : per === "mensal" ? "mensal" : "semanal";
         const t = ticketDe(r.doc);
-        if (t <= 0) semHistorico.add(String(r.cid));
+        (t > 0 ? comHistorico : semHistorico).add(String(r.cid));
         soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", tipo, 1, t);
       }
       for (const r of repescagens) {
@@ -349,7 +355,7 @@ export function registerAgendaRota(app: Express) {
         const dia = DIA_POR_DOW[Number(r.dow)];
         if (!sem || !dia) continue;
         const t = ticketDe(r.doc);
-        if (t <= 0) semHistorico.add(String(r.cid));
+        (t > 0 ? comHistorico : semHistorico).add(String(r.cid));
         soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", "repescagem", 1, t);
       }
       let totalLeads = 0;
@@ -412,7 +418,7 @@ export function registerAgendaRota(app: Express) {
           de: iniTicket,
           ate: hojeBrasilia(),
           dias: JANELA_TICKET_DIAS,
-          clientesComTicket: ticketPorDoc.size,
+          clientesComTicket: comHistorico.size,
           semHistorico: semHistorico.size,
           leads: totalLeads,
           regra: "ticket ponderado por recência: média do valor das NF-e de venda do cliente na janela, com peso maior para as mais recentes (mesma conta do termômetro do dia no Dashboard)",
