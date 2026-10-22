@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
 import { MENU_ITEM_INDEX, resolveMenuHref, normalizeFavorites } from "@/lib/menuItems";
 import integraLogo from "@assets/ChatGPT Image 8 de out. de 2025, 11_03_24_1759932343344.png";
 
@@ -52,6 +53,18 @@ export default function PersistentHeader() {
     const iv = setInterval(() => { if (alive && document.visibilityState !== 'hidden') load(); }, 30000);
     return () => { alive = false; clearInterval(iv); };
   }, [user]);
+
+  // Chamados: entrada (novos recebidos, respostas não lidas, consultas pendentes) — badge do atalho fixo.
+  const { data: chamadosCont } = useQuery<{ entrada?: number; naoLidos?: number; novos?: number }>({
+    queryKey: ["/api/chamados/contadores"],
+    queryFn: async () => {
+      const r = await fetch("/api/chamados/contadores", { credentials: "include" });
+      return r.ok ? r.json() : { entrada: 0 };
+    },
+    refetchInterval: 30000,
+    enabled: !!user,
+  });
+  const chamadosEntrada = chamadosCont?.entrada ?? Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
 
   const u = user as any;
   const roleLabel = u?._perfilContador ? ROLE_LABELS.contador : u?._perfilIndustria ? ROLE_LABELS.industria : (u?.role ? (ROLE_LABELS[u.role] || u.role) : "");
@@ -110,7 +123,22 @@ export default function PersistentHeader() {
 
         {/* Atalhos (até 10) — sempre centralizados no cabeçalho */}
         <div className="hidden md:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
-          {shortcutIds.map((favId) => {
+          <Link href="/chamados">
+            <button
+              title={chamadosEntrada > 0 ? `Chamados — ${chamadosEntrada} na entrada` : "Chamados"}
+              data-testid="fav-shortcut-header-chamados"
+              className="relative w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110 shadow-sm"
+              style={{ backgroundColor: "#15803d15", color: "#15803d" }}
+            >
+              <i className="fas fa-ticket-alt text-base"></i>
+              {chamadosEntrada > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                  {chamadosEntrada > 99 ? "99+" : chamadosEntrada}
+                </span>
+              )}
+            </button>
+          </Link>
+          {shortcutIds.filter((id) => id !== "chamados").map((favId) => {
             const info = MENU_ITEM_INDEX[favId];
             if (!info) return null;
             return (

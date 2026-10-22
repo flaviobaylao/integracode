@@ -218,12 +218,12 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   });
   const blockedOrdersCount = blockedOrdersData?.filter(order => order.status === 'blocked').length || 0;
   // Chamados: novidades (não lidos + recebidos ainda não abertos) para o badge do menu
-  const { data: chamadosCont } = useQuery<{ naoLidos: number; novos: number }>({
+  const { data: chamadosCont } = useQuery<{ naoLidos: number; novos: number; entrada?: number }>({
     queryKey: ['/api/chamados/contadores'],
     queryFn: async () => { const r = await fetch('/api/chamados/contadores', { credentials: 'include' }); return r.ok ? r.json() : { naoLidos: 0, novos: 0 }; },
-    refetchInterval: 60000,
+    refetchInterval: 30000,
   });
-  const chamadosBadge = Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
+  const chamadosBadge = chamadosCont?.entrada ?? Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
 
   const { data: hotsiteOrdersData } = useQuery<{ orders: any[] }>({
     queryKey: ['/api/hotsite-orders'],
@@ -1109,7 +1109,21 @@ export default function Layout({ children, activeView, setActiveView, user }: La
 
           {/* Atalhos (até 10) — Inbox de Solicitações fixo p/ admin */}
           <div className="flex items-center justify-end gap-2 ml-auto">
-            {shortcutIds.map((favId) => {
+            <button
+              onClick={() => handleMenuItemClick('chamados')}
+              title={chamadosBadge > 0 ? `Chamados — ${chamadosBadge} na entrada` : 'Chamados'}
+              data-testid="header-chamados"
+              className="relative w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110 shadow-sm"
+              style={{ backgroundColor: '#15803d15', color: '#15803d' }}
+            >
+              <i className="fas fa-ticket-alt text-base"></i>
+              {chamadosBadge > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                  {chamadosBadge > 99 ? '99+' : chamadosBadge}
+                </span>
+              )}
+            </button>
+            {shortcutIds.filter((id) => id !== 'chamados').map((favId) => {
               const info = itemIndex.get(favId);
               if (!info) return null;
               return (
@@ -1175,7 +1189,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                 <button
                   key={group.groupLabel}
                   onClick={() => handleSectionClick(group.groupLabel)}
-                  className={`w-full flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all duration-200 group ${
+                  className={`relative w-full flex flex-col items-center justify-center py-2.5 px-1 rounded-xl transition-all duration-200 group ${
                     isActive
                       ? 'shadow-md scale-105'
                       : isCurrentGroup
@@ -1198,6 +1212,14 @@ export default function Layout({ children, activeView, setActiveView, user }: La
                   >
                     <i className={`${group.icon} text-sm`}></i>
                   </div>
+                  {(() => {
+                    const n = roleFilterItems(group.items).reduce((acc, it) => acc + (typeof it.badge === 'number' ? it.badge : 0), 0);
+                    return n > 0 ? (
+                      <span className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none ring-2 ring-white" data-testid={`section-badge-${group.groupLabel.toLowerCase().replace(/[^a-z]/g, '-')}`}>
+                        {n > 99 ? '99+' : n}
+                      </span>
+                    ) : null;
+                  })()}
                   <span
                     className={`text-[10px] font-medium leading-tight text-center line-clamp-2 ${
                       isActive ? 'text-white' : 'text-gray-600'

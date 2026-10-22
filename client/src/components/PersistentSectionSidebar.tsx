@@ -63,16 +63,16 @@ export default function PersistentSectionSidebar() {
   const currentPath = location.split("?")[0].split("#")[0];
 
   // Badge de Chamados: respostas não lidas + recebidos ainda não abertos (mesma fonte do menu do Dashboard)
-  const { data: chamadosCont } = useQuery<{ naoLidos: number; novos: number }>({
+  const { data: chamadosCont } = useQuery<{ naoLidos: number; novos: number; entrada?: number }>({
     queryKey: ["/api/chamados/contadores"],
     queryFn: async () => {
       const r = await fetch("/api/chamados/contadores", { credentials: "include" });
-      return r.ok ? r.json() : { naoLidos: 0, novos: 0 };
+      return r.ok ? r.json() : { naoLidos: 0, novos: 0, entrada: 0 };
     },
-    refetchInterval: 60000,
+    refetchInterval: 30000,
     enabled: !!user,
   });
-  const chamadosBadge = Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
+  const chamadosBadge = chamadosCont?.entrada ?? Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
 
   return (
     <nav className="hidden md:flex flex-col w-[64px] bg-white shadow-sm border-r border-gray-200 flex-shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto z-30">
@@ -94,7 +94,7 @@ export default function PersistentSectionSidebar() {
                 >
                   <i className={`${s.icon} text-sm`}></i>
                   {badge > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-orange-600 text-white text-[10px] font-bold flex items-center justify-center">
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none ring-2 ring-white flex items-center justify-center">
                       {badge > 99 ? "99+" : badge}
                     </span>
                   )}

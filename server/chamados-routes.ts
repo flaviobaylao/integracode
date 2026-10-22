@@ -268,6 +268,9 @@ export function registerChamados(app: Express) {
         recebidos: vis.chamados.filter((c) => c.papel === "dono" && c.naoLido).length,
         consultas: vis.chamados.filter((c) => c.papel === "consultado" && c.naoLido).length,
         novos: vis.chamados.filter((c) => c.papel === "dono" && c.status === "novo").length,
+        // Entrada: chamados que pedem atenção do usuário (distintos) — novo recebido ainda não
+        // aberto, mensagem/resposta não lida, ou consulta de outro setor aguardando retorno dele.
+        entrada: vis.chamados.filter((c) => c.naoLido || (c.papel === "dono" && c.status === "novo") || c.consultaPendenteParaMim).length,
       });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
