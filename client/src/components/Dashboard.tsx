@@ -604,6 +604,7 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
+      {/* Box de qualidade do cadastro (telefone) removido do Dashboard em 22/10/2026. */}
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
