@@ -9316,7 +9316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Telefone valido = 10-13 digitos, NAO todos iguais e sem o placeholder '00000'. (espelha a trava, exceto casos por-vendedor)
       const result: any = await db.execute(sql`
         WITH base AS (
-          SELECT u.id AS seller_id, u.name AS seller_name, c.name AS customer_name,
+          SELECT u.id AS seller_id, NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), '') AS seller_name, c.name AS customer_name,
                  regexp_replace(COALESCE(c.phone, ''), '[^0-9]', '', 'g') AS digits
           FROM users u
           JOIN customers c ON c.seller_id = u.id
