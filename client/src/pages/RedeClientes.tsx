@@ -510,6 +510,7 @@ export default function RedeClientes() {
                                   </Button>
                                 </div>
                               </TableCell>
+                              <TableCell className="text-sm whitespace-nowrap">{dataBR(c.conquista)}</TableCell>
                               <TableCell className="text-sm whitespace-nowrap leading-tight">
                                 {/* Periodicidade em cima, semana do mes embaixo. Os dias de rota
                                     ficam no title: ajudam a entender o "quando", mas alargariam
