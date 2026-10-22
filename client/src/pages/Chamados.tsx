@@ -279,7 +279,21 @@ export default function Chamados() {
   const listaRef = useRef<HTMLDivElement>(null);
   const painelRef = useRef<HTMLDivElement>(null);
   const [larguraLista, setLarguraLista] = useTamanho("chamados-largura-lista");
-  const [alturaLista, setAlturaLista] = useTamanho("chamados-altura-lista");
+  // No computador os boxes ocupam toda a área até o rodapé da janela.
+  const linhaRef = useRef<HTMLDivElement>(null);
+  const [alturaArea, setAlturaArea] = useState<number | null>(null);
+  useEffect(() => {
+    const medir = () => {
+      const el = linhaRef.current;
+      if (!el || window.innerWidth < 1024) { setAlturaArea(null); return; }
+      const topo = el.getBoundingClientRect().top + (document.getElementById("root")?.scrollTop || window.scrollY || 0);
+      setAlturaArea(Math.max(420, window.innerHeight - topo - 16));
+    };
+    medir();
+    const t = setTimeout(medir, 300);
+    window.addEventListener("resize", medir);
+    return () => { clearTimeout(t); window.removeEventListener("resize", medir); };
+  }, []);
   const statusRef = useRef<HTMLDivElement>(null);
   useEffect(() => { try { localStorage.setItem("chamados-ordem", ordem); } catch {} }, [ordem]);
   useEffect(() => {
@@ -368,7 +382,7 @@ export default function Chamados() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-[1400px] mx-auto p-3 sm:p-6 flex flex-col gap-4">
+      <div className="max-w-[1400px] lg:max-w-none mx-auto p-3 sm:p-6 lg:pb-0 flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <BackToDashboardButton />
@@ -392,9 +406,10 @@ export default function Chamados() {
           ))}
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-4 items-start">
-          <div ref={painelRef} style={{ ["--lw" as any]: `${larguraLista || 420}px` }}
-            className={`w-full lg:w-[var(--lw)] lg:flex-shrink-0 bg-white border rounded-xl ${selId ? "hidden lg:block" : ""}`}>
+        <div ref={linhaRef} style={alturaArea ? { height: alturaArea } : undefined}
+          className="flex flex-col lg:flex-row gap-4 items-start lg:items-stretch">
+          <div ref={painelRef} style={{ ["--lw" as any]: `${larguraLista || 480}px` }}
+            className={`w-full lg:w-[var(--lw)] lg:flex-shrink-0 bg-white border rounded-xl lg:flex lg:flex-col lg:min-h-0 ${selId ? "hidden lg:flex" : ""}`}>
             <div className="p-3 border-b flex flex-col gap-2">
               <label htmlFor="busca-chamado" className="sr-only">Buscar chamado</label>
               <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa (inclui arquivados)"
@@ -442,8 +457,7 @@ export default function Chamados() {
                 {ordem === "asc" ? "A-Z · antigos primeiro ↓" : "Z-A · recentes primeiro ↑"}
               </button>
             </div>
-            <div ref={listaRef} style={{ ["--lh" as any]: alturaLista ? `${alturaLista}px` : "70vh" }}
-              className="max-h-[70vh] lg:max-h-[var(--lh)] overflow-y-auto">
+            <div ref={listaRef} className="max-h-[70vh] lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto">
               {listaQ.isLoading && <div className="p-6 text-center text-gray-500 text-sm">Carregando…</div>}
               {!listaQ.isLoading && lista.length === 0 && (
                 <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ou cancelado ainda." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
@@ -470,15 +484,14 @@ export default function Chamados() {
                 );
               })}
             </div>
-            <Puxador dir="y" alvo={listaRef} setValor={setAlturaLista} min={160} max={() => window.innerHeight * 3} rotulo="Altura da lista" />
           </div>
 
           <Puxador dir="x" alvo={painelRef} setValor={setLarguraLista} min={320} max={() => Math.max(340, window.innerWidth - 560)} rotulo="Largura da lista" />
 
-          <div className={`w-full flex-1 min-w-0 ${selId ? "" : "hidden lg:block"}`}>
+          <div className={`w-full flex-1 min-w-0 lg:min-h-0 lg:flex lg:flex-col ${selId ? "" : "hidden lg:flex"}`}>
             {selId
               ? <Detalhe id={selId} perfil={perfil} onVoltar={() => setSelId(null)} onMudou={refresh} />
-              : <div className="bg-white border rounded-xl p-10 text-center text-gray-500">Selecione um chamado na lista</div>}
+              : <div className="bg-white border rounded-xl p-10 text-center text-gray-500 lg:flex-1 lg:flex lg:items-center lg:justify-center">Selecione um chamado na lista</div>}
           </div>
         </div>
       </div>
@@ -570,7 +583,7 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   const [arquivos, setArquivos] = useState<File[]>([]);
   const fimRef = useRef<HTMLDivElement>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
-  const [alturaMsgs, setAlturaMsgs] = useTamanho("chamados-altura-mensagens");
+
   useEffect(() => { setTexto(""); setAlvo(""); setModo("responder"); setArquivos([]); }, [id]);
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "nearest" }); }, [q.data?.mensagens?.length]);
   useEffect(() => { if (q.data) onMudou(); /* atualiza o "não lido" da lista */ /* eslint-disable-next-line */ }, [q.dataUpdatedAt]);
@@ -598,9 +611,9 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
   const dicaTeclas = ehToque() ? null : <span className="text-[11px] text-gray-500">Enter envia · Alt+Enter quebra a linha</span>;
 
   return (
-    <div className="bg-white border rounded-xl flex flex-col">
+    <div className="bg-white border rounded-xl flex flex-col lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
       {/* Cabeçalho do chamado congelado: fica visível (logo abaixo do topo do Integra) ao rolar a conversa */}
-      <div className="sticky top-14 z-20 bg-white rounded-t-xl shadow-[0_1px_0_0_#e5e7eb] p-4 border-b flex flex-col gap-2">
+      <div className="sticky top-14 lg:top-0 z-20 bg-white rounded-t-xl shadow-[0_1px_0_0_#e5e7eb] p-4 border-b flex flex-col gap-2">
         <button type="button" onClick={onVoltar} className="lg:hidden self-start h-10 px-3 rounded-lg bg-gray-100 text-sm font-semibold">← Voltar à lista</button>
         <div className="flex flex-wrap justify-between gap-2 items-start">
           <span className="text-xs font-bold text-gray-600">Chamado {c.codigo} · responsável: {c.destinoNome} ({c.destinoSetor})</span>
@@ -613,8 +626,7 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         )}
       </div>
 
-      <div ref={msgsRef} style={{ ["--mh" as any]: alturaMsgs ? `${alturaMsgs}px` : "50vh" }}
-        className="p-4 flex flex-col gap-3 bg-gray-50 max-h-[50vh] lg:max-h-[var(--mh)] overflow-y-auto">
+      <div ref={msgsRef} className="p-4 flex flex-col gap-3 bg-gray-50 max-h-[50vh] lg:max-h-none lg:flex-1 lg:min-h-[260px] overflow-y-auto">
         {q.data.mensagens.map((m) => m.tipo === "sistema" ? (
           <span key={m.id} className="self-center text-center text-xs text-gray-600 bg-gray-200/70 px-3 py-1 rounded-full">{m.texto} · {dataHora(m.createdAt)}</span>
         ) : (
@@ -627,7 +639,6 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         ))}
         <div ref={fimRef} />
       </div>
-      <Puxador dir="y" alvo={msgsRef} setValor={setAlturaMsgs} min={160} max={() => window.innerHeight * 3} rotulo="Altura da conversa" />
 
       {c.papel === "autor" && !fechado && (
         <div className="p-4 border-t flex flex-col gap-2">
