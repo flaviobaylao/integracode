@@ -46,10 +46,39 @@ async function postForm(url: string, campos: Record<string, any>, arquivos: File
   const fd = new FormData();
   for (const [k, v] of Object.entries(campos)) if (v !== undefined && v !== null) fd.append(k, String(v));
   for (const f of arquivos) fd.append("arquivos", f, f.name);
-  const r = await fetch(url, { method: "POST", credentials: "include", body: fd });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.message || `Erro ${r.status}`);
+  let r: Response;
+  try { r = await fetch(url, { method: "POST", credentials: "include", body: fd }); }
+  catch { throw new Error("Sem conexão com o servidor. Confira a internet e toque em enviar de novo — o que você escreveu continua aqui."); }
+  const txt = await r.text();
+  let j: any = {};
+  try { j = JSON.parse(txt); } catch { /* resposta não-JSON (ex.: proxy do Railway) */ }
+  const parseOk = txt.trim().startsWith("{");
+  if (!r.ok || !parseOk) {
+    if (parseOk && j?.message) throw new Error(j.message);
+    throw new Error(r.status >= 500 || /failed to respond/i.test(txt)
+      ? "O servidor demorou para responder. Toque em enviar de novo — o que você escreveu e os anexos continuam aqui."
+      : `Erro ${r.status}`);
+  }
   return j;
+}
+
+// Fotos do celular chegam com 3–6 MB. Reduzimos no próprio aparelho (lado maior 1600 px, JPEG ~82%)
+// antes de enviar: o upload fica ~10x menor e não estoura o tempo em rede móvel. Outros arquivos vão como estão.
+async function reduzirImagem(f: File): Promise<File> {
+  try {
+    if (!/^image\/(jpeg|jpg|png|webp)$/i.test(f.type) || f.size < 600 * 1024) return f;
+    const bmp = await (window as any).createImageBitmap(f, { imageOrientation: "from-image" });
+    const max = 1600;
+    const esc = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * esc), h = Math.round(bmp.height * esc);
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d"); if (!ctx) return f;
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const blob: Blob | null = await new Promise((ok) => cv.toBlob(ok, "image/jpeg", 0.82));
+    if (!blob || blob.size >= f.size) return f;
+    return new File([blob], f.name.replace(/\.(png|webp|jpe?g)$/i, "") + ".jpg", { type: "image/jpeg", lastModified: Date.now() });
+  } catch { return f; }
 }
 function tamanhoFmt(n?: number | null) {
   if (!n) return "";
@@ -62,9 +91,12 @@ function Anexador({ arquivos, setArquivos, compacto }: { arquivos: File[]; setAr
   const { toast } = useToast();
   const refArq = useRef<HTMLInputElement>(null);
   const refCam = useRef<HTMLInputElement>(null);
-  const add = (lista: FileList | null) => {
+  const [preparando, setPreparando] = useState(false);
+  const add = async (lista: FileList | null) => {
     if (!lista) return;
-    const novos = Array.from(lista);
+    setPreparando(true);
+    const novos = await Promise.all(Array.from(lista).map(reduzirImagem));
+    setPreparando(false);
     const grandes = novos.filter((f) => f.size > MAX_MB * 1024 * 1024);
     if (grandes.length) toast({ title: `Arquivo acima de ${MAX_MB} MB não enviado`, description: grandes.map((f) => f.name).join(", "), variant: "destructive" });
     const total = [...arquivos, ...novos.filter((f) => f.size <= MAX_MB * 1024 * 1024)].slice(0, 10);
@@ -79,7 +111,8 @@ function Anexador({ arquivos, setArquivos, compacto }: { arquivos: File[]; setAr
         <button type="button" onClick={() => refCam.current?.click()} className="h-9 px-3 rounded-lg border bg-white text-sm font-medium text-gray-700 hover:bg-gray-50" data-testid="button-camera">
           <i className="fas fa-camera mr-1.5" aria-hidden="true"></i>Câmera
         </button>
-        {!compacto && <span className="text-xs text-gray-500">Opcional · fotos, PDF, planilhas… até {MAX_MB} MB cada</span>}
+        {preparando && <span className="text-xs text-gray-600">Preparando foto…</span>}
+        {!compacto && !preparando && <span className="text-xs text-gray-500">Opcional · fotos, PDF, planilhas… até {MAX_MB} MB cada</span>}
         <input ref={refArq} type="file" multiple className="hidden" onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
         <input ref={refCam} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
       </div>
