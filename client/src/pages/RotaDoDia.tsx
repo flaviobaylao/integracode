@@ -2316,8 +2316,8 @@ export default function RotaDoDia() {
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
-                          onClick={(e) => { e.stopPropagation(); window.open(`https://waze.com/ul?ll=${r.latitude},${r.longitude}&navigate=yes`, '_blank'); }}
-                          title="Abrir no Waze"
+                          onClick={(e) => { e.stopPropagation(); window.open(`https://www.google.com/maps/dir/?api=1&destination=${r.latitude},${r.longitude}`, '_blank'); }}
+                          title="Abrir no Google Maps"
                           data-testid={`button-repescagem-waze-${r.customerId}`}
                         >
                           <Navigation className="h-4 w-4" />
@@ -3005,10 +3005,10 @@ export default function RotaDoDia() {
                               className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                window.open(`https://waze.com/ul?ll=${visit.customerLatitude},${visit.customerLongitude}&navigate=yes`, '_blank');
+                                window.open(`https://www.google.com/maps/dir/?api=1&destination=${visit.customerLatitude},${visit.customerLongitude}`, '_blank');
                               }}
                               data-testid={`button-waze-${visit.customerId}`}
-                              title="Abrir no Waze"
+                              title="Abrir no Google Maps"
                             >
                               <Navigation className="h-4 w-4" />
                             </Button>
