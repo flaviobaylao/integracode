@@ -188,9 +188,18 @@ function ListaAnexos({ anexos, escuro }: { anexos: Anexo[]; escuro?: boolean }) 
   );
 }
 
+// O banco grava "timestamp" sem fuso (em UTC) e o driver devolve o texto cru,
+// ex.: "2026-10-22 14:23:05.1". Sem o "Z" o navegador lia como hora local e
+// mostrava 3h a mais. Aqui tratamos como UTC e exibimos no horário de Brasília.
+function paraData(v: string) {
+  const t = String(v || "").trim();
+  if (!t) return new Date(NaN);
+  if (/[zZ]$|[+-]\d\d(:?\d\d)?$/.test(t)) return new Date(t.replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00"));
+  return new Date(t.replace(" ", "T") + "Z");
+}
 function dataHora(iso: string) {
   try {
-    return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return paraData(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   } catch { return ""; }
 }
 
@@ -200,6 +209,7 @@ export default function Chamados() {
   const idUrl = useMemo(() => new URLSearchParams(window.location.search).get("id"), []);
   const [caixa, setCaixa] = useState<string>("tudo");
   const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("todos");
   const [selId, setSelId] = useState<string | null>(idUrl);
   const [novoAberto, setNovoAberto] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -229,6 +239,11 @@ export default function Chamados() {
       if (caixa === "recebidos") return c.papel === "dono";
       if (caixa === "consultas") return c.papel === "consultado";
       return true;
+    })
+    .filter((c) => {
+      if (filtroStatus === "todos") return true;
+      if (filtroStatus === "abertos") return c.status !== "solucionado";
+      return c.status === filtroStatus;
     })
     .filter((c) => {
       const q = busca.trim().toLowerCase();
@@ -279,10 +294,17 @@ export default function Chamados() {
 
         <div className="flex flex-col lg:flex-row gap-4 items-start">
           <div className={`w-full lg:w-[420px] lg:flex-shrink-0 bg-white border rounded-xl ${selId ? "hidden lg:block" : ""}`}>
-            <div className="p-3 border-b">
+            <div className="p-3 border-b flex gap-2">
               <label htmlFor="busca-chamado" className="sr-only">Buscar chamado</label>
               <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa"
-                className="w-full h-10 px-3 border rounded-lg text-sm" />
+                className="flex-1 min-w-0 h-10 px-3 border rounded-lg text-sm" />
+              <label htmlFor="filtro-status" className="sr-only">Filtrar por status</label>
+              <select id="filtro-status" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)} data-testid="filtro-status"
+                className={`h-10 px-2 border rounded-lg text-sm bg-white ${filtroStatus !== "todos" ? "border-green-700 text-green-800 font-semibold" : ""}`}>
+                <option value="todos">Todos os status</option>
+                <option value="abertos">Em aberto</option>
+                {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
             </div>
             <div className="max-h-[70vh] overflow-y-auto">
               {listaQ.isLoading && <div className="p-6 text-center text-gray-500 text-sm">Carregando…</div>}
