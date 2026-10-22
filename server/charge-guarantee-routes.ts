@@ -73,10 +73,9 @@ export async function runGarantirCobranca(opts: {
   if (!cutoff) { cutoff = new Date().toISOString(); await setSetting("charge_guarantee_cutoff", cutoff); }
   const since = opts.sinceISO ? new Date(opts.sinceISO).toISOString() : cutoff;
 
-  const NAO_EMITE = sql`(
-    upper(COALESCE(oi.name, '')) = 'SERV'
-    OR regexp_replace(COALESCE(oi.cnpj, ''), '[^0-9]', '', 'g') = '52921727000105'
-  )`;
+  // [22/out/2026] SERV voltou a emitir (pela conta do IND). Nenhuma instancia fica de fora;
+  // o filtro fica como FALSE para manter o contador `naoEmitem` (sempre 0) e a estrutura.
+  const NAO_EMITE = sql`(false)`;
 
   const rows: any = await db.execute(sql`
     SELECT r.id, r.amount, r.due_date, r.customer_id, r.customer_name, r.customer_document,
