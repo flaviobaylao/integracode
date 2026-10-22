@@ -1585,17 +1585,40 @@ export async function recalcularAgendaPulandoCiclo(
     const periodicity = customer.visitPeriodicity as any;
     const anchor = new Date(anchorRouteDate); anchor.setHours(0, 0, 0, 0);
 
+    const today = dataCalendario(hojeBR()); today.setHours(0, 0, 0, 0);
+
     // Pular 1 ciclo: a 1ª próxima visita (pulada, "coberta" pelo pedido) e a retomada (a seguinte).
-    const skipped = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: anchor }).nextDate;
-    const resume = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: skipped }).nextDate;
+    let skipped = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: anchor }).nextDate;
+    let resume = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: skipped }).nextDate;
 
     // Próximas 3 visitas a partir da retomada.
-    const dates: Date[] = [resume];
+    let dates: Date[] = [resume];
     for (let i = 0; i < 2; i++) {
       dates.push(calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: dates[dates.length - 1] }).nextDate);
     }
 
-    const today = dataCalendario(hojeBR()); today.setHours(0, 0, 0, 0);
+    // 📅 SEMANA DE ATENDIMENTO FIXA (ex.: quinzenal "2ª e 4ª"): as datas vêm do CALENDÁRIO da
+    // regra (datasPelaRegra), não do encadeamento de 14/28 dias — senão o cliente cai em semana
+    // errada (bug out/2026: Family Church 2ª/4ª caiu na 3ª semana). Pula a 1ª ocorrência da regra
+    // após a âncora e retoma nas seguintes (só datas >= hoje).
+    try {
+      const { datasPelaRegra, normalizarSemana } = await import('../shared/visitSchedule');
+      const semanaRegra = normalizarSemana((customer as any).semanaAtendimento);
+      if (semanaRegra !== 'toda') {
+        const DIA_NUM: Record<string, number> = { Dom: 0, Seg: 1, Ter: 2, Qua: 3, Qui: 4, Sex: 5, Sab: 6 };
+        const alvos = weekdays.map((d) => DIA_NUM[String(d)]).filter((n) => n !== undefined && n >= 1 && n <= 5);
+        if (alvos.length) {
+          const ini = new Date(anchor); ini.setDate(ini.getDate() + 1);
+          const fim = new Date(anchor); fim.setMonth(fim.getMonth() + 7);
+          const regra = datasPelaRegra(ini, fim, alvos, semanaRegra);
+          if (regra.length >= 2) {
+            skipped = regra[0];
+            const futuras = regra.slice(1).filter((d) => d >= today);
+            if (futuras.length) { resume = futuras[0]; dates = futuras.slice(0, 3); }
+          }
+        }
+      }
+    } catch (_e) { /* mantém o encadeamento padrão */ }
 
     // IDEMPOTÊNCIA: se a próxima visita pendente já é >= retomada, a agenda já foi pulada. Nada a fazer.
     const nextPending = await db.select().from(visitAgenda)
