@@ -954,6 +954,9 @@ run();
   registerDelegationRoutes(app);
   // CHAMADOS (21/out/2026): solicitações internas com numeração, inbox por destino e consulta entre setores. Rotas /api/chamados*.
   try { const { registerChamados } = await import('./chamados-routes'); registerChamados(app); } catch (e: any) { console.error('[chamados]', e?.message || e); }
+  // ABERTURA DE ESTOQUE DO DIA (22/out/2026): contagem física GYN+SERV obrigatória antes do 1º faturamento;
+  // bloqueio + chamados de notificação. Rotas /api/abertura-estoque*. Kill-switch: system_settings abertura_estoque_ativa='off'.
+  try { const { registerAberturaEstoque, ensureAberturaEstoqueSchema } = await import('./abertura-estoque-routes'); registerAberturaEstoque(app); ensureAberturaEstoqueSchema().catch((e: any) => console.error('[abertura-estoque] schema', e?.message || e)); } catch (e: any) { console.error('[abertura-estoque]', e?.message || e); }
 
 
 

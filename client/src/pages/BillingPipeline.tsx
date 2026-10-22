@@ -641,6 +641,15 @@ export default function BillingPipeline() {
     }
   });
 
+  // ABERTURA DE ESTOQUE DO DIA (22/out/2026): faturamento barrado até a contagem física do dia
+  // ser registrada → pop-up com o motivo (resposta 400 { aberturaEstoqueError: true }).
+  const [aberturaBloqueio, setAberturaBloqueio] = useState<{ message: string; details?: string; podeAbrir?: boolean } | null>(null);
+  const tratarBloqueioAbertura = (error: any): boolean => {
+    if (!error?.aberturaEstoqueError) return false;
+    setAberturaBloqueio({ message: error.message || 'Faturamento bloqueado: Abertura de Estoque do Dia pendente', details: error.details, podeAbrir: !!error.podeAbrir });
+    return true;
+  };
+
   const moveStageMutation = useMutation({
     mutationFn: async ({ id, stage, scheduledBillingDate }: { id: string; stage: string; scheduledBillingDate?: string }) => {
       const body: any = { stage };
@@ -659,6 +668,7 @@ export default function BillingPipeline() {
       }
     },
     onError: (error: any) => {
+      if (tratarBloqueioAbertura(error)) return;
       // Bloqueio por estoque em uso: mostra produto a produto o que falta.
       if (error?.stockError) {
         toast({
@@ -682,6 +692,7 @@ export default function BillingPipeline() {
       toast({ title: data?.already ? 'NF-e já autorizada' : 'Faturamento reprocessado', description: 'NF-e transmitida com sucesso.' });
     },
     onError: (error: any) => {
+      if (tratarBloqueioAbertura(error)) return;
       toast({ title: 'Falha ao re-tentar faturamento', description: error?.stockError && error?.details ? <div className="whitespace-pre-line text-xs">{String(error.details)}</div> : (error?.message || 'Erro ao transmitir a NF-e.'), variant: 'destructive', ...(error?.stockError ? { duration: 15000 } : {}) });
     },
     onSettled: () => setRetryingId(null),
@@ -885,6 +896,7 @@ export default function BillingPipeline() {
       toast({ title: 'Ação em lote concluída', description: desc });
     },
     onError: (error: any) => {
+      if (tratarBloqueioAbertura(error)) { setBatchStageTarget(null); return; }
       toast({ title: 'Erro na ação em lote', description: error.message, variant: 'destructive' });
     }
   });
@@ -2600,6 +2612,25 @@ export default function BillingPipeline() {
               {batchDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
               Remover {selectedIds.size} pedidos
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ABERTURA DE ESTOQUE DO DIA: pop-up de bloqueio do faturamento */}
+      <Dialog open={!!aberturaBloqueio} onOpenChange={(o) => { if (!o) setAberturaBloqueio(null); }}>
+        <DialogContent className="max-w-lg border-red-300">
+          <DialogHeader>
+            <DialogTitle className="text-red-700 flex items-center gap-2">🔒 {aberturaBloqueio?.message || 'Faturamento bloqueado'}</DialogTitle>
+            <DialogDescription className="whitespace-pre-line text-sm text-slate-700 pt-2">
+              {aberturaBloqueio?.details || 'A Abertura de Estoque do Dia ainda não foi registrada.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-xs text-slate-500">Os responsáveis (Flávio, Lanucy e Naiara) foram notificados por chamado sobre esta tentativa.</div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setAberturaBloqueio(null)}>Entendi</Button>
+            {aberturaBloqueio?.podeAbrir && (
+              <Link href="/abertura-estoque"><Button className="bg-amber-600 hover:bg-amber-700">Fazer a abertura agora</Button></Link>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
