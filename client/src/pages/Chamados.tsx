@@ -503,7 +503,7 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         <div className="p-4 border-t bg-orange-50 flex flex-wrap items-center justify-between gap-3">
           <span className="text-sm text-orange-900">Este chamado ainda não foi recebido. Ao receber, o solicitante vê “Em atendimento”.</span>
           <Button disabled={busy} className="h-11 bg-orange-700 hover:bg-orange-800 text-white" data-testid="button-receber"
-            onClick={() => acao(`/api/chamados/${c.id}/receber`, {}, "Chamado recebido")}>Receber chamado</Button>
+            onClick={() => acao(`/api/chamados/${c.id}/receber`, {}, "Chamado recebido", { exigeConteudo: false })}>Receber chamado</Button>
         </div>
       )}
 
