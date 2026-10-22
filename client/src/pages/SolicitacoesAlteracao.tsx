@@ -865,7 +865,9 @@ export default function SolicitacoesAlteracao() {
     // vendedor, abas e a barra de seleção em lote ficam fixos no topo (sticky) enquanto só a
     // lista de cards rola. Para isso a barra "Selecionar tudo / Limpar caixa" saiu de dentro do
     // TabsContent e subiu para o painel — por isso a aba virou estado controlado (`tab`).
-    <div className="px-4 md:px-6 pb-6 max-w-3xl mx-auto">
+    // 22/out/2026 — No PC o Inbox ocupa bem mais da tela (até ~1150px); no celular segue
+    // com a largura de leitura (max-w-3xl), que é a mesma de antes.
+    <div className="px-4 md:px-6 pb-6 max-w-3xl lg:max-w-6xl mx-auto">
     <Tabs value={tab} onValueChange={setTab}>
       <div className="sticky top-0 z-30 -mx-4 md:-mx-6 px-4 md:px-6 pt-4 md:pt-6 pb-3 space-y-3 bg-background/95 supports-[backdrop-filter]:backdrop-blur border-b shadow-sm">
       <div className="flex items-center gap-2">
