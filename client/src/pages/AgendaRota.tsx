@@ -50,7 +50,7 @@ type Resposta = {
   mes: string;
   hoje: string;
   semanas: Semana[];
-  vendedor: { id: string; nome: string; ativos: number; ativosVirtuais: number } | null;
+  vendedor: { id: string; nome: string; ativos: number; ativosVirtuais: number; todos?: boolean } | null;
   celulas: Celula[];
   vendedores: Array<{ id: string; nome: string; ativos: number }>;
   escopo: { restrito: boolean; papel: string };
@@ -294,7 +294,7 @@ export default function AgendaRota() {
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVendedorSel(e.target.value)}
                 data-testid="select-vendedor-agenda-rota"
               >
-                <option value="">Escolha um vendedor…</option>
+                <option value="">Todos os vendedores</option>
                 {vendedores.map((v) => (
                   <option key={v.id} value={v.id}>{v.nome} ({NUM(v.ativos) || 0} ativos)</option>
                 ))}
@@ -339,7 +339,11 @@ export default function AgendaRota() {
             variant="outline"
             onClick={atualizar}
             disabled={atualizando || (!vendedorSel && !restrito)}
-            title="Regrava a agenda de visitas deste vendedor pelo cadastro atual e recarrega o quadro"
+            title={
+              !vendedorSel && !restrito
+                ? "Regravar a agenda é por vendedor — escolha um no seletor ao lado. Regravar a operação inteira de uma vez levaria minutos."
+                : "Regrava a agenda de visitas deste vendedor pelo cadastro atual e recarrega o quadro"
+            }
             data-testid="button-atualizar-agenda-rota"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${atualizando ? "animate-spin" : ""}`} />
@@ -352,6 +356,7 @@ export default function AgendaRota() {
               <span className="text-muted-foreground">
                 · {NUM(data.vendedor.ativos) || 0} clientes ativos
                 {data.vendedor.ativosVirtuais ? ` (${NUM(data.vendedor.ativosVirtuais)} virtuais)` : ""}
+                {data.vendedor.todos ? " · soma do seletor" : ""}
               </span>
             </div>
           ) : null}
@@ -376,7 +381,7 @@ export default function AgendaRota() {
               <CardDescription>
                 {moeda
                   ? "Quanto os atendimentos de cada semana e do mês potencialmente compram, por dia da rota."
-                  : "Quantos atendimentos o vendedor tem em cada semana e no mês, por dia da rota."}
+                  : `Quantos atendimentos ${data?.vendedor?.todos ? "a equipe tem" : "o vendedor tem"} em cada semana e no mês, por dia da rota.`}
                 {data?.vendedor
                   ? moeda
                     ? ` · ${BRL0(totalMes)} de potencial no mês`
@@ -415,6 +420,15 @@ export default function AgendaRota() {
                   Fica de fora só o filtro “já comprou no ciclo”, que é uma decisão do dia na Rota do
                   Dia — aqui ele encolheria o passado a cada vez que a tela fosse aberta.
                 </p>
+                <p className="font-semibold pt-1">Sem vendedor escolhido</p>
+                <p className="text-muted-foreground">
+                  O quadro mostra a <b>operação inteira</b>: a soma de todos os vendedores que
+                  aparecem no seletor
+                  {vendedores.length ? ` (${NUM(vendedores.length)} hoje)` : ""} — nem um a mais. Dá
+                  para somar o seletor na mão e bater com o total. Se alguma carteira não deveria
+                  estar nessa conta, o caminho é tirá-la do seletor, não um filtro escondido aqui.
+                  Repescagem e leads entram pelo usuário a quem foram atribuídos.
+                </p>
                 <p className="font-semibold pt-1">O calendário de R$ potencial</p>
                 <p className="text-muted-foreground">
                   É o <b>mesmo quadro</b>, com os mesmos atendimentos: cada célula troca a contagem de
@@ -446,7 +460,7 @@ export default function AgendaRota() {
             <div className="text-center text-destructive py-16">Não deu para carregar a agenda de rota.</div>
           ) : !data?.vendedor ? (
             <div className="text-center text-muted-foreground py-16">
-              Escolha um vendedor para ver o quadro.
+              Nenhum vendedor com carteira ativa para montar o quadro.
             </div>
           ) : (
             <>
