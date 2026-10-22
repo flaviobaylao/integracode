@@ -87,6 +87,7 @@ import { registerSellerDocumentsRoutes } from './seller-documents-routes';
 import { registerResumoRecebiveisRoutes } from './resumo-recebiveis-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
+import { registerRastreabilidadeLoteRoutes } from './rastreabilidade-lote-routes';
 import { registerRelatorioInsumosRoutes } from './relatorio-insumos';
 import { registerFabricaRoutes } from './fabrica-routes';
 import { registerProgramacaoProducaoRoutes } from './programacao-producao-routes';
@@ -3248,6 +3249,10 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // pipeline com cliente, solicitante, motivo, data e foto — so admins e Naiara — 28/set/2026.
   // Rotas /api/industria/trocas*.
   try { registerTrocasIndustriaRoutes(app); } catch (e) { console.error('[trocas-ind]', e); }
+  // Rastreabilidade de lote (Faturamentos > aba Rastreabilidade): todas as NFs faturadas
+  // com o lote X (do produto Y), com a instancia emissora; sem transferencias — 22/out/2026.
+  // Rotas /api/rastreabilidade-lote*.
+  try { registerRastreabilidadeLoteRoutes(app); } catch (e) { console.error('[rastreabilidade-lote]', e); }
   // Checklist de producao + manutencao de maquinas (Flavio 05/set) — mesmo guard /api/industria
   try { registerFabricaRoutes(app); } catch (e) { console.error('[fabrica]', e); }
   // Programacao de Producao (aba Programacao do modulo Industria): saidas por
