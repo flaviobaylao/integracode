@@ -131,7 +131,7 @@ async function setSetting(key: string, value: string, by: string) {
 type DestinoResolvido = { key: string; nome: string; setor: string; label: string; userIds: string[] };
 
 // Resolve os destinos: config salva (userIds explícitos) OU padrão por e-mail/nome.
-async function getDestinos(): Promise<DestinoResolvido[]> {
+export async function getDestinos(): Promise<DestinoResolvido[]> {
   let cfg: Destino[] = DESTINOS_PADRAO;
   const raw = await getSetting("chamados_destinos");
   if (raw) { try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) cfg = p; } catch { /* usa padrão */ } }
@@ -217,6 +217,57 @@ async function inserirMsg(chamadoId: string, autorId: string, autorNome: string,
   return String(r[0].id);
 }
 const sufixoAnexos = (n: number) => (n ? `\n📎 ${n} anexo${n > 1 ? "s" : ""}` : "");
+
+// ---------- chamado aberto PELO SISTEMA (22/out/2026) ----------
+// Usado por rotinas automáticas (ex.: Abertura de Estoque do Dia) para NOTIFICAR
+// responsáveis: um chamado por destino, com assunto fixo e corpo descritivo.
+// `autor` é quem causou o evento (ex.: usuário que tentou faturar) — ele vê o
+// chamado na caixa "Meus"; se não houver, o autor é 'sistema'. Devolve os ids.
+// Opcional: `dedupeKey` + `dedupeDia` — se já existe chamado ABERTO hoje com o
+// mesmo assunto e destino, só acrescenta uma mensagem em vez de abrir outro.
+export async function abrirChamadoSistema(opts: {
+  destinoKeys: string[];
+  assunto: string;
+  descricao: string;
+  prioridade?: string;
+  autor?: { id: string; nome?: string; role?: string } | null;
+  dedupeHoje?: boolean;
+  avisarWhatsApp?: boolean;
+}): Promise<string[]> {
+  await ensureTables();
+  const destinos = await getDestinos();
+  const prioridade = PRIORIDADES.includes(opts.prioridade || "") ? String(opts.prioridade) : "Normal";
+  const autorId = String(opts.autor?.id || "sistema");
+  const autorNome = String(opts.autor?.nome || "Integra (sistema)");
+  const autorPapel = String(opts.autor?.role || "sistema");
+  const ids: string[] = [];
+  for (const key of Array.from(new Set(opts.destinoKeys))) {
+    const d = destinos.find((x) => x.key === key);
+    if (!d) { console.warn(`[chamados] destino '${key}' não existe — notificação ignorada`); continue; }
+    if (opts.dedupeHoje) {
+      const ex = rows(await db.execute(sql`SELECT id, numero FROM chamados
+        WHERE destino_key = ${key} AND assunto = ${opts.assunto} AND status NOT IN ('solucionado','cancelado')
+          AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        ORDER BY created_at DESC LIMIT 1`))[0];
+      if (ex) {
+        await inserirMsg(String(ex.id), autorId, autorNome, "publica", "autor", key, opts.descricao);
+        await db.execute(sql`UPDATE chamados SET updated_at = now() WHERE id = ${String(ex.id)}`);
+        if (opts.avisarWhatsApp !== false) avisarBg(d.userIds.filter((x) => x !== autorId), `🔔 ${numeroFmt(ex.numero)} — ${opts.assunto}\n${trecho(opts.descricao, 200)}\n\nAbra no Integra: ${APP_URL}/chamados?id=${ex.id}`);
+        ids.push(String(ex.id));
+        continue;
+      }
+    }
+    const ins = rows(await db.execute(sql`INSERT INTO chamados (autor_id, autor_nome, autor_papel, destino_key, assunto, descricao, prioridade, status)
+      VALUES (${autorId}, ${autorNome}, ${autorPapel}, ${key}, ${opts.assunto}, ${opts.descricao}, ${prioridade}, 'novo') RETURNING id, numero`));
+    const novo = ins[0];
+    await inserirMsg(String(novo.id), autorId, autorNome, "publica", "autor", key, opts.descricao);
+    if (autorId !== "sistema") await db.execute(sql`INSERT INTO chamado_leituras (chamado_id, user_id) VALUES (${String(novo.id)}, ${autorId}) ON CONFLICT DO NOTHING`);
+    if (opts.avisarWhatsApp !== false) avisarBg(d.userIds.filter((x) => x !== autorId),
+      `🔔 ${numeroFmt(novo.numero)}${prioridade === "Urgente" ? " (URGENTE)" : ""} — ${opts.assunto}\n${trecho(opts.descricao, 200)}\n\nAbra no Integra: ${APP_URL}/chamados?id=${novo.id}`);
+    ids.push(String(novo.id));
+  }
+  return ids;
+}
 
 // ---------- carga de chamados visíveis para um usuário ----------
 async function carregarVisiveis(user: any, caixa: string) {

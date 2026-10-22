@@ -2195,6 +2195,18 @@ export function registerBillingPipelineRoutes(app: Express) {
       let balcaoConcluido = false;
 
       if (stage === 'faturado' && item.stage !== 'faturado') {
+        // 📋 ABERTURA DE ESTOQUE DO DIA (22/out/2026): sem a contagem física do dia
+        // registrada, nenhum faturamento começa. Pop-up no Pipeline + chamado aos
+        // responsáveis (ver server/abertura-estoque-routes.ts).
+        {
+          const { exigirAberturaDoDia } = await import('./abertura-estoque-routes');
+          const ab = await exigirAberturaDoDia(user, { rota: 'PATCH /api/billing-pipeline/:id/stage', pedidos: [{ id: item.id, orderNumber: item.orderNumber, customerName: item.customerName }] });
+          if (!ab.ok) {
+            console.log(`🚫 [BILLING-PIPELINE] Faturamento bloqueado para item ${req.params.id} - abertura de estoque do dia pendente`);
+            return res.status(ab.status).json(ab.body);
+          }
+        }
+
         // 📦 ESTOQUE EM USO: so lotes em uso podem ser faturados; faltou para qualquer
         // produto → o pedido inteiro fica parado ate entrar estoque em uso / correcao.
         const stockCheck = await validateStockForBilling(item);
@@ -2827,6 +2839,24 @@ export function registerBillingPipelineRoutes(app: Express) {
       const user = req.currentUser || req.user;
       const results: Array<{ id: string; success: boolean; fiscalInvoiceId?: string; error?: string; stockError?: boolean }> = [];
 
+      // 📋 ABERTURA DE ESTOQUE DO DIA (22/out/2026): faturamento em lote só começa com a
+      // contagem física do dia registrada — bloqueia o lote inteiro antes de tocar em qualquer card.
+      if (stage === 'faturado') {
+        const { exigirAberturaDoDia } = await import('./abertura-estoque-routes');
+        let pedidos: Array<{ id: string; orderNumber?: string | null; customerName?: string | null }> = [];
+        try {
+          const r: any = await db.execute(sql`SELECT id, order_number, customer_name FROM billing_pipeline WHERE id IN (${sql.join(ids.map((i: string) => sql`${String(i)}`), sql`, `)}) AND stage <> 'faturado'`);
+          pedidos = ((r?.rows ?? r ?? []) as any[]).map((x) => ({ id: String(x.id), orderNumber: x.order_number, customerName: x.customer_name }));
+        } catch { pedidos = ids.map((i: string) => ({ id: String(i) })); }
+        if (pedidos.length) {
+          const ab = await exigirAberturaDoDia(user, { rota: 'POST /api/billing-pipeline/batch/stage', pedidos });
+          if (!ab.ok) {
+            console.log(`🚫 [BILLING-PIPELINE] Faturamento em lote bloqueado (${ids.length} itens) - abertura de estoque do dia pendente`);
+            return res.status(ab.status).json(ab.body);
+          }
+        }
+      }
+
       for (const id of ids) {
         try {
           const item = await storage.getBillingPipelineItem(id);
@@ -2952,6 +2982,12 @@ export function registerBillingPipelineRoutes(app: Express) {
       const item = await storage.getBillingPipelineItem(req.params.id);
       if (!item) return res.status(404).json({ success: false, message: 'Item não encontrado' });
       const user = req.currentUser || req.user;
+      // 📋 ABERTURA DE ESTOQUE DO DIA (22/out/2026): re-tentar o faturamento também é faturar.
+      {
+        const { exigirAberturaDoDia } = await import('./abertura-estoque-routes');
+        const ab = await exigirAberturaDoDia(user, { rota: 'POST /api/billing-pipeline/:id/retry-invoice', pedidos: [{ id: item.id, orderNumber: item.orderNumber, customerName: item.customerName }] });
+        if (!ab.ok) return res.status(ab.status).json({ success: false, ...ab.body });
+      }
       const { sefazService } = await import('./sefaz-service.js');
 
       // Localiza a NF do item de forma A PROVA DE COLISAO. O numero da NF-e SE REPETE entre
