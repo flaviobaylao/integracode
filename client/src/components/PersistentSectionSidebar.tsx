@@ -1,5 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
 
 // (15/jul/2026) Sidebar de seções persistente, visível em todas as páginas de módulo
 // (rotas que renderizam fora do Layout do Dashboard). Cada seção leva à página inicial
@@ -10,6 +11,7 @@ type Section = {
   label: string;
   icon: string;
   hex: string;
+  href?: string;
   canView: (f: RoleFlags) => boolean;
 };
 
@@ -25,6 +27,7 @@ type RoleFlags = {
 const SECTIONS: Section[] = [
   { label: "Geral", icon: "fas fa-home", hex: "#64748b", canView: () => true },
   { label: "Vendas", icon: "fas fa-shopping-cart", hex: "#3b82f6", canView: (f) => !f.isMotorista },
+  { label: "Chamados", icon: "fas fa-ticket-alt", hex: "#15803d", href: "/chamados", canView: () => true },
   { label: "Clientes", icon: "fas fa-users", hex: "#10b981", canView: (f) => !f.isMotorista },
   { label: "Logística", icon: "fas fa-truck", hex: "#f97316", canView: () => true },
   { label: "Produtos & Estoque", icon: "fas fa-box", hex: "#f59e0b", canView: (f) => f.canAccessReports || f.isTelemarketing },
@@ -53,29 +56,48 @@ export default function PersistentSectionSidebar() {
 
   const isMotorista = flags.isMotorista;
   const sections = SECTIONS.filter((s) => {
-    if (isMotorista) return s.label === "Geral" || s.label === "Logística";
+    if (isMotorista) return s.label === "Geral" || s.label === "Logística" || s.label === "Chamados";
     return s.canView(flags);
   });
 
   const currentPath = location.split("?")[0].split("#")[0];
 
+  // Badge de Chamados: respostas não lidas + recebidos ainda não abertos (mesma fonte do menu do Dashboard)
+  const { data: chamadosCont } = useQuery<{ naoLidos: number; novos: number }>({
+    queryKey: ["/api/chamados/contadores"],
+    queryFn: async () => {
+      const r = await fetch("/api/chamados/contadores", { credentials: "include" });
+      return r.ok ? r.json() : { naoLidos: 0, novos: 0 };
+    },
+    refetchInterval: 60000,
+    enabled: !!user,
+  });
+  const chamadosBadge = Math.max(chamadosCont?.naoLidos || 0, chamadosCont?.novos || 0);
+
   return (
     <nav className="hidden md:flex flex-col w-[64px] bg-white shadow-sm border-r border-gray-200 flex-shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto z-30">
       <div className="flex-1 py-2 px-1.5 space-y-1">
         {sections.map((s) => {
-          const href = s.label === "Geral" ? "/" : `/?secao=${encodeURIComponent(s.label)}`;
+          const href = s.href || (s.label === "Geral" ? "/" : `/?secao=${encodeURIComponent(s.label)}`);
+          const isCurrent = !!s.href && currentPath.startsWith(s.href);
+          const badge = s.label === "Chamados" ? chamadosBadge : 0;
           return (
             <Link key={s.label} href={href}>
               <button
                 title={s.label}
                 data-testid={`persistent-section-${s.label.toLowerCase().replace(/[^a-z]/g, "-")}`}
-                className="w-full flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all duration-200 hover:bg-gray-50"
+                className={`w-full flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all duration-200 ${isCurrent ? "bg-gray-100" : "hover:bg-gray-50"}`}
               >
                 <div
-                  className="w-9 h-9 rounded-lg flex items-center justify-center mb-1 text-white"
+                  className="relative w-9 h-9 rounded-lg flex items-center justify-center mb-1 text-white"
                   style={{ backgroundColor: s.hex }}
                 >
                   <i className={`${s.icon} text-sm`}></i>
+                  {badge > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-orange-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      {badge > 99 ? "99+" : badge}
+                    </span>
+                  )}
                 </div>
                 <span className="text-[9px] font-medium leading-tight text-center text-gray-600 line-clamp-2">
                   {s.label}
