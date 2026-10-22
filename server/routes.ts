@@ -16207,7 +16207,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (actingRole === 'vendedor' && currentCard.customerId && !isNaN(gLat) && !isNaN(gLng) && !leituraGrosseira) {
           const cust: any = await storage.getCustomer(currentCard.customerId);
           const isLocked = !!(cust && cust.coordinatesLocked);
-          if (!isLocked) {
+          // 🛡️ (22/out/2026) Ponto do GPS MUITO LONGE da coordenada que o cadastro já tem (> 300 m):
+          // não sobrescreve nem trava — o vendedor pode ter feito o check-in fora do local. Avisa o
+          // admin no Inbox para conferir. Coordenada atual em grade (~2 km) não conta como referência.
+          let _longeDoCadastro = false;
+          try {
+            const cLat = parseFloat(String(cust?.latitude ?? '')), cLng = parseFloat(String(cust?.longitude ?? ''));
+            const temRef = Number.isFinite(cLat) && Number.isFinite(cLng) && !(cLat === 0 && cLng === 0) && !latitudeEmGrade(cLat);
+            if (!isLocked && temRef) {
+              const R0 = 6371000, t0 = Math.PI / 180;
+              const h0 = Math.sin(((gLat - cLat) * t0) / 2) ** 2 + Math.cos(cLat * t0) * Math.cos(gLat * t0) * Math.sin(((gLng - cLng) * t0) / 2) ** 2;
+              const distCad = 2 * R0 * Math.asin(Math.sqrt(h0));
+              if (distCad > 300) {
+                _longeDoCadastro = true;
+                console.log(`📍 [CHECKIN-COORD] Cliente ${currentCard.customerId}: GPS a ${Math.round(distCad)} m da coordenada do cadastro — NÃO alterada (conferir)`);
+                try {
+                  const { registrarReportInbox } = await import('./change-requests-routes');
+                  await registrarReportInbox({
+                    entityType: 'customer', entityId: String(currentCard.customerId), customerId: String(currentCard.customerId),
+                    sellerId: String(req.currentUser?.id || ''),
+                    reportKind: 'coordenada',
+                    motivo: 'Check-in longe da coordenada do cadastro',
+                    texto: `Check-in a ${distCad >= 1000 ? (distCad / 1000).toFixed(1) + ' km' : Math.round(distCad) + ' m'} da coordenada cadastrada. A coordenada do cliente NÃO foi alterada. GPS do check-in: ${gLat.toFixed(6)}, ${gLng.toFixed(6)} (https://www.google.com/maps?q=${gLat.toFixed(6)},${gLng.toFixed(6)}). Cadastro: ${cLat.toFixed(6)}, ${cLng.toFixed(6)}.`,
+                    sempre: true,
+                  });
+                } catch (_ie) { /* aviso é best-effort */ }
+              }
+            }
+          } catch (_de) { /* segue a regra normal */ }
+          if (!isLocked && !_longeDoCadastro) {
             const gLatS = gLat.toFixed(6);
             const gLngS = gLng.toFixed(6);
             await storage.updateCustomer(currentCard.customerId, { latitude: gLatS, longitude: gLngS, coordinatesLocked: true } as any);
@@ -26326,7 +26354,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // check-in não refaz a checagem nem altera a coordenada. Alteração manual
       // destrava e o próximo check-in volta a gravar+travar (reverificação).
       const leadCoordUpdate: any = {};
-      if (user.role === 'vendedor' && !isNaN(userLat) && !isNaN(userLon) && !(lead as any).coordinatesLocked) {
+      // 🛡️ (22/out/2026) Mesmas proteções do cliente: não grava/trava leitura GROSSEIRA (grade de ~2 km
+      // de "localização aproximada") nem ponto a mais de 300 m da coordenada que o lead já tem.
+      let _leadLeituraRuim = false;
+      try {
+        const { latitudeEmGrade: _gradeL } = await import('@shared/coordenadas-aproximadas');
+        if (_gradeL(userLat)) _leadLeituraRuim = true;
+        const _temRefL = Number.isFinite(leadLat) && Number.isFinite(leadLon) && !(leadLat === 0 && leadLon === 0) && !_gradeL(leadLat);
+        if (_temRefL && checkInDistance != null && checkInDistance > 300) _leadLeituraRuim = true;
+      } catch (_e) { /* segue */ }
+      if (user.role === 'vendedor' && !isNaN(userLat) && !isNaN(userLon) && !(lead as any).coordinatesLocked && !_leadLeituraRuim) {
         leadCoordUpdate.latitude = userLat.toFixed(6);
         leadCoordUpdate.longitude = userLon.toFixed(6);
         leadCoordUpdate.coordinatesLocked = true;

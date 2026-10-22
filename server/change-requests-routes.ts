@@ -180,6 +180,7 @@ const mapRow = (r: any) => ({
 // vazio) — motivo/opção sozinho não gera report. Best-effort: nunca deixa a ação principal falhar.
 const REPORT_KIND_LABEL: Record<string, string> = {
   nao_venda: "Não-venda",
+  coordenada: "Coordenada do cliente",
   justificativa: "Justificativa de não-visita",
   debito: "Prestação de contas (débito)",
   atendimento_virtual: "Atendimento virtual",
