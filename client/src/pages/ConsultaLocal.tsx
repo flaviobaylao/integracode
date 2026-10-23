@@ -273,7 +273,12 @@ export default function ConsultaLocal() {
   const [telefones, setTelefones] = useState<Record<string, { st: "loading" | "ok" | "sem" | "erro"; num?: string | null; msg?: string }>>({});
 
   // ----- interno (telemarketing/administrativo): consulta pela região de um CLIENTE DE REFERÊNCIA -----
-  const isInterno = ((user as any)?.role === "telemarketing" || (user as any)?.role === "administrative");
+  // No PC (mouse/trackpad, sem GPS de campo) TODOS os usuários — inclusive admin e vendedor —
+  // consultam pela região de um cliente de referência. No celular, só telemarketing/administrativo;
+  // o vendedor em campo continua usando o GPS do aparelho. (23/out/2026)
+  const ehPC = typeof window !== "undefined" && typeof window.matchMedia === "function"
+    && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const isInterno = ehPC || ((user as any)?.role === "telemarketing" || (user as any)?.role === "administrative");
   const [clienteBusca, setClienteBusca] = useState<string>("");
   const [clienteResultados, setClienteResultados] = useState<ClienteRef[]>([]);
   const [clienteBuscando, setClienteBuscando] = useState<boolean>(false);

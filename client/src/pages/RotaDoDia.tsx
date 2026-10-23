@@ -2747,14 +2747,15 @@ export default function RotaDoDia() {
                                 const lo = customerInfo.lastOrders[visit.customerId];
                                 const dd = lo.dia ? `${lo.dia.slice(8, 10)}/${lo.dia.slice(5, 7)}` : new Date(lo.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
                                 const valor = `R$ ${Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-                                const quem = (lo.sellerName || '').trim().split(/\s+/)[0] || '';
+                                const quemRaw = (lo.sellerName || '').trim().split(/\s+/)[0] || '';
+                                const quem = quemRaw ? quemRaw.charAt(0).toUpperCase() + quemRaw.slice(1).toLowerCase() : '';
                                 return (
                                   <span
-                                    title={`Última compra feita em ${dd}, fora do dia de rota do cliente${quem ? `, lançada por ${lo.sellerName}` : ''}`}
+                                    title={`Compra em ${dd} — ${valor}${lo.sellerName ? ` — lançada por ${lo.sellerName}` : ''} (fora do dia de rota do cliente)`}
                                     className="inline-flex items-center gap-1 rounded-full border border-orange-400 bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-800 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
                                     data-testid={`badge-venda-fora-rota-${visit.customerId}`}
                                   >
-                                    🧾 Venda fora do dia de rota - {dd} - {valor}{quem ? ` - ${quem}` : ''}
+                                    🧾 Compra fora do dia de rota{quem ? ` por ${quem}` : ''}
                                   </span>
                                 );
                               })()}
