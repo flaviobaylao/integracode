@@ -21479,34 +21479,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Data do último pedido FATURADO (todo o histórico do pipeline) por cliente.
       // "Faturado" = item do pipeline com nota fiscal atribuída (invoice_number), cobre faturado→entregue.
       // Agora retorna { date, value } do ÚLTIMO faturamento (não só a data).
-      const lastOrdersMap: Record<string, { date: string; value: number }> = {};
+      // + (23/out/2026) vendedor que lançou e se a venda foi FORA DO DIA DE ROTA (sem visita na agenda
+      //   real naquele dia — a agenda inclui a visita deslocada por feriado). O card da Rota do Dia
+      //   destaca só as vendas fora do dia de rota: "Venda fora do dia de rota - dd/mm - R$ - Vendedor".
+      const lastOrdersMap: Record<string, { date: string; value: number; sellerName?: string | null; dia?: string; foraRota?: boolean }> = {};
       try {
         const lastOrdersResult = await db.execute(sql`
           SELECT customer_id,
                  REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') as ndoc,
-                 created_at, sale_value
+                 created_at, sale_value, seller_id, seller_name,
+                 (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
           FROM billing_pipeline
           WHERE invoice_number IS NOT NULL AND invoice_number <> ''
             AND (customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
                  OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documentsForLookup.join(',')}, ',')))
         `);
-        const loByCid: Record<string, { t: number; value: number }> = {};
-        const loByDoc: Record<string, { t: number; value: number }> = {};
+        type LO = { t: number; value: number; sellerId: string | null; sellerName: string | null; dia: string };
+        const loByCid: Record<string, LO> = {};
+        const loByDoc: Record<string, LO> = {};
         (lastOrdersResult.rows as any[]).forEach(row => {
           if (!row.created_at) return;
           const t = new Date(row.created_at).getTime();
           const value = row.sale_value != null ? parseFloat(String(row.sale_value)) : 0;
-          if (row.customer_id && (!loByCid[row.customer_id] || t > loByCid[row.customer_id].t)) loByCid[row.customer_id] = { t, value };
-          if (row.ndoc && (!loByDoc[row.ndoc] || t > loByDoc[row.ndoc].t)) loByDoc[row.ndoc] = { t, value };
+          const lo: LO = { t, value, sellerId: row.seller_id ? String(row.seller_id) : null, sellerName: row.seller_name ? String(row.seller_name) : null, dia: String(row.dia || '') };
+          if (row.customer_id && (!loByCid[row.customer_id] || t > loByCid[row.customer_id].t)) loByCid[row.customer_id] = lo;
+          if (row.ndoc && (!loByDoc[row.ndoc] || t > loByDoc[row.ndoc].t)) loByDoc[row.ndoc] = lo;
         });
         customerIds.forEach(cid => {
           const a = loByCid[cid];
           const b = loByDoc[customerDocuments[cid]];
-          let best: { t: number; value: number } | null = null;
+          let best: LO | null = null;
           if (a && (!best || a.t > best.t)) best = a;
           if (b && (!best || b.t > best.t)) best = b;
-          if (best) lastOrdersMap[cid] = { date: new Date(best.t).toISOString(), value: best.value };
+          if (best) lastOrdersMap[cid] = { date: new Date(best.t).toISOString(), value: best.value, sellerName: best.sellerName, dia: best.dia, foraRota: false };
         });
+        // Nome do vendedor pelo seller_id quando o pipeline não guardou o nome (users.id ou omie_vendor_code).
+        try {
+          const semNome = Object.entries(lastOrdersMap).filter(([, v]) => !v.sellerName).map(([cid]) => (loByCid[cid] || loByDoc[customerDocuments[cid]])?.sellerId).filter(Boolean) as string[];
+          if (semNome.length) {
+            const ur: any = await db.execute(sql`SELECT id, omie_vendor_code, COALESCE(NULLIF(name,''), email) AS nome FROM users WHERE id = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")}) OR omie_vendor_code = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")})`);
+            const nomePorId: Record<string, string> = {};
+            for (const u of ((ur.rows || ur) as any[])) { if (u.id) nomePorId[String(u.id)] = String(u.nome || ''); if (u.omie_vendor_code) nomePorId[String(u.omie_vendor_code)] = String(u.nome || ''); }
+            for (const [cid, v] of Object.entries(lastOrdersMap)) {
+              if (v.sellerName) continue;
+              const sid = (loByCid[cid] || loByDoc[customerDocuments[cid]])?.sellerId;
+              if (sid && nomePorId[sid]) v.sellerName = nomePorId[sid];
+            }
+          }
+        } catch (e) { console.warn('[CUSTOMER-INFO] nome do vendedor da última compra:', (e as any)?.message); }
+        // FORA DO DIA DE ROTA: não havia visita na agenda real do cliente no dia da venda.
+        try {
+          const pares = Object.entries(lastOrdersMap).filter(([, v]) => !!v.dia);
+          if (pares.length) {
+            const cidsLO = Array.from(new Set(pares.map(([cid]) => cid)));
+            const diasLO = Array.from(new Set(pares.map(([, v]) => String(v.dia))));
+            const arr = (xs: string[]) => sql.raw("ARRAY[" + xs.map((x) => "'" + String(x).replace(/'/g, "''") + "'").join(',') + "]");
+            const vr: any = await db.execute(sql`
+              SELECT customer_id, scheduled_date::date::text AS dia
+                FROM visit_agenda
+               WHERE customer_id = ANY(${arr(cidsLO)}::text[])
+                 AND scheduled_date::date = ANY(${arr(diasLO)}::date[])
+                 AND COALESCE(visit_status, 'pending') <> 'cancelled'`);
+            const naRota = new Set<string>();
+            for (const r of ((vr.rows || vr) as any[])) naRota.add(String(r.customer_id) + '|' + String(r.dia));
+            for (const [cid, v] of pares) v.foraRota = !naRota.has(cid + '|' + v.dia);
+          }
+        } catch (e) { console.warn('[CUSTOMER-INFO] venda fora do dia de rota:', (e as any)?.message); }
       } catch (e) {
         console.warn('[CUSTOMER-INFO] falha ao buscar último faturamento:', (e as any)?.message);
       }
