@@ -46,6 +46,7 @@ import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import { sqlFaturamentoPorVendedor } from "./faturamento-oficial";
 import { computeCampaign } from "./campanha-outubro";
+import { descontosTrocaPorVendedor } from "./troca-registros-routes";
 
 // Funções que aparecem na planilha.
 const PAPEIS = ["vendedor", "telemarketing", "administrative", "motorista"];
@@ -345,6 +346,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         };
       }
 
+      // 6b. Desconto de comissão por TROCA POR VENCIMENTO (política de 23/10/2026):
+      //     lançado no mês da troca para o vendedor que faturou a última NF do cliente.
+      const descTroca = await descontosTrocaPorVendedor(ym);
+
       // 7. Monta cada colaborador
       const colaboradores = linhas.map((u) => {
         const id = String(u.id);
@@ -354,7 +359,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         const faturamento = fatMap[id] || 0;
 
         const fixo = cfg.fixoMensal;
-        const comissao = calcularComissao(cfg, faturamento, meta);
+        const comissaoBruta = calcularComissao(cfg, faturamento, meta);
+        const descontoTroca = descTroca[id] || 0;
+        const comissao = Math.max(0, comissaoBruta - descontoTroca);
 
         const bonusCampanha = campMap[nome.toLowerCase()] || 0;
         const bateuDesafio = metaMap[id]?.desafio > 0 && faturamento >= metaMap[id].desafio;
@@ -380,6 +387,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           faturamento,
           atingimentoPct: meta > 0 ? (faturamento / meta) * 100 : 0,
           comissao,
+          comissaoBruta,
+          descontoTroca,
           bonus,
           bonusDetalhe: { campanha: bonusCampanha, desafio: bonusDesafio, manual: bonusManual, lancamentos },
           kmRodado, kmTarifa: tarifa, kmValor,

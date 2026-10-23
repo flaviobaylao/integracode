@@ -63,7 +63,7 @@ interface Colab {
   id: string; nome: string; role: string; sellerType: string | null;
   config: any;
   fixoMensal: number; meta: number; faturamento: number; atingimentoPct: number;
-  comissao: number; bonus: number;
+  comissao: number; comissaoBruta?: number; descontoTroca?: number; bonus: number;
   bonusDetalhe: { campanha: number; desafio: number; manual: number; lancamentos: Array<{ id: string; descricao: string; valor: number }> };
   kmRodado: number; kmTarifa: number; kmValor: number; totalMes: number;
   percentuais: { fixoMensal: number; comissao: number; bonus: number; km: number; totalMes: number };
@@ -241,7 +241,12 @@ export default function ResumoRecebiveis() {
                         <td className="px-3 py-1 text-right">{brl(c.fixoMensal)}</td>
                         <td className="px-3 py-1 text-right">{c.meta > 0 ? brl(c.meta) : "—"}</td>
                         <td className="px-3 py-1 text-right">{brl(c.faturamento)}</td>
-                        <td className="px-3 py-1 text-right">{brl(c.comissao)}</td>
+                        <td className="px-3 py-1 text-right" title={(c.descontoTroca || 0) > 0 ? `Comissão ${brl(c.comissaoBruta || 0)} − desconto por troca vencida ${brl(c.descontoTroca || 0)}` : undefined}>
+                          {brl(c.comissao)}
+                          {(c.descontoTroca || 0) > 0 && (
+                            <div className="text-[11px] text-red-600">− {brl(c.descontoTroca || 0)} troca</div>
+                          )}
+                        </td>
                         <td className="px-3 py-1 text-right" title={`Campanha ${brl(c.bonusDetalhe.campanha)} · Desafio ${brl(c.bonusDetalhe.desafio)} · Manual ${brl(c.bonusDetalhe.manual)}`}>
                           {brl(c.bonus)}
                         </td>

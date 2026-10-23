@@ -80,6 +80,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // Ate TROCA_MAX_FOTOS imagens, vindas da camera OU da galeria/arquivos do PC.
   const [trocaPhotos, setTrocaPhotos] = useState<string[]>([]);
   const [uploadingTrocaPhoto, setUploadingTrocaPhoto] = useState(false);
+  // Troca: motivo obrigatorio (politica de trocas 23/10/2026). Fermentado exige a
+  // temperatura lida no display do refrigerador. Vencido = comercial, com desconto
+  // da comissao sobre o valor trocado.
+  const [trocaMotivo, setTrocaMotivo] = useState('');
+  const [trocaTemperatura, setTrocaTemperatura] = useState('');
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -151,6 +156,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setOperationType(card.operationType || 'venda');
       setNotes(card.notes || '');
       setTrocaPhotos([]);
+      setTrocaMotivo('');
+      setTrocaTemperatura('');
       setGravandoObs(false);
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
@@ -678,6 +685,26 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       });
       return;
     }
+    // 🔒 TRAVA Troca: motivo obrigatório (Fermentado, Lacre, Tampa ou Vencido).
+    if (operationType === 'troca' && !trocaMotivo) {
+      toast({
+        title: 'Motivo da troca obrigatório',
+        description: 'Selecione o motivo da troca: Fermentado, Lacre, Tampa ou Vencido.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (operationType === 'troca' && trocaMotivo === 'fermentado') {
+      const _t = Number(String(trocaTemperatura).replace(',', '.'));
+      if (!String(trocaTemperatura).trim() || !Number.isFinite(_t) || _t < -30 || _t > 60) {
+        toast({
+          title: 'Temperatura obrigatória',
+          description: 'Para troca por fermentado, informe a temperatura lida no display do refrigerador do cliente.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     // 🔒 TRAVA Troca: foto dos produtos obrigatória.
     if (operationType === 'troca' && trocaPhotos.length === 0) {
       toast({
@@ -752,6 +779,28 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       }
       // Primeiro finalizar a venda
       await handleFinalizeSale();
+
+      // Troca: registra o motivo (e, se vencido, o desconto de comissão). Não bloqueia o envio.
+      if (operationType === 'troca' && trocaMotivo) {
+        try {
+          const _r = await fetch(`/api/sales-cards/${card.id}/troca-motivo`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ motivo: trocaMotivo, temperatura: trocaMotivo === 'fermentado' ? trocaTemperatura : undefined }),
+          });
+          if (!_r.ok) throw new Error((await _r.json().catch(() => ({})))?.message || 'Falha ao registrar o motivo');
+          const _d = await _r.json();
+          if (trocaMotivo === 'vencido' && Number(_d?.desconto) > 0) {
+            toast({
+              title: 'Troca por vencimento registrada',
+              description: `Valor da troca R$ ${Number(_d.valorTroca).toFixed(2).replace('.', ',')} — desconto de comissão R$ ${Number(_d.desconto).toFixed(2).replace('.', ',')} (${Number(_d.pct).toFixed(2).replace('.', ',')}%).`,
+            });
+          }
+        } catch (e: any) {
+          toast({ title: 'Motivo da troca não registrado', description: e?.message || 'Tente novamente.', variant: 'destructive' });
+        }
+      }
       
       // Aguardar um pouco para garantir que a venda foi salva
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -1760,6 +1809,46 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   data-testid="textarea-notes"
                 />
               </div>
+
+              {/* Troca: motivo obrigatório (política de trocas). Vencido desconta comissão. */}
+              {operationType === 'troca' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <div>
+                    <Label>Motivo da troca <span className="text-red-600">*</span></Label>
+                    <Select value={trocaMotivo} onValueChange={setTrocaMotivo}>
+                      <SelectTrigger data-testid="select-troca-motivo">
+                        <SelectValue placeholder="Selecione o motivo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fermentado">Fermentado</SelectItem>
+                        <SelectItem value="lacre">Lacre</SelectItem>
+                        <SelectItem value="tampa">Tampa</SelectItem>
+                        <SelectItem value="vencido">Vencido</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {trocaMotivo === 'fermentado' && (
+                    <div>
+                      <Label>Temperatura no display do refrigerador (°C) <span className="text-red-600">*</span></Label>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.1"
+                        placeholder="Ex.: 4"
+                        value={trocaTemperatura}
+                        onChange={(e) => setTrocaTemperatura(e.target.value)}
+                        data-testid="input-troca-temperatura"
+                      />
+                    </div>
+                  )}
+                  {(trocaMotivo === 'fermentado' || trocaMotivo === 'lacre' || trocaMotivo === 'tampa') && (
+                    <p className="text-xs text-amber-800">Problema de qualidade: a foto deve mostrar o <b>lote</b> e a <b>validade</b> na embalagem.</p>
+                  )}
+                  {trocaMotivo === 'vencido' && (
+                    <p className="text-xs text-red-700">Troca comercial: a comissão sobre o valor trocado (preço da última NF do cliente) será descontada da comissão do mês.</p>
+                  )}
+                </div>
+              )}
 
               {/* Troca: fotos obrigatórias dos produtos (câmera OU galeria/arquivos, até 3) */}
               {operationType === 'troca' && (

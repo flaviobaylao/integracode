@@ -17,6 +17,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Plus, Pencil, Trash2, DollarSign, Users, TrendingUp, Calendar, Trophy, Info } from "lucide-react";
 import SalesGoalsDashboard from './SalesGoalsDashboard';
+import TrocaDescontosTab from './TrocaDescontosTab';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { SalesGoal, User } from "@shared/schema";
 
 interface SalesGoalsManagementProps {
@@ -91,7 +93,26 @@ interface YearlySummaryData {
 
 const CARD_METAS = "Metas de Vendas";
 
+// Módulo Metas: aba "Metas e comissão" (tela original) + aba "Descontos por troca"
+// (política de trocas 23/10/2026 — troca por vencimento desconta comissão).
 export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps) {
+  return (
+    <Tabs defaultValue="metas" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="metas" data-testid="tab-metas-comissao">Metas e comissão</TabsTrigger>
+        <TabsTrigger value="trocas" data-testid="tab-descontos-troca">Descontos por troca</TabsTrigger>
+      </TabsList>
+      <TabsContent value="metas">
+        <MetasEComissao user={user} />
+      </TabsContent>
+      <TabsContent value="trocas">
+        <TrocaDescontosTab user={user} />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function MetasEComissao({ user }: SalesGoalsManagementProps) {
   const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
