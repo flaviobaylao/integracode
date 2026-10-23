@@ -16618,7 +16618,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Route to finalize sale with Omie integration
-  app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
+  // authenticateUser (e nao isAuthenticated): preenche req.currentUser com o usuario logado.
+  // Sem isto, a ATRIBUICAO DO IMPLANTADOR abaixo nunca rodava e o pipeline recebia
+  // 'finalize-sale' como e-mail -> o pedido ficava com o vendedor que ja estava no card
+  // (ex.: SANTA CEIA lancado pelo Gilmar saiu no nome da Leticia).
+  app.post('/api/sales-cards/:id/finalize-sale', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { 
