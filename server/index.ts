@@ -85,6 +85,7 @@ import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registerSellerDocumentsRoutes } from './seller-documents-routes';
 import { registerResumoRecebiveisRoutes } from './resumo-recebiveis-routes';
+import { registerTrocaRegistrosRoutes } from './troca-registros-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
 import { registerRastreabilidadeLoteRoutes } from './rastreabilidade-lote-routes';
@@ -3243,6 +3244,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // comissao, bonus e km por colaborador no mes — 18/out/2026.
   // Rotas /api/resumo-recebiveis*.
   try { registerResumoRecebiveisRoutes(app); } catch (e) { console.error('[resumo-receb]', e); }
+  try { registerTrocaRegistrosRoutes(app); } catch (e) { console.error('[troca-registros]', e); }
 
   // Check-list da industria (modelos + execucoes com foto, responsavel e
   // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
