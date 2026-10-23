@@ -231,6 +231,13 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     staleTime: 5 * 60 * 1000,
   });
   const podeAbrirEstoque = !!aberturaAcesso?.podeAbrir;
+  // Recebimento de Transferências (22/out/2026): Flávio, Lanucy e Robson conferem e desbloqueiam lotes.
+  const { data: recebimentoAcesso } = useQuery<{ podeReceber: boolean }>({
+    queryKey: ['/api/recebimento-lote/acesso'],
+    queryFn: async () => { const r = await fetch('/api/recebimento-lote/acesso', { credentials: 'include' }); return r.ok ? r.json() : { podeReceber: false }; },
+    staleTime: 5 * 60 * 1000,
+  });
+  const podeReceberLote = !!recebimentoAcesso?.podeReceber;
 
   const { data: hotsiteOrdersData } = useQuery<{ orders: any[] }>({
     queryKey: ['/api/hotsite-orders'],
@@ -367,6 +374,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         // Abertura de Estoque do Dia (22/out/2026): contagem física GYN+SERV obrigatória antes do 1º faturamento.
         // Visível a gestores e ao perfil indústria (Naiara é uma das responsáveis pela abertura).
         { id: 'abertura-estoque', label: 'Abertura de Estoque do Dia', icon: 'fas fa-clipboard-check', available: canAccessReports || canAccessIndustria || podeAbrirEstoque, badge: null },
+        // Recebimento de Transferências (22/out/2026): conferência física + desbloqueio dos lotes que entraram pela NF-e IND→GYN.
+        { id: 'recebimento-estoque', label: 'Recebimento de Transferências', icon: 'fas fa-truck-ramp-box', available: canAccessReports || canAccessIndustria || podeReceberLote, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         // Cupons de Desconto passou a viver dentro de Canais > Hotsite (04/ago/2026).
         // A rota /cupons continua valendo para links salvos.
@@ -584,7 +593,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
-  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque'];
+  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque', 'recebimento-estoque'];
   // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
   // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
   // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
@@ -681,7 +690,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['chamados', 'resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque', 'abertura-estoque'];
+    const routePages = ['chamados', 'resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque', 'abertura-estoque', 'recebimento-estoque'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');

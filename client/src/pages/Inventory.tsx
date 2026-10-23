@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useLocation } from 'wouter';
 import { useTableSort, SortableTh } from "@/lib/tableTools";
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
@@ -36,6 +37,11 @@ interface InventoryLot {
   // transferencia entre filiais. Renomear/Excluir ficam indisponiveis;
   // quantidade e bloquear/desbloquear continuam liberados (05/out/2026).
   transferLock?: { reason: string; orderNumber: string | null; invoiceNumber: number | null } | null;
+  // Responsavel pelo desbloqueio (recebimento com conferencia, 22/out/2026).
+  desbloqueadoPor?: string | null;
+  desbloqueadoPorNome?: string | null;
+  desbloqueadoEm?: string | null;
+  recebimentoId?: string | null;
 }
 
 interface InventoryMovement {
@@ -87,6 +93,7 @@ function getInstanceColor(code: string) {
 }
 
 export default function Inventory() {
+  const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState('lots');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterInstance, setFilterInstance] = useState('all');
@@ -318,6 +325,12 @@ export default function Inventory() {
                                     ) : (
                                       <Badge className="bg-amber-100 text-amber-800 border-amber-300">Bloqueado</Badge>
                                     )}
+                                    {lot.desbloqueadoPorNome && (
+                                      <div className="text-[11px] text-muted-foreground mt-0.5 whitespace-nowrap" title={`Desbloqueado por ${lot.desbloqueadoPorNome}${lot.desbloqueadoEm ? ' em ' + new Date(lot.desbloqueadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : ''}${lot.recebimentoId ? ' (recebimento conferido)' : ''}`}>
+                                        <Unlock className="inline h-3 w-3 mr-0.5 text-green-700" />
+                                        {lot.desbloqueadoPorNome}{lot.desbloqueadoEm ? ` · ${new Date(lot.desbloqueadoEm).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
+                                      </div>
+                                    )}
                                   </TableCell>
                                   <TableCell>
                                     <code className="text-sm bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
@@ -365,8 +378,8 @@ export default function Inventory() {
                                           variant="ghost"
                                           size="sm"
                                           className={lot.stockType === 'in_use' ? 'text-amber-700 hover:text-amber-900' : 'text-green-700 hover:text-green-900'}
-                                          title={lot.stockType === 'in_use' ? 'Bloquear estoque' : 'Desbloquear estoque'}
-                                          onClick={() => handleMoverTipo(lot)}
+                                          title={lot.stockType === 'in_use' ? 'Bloquear estoque' : 'Conferir recebimento e desbloquear'}
+                                          onClick={() => lot.stockType === 'in_use' ? handleMoverTipo(lot) : setLocation(`/recebimento-estoque?lot=${lot.id}`)}
                                         >
                                           {lot.stockType === 'in_use' ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                                         </Button>
@@ -849,7 +862,7 @@ export default function Inventory() {
                 <Input disabled value={editingLot?.stockType === 'in_use' ? 'Em Uso' : 'Bloqueado'} />
                 {editingLot && (parseFloat(editingLot.quantity) || 0) > 0 && (
                   <Button type="button" variant="outline" size="sm" className="shrink-0 h-10"
-                    onClick={() => { const l = editingLot; setShowEditDialog(false); setEditingLot(null); handleMoverTipo(l); }}>
+                    onClick={() => { const l = editingLot; setShowEditDialog(false); setEditingLot(null); if (l.stockType === 'in_use') handleMoverTipo(l); else setLocation(`/recebimento-estoque?lot=${l.id}`); }}>
                     {editingLot.stockType === 'in_use' ? <><Lock className="h-4 w-4 mr-1" />Bloquear</> : <><Unlock className="h-4 w-4 mr-1" />Desbloquear</>}
                   </Button>
                 )}

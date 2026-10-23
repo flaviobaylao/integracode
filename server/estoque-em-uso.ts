@@ -23,6 +23,16 @@
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
+// Promocao automatica do bloqueado na baixa: desligada por padrao desde 22/out/2026
+// (system_settings 'estoque_promover_bloqueado' = 'on' religa). Lida aqui, sem
+// importar recebimento-lote.ts, para nao criar ciclo de import.
+async function promoverBloqueadoNoFaturamento(): Promise<boolean> {
+  try {
+    const r = ((await db.execute(sql`SELECT value FROM system_settings WHERE key = 'estoque_promover_bloqueado' LIMIT 1`)) as any);
+    return String((r?.rows ?? r ?? [])[0]?.value || '') === 'on';
+  } catch { return false; }
+}
+
 // Instancias que NAO controlam estoque por lote no Integra: o faturamento por elas
 // nao e bloqueado por falta de saldo e nao gera baixa de lote.
 // VAZIO desde 04/out/2026 (Flavio, auditoria de estoque): a SERV (PURO SERVICOS)
@@ -130,7 +140,11 @@ const fmtQtd = (n: number) => {
 export function descreverFaltas(faltas: FaltaEstoque[]): string {
   return faltas.map((f) =>
     `• ${f.productName}: necessário ${fmtQtd(f.required)}, disponível em uso ${fmtQtd(f.available)}`
-    + (f.blocked > EPS ? ` + ${fmtQtd(f.blocked)} bloqueado (fila de reposição) — mesmo liberando o bloqueado não cobre` : ''),
+    + (f.blocked > EPS
+        ? (f.available + f.blocked + EPS >= f.required
+            ? ` — há ${fmtQtd(f.blocked)} bloqueado aguardando CONFERÊNCIA DE RECEBIMENTO (Recebimento de Transferências › Conferir e desbloquear)`
+            : ` + ${fmtQtd(f.blocked)} bloqueado aguardando conferência — mesmo recebendo o bloqueado não cobre`)
+        : ''),
   ).join('\n');
 }
 
@@ -218,6 +232,7 @@ function faltasPorLote(_n: NecessidadeProduto, _lotesEmUso: Array<{ id: string; 
 export async function verificarEstoqueEmUso(instanceId: string, products: LinhaPedido[] | null | undefined): Promise<{ valid: boolean; shortages: FaltaEstoque[]; semProduto: string[] }> {
   const { necessidades, semProduto } = agregarLinhas(products);
   const shortages: FaltaEstoque[] = [];
+  const promover = await promoverBloqueadoNoFaturamento();
   for (const n of necessidades) {
     const r = rowsOf(await db.execute(sql`
       SELECT
@@ -227,9 +242,12 @@ export async function verificarEstoqueEmUso(instanceId: string, products: LinhaP
       WHERE product_id = ${n.productId} AND instance_id = ${instanceId} AND is_active = true`))[0] || {};
     const disponivel = Number(r.em_uso) || 0;
     const bloqueado = Number(r.outros) || 0;
-    // Bloqueado = fila de reposicao (entrada por transferencia): e liberado para
-    // "em uso" na baixa, FIFO, quando o em uso nao cobre. So falta se nem somando cobre.
-    if (disponivel + bloqueado + EPS < n.quantidade) {
+    // Bloqueado = fila de reposicao (entrada por transferencia). Desde 22/out/2026
+    // ele SO vira em uso pelo RECEBIMENTO COM CONFERENCIA (recebimento-lote.ts);
+    // a promocao automatica na baixa fica desligada (system_settings
+    // 'estoque_promover_bloqueado' = 'on' religa). Sem promocao, bloqueado nao conta.
+    const cobre = disponivel + (promover ? bloqueado : 0);
+    if (cobre + EPS < n.quantidade) {
       shortages.push({ productId: n.productId, productName: n.productName, required: n.quantidade, available: disponivel, blocked: bloqueado });
     } else if (Object.keys(n.porLote).length) {
       const ls = rowsOf(await db.execute(sql`
@@ -262,6 +280,7 @@ export async function baixarEstoqueEmUso(opts: {
   const mapa: MapaLotes = {};
   if (!necessidades.length) return mapa;
 
+  const promover = await promoverBloqueadoNoFaturamento();
   await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'estoque-baixa:' + opts.sourceId}))`);
     if (opts.impedirDuplicadaDesde !== undefined) {
@@ -296,6 +315,9 @@ export async function baixarEstoqueEmUso(opts: {
         // cobre, o lote bloqueado mais antigo vira "em uso" — inteiro, com o PROPRIO
         // numero e CMV — ate cobrir. Se nem a fila toda cobre, nada e promovido
         // (o throw abaixo desfaz a transacao inteira).
+        // 22/out/2026 (Flavio): a promocao automatica fica DESLIGADA por padrao —
+        // lote bloqueado so vira em uso pelo recebimento com conferencia
+        // (recebimento-lote.ts). O bloqueado aparece na mensagem so para orientar.
         const bloqueados = rowsOf(await tx.execute(sql`
           SELECT id, lot_number, quantity::float8 AS qtd
           FROM inventory_lots
@@ -304,7 +326,7 @@ export async function baixarEstoqueEmUso(opts: {
           ORDER BY created_at ASC NULLS LAST, lot_number ASC
           FOR UPDATE`));
         const totalBloq = bloqueados.reduce((s, l) => s + (Number(l.qtd) || 0), 0);
-        if (disponivel + totalBloq + EPS < n.quantidade) {
+        if (!promover || disponivel + totalBloq + EPS < n.quantidade) {
           faltas.push({ productId: n.productId, productName: n.productName, required: n.quantidade, available: disponivel, blocked: totalBloq });
           continue;
         }
