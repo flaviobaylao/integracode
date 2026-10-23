@@ -404,7 +404,7 @@ export default function RotaDoDia() {
     orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
     debts: Record<string, number>;
     periodicity?: Record<string, string>;
-    lastOrders?: Record<string, { date: string; value: number }>;
+    lastOrders?: Record<string, { date: string; value: number; sellerName?: string | null; dia?: string; foraRota?: boolean }>;
     phones?: Record<string, string>;
     cities?: Record<string, string>;
     trocasBloqueadas?: Record<string, boolean>;
@@ -2740,23 +2740,21 @@ export default function RotaDoDia() {
                                   </button>
                                 )}
                               </p>
-                              {/* 🧾 ÚLTIMA COMPRA em destaque (23/out/2026): venda fora do dia de rota não pula mais o
-                                  ciclo — o vendedor vê no card quando o cliente comprou por último. Âmbar = comprou
-                                  dentro do ciclo atual da periodicidade (pode já estar abastecido). */}
-                              {!isLead && customerInfo?.lastOrders?.[visit.customerId] && (() => {
+                              {/* 🧾 VENDA FORA DO DIA DE ROTA (23/out/2026): só aparece quando a última compra foi
+                                  num dia SEM visita na agenda do cliente (a agenda inclui a visita deslocada por
+                                  feriado). Formato: "Venda fora do dia de rota - dd/mm - R$ - Vendedor". */}
+                              {!isLead && customerInfo?.lastOrders?.[visit.customerId]?.foraRota && (() => {
                                 const lo = customerInfo.lastOrders[visit.customerId];
-                                const dias = Math.max(0, Math.floor((new Date(selectedDate + 'T12:00:00').getTime() - new Date(lo.date).getTime()) / 86400000));
-                                const perRaw = String(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || 'semanal').toLowerCase();
-                                const perDias = perRaw.includes('quinz') ? 14 : perRaw.includes('mens') ? 28 : 7;
-                                const recente = dias < perDias;
-                                const quando = dias === 0 ? 'hoje' : dias === 1 ? 'ontem' : `há ${dias} dias`;
+                                const dd = lo.dia ? `${lo.dia.slice(8, 10)}/${lo.dia.slice(5, 7)}` : new Date(lo.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                                const valor = `R$ ${Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+                                const quem = (lo.sellerName || '').trim().split(/\s+/)[0] || '';
                                 return (
                                   <span
-                                    title={`Última compra em ${new Date(lo.date).toLocaleDateString('pt-BR')} — R$ ${Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}${recente ? ' (dentro do ciclo atual)' : ''}`}
-                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${recente ? 'border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300' : 'border-gray-300 bg-gray-100 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}
-                                    data-testid={`badge-ultima-compra-${visit.customerId}`}
+                                    title={`Última compra feita em ${dd}, fora do dia de rota do cliente${quem ? `, lançada por ${lo.sellerName}` : ''}`}
+                                    className="inline-flex items-center gap-1 rounded-full border border-orange-400 bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-800 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+                                    data-testid={`badge-venda-fora-rota-${visit.customerId}`}
                                   >
-                                    🧾 Última compra {new Date(lo.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ({quando})
+                                    🧾 Venda fora do dia de rota - {dd} - {valor}{quem ? ` - ${quem}` : ''}
                                   </span>
                                 );
                               })()}
