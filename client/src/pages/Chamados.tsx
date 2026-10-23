@@ -305,11 +305,15 @@ export default function Chamados() {
 
   const todos = listaQ.data?.chamados || [];
   const uid = perfil?.usuario?.id;
+  // Os contadores de cada aba consideram só o que aparece nela: um chamado encerrado
+  // (solucionado/cancelado) com novidade é contado na aba Arquivados, onde ele está.
+  const abertos = todos.filter((c) => !encerrado(c.status));
   const contagem = {
-    tudo: todos.filter((c) => c.naoLido).length,
-    meus: todos.filter((c) => c.autorId === uid && c.naoLido).length,
-    recebidos: todos.filter((c) => c.papel === "dono" && (c.naoLido || c.status === "novo")).length,
-    consultas: todos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
+    tudo: abertos.filter((c) => c.naoLido).length,
+    meus: abertos.filter((c) => c.autorId === uid && c.naoLido).length,
+    recebidos: abertos.filter((c) => c.papel === "dono" && (c.naoLido || c.status === "novo")).length,
+    consultas: abertos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
+    arquivados: todos.filter((c) => encerrado(c.status) && c.naoLido).length,
   };
   const q = busca.trim().toLowerCase();
   const pedeEncerrado = statusSel.some(encerrado);
@@ -357,7 +361,7 @@ export default function Chamados() {
   ];
   if (atendeAlgum) abas.push(["recebidos", "Recebidos", contagem.recebidos]);
   if (atendeAlgum || todos.some((c) => c.papel === "consultado")) abas.push(["consultas", "Consultas para mim", contagem.consultas]);
-  abas.push(["arquivados", `Arquivados${qtdArquivados ? ` (${qtdArquivados})` : ""}`, 0]);
+  abas.push(["arquivados", `Arquivados${qtdArquivados ? ` (${qtdArquivados})` : ""}`, contagem.arquivados]);
   if (perfil?.admin) abas.push(["todos", "Todos (admin)", 0]);
 
   const refresh = () => {
