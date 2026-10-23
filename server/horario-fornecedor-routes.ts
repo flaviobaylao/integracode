@@ -49,7 +49,7 @@ export function registerHorarioFornecedorRoutes(app: Express) {
       const r = await db.execute(sql`
         SELECT id, atende_fornecedor_inicio AS inicio, atende_fornecedor_fim AS fim
         FROM customers
-        WHERE id = ANY(${ids}::text[])
+        WHERE id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
           AND (atende_fornecedor_inicio IS NOT NULL OR atende_fornecedor_fim IS NOT NULL)`);
       const horarios: Record<string, { inicio: string | null; fim: string | null }> = {};
       for (const row of rowsOf(r)) horarios[String(row.id)] = { inicio: row.inicio || null, fim: row.fim || null };
