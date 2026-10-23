@@ -46,6 +46,7 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/hotsite-orders": "Produtos & Estoque",
   "/cupons": "Produtos & Estoque",
   "/fornecedores": "Produtos & Estoque",
+  "/fornecedores-criticos": "Produtos & Estoque",
   // Faturamento
   "/billings": "Faturamento",
   "/fiscal-invoices": "Faturamento",

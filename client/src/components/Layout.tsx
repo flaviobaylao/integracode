@@ -31,7 +31,7 @@ const MENU_CARD: Record<string, string> = {
   "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas", "temperatura-entregas": "Temperatura das Entregas",
   products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   "gestao-debito-vendas": "Débito e Variação de Vendas", "painel-atendimento": "Painel de Atendimento",
-  estoque: "Gestão de Estoque", "auditoria-estoque": "Auditoria de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores", comodatos: "Contratos de Comodato",
+  estoque: "Gestão de Estoque", "auditoria-estoque": "Auditoria de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores", "fornecedores-criticos": "Fornecedores Críticos", comodatos: "Contratos de Comodato",
   billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "inutilizacao-nf": "Inutilização de NF", contabilidade: "Contabilidade", "contabilidade-fiscal": "Fiscal", "contabilidade-contabil": "Contábil", "billing-pipeline": "Pipeline Faturamento",
   "recuperacao-faturamento": "Recuperação de Faturamento",
   "fin-receivables": "Contas a Receber", "fin-payables": "Contas a Pagar", "fin-overdue": "Débitos Vencidos",
