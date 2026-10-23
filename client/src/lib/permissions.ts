@@ -45,6 +45,7 @@ export const ACCESS_MATRIX: Acc[] = [
   ["Produtos & Estoque", "Gestão de Estoque", REPORTS],
   ["Produtos & Estoque", "Cupons de Desconto", REPORTS],
   ["Produtos & Estoque", "Fornecedores", REPORTS],
+  ["Produtos & Estoque", "Fornecedores Críticos", REPORTS],
   ["Faturamento", "Faturamentos", [A, C, D, V]],
   ["Faturamento", "Faturamento NF-e", REPORTS],
   ["Faturamento", "Pipeline Faturamento", [A, C, D, T]],
