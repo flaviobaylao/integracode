@@ -2740,6 +2740,26 @@ export default function RotaDoDia() {
                                   </button>
                                 )}
                               </p>
+                              {/* 🧾 ÚLTIMA COMPRA em destaque (23/out/2026): venda fora do dia de rota não pula mais o
+                                  ciclo — o vendedor vê no card quando o cliente comprou por último. Âmbar = comprou
+                                  dentro do ciclo atual da periodicidade (pode já estar abastecido). */}
+                              {!isLead && customerInfo?.lastOrders?.[visit.customerId] && (() => {
+                                const lo = customerInfo.lastOrders[visit.customerId];
+                                const dias = Math.max(0, Math.floor((new Date(selectedDate + 'T12:00:00').getTime() - new Date(lo.date).getTime()) / 86400000));
+                                const perRaw = String(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || 'semanal').toLowerCase();
+                                const perDias = perRaw.includes('quinz') ? 14 : perRaw.includes('mens') ? 28 : 7;
+                                const recente = dias < perDias;
+                                const quando = dias === 0 ? 'hoje' : dias === 1 ? 'ontem' : `há ${dias} dias`;
+                                return (
+                                  <span
+                                    title={`Última compra em ${new Date(lo.date).toLocaleDateString('pt-BR')} — R$ ${Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}${recente ? ' (dentro do ciclo atual)' : ''}`}
+                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${recente ? 'border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300' : 'border-gray-300 bg-gray-100 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}
+                                    data-testid={`badge-ultima-compra-${visit.customerId}`}
+                                  >
+                                    🧾 Última compra {new Date(lo.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ({quando})
+                                  </span>
+                                );
+                              })()}
                               {!isLead && rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (() => {
                                 const h = horarioForn[String(visit.customerId)];
                                 return (
