@@ -433,6 +433,47 @@ export default function RotaDoDia() {
     staleTime: 60000, // Cache por 1 minuto
   });
 
+  // 🕑 Horário de atendimento ao FORNECEDOR (marcado pelo vendedor). Mapa customerId → janela.
+  const { data: horarioFornData } = useQuery<{ horarios: Record<string, { inicio: string | null; fim: string | null }> }>({
+    queryKey: ['/api/horario-fornecedor', routeCustomerIds.join(',')],
+    queryFn: async () => {
+      if (!routeCustomerIds.length) return { horarios: {} };
+      const res = await fetch(`/api/horario-fornecedor?ids=${encodeURIComponent(routeCustomerIds.join(','))}`, { credentials: 'include' });
+      if (!res.ok) return { horarios: {} };
+      return res.json();
+    },
+    enabled: routeCustomerIds.length > 0,
+    staleTime: 60000,
+  });
+  const horarioForn = horarioFornData?.horarios || {};
+  const rotuloHorarioForn = (h?: { inicio: string | null; fim: string | null } | null) => {
+    if (!h || (!h.inicio && !h.fim)) return '';
+    if (h.inicio && h.fim) return `${h.inicio}–${h.fim}`;
+    return h.inicio ? `a partir das ${h.inicio}` : `até ${h.fim}`;
+  };
+  const [editHorario, setEditHorario] = useState<{ customerId: string; nome: string; inicio: string; fim: string } | null>(null);
+  const [salvandoHorario, setSalvandoHorario] = useState(false);
+  const salvarHorarioForn = async (limpar = false) => {
+    if (!editHorario) return;
+    const inicio = limpar ? '' : editHorario.inicio;
+    const fim = limpar ? '' : editHorario.fim;
+    if (!limpar && !inicio && !fim) {
+      toast({ title: 'Informe o horário', description: 'Preencha pelo menos o horário inicial.', variant: 'destructive' });
+      return;
+    }
+    setSalvandoHorario(true);
+    try {
+      await apiRequest('PUT', `/api/horario-fornecedor/${editHorario.customerId}`, { inicio, fim });
+      await queryClient.invalidateQueries({ queryKey: ['/api/horario-fornecedor'] });
+      toast({ title: limpar ? 'Horário removido' : 'Horário salvo', description: limpar ? editHorario.nome : `${editHorario.nome}: atende fornecedor ${rotuloHorarioForn({ inicio: inicio || null, fim: fim || null })}` });
+      setEditHorario(null);
+    } catch (e: any) {
+      toast({ title: 'Erro ao salvar horário', description: e?.message || 'Tente novamente.', variant: 'destructive' });
+    } finally {
+      setSalvandoHorario(false);
+    }
+  };
+
   // 🟢🔴 Efetividade em vendas (bolinhas por ciclo) — reaproveita a mesma fonte do
   // Resumo de Visitas (/api/visit-summary), que já calcula os ciclos por cliente a
   // partir dos faturamentos (~130 dias). Buscamos só a data selecionada (janela de
@@ -2684,7 +2725,37 @@ export default function RotaDoDia() {
                                 >
                                   <Copy className="h-3.5 w-3.5" />
                                 </button>
+                                {!isLead && !(visit as any).isVirtual && !rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setEditHorario({ customerId: String(visit.customerId), nome: visit.customerName || '', inicio: '', fim: '' }); }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    draggable={false}
+                                    title="Marcar horário de atendimento ao fornecedor"
+                                    aria-label="Marcar horário de atendimento ao fornecedor"
+                                    className="shrink-0 text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                                    data-testid={`horario-forn-add-${visit.customerId}`}
+                                  >
+                                    <Clock className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                               </p>
+                              {!isLead && rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (() => {
+                                const h = horarioForn[String(visit.customerId)];
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setEditHorario({ customerId: String(visit.customerId), nome: visit.customerName || '', inicio: h?.inicio || '', fim: h?.fim || '' }); }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    draggable={false}
+                                    title="Horário em que o cliente atende fornecedor (toque para editar)"
+                                    className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                                    data-testid={`badge-horario-forn-${visit.customerId}`}
+                                  >
+                                    <Clock className="h-3 w-3" /> Fornecedor {rotuloHorarioForn(h)}
+                                  </button>
+                                );
+                              })()}
                               {holidayNotes[String(visit.customerId)] && (
                                 <Badge variant="outline" className="text-[11px] border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title={holidayNotes[String(visit.customerId)]} data-testid={`badge-feriado-${visit.customerId}`}>
                                   🎌 {holidayNotes[String(visit.customerId)]}
@@ -3549,6 +3620,52 @@ export default function RotaDoDia() {
           card={selectedCard}
         />
       )}
+
+      {/* 🕑 Horário de atendimento ao FORNECEDOR (o vendedor marca; aparece no card do dia de rota) */}
+      <Dialog open={!!editHorario} onOpenChange={(o) => { if (!o && !salvandoHorario) setEditHorario(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Clock className="h-5 w-5 text-amber-600" /> Atendimento ao fornecedor</DialogTitle>
+          </DialogHeader>
+          {editHorario && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Em que horário <b className="text-foreground">{editHorario.nome}</b> atende fornecedor/vendedor?
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm font-medium space-y-1">
+                  <span>Das</span>
+                  <Input type="time" value={editHorario.inicio} onChange={(e) => setEditHorario({ ...editHorario, inicio: e.target.value })} data-testid="input-horario-forn-inicio" />
+                </label>
+                <label className="text-sm font-medium space-y-1">
+                  <span>Às <span className="text-xs text-muted-foreground">(opcional)</span></span>
+                  <Input type="time" value={editHorario.fim} onChange={(e) => setEditHorario({ ...editHorario, fim: e.target.value })} data-testid="input-horario-forn-fim" />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[['08:00', '11:00'], ['09:00', '12:00'], ['14:00', '17:00']].map(([a, b]) => (
+                  <Button key={a + b} type="button" variant="outline" size="sm" onClick={() => setEditHorario({ ...editHorario, inicio: a, fim: b })}>
+                    {a}–{b}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-2 border-t">
+                {rotuloHorarioForn(horarioForn[editHorario.customerId]) ? (
+                  <Button type="button" variant="ghost" size="sm" className="text-red-600" disabled={salvandoHorario} onClick={() => salvarHorarioForn(true)} data-testid="button-horario-forn-limpar">
+                    Remover
+                  </Button>
+                ) : <span />}
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" disabled={salvandoHorario} onClick={() => setEditHorario(null)}>Cancelar</Button>
+                  <Button type="button" disabled={salvandoHorario} onClick={() => salvarHorarioForn(false)} data-testid="button-horario-forn-salvar">
+                    {salvandoHorario ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
         <DialogContent className="max-w-4xl">
