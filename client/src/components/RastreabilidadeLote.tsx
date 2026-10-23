@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -267,6 +267,235 @@ function LinhaDoTempo({ consulta }: { consulta: { lote: string; productId: strin
   );
 }
 
+
+/* ------------------------------------------------------------------------ */
+/* DESTINO DAS ENTRADAS (todas as entradas → NF de saída)                    */
+/* GET /api/destino-estoque                                                  */
+/* ------------------------------------------------------------------------ */
+type Entrada = { tipo: string; data: string; quantidade: number; ref: string; refId: string | null; detalhe: string; por: string | null };
+type Saida = { tipo: "nf" | "sem_nf" | "ajuste"; data: string; quantidade: number; nfId: string | null; nfNumero: number | null; nfSerie: string | null; nfStatus: string | null; cfop: string | null; natureza: string | null; transferencia: boolean; destinatario: string | null; destinatarioDoc: string | null; instanciaEmissora: string | null; pedido: string | null; detalhe: string; nfTemLote: boolean | null };
+type Grupo = { chave: string; productId: string; produto: string; instanceId: string; instancia: string; lote: string; primeiraEntrada: string | null; entradas: Entrada[]; saidas: Saida[]; totais: { entradas: number; saidasNf: number; saidasSemNf: number; ajustesNeg: number; saldoEmUso: number; saldoBloqueado: number; naoExplicado: number }; situacao: "fechado" | "em_estoque" | "divergente"; alertas: string[] };
+type Destino = { de: string; ate: string; grupos: Grupo[]; resumo: { lotes: number; divergentes: number; emEstoque: number; fechados: number; entradas: number; saidasNf: number; saidasSemNf: number; ajustesNeg: number; saldo: number; naoExplicado: number; nfs: number } };
+const ENTRADA_LABEL: Record<string, string> = { producao: "Produção", transferencia: "Transferência recebida", compra: "Compra (NF entrada)", ajuste: "Ajuste manual (+)", estorno: "Estorno (NF cancelada/devolvida)", criacao: "Criação do lote", desconhecida: "Origem não identificada" };
+const SIT: Record<string, { label: string; cls: string }> = { fechado: { label: "Fechado", cls: "bg-green-100 text-green-800" }, em_estoque: { label: "Em estoque", cls: "bg-blue-100 text-blue-800" }, divergente: { label: "Divergente", cls: "bg-red-100 text-red-800" } };
+const isoHoje = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+const isoAtras = (d: number) => new Date(Date.now() - 3 * 3600000 - d * 86400000).toISOString().slice(0, 10);
+
+function DestinoEntradas({ produtos }: { produtos: Array<{ id: string; name: string }> }) {
+  const [de, setDe] = useState(isoAtras(60));
+  const [ate, setAte] = useState(isoHoje());
+  const [productId, setProductId] = useState<string>(TODOS);
+  const [instanciaSel, setInstanciaSel] = useState<string>(TODOS);
+  const [somenteAbertos, setSomenteAbertos] = useState(false);
+  const [params, setParams] = useState<{ de: string; ate: string; productId: string | null; somenteAbertos: boolean } | null>(null);
+  const [busca, setBusca] = useState("");
+  const [situacoes, setSituacoes] = useState<string[]>([]);
+  const [abertos, setAbertos] = useState<Record<string, boolean>>({});
+
+  const { data, isFetching, error } = useQuery<Destino>({
+    queryKey: ["/api/destino-estoque", params],
+    enabled: !!params,
+    queryFn: () => {
+      const p = new URLSearchParams({ de: params!.de, ate: params!.ate });
+      if (params!.productId) p.set("productId", params!.productId);
+      if (params!.somenteAbertos) p.set("somenteAbertos", "1");
+      return fetch(`/api/destino-estoque?${p}`).then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => null))?.message || `HTTP ${r.status}`); return r.json(); });
+    },
+  });
+  const grupos = data?.grupos || [];
+  const instancias = useMemo(() => Array.from(new Set(grupos.map(g => g.instancia))).sort(), [grupos]);
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return grupos.filter(g => {
+      if (instanciaSel !== TODOS && g.instancia !== instanciaSel) return false;
+      if (situacoes.length && !situacoes.includes(SIT[g.situacao].label)) return false;
+      if (q && !`${g.produto} ${g.lote} ${g.entradas.map(e => e.ref).join(" ")} ${g.saidas.map(s => `${s.nfNumero ?? ""} ${s.destinatario ?? ""} ${s.pedido ?? ""}`).join(" ")}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [grupos, instanciaSel, situacoes, busca]);
+  const resumo = useMemo(() => {
+    const r = { lotes: filtrados.length, divergentes: 0, emEstoque: 0, fechados: 0, entradas: 0, saidasNf: 0, saidasSemNf: 0, saldo: 0, naoExplicado: 0, nfs: new Set<string>() };
+    for (const g of filtrados) {
+      if (g.situacao === "divergente") r.divergentes++; else if (g.situacao === "em_estoque") r.emEstoque++; else r.fechados++;
+      r.entradas += g.totais.entradas; r.saidasNf += g.totais.saidasNf; r.saidasSemNf += g.totais.saidasSemNf; r.saldo += g.totais.saldoEmUso + g.totais.saldoBloqueado; r.naoExplicado += g.totais.naoExplicado;
+      for (const s of g.saidas) if (s.nfId) r.nfs.add(s.nfId);
+    }
+    return r;
+  }, [filtrados]);
+
+  const exportar = () => {
+    const linhas: any[] = [];
+    for (const g of filtrados) {
+      for (const e of g.entradas) linhas.push({ "Instância": g.instancia, "Produto": g.produto, "Lote": g.lote, "Situação": SIT[g.situacao].label, "Movimento": "ENTRADA", "Tipo": ENTRADA_LABEL[e.tipo] || e.tipo, "Data": fmtDT(e.data), "Referência": e.ref, "Detalhe": e.detalhe, "Quantidade": e.quantidade, "NF saída": "", "Status NF": "", "CFOP": "", "Destinatário": "", "CNPJ/CPF": "", "Emissora": "", "Pedido": "" });
+      for (const s of g.saidas) linhas.push({ "Instância": g.instancia, "Produto": g.produto, "Lote": g.lote, "Situação": SIT[g.situacao].label, "Movimento": "SAÍDA", "Tipo": s.tipo === "nf" ? (s.transferencia ? "NF transferência" : "NF saída") : s.tipo === "sem_nf" ? "BAIXA SEM NF" : "Ajuste (−)", "Data": fmtDT(s.data), "Referência": s.nfNumero != null ? `NF-e ${s.nfNumero}${s.nfSerie && s.nfSerie !== "1" ? "/" + s.nfSerie : ""}` : "", "Detalhe": s.detalhe, "Quantidade": -s.quantidade, "NF saída": s.nfNumero ?? "", "Status NF": s.nfStatus || "", "CFOP": s.cfop || "", "Destinatário": s.destinatario || "", "CNPJ/CPF": s.destinatarioDoc || "", "Emissora": s.instanciaEmissora || "", "Pedido": s.pedido || "" });
+      linhas.push({ "Instância": g.instancia, "Produto": g.produto, "Lote": g.lote, "Situação": SIT[g.situacao].label, "Movimento": "SALDO ATUAL", "Tipo": `em uso ${g.totais.saldoEmUso} / bloqueado ${g.totais.saldoBloqueado}`, "Data": "", "Referência": "", "Detalhe": g.alertas.join("; "), "Quantidade": g.totais.saldoEmUso + g.totais.saldoBloqueado, "NF saída": "", "Status NF": "", "CFOP": "", "Destinatário": "", "CNPJ/CPF": "", "Emissora": "", "Pedido": "" });
+      if (Math.abs(g.totais.naoExplicado) > 0.01) linhas.push({ "Instância": g.instancia, "Produto": g.produto, "Lote": g.lote, "Situação": SIT[g.situacao].label, "Movimento": "SEM DESTINO", "Tipo": "", "Data": "", "Referência": "", "Detalhe": "", "Quantidade": g.totais.naoExplicado, "NF saída": "", "Status NF": "", "CFOP": "", "Destinatário": "", "CNPJ/CPF": "", "Emissora": "", "Pedido": "" });
+    }
+    exportToExcel(linhas, `destino-entradas-${params?.de}-${params?.ate}`);
+  };
+  const toggleTodos = (v: boolean) => setAbertos(Object.fromEntries(filtrados.map(g => [g.chave, v])));
+
+  return (
+    <div className="space-y-4" data-testid="destino-entradas">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Destino das entradas de estoque</CardTitle>
+          <CardDescription>Toda entrada (produção, transferência recebida, compra, estorno, ajuste) por lote e instância, com as notas fiscais de saída que consumiram cada uma, o saldo atual e o que ficou sem destino. Entradas − saídas − saldo deve dar zero.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="grid gap-3 md:grid-cols-[auto_auto_2fr_auto_auto] items-end" onSubmit={e => { e.preventDefault(); setAbertos({}); setParams({ de, ate, productId: productId === TODOS ? null : productId, somenteAbertos }); }}>
+            <div className="space-y-1"><Label className="text-xs">Entradas de</Label><Input type="date" value={de} onChange={e => setDe(e.target.value)} data-testid="input-destino-de" /></div>
+            <div className="space-y-1"><Label className="text-xs">até</Label><Input type="date" value={ate} onChange={e => setAte(e.target.value)} data-testid="input-destino-ate" /></div>
+            <div className="space-y-1">
+              <Label className="text-xs">Produto</Label>
+              <Select value={productId} onValueChange={setProductId}>
+                <SelectTrigger data-testid="select-produto-destino"><SelectValue placeholder="Todos os produtos" /></SelectTrigger>
+                <SelectContent className="max-h-80"><SelectItem value={TODOS}>Todos os produtos</SelectItem>{produtos.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-sm h-10 whitespace-nowrap"><Checkbox checked={somenteAbertos} onCheckedChange={v => setSomenteAbertos(!!v)} />Só em estoque / divergentes</label>
+            <Button type="submit" disabled={isFetching} data-testid="button-buscar-destino"><Search className="w-4 h-4 mr-2" />{isFetching ? "Buscando…" : "Conferir"}</Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {!params ? (
+        <Card><CardContent className="p-8 text-center text-muted-foreground flex flex-col items-center gap-2"><PackageSearch className="h-8 w-8" />Escolha o período das entradas e clique em Conferir.</CardContent></Card>
+      ) : error ? (
+        <Card><CardContent className="p-8 text-center text-red-600">Erro: {(error as Error).message}</CardContent></Card>
+      ) : isFetching && !data ? (
+        <Card><CardContent className="p-8 text-center text-muted-foreground">Cruzando entradas, baixas e notas fiscais…</CardContent></Card>
+      ) : (
+        <>
+          <div className="grid gap-2 grid-cols-2 md:grid-cols-4 lg:grid-cols-8">
+            <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Lotes</div><div className="text-xl font-bold">{resumo.lotes}</div><div className="text-[11px] text-muted-foreground">{resumo.fechados} fechados · {resumo.emEstoque} em estoque</div></CardContent></Card>
+            <Card className={`py-0 ${resumo.divergentes ? "border-red-400" : ""}`}><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Divergentes</div><div className={`text-xl font-bold ${resumo.divergentes ? "text-red-700" : "text-green-700"}`}>{resumo.divergentes}</div></CardContent></Card>
+            <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Unidades entradas</div><div className="text-xl font-bold">{fmtNum(resumo.entradas)}</div></CardContent></Card>
+            <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Saídas com NF</div><div className="text-xl font-bold">{fmtNum(resumo.saidasNf)}</div><div className="text-[11px] text-muted-foreground">{resumo.nfs.size} NF-e</div></CardContent></Card>
+            <Card className={`py-0 ${resumo.saidasSemNf ? "border-red-400" : ""}`}><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Baixas sem NF</div><div className={`text-xl font-bold ${resumo.saidasSemNf ? "text-red-700" : ""}`}>{fmtNum(resumo.saidasSemNf)}</div></CardContent></Card>
+            <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Em estoque</div><div className="text-xl font-bold">{fmtNum(resumo.saldo)}</div></CardContent></Card>
+            <Card className={`py-0 ${Math.abs(resumo.naoExplicado) > 0.5 ? "border-red-400" : "border-green-400"}`}><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Sem destino</div><div className={`text-xl font-bold ${Math.abs(resumo.naoExplicado) > 0.5 ? "text-red-700" : "text-green-700"}`}>{fmtNum(resumo.naoExplicado)}</div></CardContent></Card>
+            <Card className="py-0"><CardContent className="p-3"><div className="text-[11px] text-muted-foreground">Período (entradas)</div><div className="text-sm font-semibold">{data?.de.split("-").reverse().join("/")} – {data?.ate.split("-").reverse().join("/")}</div></CardContent></Card>
+          </div>
+
+          <Card>
+            <CardContent className="p-3 space-y-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1 min-w-[220px]"><Label className="text-xs">Buscar produto / lote / NF / cliente</Label><Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Filtrar…" /></div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Instância</Label>
+                  <Select value={instanciaSel} onValueChange={setInstanciaSel}><SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value={TODOS}>Todas</SelectItem>{instancias.map(i => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent></Select>
+                </div>
+                <div className="min-w-[180px]"><MultiSelect label="Situação" options={["Divergente", "Em estoque", "Fechado"]} selected={situacoes} onChange={setSituacoes} testId="filtro-situacao-destino" /></div>
+                <span className="text-sm text-muted-foreground ml-auto">{filtrados.length} lote(s)</span>
+                <Button variant="outline" size="sm" onClick={() => toggleTodos(true)}>Expandir</Button>
+                <Button variant="outline" size="sm" onClick={() => toggleTodos(false)}>Recolher</Button>
+                <Button variant="outline" size="sm" onClick={exportar} disabled={!filtrados.length}><Download className="w-4 h-4 mr-2" />Exportar Excel</Button>
+              </div>
+
+              {filtrados.length === 0 ? <div className="p-8 text-center text-muted-foreground">Nenhuma entrada no período.</div> : (
+                <div className="overflow-auto max-h-[70vh] border rounded">
+                  <table className="w-full text-sm border-collapse">
+                    <thead className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
+                      <tr className="text-left">
+                        <th className="px-2 py-2 w-6"></th>
+                        <th className="px-2 py-2 font-medium">Instância</th>
+                        <th className="px-2 py-2 font-medium min-w-[200px]">Produto</th>
+                        <th className="px-2 py-2 font-medium">Lote</th>
+                        <th className="px-2 py-2 font-medium">1ª entrada</th>
+                        <th className="px-2 py-2 font-medium text-right">Entradas</th>
+                        <th className="px-2 py-2 font-medium text-right">Saídas c/ NF</th>
+                        <th className="px-2 py-2 font-medium text-right">Sem NF</th>
+                        <th className="px-2 py-2 font-medium text-right">Ajustes −</th>
+                        <th className="px-2 py-2 font-medium text-right">Saldo</th>
+                        <th className="px-2 py-2 font-medium text-right">Sem destino</th>
+                        <th className="px-2 py-2 font-medium">Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtrados.map(g => {
+                        const ab = !!abertos[g.chave];
+                        const st = SIT[g.situacao];
+                        return (
+                          <Fragment key={g.chave}>
+                            <tr className={`border-t cursor-pointer hover:bg-muted/30 ${g.situacao === "divergente" ? "bg-red-50/40 dark:bg-red-950/10" : ""}`} onClick={() => setAbertos(a => ({ ...a, [g.chave]: !ab }))} data-testid={`linha-destino-${g.lote}`}>
+                              <td className="px-2 py-1.5 text-muted-foreground">{ab ? "▾" : "▸"}</td>
+                              <td className="px-2 py-1.5"><Badge variant="outline">{g.instancia}</Badge></td>
+                              <td className="px-2 py-1.5 font-medium">{g.produto}</td>
+                              <td className="px-2 py-1.5"><code className="bg-muted px-1.5 py-0.5 rounded">{g.lote}</code></td>
+                              <td className="px-2 py-1.5 whitespace-nowrap">{g.primeiraEntrada ? fmtData(g.primeiraEntrada) : "—"}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{fmtNum(g.totais.entradas)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(g.totais.saidasNf)}</td>
+                              <td className={`px-2 py-1.5 text-right tabular-nums ${g.totais.saidasSemNf ? "text-red-700 font-semibold" : "text-muted-foreground"}`}>{fmtNum(g.totais.saidasSemNf)}</td>
+                              <td className={`px-2 py-1.5 text-right tabular-nums ${g.totais.ajustesNeg ? "text-amber-700" : "text-muted-foreground"}`}>{fmtNum(g.totais.ajustesNeg)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums" title={`em uso ${fmtNum(g.totais.saldoEmUso)} · bloqueado ${fmtNum(g.totais.saldoBloqueado)}`}>{fmtNum(g.totais.saldoEmUso + g.totais.saldoBloqueado)}{g.totais.saldoBloqueado > 0 && <span className="text-[10px] text-amber-700 ml-1">({fmtNum(g.totais.saldoBloqueado)} bloq.)</span>}</td>
+                              <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${Math.abs(g.totais.naoExplicado) > 0.01 ? "text-red-700" : "text-green-700"}`}>{fmtNum(g.totais.naoExplicado)}</td>
+                              <td className="px-2 py-1.5"><Badge className={`${st.cls} text-[11px]`}>{st.label}</Badge></td>
+                            </tr>
+                            {ab && (
+                              <tr className="border-t bg-muted/20">
+                                <td></td>
+                                <td colSpan={11} className="px-2 py-2">
+                                  {g.alertas.length > 0 && <div className="mb-2 space-y-1">{g.alertas.map((a, i) => <div key={i} className="text-xs rounded border border-red-300 bg-red-50 text-red-900 px-2 py-1">{a}</div>)}</div>}
+                                  <div className="grid gap-3 lg:grid-cols-[1fr_2fr]">
+                                    <div>
+                                      <div className="text-xs font-semibold mb-1">ENTRADAS ({fmtNum(g.totais.entradas)})</div>
+                                      <table className="w-full text-xs"><tbody>
+                                        {g.entradas.map((e, i) => (
+                                          <tr key={i} className="border-t">
+                                            <td className="py-1 pr-2 whitespace-nowrap">{fmtDT(e.data)}</td>
+                                            <td className="py-1 pr-2">{ENTRADA_LABEL[e.tipo] || e.tipo}</td>
+                                            <td className="py-1 pr-2 font-medium whitespace-nowrap">{e.ref}</td>
+                                            <td className="py-1 pr-2 text-muted-foreground truncate max-w-[260px]" title={e.detalhe}>{e.detalhe}</td>
+                                            <td className="py-1 text-right tabular-nums font-semibold text-green-700">+{fmtNum(e.quantidade)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody></table>
+                                    </div>
+                                    <div>
+                                      <div className="text-xs font-semibold mb-1">SAÍDAS — notas fiscais ({fmtNum(g.totais.saidasNf + g.totais.saidasSemNf + g.totais.ajustesNeg)})</div>
+                                      {g.saidas.length === 0 ? <div className="text-xs text-muted-foreground">Nenhuma saída ainda.</div> : (
+                                        <table className="w-full text-xs"><tbody>
+                                          {g.saidas.map((s, i) => (
+                                            <tr key={i} className={`border-t ${s.tipo === "sem_nf" ? "bg-red-50" : ""}`}>
+                                              <td className="py-1 pr-2 whitespace-nowrap">{fmtDT(s.data)}</td>
+                                              <td className="py-1 pr-2 whitespace-nowrap font-medium">
+                                                {s.tipo === "ajuste" ? <span className="text-amber-700">Ajuste (−)</span>
+                                                  : s.nfNumero != null ? <a className="underline text-primary" href={`/api/contabilidade/fiscal/nota/${s.nfId}/danfe`} target="_blank" rel="noreferrer" onClick={ev => ev.stopPropagation()}>NF-e {s.nfNumero}{s.nfSerie && s.nfSerie !== "1" ? `/${s.nfSerie}` : ""}</a>
+                                                  : <span className="text-red-700">SEM NF</span>}
+                                                {s.tipo === "sem_nf" && s.nfNumero != null && <span className="ml-1 text-red-700">[{s.nfStatus}]</span>}
+                                                {s.transferencia && <Badge className="ml-1 bg-blue-100 text-blue-800 text-[10px] py-0">transf.</Badge>}
+                                                {s.nfTemLote === false && <span className="ml-1 text-amber-700" title="A NF não traz este lote no item">⚠ lote fora da NF</span>}
+                                              </td>
+                                              <td className="py-1 pr-2 whitespace-nowrap">{s.cfop || ""}{s.instanciaEmissora ? ` · ${s.instanciaEmissora}` : ""}</td>
+                                              <td className="py-1 pr-2 truncate max-w-[260px]" title={`${s.destinatario || ""} ${s.destinatarioDoc || ""} ${s.detalhe}`}>{s.destinatario || s.detalhe}{s.pedido ? <span className="text-muted-foreground"> · {s.pedido}</span> : null}</td>
+                                              <td className="py-1 text-right tabular-nums font-semibold text-red-700">−{fmtNum(s.quantidade)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody></table>
+                                      )}
+                                      <div className="mt-1 text-xs text-muted-foreground">Saldo atual: em uso {fmtNum(g.totais.saldoEmUso)} · bloqueado {fmtNum(g.totais.saldoBloqueado)} · <b className={Math.abs(g.totais.naoExplicado) > 0.01 ? "text-red-700" : "text-green-700"}>sem destino {fmtNum(g.totais.naoExplicado)}</b></div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function RastreabilidadeLote() {
   const [productId, setProductId] = useState<string>(TODOS);
   const [loteDigitado, setLoteDigitado] = useState("");
@@ -275,7 +504,7 @@ export default function RastreabilidadeLote() {
   const [instancias, setInstancias] = useState<string[]>([]);
   const [tipos, setTipos] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
-  const [visao, setVisao] = useState<"notas" | "tempo">("notas");
+  const [visao, setVisao] = useState<"notas" | "tempo" | "destino">("notas");
 
   const pid = productId === TODOS ? null : productId;
   const { data: opcoes } = useQuery<{ produtos: Array<{ id: string; name: string }>; lotes: string[] }>({
@@ -409,11 +638,14 @@ export default function RastreabilidadeLote() {
           <div className="flex gap-1">
             <Button type="button" size="sm" variant={visao === "notas" ? "default" : "outline"} onClick={() => setVisao("notas")} data-testid="button-visao-notas">Notas fiscais (vendas)</Button>
             <Button type="button" size="sm" variant={visao === "tempo" ? "default" : "outline"} onClick={() => setVisao("tempo")} data-testid="button-visao-tempo">Linha do tempo: produção → destino</Button>
+            <Button type="button" size="sm" variant={visao === "destino" ? "default" : "outline"} onClick={() => setVisao("destino")} data-testid="button-visao-destino">Destino de todas as entradas</Button>
           </div>
         </CardContent>
       </Card>
 
-      {!consulta ? (
+      {visao === "destino" ? (
+        <DestinoEntradas produtos={opcoes?.produtos || []} />
+      ) : !consulta ? (
         <Card><CardContent className="p-8 text-center text-muted-foreground flex flex-col items-center gap-2">
           <PackageSearch className="h-8 w-8" />Escolha o produto, informe o lote e clique em Rastrear.
         </CardContent></Card>

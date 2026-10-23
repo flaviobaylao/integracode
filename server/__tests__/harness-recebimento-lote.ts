@@ -35,10 +35,11 @@ async function main() {
   for (const tb of ['chamados', 'chamado_mensagens', 'chamado_consultas', 'chamado_leituras']) {
     try { await db.execute(sql.raw(`DELETE FROM ${tb}`)); } catch { /* ainda nao existe */ }
   }
-  await db.execute(sql`DELETE FROM users WHERE id LIKE 'r-%'`);
-  await db.execute(sql`DELETE FROM customers WHERE id LIKE 'r-%'`);
+  // Outros harnesses deixam 'IND'/'GYN' (name UNIQUE) e e-mails com ids proprios — limpa por nome/e-mail.
+  await db.execute(sql`DELETE FROM users WHERE id LIKE 'r-%' OR email IN ('flavio@bebahonest.com.br','lanucy@bebahonest.com.br','robson@bebahonest.com.br','industria@bebahonest.com.br','vend@bebahonest.com.br')`);
+  await db.execute(sql`DELETE FROM customers WHERE id LIKE 'r-%' OR cnpj = '22222222000192'`);
   await db.execute(sql`DELETE FROM products WHERE id LIKE 'r-%'`);
-  await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'r-%'`);
+  await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'r-%' OR name IN ('IND', 'GYN')`);
 
   await db.execute(sql`INSERT INTO users (id, email, first_name, last_name, role, is_active) VALUES
     ('r-flavio', 'flavio@bebahonest.com.br', 'Flavio', 'Baylao', 'admin', true),
@@ -161,8 +162,38 @@ async function main() {
   t('destinacao: produzido 100, em estoque 87 (30+57), ajustes -3, 10 baixados sem NF -> 10 sem destino explicado', lt.destinacao.produzido === 100 && lt.destinacao.emEstoque === 87 && lt.destinacao.ajustes === -3 && lt.destinacao.naoExplicado === 10, lt.destinacao);
   t('saldos recalculados batem com os gravados (sem divergencia tipo saldo)', !tipos.includes('saldo'), lt.divergencias.filter((d: any) => d.tipo === 'saldo'));
 
+  console.log('\n8) Destino das entradas (GET /api/destino-estoque)');
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS purchase_invoices (id varchar PRIMARY KEY, invoice_number varchar, supplier_name varchar NOT NULL)`);
+  // NF de venda autorizada para o PED-1 (10 un), para a baixa deixar de ser "sem NF".
+  await db.execute(sql`INSERT INTO billing_pipeline (id, sales_card_id, customer_id, customer_name, order_number, omie_instance_id, omie_instance_name, stage, products)
+    VALUES ('r-ped-1', 'r-sc-ped1', 'r-cli-gyn', 'MERCADO X', 'PED-1', 'r-gyn', 'GYN', 'faturado', '[{"id":"r-prod","name":"SUCO MISTO - UVA 350ml","quantity":10}]'::jsonb)`);
+  await db.execute(sql`INSERT INTO fiscal_invoices (id, status, operation_type, invoice_number, series, customer_name, customer_cnpj_cpf, total_invoice, omie_instance_id, sales_card_id, cfop, nature_of_operation, environment, issuer_cnpj, fin_nfe)
+    VALUES ('r-nf-ped1', 'authorized', 'saida', 7001, '1', 'MERCADO X', '33333333000100', 54, 'r-gyn', 'r-sc-ped1', '5101', 'Venda', 'producao', '22222222000192', '1')`);
+  await db.execute(sql`INSERT INTO fiscal_invoice_items (id, invoice_id, item_number, product_id, product_name, quantity, unit_price, total_price, lot_number, cfop)
+    VALUES ('r-nfi-ped1', 'r-nf-ped1', 1, 'r-prod', 'SUCO MISTO - UVA 350ml - Lote: H221026', 10, 5.4, 54, 'H221026', '5101')`);
+  const { registerDestinoEstoqueRoutes } = await import('../destino-estoque-routes');
+  const h2: Record<string, any> = {};
+  registerDestinoEstoqueRoutes({ get: (path: string, ...fns: any[]) => { h2[path] = fns[fns.length - 1]; } } as any);
+  const call2 = async (query: any) => { let out: any = null; await h2['/api/destino-estoque']({ query }, { status: () => ({ json: (j: any) => { out = j; } }), json: (j: any) => { out = j; } }); return out; };
+  const dd = await call2({});
+  t('3 grupos: H221026 na IND e na GYN + H990001 (sem entrada registrada → divergente)', dd.grupos.length === 3 && dd.grupos.find((g: any) => g.lote === 'H990001')?.situacao === 'divergente' && /sem nenhuma entrada/.test(dd.grupos.find((g: any) => g.lote === 'H990001')?.alertas[0] || ''), dd.grupos.map((g: any) => [g.instancia, g.lote, g.situacao]));
+  const gInd = dd.grupos.find((g: any) => g.lote === 'H221026' && g.instanceId === 'r-ind');
+  const gGyn = dd.grupos.find((g: any) => g.lote === 'H221026' && g.instanceId === 'r-gyn');
+  t('IND: entrada producao OP-1 100', gInd.entradas.length === 1 && gInd.entradas[0].tipo === 'producao' && gInd.entradas[0].quantidade === 100 && /OP-1/.test(gInd.entradas[0].ref), gInd.entradas);
+  t('IND: 2 saidas por NF de transferencia (5001: 40, 5002: 30), com destinatario', gInd.saidas.length === 2 && gInd.saidas.every((s: any) => s.tipo === 'nf' && s.transferencia) && gInd.saidas.map((s: any) => s.nfNumero + ':' + s.quantidade).sort().join(',') === '5001:40,5002:30' && gInd.saidas[0].destinatario === 'HONEST FILIAL GYN', gInd.saidas);
+  t('IND: saldo 30, nada sem destino, situacao em_estoque', gInd.totais.saldoEmUso === 30 && gInd.totais.naoExplicado === 0 && gInd.situacao === 'em_estoque', gInd.totais);
+  t('GYN: entradas = 2 transferencias (NF 5001 e 5002) = 70', gGyn.entradas.length === 2 && gGyn.entradas.every((e: any) => e.tipo === 'transferencia') && gGyn.totais.entradas === 70, gGyn.entradas);
+  t('GYN: saida NF 7001 (10 un) para MERCADO X, com lote na NF', gGyn.saidas.some((s: any) => s.tipo === 'nf' && s.nfNumero === 7001 && s.quantidade === 10 && s.destinatario === 'MERCADO X' && s.nfTemLote === true), gGyn.saidas);
+  t('GYN: ajuste -3 do recebimento como saida tipo ajuste', gGyn.saidas.some((s: any) => s.tipo === 'ajuste' && s.quantidade === 3), gGyn.saidas);
+  t('GYN: 70 - 10 - 3 - saldo 57 = 0 sem destino; mas divergente por ajuste manual', gGyn.totais.naoExplicado === 0 && gGyn.totais.saldoEmUso === 57 && gGyn.situacao === 'divergente' && gGyn.alertas.some((a: string) => /ajuste manual/.test(a)), { t: gGyn.totais, a: gGyn.alertas });
+  t('resumo: entradas 170 (100+70), NFs distintas 3, 2 divergentes', dd.resumo.entradas === 170 && dd.resumo.nfs === 3 && dd.resumo.divergentes === 2, dd.resumo);
+  const dd2 = await call2({ somenteAbertos: '1', productId: 'r-prod', instanceId: 'r-gyn' });
+  t('filtros por produto/instancia funcionam', dd2.grupos.length === 2 && dd2.grupos.every((g: any) => g.instanceId === 'r-gyn'), dd2.grupos.map((g: any) => g.lote));
+  const dd3 = await call2({ de: '2000-01-01', ate: '2000-01-02' });
+  t('periodo sem entradas -> vazio', dd3.grupos.length === 0);
+
   // Limpeza (omie_instances.name e UNIQUE: outros harnesses criam 'IND'/'GYN' com ids proprios).
-  for (const tb of ['inventory_movements', 'inventory_lots', 'billing_pipeline', 'fiscal_invoice_items', 'fiscal_invoices', 'production_orders']) await db.execute(sql.raw(`DELETE FROM ${tb}`));
+  for (const tb of ['inventory_movements', 'inventory_lots', 'billing_pipeline', 'fiscal_invoice_items', 'fiscal_invoices', 'production_orders', 'lote_recebimentos']) await db.execute(sql.raw(`DELETE FROM ${tb}`));
   await db.execute(sql`DELETE FROM omie_instances WHERE id LIKE 'r-%'`);
   await db.execute(sql`DELETE FROM products WHERE id LIKE 'r-%'`);
   await db.execute(sql`DELETE FROM customers WHERE id LIKE 'r-%'`);

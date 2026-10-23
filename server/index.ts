@@ -3258,6 +3258,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // com o lote X (do produto Y), com a instancia emissora; sem transferencias — 22/out/2026.
   // Rotas /api/rastreabilidade-lote*.
   try { registerRastreabilidadeLoteRoutes(app); } catch (e) { console.error('[rastreabilidade-lote]', e); }
+  // Destino das entradas de estoque (entrada → NF de saída), 23/out/2026.
+  try { const { registerDestinoEstoqueRoutes } = await import('./destino-estoque-routes'); registerDestinoEstoqueRoutes(app); } catch (e) { console.error('[destino-estoque]', e); }
   // Checklist de producao + manutencao de maquinas (Flavio 05/set) — mesmo guard /api/industria
   try { registerFabricaRoutes(app); } catch (e) { console.error('[fabrica]', e); }
   // Programacao de Producao (aba Programacao do modulo Industria): saidas por
