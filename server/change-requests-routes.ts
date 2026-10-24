@@ -638,6 +638,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     // Contagem de pendentes (para o badge do menu).
     const cnt = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM change_requests WHERE status = 'pending'`));
     const mapped = rows.map(mapRow);
+    let fotoErro = ""; // diagnóstico da foto do check-in (aparece na resposta só se a consulta falhar)
     // 📲 Enriquece cada card: telefone (cliente/lead) + flag de REPESCAGEM (assignment pendente).
     try {
       const custIds = Array.from(new Set(mapped.filter((m: any) => m.entityType === "customer").map((m: any) => m.customerId || m.entityId).filter(Boolean)));
@@ -731,7 +732,7 @@ export function registerChangeRequestsRoutes(app: Express) {
             m.temFoto = comFoto.has(String(m.id)) || link;
           }
         }
-      } catch (_e: any) { console.warn("[INBOX] foto check-in:", _e?.message); }
+      } catch (_e: any) { console.warn("[INBOX] foto check-in:", _e?.message); fotoErro = String(_e?.message || _e).slice(0, 300); }
       // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
       // lugar do nome. Aqui o nome é resolvido na leitura (cliente e, se não achar, lead), sem
       // precisar migrar nada: os cards novos já nascem com o nome certo.
@@ -742,7 +743,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.entityName = (await nomeDaEntidade(id, "customer")) || (await nomeDaEntidade(id, "lead")) || null;
       }
     } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
-    res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped });
+    res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped, ...(fotoErro ? { _fotoErro: fotoErro } : {}) });
   }));
 
   // --------------------------------------------------------------------------
