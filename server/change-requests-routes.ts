@@ -648,7 +648,7 @@ export function registerChangeRequestsRoutes(app: Express) {
           // card da Rota do Dia: "Último faturamento: dd/mm/aaaa - R$ x (Seg-4ªSem-26 dias)".
           const lo = rowsOf(await db.execute(sql`
             SELECT DISTINCT ON (customer_id) customer_id, created_at AS ultima, sale_value,
-                   (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
+                   ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
             FROM billing_pipeline
             WHERE invoice_number IS NOT NULL AND invoice_number <> '' AND customer_id IN (${inCust})
             ORDER BY customer_id, created_at DESC`));

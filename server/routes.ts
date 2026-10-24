@@ -21490,7 +21490,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           SELECT customer_id,
                  REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') as ndoc,
                  created_at, sale_value, seller_id, seller_name,
-                 (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
+                 ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
           FROM billing_pipeline
           WHERE invoice_number IS NOT NULL AND invoice_number <> ''
             AND (customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
