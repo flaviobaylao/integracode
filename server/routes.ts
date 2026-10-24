@@ -18927,6 +18927,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               isVirtual: customer.virtualService,
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
               visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
+              semanaAtendimento: (customer as any).semanaAtendimento || 'toda', // Semana do mês do cadastro
               isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
               visitDuration: visitAgendaInfo?.visitDuration ?? null,
               omieInstanceId: customer.omieInstanceId // Tag multi-tenant
@@ -19022,6 +19023,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               isVirtual: true, // Forçar isVirtual = true
               weekdays: vc.weekdays,
               visitPeriodicity: vc.visitPeriodicity,
+              semanaAtendimento: (vc as any).semanaAtendimento || 'toda',
               isAutoCheckout: false,
               visitDuration: null
             }));
