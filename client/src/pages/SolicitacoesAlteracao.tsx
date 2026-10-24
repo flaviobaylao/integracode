@@ -23,7 +23,7 @@ import { MessageThread } from "@/components/change-request/ChangeRequestControl"
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -149,6 +149,25 @@ function CabecalhoRota({ r }: { r: any }) {
           <CalendarClock className="h-3 w-3" /> {agenda}
         </div>
       )}
+    </div>
+  );
+}
+
+// 💰 Débito vencido de HOJE nos reports de débito (24/out/2026) — mesma régua e mesmo selo
+// vermelho do card da Rota do Dia. O servidor só manda o campo nos reports de débito; abaixo
+// do piso de R$ 50 vem 0 e o card avisa que não há débito vencido no momento.
+function DebitoVencido({ r }: { r: any }) {
+  if (r?.debitoVencido === undefined || r?.debitoVencido === null) return null;
+  const v = Number(r.debitoVencido) || 0;
+  if (v <= 0) {
+    return <div className="text-[11px] text-emerald-700 dark:text-emerald-400">Sem débito vencido no momento.</div>;
+  }
+  return (
+    <div>
+      <Badge variant="destructive" className="text-xs" data-testid={`cr-debito-${r.id}`}>
+        <DollarSign className="h-3 w-3 mr-1" />
+        Débito vencido: R$ {v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </Badge>
     </div>
   );
 }
@@ -446,6 +465,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               <div>{rd.motivo}</div>
             </div>
           )}
+          <DebitoVencido r={r} />
           {rd.texto && (
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Observação do vendedor</div>
@@ -693,6 +713,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
       {isReport ? (
         <div className="rounded-md bg-muted/50 border p-2.5 text-sm space-y-1">
           {rd.motivo && <div><span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Motivo: </span>{rd.motivo}</div>}
+          <DebitoVencido r={r} />
           {rd.texto && <div className="whitespace-pre-wrap break-words">{rd.texto}</div>}
           <FotoCheckin r={r} tamanho="max-h-32" />
         </div>
