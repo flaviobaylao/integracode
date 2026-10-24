@@ -2743,23 +2743,24 @@ export default function RotaDoDia() {
                                   </button>
                                 )}
                               </p>
-                              {/* 🧾 VENDA FORA DO DIA DE ROTA (23/out/2026): só aparece quando a última compra foi
-                                  num dia SEM visita na agenda do cliente (a agenda inclui a visita deslocada por
-                                  feriado). Formato: "Venda fora do dia de rota - dd/mm - R$ - Vendedor". */}
+                              {/* ⚠️ COMPRA FORA DO DIA DE ROTA (24/out/2026): só um alerta discreto para o vendedor rever
+                                  — a última compra caiu num dia SEM visita na agenda do cliente (a agenda inclui a
+                                  visita deslocada por feriado). Mouse em cima (PC) ou toque (celular) mostra o aviso. */}
                               {!isLead && customerInfo?.lastOrders?.[visit.customerId]?.foraRota && (() => {
-                                const lo = customerInfo.lastOrders[visit.customerId];
-                                const dd = lo.dia ? `${lo.dia.slice(8, 10)}/${lo.dia.slice(5, 7)}` : new Date(lo.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-                                const valor = `R$ ${Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-                                const quemRaw = (lo.sellerName || '').trim().split(/\s+/)[0] || '';
-                                const quem = quemRaw ? quemRaw.charAt(0).toUpperCase() + quemRaw.slice(1).toLowerCase() : '';
+                                const aviso = 'Verificar: compra feita fora do dia de rota e periodicidade';
                                 return (
-                                  <span
-                                    title={`Compra em ${dd} — ${valor}${lo.sellerName ? ` — lançada por ${lo.sellerName}` : ''} (fora do dia de rota do cliente)`}
-                                    className="inline-flex items-center gap-1 rounded-full border border-orange-400 bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-800 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
-                                    data-testid={`badge-venda-fora-rota-${visit.customerId}`}
+                                  <button
+                                    type="button"
+                                    title={aviso}
+                                    aria-label={aviso}
+                                    onClick={(e) => { e.stopPropagation(); toast({ title: '⚠️ Verificar', description: 'Compra feita fora do dia de rota e periodicidade.' }); }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    draggable={false}
+                                    className="shrink-0 text-sm leading-none cursor-help"
+                                    data-testid={`alerta-fora-rota-${visit.customerId}`}
                                   >
-                                    🧾 Compra fora do dia de rota{quem ? ` por ${quem}` : ''}
-                                  </span>
+                                    ⚠️
+                                  </button>
                                 );
                               })()}
                               {!isLead && rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (() => {
