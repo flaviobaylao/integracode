@@ -37,6 +37,7 @@ import CampanhaRotaAvisos from "@/components/CampanhaRotaAvisos";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 import { safeParseWeekdays } from "@/lib/weekdayParser";
+import { semanaDoMesDaData } from "@shared/visitSchedule";
 
 // Vendedores/canais ocultados do seletor de Vendedor da Rota do Dia (por id).
 // (HOTSITE, INSTAGRAM, Fabio H. e Lorenna Pina.)
@@ -57,6 +58,21 @@ const isHiddenRouteSeller = (s: any): boolean => {
   const nm = `${s.firstName || ''} ${s.lastName || ''}`.trim().toLowerCase().replace(/\s+/g, ' ');
   return HIDDEN_ROUTE_SELLER_NAME_PREFIXES.some(p => nm.startsWith(p));
 };
+
+// 🧾 "21/09/2026 - R$ 260,40 (Seg-3ªSem)": data do último faturamento com o dia da semana e a
+// semana do mês — mesma contagem da Semana de Atendimento do cadastro (semana pela segunda-feira).
+function formatUltimoFaturamento(lo: { date: string; value: number; dia?: string } | null | undefined): string {
+  if (!lo) return 'Sem registro';
+  let d: Date;
+  if (lo.dia && /^\d{4}-\d{2}-\d{2}$/.test(lo.dia)) { const [y, m, dd] = lo.dia.split('-').map(Number); d = new Date(y, m - 1, dd); }
+  else d = new Date(lo.date);
+  if (isNaN(d.getTime())) return 'Sem registro';
+  const dow = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][d.getDay()];
+  let sem = '';
+  try { const sm = semanaDoMesDaData(d); sem = `-${sm.n}ªSem`; } catch { /* sem semana */ }
+  const valor = Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+  return `${d.toLocaleDateString('pt-BR')} - R$ ${valor} (${dow}${sem})`;
+}
 
 // Funções auxiliares para formatar dados de agendamento
 function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
@@ -2300,9 +2316,7 @@ export default function RotaDoDia() {
                       )}
                       {r.customerId && (
                         <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                          🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
-                          {' • '}
-                          💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          🧾 Último faturamento: {formatUltimoFaturamento(customerInfo?.lastOrders?.[r.customerId])}
                         </p>
                       )}
                       {((r.weekdays && r.weekdays.length) || r.visitPeriodicity) && (
@@ -2923,9 +2937,7 @@ export default function RotaDoDia() {
 
                             {visit.customerId && (
                               <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                                🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
-                                {' • '}
-                                💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                🧾 Último faturamento: {formatUltimoFaturamento(customerInfo?.lastOrders?.[visit.customerId])}
                               </p>
                             )}
 
@@ -3372,9 +3384,7 @@ export default function RotaDoDia() {
                                       {' • '}
                                       📅 Dia de rota: {formatWeekdaysLocal((visit as any).weekdays) || '—'}
                                       {' • '}
-                                      🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
-                                      {' • '}
-                                      💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      🧾 Último faturamento: {formatUltimoFaturamento(customerInfo?.lastOrders?.[visit.customerId])}
                                     </p>
                                   )}
                                   </>)}
