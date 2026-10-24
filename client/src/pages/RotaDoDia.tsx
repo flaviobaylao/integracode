@@ -37,7 +37,7 @@ import CampanhaRotaAvisos from "@/components/CampanhaRotaAvisos";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 import { safeParseWeekdays } from "@/lib/weekdayParser";
-import { semanaDoMesDaData } from "@shared/visitSchedule";
+import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 
 // Vendedores/canais ocultados do seletor de Vendedor da Rota do Dia (por id).
 // (HOTSITE, INSTAGRAM, Fabio H. e Lorenna Pina.)
@@ -2325,6 +2325,7 @@ export default function RotaDoDia() {
                           {formatWeekdaysLocal(r.weekdays)}
                           {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
                           {formatPeriodicity(r.visitPeriodicity)}
+                          {` • ${ROTULO_SEMANA[normalizarSemana((r as any).semanaAtendimento)]}`}
                         </p>
                       )}
                       </>)}
@@ -2967,6 +2968,8 @@ export default function RotaDoDia() {
                                 {formatWeekdaysLocal((visit as any).weekdays)}
                                 {(visit as any).weekdays && (visit as any).visitPeriodicity && ' • '}
                                 {formatPeriodicity((visit as any).visitPeriodicity)}
+                                {/* Semana do mês do cadastro (Semana de Atendimento) logo após a periodicidade */}
+                                {` • ${ROTULO_SEMANA[normalizarSemana((visit as any).semanaAtendimento)]}`}
                               </p>
                             )}
 
