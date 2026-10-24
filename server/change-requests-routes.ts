@@ -611,6 +611,8 @@ export function registerChangeRequestsRoutes(app: Express) {
       const cityByKey = new Map<string, string>();
       const bairroByKey = new Map<string, string>();
       const lastOrderByKey = new Map<string, string>();
+      const lastOrderValueByKey = new Map<string, number>();
+      const lastOrderDiaByKey = new Map<string, string>();
       // 15/out/2026 — Periodicidade do cliente no card: ao ler um report de não-venda o admin
       // precisa saber de quanto em quanto tempo aquele cliente é visitado para julgar o caso
       // (ex.: "sugestão não gera pedido mínimo" pesa diferente num mensal e num semanal).
@@ -642,12 +644,20 @@ export function registerChangeRequestsRoutes(app: Express) {
         // 🛒 Última compra (18/set/2026): mesma fonte do resto do sistema — último item do
         // billing_pipeline com nota fiscal atribuída (faturado→entregue), por cliente.
         try {
+          // 24/out/2026 — também o VALOR e o dia BR da última compra, para o cabeçalho igual ao
+          // card da Rota do Dia: "Último faturamento: dd/mm/aaaa - R$ x (Seg-4ªSem-26 dias)".
           const lo = rowsOf(await db.execute(sql`
-            SELECT customer_id, MAX(created_at) AS ultima
+            SELECT DISTINCT ON (customer_id) customer_id, created_at AS ultima, sale_value,
+                   (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
             FROM billing_pipeline
             WHERE invoice_number IS NOT NULL AND invoice_number <> '' AND customer_id IN (${inCust})
-            GROUP BY customer_id`));
-          for (const r of lo) if (r.customer_id && r.ultima) lastOrderByKey.set("customer:" + r.customer_id, new Date(r.ultima).toISOString());
+            ORDER BY customer_id, created_at DESC`));
+          for (const r of lo) {
+            if (!r.customer_id || !r.ultima) continue;
+            lastOrderByKey.set("customer:" + r.customer_id, new Date(r.ultima).toISOString());
+            lastOrderValueByKey.set("customer:" + r.customer_id, r.sale_value != null ? Number(r.sale_value) : 0);
+            if (r.dia) lastOrderDiaByKey.set("customer:" + r.customer_id, String(r.dia));
+          }
         } catch (_e: any) { console.warn("[INBOX] ultima compra:", _e?.message); }
       }
       if (leadIds.length) {
@@ -664,6 +674,8 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.city = cityByKey.get(key) || null;
         m.neighborhood = bairroByKey.get(key) || null;
         m.lastOrderAt = lastOrderByKey.get(key) || null;
+        m.lastOrderValue = lastOrderValueByKey.has(key) ? lastOrderValueByKey.get(key) : null;
+        m.lastOrderDia = lastOrderDiaByKey.get(key) || null;
         m.periodicidade = periodicidadeByKey.get(key) || null;
         m.diasRota = diasByKey.get(key) || null;
         m.semanaAtendimento = semanaByKey.get(key) || null;
