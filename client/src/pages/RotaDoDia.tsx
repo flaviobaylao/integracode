@@ -36,6 +36,7 @@ import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportRe
 import CampanhaRotaAvisos from "@/components/CampanhaRotaAvisos";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
+import { safeParseWeekdays } from "@/lib/weekdayParser";
 
 // Vendedores/canais ocultados do seletor de Vendedor da Rota do Dia (por id).
 // (HOTSITE, INSTAGRAM, Fabio H. e Lorenna Pina.)
@@ -62,7 +63,7 @@ function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
   if (!weekdaysJson) return '';
   
   try {
-    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    // import estático: o require() não existe no navegador (Vite/ESM) e o dia de rota sumia do card.
     const days = safeParseWeekdays(weekdaysJson);
     if (!Array.isArray(days) || days.length === 0) return '';
     
@@ -2301,6 +2302,8 @@ export default function RotaDoDia() {
                         <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
                           🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
                           {' • '}
+                          📅 Dia de rota: {formatWeekdaysLocal(r.weekdays as any) || '—'}
+                          {' • '}
                           🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                           {' • '}
                           💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -2922,6 +2925,8 @@ export default function RotaDoDia() {
                               <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
                                 🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || '') || '—'}
                                 {' • '}
+                                📅 Dia de rota: {formatWeekdaysLocal((visit as any).weekdays) || '—'}
+                                {' • '}
                                 🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                                 {' • '}
                                 💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -3368,6 +3373,8 @@ export default function RotaDoDia() {
                                   {visit.customerId && (
                                     <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                                       🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
+                                      {' • '}
+                                      📅 Dia de rota: {formatWeekdaysLocal((visit as any).weekdays) || '—'}
                                       {' • '}
                                       🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                                       {' • '}
