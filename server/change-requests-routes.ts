@@ -17,6 +17,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
+import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
 
 const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : Array.isArray(r) ? r : []);
 
@@ -75,6 +76,10 @@ const DDL: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS ux_cr_pending_sol ON change_requests (entity_type, entity_id) WHERE status = 'pending' AND kind = 'solicitacao';`,
   // 💬 Histórico de conversa (vendedor ⇄ admin) — mensagens da solicitação.
   `ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS messages jsonb NOT NULL DEFAULT '[]'::jsonb;`,
+  // 📷 24/out/2026 — Report que vai para Resolvidas perde a foto DE VEZ (fotoRemovida=true),
+  // mesmo se for reaberto depois. Esta linha cobre os que já estavam resolvidos e qualquer
+  // caminho que resolva sem passar pelo /resolve. A foto original segue no card de visita.
+  `UPDATE change_requests SET details = (COALESCE(details, '{}'::jsonb) - 'fotoUrl') || '{"fotoRemovida": true}'::jsonb WHERE kind = 'report' AND status <> 'pending' AND COALESCE(details->>'fotoRemovida', '') <> 'true';`,
 ];
 
 let _tablesReady: Promise<void> | null = null;
@@ -138,19 +143,22 @@ async function nomeDaEntidade(id: string, onde: "customer" | "lead"): Promise<st
 }
 
 // 📷 FOTO DO CHECK-IN NOS REPORTS — 24/out/2026.
-//   Reports de não-venda e de justificativa de não-visita mostram a foto que o vendedor tirou
+//   Reports (qualquer motivo) de visita SEM venda mostram a foto que o vendedor tirou
 //   no check-in da Rota do Dia (sales_cards.check_in_photo_url), quando houver. A foto é base64
 //   e pesada, então NÃO vai na listagem: a lista só diz se existe (temFoto) e a imagem é servida
 //   card a card por GET /api/change-requests/:id/foto-checkin.
 //   Qual card de visita: o gravado no report (details.salesCardId, reports novos) ou, nos
 //   antigos, o card do mesmo cliente e vendedor mais próximo do horário do report.
-const REPORT_KINDS_COM_FOTO = ["nao_venda", "justificativa"];
+// 24/out/2026 (2ª versão) — vale para QUALQUER report, seja qual for o motivo (não-venda,
+// justificativa, débito, outro…): se houve check-in com foto e a visita NÃO virou venda, a foto vem.
 const casaCardDoReport = sql`
-  ( ((cr.details->>'salesCardId') IS NOT NULL AND sc.id::text = cr.details->>'salesCardId')
-    OR ( sc.customer_id::text = COALESCE(cr.customer_id, cr.entity_id)::text
-         AND (cr.seller_id IS NULL OR sc.seller_id IS NULL OR sc.seller_id::text = cr.seller_id::text)
-         AND COALESCE(sc.check_in_time, sc.updated_at)::timestamptz
-             BETWEEN cr.created_at - interval '20 hours' AND cr.created_at + interval '4 hours' ) )`;
+  ( ( ((cr.details->>'salesCardId') IS NOT NULL AND sc.id::text = cr.details->>'salesCardId')
+      OR ( sc.customer_id::text = COALESCE(cr.customer_id, cr.entity_id)::text
+           AND (cr.seller_id IS NULL OR sc.seller_id IS NULL OR sc.seller_id::text = cr.seller_id::text)
+           AND COALESCE(sc.check_in_time, sc.updated_at)::timestamptz
+               BETWEEN cr.created_at - interval '20 hours' AND cr.created_at + interval '4 hours' ) )
+    -- visita sem venda: sem valor vendido e sem status de venda concluída/faturada
+    AND NOT (COALESCE(sc.sale_value, 0) > 0 OR sc.status IN ('completed', 'invoiced')) )`;
 async function fotoCheckinDoReport(crId: string): Promise<string | null> {
   try {
     const r = rowsOf(await db.execute(sql`
@@ -158,13 +166,14 @@ async function fotoCheckinDoReport(crId: string): Promise<string | null> {
         FROM change_requests cr
         JOIN sales_cards sc ON sc.check_in_photo_url IS NOT NULL AND ${casaCardDoReport}
        WHERE cr.id::text = ${crId}
+         AND COALESCE(cr.details->>'fotoRemovida', '') <> 'true'
        ORDER BY (sc.id::text = COALESCE(cr.details->>'salesCardId','')) DESC,
                 abs(extract(epoch from (COALESCE(sc.check_in_time, sc.updated_at)::timestamptz - cr.created_at))) ASC
        LIMIT 1`));
     const f = String(r[0]?.foto || "").trim();
     if (f) return f;
     // Sem card com foto: usa a foto anexada no próprio report, se for um link válido.
-    const d = rowsOf(await db.execute(sql`SELECT details->>'fotoUrl' AS f FROM change_requests WHERE id::text = ${crId} LIMIT 1`));
+    const d = rowsOf(await db.execute(sql`SELECT details->>'fotoUrl' AS f FROM change_requests WHERE id::text = ${crId} AND COALESCE(details->>'fotoRemovida', '') <> 'true' LIMIT 1`));
     const fu = String(d[0]?.f || "").trim();
     return /^https?:\/\//i.test(fu) ? fu : null;
   } catch { return null; }
@@ -717,22 +726,64 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.semanaAtendimento = semanaByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
-      // 📷 temFoto: reports de não-venda / não-visita com foto de check-in (ou link de foto).
+      // 📷 temFoto: qualquer report com foto de check-in de visita sem venda (ou link de foto).
       try {
-        const reps = (mapped as any[]).filter((m) => m.kind === "report" && REPORT_KINDS_COM_FOTO.includes(String((m.details || {}).reportKind || "")));
+        const reps = (mapped as any[]).filter((m) => m.kind === "report");
         if (reps.length) {
           const inRep = sql.join(reps.map((m) => sql`${String(m.id)}`), sql`, `);
           const fr = rowsOf(await db.execute(sql`
             SELECT cr.id::text AS id FROM change_requests cr
              WHERE cr.id::text IN (${inRep})
+               AND COALESCE(cr.details->>'fotoRemovida', '') <> 'true'
                AND EXISTS (SELECT 1 FROM sales_cards sc WHERE sc.check_in_photo_url IS NOT NULL AND ${casaCardDoReport})`));
           const comFoto = new Set(fr.map((x: any) => String(x.id)));
           for (const m of reps) {
+            const removida = String((m.details || {}).fotoRemovida || "") === "true" || (m.details || {}).fotoRemovida === true;
             const link = /^https?:\/\//i.test(String((m.details || {}).fotoUrl || ""));
-            m.temFoto = comFoto.has(String(m.id)) || link;
+            m.temFoto = !removida && (comFoto.has(String(m.id)) || link);
           }
         }
       } catch (_e: any) { console.warn("[INBOX] foto check-in:", _e?.message); fotoErro = String(_e?.message || _e).slice(0, 300); }
+      // 💰 24/out/2026 — Report de DÉBITO traz o débito vencido de hoje, com a MESMA régua do
+      // badge da Rota do Dia (whereDebitoVivoSql + piso de R$ 50; casa por customer_id ou pelo
+      // documento do cadastro). É o valor vivo, não o do dia do report.
+      try {
+        const ehDebito = (m: any) => m.kind === "report" && m.entityType === "customer" &&
+          (String((m.details || {}).reportKind || "") === "debito" || /d[eé]bito/i.test(String((m.details || {}).motivo || "")));
+        const repsDeb = (mapped as any[]).filter(ehDebito);
+        const cids = Array.from(new Set(repsDeb.map((m) => String(m.customerId || m.entityId || "")).filter(Boolean)));
+        if (cids.length) {
+          const inC = sql.join(cids.map((id) => sql`${id}`), sql`, `);
+          const docs = rowsOf(await db.execute(sql`
+            SELECT id, REGEXP_REPLACE(COALESCE(NULLIF(cnpj, ''), cpf, ''), '[^0-9]', '', 'g') AS doc
+              FROM customers WHERE id IN (${inC})`));
+          const docToCid: Record<string, string> = {};
+          for (const d of docs) if (d.doc) docToCid[String(d.doc)] = String(d.id);
+          const docList = Object.keys(docToCid);
+          const rr = rowsOf(await db.execute(sql`
+            SELECT r.customer_id AS cid,
+                   REGEXP_REPLACE(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') AS ndoc,
+                   (r.amount - COALESCE(r.amount_paid, 0)) AS saldo
+              FROM receivables r
+             WHERE ${whereDebitoVivoSql("r")}
+               AND ( r.customer_id IN (${inC})
+                     ${docList.length ? sql`OR REGEXP_REPLACE(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') IN (${sql.join(docList.map((d) => sql`${d}`), sql`, `)})` : sql``} )`));
+          const wanted = new Set(cids);
+          const saldoPor: Record<string, number> = {};
+          for (const row of rr) {
+            const saldo = parseFloat(String(row.saldo || "0"));
+            if (!(saldo > 0)) continue;
+            let alvo: string | undefined;
+            if (row.cid && wanted.has(String(row.cid))) alvo = String(row.cid);
+            else { const nd = String(row.ndoc || ""); if (nd && docToCid[nd]) alvo = docToCid[nd]; }
+            if (alvo) saldoPor[alvo] = (saldoPor[alvo] || 0) + saldo;
+          }
+          for (const m of repsDeb) {
+            const v = saldoPor[String(m.customerId || m.entityId || "")] || 0;
+            m.debitoVencido = v > PISO_DEBITO_BLOQUEIO ? Math.round(v * 100) / 100 : 0;
+          }
+        }
+      } catch (_e: any) { console.warn("[INBOX] debito:", _e?.message); }
       // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
       // lugar do nome. Aqui o nome é resolvido na leitura (cliente e, se não achar, lead), sem
       // precisar migrar nada: os cards novos já nascem com o nome certo.
@@ -1128,7 +1179,11 @@ export function registerChangeRequestsRoutes(app: Express) {
       UPDATE change_requests
       SET status = ${status}, resolution_note = ${note},
           resolved_by = ${u?.id || null}, resolved_by_name = ${userName(u)}, resolved_at = now(),
-          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([adminMsg])}::jsonb
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([adminMsg])}::jsonb,
+          -- 📷 Report resolvido perde a foto de vez (ver DDL acima).
+          details = CASE WHEN kind = 'report'
+                         THEN (COALESCE(details, '{}'::jsonb) - 'fotoUrl') || '{"fotoRemovida": true}'::jsonb
+                         ELSE details END
       WHERE id = ${id}
       RETURNING *`));
     if (updated.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });
