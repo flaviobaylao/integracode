@@ -59,7 +59,7 @@ const isHiddenRouteSeller = (s: any): boolean => {
   return HIDDEN_ROUTE_SELLER_NAME_PREFIXES.some(p => nm.startsWith(p));
 };
 
-// 🧾 "21/09/2026 - R$ 260,40 (Seg-3ªSem)": data do último faturamento com o dia da semana e a
+// 🧾 "21/09/2026 - R$ 260,40 (Seg-3ªSem-40 dias)": data do último faturamento com o dia da semana e a
 // semana do mês — mesma contagem da Semana de Atendimento do cadastro (semana pela segunda-feira).
 function formatUltimoFaturamento(lo: { date: string; value: number; dia?: string } | null | undefined): string {
   if (!lo) return 'Sem registro';
@@ -71,7 +71,12 @@ function formatUltimoFaturamento(lo: { date: string; value: number; dia?: string
   let sem = '';
   try { const sm = semanaDoMesDaData(d); sem = `-${sm.n}ªSem`; } catch { /* sem semana */ }
   const valor = Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-  return `${d.toLocaleDateString('pt-BR')} - R$ ${valor} (${dow}${sem})`;
+  // Dias passados desde a compra até HOJE (datas de calendário, sem efeito de fuso/horário).
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const base = new Date(d); base.setHours(0, 0, 0, 0);
+  const dias = Math.max(0, Math.round((hoje.getTime() - base.getTime()) / 86400000));
+  const txtDias = dias === 0 ? 'hoje' : dias === 1 ? '1 dia' : `${dias} dias`;
+  return `${d.toLocaleDateString('pt-BR')} - R$ ${valor} (${dow}${sem}-${txtDias})`;
 }
 
 // Funções auxiliares para formatar dados de agendamento
