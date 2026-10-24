@@ -9889,7 +9889,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const VENCIDOS_REPROG_KEY = 'reprog_vencidos_last_day';
 
   async function runTelemarketingRegen(sellerIdsFilter?: string[]): Promise<any> {
-    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    // 🗓️ MOTOR ÚNICO (24/out/2026): cada cliente da carteira de telemarketing é regenerado por
+    // regenerateCustomerAgenda — o mesmo cálculo da Rota do Dia (semana do mês, início do
+    // fornecimento, BSB, feriados). O motor já grava a agenda de telemarketing como VIRTUAL.
     // Escopo opcional: se sellerIdsFilter vier preenchido, regenera SÓ esses vendedores
     // (não toca nos demais). Sem filtro, roda para todos os telemarketing (auto-regen semanal).
     let sellerIds: string[];
@@ -9902,60 +9904,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (sellerIds.length === 0) return { message: 'Nenhum vendedor telemarketing', custProcessed: 0 };
 
     const custRes = await db.execute(sql`
-      SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address, service_start_date
+      SELECT id, seller_id
       FROM customers
       WHERE seller_id = ANY(string_to_array(${sellerIds.join(',')}, ','))
         AND is_active = true
+        AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE) AND (is_colaborador IS NOT TRUE)
         AND weekdays IS NOT NULL AND weekdays NOT IN ('[]', 'null', '')`);
 
-    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-    // A regeneração NUNCA toca em HOJE nem no passado: só cuida das ocorrências FUTURAS
-    // (a partir de amanhã). Assim a lista de atendimentos virtuais do dia nunca encolhe
-    // quando a regeneração semanal roda no meio do dia.
-    const tomorrow = new Date(today); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
     let custProcessed = 0, agendaCreated = 0;
     const routeKeys = new Set<string>();
-
     for (const c of custRes.rows as any[]) {
-      let weekdays: any;
-      try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { continue; }
-      if (!Array.isArray(weekdays) || weekdays.length === 0) continue;
-      const periodicity = c.visit_periodicity || 'semanal';
-
-      // Limpa apenas a agenda FUTURA pendente (>= amanhã) deste cliente e regenera.
-      // Hoje e o passado ficam intactos (preserva os atendimentos virtuais já programados para hoje).
-      await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${tomorrow.toISOString()}`);
-
-      let dates: Date[] = [];
       try {
-        const _ssd = c.service_start_date ? new Date(c.service_start_date) : undefined;
-        const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today, serviceStartDate: _ssd }).nextDate;
-        dates.push(first);
-        let last = first;
-        for (let i = 0; i < 3; i++) { const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last }).nextDate; dates.push(nx); last = nx; }
-      } catch { continue; }
-
-      for (const dt of dates) {
-        const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
-        if (ds.getTime() < today.getTime()) continue;
-        const iso = ds.toISOString();
-        if (ds.getTime() < tomorrow.getTime()) {
-          const exToday: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${c.id} AND DATE(scheduled_date) = ${iso.slice(0, 10)}::date LIMIT 1`);
-          if ((exToday.rows || []).length > 0) continue;
-          await db.execute(sql`
-            INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
-            VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
-          agendaCreated++;
-          continue;
-        }
-        await db.execute(sql`
-          INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
-          VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
-        agendaCreated++;
-        routeKeys.add(`${c.seller_id}|${iso.slice(0, 10)}`);
-      }
-      custProcessed++;
+        const n = await regenerateCustomerAgenda(String(c.id));
+        agendaCreated += n > 0 ? n : 0;
+        custProcessed++;
+        const fut: any = await db.execute(sql`
+          SELECT scheduled_date::date::text AS d FROM visit_agenda
+           WHERE customer_id = ${c.id} AND visit_status = 'pending'
+             AND scheduled_date::date > ((now() AT TIME ZONE 'America/Sao_Paulo')::date)`);
+        for (const r of ((fut.rows || fut) as any[])) if (r.d) routeKeys.add(`${c.seller_id}|${r.d}`);
+      } catch (e: any) { console.warn('[TM-REGEN] cliente', c.id, e?.message); }
     }
 
     // Garante uma rota (vazia) por vendedor/dia para o GET montar os atendimentos virtuais;
