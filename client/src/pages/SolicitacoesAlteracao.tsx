@@ -22,6 +22,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
+import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -47,17 +48,6 @@ const fmtDiaBR = (s?: string) => {
   try { return new Date(s).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric" }); }
   catch { return ""; }
 };
-function UltimaCompra({ iso }: { iso?: string | null }) {
-  if (!iso) return <span className="text-[11px] text-muted-foreground flex items-center gap-1"><ShoppingCart className="h-3 w-3" /> Sem compra registrada</span>;
-  const dias = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
-  const cls = dias >= 60 ? "text-red-700" : dias >= 30 ? "text-amber-700" : "text-emerald-700";
-  return (
-    <span className={`text-[11px] flex items-center gap-1 ${cls}`} title="Data do último pedido faturado deste cliente">
-      <ShoppingCart className="h-3 w-3" /> Última compra: <b>{fmtDiaBR(iso)}</b> ({dias === 0 ? "hoje" : dias === 1 ? "há 1 dia" : `há ${dias} dias`})
-    </span>
-  );
-}
-
 const fmtDate = (s?: string) => {
   if (!s) return "";
   try { return new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
@@ -110,40 +100,54 @@ function fmtPeriodicidade(v?: string | null): string {
   if (!k) return "";
   return PERIODICIDADE_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1));
 }
-// Dia(s) de rota do cadastro: ["segunda","quinta"] -> "Segunda/Quinta".
-function fmtDiasRota(v?: any): string {
-  if (!Array.isArray(v) || v.length === 0) return "";
-  return v.map((d: any) => { const k = String(d || "").trim(); return k ? k.charAt(0).toUpperCase() + k.slice(1) : ""; })
-    .filter(Boolean).join("/");
-}
-// Semana do mês em que o cliente é atendido (contada pela segunda-feira, igual ao cadastro).
-// "toda" é o padrão e não vira rótulo — a periodicidade já diz a cadência.
-const SEMANA_LABEL: Record<string, string> = {
-  impar: "1ª e 3ª sem.", par: "2ª e 4ª sem.",
-  "1": "1ª sem.", "2": "2ª sem.", "3": "3ª sem.", "4": "4ª sem.", ultima: "Última sem.",
-};
-function fmtSemanaAtendimento(v?: string | null): string {
-  const k = String(v || "").trim().toLowerCase();
-  if (!k || k === "toda") return "";
-  return SEMANA_LABEL[k] || "";
-}
-
 // Linha cinza sob o cabeçalho do card: onde fica o cliente e quando ele é visitado
 // (bairro · cidade · periodicidade · dia de rota · semana do mês). O que não existe no
 // cadastro simplesmente não aparece — lead, por exemplo, não tem nenhuma das três últimas.
 function LinhaCadastro({ r }: { r: any }) {
+  // 24/out/2026 — periodicidade/dia/semana saíram daqui: agora vêm no cabeçalho igual ao card da
+  // Rota do Dia (CabecalhoRota), sem duplicar. Aqui fica só onde o cliente está.
   const local = [r.neighborhood, r.city].filter(Boolean).join(" · ");
-  const agenda = [fmtPeriodicidade(r.periodicidade), fmtDiasRota(r.diasRota), fmtSemanaAtendimento(r.semanaAtendimento)]
-    .filter(Boolean).join(" · ");
-  if (!local && !agenda) return null;
+  if (!local) return null;
+  return <div className="text-[11px] text-muted-foreground mt-0.5">{local}</div>;
+}
+
+// 🧾📅 Cabeçalho igual ao card da Rota do Dia (24/out/2026):
+//   🧾 Último faturamento: 28/09/2026 - R$ 294,00 (Seg-4ªSem-26 dias)
+//   📅 Seg • Quinzenal • 2ª e 4ª do mês
+const DIA_ABREV: Record<string, string> = { seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sab: "Sáb", "sáb": "Sáb", dom: "Dom" };
+function fmtUltimoFaturamento(r: any): string {
+  if (!r.lastOrderAt) return "Sem registro";
+  let d: Date;
+  if (r.lastOrderDia && /^\d{4}-\d{2}-\d{2}$/.test(r.lastOrderDia)) { const [y, m, dd] = String(r.lastOrderDia).split("-").map(Number); d = new Date(y, m - 1, dd); }
+  else d = new Date(r.lastOrderAt);
+  if (isNaN(d.getTime())) return "Sem registro";
+  const dow = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.getDay()];
+  let sem = "";
+  try { sem = `-${semanaDoMesDaData(d).n}ªSem`; } catch { /* sem semana */ }
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const base = new Date(d); base.setHours(0, 0, 0, 0);
+  const dias = Math.max(0, Math.round((hoje.getTime() - base.getTime()) / 86400000));
+  const txtDias = dias === 0 ? "hoje" : dias === 1 ? "1 dia" : `${dias} dias`;
+  const valor = r.lastOrderValue != null ? ` - R$ ${Number(r.lastOrderValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "";
+  return `${d.toLocaleDateString("pt-BR")}${valor} (${dow}${sem}-${txtDias})`;
+}
+function CabecalhoRota({ r }: { r: any }) {
+  if (r.entityType !== "customer") return null;
+  const dias = Array.isArray(r.diasRota)
+    ? r.diasRota.map((x: any) => { const k = String(x || "").trim().toLowerCase().slice(0, 3); return DIA_ABREV[k] || String(x); }).filter(Boolean).join(", ")
+    : "";
+  const per = fmtPeriodicidade(r.periodicidade);
+  const sem = r.periodicidade || r.semanaAtendimento ? ROTULO_SEMANA[normalizarSemana(r.semanaAtendimento)] : "";
+  const agenda = [dias, per, sem].filter(Boolean).join(" • ");
   return (
-    <div className="text-[11px] text-muted-foreground mt-0.5">
-      {local}
+    <div className="mt-0.5 space-y-0.5">
+      <div className="text-[11px] text-gray-600 dark:text-gray-300" data-testid={`cr-ultimo-faturamento-${r.id}`}>
+        🧾 Último faturamento: {fmtUltimoFaturamento(r)}
+      </div>
       {agenda && (
-        <>
-          {local ? " · " : ""}
-          <span className="font-medium text-foreground/80">{agenda}</span>
-        </>
+        <div className="text-[11px] text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1" data-testid={`cr-agenda-${r.id}`}>
+          <CalendarClock className="h-3 w-3" /> {agenda}
+        </div>
       )}
     </div>
   );
@@ -412,7 +416,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
           <LinhaCadastro r={r} />
-          {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
+          <CabecalhoRota r={r} />
         </div>
       </div>
 
@@ -665,7 +669,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
             <span>{fmtDate(r.createdAt)}</span>
           </div>
           <LinhaCadastro r={r} />
-          {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
+          <CabecalhoRota r={r} />
           {rd?.previsaoPagamento && (
             <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
               <CalendarClock className="h-3 w-3" /> Previsão de pagamento: <b>{fmtDiaBR(rd.previsaoPagamento)}</b>
