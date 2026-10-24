@@ -153,6 +153,24 @@ function CabecalhoRota({ r }: { r: any }) {
   );
 }
 
+// 📷 Foto do check-in da Rota do Dia (24/out/2026). Só aparece quando o servidor diz que o
+// report tem foto (r.temFoto); a imagem vem sob demanda de /api/change-requests/:id/foto-checkin
+// — base64 pesado não trafega na listagem. Clicar abre a foto inteira numa aba nova.
+function FotoCheckin({ r, tamanho }: { r: any; tamanho: string }) {
+  const [falhou, setFalhou] = useState(false);
+  if (!r?.temFoto || falhou) return null;
+  const src = `/api/change-requests/${encodeURIComponent(String(r.id))}/foto-checkin`;
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Foto do check-in</div>
+      <a href={src} target="_blank" rel="noreferrer" data-testid={`cr-foto-${r.id}`}>
+        <img src={src} alt="Foto tirada no check-in" loading="lazy" onError={() => setFalhou(true)}
+          className={`mt-1 ${tamanho} rounded border object-contain bg-white`} />
+      </a>
+    </div>
+  );
+}
+
 function Detalhes({ details }: { details: any }) {
   if (!details || Object.keys(details).length === 0) return null;
   return (
@@ -434,14 +452,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               <div className="whitespace-pre-wrap break-words">{rd.texto}</div>
             </div>
           )}
-          {rd.fotoUrl && (
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Foto</div>
-              <a href={rd.fotoUrl} target="_blank" rel="noreferrer" data-testid={`cr-foto-${r.id}`}>
-                <img src={rd.fotoUrl} alt="Foto anexada pelo vendedor" className="mt-1 max-h-40 rounded border object-contain" />
-              </a>
-            </div>
-          )}
+          <FotoCheckin r={r} tamanho="max-h-48" />
         </div>
       ) : (
         <>
@@ -683,9 +694,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
         <div className="rounded-md bg-muted/50 border p-2.5 text-sm space-y-1">
           {rd.motivo && <div><span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Motivo: </span>{rd.motivo}</div>}
           {rd.texto && <div className="whitespace-pre-wrap break-words">{rd.texto}</div>}
-          {rd.fotoUrl && (
-            <a href={rd.fotoUrl} target="_blank" rel="noreferrer"><img src={rd.fotoUrl} alt="Foto anexada pelo vendedor" className="mt-1 max-h-32 rounded border object-contain" /></a>
-          )}
+          <FotoCheckin r={r} tamanho="max-h-32" />
         </div>
       ) : (<>
       <div className="flex flex-wrap gap-1">
