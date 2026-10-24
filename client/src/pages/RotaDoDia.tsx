@@ -2300,10 +2300,6 @@ export default function RotaDoDia() {
                       )}
                       {r.customerId && (
                         <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                          🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
-                          {' • '}
-                          📅 Dia de rota: {formatWeekdaysLocal(r.weekdays as any) || '—'}
-                          {' • '}
                           🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                           {' • '}
                           💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -2747,13 +2743,16 @@ export default function RotaDoDia() {
                                   — a última compra caiu num dia SEM visita na agenda do cliente (a agenda inclui a
                                   visita deslocada por feriado). Mouse em cima (PC) ou toque (celular) mostra o aviso. */}
                               {!isLead && customerInfo?.lastOrders?.[visit.customerId]?.foraRota && (() => {
-                                const aviso = 'Verificar: compra feita fora do dia de rota e periodicidade';
+                                const lo = customerInfo.lastOrders[visit.customerId];
+                                const quemRaw = (lo.sellerName || '').trim().split(/\s+/)[0] || '';
+                                const quem = quemRaw ? quemRaw.charAt(0).toUpperCase() + quemRaw.slice(1).toLowerCase() : '';
+                                const aviso = `Verificar: compra feita fora do dia de rota e periodicidade${quem ? ` por ${quem}` : ''}`;
                                 return (
                                   <button
                                     type="button"
                                     title={aviso}
                                     aria-label={aviso}
-                                    onClick={(e) => { e.stopPropagation(); toast({ title: '⚠️ Verificar', description: 'Compra feita fora do dia de rota e periodicidade.' }); }}
+                                    onClick={(e) => { e.stopPropagation(); toast({ title: '⚠️ Verificar', description: `Compra feita fora do dia de rota e periodicidade${quem ? ` por ${quem}` : ''}.` }); }}
                                     onPointerDown={(e) => e.stopPropagation()}
                                     draggable={false}
                                     className="shrink-0 text-sm leading-none cursor-help"
@@ -2924,10 +2923,6 @@ export default function RotaDoDia() {
 
                             {visit.customerId && (
                               <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                                🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || '') || '—'}
-                                {' • '}
-                                📅 Dia de rota: {formatWeekdaysLocal((visit as any).weekdays) || '—'}
-                                {' • '}
                                 🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
                                 {' • '}
                                 💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
