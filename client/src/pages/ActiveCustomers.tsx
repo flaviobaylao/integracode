@@ -219,7 +219,6 @@ export default function ActiveCustomers() {
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
-  const [selectedQuarentena, setSelectedQuarentena] = useState<string>(""); // "", "sim", "nao"
   const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [neighborhoodMulti, setNeighborhoodMulti] = useState<string[]>([]);
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | 'name' | null>(null);
@@ -714,6 +713,9 @@ export default function ActiveCustomers() {
         .flatMap(ac => parseWeekdaysArray(ac.customer?.weekdays))
     )
   ).sort();
+  // Opção especial no filtro de Dia: clientes SEM dia de rota cadastrado (weekdays vazio).
+  const SEM_DIA_ROTA = "Sem dia de rota";
+  const dayFilterOptions = [SEM_DIA_ROTA, ...daysOfRoute];
 
   // Obter lista única de periodicidades
   const periodicities = Array.from(
@@ -792,7 +794,9 @@ export default function ActiveCustomers() {
       // Filtro de dia de rota (múltipla escolha): casa se QUALQUER dia selecionado
       // estiver entre os dias de rota do cliente.
       const custDays = ac.customer?.weekdays ? parseWeekdaysArray(ac.customer.weekdays) : [];
-      const matchesDayOfRoute = dayMulti.length === 0 || custDays.some((d) => dayMulti.includes(d));
+      const matchesDayOfRoute = dayMulti.length === 0
+        || (dayMulti.includes(SEM_DIA_ROTA) && custDays.length === 0)
+        || custDays.some((d) => dayMulti.includes(d));
       
       // Filtro de periodicidade
       const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
@@ -809,12 +813,6 @@ export default function ActiveCustomers() {
       const matchesPositivation = !selectedPositivation || 
         (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth === false);
       
-      // Filtro de quarentena (Sim = Data de Início do Fornecimento no futuro)
-      const ssd = (ac.customer as any)?.serviceStartDate;
-      const ssdT = ssd ? new Date(ssd).getTime() : NaN;
-      const emQuarentena = !Number.isNaN(ssdT) && ssdT > Date.now();
-      const matchesQuarentena = !selectedQuarentena || (selectedQuarentena === 'sim' ? emQuarentena : !emQuarentena);
-      
       const matchesCity = cityMulti.length === 0 || cityMulti.includes(cityLabelOf(ac.customer?.city));
       const matchesNeighborhood = multiMatch(neighborhoodMulti, ac.customer?.neighborhood?.trim() || '');
       
@@ -826,7 +824,7 @@ export default function ActiveCustomers() {
       // Filtro de coordenadas (com/sem lat-long no cadastro)
       const hasCoords = !!((ac.customer as any)?.latitude && (ac.customer as any)?.longitude);
       const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesQuarentena && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -1165,7 +1163,7 @@ export default function ActiveCustomers() {
               
               <MultiSelect label="Vendedor" options={sellerOptions} selected={sellerMulti} onChange={setSellerMulti} testId="filter-seller-active" />
 
-              <MultiSelect label="Dia" options={daysOfRoute} selected={dayMulti} onChange={setDayMulti} testId="filter-day-active" />
+              <MultiSelect label="Dia" options={dayFilterOptions} selected={dayMulti} onChange={setDayMulti} testId="filter-day-active" />
               
               <Select value={selectedVirtualType} onValueChange={setSelectedVirtualType}>
                 <SelectTrigger className="w-[100px] h-9" data-testid="select-virtual-filter">
@@ -1237,16 +1235,6 @@ export default function ActiveCustomers() {
 
               <MultiSelect label="Bairro" options={neighborhoods} selected={neighborhoodMulti} onChange={setNeighborhoodMulti} testId="filter-neighborhood-active" />
 
-              <Select value={selectedQuarentena} onValueChange={setSelectedQuarentena}>
-                <SelectTrigger className="w-[150px] h-9" data-testid="select-quarentena-filter">
-                  <SelectValue placeholder="Quarentena" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sim">Em quarentena</SelectItem>
-                  <SelectItem value="nao">Fora de quarentena</SelectItem>
-                </SelectContent>
-              </Select>
-
               <Input
                 type="date"
                 value={selectedDate}
@@ -1267,7 +1255,6 @@ export default function ActiveCustomers() {
                   setSelectedSemana("");
                   setSelectedDate("");
                   setSelectedPositivation("");
-                  setSelectedQuarentena("");
                   setCityMulti([]);
                   setNeighborhoodMulti([]);
                   setSelectedPersonType("");
@@ -1300,7 +1287,7 @@ export default function ActiveCustomers() {
                   🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedCustomerIds.size})`}
                 </Button>
               )}
-              {(searchTerm || selectedSeller || dayMulti.length > 0 || selectedPeriodicity || selectedSemana || selectedVirtualType || selectedPositivation || selectedQuarentena || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
+              {(searchTerm || selectedSeller || dayMulti.length > 0 || selectedPeriodicity || selectedSemana || selectedVirtualType || selectedPositivation || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
@@ -1484,7 +1471,7 @@ export default function ActiveCustomers() {
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
-                            {searchTerm || selectedSeller || selectedQuarentena || cityMulti.length > 0 || neighborhoodMulti.length > 0 ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
+                            {searchTerm || selectedSeller || dayMulti.length > 0 || cityMulti.length > 0 || neighborhoodMulti.length > 0 ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
                       ) : (
