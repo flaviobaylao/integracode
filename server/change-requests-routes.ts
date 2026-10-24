@@ -137,6 +137,39 @@ async function nomeDaEntidade(id: string, onde: "customer" | "lead"): Promise<st
   } catch { return null; }
 }
 
+// 📷 FOTO DO CHECK-IN NOS REPORTS — 24/out/2026.
+//   Reports de não-venda e de justificativa de não-visita mostram a foto que o vendedor tirou
+//   no check-in da Rota do Dia (sales_cards.check_in_photo_url), quando houver. A foto é base64
+//   e pesada, então NÃO vai na listagem: a lista só diz se existe (temFoto) e a imagem é servida
+//   card a card por GET /api/change-requests/:id/foto-checkin.
+//   Qual card de visita: o gravado no report (details.salesCardId, reports novos) ou, nos
+//   antigos, o card do mesmo cliente e vendedor mais próximo do horário do report.
+const REPORT_KINDS_COM_FOTO = ["nao_venda", "justificativa"];
+const casaCardDoReport = sql`
+  ( ((cr.details->>'salesCardId') IS NOT NULL AND sc.id::text = cr.details->>'salesCardId')
+    OR ( sc.customer_id::text = COALESCE(cr.customer_id, cr.entity_id)::text
+         AND (cr.seller_id IS NULL OR sc.seller_id IS NULL OR sc.seller_id::text = cr.seller_id::text)
+         AND COALESCE(sc.check_in_time, sc.updated_at)::timestamptz
+             BETWEEN cr.created_at - interval '20 hours' AND cr.created_at + interval '4 hours' ) )`;
+async function fotoCheckinDoReport(crId: string): Promise<string | null> {
+  try {
+    const r = rowsOf(await db.execute(sql`
+      SELECT sc.check_in_photo_url AS foto
+        FROM change_requests cr
+        JOIN sales_cards sc ON sc.check_in_photo_url IS NOT NULL AND ${casaCardDoReport}
+       WHERE cr.id::text = ${crId}
+       ORDER BY (sc.id::text = COALESCE(cr.details->>'salesCardId','')) DESC,
+                abs(extract(epoch from (COALESCE(sc.check_in_time, sc.updated_at)::timestamptz - cr.created_at))) ASC
+       LIMIT 1`));
+    const f = String(r[0]?.foto || "").trim();
+    if (f) return f;
+    // Sem card com foto: usa a foto anexada no próprio report, se for um link válido.
+    const d = rowsOf(await db.execute(sql`SELECT details->>'fotoUrl' AS f FROM change_requests WHERE id::text = ${crId} LIMIT 1`));
+    const fu = String(d[0]?.f || "").trim();
+    return /^https?:\/\//i.test(fu) ? fu : null;
+  } catch { return null; }
+}
+
 function newMsgId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -197,6 +230,7 @@ export async function registrarReportInbox(p: {
   texto: string;           // observação escrita (obrigatória — só cria se tiver conteúdo)
   sempre?: boolean;        // true = registra mesmo sem texto (usa o motivo como texto). Ex.: Não Venda.
   fotoUrl?: string | null; // foto anexada pelo vendedor (exibida no Inbox)
+  salesCardId?: string | null; // card da visita (Rota do Dia) — de onde sai a foto do check-in
 }): Promise<void> {
   try {
     let texto = String(p?.texto || "").trim();
@@ -232,6 +266,7 @@ export async function registrarReportInbox(p: {
     const catLabel = REPORT_KIND_LABEL[p.reportKind] || "Report";
     const details: any = { reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000) };
     if (p.fotoUrl) details.fotoUrl = String(p.fotoUrl).slice(0, 500);
+    if (p.salesCardId) details.salesCardId = String(p.salesCardId);
     const seedMsg = {
       id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
       text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
@@ -681,6 +716,22 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.semanaAtendimento = semanaByKey.get(key) || null;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
+      // 📷 temFoto: reports de não-venda / não-visita com foto de check-in (ou link de foto).
+      try {
+        const reps = (mapped as any[]).filter((m) => m.kind === "report" && REPORT_KINDS_COM_FOTO.includes(String((m.details || {}).reportKind || "")));
+        if (reps.length) {
+          const inRep = sql.join(reps.map((m) => sql`${String(m.id)}`), sql`, `);
+          const fr = rowsOf(await db.execute(sql`
+            SELECT cr.id::text AS id FROM change_requests cr
+             WHERE cr.id::text IN (${inRep})
+               AND EXISTS (SELECT 1 FROM sales_cards sc WHERE sc.check_in_photo_url IS NOT NULL AND ${casaCardDoReport})`));
+          const comFoto = new Set(fr.map((x: any) => String(x.id)));
+          for (const m of reps) {
+            const link = /^https?:\/\//i.test(String((m.details || {}).fotoUrl || ""));
+            m.temFoto = comFoto.has(String(m.id)) || link;
+          }
+        }
+      } catch (_e: any) { console.warn("[INBOX] foto check-in:", _e?.message); }
       // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
       // lugar do nome. Aqui o nome é resolvido na leitura (cliente e, se não achar, lead), sem
       // precisar migrar nada: os cards novos já nascem com o nome certo.
@@ -692,6 +743,23 @@ export function registerChangeRequestsRoutes(app: Express) {
       }
     } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
     res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped });
+  }));
+
+  // --------------------------------------------------------------------------
+  // GET /api/change-requests/:id/foto-checkin — devolve a IMAGEM (binário) da foto do
+  //   check-in ligada ao report. 404 quando não há foto. Usado direto num <img src>.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/:id/foto-checkin", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), safe(async (req, res) => {
+    const foto = await fotoCheckinDoReport(String(req.params.id));
+    if (!foto) return res.status(404).end();
+    if (/^https?:\/\//i.test(foto)) return res.redirect(foto);
+    const m = foto.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+    if (!m) return res.status(404).end();
+    const buf = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]));
+    if (!buf.length) return res.status(404).end();
+    res.setHeader("Content-Type", m[1] || "image/jpeg");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.end(buf);
   }));
 
   // --------------------------------------------------------------------------
