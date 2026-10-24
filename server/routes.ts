@@ -21497,7 +21497,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
         } catch (e) { console.warn('[CUSTOMER-INFO] nome do vendedor da última compra:', (e as any)?.message); }
-        // FORA DO DIA DE ROTA: não havia visita na agenda real do cliente no dia da venda.
+        // FORA DO DIA DE ROTA (regra do Flavio, 24/out/2026): olha SÓ a última compra. Ela é
+        // "fora" quando caiu num dia da semana que NÃO é dia de rota do cliente (ex.: semanal de
+        // segunda que comprou na quarta). Compra no dia de rota (qualquer semana) ou num dia que
+        // tinha visita na agenda (visita deslocada por feriado) NÃO alerta. Como só a última compra
+        // conta, a próxima compra feita no dia certo faz o alerta sumir.
         try {
           const pares = Object.entries(lastOrdersMap).filter(([, v]) => !!v.dia);
           if (pares.length) {
@@ -21512,7 +21516,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
                  AND COALESCE(visit_status, 'pending') <> 'cancelled'`);
             const naRota = new Set<string>();
             for (const r of ((vr.rows || vr) as any[])) naRota.add(String(r.customer_id) + '|' + String(r.dia));
-            for (const [cid, v] of pares) v.foraRota = !naRota.has(cid + '|' + v.dia);
+            // Dias de rota do cadastro (0=Dom … 6=Sáb).
+            const DOW_TOK: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6, 'sáb': 6 };
+            const diasRotaPorCliente = new Map<string, Set<number>>();
+            const wr: any = await db.execute(sql`SELECT id, weekdays FROM customers WHERE id = ANY(${arr(cidsLO)}::text[])`);
+            for (const r of ((wr.rows || wr) as any[])) {
+              let w: any = r.weekdays;
+              if (typeof w === 'string') { try { w = JSON.parse(w); } catch { w = []; } }
+              const set = new Set<number>();
+              for (const t of (Array.isArray(w) ? w : [])) { const n = DOW_TOK[String(t || '').trim().toLowerCase().slice(0, 3)]; if (n !== undefined) set.add(n); }
+              diasRotaPorCliente.set(String(r.id), set);
+            }
+            for (const [cid, v] of pares) {
+              const [y, m, d] = String(v.dia).split('-').map(Number);
+              const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+              const diaDeRota = (diasRotaPorCliente.get(cid) || new Set<number>()).has(dow);
+              v.foraRota = !diaDeRota && !naRota.has(cid + '|' + v.dia);
+            }
           }
         } catch (e) { console.warn('[CUSTOMER-INFO] venda fora do dia de rota:', (e as any)?.message); }
       } catch (e) {
