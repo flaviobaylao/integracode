@@ -708,7 +708,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       for (const n of Array.from(notas.values())) {
         const cancelada = n.valor <= 0.009 && n.valorCancelado > 0.009;
         const saldoTitulo = Math.max(0, n.valor - n.pago);
-        const vencido = !cancelada && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
+        const vencido = !cancelada && !n.semCobranca && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
         const tipoMov = tipoMovimentoDa(n);
         const natureza = tipoMov === "Venda" ? null : tipoMov;
         const motivo = motivoDa(n, tipoMov);
@@ -717,7 +717,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
         // do título — igual ao Contas a Receber — e a devolução/troca/transferência
         // deixa de perder a informação de "em aberto / quitada / vencida".
         const tipoMovimento = tipoMov;
-        const situacao = cancelada
+        const situacao = n.semCobranca
+          // Não gerou conta a receber: não está em aberto nem vencida. A tag diz isso.
+          ? "Sem cobrança"
+          : cancelada
           ? "Cancelada"
           : saldoTitulo <= 0.009
           ? "Quitada"
@@ -756,7 +759,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           key: `${n.key}|nf`,
           data: n.data,
           tipo: "NF",
-          documento: n.nf !== "—" ? `NF ${n.nf}` : "Título",
+          documento: n.nf !== "—" ? `NF ${n.nf}` : n.semCobranca ? "Pedido" : "Título",
           nf: n.nf,
           pedido: n.pedido || null,
           descricao: n.descricao || null,
