@@ -830,6 +830,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
           debito: cancelada || n.fantasma || n.semCobranca ? 0 : n.valor,
           credito: 0,
           valorNota: n.valor,
+          // Valor cheio da nota, com as parcelas canceladas. É o que o front soma nos
+          // cards de Devoluções e Trocas: numa devolução o valor vive em valorCancelado.
+          valorBruto: Math.round((n.valor + n.valorCancelado) * 100) / 100,
           pagoNota: n.pago,
           saldoNota: saldoTitulo,
           situacao,
@@ -1055,6 +1058,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
         qtdNotasAbertas: abertos.length,
         qtdPagamentos: linhas.filter((l) => l.tipo === "PAGAMENTO").length,
         ticketMedio: notasArr.length ? Math.round((totalFaturado / notasArr.length) * 100) / 100 : 0,
+        // `clienteDesde` é o início da relação olhando TODAS as origens e ignorando
+        // qualquer filtro — o card Relacionamento mostra a primeira compra do recorte
+        // e usa este valor para lembrar desde quando o cliente existe.
+        clienteDesde: primeiraCompra,
         primeiraCompra,
         ultimaCompra,
         diasSemComprar: ultimaCompra ? diffDays(hoje.toISOString(), ultimaCompra) : null,
