@@ -46,6 +46,7 @@ type Linha = {
   origem: string;
   tipoMovimento?: string | null;
   motivo?: string | null;
+  historico?: boolean;
   natureza?: string | null;
   informativa?: boolean;
   duplicado?: boolean;
@@ -131,6 +132,9 @@ type Extrato = {
     atrasoMedioDias: number | null;
     notasCanceladas: number;
     baixasEstimadas: number;
+    origem?: string;
+    notasHistorico?: number;
+    valorHistorico?: number;
     notasInformativas?: number;
     valorInformativas?: number;
     titulosFantasma?: number;
@@ -190,6 +194,91 @@ const MOV_COR: Record<string, string> = {
 };
 const MOVIMENTOS = ["Venda", "Devolução", "Troca", "Amostra", "Outra saída", "Outra praça", "Transferência", "Duplicado"];
 
+// O que cada tipo de movimento quer dizer — vira o "i" no cabeçalho da coluna.
+const MOV_AJUDA: Array<[string, string]> = [
+  ["Venda", "Venda normal para este cliente. É o que entra no total faturado e no saldo devedor."],
+  ["Devolução", "A mercadoria voltou: o título foi cancelado por devolução de venda. Não é compra nem dívida — fica no histórico e no card Devoluções. A coluna Motivo traz a justificativa de quem devolveu."],
+  ["Troca", "Pedido registrado como troca de mercadoria (produto fermentado, lacre, tampa ou vencido). A troca é cobrada normalmente, então continua no faturado e no saldo devedor."],
+  ["Amostra", "Pedido registrado como amostra/bonificação. Quando gera título, é cobrado como venda."],
+  ["Outra praça", "Nota faturada por OUTRA unidade do grupo — [GYN] Goiânia, [BSB] Brasília, [IND] Puro Indústria, [SERV] Puro Serviços. Aparece no histórico do cliente por rastreabilidade, mas a cobrança é da outra praça: fica fora do faturado, do saldo devedor e do vencido."],
+  ["Transferência", "Transferência de mercadoria entre estabelecimentos da própria empresa (CFOP 5151/6151). Não é venda para o cliente; entra só como ocorrência."],
+  ["Outra saída", "CFOP 5949/6949 — \"outra saída de mercadoria ou prestação de serviço não especificado\": bonificação, remessa, brinde. Sai mercadoria, mas não há cobrança."],
+  ["Duplicado", "Título repetido criado por rotina de reparo: a mesma NF já tem outro título ligado à nota fiscal, e este nasceu depois, sem NF-e e sem pedido. Fica na lista com valor zero, só para conferência com o Contas a Receber."],
+];
+
+/**
+ * Filtro de MÚLTIPLA ESCOLHA. Mostra todas as opções de uma vez, com caixa de seleção.
+ * Lista vazia = nenhum filtro (todos), que é o estado inicial.
+ */
+function MultiFiltro(props: {
+  label: string;
+  opcoes: Array<{ valor: string; rotulo: string }>;
+  selecionados: string[];
+  onChange: (v: string[]) => void;
+  testId?: string;
+  rotuloVazio: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const caixa = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const fora = (e: MouseEvent) => {
+      if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false);
+    };
+    document.addEventListener("mousedown", fora);
+    return () => document.removeEventListener("mousedown", fora);
+  }, []);
+  const n = props.selecionados.length;
+  const resumo =
+    n === 0 ? props.rotuloVazio
+    : n === 1 ? (props.opcoes.find((o) => o.valor === props.selecionados[0])?.rotulo || props.selecionados[0])
+    : `${n} selecionados`;
+  const alterna = (v: string) => {
+    const atual = props.selecionados;
+    props.onChange(atual.includes(v) ? atual.filter((x) => x !== v) : [...atual, v]);
+  };
+  return (
+    <div className="relative" ref={caixa}>
+      <label className="text-xs text-gray-500 dark:text-gray-400 block">{props.label}</label>
+      <button
+        type="button"
+        onClick={() => setAberto((a) => !a)}
+        className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm min-w-[11rem] text-left flex items-center justify-between gap-2"
+        data-testid={props.testId}
+      >
+        <span className={n ? "font-medium" : "text-gray-600 dark:text-gray-300"}>{resumo}</span>
+        <span className="text-[10px] text-gray-400">▾</span>
+      </button>
+      {aberto ? (
+        <div className="absolute z-40 mt-1 min-w-full w-max max-w-[22rem] max-h-72 overflow-auto rounded-md border bg-white dark:bg-gray-800 dark:border-gray-700 shadow-lg py-1">
+          <button
+            type="button"
+            onClick={() => props.onChange([])}
+            className="w-full text-left px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+          >
+            {props.rotuloVazio} (limpar)
+          </button>
+          <div className="border-t dark:border-gray-700 my-1" />
+          {props.opcoes.map((o) => (
+            <label
+              key={o.valor}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={props.selecionados.includes(o.valor)}
+                onChange={() => alterna(o.valor)}
+                className="rounded border-gray-300"
+                data-testid={props.testId ? `${props.testId}-${o.valor}` : undefined}
+              />
+              <span>{o.rotulo}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const ORIGEM_LABEL: Record<string, string> = {
   financeiro: "Financeiro",
   nfe: "NF-e emitida",
@@ -220,7 +309,12 @@ const KPI_INFO = {
 } as const;
 
 // "i" no canto do card: abre a explicação no hover e também no clique (toque no celular).
-function InfoDot(props: { text: string; testId?: string }) {
+function InfoDot(props: {
+  text: string;
+  testId?: string;
+  /** Lista termo → explicação. Quando vem, o balão vira glossário e fica mais largo. */
+  itens?: Array<[string, string]>;
+}) {
   const [aberto, setAberto] = useState(false);
   return (
     <span className="relative inline-flex shrink-0">
@@ -243,9 +337,24 @@ function InfoDot(props: { text: string; testId?: string }) {
       {aberto ? (
         <span
           role="tooltip"
-          className="absolute right-0 top-5 z-50 w-60 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          className={`absolute right-0 top-5 z-50 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 ${
+            props.itens ? "w-[26rem] max-h-80 overflow-auto" : "w-60"
+          }`}
         >
-          {props.text}
+          {props.itens ? (
+            <span className="block space-y-1.5">
+              {props.text ? <span className="block pb-1 text-gray-500 dark:text-gray-400">{props.text}</span> : null}
+              {props.itens.map(([termo, desc]) => (
+                <span key={termo} className="block">
+                  <strong className="text-gray-900 dark:text-gray-100">{termo}</strong>
+                  {" — "}
+                  {desc}
+                </span>
+              ))}
+            </span>
+          ) : (
+            props.text
+          )}
         </span>
       ) : null}
     </span>
@@ -276,9 +385,12 @@ export default function ExtratoCliente() {
   const [selected, setSelected] = useState<CustomerHit | null>(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [tipo, setTipo] = useState<"todos" | "NF" | "PAGAMENTO">("todos");
-  const [situacaoFiltro, setSituacaoFiltro] = useState<string>("todos");
-  const [movimentoFiltro, setMovimentoFiltro] = useState<string>("todos");
+  // Filtros de múltipla escolha: lista vazia = sem filtro (mostra tudo).
+  const [tiposSel, setTiposSel] = useState<string[]>([]);
+  const [situacoesSel, setSituacoesSel] = useState<string[]>([]);
+  const [movimentosSel, setMovimentosSel] = useState<string[]>([]);
+  // Origem dos DADOS (não é filtro de tela: vai ao servidor e refaz os KPIs).
+  const [origem, setOrigem] = useState<"todas" | "integra" | "omie">("todas");
   const [busca, setBusca] = useState("");
   const [detalheLinha, setDetalheLinha] = useState<Linha | null>(null);
   const [sortCol, setSortCol] = useState<"data" | "documento" | "descricao" | "vencimento" | "situacao">("data");
@@ -331,11 +443,12 @@ export default function ExtratoCliente() {
   });
 
   const { data: extrato, isLoading, isError, error } = useQuery<Extrato>({
-    queryKey: ["customer-statement", selected?.id, start, end],
+    queryKey: ["customer-statement", selected?.id, start, end, origem],
     queryFn: () => {
       const p = new URLSearchParams();
       if (start) p.set("start", start);
       if (end) p.set("end", end);
+      if (origem !== "todas") p.set("origem", origem);
       const qs = p.toString();
       return apiRequest("GET", `/api/customer-statement/${selected!.id}${qs ? "?" + qs : ""}`);
     },
@@ -361,14 +474,14 @@ export default function ExtratoCliente() {
 
   const linhas = useMemo(() => {
     let out = extrato?.linhas || [];
-    if (tipo !== "todos") out = out.filter((l) => l.tipo === tipo);
-    if (situacaoFiltro !== "todos") {
+    if (tiposSel.length) out = out.filter((l) => tiposSel.includes(l.tipo));
+    if (situacoesSel.length) {
       out = out.filter((l) =>
-        situacaoFiltro === "__sem__" ? !l.situacao : String(l.situacao || "") === situacaoFiltro
+        situacoesSel.includes(l.situacao ? String(l.situacao) : "__sem__")
       );
     }
-    if (movimentoFiltro !== "todos") {
-      out = out.filter((l) => String(l.tipoMovimento || "") === movimentoFiltro);
+    if (movimentosSel.length) {
+      out = out.filter((l) => movimentosSel.includes(String(l.tipoMovimento || "")));
     }
     const q = busca.trim().toLowerCase();
     if (q) {
@@ -399,7 +512,7 @@ export default function ExtratoCliente() {
       return String(a.documento).localeCompare(String(b.documento));
     });
     return out;
-  }, [extrato, tipo, situacaoFiltro, movimentoFiltro, busca, sortCol, sortDir]);
+  }, [extrato, tiposSel, situacoesSel, movimentosSel, busca, sortCol, sortDir]);
 
   const totaisVisiveis = useMemo(() => {
     const deb = linhas.reduce((s, l) => s + (l.debito || 0), 0);
@@ -518,51 +631,61 @@ export default function ExtratoCliente() {
               <DateRangeFilter start={start} end={end} onChange={(s, e) => { setStart(s); setEnd(e); }} />
             </div>
 
-            <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400 block">Tipo</label>
-              <select
-                value={tipo}
-                onChange={(e) => setTipo(e.target.value as any)}
-                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
-                data-testid="select-tipo-linha"
-              >
-                <option value="todos">Notas + Pagamentos</option>
-                <option value="NF">Somente notas</option>
-                <option value="PAGAMENTO">Somente pagamentos</option>
-              </select>
-            </div>
+            <MultiFiltro
+              label="Tipo"
+              rotuloVazio="Notas + Pagamentos"
+              testId="select-tipo-linha"
+              opcoes={[
+                { valor: "NF", rotulo: "Notas" },
+                { valor: "PAGAMENTO", rotulo: "Pagamentos" },
+              ]}
+              selecionados={tiposSel}
+              onChange={setTiposSel}
+            />
+
+            <MultiFiltro
+              label="Situação"
+              rotuloVazio="Todas as situações"
+              testId="select-situacao"
+              opcoes={[
+                { valor: "Em aberto", rotulo: "Em aberto" },
+                { valor: "Vencida", rotulo: "Vencida" },
+                { valor: "Parcial", rotulo: "Parcial" },
+                { valor: "Quitada", rotulo: "Quitada" },
+                { valor: "Recebido", rotulo: "Recebido" },
+                { valor: "Cancelada", rotulo: "Cancelada" },
+                { valor: "__sem__", rotulo: "Sem situação" },
+              ]}
+              selecionados={situacoesSel}
+              onChange={setSituacoesSel}
+            />
+
+            <MultiFiltro
+              label="Movimento"
+              rotuloVazio="Todos os movimentos"
+              testId="select-movimento"
+              opcoes={MOVIMENTOS.map((m) => ({ valor: m, rotulo: m }))}
+              selecionados={movimentosSel}
+              onChange={setMovimentosSel}
+            />
 
             <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400 block">Situação</label>
+              <label className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                Origem
+                <InfoDot
+                  testId="info-origem"
+                  text="De onde vêm os lançamentos. O INTEGRA 2.0 começou a gerar títulos próprios em 31/03/2026; tudo que é anterior veio da migração do Omie (emissões desde 28/01/2020), importada a partir de 28/04/2026. O histórico tem defeitos conhecidos — títulos marcados como recebidos sem a baixa correspondente, baixas sem data de pagamento lançadas no vencimento e algumas NFs que existem nas duas origens —, então para conferir número financeiro escolha Somente INTEGRA 2.0."
+                />
+              </label>
               <select
-                value={situacaoFiltro}
-                onChange={(e) => setSituacaoFiltro(e.target.value)}
+                value={origem}
+                onChange={(e) => setOrigem(e.target.value as any)}
                 className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
-                data-testid="select-situacao"
+                data-testid="select-origem"
               >
-                <option value="todos">Todas as situações</option>
-                <option value="Em aberto">Em aberto</option>
-                <option value="Vencida">Vencida</option>
-                <option value="Parcial">Parcial</option>
-                <option value="Quitada">Quitada</option>
-                <option value="Recebido">Recebido</option>
-                <option value="Cancelada">Cancelada</option>
-                <option value="__sem__">Sem situação</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400 block">Movimento</label>
-              <select
-                value={movimentoFiltro}
-                onChange={(e) => setMovimentoFiltro(e.target.value)}
-                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
-                data-testid="select-movimento"
-              >
-                <option value="todos">Todos os movimentos</option>
-                {MOVIMENTOS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                <option value="todas">INTEGRA 2.0 + histórico</option>
+                <option value="integra">Somente INTEGRA 2.0</option>
+                <option value="omie">Somente histórico Omie</option>
               </select>
             </div>
 
@@ -653,6 +776,14 @@ export default function ExtratoCliente() {
                 <div className="mt-3 text-[11px] text-amber-700 dark:text-amber-300">
                   ⚠ {r?.baixasEstimadas} baixa(s) vieram do histórico importado sem data de pagamento — foram lançadas na data
                   de vencimento e aparecem marcadas como <em>data estimada</em>.
+                </div>
+              ) : null}
+              {(r?.notasHistorico || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.notasHistorico} nota(s) de {fmtBRL(r?.valorHistorico)} vieram do{" "}
+                  <strong>histórico migrado do Omie</strong> (emissões anteriores a 31/03/2026, quando o INTEGRA 2.0 passou a
+                  gerar títulos próprios). Esse acervo tem baixas sem data de pagamento e títulos quitados sem a baixa
+                  correspondente — para conferir número financeiro, use o filtro <strong>Origem → Somente INTEGRA 2.0</strong>.
                 </div>
               ) : null}
               {(r?.notasInformativas || 0) > 0 ? (
@@ -751,7 +882,16 @@ export default function ExtratoCliente() {
                         <SortHeader label="Data" col="data" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
                       <th className="px-3 py-2 whitespace-nowrap">Tipo</th>
-                      <th className="px-3 py-2 whitespace-nowrap">Tipo de movimento</th>
+                      <th className="px-3 py-2 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1">
+                          Tipo de movimento
+                          <InfoDot
+                            testId="info-tipo-movimento"
+                            text="O que cada linha é. Só Venda, Troca e Amostra entram no faturado e no saldo devedor."
+                            itens={MOV_AJUDA}
+                          />
+                        </span>
+                      </th>
                       <th className="px-3 py-2 whitespace-nowrap">Motivo da troca</th>
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Documento" col="documento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
