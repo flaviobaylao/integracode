@@ -45,6 +45,8 @@ type Celula = { semana: number; dia: string; canal: string; n: PorTipo; v: PorTi
 type Potencial = {
   de: string; ate: string; dias: number;
   clientesComTicket: number; semHistorico: number; leads: number; regra: string;
+  /** Atendimentos que caíram no mesmo ciclo de um anterior e entraram com R$ 0. */
+  repetidosNoCiclo?: number;
 };
 type Resposta = {
   mes: string;
@@ -445,9 +447,18 @@ export default function AgendaRota() {
                   primeiro quadro, para o total ser lido sabendo o quanto falta nele.
                 </p>
                 <p className="text-muted-foreground">
-                  É <b>potencial, não previsão</b>: o quadro não desconta quem já comprou no ciclo nem
-                  pondera a chance de a visita virar pedido. Serve para comparar o peso de um dia, de
-                  uma semana ou de um vendedor contra outro.
+                  <b>Um ticket por ciclo de compra, não por atendimento.</b> O mesmo cliente é tocado
+                  mais de uma vez no mês — o virtual recebe a cadência virtual e ainda uma visita
+                  presencial de reforço, e a repescagem é segunda tentativa de quem não comprou. O
+                  primeiro atendimento do ciclo leva o valor cheio; os seguintes continuam contando
+                  no calendário de Clientes e entram com R$ 0 no de R$, porque o pedido daquele ciclo
+                  já foi contado. Sem isso, out/26 marcava R$ 603 mil de potencial contra R$ 285 mil
+                  de faturamento real — eram 2,6 atendimentos para cada nota emitida.
+                </p>
+                <p className="text-muted-foreground">
+                  Ainda assim é <b>potencial, não previsão</b>: o quadro não desconta quem já comprou
+                  no ciclo nem pondera a chance de a visita virar pedido. Serve para comparar o peso
+                  de um dia, de uma semana ou de um vendedor contra outro.
                 </p>
               </PopoverContent>
             </Popover>
@@ -495,6 +506,14 @@ export default function AgendaRota() {
                   ) : (
                     <>Todos os clientes do quadro têm histórico de compra na janela.</>
                   )}
+                  {data.potencial.repetidosNoCiclo ? (
+                    <div className="text-muted-foreground mt-0.5">
+                      {NUM(data.potencial.repetidosNoCiclo)} atendimento(s) caem no mesmo ciclo de
+                      compra de um anterior (visita presencial de reforço do cliente virtual,
+                      repescagem de quem já está na rota) — contam como atendimento e entram com
+                      R$ 0, porque o pedido do ciclo já foi contado.
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
