@@ -296,14 +296,14 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const vazio: any = {
     userId: "", vigenciaYm: ym, fixoMensal: "", comissaoTipo: "nenhum",
     comissaoPct: "", comissaoDescontoFixo: "", comissaoProporcionalMeta: false,
-    faixaTipo: "telemarketing", incluirNoResumo: true,
+    faixaTipo: "telemarketing",
     usaFixo: true, usaMeta: true, usaFaturamento: true, usaComissao: true,
     usaKm: true, usaCampanhas: true, usaBonus: false, observacao: "",
   };
   const [form, setForm] = useState<any>(vazio);
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
-  const { data: cfgData } = useQuery<{ configs: any[]; colaboradores: any[] }>({
+  const { data: cfgData } = useQuery<{ configs: any[]; colaboradores: any[]; participantes: any[] }>({
     queryKey: ["/api/resumo-recebiveis/config"],
     queryFn: () => apiRequest("GET", "/api/resumo-recebiveis/config"),
     enabled: open,
@@ -327,7 +327,6 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
       fixoMensal: num(form.fixoMensal), comissaoTipo: form.comissaoTipo,
       comissaoPct: num(form.comissaoPct), comissaoDescontoFixo: num(form.comissaoDescontoFixo),
       comissaoProporcionalMeta: form.comissaoProporcionalMeta, faixaTipo: form.faixaTipo,
-      incluirNoResumo: form.incluirNoResumo,
       usaFixo: form.usaFixo, usaMeta: form.usaMeta, usaFaturamento: form.usaFaturamento,
       usaComissao: form.usaComissao, usaKm: form.usaKm, usaCampanhas: form.usaCampanhas,
       usaBonus: form.usaBonus, observacao: form.observacao,
@@ -338,6 +337,13 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const removerCfg = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/resumo-recebiveis/config/${id}`),
     onSuccess: () => { toast({ title: "Vigência removida" }); invalidar(); },
+  });
+
+  const participacao = useMutation({
+    mutationFn: (v: { userId: string; incluir: boolean }) =>
+      apiRequest("POST", "/api/resumo-recebiveis/participacao", v),
+    onSuccess: (r: any) => { toast({ title: r?.message || "Participação atualizada" }); invalidar(); },
+    onError: (e: any) => toast({ title: "Falha ao alterar", description: e?.message, variant: "destructive" }),
   });
 
   // --- campanhas
@@ -396,6 +402,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
             <TabsTrigger value="colaboradores">Colaboradores</TabsTrigger>
             <TabsTrigger value="campanhas">Campanhas</TabsTrigger>
             <TabsTrigger value="bonus">Bônus e lançamentos</TabsTrigger>
+            <TabsTrigger value="participantes">Participantes</TabsTrigger>
           </TabsList>
 
           {/* ---------------- COLABORADORES ---------------- */}
@@ -409,7 +416,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
 
             <div className="rounded-lg border bg-muted/30 p-3 space-y-3 min-w-0">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 min-w-0">
-                <div className="min-w-0 md:col-span-2">
+                <div className="min-w-0 md:col-span-3">
                   <Label className="text-xs">Colaborador</Label>
                   <Select value={form.userId} onValueChange={(v) => set("userId", v)}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
@@ -428,10 +435,6 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       {mesesDisponiveis().map((m) => <SelectItem key={m} value={m}>{nomeDoMes(m)}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="min-w-0 flex items-end gap-2 pb-1">
-                  <Switch checked={form.incluirNoResumo} onCheckedChange={(v) => set("incluirNoResumo", v)} />
-                  <span className="text-xs">Aparece no resumo</span>
                 </div>
               </div>
 
@@ -528,9 +531,6 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     <tr key={c.id} className="border-t">
                       <td className="px-2 py-1.5">
                         {c.nome}
-                        {c.incluir_no_resumo === false && (
-                          <Badge className="ml-1 bg-gray-200 text-gray-700">fora do resumo</Badge>
-                        )}
                       </td>
                       <td className="px-2 py-1.5">{nomeDoMes(c.vigencia_ym)}</td>
                       <td className="px-2 py-1.5 text-right">{brl(Number(c.fixo_mensal))}</td>
@@ -757,6 +757,32 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                   ))}
                 </div>
               )}
+            </div>
+          </TabsContent>
+          {/* ---------------- PARTICIPANTES ---------------- */}
+          <TabsContent value="participantes" className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Quem sai daqui some da planilha e do seletor de colaborador das outras abas. Use para contas
+              que não são pessoas — canais, usuários de sistema — e para cadastros de teste. Dá para
+              trazer de volta a qualquer momento: a lista mostra todos os usuários ativos.
+            </p>
+            <div className="space-y-1">
+              {(cfgData?.participantes || []).map((p: any) => (
+                <div key={p.id}
+                  className={`flex items-center gap-3 rounded-md border px-3 py-1.5 text-sm min-w-0 ${p.incluir ? "" : "bg-muted/40"}`}>
+                  <Switch checked={p.incluir !== false}
+                    onCheckedChange={(v) => participacao.mutate({ userId: p.id, incluir: v })} />
+                  <div className="min-w-0 flex-1">
+                    <div className={`truncate font-medium ${p.incluir ? "" : "text-muted-foreground line-through"}`}>
+                      {p.nome}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{p.email || "—"}</div>
+                  </div>
+                  <Badge className={`${PAPEL_COR[p.role] || "bg-gray-100 text-gray-800"} shrink-0`}>
+                    {PAPEL_LABEL[p.role] || p.role}
+                  </Badge>
+                </div>
+              ))}
             </div>
           </TabsContent>
         </Tabs>
