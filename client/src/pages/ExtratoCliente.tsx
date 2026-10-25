@@ -181,6 +181,7 @@ const SIT_COR: Record<string, string> = {
   Vencida: "bg-red-100 text-red-800 border-red-200",
   Cancelada: "bg-gray-200 text-gray-600 border-gray-300",
   Recebido: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  "Sem cobrança": "bg-gray-100 text-gray-600 border-gray-200",
 };
 
 // Tipo de movimento: o QUE a linha é. Venda fica neutra para não poluir; o que não
@@ -657,6 +658,7 @@ export default function ExtratoCliente() {
                 { valor: "Quitada", rotulo: "Quitada" },
                 { valor: "Recebido", rotulo: "Recebido" },
                 { valor: "Cancelada", rotulo: "Cancelada" },
+                { valor: "Sem cobrança", rotulo: "Sem cobrança" },
                 { valor: "__sem__", rotulo: "Sem situação" },
               ]}
               selecionados={situacoesSel}
