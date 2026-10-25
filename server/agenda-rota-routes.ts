@@ -225,6 +225,18 @@ export function registerAgendaRota(app: Express) {
       // Janela do quadro: da segunda da 1a semana a sexta da ultima.
       const ini = semanas[0].ini;
       const fim = semanas[semanas.length - 1].fim;
+      // AQUECIMENTO: as consultas comecam 35 dias ANTES do quadro. Esses dias nao
+      // aparecem em lugar nenhum da tela — servem so' para a regra de "um ticket
+      // por ciclo" (abaixo) saber em que pe' cada cliente entrou no mes. Sem
+      // isso, o relogio do ciclo reiniciava na borda da janela e TODO cliente
+      // tocado na 1a semana era cobrado ali: out/26 ficava com R$ 156 mil na 1a
+      // semana e R$ 45 mil na 2a, por puro efeito de borda. Com o aquecimento,
+      // quem ja' tinha sido atendido em setembro so' volta a valer quando o
+      // ciclo dele realmente fecha.
+      const iniAquecimento = (() => {
+        const [a, m, d] = ini.split("-").map(Number);
+        return iso(new Date(a, m - 1, d - 35));
+      })();
 
       // ── 1) CLIENTES NA AGENDA DE VISITAS ─────────────────────────────────
       // Mesma regua de storage.getCustomersForDate (Rota do Dia), menos o filtro
@@ -245,7 +257,7 @@ export function registerAgendaRota(app: Express) {
                NULLIF(regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g'),'') AS doc
         FROM visit_agenda v
         JOIN customers c ON c.id = v.customer_id
-        WHERE v.scheduled_date::date >= ${ini}::date
+        WHERE v.scheduled_date::date >= ${iniAquecimento}::date
           AND v.scheduled_date::date <= ${fim}::date
           AND COALESCE(v.visit_status,'pending') <> 'cancelled'
           AND c.seller_id IN (${listaIds})
@@ -267,7 +279,7 @@ export function registerAgendaRota(app: Express) {
                NULLIF(regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g'),'') AS doc
         FROM repescagem_assignments ra
         JOIN customers c ON c.id = ra.customer_id
-        WHERE ra.draw_date >= ${ini}
+        WHERE ra.draw_date >= ${iniAquecimento}
           AND ra.draw_date <= ${fim}
           AND COALESCE(ra.status,'') NOT IN ('cancelled','returned')
           AND COALESCE(c.is_supplier,false) = false
@@ -363,9 +375,11 @@ export function registerAgendaRota(app: Express) {
       };
       const atendimentos: Atendimento[] = [];
       const empilha = (r: any, tipo: Tipo | null) => {
+        // sem = 0 marca o AQUECIMENTO: o atendimento existiu, conta para o ciclo
+        // e nao entra em celula nenhuma do quadro.
         const sem = semanaDaData(semanas, String(r.dia));
         const diaSem = DIA_POR_DOW[Number(r.dow)];
-        if (!sem || !diaSem) return;
+        if (!diaSem) return;
         const per = String(r.periodicidade || "semanal");
         atendimentos.push({
           dia: String(r.dia), sem, diaSem,
@@ -390,14 +404,17 @@ export function registerAgendaRota(app: Express) {
       let repetidosNoCiclo = 0;
       for (const a of atendimentos) {
         const cheio = ticketDe(a.doc);
-        if (cheio > 0) comHistorico.add(a.cid); else semHistorico.add(a.cid);
         let t = cheio;
         if (cheio > 0) {
           const ultimo = cobradoEm.get(a.cid);
           const minimo = JANELA_CICLO[a.per] ?? JANELA_CICLO.semanal;
-          if (ultimo && diasEntre(ultimo, a.dia) < minimo) { t = 0; repetidosNoCiclo++; }
+          if (ultimo && diasEntre(ultimo, a.dia) < minimo) { t = 0; if (a.sem) repetidosNoCiclo++; }
           else cobradoEm.set(a.cid, a.dia);
         }
+        // O aquecimento (sem = 0) ja' cumpriu o papel dele ao mexer no relogio
+        // do ciclo acima. Daqui para baixo so' entra o que esta' no quadro.
+        if (!a.sem) continue;
+        if (cheio > 0) comHistorico.add(a.cid); else semHistorico.add(a.cid);
         soma(mapa, a.sem, a.diaSem, a.canal, a.tipo, 1, t);
       }
       let totalLeads = 0;
