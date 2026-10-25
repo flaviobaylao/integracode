@@ -195,7 +195,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
       // 7.298 títulos marcados "recebida" SEM baixa lançada (R$ 2.381.043,93), baixas
       // sem data de pagamento lançadas no vencimento, e 56 NFs que existem NAS DUAS
       // origens. Quem quiser números limpos usa ?origem=integra.
-      const origem = String(req.query.origem || "todas").toLowerCase();
+      // Padrão = integra (decisão do Flavio, 25/out/2026): o número financeiro sai
+      // limpo por padrão. O RELACIONAMENTO (primeira/última compra) continua olhando
+      // TODAS as origens — é o que o vendedor usa para falar com o cliente, e a data
+      // de 2020 só existe no acervo migrado. Ver `relacionamento` mais abaixo.
+      const origem = String(req.query.origem || "integra").toLowerCase();
       const filtroOrigem =
         origem === "integra" ? sql` AND COALESCE(r.import_origin, '') <> 'omie_historico'`
         : origem === "omie" ? sql` AND COALESCE(r.import_origin, '') = 'omie_historico'`
@@ -358,6 +362,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
         motivoDevolucao: string | null;
         /** true enquanto TODAS as parcelas vierem do histórico migrado do Omie. */
         historico: boolean;
+        /** Ocorrência que NÃO gerou conta a receber: aparece, mas sem débito. */
+        semCobranca?: boolean;
+        /** Rótulo fixo quando a linha não vem de título (troca/amostra/transferência). */
+        movimentoFixo?: string;
         /** sales_card_id de qualquer parcela — é por ele que se acha a operação e o motivo. */
         cardIds: string[];
         fantasma?: boolean;
@@ -474,6 +482,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
 
       /** O que esta nota É. Fonte estruturada primeiro; texto só no histórico sem card. */
       const tipoMovimentoDa = (n: NotaAgg): string => {
+        if (n.movimentoFixo) return n.movimentoFixo;
         if (n.fantasma) return "Duplicado";
         if (n.devolucao) return "Devolução";
         for (const id of n.cardIds) {
@@ -504,6 +513,62 @@ export function registerCustomerStatementRoutes(app: Express): void {
         }
         return null;
       };
+
+      // ── OCORRÊNCIAS SEM CONTA A RECEBER (25/out/2026) ──────────────────────
+      // Troca, amostra e transferência muitas vezes NÃO geram título: na base são 289
+      // trocas, 194 amostras e 6 transferências sem nenhum recebível. Como o Extrato
+      // passou a ler só o financeiro, essas ocorrências sumiram do histórico do cliente.
+      // Decisão do Flavio: resgatar e mostrar. Entram com DÉBITO ZERO — não houve
+      // cobrança —, ficam fora do faturado e do saldo devedor, e somam nos cards de
+      // Trocas / Devoluções. Pedido cancelado ou sem venda não entra: não ocorreu.
+      //
+      // A NF-e de devolução NÃO é resgatada de propósito: ela é a contrapartida fiscal
+      // da mesma nota que já aparece marcada "Devolução" (conferido no PANIFICADORA
+      // MOREIRA: 5 títulos de R$ 301,30 e 5 NF-e de R$ 301,30, a mesma ocorrência).
+      // Trazer as duas dobraria o valor devolvido.
+      try {
+        const opRes: any = await db.execute(sql`
+          SELECT sc.id, sc.operation_type, sc.sale_value, sc.status, sc.invoice_number,
+                 sc.created_at, sc.updated_at
+          FROM sales_cards sc
+          WHERE sc.customer_id = ${customerId}
+            AND sc.operation_type IN ('troca', 'amostra', 'transferencia')
+            AND COALESCE(sc.status, '') NOT IN ('cancelled', 'no_sale')
+            AND COALESCE(sc.sale_value, 0) > 0
+            AND NOT EXISTS (
+              SELECT 1 FROM receivables r
+              WHERE r.sales_card_id = sc.id AND r.deleted_at IS NULL
+            )
+          ORDER BY sc.created_at ASC
+        `);
+        for (const c of (opRes?.rows || opRes || []) as any[]) {
+          const rotulo = OP_ROTULO[String(c.operation_type)] || "Venda";
+          const quando = toISO(c.updated_at || c.created_at);
+          const nf = nfKeyOf(c.invoice_number);
+          notas.set(`OP:${c.id}`, {
+            key: `OP:${c.id}`,
+            nf: nf || "—",
+            pedido: "",
+            data: quando,
+            vencimento: quando,
+            valor: num(c.sale_value),
+            valorCancelado: 0,
+            pago: 0,
+            parcelas: 1,
+            origem: "pedido",
+            descricao: `${rotulo} sem conta a receber`,
+            marcadores: "",
+            devolucao: false,
+            motivoDevolucao: null,
+            cardIds: [String(c.id)],
+            historico: false,
+            semCobranca: true,
+            movimentoFixo: rotulo,
+            titulos: [],
+            scId: String(c.id),
+          });
+        }
+      } catch (_e) { /* nunca derruba o extrato */ }
 
       // ── Produtos faturados por nota ─────────────────────────────────────────
       // Resolve a lista de itens de cada nota na ordem: billing_pipeline ->
@@ -697,7 +762,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           descricao: n.descricao || null,
           vencimento: n.vencimento,
           parcelas: n.parcelas,
-          debito: cancelada || n.fantasma ? 0 : n.valor,
+          debito: cancelada || n.fantasma || n.semCobranca ? 0 : n.valor,
           credito: 0,
           valorNota: n.valor,
           pagoNota: n.pago,
@@ -707,6 +772,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           tipoMovimento,
           motivo,
           historico: n.historico,
+          semCobranca: !!n.semCobranca,
           natureza,
           informativa: natureza !== null,
           duplicado: !!n.fantasma,
@@ -860,7 +926,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
       // do saldo devedor era deixar de cobrar. O que elas ganham é rótulo próprio na
       // coluna Tipo de movimento e KPI próprio.
       const notasVivas = Array.from(notas.values()).filter(
-        (n) => !n.fantasma && !(n.valor <= 0.009 && n.valorCancelado > 0.009)
+        (n) => !n.fantasma && !n.semCobranca && !(n.valor <= 0.009 && n.valorCancelado > 0.009)
       );
       const INFORMATIVAS = new Set(["Outra praça", "Transferência", "Devolução", "Outra saída"]);
       const ehInformativa = (n: NotaAgg) => INFORMATIVAS.has(tipoMovimentoDa(n));
@@ -873,6 +939,26 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const abertos = notasArr.filter((n) => n.valor - n.pago > 0.009);
       const vencidos = abertos.filter((n) => estaVencido(n.vencimento, hojeDia));
       const datas = notasArr.map((n) => n.data).filter(Boolean).sort() as string[];
+      // RELACIONAMENTO — primeira e última compra olham SEMPRE todas as origens, mesmo
+      // com o extrato filtrado por INTEGRA 2.0. O acervo migrado é ruim de número, mas é
+      // nele que mora o começo da relação (há clientes desde 2020) e é disso que o
+      // vendedor precisa. Só títulos não cancelados contam como compra.
+      let primeiraCompra: string | null = datas[0] || null;
+      let ultimaCompra: string | null = datas[datas.length - 1] || null;
+      try {
+        const relRes: any = await db.execute(sql`
+          SELECT MIN(r.issue_date) AS primeira, MAX(r.issue_date) AS ultima
+          FROM receivables r
+          WHERE r.deleted_at IS NULL
+            AND COALESCE(r.status, '') <> 'cancelada'
+            AND (r.customer_id = ${customerId} ${docCond})
+        `);
+        const rel: any = (relRes?.rows || relRes || [])[0];
+        const pri = toISO(rel?.primeira);
+        const ult = toISO(rel?.ultima);
+        if (pri && (!primeiraCompra || pri < primeiraCompra)) primeiraCompra = pri;
+        if (ult && (!ultimaCompra || ult > ultimaCompra)) ultimaCompra = ult;
+      } catch (_e) { /* mantém as datas do recorte atual */ }
       const atrasos = linhas
         .filter((l) => l.tipo === "PAGAMENTO" && !l.estimado && l.diasAtraso !== null)
         .map((l) => l.diasAtraso as number);
@@ -883,6 +969,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           .filter((n) => !n.fantasma && tipoMovimentoDa(n) === tipo)
           .reduce((s, n) => s + n.valor + n.valorCancelado, 0);
       const historicas = notasVivas.filter((n) => n.historico);
+      const semCobranca = Array.from(notas.values()).filter((n) => n.semCobranca);
       const totalDevolucoes = porTipo("Devolução");
       const totalTrocas = porTipo("Troca");
 
@@ -903,9 +990,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
         qtdNotasAbertas: abertos.length,
         qtdPagamentos: linhas.filter((l) => l.tipo === "PAGAMENTO").length,
         ticketMedio: notasArr.length ? Math.round((totalFaturado / notasArr.length) * 100) / 100 : 0,
-        primeiraCompra: datas[0] || null,
-        ultimaCompra: datas[datas.length - 1] || null,
-        diasSemComprar: datas.length ? diffDays(hoje.toISOString(), datas[datas.length - 1]) : null,
+        primeiraCompra,
+        ultimaCompra,
+        diasSemComprar: ultimaCompra ? diffDays(hoje.toISOString(), ultimaCompra) : null,
         atrasoMedioDias: atrasos.length ? Math.round(atrasos.reduce((s, d) => s + d, 0) / atrasos.length) : null,
         notasCanceladas: Array.from(notas.values()).filter(
           (n) => !n.fantasma && n.valor <= 0.009 && n.valorCancelado > 0.009
@@ -915,6 +1002,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
         origem,
         notasHistorico: historicas.length,
         valorHistorico: Math.round(historicas.reduce((s2, n) => s2 + n.valor, 0) * 100) / 100,
+        ocorrenciasSemCobranca: semCobranca.length,
+        valorSemCobranca: Math.round(semCobranca.reduce((s2, n) => s2 + n.valor, 0) * 100) / 100,
         notasInformativas: informativas.length,
         valorInformativas: Math.round(informativas.reduce((s2, n) => s2 + n.valor, 0) * 100) / 100,
         // Duplicatas de reparo de órfãos: visíveis, marcadas e com débito zero.
