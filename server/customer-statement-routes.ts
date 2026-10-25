@@ -950,7 +950,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           SELECT MIN(r.issue_date) AS primeira, MAX(r.issue_date) AS ultima
           FROM receivables r
           WHERE r.deleted_at IS NULL
-            AND COALESCE(r.status, '') <> 'cancelada'
+            AND COALESCE(r.status::text, '') <> 'cancelada'
             AND (r.customer_id = ${customerId} ${docCond})
         `);
         const rel: any = (relRes?.rows || relRes || [])[0];
