@@ -299,16 +299,27 @@ const FORA_DO_RESUMO = [
   "motorista teste",
 ];
 
+// Pessoas que participam do resumo mesmo não tendo papel de vendas — a marcação
+// explícita vale mais que o papel. Apontadas pelo Flavio em 25/10/2026.
+const DENTRO_DO_RESUMO = ["lanucy machado", "cinthia marques"];
+
 async function semearNaoParticipantes(): Promise<void> {
   const ja: any = await db.execute(sql`SELECT COUNT(1)::int AS n FROM resumo_participantes`);
   if (Number(ja.rows?.[0]?.n || 0) > 0) return;
-  const r: any = await db.execute(sql`
+  const nome = sql.raw(
+    "LOWER(TRIM(COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email)))"
+  );
+  const fora: any = await db.execute(sql`
     INSERT INTO resumo_participantes (user_id, incluir, updated_by)
     SELECT u.id, false, 'sistema' FROM users u
-    WHERE LOWER(TRIM(COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email)))
-          = ANY(${arraySql(FORA_DO_RESUMO)})
+    WHERE ${nome} = ANY(${arraySql(FORA_DO_RESUMO)})
     ON CONFLICT (user_id) DO NOTHING`);
-  console.log(`[RESUMO-RECEB] ${r.rowCount ?? 0} contas marcadas fora do resumo`);
+  const dentro: any = await db.execute(sql`
+    INSERT INTO resumo_participantes (user_id, incluir, updated_by)
+    SELECT u.id, true, 'sistema' FROM users u
+    WHERE ${nome} = ANY(${arraySql(DENTRO_DO_RESUMO)})
+    ON CONFLICT (user_id) DO NOTHING`);
+  console.log(`[RESUMO-RECEB] ${fora.rowCount ?? 0} contas fora e ${dentro.rowCount ?? 0} dentro do resumo`);
 }
 
 // Admin de verdade: 'industria' e 'contador' são elevados a admin pelo
@@ -345,8 +356,12 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         ? await db.execute(sql`
             SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.seller_type
             FROM users u
-            WHERE u.is_active = true AND u.role::text = ANY(${arraySql(PAPEIS)})
-              AND COALESCE((SELECT p.incluir FROM resumo_participantes p WHERE p.user_id = u.id), true) = true
+            LEFT JOIN resumo_participantes p ON p.user_id = u.id
+            WHERE u.is_active = true
+              AND (
+                (u.role::text = ANY(${arraySql(PAPEIS)}) AND COALESCE(p.incluir, true) = true)
+                OR p.incluir = true
+              )
             ORDER BY u.role, u.first_name, u.last_name`)
         : await db.execute(sql`
             SELECT id, first_name, last_name, email, role, seller_type
@@ -514,7 +529,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           comissao,
           campanhas: porCampanha,
           bonus, lancamentos,
-          kmRodado, kmTarifa: tarifa, kmValor,
+          kmRodado, kmTarifa: tarifa, kmRegiao: String(kmRegioes[id] || "GO").toUpperCase(),
+          kmTarifaPropria: Object.prototype.hasOwnProperty.call(kmRates, id),
+          kmValor,
           totalMes: total,
         };
       });
@@ -564,16 +581,19 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         SELECT u.id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
                u.role, u.seller_type
         FROM users u
-        WHERE u.is_active = true AND u.role::text = ANY(${arraySql(PAPEIS)})
-          AND COALESCE((SELECT p.incluir FROM resumo_participantes p WHERE p.user_id = u.id), true) = true
+        LEFT JOIN resumo_participantes p ON p.user_id = u.id
+        WHERE u.is_active = true
+          AND ((u.role::text = ANY(${arraySql(PAPEIS)}) AND COALESCE(p.incluir, true) = true) OR p.incluir = true)
         ORDER BY u.role, u.first_name, u.last_name`);
       // Lista completa para a aba Participantes, com o estado de cada um.
       const todos: any = await db.execute(sql`
         SELECT u.id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
-               u.role, u.email,
-               COALESCE((SELECT p.incluir FROM resumo_participantes p WHERE p.user_id = u.id), true) AS incluir
+               u.role::text AS role, u.email,
+               (u.role::text = ANY(${arraySql(PAPEIS)})) AS papel_de_vendas,
+               COALESCE(p.incluir, u.role::text = ANY(${arraySql(PAPEIS)})) AS incluir
         FROM users u
-        WHERE u.is_active = true AND u.role::text = ANY(${arraySql(PAPEIS)})
+        LEFT JOIN resumo_participantes p ON p.user_id = u.id
+        WHERE u.is_active = true
         ORDER BY u.role, u.first_name, u.last_name`);
       res.json({ configs: r.rows || [], colaboradores: colabs.rows || [], participantes: todos.rows || [] });
     } catch (e: any) {
