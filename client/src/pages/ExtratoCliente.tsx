@@ -44,6 +44,7 @@ type Linha = {
   saldoNota?: number;
   situacao: string | null;
   origem: string;
+  tipoMovimento?: string | null;
   natureza?: string | null;
   informativa?: boolean;
   duplicado?: boolean;
@@ -78,6 +79,7 @@ type DetalheNota = {
   parcelasQtd: number;
   origem?: string | null;
   situacao: string | null;
+  tipoMovimento?: string | null;
   natureza?: string | null;
   duplicado?: boolean;
   cancelada?: boolean;
@@ -158,7 +160,12 @@ const SIT_COR: Record<string, string> = {
   Vencida: "bg-red-100 text-red-800 border-red-200",
   Cancelada: "bg-gray-200 text-gray-600 border-gray-300",
   Recebido: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  // Ocorrências que não são venda: aparecem no histórico, fora dos totais de venda.
+};
+
+// Tipo de movimento: o QUE a linha é. Venda fica neutra para não poluir; o que não
+// é venda ganha cor, porque é a exceção que o usuário precisa enxergar de longe.
+const MOV_COR: Record<string, string> = {
+  Venda: "bg-gray-100 text-gray-600 border-gray-200",
   Duplicado: "bg-gray-200 text-gray-600 border-gray-300",
   "Outra praça": "bg-violet-100 text-violet-800 border-violet-200",
   "Transferência": "bg-violet-100 text-violet-800 border-violet-200",
@@ -167,6 +174,7 @@ const SIT_COR: Record<string, string> = {
   Amostra: "bg-sky-100 text-sky-800 border-sky-200",
   "Outra saída": "bg-sky-100 text-sky-800 border-sky-200",
 };
+const MOVIMENTOS = ["Venda", "Devolução", "Troca", "Amostra", "Outra saída", "Outra praça", "Transferência", "Duplicado"];
 
 const ORIGEM_LABEL: Record<string, string> = {
   financeiro: "Financeiro",
@@ -252,6 +260,7 @@ export default function ExtratoCliente() {
   const [end, setEnd] = useState("");
   const [tipo, setTipo] = useState<"todos" | "NF" | "PAGAMENTO">("todos");
   const [situacaoFiltro, setSituacaoFiltro] = useState<string>("todos");
+  const [movimentoFiltro, setMovimentoFiltro] = useState<string>("todos");
   const [busca, setBusca] = useState("");
   const [detalheLinha, setDetalheLinha] = useState<Linha | null>(null);
   const [sortCol, setSortCol] = useState<"data" | "documento" | "descricao" | "vencimento" | "situacao">("data");
@@ -323,6 +332,9 @@ export default function ExtratoCliente() {
         situacaoFiltro === "__sem__" ? !l.situacao : String(l.situacao || "") === situacaoFiltro
       );
     }
+    if (movimentoFiltro !== "todos") {
+      out = out.filter((l) => String(l.tipoMovimento || "") === movimentoFiltro);
+    }
     const q = busca.trim().toLowerCase();
     if (q) {
       out = out.filter(
@@ -352,7 +364,7 @@ export default function ExtratoCliente() {
       return String(a.documento).localeCompare(String(b.documento));
     });
     return out;
-  }, [extrato, tipo, situacaoFiltro, busca, sortCol, sortDir]);
+  }, [extrato, tipo, situacaoFiltro, movimentoFiltro, busca, sortCol, sortDir]);
 
   const totaisVisiveis = useMemo(() => {
     const deb = linhas.reduce((s, l) => s + (l.debito || 0), 0);
@@ -364,13 +376,14 @@ export default function ExtratoCliente() {
     const rows = linhas.map((l) => ({
       Data: fmtData(l.data),
       Tipo: l.tipo === "NF" ? "Nota faturada" : "Pagamento",
+      "Tipo de movimento": l.tipoMovimento || "",
       Documento: l.documento,
       Pedido: l.pedido || "",
       Descricao: l.descricao || "",
       Vencimento: fmtData(l.vencimento),
       Parcelas: l.parcelas || "",
       "Forma de pagamento": l.formaPagamento || "",
-      Debito: l.debito || 0,
+      "Valor do DOC": l.debito || 0,
       Credito: l.credito || 0,
       Saldo: l.saldo,
       Situacao: l.situacao,
@@ -498,14 +511,22 @@ export default function ExtratoCliente() {
                 <option value="Quitada">Quitada</option>
                 <option value="Recebido">Recebido</option>
                 <option value="Cancelada">Cancelada</option>
-                <option value="Duplicado">Duplicado</option>
-                <option value="Outra praça">Outra praça</option>
-                <option value="Transferência">Transferência</option>
-                <option value="Devolução">Devolução</option>
-                <option value="Troca">Troca</option>
-                <option value="Amostra">Amostra</option>
-                <option value="Outra saída">Outra saída</option>
                 <option value="__sem__">Sem situação</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 dark:text-gray-400 block">Movimento</label>
+              <select
+                value={movimentoFiltro}
+                onChange={(e) => setMovimentoFiltro(e.target.value)}
+                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
+                data-testid="select-movimento"
+              >
+                <option value="todos">Todos os movimentos</option>
+                {MOVIMENTOS.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
               </select>
             </div>
 
@@ -622,6 +643,7 @@ export default function ExtratoCliente() {
                         <SortHeader label="Data" col="data" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
                       <th className="px-3 py-2 whitespace-nowrap">Tipo</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Tipo de movimento</th>
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Documento" col="documento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
@@ -631,17 +653,28 @@ export default function ExtratoCliente() {
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Vencimento" col="vencimento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
-                      <th className="px-3 py-2 text-right whitespace-nowrap">Venda (D)</th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap">Valor do DOC</th>
                       <th className="px-3 py-2 text-right whitespace-nowrap">Pagamento (C)</th>
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Situação" col="situacao" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
                     </tr>
+                    {/* Totais do que está na tela AGORA: acompanham período, tipo,
+                        movimento, situação e busca. Ficam colados no cabeçalho para
+                        serem lidos junto com as colunas que somam. */}
+                    <tr className="text-left font-semibold [&>th]:sticky [&>th]:top-9 [&>th]:z-20 [&>th]:bg-gray-50 [&>th]:dark:bg-gray-900 [&>th]:shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.12)]">
+                      <th className="px-3 py-1.5 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400" colSpan={6}>
+                        Valor total dos filtros
+                      </th>
+                      <th className="px-3 py-1.5 text-right whitespace-nowrap" data-testid="total-valor-doc">{fmtBRL(totaisVisiveis.deb)}</th>
+                      <th className="px-3 py-1.5 text-right whitespace-nowrap text-emerald-700 dark:text-emerald-300" data-testid="total-pagamento">{fmtBRL(totaisVisiveis.cre)}</th>
+                      <th className="px-3 py-1.5"></th>
+                    </tr>
                   </thead>
                   <tbody>
                     {linhas.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
+                        <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
                           Nenhum lançamento no período/filtro selecionado.
                         </td>
                       </tr>
@@ -676,6 +709,15 @@ export default function ExtratoCliente() {
                                 <><i className="fas fa-hand-holding-dollar text-[11px]" /> Pagamento</>
                               )}
                             </button>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {l.tipo === "NF" && l.tipoMovimento ? (
+                              <span className={`px-2 py-0.5 rounded-full border text-[11px] ${MOV_COR[l.tipoMovimento] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                                {l.tipoMovimento}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 dark:text-gray-600">—</span>
+                            )}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">
                             {l.tipo === "NF" ? (
@@ -735,16 +777,6 @@ export default function ExtratoCliente() {
                       ))
                     )}
                   </tbody>
-                  {linhas.length ? (
-                    <tfoot className="font-semibold">
-                      <tr className="[&>td]:sticky [&>td]:bottom-0 [&>td]:z-20 [&>td]:bg-gray-100 [&>td]:dark:bg-gray-800 [&>td]:shadow-[inset_0_1px_0_0_rgba(0,0,0,0.12)]">
-                        <td className="px-3 py-2" colSpan={5}>Totais do filtro</td>
-                        <td className="px-3 py-2 text-right">{fmtBRL(totaisVisiveis.deb)}</td>
-                        <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">{fmtBRL(totaisVisiveis.cre)}</td>
-                        <td className="px-3 py-2"></td>
-                      </tr>
-                    </tfoot>
-                  ) : null}
                 </table>
               </div>
             </CardContent>
@@ -866,6 +898,11 @@ function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void })
                 <i className="fas fa-hand-holding-dollar" /> Pagamento{dPag?.nf ? ` — NF ${dPag.nf}` : ""}
               </span>
             )}
+            {linha.tipoMovimento ? (
+              <span className={`px-2 py-0.5 rounded-full border text-[11px] ${MOV_COR[linha.tipoMovimento] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                {linha.tipoMovimento}
+              </span>
+            ) : null}
             {linha.situacao ? (
               <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[linha.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
                 {linha.situacao}
