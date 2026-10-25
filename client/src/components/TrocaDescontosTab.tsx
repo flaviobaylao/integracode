@@ -19,6 +19,7 @@ const MOTIVO: Record<string, { label: string; cls: string }> = {
   fermentado: { label: 'Fermentado', cls: 'bg-amber-100 text-amber-800' },
   lacre: { label: 'Lacre', cls: 'bg-amber-100 text-amber-800' },
   tampa: { label: 'Tampa', cls: 'bg-amber-100 text-amber-800' },
+  avaria: { label: 'Avaria / deformação / rótulo', cls: 'bg-amber-100 text-amber-800' },
 };
 const brl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const dataBR = (s?: string | null) => {

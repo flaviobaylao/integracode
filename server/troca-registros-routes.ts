@@ -4,7 +4,9 @@
 // Política de trocas Honest (versão enxuta, aprovada por Flavio em 23/10/2026):
 //   Motivos aceitos: fermentado, lacre, tampa (QUALIDADE) e vencido (COMERCIAL).
 //   Toda troca exige foto (câmera ou galeria) — trava já existente no card.
-//   Fermentado exige a temperatura lida no DISPLAY do refrigerador do cliente.
+//   Fermentado exige FOTO do display de temperatura do refrigerador do cliente (25/10/2026:
+//   a temperatura deixou de ser digitada). Motivo "avaria" (avaria/deformação/rótulo)
+//   incluído em 25/10/2026.
 //
 // TROCA POR VENCIMENTO é aceita como decisão comercial, mas a comissão sobre o
 // valor trocado é descontada do vendedor:
@@ -29,12 +31,13 @@ import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import { nfVendaFrom, nfVendaWhere, nfData, vendedorImplantou } from "./faturamento-oficial";
 
-export const MOTIVOS_TROCA = ["fermentado", "lacre", "tampa", "vencido"] as const;
+export const MOTIVOS_TROCA = ["fermentado", "lacre", "tampa", "avaria", "vencido"] as const;
 export type MotivoTroca = typeof MOTIVOS_TROCA[number];
 export const MOTIVO_LABEL: Record<MotivoTroca, string> = {
   fermentado: "Fermentado",
   lacre: "Lacre",
   tampa: "Tampa",
+  avaria: "Avaria / deformação / rótulo",
   vencido: "Vencido",
 };
 
@@ -232,15 +235,14 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       const { id } = req.params;
       const motivo = String(req.body?.motivo || "").toLowerCase() as MotivoTroca;
       if (!MOTIVOS_TROCA.includes(motivo)) {
-        return res.status(400).json({ message: "Motivo da troca inválido. Use: Fermentado, Lacre, Tampa ou Vencido." });
+        return res.status(400).json({ message: "Motivo da troca inválido. Use: Fermentado, Lacre, Tampa, Avaria/deformação/rótulo ou Vencido." });
       }
+      // Temperatura não é mais digitada: no fermentado a prova é a FOTO do display do
+      // refrigerador. Mantido opcional para compatibilidade com apps ainda em cache.
       let temperatura: number | null = null;
-      if (motivo === "fermentado") {
-        const t = Number(String(req.body?.temperatura ?? "").replace(",", "."));
-        if (!Number.isFinite(t) || t < -30 || t > 60) {
-          return res.status(400).json({ message: "Informe a temperatura lida no display do refrigerador." });
-        }
-        temperatura = t;
+      if (motivo === "fermentado" && req.body?.temperatura != null && String(req.body.temperatura).trim() !== "") {
+        const t = Number(String(req.body.temperatura).replace(",", "."));
+        if (Number.isFinite(t) && t >= -30 && t <= 60) temperatura = t;
       }
       const c: any = await db.execute(sql`
         SELECT sc.id, sc.customer_id, sc.seller_id, sc.products, sc.notes,

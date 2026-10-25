@@ -152,7 +152,7 @@ interface TrocaRegistro {
   nfNumero: string | null; nfData: string | null; vendedorNf: string | null; vendedorCard: string | null;
   comissaoPct: number; desconto: number; observacao: string | null; data: string;
 }
-const MOTIVO_TROCA_LABEL: Record<string, string> = { fermentado: "Fermentado", lacre: "Lacre", tampa: "Tampa", vencido: "Vencido" };
+const MOTIVO_TROCA_LABEL: Record<string, string> = { fermentado: "Fermentado", lacre: "Lacre", tampa: "Tampa", avaria: "Avaria / deformação / rótulo", vencido: "Vencido" };
 
 const fmtBRL = (v?: number | null) =>
   (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
