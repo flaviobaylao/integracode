@@ -229,6 +229,23 @@ function podeVerEquipe(req: any): boolean {
 
 export function registerTrocaRegistrosRoutes(app: Express) {
   // Grava o motivo da troca do card (chamado pelo card de vendas ao finalizar).
+  // PRÉVIA do desconto (card de vendas, antes de finalizar): mesma conta do registro,
+  // com os produtos que estão na tela (ainda não gravados no card). Não grava nada.
+  app.post("/api/sales-cards/:id/troca-previa", authenticateUser, async (req: any, res) => {
+    try {
+      const c: any = await db.execute(sql`
+        SELECT id, customer_id, seller_id, products FROM sales_cards WHERE id = ${req.params.id} LIMIT 1`);
+      const card = c.rows?.[0];
+      if (!card) return res.status(404).json({ message: "Card não encontrado" });
+      const produtos = Array.isArray(req.body?.products) ? req.body.products : card.products;
+      const calc = await calcularTroca({ ...card, products: produtos }, "vencido");
+      return res.json(calc);
+    } catch (e: any) {
+      console.error("[TROCA] previa:", e?.message || e);
+      return res.status(500).json({ message: "Falha ao calcular a prévia do desconto" });
+    }
+  });
+
   app.post("/api/sales-cards/:id/troca-motivo", authenticateUser, async (req: any, res) => {
     try {
       await ensureTrocaSchema();

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PaymentLinkDialog from "./PaymentLinkDialog";
 import TrocaAnteriorAviso from "./TrocaAnteriorAviso";
+import TrocaPreviaDesconto from "./TrocaPreviaDesconto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1834,7 +1835,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     </div>
                   )}
                   {trocaMotivo === 'vencido' && (
-                    <p className="text-xs text-red-700">Troca comercial: a comissão sobre o valor trocado (preço da última NF do cliente) será descontada da comissão do mês.</p>
+                    <TrocaPreviaDesconto cardId={card?.id} products={products} />
                   )}
                 </div>
               )}
