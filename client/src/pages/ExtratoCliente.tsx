@@ -45,6 +45,7 @@ type Linha = {
   situacao: string | null;
   origem: string;
   tipoMovimento?: string | null;
+  motivo?: string | null;
   natureza?: string | null;
   informativa?: boolean;
   duplicado?: boolean;
@@ -80,6 +81,7 @@ type DetalheNota = {
   origem?: string | null;
   situacao: string | null;
   tipoMovimento?: string | null;
+  motivo?: string | null;
   natureza?: string | null;
   duplicado?: boolean;
   cancelada?: boolean;
@@ -114,6 +116,10 @@ type Extrato = {
     totalPago: number;
     saldoDevedor: number;
     totalVencido: number;
+    totalDevolucoes?: number;
+    totalTrocas?: number;
+    qtdDevolucoes?: number;
+    qtdTrocas?: number;
     totalAVencer: number;
     qtdNotas: number;
     qtdNotasAbertas: number;
@@ -203,6 +209,10 @@ const KPI_INFO = {
     "Total faturado menos total pago: o que o cliente ainda deve hoje. Abaixo, a quantidade de notas com saldo em aberto.",
   vencido:
     "Parte do saldo devedor cujo vencimento já passou. Nota que vence hoje NÃO conta como vencida — só a partir do dia seguinte.",
+  devolucoes:
+    "Quanto este cliente já devolveu: soma das notas canceladas por devolução de venda. Não é dívida nem compra — entra só como histórico. Abaixo, a quantidade de devoluções.",
+  trocas:
+    "Quanto este cliente já trocou: soma das notas cujo pedido foi registrado como troca. A troca é cobrada normalmente, então continua dentro do faturado e do saldo devedor. Abaixo, a quantidade de trocas.",
   ticket:
     "Total faturado dividido pela quantidade de notas. Abaixo, a média de dias entre o vencimento e o pagamento efetivo (só de baixas com data real).",
   relacionamento:
@@ -402,6 +412,7 @@ export default function ExtratoCliente() {
       Data: fmtData(l.data),
       Tipo: l.tipo === "NF" ? "Nota faturada" : "Pagamento",
       "Tipo de movimento": l.tipoMovimento || "",
+      "Motivo da troca": l.motivo || "",
       Documento: l.documento,
       Pedido: l.pedido || "",
       Descricao: l.descricao || "",
@@ -601,7 +612,7 @@ export default function ExtratoCliente() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
                 <Kpi label="Total faturado" value={fmtBRL(r?.totalFaturado)} sub={`${r?.qtdNotas || 0} notas`} testId="kpi-faturado" info={KPI_INFO.faturado} />
                 <Kpi label="Total pago" value={fmtBRL(r?.totalPago)} sub={`${r?.qtdPagamentos || 0} pagamentos`} tone="bg-emerald-50 dark:bg-emerald-900/20" testId="kpi-pago" info={KPI_INFO.pago} />
                 <Kpi
@@ -613,6 +624,22 @@ export default function ExtratoCliente() {
                   info={KPI_INFO.saldo}
                 />
                 <Kpi label="Vencido" value={fmtBRL(r?.totalVencido)} tone={(r?.totalVencido || 0) > 0.009 ? "bg-red-50 dark:bg-red-900/20" : ""} testId="kpi-vencido" info={KPI_INFO.vencido} />
+                <Kpi
+                  label="Devoluções"
+                  value={fmtBRL(r?.totalDevolucoes)}
+                  sub={`${r?.qtdDevolucoes || 0} nota(s)`}
+                  tone={(r?.totalDevolucoes || 0) > 0.009 ? "bg-sky-50 dark:bg-sky-900/20" : ""}
+                  testId="kpi-devolucoes"
+                  info={KPI_INFO.devolucoes}
+                />
+                <Kpi
+                  label="Trocas"
+                  value={fmtBRL(r?.totalTrocas)}
+                  sub={`${r?.qtdTrocas || 0} nota(s)`}
+                  tone={(r?.totalTrocas || 0) > 0.009 ? "bg-sky-50 dark:bg-sky-900/20" : ""}
+                  testId="kpi-trocas"
+                  info={KPI_INFO.trocas}
+                />
                 <Kpi label="Ticket médio" value={fmtBRL(r?.ticketMedio)} sub={r?.atrasoMedioDias != null ? `atraso médio: ${r.atrasoMedioDias}d` : undefined} testId="kpi-ticket" info={KPI_INFO.ticket} />
                 <Kpi
                   label="Relacionamento"
@@ -725,6 +752,7 @@ export default function ExtratoCliente() {
                       </th>
                       <th className="px-3 py-2 whitespace-nowrap">Tipo</th>
                       <th className="px-3 py-2 whitespace-nowrap">Tipo de movimento</th>
+                      <th className="px-3 py-2 whitespace-nowrap">Motivo da troca</th>
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Documento" col="documento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
@@ -744,7 +772,7 @@ export default function ExtratoCliente() {
                         movimento, situação e busca. Ficam colados no cabeçalho para
                         serem lidos junto com as colunas que somam. */}
                     <tr className="text-left font-semibold [&>th]:sticky [&>th]:top-9 [&>th]:z-20 [&>th]:bg-gray-50 [&>th]:dark:bg-gray-900 [&>th]:shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.12)]">
-                      <th className="px-3 py-1.5 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400" colSpan={6}>
+                      <th className="px-3 py-1.5 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400" colSpan={7}>
                         Valor total dos filtros
                       </th>
                       <th className="px-3 py-1.5 text-right whitespace-nowrap" data-testid="total-valor-doc">{fmtBRL(totaisVisiveis.deb)}</th>
@@ -755,7 +783,7 @@ export default function ExtratoCliente() {
                   <tbody>
                     {linhas.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
+                        <td colSpan={10} className="px-3 py-8 text-center text-gray-500">
                           Nenhum lançamento no período/filtro selecionado.
                         </td>
                       </tr>
@@ -799,6 +827,9 @@ export default function ExtratoCliente() {
                             ) : (
                               <span className="text-gray-300 dark:text-gray-600">—</span>
                             )}
+                          </td>
+                          <td className="px-3 py-2 max-w-[200px] truncate" title={l.motivo || ""}>
+                            {l.motivo || <span className="text-gray-300 dark:text-gray-600">—</span>}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">
                             {l.tipo === "NF" ? (
