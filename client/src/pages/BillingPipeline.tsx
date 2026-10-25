@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import PaymentLinkDialog from '@/components/PaymentLinkDialog';
+import TrocaAnteriorAviso from '@/components/TrocaAnteriorAviso';
 import PedidoGynServDialog from '@/components/PedidoGynServDialog';
 import DescontoBoletoBox from '@/components/DescontoBoletoBox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -2254,7 +2255,14 @@ export default function BillingPipeline() {
                   <label className="text-[10px] uppercase tracking-wider text-gray-400 font-medium mb-1 block">Observações</label>
                   {editMode && (canEdit || canSellerEditItem(detailItem)) ? (
                     <textarea value={editData?.notes ?? ''} onChange={(e) => setEditData((d: any) => ({ ...d, notes: e.target.value }))} rows={2} className="w-full border rounded px-2 py-1 text-sm" />
-                  ) : (<p className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg whitespace-pre-line">{detailItem.notes}</p>)}
+                  ) : (
+                    <div className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">
+                      <p className="whitespace-pre-line">{detailItem.notes}</p>
+                      {String(detailItem.operationType || '').toLowerCase() === 'troca' && detailItem.salesCardId && (
+                        <TrocaAnteriorAviso salesCardId={detailItem.salesCardId} className="mt-3 text-sm font-semibold text-red-600" />
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

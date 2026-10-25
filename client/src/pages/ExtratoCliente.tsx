@@ -136,6 +136,14 @@ type Extrato = {
   totalLinhas: number;
 };
 
+interface TrocaRegistro {
+  id: string; salesCardId: string; motivo: string; categoria: string; temperatura: number | null;
+  valorTroca: number; itens: Array<{ produto: string; quantidade: number }>;
+  nfNumero: string | null; nfData: string | null; vendedorNf: string | null; vendedorCard: string | null;
+  comissaoPct: number; desconto: number; observacao: string | null; data: string;
+}
+const MOTIVO_TROCA_LABEL: Record<string, string> = { fermentado: "Fermentado", lacre: "Lacre", tampa: "Tampa", vencido: "Vencido" };
+
 const fmtBRL = (v?: number | null) =>
   (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -323,6 +331,23 @@ export default function ExtratoCliente() {
     },
     enabled: !!selected?.id,
   });
+
+  // Trocas registradas (política de trocas): motivo, valor e desconto de comissão.
+  const { data: trocas = [] } = useQuery<TrocaRegistro[]>({
+    queryKey: ["trocas-cliente", selected?.id],
+    queryFn: () => apiRequest("GET", `/api/trocas/cliente/${selected!.id}`),
+    enabled: !!selected?.id,
+  });
+  // Link do aviso "troca pelo mesmo motivo" abre com ?secao=trocas: rola até o bloco.
+  const secaoTrocas = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("secao") === "trocas";
+  const trocasRef = useRef<HTMLDivElement | null>(null);
+  const rolouTrocas = useRef(false);
+  useEffect(() => {
+    if (secaoTrocas && !rolouTrocas.current && extrato && trocasRef.current) {
+      rolouTrocas.current = true;
+      setTimeout(() => trocasRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    }
+  }, [secaoTrocas, extrato, trocas.length]);
 
   const linhas = useMemo(() => {
     let out = extrato?.linhas || [];
@@ -626,6 +651,62 @@ export default function ExtratoCliente() {
               ) : null}
             </CardContent>
           </Card>
+
+          {/* Trocas registradas */}
+          {(trocas.length > 0 || secaoTrocas) && (
+            <div ref={trocasRef} id="trocas" className="scroll-mt-4">
+              <Card className={secaoTrocas ? "ring-2 ring-red-400" : undefined}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Trocas registradas ({trocas.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {trocas.length === 0 ? (
+                    <div className="px-4 py-6 text-sm text-gray-500">Nenhuma troca registrada com motivo para este cliente.</div>
+                  ) : (
+                    <div className="overflow-auto max-h-[50vh]">
+                      <table className="w-full text-sm" data-testid="tabela-trocas-cliente">
+                        <thead className="text-gray-600 dark:text-gray-300">
+                          <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:bg-gray-100 [&>th]:dark:bg-gray-800 [&>th]:px-3 [&>th]:py-2 [&>th]:whitespace-nowrap">
+                            <th>Data</th>
+                            <th>Motivo</th>
+                            <th>Produtos</th>
+                            <th className="text-right">Valor</th>
+                            <th>Vendedor</th>
+                            <th>Última NF</th>
+                            <th className="text-right">Desconto comissão</th>
+                            <th>Observação</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trocas.map((t) => (
+                            <tr key={t.id} className="border-t align-top [&>td]:px-3 [&>td]:py-2">
+                              <td className="whitespace-nowrap">{new Date(t.data).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}</td>
+                              <td className="whitespace-nowrap">
+                                <Badge variant="outline" className={t.motivo === "vencido" ? "border-red-300 text-red-700" : "border-amber-300 text-amber-800"}>
+                                  {MOTIVO_TROCA_LABEL[t.motivo] || t.motivo}
+                                </Badge>
+                                {t.temperatura != null && <span className="ml-1 text-xs text-gray-500">{String(t.temperatura).replace(".", ",")} °C</span>}
+                              </td>
+                              <td className="text-xs">
+                                {(t.itens || []).map((i, k) => (
+                                  <div key={k}>{i.quantidade} × {i.produto}</div>
+                                ))}
+                              </td>
+                              <td className="text-right whitespace-nowrap">{fmtBRL(t.valorTroca)}</td>
+                              <td className="whitespace-nowrap">{t.vendedorCard || t.vendedorNf || "—"}</td>
+                              <td className="whitespace-nowrap">{t.nfNumero ? `NF ${t.nfNumero} · ${fmtData(t.nfData)}` : "—"}</td>
+                              <td className="text-right whitespace-nowrap text-red-700">{t.desconto > 0 ? `− ${fmtBRL(t.desconto)}` : "—"}</td>
+                              <td className="text-xs text-gray-600 dark:text-gray-300 max-w-[22rem] whitespace-pre-line">{t.observacao || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Extrato */}
           <Card>
