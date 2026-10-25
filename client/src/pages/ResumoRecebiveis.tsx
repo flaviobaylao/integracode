@@ -74,7 +74,7 @@ interface Colab {
   campanhas: Record<string, number | null>;
   bonus: number | null;
   lancamentos: Array<{ id: string; descricao: string; valor: number }>;
-  kmRodado: number; kmTarifa: number; kmValor: number | null; totalMes: number;
+  kmRodado: number; kmTarifa: number; kmRegiao?: string; kmTarifaPropria?: boolean; kmValor: number | null; totalMes: number;
 }
 
 export default function ResumoRecebiveis() {
@@ -277,14 +277,14 @@ export default function ResumoRecebiveis() {
 // ---------------------------------------------------------------------------
 // GESTOR — três abas: colaboradores (flags + remuneração), campanhas e bônus.
 // ---------------------------------------------------------------------------
-const FLAGS: Array<{ k: string; label: string; ajuda: string }> = [
-  { k: "usaFixo", label: "Fixo mensal", ajuda: "Valor de cadastro, informado abaixo" },
-  { k: "usaMeta", label: "Meta", ajuda: "Buscada em Metas de Vendas" },
-  { k: "usaFaturamento", label: "Faturamento", ajuda: "Buscado na fonte oficial de faturamento" },
-  { k: "usaComissao", label: "Comissão mês", ajuda: "Calculada pela regra do colaborador" },
-  { k: "usaKm", label: "Km", ajuda: "Buscado na Kilometragem Vendedores" },
-  { k: "usaCampanhas", label: "Campanhas", ajuda: "Buscadas nos módulos de campanha" },
-  { k: "usaBonus", label: "Bônus manual", ajuda: "Abre o lançamento avulso para este colaborador" },
+const FLAGS: Array<{ k: string; label: string; modulo: string; ajuda: string }> = [
+  { k: "usaFixo", label: "Fixo mensal", modulo: "Cadastro (aqui)", ajuda: "Nenhum módulo calcula salário; o valor é informado nesta tela" },
+  { k: "usaMeta", label: "Meta", modulo: "Metas de Vendas", ajuda: "sales_goals: meta de faturamento do mês" },
+  { k: "usaFaturamento", label: "Faturamento", modulo: "Faturamento oficial", ajuda: "NF-e de venda autorizada, atribuída a quem implantou o pedido" },
+  { k: "usaComissao", label: "Comissão mês", modulo: "Regra do colaborador", ajuda: "Percentual ou faixa definidos abaixo, sobre o faturamento" },
+  { k: "usaKm", label: "Km", modulo: "Kilometragem Vendedores", ajuda: "Km rodado no mês x tarifa do colaborador" },
+  { k: "usaCampanhas", label: "Campanhas", modulo: "Módulos de campanha", ajuda: "Uma coluna por campanha vigente" },
+  { k: "usaBonus", label: "Bônus manual", modulo: "Lançamento avulso", ajuda: "Abre o lançamento por usuário na aba Bônus" },
 ];
 
 function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
@@ -301,6 +301,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     usaKm: true, usaCampanhas: true, usaBonus: false, observacao: "",
   };
   const [form, setForm] = useState<any>(vazio);
+  const [buscaPart, setBuscaPart] = useState("");
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
   const { data: cfgData } = useQuery<{ configs: any[]; colaboradores: any[]; participantes: any[] }>({
@@ -442,10 +443,13 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 <Label className="text-xs">Rubricas deste colaborador</Label>
                 <div className="mt-1 grid grid-cols-2 md:grid-cols-4 gap-2">
                   {FLAGS.map((f) => (
-                    <label key={f.k} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5 cursor-pointer min-w-0"
+                    <label key={f.k} className="flex items-start gap-2 rounded-md border bg-background px-2 py-1.5 cursor-pointer min-w-0"
                       title={f.ajuda}>
-                      <Switch checked={!!form[f.k]} onCheckedChange={(v) => set(f.k, v)} />
-                      <span className="text-xs truncate">{f.label}</span>
+                      <Switch className="mt-0.5" checked={!!form[f.k]} onCheckedChange={(v) => set(f.k, v)} />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-medium truncate">{f.label}</span>
+                        <span className="block text-[10px] text-muted-foreground truncate">{f.modulo}</span>
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -505,6 +509,40 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     onChange={(e) => set("observacao", e.target.value)} placeholder="Ex.: reajuste aprovado em reunião" />
                 </div>
               </div>
+
+              {(() => {
+                const alvo = colabs.find((c) => c.id === form.userId);
+                if (!form.userId) return null;
+                const regraCom = form.comissaoTipo === "faixa"
+                  ? `Faixa por atingimento (${form.faixaTipo === "telemarketing" ? "vendas internas" : form.faixaTipo === "vendedor_pj" ? "externo PJ" : "externo CLT"})`
+                  : form.comissaoTipo === "fixo"
+                    ? `${form.comissaoPct || 0}% sobre o faturamento${num(form.comissaoDescontoFixo) > 0 ? `, menos ${brl(num(form.comissaoDescontoFixo))}` : ""}${form.comissaoProporcionalMeta ? ", proporcional à meta" : ""}`
+                    : "Sem comissão";
+                const itens: Array<[string, string, string]> = [
+                  ["Fixo mensal", "Cadastro (esta tela)", form.fixoMensal ? brl(num(form.fixoMensal)) : "a preencher"],
+                  ["Meta", "Metas de Vendas", alvo?.meta ? brl(alvo.meta) : "sem meta cadastrada em " + nomeDoMes(ym)],
+                  ["Faturamento", "Faturamento oficial", alvo?.faturamento != null ? brl(alvo.faturamento) : "—"],
+                  ["Comissão mês", "Regra do colaborador", regraCom],
+                  ["Km", "Kilometragem Vendedores",
+                    alvo ? `${brl(alvo.kmTarifa)}/km · ${(alvo as any).kmTarifaPropria ? "tarifa própria" : `tarifa da região ${(alvo as any).kmRegiao || "GO"}`}` : "—"],
+                  ["Campanhas", "Módulos de campanha",
+                    campanhas.length ? campanhas.map((c) => `${c.nome} (${c.origem === "campanha" ? "módulo" : "manual"})`).join(" · ") : "nenhuma vigente em " + nomeDoMes(ym)],
+                ];
+                return (
+                  <div className="rounded-md border bg-background p-2">
+                    <div className="text-xs font-medium mb-1">De onde vem cada número deste colaborador</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-0.5">
+                      {itens.map(([rub, mod, regra]) => (
+                        <div key={rub} className="flex items-baseline gap-1 text-[11px] min-w-0">
+                          <span className="font-medium shrink-0">{rub}:</span>
+                          <span className="text-muted-foreground shrink-0">{mod} —</span>
+                          <span className="truncate" title={regra}>{regra}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-end">
                 <Button size="sm" disabled={!form.userId || salvarCfg.isPending} onClick={() => salvarCfg.mutate()}>
@@ -763,11 +801,18 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
           <TabsContent value="participantes" className="space-y-2">
             <p className="text-xs text-muted-foreground">
               Quem sai daqui some da planilha e do seletor de colaborador das outras abas. Use para contas
-              que não são pessoas — canais, usuários de sistema — e para cadastros de teste. Dá para
-              trazer de volta a qualquer momento: a lista mostra todos os usuários ativos.
+              que não são pessoas — canais, usuários de sistema — e para cadastros de teste. A lista traz
+              <strong> todos os usuários ativos</strong>, de qualquer função: ligar o botão de alguém fora
+              de vendas (um administrador, por exemplo) coloca essa pessoa na planilha.
             </p>
+            <Input className="h-8" placeholder="Buscar por nome ou e-mail…"
+              value={buscaPart} onChange={(e) => setBuscaPart(e.target.value)} />
             <div className="space-y-1">
-              {(cfgData?.participantes || []).map((p: any) => (
+              {(cfgData?.participantes || []).filter((p: any) => {
+                const t = buscaPart.trim().toLowerCase();
+                if (!t) return true;
+                return String(p.nome || "").toLowerCase().includes(t) || String(p.email || "").toLowerCase().includes(t);
+              }).map((p: any) => (
                 <div key={p.id}
                   className={`flex items-center gap-3 rounded-md border px-3 py-1.5 text-sm min-w-0 ${p.incluir ? "" : "bg-muted/40"}`}>
                   <Switch checked={p.incluir !== false}
@@ -778,9 +823,12 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     </div>
                     <div className="truncate text-xs text-muted-foreground">{p.email || "—"}</div>
                   </div>
-                  <Badge className={`${PAPEL_COR[p.role] || "bg-gray-100 text-gray-800"} shrink-0`}>
+                  <Badge className={`${PAPEL_COR[p.role] || "bg-slate-100 text-slate-700"} shrink-0`}>
                     {PAPEL_LABEL[p.role] || p.role}
                   </Badge>
+                  {!p.papel_de_vendas && p.incluir && (
+                    <Badge className="bg-emerald-100 text-emerald-800 shrink-0">incluído à mão</Badge>
+                  )}
                 </div>
               ))}
             </div>
