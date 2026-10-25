@@ -185,6 +185,26 @@ export function registerCustomerStatementRoutes(app: Express): void {
     }
   });
 
+  // ── Redes de clientes (para o filtro Rede do Extrato) ─────────────────────
+  // Lista enxuta: só o que o seletor precisa. O módulo de carteira tem a visão
+  // consolidada pesada; aqui só interessa id, nome e quantos clientes tem.
+  app.get("/api/customer-statement/redes", authenticateUser, isExtratoAuthorized, async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`
+        SELECT rd.id, rd.nome, COUNT(m.customer_id)::int AS membros
+        FROM cliente_redes rd
+        LEFT JOIN cliente_rede_membros m ON m.rede_id = rd.id
+        GROUP BY rd.id, rd.nome
+        HAVING COUNT(m.customer_id) > 0
+        ORDER BY rd.nome
+      `);
+      res.json((r?.rows || r || []).map((x: any) => ({ id: String(x.id), nome: x.nome, membros: Number(x.membros || 0) })));
+    } catch (e: any) {
+      console.error("[extrato-cliente] falha ao listar redes:", e?.message || e);
+      res.json([]);
+    }
+  });
+
   // ── Extrato completo de um cliente ────────────────────────────────────────
   app.get("/api/customer-statement/:customerId", authenticateUser, isExtratoAuthorized, async (req: any, res) => {
     try {
@@ -208,18 +228,58 @@ export function registerCustomerStatementRoutes(app: Express): void {
       const end = req.query.end ? new Date(String(req.query.end)) : null;
       if (end) end.setHours(23, 59, 59, 999);
 
-      const cRes: any = await db.execute(sql`
-        SELECT c.*, TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')) AS seller_name
-        FROM customers c LEFT JOIN users u ON u.id = c.seller_id
-        WHERE c.id = ${customerId} LIMIT 1
-      `);
-      const cust: any = (cRes?.rows || cRes || [])[0];
-      if (!cust) return res.status(404).json({ message: "Cliente não encontrado" });
+      // REDE (25/out/2026): "rede:<id>" no lugar do cliente consolida o extrato de
+      // TODOS os membros — é como se vê a conta de um grupo com várias lojas
+      // (SUPERMERCADO TÁTICO tem cinco). O resto do endpoint não muda: o recorte do
+      // cliente virou `condCliente`, que vale para um ou para muitos.
+      const ehRede = customerId.startsWith("rede:");
+      let cust: any;
+      let idsRede: string[] = [];
+      let docsRede: string[] = [];
+      if (ehRede) {
+        const redeId = customerId.slice(5);
+        const rRes: any = await db.execute(sql`
+          SELECT rd.nome,
+                 COALESCE(ARRAY_AGG(DISTINCT m.customer_id) FILTER (WHERE m.customer_id IS NOT NULL), '{}') AS ids
+          FROM cliente_redes rd
+          LEFT JOIN cliente_rede_membros m ON m.rede_id = rd.id
+          WHERE rd.id = ${redeId}
+          GROUP BY rd.nome
+        `);
+        const rede: any = (rRes?.rows || rRes || [])[0];
+        if (!rede) return res.status(404).json({ message: "Rede não encontrada" });
+        idsRede = (rede.ids || []).map((x: any) => String(x)).filter(Boolean);
+        if (!idsRede.length) return res.status(404).json({ message: "Rede sem clientes" });
+        const dRes: any = await db.execute(sql`
+          SELECT c.cnpj, c.cpf FROM customers c
+          WHERE c.id IN (${sql.join(idsRede.map((x) => sql`${x}`), sql`, `)})
+        `);
+        docsRede = (dRes?.rows || dRes || [])
+          .map((c: any) => onlyDigits(c.cnpj || c.cpf))
+          .filter((d: string) => d.length >= 11);
+        cust = { id: customerId, name: `Rede ${rede.nome}`, cnpj: null, cpf: null, city: null, state: null, seller_name: null, is_active: true };
+      } else {
+        const cRes: any = await db.execute(sql`
+          SELECT c.*, TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')) AS seller_name
+          FROM customers c LEFT JOIN users u ON u.id = c.seller_id
+          WHERE c.id = ${customerId} LIMIT 1
+        `);
+        cust = (cRes?.rows || cRes || [])[0];
+        if (!cust) return res.status(404).json({ message: "Cliente não encontrado" });
+      }
 
       const doc = onlyDigits(cust.cnpj || cust.cpf);
       const docCond = doc.length >= 11
         ? sql` OR REGEXP_REPLACE(COALESCE(r.customer_document,''), '\\D', '', 'g') = ${doc}`
         : sql``;
+      /** Recorte do titular: um cliente, ou todos os clientes da rede. */
+      const condCliente = ehRede
+        ? sql`(r.customer_id IN (${sql.join(idsRede.map((x) => sql`${x}`), sql`, `)})${
+            docsRede.length
+              ? sql` OR REGEXP_REPLACE(COALESCE(r.customer_document,''), '\\D', '', 'g') IN (${sql.join(docsRede.map((x) => sql`${x}`), sql`, `)})`
+              : sql``
+          })`
+        : sql`(r.customer_id = ${customerId} ${docCond})`;
 
       // 1) Títulos do financeiro
       const recRes: any = await db.execute(sql`
@@ -230,7 +290,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
                r.omie_instance_id, r.created_at
         FROM receivables r
         WHERE r.deleted_at IS NULL
-          AND (r.customer_id = ${customerId} ${docCond})${filtroOrigem}
+          AND ${condCliente}${filtroOrigem}
         ORDER BY r.issue_date ASC, r.due_date ASC
       `);
       const receivables: any[] = recRes?.rows || recRes || [];
@@ -531,7 +591,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
           SELECT sc.id, sc.operation_type, sc.sale_value, sc.status, sc.invoice_number,
                  sc.created_at, sc.updated_at
           FROM sales_cards sc
-          WHERE sc.customer_id = ${customerId}
+          WHERE ${ehRede
+            ? sql`sc.customer_id IN (${sql.join(idsRede.map((x) => sql`${x}`), sql`, `)})`
+            : sql`sc.customer_id = ${customerId}`}
             AND sc.operation_type IN ('troca', 'amostra', 'transferencia')
             AND COALESCE(sc.status, '') NOT IN ('cancelled', 'no_sale')
             AND COALESCE(sc.sale_value, 0) > 0
@@ -954,7 +1016,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           FROM receivables r
           WHERE r.deleted_at IS NULL
             AND COALESCE(r.status::text, '') <> 'cancelada'
-            AND (r.customer_id = ${customerId} ${docCond})
+            AND ${condCliente}
         `);
         const rel: any = (relRes?.rows || relRes || [])[0];
         const pri = toISO(rel?.primeira);
