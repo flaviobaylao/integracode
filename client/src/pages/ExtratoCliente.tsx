@@ -47,6 +47,7 @@ type Linha = {
   tipoMovimento?: string | null;
   motivo?: string | null;
   historico?: boolean;
+  semCobranca?: boolean;
   natureza?: string | null;
   informativa?: boolean;
   duplicado?: boolean;
@@ -135,6 +136,8 @@ type Extrato = {
     origem?: string;
     notasHistorico?: number;
     valorHistorico?: number;
+    ocorrenciasSemCobranca?: number;
+    valorSemCobranca?: number;
     notasInformativas?: number;
     valorInformativas?: number;
     titulosFantasma?: number;
@@ -390,7 +393,7 @@ export default function ExtratoCliente() {
   const [situacoesSel, setSituacoesSel] = useState<string[]>([]);
   const [movimentosSel, setMovimentosSel] = useState<string[]>([]);
   // Origem dos DADOS (não é filtro de tela: vai ao servidor e refaz os KPIs).
-  const [origem, setOrigem] = useState<"todas" | "integra" | "omie">("todas");
+  const [origem, setOrigem] = useState<"todas" | "integra" | "omie">("integra");
   const [busca, setBusca] = useState("");
   const [detalheLinha, setDetalheLinha] = useState<Linha | null>(null);
   const [sortCol, setSortCol] = useState<"data" | "documento" | "descricao" | "vencimento" | "situacao">("data");
@@ -448,7 +451,7 @@ export default function ExtratoCliente() {
       const p = new URLSearchParams();
       if (start) p.set("start", start);
       if (end) p.set("end", end);
-      if (origem !== "todas") p.set("origem", origem);
+      p.set("origem", origem);
       const qs = p.toString();
       return apiRequest("GET", `/api/customer-statement/${selected!.id}${qs ? "?" + qs : ""}`);
     },
@@ -778,6 +781,14 @@ export default function ExtratoCliente() {
                   de vencimento e aparecem marcadas como <em>data estimada</em>.
                 </div>
               ) : null}
+              {(r?.ocorrenciasSemCobranca || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.ocorrenciasSemCobranca} ocorrência(s) de {fmtBRL(r?.valorSemCobranca)} —{" "}
+                  <strong>troca, amostra ou transferência que não gerou conta a receber</strong> — aparecem no histórico com o
+                  valor em cinza e <strong>sem débito</strong>: não houve cobrança, então ficam fora do faturado e do saldo
+                  devedor. Elas somam nos cards de Trocas e Devoluções.
+                </div>
+              ) : null}
               {(r?.notasHistorico || 0) > 0 ? (
                 <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
                   {r?.notasHistorico} nota(s) de {fmtBRL(r?.valorHistorico)} vieram do{" "}
@@ -1010,7 +1021,18 @@ export default function ExtratoCliente() {
                             ) : null}
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap font-medium">
-                            {l.debito ? fmtBRL(l.debito) : ""}
+                            {l.debito ? (
+                              fmtBRL(l.debito)
+                            ) : l.semCobranca && (l.valorNota || 0) > 0 ? (
+                              <span
+                                className="font-normal text-gray-400 dark:text-gray-500"
+                                title="Ocorrência sem conta a receber: o valor não entra no saldo devedor nem nos totais."
+                              >
+                                {fmtBRL(l.valorNota)}
+                              </span>
+                            ) : (
+                              ""
+                            )}
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-emerald-700 dark:text-emerald-300">
                             {l.credito ? fmtBRL(l.credito) : ""}
