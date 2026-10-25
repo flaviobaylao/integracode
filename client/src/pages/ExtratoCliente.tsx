@@ -40,6 +40,7 @@ type Linha = {
   credito: number;
   saldo: number;
   valorNota?: number;
+  valorBruto?: number;
   pagoNota?: number;
   saldoNota?: number;
   situacao: string | null;
@@ -118,6 +119,7 @@ type Extrato = {
     totalPago: number;
     saldoDevedor: number;
     totalVencido: number;
+    clienteDesde?: string | null;
     totalDevolucoes?: number;
     totalTrocas?: number;
     qtdDevolucoes?: number;
@@ -295,9 +297,9 @@ const ORIGEM_LABEL: Record<string, string> = {
 // Todos os KPIs são de VIDA INTEIRA: não mudam quando o filtro de período é aplicado.
 const KPI_INFO = {
   faturado:
-    "Soma de todas as notas emitidas para este cliente desde a primeira compra — vida inteira, não muda com o filtro de período. Notas canceladas não entram. Abaixo, a quantidade de notas.",
+    "Soma das notas de VENDA que estão na lista agora — acompanha período, tipo, situação, movimento, rede, origem e busca. Devolução, troca sem cobrança, outra praça, duplicata e nota cancelada não entram. Abaixo, a quantidade de notas.",
   pago:
-    "Soma de todas as baixas recebidas deste cliente, lançadas na data real do pagamento. Baixas vindas do histórico importado sem data entram na data de vencimento e aparecem marcadas como (est.). Abaixo, a quantidade de pagamentos.",
+    "Soma das baixas que estão na lista agora, lançadas na data real do pagamento. Baixas vindas do histórico importado sem data entram na data de vencimento e aparecem marcadas como (est.). Abaixo, a quantidade de pagamentos.",
   saldo:
     "Parte do que o cliente deve que AINDA NÃO venceu: notas em aberto com vencimento de hoje em diante. Vencido + A vencer é a dívida total. Abaixo, a quantidade de notas com saldo em aberto.",
   vencido:
@@ -309,7 +311,7 @@ const KPI_INFO = {
   ticket:
     "Total faturado dividido pela quantidade de notas. Abaixo, a média de dias entre o vencimento e o pagamento efetivo (só de baixas com data real).",
   relacionamento:
-    "Data da primeira compra do cliente. Abaixo, a data da última compra e há quantos dias ele não compra.",
+    "Primeira compra dentro do recorte filtrado. Abaixo, a última compra, há quantos dias ele não compra e — quando o filtro esconde algo mais antigo — desde quando o cliente existe, olhando todas as origens.",
 } as const;
 
 // "i" no canto do card: abre a explicação no hover e também no clique (toque no celular).
@@ -544,6 +546,65 @@ export default function ExtratoCliente() {
     return { deb, cre, saldo: deb - cre };
   }, [linhas]);
 
+  // ── BIG NUMBERS DO QUE ESTÁ NA TELA (25/out/2026) ──────────────────────────
+  // Antes os cards eram sempre de vida inteira e ignoravam período, tipo, situação,
+  // movimento e busca — filtrar maio em diante continuava mostrando o faturado de
+  // 200 notas. Agora eles saem das MESMAS linhas que a tabela mostra, então o que
+  // está no card é o que está na lista. Rede e Origem já eram aplicados no servidor.
+  const kpis = useMemo(() => {
+    const notas = linhas.filter((l) => l.tipo !== "PAGAMENTO");
+    const pagtos = linhas.filter((l) => l.tipo === "PAGAMENTO");
+    // VENDA = o que é compra deste cliente. Fora: operação informativa (outra praça,
+    // transferência, devolução, CFOP 5949), ocorrência sem cobrança, duplicata e nota
+    // cancelada. Mesma régua do servidor, agora sobre o recorte visível.
+    const vendas = notas.filter(
+      (l) => !l.informativa && !l.semCobranca && !l.duplicado && !l.cancelada
+    );
+    const soma = (arr: Linha[], f: (l: Linha) => number) => arr.reduce((acc, l) => acc + (f(l) || 0), 0);
+    const cent = (v: number) => Math.round(v * 100) / 100;
+
+    const totalFaturado = soma(vendas, (l) => l.valorNota || 0);
+    const totalPago = soma(pagtos.filter((l) => !l.informativa), (l) => l.credito || 0);
+    const abertas = vendas.filter((l) => (l.saldoNota || 0) > 0.009);
+    const vencidas = abertas.filter((l) => l.situacao === "Vencida");
+    const aVencer = abertas.filter((l) => l.situacao !== "Vencida");
+    const porMov = (mov: string) => notas.filter((l) => l.tipoMovimento === mov);
+    const devolucoes = porMov("Devolução");
+    const trocas = porMov("Troca");
+    const atrasos = pagtos.filter((l) => !l.estimado && l.diasAtraso != null).map((l) => l.diasAtraso as number);
+    const datas = vendas.map((l) => l.data).filter(Boolean).sort() as string[];
+    const ultima = datas[datas.length - 1] || null;
+
+    return {
+      totalFaturado: cent(totalFaturado),
+      totalPago: cent(totalPago),
+      totalAVencer: cent(soma(aVencer, (l) => l.saldoNota || 0)),
+      totalVencido: cent(soma(vencidas, (l) => l.saldoNota || 0)),
+      totalDevolucoes: cent(soma(devolucoes, (l) => l.valorBruto ?? l.valorNota ?? 0)),
+      totalTrocas: cent(soma(trocas, (l) => l.valorBruto ?? l.valorNota ?? 0)),
+      qtdDevolucoes: devolucoes.length,
+      qtdTrocas: trocas.length,
+      qtdNotas: vendas.length,
+      qtdNotasAbertas: abertas.length,
+      qtdPagamentos: pagtos.length,
+      ticketMedio: vendas.length ? cent(totalFaturado / vendas.length) : 0,
+      primeiraCompra: datas[0] || null,
+      ultimaCompra: ultima,
+      diasSemComprar: ultima ? Math.floor((Date.now() - new Date(ultima).getTime()) / 86400000) : null,
+      atrasoMedioDias: atrasos.length ? Math.round(atrasos.reduce((a, b) => a + b, 0) / atrasos.length) : null,
+      // Avisos: também do recorte visível, senão o texto contradiz a lista.
+      baixasEstimadas: pagtos.filter((l) => l.estimado).length,
+      notasHistorico: notas.filter((l) => l.historico).length,
+      valorHistorico: cent(soma(notas.filter((l) => l.historico), (l) => l.valorNota || 0)),
+      ocorrenciasSemCobranca: notas.filter((l) => l.semCobranca).length,
+      valorSemCobranca: cent(soma(notas.filter((l) => l.semCobranca), (l) => l.valorNota || 0)),
+      notasInformativas: notas.filter((l) => l.informativa).length,
+      valorInformativas: cent(soma(notas.filter((l) => l.informativa), (l) => l.valorNota || 0)),
+      titulosFantasma: notas.filter((l) => l.duplicado).length,
+      valorFantasma: cent(soma(notas.filter((l) => l.duplicado), (l) => l.valorBruto ?? l.valorNota ?? 0)),
+    };
+  }, [linhas]);
+
   const exportar = () => {
     const rows = linhas.map((l) => ({
       Data: fmtData(l.data),
@@ -568,7 +629,10 @@ export default function ExtratoCliente() {
     exportToExcel(rows, `extrato_${nome}`);
   };
 
-  const r = extrato?.resumo;
+  // `r` é o que os cards mostram: o recorte da tela. `clienteDesde` e
+  // `duplicadasComBaixa` seguem vindo do servidor — não dependem do filtro.
+  const r = extrato ? { ...extrato.resumo, ...kpis } : undefined;
+  const clienteDesde = extrato?.resumo?.clienteDesde || null;
 
   return (
     <div className="space-y-4" data-testid="page-extrato-cliente">
@@ -816,7 +880,11 @@ export default function ExtratoCliente() {
                 <Kpi
                   label="Relacionamento"
                   value={fmtData(r?.primeiraCompra)}
-                  sub={`última: ${fmtData(r?.ultimaCompra)}${r?.diasSemComprar != null ? ` (${r.diasSemComprar}d)` : ""}`}
+                  sub={`última: ${fmtData(r?.ultimaCompra)}${r?.diasSemComprar != null ? ` (${r.diasSemComprar}d)` : ""}${
+                    clienteDesde && r?.primeiraCompra && clienteDesde < r.primeiraCompra
+                      ? ` · cliente desde ${fmtData(clienteDesde)}`
+                      : ""
+                  }`}
                   testId="kpi-relacionamento"
                   info={KPI_INFO.relacionamento}
                 />
