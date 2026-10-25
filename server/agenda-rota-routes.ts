@@ -262,6 +262,7 @@ export function registerAgendaRota(app: Express) {
                ra.draw_date                                   AS dia,
                EXTRACT(ISODOW FROM ra.draw_date::date)::int    AS dow,
                (COALESCE(ra.phase,'') = 'telemarketing')       AS virtual,
+               LOWER(COALESCE(c.visit_periodicity::text,'semanal')) AS periodicidade,
                ra.customer_id                                  AS cid,
                NULLIF(regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g'),'') AS doc
         FROM repescagem_assignments ra
@@ -334,29 +335,70 @@ export function registerAgendaRota(app: Express) {
       }
       const ticketDe = (doc: any) => ticketPorDoc.get(String(doc || "")) || 0;
 
+      // ── UM TICKET POR CICLO DE COMPRA, nao por atendimento ────────────────
+      // Flavio, 25/10/2026. O potencial do mes vinha 2,1x o faturamento real
+      // (R$ 603 mil contra ~R$ 285 mil) e a razao nao era o ticket — era a
+      // CONTAGEM. Medido nas 3 semanas fechadas de out/26: R$ 250 de potencial
+      // por atendimento e R$ 250 de faturamento real por nota emitida, mas 2,63
+      // atendimentos para cada nota. O cliente e' TOCADO 2,6 vezes no mes e
+      // COMPRA uma vez por ciclo:
+      //   • cliente virtual hibrido (439 dos 941 ativos) recebe a cadencia
+      //     virtual MAIS uma visita presencial de reforco por mes — dois
+      //     atendimentos, um pedido (ver visitScheduleService: gera a presencial
+      //     e, se segue virtual, continua na cadencia virtual);
+      //   • repescagem e' segunda tentativa do MESMO ciclo de quem nao comprou,
+      //     nao um pedido a mais;
+      //   • cliente com dois dias de rota na semana.
+      // Entao o ticket entra UMA vez por ciclo: o primeiro atendimento do ciclo
+      // leva o valor cheio, os seguintes entram com R$ 0 e continuam contando
+      // como atendimento no calendario de Clientes. A visita de reforco nao
+      // sumiu da rota — ela so' deixou de valer como segundo pedido.
+      const JANELA_CICLO: Record<string, number> = { semanal: 5, quinzenal: 11, mensal: 24 };
+      const diasEntre = (a: string, b: string) =>
+        Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+
+      type Atendimento = {
+        dia: string; sem: number; diaSem: DiaSemana; canal: string;
+        tipo: Tipo; cid: string; doc: string; per: string;
+      };
+      const atendimentos: Atendimento[] = [];
+      const empilha = (r: any, tipo: Tipo | null) => {
+        const sem = semanaDaData(semanas, String(r.dia));
+        const diaSem = DIA_POR_DOW[Number(r.dow)];
+        if (!sem || !diaSem) return;
+        const per = String(r.periodicidade || "semanal");
+        atendimentos.push({
+          dia: String(r.dia), sem, diaSem,
+          canal: r.virtual === true ? "virtual" : "presencial",
+          tipo: tipo || (per === "quinzenal" ? "quinzenal" : per === "mensal" ? "mensal" : "semanal"),
+          cid: String(r.cid), doc: String(r.doc || ""), per,
+        });
+      };
+      for (const r of visitas) empilha(r, null);
+      for (const r of repescagens) empilha(r, "repescagem");
+      // Em ordem de data: o PRIMEIRO atendimento do ciclo e' o que leva o valor.
+      atendimentos.sort((a, b) => (a.dia < b.dia ? -1 : a.dia > b.dia ? 1 : 0));
+
       // ── monta a matriz ───────────────────────────────────────────────────
       // `semHistorico` conta CLIENTE, nao atendimento: quem aparece 4x no mes
       // sem nota nenhuma e' um cliente faltando no total de R$, nao quatro.
       const mapa: Mapa = new Map();
       const semHistorico = new Set<string>();
       const comHistorico = new Set<string>();
-      for (const r of visitas) {
-        const sem = semanaDaData(semanas, String(r.dia));
-        const dia = DIA_POR_DOW[Number(r.dow)];
-        if (!sem || !dia) continue;
-        const per = String(r.periodicidade);
-        const tipo: Tipo = per === "quinzenal" ? "quinzenal" : per === "mensal" ? "mensal" : "semanal";
-        const t = ticketDe(r.doc);
-        (t > 0 ? comHistorico : semHistorico).add(String(r.cid));
-        soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", tipo, 1, t);
-      }
-      for (const r of repescagens) {
-        const sem = semanaDaData(semanas, String(r.dia));
-        const dia = DIA_POR_DOW[Number(r.dow)];
-        if (!sem || !dia) continue;
-        const t = ticketDe(r.doc);
-        (t > 0 ? comHistorico : semHistorico).add(String(r.cid));
-        soma(mapa, sem, dia, r.virtual === true ? "virtual" : "presencial", "repescagem", 1, t);
+      /** cliente -> dia do ultimo atendimento que ja' levou o ticket. */
+      const cobradoEm = new Map<string, string>();
+      let repetidosNoCiclo = 0;
+      for (const a of atendimentos) {
+        const cheio = ticketDe(a.doc);
+        if (cheio > 0) comHistorico.add(a.cid); else semHistorico.add(a.cid);
+        let t = cheio;
+        if (cheio > 0) {
+          const ultimo = cobradoEm.get(a.cid);
+          const minimo = JANELA_CICLO[a.per] ?? JANELA_CICLO.semanal;
+          if (ultimo && diasEntre(ultimo, a.dia) < minimo) { t = 0; repetidosNoCiclo++; }
+          else cobradoEm.set(a.cid, a.dia);
+        }
+        soma(mapa, a.sem, a.diaSem, a.canal, a.tipo, 1, t);
       }
       let totalLeads = 0;
       for (const r of leads) {
@@ -435,7 +477,9 @@ export function registerAgendaRota(app: Express) {
           clientesComTicket: comHistorico.size,
           semHistorico: semHistorico.size,
           leads: totalLeads,
-          regra: "ticket ponderado por recência: média do valor das NF-e de venda do cliente na janela, com peso maior para as mais recentes (mesma conta do termômetro do dia no Dashboard)",
+          /** Atendimentos que caíram no mesmo ciclo de um anterior e entraram com R$ 0. */
+          repetidosNoCiclo,
+          regra: "ticket ponderado por recência: média do valor das NF-e de venda do cliente na janela, com peso maior para as mais recentes (mesma conta do termômetro do dia no Dashboard). O ticket entra uma vez por ciclo de compra do cliente — o segundo atendimento dentro do mesmo ciclo (visita presencial de reforço do cliente virtual, repescagem de quem já está na rota) conta como atendimento e não como novo pedido",
         },
         fonte: "agenda de visitas (visit_agenda), mesma régua da Rota do Dia; repescagem pelo sorteio do dia; leads pela data do próximo contato",
       });
