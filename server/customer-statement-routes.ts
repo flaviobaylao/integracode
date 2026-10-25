@@ -760,6 +760,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
                 situacao: "Recebido",
                 origem: "baixa",
                 natureza,
+                // O pagamento herda o movimento da sua nota para acompanhar o filtro:
+                // filtrar "Venda" tem de trazer as vendas E as baixas delas. A coluna
+                // Tipo de movimento continua em branco na linha de pagamento.
+                tipoMovimento: tipoMov,
                 informativa: natureza !== null,
                 historico: n.historico,
                 formaPagamento: PM_LABEL[p.payment_method] || p.payment_method || null,
