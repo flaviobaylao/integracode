@@ -208,6 +208,17 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "created_by varchar, created_at timestamptz DEFAULT now())"
       ));
 
+      // Quem participa do resumo. Fora da tabela de vigência de propósito: isto
+      // não é remuneração que muda com o tempo, é "esta conta é uma pessoa que
+      // recebe". Contas de sistema (HOTSITE, INSTAGRAM, Honest Admin...) e
+      // cadastros de teste ficam de fora de uma vez.
+      await db.execute(sql.raw(
+        "CREATE TABLE IF NOT EXISTS resumo_participantes (" +
+        "user_id varchar PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, " +
+        "incluir boolean NOT NULL DEFAULT true, " +
+        "updated_by varchar, updated_at timestamptz DEFAULT now())"
+      ));
+
       for (const ix of [
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_collab_cfg_user_ym ON collab_remuneracao_config (user_id, vigencia_ym)",
         "CREATE INDEX IF NOT EXISTS idx_collab_bonus_ym ON collab_bonus_lancamentos (ym, user_id)",
@@ -217,6 +228,7 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
 
       await semearRegrasAtuais();
       await semearCampanhaOutubro();
+      await semearNaoParticipantes();
     })().catch((e) => {
       schemaReady = null;
       throw e;
@@ -273,6 +285,32 @@ async function semearCampanhaOutubro(): Promise<void> {
   ).catch(() => {});
 }
 
+// Contas que não são pessoas (sistema, canais) e cadastros de teste, apontadas
+// pelo Flavio em 25/10/2026. Roda uma única vez; depois é tudo pela tela, na aba
+// Participantes — inclusive para trazer alguém de volta.
+const FORA_DO_RESUMO = [
+  "fabio h.",
+  "honest admin",
+  "honest colaboradores",
+  "honest fornecedores",
+  "hotsite",
+  "instagram",
+  "baruc entregador",
+  "motorista teste",
+];
+
+async function semearNaoParticipantes(): Promise<void> {
+  const ja: any = await db.execute(sql`SELECT COUNT(1)::int AS n FROM resumo_participantes`);
+  if (Number(ja.rows?.[0]?.n || 0) > 0) return;
+  const r: any = await db.execute(sql`
+    INSERT INTO resumo_participantes (user_id, incluir, updated_by)
+    SELECT u.id, false, 'sistema' FROM users u
+    WHERE LOWER(TRIM(COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email)))
+          = ANY(${arraySql(FORA_DO_RESUMO)})
+    ON CONFLICT (user_id) DO NOTHING`);
+  console.log(`[RESUMO-RECEB] ${r.rowCount ?? 0} contas marcadas fora do resumo`);
+}
+
 // Admin de verdade: 'industria' e 'contador' são elevados a admin pelo
 // authenticateUser para LEITURA do sistema; folha de pagamento não entra nisso.
 function ehAdmin(req: any): boolean {
@@ -308,11 +346,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
             SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.seller_type
             FROM users u
             WHERE u.is_active = true AND u.role::text = ANY(${arraySql(PAPEIS)})
-              AND COALESCE((
-                SELECT c.incluir_no_resumo FROM collab_remuneracao_config c
-                WHERE c.user_id = u.id AND c.vigencia_ym <= ${ym}
-                ORDER BY c.vigencia_ym DESC LIMIT 1
-              ), true) = true
+              AND COALESCE((SELECT p.incluir FROM resumo_participantes p WHERE p.user_id = u.id), true) = true
             ORDER BY u.role, u.first_name, u.last_name`)
         : await db.execute(sql`
             SELECT id, first_name, last_name, email, role, seller_type
@@ -525,11 +559,23 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         JOIN users u ON u.id = c.user_id
         WHERE u.is_active = true
         ORDER BY nome, c.vigencia_ym DESC`);
+      // O seletor só oferece quem participa do resumo.
       const colabs: any = await db.execute(sql`
-        SELECT id, COALESCE(NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')), ''), email) AS nome, role, seller_type
-        FROM users WHERE is_active = true AND role::text = ANY(${arraySql(PAPEIS)})
-        ORDER BY role, first_name, last_name`);
-      res.json({ configs: r.rows || [], colaboradores: colabs.rows || [] });
+        SELECT u.id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
+               u.role, u.seller_type
+        FROM users u
+        WHERE u.is_active = true AND u.role::text = ANY(${arraySql(PAPEIS)})
+          AND COALESCE((SELECT p.incluir FROM resumo_participantes p WHERE p.user_id = u.id), true) = true
+        ORDER BY u.role, u.first_name, u.last_name`);
+      // Lista completa para a aba Participantes, com o estado de cada um.
+      const todos: any = await db.execute(sql`
+        SELECT u.id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
+               u.role, u.email,
+               COALESCE((SELECT p.incluir FROM resumo_participantes p WHERE p.user_id = u.id), true) AS incluir
+        FROM users u
+        WHERE u.is_active = true AND u.role::text = ANY(${arraySql(PAPEIS)})
+        ORDER BY u.role, u.first_name, u.last_name`);
+      res.json({ configs: r.rows || [], colaboradores: colabs.rows || [], participantes: todos.rows || [] });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] config listar:", e?.message || e);
       res.status(500).json({ message: "Falha ao listar as configurações" });
@@ -594,6 +640,27 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     } catch (e: any) {
       console.error("[RESUMO-RECEB] config remover:", e?.message || e);
       res.status(500).json({ message: "Falha ao remover a vigência" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Participação no resumo: tira/traz um colaborador da planilha (somente admin).
+  // -------------------------------------------------------------------------
+  app.post("/api/resumo-recebiveis/participacao", authenticateUser, async (req: any, res) => {
+    try {
+      if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
+      await ensureResumoRecebiveisSchema();
+      const b = req.body || {};
+      if (!b.userId) return res.status(400).json({ message: "Informe o colaborador" });
+      await db.execute(sql`
+        INSERT INTO resumo_participantes (user_id, incluir, updated_by, updated_at)
+        VALUES (${b.userId}, ${b.incluir !== false}, ${req.currentUser?.id || null}, now())
+        ON CONFLICT (user_id) DO UPDATE SET
+          incluir = EXCLUDED.incluir, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      res.json({ message: b.incluir !== false ? "Colaborador incluído no resumo" : "Colaborador retirado do resumo" });
+    } catch (e: any) {
+      console.error("[RESUMO-RECEB] participacao:", e?.message || e);
+      res.status(500).json({ message: "Falha ao alterar a participação" });
     }
   });
 
