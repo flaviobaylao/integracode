@@ -299,7 +299,7 @@ const KPI_INFO = {
   pago:
     "Soma de todas as baixas recebidas deste cliente, lançadas na data real do pagamento. Baixas vindas do histórico importado sem data entram na data de vencimento e aparecem marcadas como (est.). Abaixo, a quantidade de pagamentos.",
   saldo:
-    "Total faturado menos total pago: o que o cliente ainda deve hoje. Abaixo, a quantidade de notas com saldo em aberto.",
+    "Parte do que o cliente deve que AINDA NÃO venceu: notas em aberto com vencimento de hoje em diante. Vencido + A vencer é a dívida total. Abaixo, a quantidade de notas com saldo em aberto.",
   vencido:
     "Parte do saldo devedor cujo vencimento já passou. Nota que vence hoje NÃO conta como vencida — só a partir do dia seguinte.",
   devolucoes:
@@ -393,6 +393,9 @@ export default function ExtratoCliente() {
   const [tiposSel, setTiposSel] = useState<string[]>([]);
   const [situacoesSel, setSituacoesSel] = useState<string[]>([]);
   const [movimentosSel, setMovimentosSel] = useState<string[]>([]);
+  // REDE: consolida o extrato de todos os clientes do grupo num só histórico.
+  // Escolher uma rede substitui o cliente; escolher um cliente limpa a rede.
+  const [redeSel, setRedeSel] = useState<string>("");
   // Origem dos DADOS (não é filtro de tela: vai ao servidor e refaz os KPIs).
   const [origem, setOrigem] = useState<"todas" | "integra" | "omie">("integra");
   const [busca, setBusca] = useState("");
@@ -414,7 +417,19 @@ export default function ExtratoCliente() {
     setTerm("");
     setDebounced("");
     setSelected(null);
+    setRedeSel("");
     setOpen(false);
+  };
+
+  /** Escolher uma rede troca o titular do extrato; o cliente escolhido sai. */
+  const escolherRede = (id: string) => {
+    setRedeSel(id);
+    if (!id) { setSelected(null); setTerm(""); return; }
+    const r = redes.find((x) => x.id === id);
+    setTerm("");
+    setDebounced("");
+    setOpen(false);
+    setSelected({ id: `rede:${id}`, name: `Rede ${r?.nome || ""}`.trim() } as any);
   };
 
   // Permite abrir já num cliente: /extrato-cliente?customerId=...
@@ -446,6 +461,11 @@ export default function ExtratoCliente() {
     enabled: debounced.length >= 2,
   });
 
+  const { data: redes = [] } = useQuery<Array<{ id: string; nome: string; membros: number }>>({
+    queryKey: ["extrato-redes"],
+    queryFn: () => apiRequest("GET", "/api/customer-statement/redes"),
+  });
+
   const { data: extrato, isLoading, isError, error } = useQuery<Extrato>({
     queryKey: ["customer-statement", selected?.id, start, end, origem],
     queryFn: () => {
@@ -463,7 +483,7 @@ export default function ExtratoCliente() {
   const { data: trocas = [] } = useQuery<TrocaRegistro[]>({
     queryKey: ["trocas-cliente", selected?.id],
     queryFn: () => apiRequest("GET", `/api/trocas/cliente/${selected!.id}`),
-    enabled: !!selected?.id,
+    enabled: !!selected?.id && !String(selected?.id).startsWith("rede:"),
   });
   // Link do aviso "troca pelo mesmo motivo" abre com ?secao=trocas: rola até o bloco.
   const secaoTrocas = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("secao") === "trocas";
@@ -606,6 +626,7 @@ export default function ExtratoCliente() {
                         type="button"
                         onClick={() => {
                           setSelected(h);
+                          setRedeSel("");
                           setTerm(h.fantasyName || h.name);
                           setOpen(false);
                         }}
@@ -628,6 +649,29 @@ export default function ExtratoCliente() {
                   )}
                 </div>
               ) : null}
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                Rede
+                <InfoDot
+                  testId="info-rede"
+                  text="Consolida num só extrato todos os clientes do grupo — útil quando a rede tem várias lojas com CNPJs diferentes. Escolher uma rede substitui o cliente selecionado; escolher um cliente limpa a rede."
+                />
+              </label>
+              <select
+                value={redeSel}
+                onChange={(e) => escolherRede(e.target.value)}
+                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm max-w-[13rem]"
+                data-testid="select-rede"
+              >
+                <option value="">Sem rede (cliente)</option>
+                {redes.map((rd) => (
+                  <option key={rd.id} value={rd.id}>
+                    {rd.nome} ({rd.membros})
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -744,10 +788,10 @@ export default function ExtratoCliente() {
                 <Kpi label="Total faturado" value={fmtBRL(r?.totalFaturado)} sub={`${r?.qtdNotas || 0} notas`} testId="kpi-faturado" info={KPI_INFO.faturado} />
                 <Kpi label="Total pago" value={fmtBRL(r?.totalPago)} sub={`${r?.qtdPagamentos || 0} pagamentos`} tone="bg-emerald-50 dark:bg-emerald-900/20" testId="kpi-pago" info={KPI_INFO.pago} />
                 <Kpi
-                  label="Saldo devedor"
-                  value={fmtBRL(r?.saldoDevedor)}
+                  label="A vencer"
+                  value={fmtBRL(r?.totalAVencer)}
                   sub={`${r?.qtdNotasAbertas || 0} em aberto`}
-                  tone={(r?.saldoDevedor || 0) > 0.009 ? "bg-amber-50 dark:bg-amber-900/20" : "bg-white dark:bg-gray-800"}
+                  tone={(r?.totalAVencer || 0) > 0.009 ? "bg-amber-50 dark:bg-amber-900/20" : "bg-white dark:bg-gray-800"}
                   testId="kpi-saldo"
                   info={KPI_INFO.saldo}
                 />
