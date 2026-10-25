@@ -537,13 +537,14 @@ export function registerCustomerStatementRoutes(app: Express): void {
       for (const n of Array.from(notas.values())) {
         const cancelada = n.valor <= 0.009 && n.valorCancelado > 0.009;
         const saldoTitulo = Math.max(0, n.valor - n.pago);
-        const vencido = !cancelada && !n.fantasma && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
+        const vencido = !cancelada && saldoTitulo > 0.009 && estaVencido(n.vencimento, hojeDia);
         const natureza = naturezaDe(n.marcadores);
-        const situacao = n.fantasma
-          ? "Duplicado"
-          : natureza
-          ? natureza
-          : cancelada
+        // TIPO DE MOVIMENTO (25/out/2026): a natureza da ocorrência saiu da coluna
+        // Situação e virou coluna própria. Assim a Situação volta a ser o status real
+        // do título — igual ao Contas a Receber — e a devolução/troca/transferência
+        // deixa de perder a informação de "em aberto / quitada / vencida".
+        const tipoMovimento = n.fantasma ? "Duplicado" : natureza || "Venda";
+        const situacao = cancelada
           ? "Cancelada"
           : saldoTitulo <= 0.009
           ? "Quitada"
@@ -595,6 +596,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           saldoNota: saldoTitulo,
           situacao,
           origem: n.origem,
+          tipoMovimento,
           natureza,
           informativa: natureza !== null,
           duplicado: !!n.fantasma,
@@ -614,6 +616,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
             parcelasQtd: n.parcelas,
             origem: ORIGEM_LABEL[n.origem] || n.origem,
             situacao,
+            tipoMovimento,
             natureza,
             duplicado: !!n.fantasma,
             cancelada,
