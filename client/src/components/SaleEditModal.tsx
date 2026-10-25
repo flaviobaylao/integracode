@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PaymentLinkDialog from "./PaymentLinkDialog";
+import TrocaAnteriorAviso from "./TrocaAnteriorAviso";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1827,6 +1828,9 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                       </SelectContent>
                     </Select>
                   </div>
+                  {trocaMotivo && (
+                    <TrocaAnteriorAviso customerId={(card as any)?.customerId} motivo={trocaMotivo} />
+                  )}
                   {trocaMotivo === 'fermentado' && (
                     <div>
                       <Label>Temperatura no display do refrigerador (°C) <span className="text-red-600">*</span></Label>

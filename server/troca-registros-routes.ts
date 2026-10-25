@@ -68,7 +68,11 @@ export function ensureTrocaSchema(): Promise<void> {
         "created_by varchar, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())"
       ));
       for (const ix of [
-        "CREATE UNIQUE INDEX IF NOT EXISTS ux_troca_registros_card ON troca_registros (sales_card_id)",
+        // Card permanente é reaproveitado a cada pedido: um card pode ter VÁRIAS trocas ao longo do
+        // tempo. A chave única por card (versão de 23/10) sobrescreveria a troca anterior.
+        "DROP INDEX IF EXISTS ux_troca_registros_card",
+        "CREATE INDEX IF NOT EXISTS idx_troca_registros_card ON troca_registros (sales_card_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_troca_registros_cliente ON troca_registros (customer_id, motivo, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_troca_registros_ym ON troca_registros (ym, nf_seller_id)",
       ]) await db.execute(sql.raw(ix)).catch(() => {});
     })().catch((e) => {
@@ -197,6 +201,25 @@ async function calcularTroca(card: any, motivo: MotivoTroca) {
   };
 }
 
+/** Troca anterior do cliente pelo mesmo motivo, antes de `antesDe` (ou a mais recente). */
+async function trocaAnterior(customerId: string | null, motivo: string, antesDe: { id: string; createdAt: string } | null) {
+  if (!customerId || !motivo) return null;
+  const r: any = antesDe
+    ? await db.execute(sql`
+        SELECT id, motivo, created_at, to_char(created_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY') AS data_br
+        FROM troca_registros
+        WHERE customer_id = ${customerId} AND motivo = ${motivo} AND id <> ${antesDe.id}
+          AND created_at < ${antesDe.createdAt}::timestamptz
+        ORDER BY created_at DESC LIMIT 1`)
+    : await db.execute(sql`
+        SELECT id, motivo, created_at, to_char(created_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY') AS data_br
+        FROM troca_registros
+        WHERE customer_id = ${customerId} AND motivo = ${motivo}
+        ORDER BY created_at DESC LIMIT 1`);
+  const x = r.rows?.[0];
+  return x ? { id: String(x.id), motivo: String(x.motivo), data: x.created_at, dataBr: String(x.data_br), customerId } : null;
+}
+
 function podeVerEquipe(req: any): boolean {
   return ["admin", "coordinator", "administrative"].includes(req.currentUser?.role);
 }
@@ -232,20 +255,35 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       const ym = ymBrasil();
       const user = req.currentUser;
 
-      await db.execute(sql`
-        INSERT INTO troca_registros
-          (sales_card_id, customer_id, customer_name, card_seller_id, motivo, categoria, temperatura_c,
-           valor_troca, itens, nf_id, nf_numero, nf_data, nf_seller_id, nf_seller_name,
-           comissao_pct, desconto, ym, observacao, created_by)
-        VALUES (${id}, ${card.customer_id}, ${card.customer_name}, ${card.seller_id}, ${motivo}, ${categoria}, ${temperatura},
-           ${calc.valorTroca}, ${JSON.stringify(calc.itens)}::jsonb, ${calc.nfId}, ${calc.nfNumero}, ${calc.nfData},
-           ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null})
-        ON CONFLICT (sales_card_id) DO UPDATE SET
-          motivo = EXCLUDED.motivo, categoria = EXCLUDED.categoria, temperatura_c = EXCLUDED.temperatura_c,
-          valor_troca = EXCLUDED.valor_troca, itens = EXCLUDED.itens, nf_id = EXCLUDED.nf_id,
-          nf_numero = EXCLUDED.nf_numero, nf_data = EXCLUDED.nf_data, nf_seller_id = EXCLUDED.nf_seller_id,
-          nf_seller_name = EXCLUDED.nf_seller_name, comissao_pct = EXCLUDED.comissao_pct,
-          desconto = EXCLUDED.desconto, observacao = EXCLUDED.observacao, updated_at = now()`);
+      // Reenvio do MESMO pedido (o vendedor tenta de novo em poucas horas) atualiza o registro;
+      // um pedido novo no mesmo card permanente gera registro novo.
+      const recente: any = await db.execute(sql`
+        SELECT id FROM troca_registros
+        WHERE sales_card_id = ${id} AND created_at > now() - interval '6 hours'
+        ORDER BY created_at DESC LIMIT 1`);
+      const recenteId = recente.rows?.[0]?.id || null;
+      // Troca anterior do mesmo cliente pelo mesmo motivo (aviso no card e no pipeline).
+      const anterior = await trocaAnterior(card.customer_id, motivo,
+        recenteId ? { id: String(recenteId), createdAt: new Date().toISOString() } : null);
+      if (recenteId) {
+        await db.execute(sql`
+          UPDATE troca_registros SET
+            motivo = ${motivo}, categoria = ${categoria}, temperatura_c = ${temperatura},
+            valor_troca = ${calc.valorTroca}, itens = ${JSON.stringify(calc.itens)}::jsonb, nf_id = ${calc.nfId},
+            nf_numero = ${calc.nfNumero}, nf_data = ${calc.nfData}, nf_seller_id = ${calc.nfSellerId},
+            nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct},
+            desconto = ${calc.desconto}, observacao = ${card.notes || null}, updated_at = now()
+          WHERE id = ${recenteId}`);
+      } else {
+        await db.execute(sql`
+          INSERT INTO troca_registros
+            (sales_card_id, customer_id, customer_name, card_seller_id, motivo, categoria, temperatura_c,
+             valor_troca, itens, nf_id, nf_numero, nf_data, nf_seller_id, nf_seller_name,
+             comissao_pct, desconto, ym, observacao, created_by)
+          VALUES (${id}, ${card.customer_id}, ${card.customer_name}, ${card.seller_id}, ${motivo}, ${categoria}, ${temperatura},
+             ${calc.valorTroca}, ${JSON.stringify(calc.itens)}::jsonb, ${calc.nfId}, ${calc.nfNumero}, ${calc.nfData},
+             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null})`);
+      }
 
       // Auditoria junto das fotos da troca.
       try {
@@ -253,7 +291,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
           VALUES (gen_random_uuid(), ${id}, 'troca_motivo', ${`${MOTIVO_LABEL[motivo]}${temperatura != null ? ` ${temperatura}°C` : ""} | desconto R$ ${calc.desconto.toFixed(2)}`}, now())`);
       } catch { /* auditoria nao bloqueia */ }
 
-      return res.json({ ok: true, motivo, categoria, ...calc });
+      return res.json({ ok: true, motivo, categoria, ...calc, anterior });
     } catch (e: any) {
       console.error("[TROCA] motivo:", e?.message || e);
       return res.status(500).json({ message: "Falha ao registrar o motivo da troca" });
@@ -308,6 +346,83 @@ export function registerTrocaRegistrosRoutes(app: Express) {
     } catch (e: any) {
       console.error("[TROCA] descontos:", e?.message || e);
       res.status(500).json({ message: "Falha ao listar descontos por troca" });
+    }
+  });
+
+  // Troca anterior pelo mesmo motivo.
+  //  ?salesCardId=X          → pedido no pipeline (card-filho resolve para o card de origem)
+  //  ?customerId=Y&motivo=Z  → card de vendas, enquanto o vendedor escolhe o motivo
+  app.get("/api/trocas/anterior", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const salesCardId = String(req.query?.salesCardId || "").trim();
+      if (salesCardId) {
+        const sc: any = await db.execute(sql`
+          SELECT id, parent_card_id, created_at FROM sales_cards WHERE id = ${salesCardId} LIMIT 1`);
+        const card = sc.rows?.[0];
+        if (!card) return res.json({ atual: null, anterior: null });
+        const ids = [String(card.id)];
+        if (card.parent_card_id) ids.push(String(card.parent_card_id));
+        // Card-filho nasce logo DEPOIS do registro do motivo (gravado no card de origem):
+        // limita ao registro feito até o nascimento do filho, para não pegar uma troca posterior.
+        const limite = card.parent_card_id && card.created_at ? new Date(new Date(card.created_at).getTime() + 30 * 60000).toISOString() : null;
+        const a: any = limite
+          ? await db.execute(sql`
+              SELECT id, customer_id, motivo, created_at FROM troca_registros
+              WHERE sales_card_id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)}) AND created_at <= ${limite}::timestamptz
+              ORDER BY created_at DESC LIMIT 1`)
+          : await db.execute(sql`
+              SELECT id, customer_id, motivo, created_at FROM troca_registros
+              WHERE sales_card_id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)})
+              ORDER BY created_at DESC LIMIT 1`);
+        const atual = a.rows?.[0];
+        if (!atual) return res.json({ atual: null, anterior: null });
+        const createdAt = new Date(atual.created_at).toISOString();
+        const anterior = await trocaAnterior(atual.customer_id, atual.motivo, { id: String(atual.id), createdAt });
+        return res.json({ atual: { id: atual.id, motivo: atual.motivo, customerId: atual.customer_id }, anterior });
+      }
+      const customerId = String(req.query?.customerId || "").trim();
+      const motivo = String(req.query?.motivo || "").toLowerCase();
+      if (!customerId || !MOTIVOS_TROCA.includes(motivo as MotivoTroca)) return res.json({ anterior: null });
+      return res.json({ anterior: await trocaAnterior(customerId, motivo, null) });
+    } catch (e: any) {
+      console.error("[TROCA] anterior:", e?.message || e);
+      res.status(500).json({ message: "Falha ao consultar troca anterior" });
+    }
+  });
+
+  // Trocas registradas do cliente (bloco "Trocas registradas" do Extrato do Cliente).
+  app.get("/api/trocas/cliente/:customerId", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const r: any = await db.execute(sql`
+        SELECT id, sales_card_id, motivo, categoria, temperatura_c, valor_troca, itens,
+               nf_numero, to_char(nf_data, 'YYYY-MM-DD') AS nf_data, nf_seller_name, card_seller_id,
+               comissao_pct, desconto, observacao, created_at
+        FROM troca_registros WHERE customer_id = ${req.params.customerId}
+        ORDER BY created_at DESC LIMIT 200`);
+      const vend: any = await db.execute(sql`SELECT id, TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS nome FROM users`);
+      const nomes = new Map<string, string>((vend.rows || []).map((u: any) => [String(u.id), String(u.nome || "")]));
+      res.json((r.rows || []).map((x: any) => ({
+        id: x.id,
+        salesCardId: x.sales_card_id,
+        motivo: x.motivo,
+        categoria: x.categoria,
+        temperatura: x.temperatura_c != null ? n(x.temperatura_c) : null,
+        valorTroca: n(x.valor_troca),
+        itens: x.itens || [],
+        nfNumero: x.nf_numero,
+        nfData: x.nf_data,
+        vendedorNf: x.nf_seller_name,
+        vendedorCard: x.card_seller_id ? nomes.get(String(x.card_seller_id)) || null : null,
+        comissaoPct: n(x.comissao_pct),
+        desconto: n(x.desconto),
+        observacao: x.observacao,
+        data: x.created_at,
+      })));
+    } catch (e: any) {
+      console.error("[TROCA] cliente:", e?.message || e);
+      res.status(500).json({ message: "Falha ao listar trocas do cliente" });
     }
   });
 }
