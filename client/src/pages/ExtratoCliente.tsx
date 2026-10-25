@@ -337,7 +337,7 @@ function InfoDot(props: {
       {aberto ? (
         <span
           role="tooltip"
-          className={`absolute top-5 z-50 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 ${
+          className={`absolute top-5 z-50 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case whitespace-normal break-words leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 ${
             props.itens ? "left-0 w-[26rem] max-h-80 overflow-auto" : "right-0 w-60"
           }`}
         >
