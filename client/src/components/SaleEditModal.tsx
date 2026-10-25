@@ -85,7 +85,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // temperatura lida no display do refrigerador. Vencido = comercial, com desconto
   // da comissao sobre o valor trocado.
   const [trocaMotivo, setTrocaMotivo] = useState('');
-  const [trocaTemperatura, setTrocaTemperatura] = useState('');
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -158,7 +157,6 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes(card.notes || '');
       setTrocaPhotos([]);
       setTrocaMotivo('');
-      setTrocaTemperatura('');
       setGravandoObs(false);
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
@@ -690,21 +688,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     if (operationType === 'troca' && !trocaMotivo) {
       toast({
         title: 'Motivo da troca obrigatório',
-        description: 'Selecione o motivo da troca: Fermentado, Lacre, Tampa ou Vencido.',
+        description: 'Selecione o motivo da troca: Fermentado, Lacre, Tampa, Avaria/deformação/rótulo ou Vencido.',
         variant: 'destructive',
       });
       return;
-    }
-    if (operationType === 'troca' && trocaMotivo === 'fermentado') {
-      const _t = Number(String(trocaTemperatura).replace(',', '.'));
-      if (!String(trocaTemperatura).trim() || !Number.isFinite(_t) || _t < -30 || _t > 60) {
-        toast({
-          title: 'Temperatura obrigatória',
-          description: 'Para troca por fermentado, informe a temperatura lida no display do refrigerador do cliente.',
-          variant: 'destructive',
-        });
-        return;
-      }
     }
     // 🔒 TRAVA Troca: foto dos produtos obrigatória.
     if (operationType === 'troca' && trocaPhotos.length === 0) {
@@ -788,7 +775,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ motivo: trocaMotivo, temperatura: trocaMotivo === 'fermentado' ? trocaTemperatura : undefined }),
+            body: JSON.stringify({ motivo: trocaMotivo }),
           });
           if (!_r.ok) throw new Error((await _r.json().catch(() => ({})))?.message || 'Falha ao registrar o motivo');
           const _d = await _r.json();
@@ -1824,6 +1811,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                         <SelectItem value="fermentado">Fermentado</SelectItem>
                         <SelectItem value="lacre">Lacre</SelectItem>
                         <SelectItem value="tampa">Tampa</SelectItem>
+                        <SelectItem value="avaria">Avaria / deformação / rótulo</SelectItem>
                         <SelectItem value="vencido">Vencido</SelectItem>
                       </SelectContent>
                     </Select>
@@ -1831,22 +1819,19 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   {trocaMotivo && (
                     <TrocaAnteriorAviso customerId={(card as any)?.customerId} motivo={trocaMotivo} />
                   )}
-                  {trocaMotivo === 'fermentado' && (
-                    <div>
-                      <Label>Temperatura no display do refrigerador (°C) <span className="text-red-600">*</span></Label>
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        step="0.1"
-                        placeholder="Ex.: 4"
-                        value={trocaTemperatura}
-                        onChange={(e) => setTrocaTemperatura(e.target.value)}
-                        data-testid="input-troca-temperatura"
-                      />
+                  {/* Foto exigida por motivo (25/10/2026): a temperatura não é digitada —
+                      no fermentado a prova é a foto do display do refrigerador. */}
+                  {trocaMotivo && (
+                    <div className="flex items-start gap-2 rounded-md border-2 border-red-500 bg-red-100 px-3 py-2 text-sm font-bold text-red-800" data-testid="aviso-foto-troca">
+                      <Camera className="h-5 w-5 mt-0.5 shrink-0" />
+                      <span>
+                        {trocaMotivo === 'fermentado' && 'OBRIGATÓRIO: foto do DISPLAY DE TEMPERATURA do refrigerador do cliente.'}
+                        {trocaMotivo === 'lacre' && 'OBRIGATÓRIO: foto nítida do LACRE com problema.'}
+                        {trocaMotivo === 'tampa' && 'OBRIGATÓRIO: foto nítida da TAMPA com problema.'}
+                        {trocaMotivo === 'avaria' && 'OBRIGATÓRIO: foto nítida do item com a AVARIA / DEFORMAÇÃO / RÓTULO com problema.'}
+                        {trocaMotivo === 'vencido' && 'OBRIGATÓRIO: foto nítida da MARCAÇÃO DE VALIDADE.'}
+                      </span>
                     </div>
-                  )}
-                  {(trocaMotivo === 'fermentado' || trocaMotivo === 'lacre' || trocaMotivo === 'tampa') && (
-                    <p className="text-xs text-amber-800">Problema de qualidade: a foto deve mostrar o <b>lote</b> e a <b>validade</b> na embalagem.</p>
                   )}
                   {trocaMotivo === 'vencido' && (
                     <p className="text-xs text-red-700">Troca comercial: a comissão sobre o valor trocado (preço da última NF do cliente) será descontada da comissão do mês.</p>
