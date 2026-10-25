@@ -343,6 +343,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
         marcadores: string;
         /** true se QUALQUER parcela foi cancelada por devolução de venda. */
         devolucao: boolean;
+        /** Justificativa da devolução. Vem da parcela CANCELADA, que não entra em `titulos`. */
+        motivoDevolucao: string | null;
         /** sales_card_id de qualquer parcela — é por ele que se acha a operação e o motivo. */
         cardIds: string[];
         fantasma?: boolean;
@@ -353,6 +355,12 @@ export function registerCustomerStatementRoutes(app: Express): void {
       };
       const notas = new Map<string, NotaAgg>();
       const nfSeen = new Set<string>();
+      /** Motivo gravado pela rotina de devolução: "... Devolução de venda: <motivo>". */
+      const motivoDoTexto = (notas_: any): string | null => {
+        const txt = String(notas_ || "");
+        const m = txt.match(/Devolu[çc][ãa]o de venda:\s*([^|\n]+)/i) || txt.match(/Motivo:\s*([^|\n]+)/i);
+        return m ? m[1].trim().slice(0, 120) || null : null;
+      };
 
       for (const r of receivablesUteis) {
         const nfFromNotes = noteVal(r.notes, "nf");
@@ -385,6 +393,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
             descricao: r.description || r.category || "",
             marcadores: `${r.description || ""} ${r.category || ""}`,
             devolucao: String(r.cancel_reason || "") === "devolucao",
+            motivoDevolucao: String(r.cancel_reason || "") === "devolucao" ? motivoDoTexto(r.notes) : null,
             cardIds: r.sales_card_id ? [String(r.sales_card_id)] : [],
             fantasma,
             titulos: cancelado ? [] : [r],
@@ -401,7 +410,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
           const venc = toISO(r.due_date);
           if (venc && (!cur.vencimento || venc > cur.vencimento)) cur.vencimento = venc;
           cur.marcadores += ` ${r.description || ""} ${r.category || ""}`;
-          if (String(r.cancel_reason || "") === "devolucao") cur.devolucao = true;
+          if (String(r.cancel_reason || "") === "devolucao") {
+            cur.devolucao = true;
+            if (!cur.motivoDevolucao) cur.motivoDevolucao = motivoDoTexto(r.notes);
+          }
           if (r.sales_card_id && !cur.cardIds.includes(String(r.sales_card_id))) cur.cardIds.push(String(r.sales_card_id));
           if (!cur.pedido && pedido) cur.pedido = pedido;
           if (!cur.bpId && r.billing_pipeline_id) cur.bpId = r.billing_pipeline_id;
@@ -468,10 +480,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
           return null;
         }
         if (tipo === "Devolução") {
+          if (n.motivoDevolucao) return n.motivoDevolucao;
           for (const t of n.titulos) {
-            const txt = String(t.notes || "");
-            const m = txt.match(/Devolu[çc][ãa]o de venda:\s*([^|\n]+)/i) || txt.match(/Motivo:\s*([^|\n]+)/i);
-            if (m) return m[1].trim().slice(0, 120);
+            const m = motivoDoTexto(t.notes);
+            if (m) return m;
           }
           return null;
         }
