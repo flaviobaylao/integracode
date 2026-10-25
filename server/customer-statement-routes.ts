@@ -189,6 +189,17 @@ export function registerCustomerStatementRoutes(app: Express): void {
   app.get("/api/customer-statement/:customerId", authenticateUser, isExtratoAuthorized, async (req: any, res) => {
     try {
       const customerId = String(req.params.customerId);
+      // ORIGEM DOS DADOS (25/out/2026) — o histórico migrado do Omie (55.436 títulos,
+      // emissões de 28/jan/2020 a 18/jun/2026) convive com o que o INTEGRA 2.0 gerou
+      // (7.100 títulos, a partir de 31/mar/2026). O histórico tem defeitos conhecidos:
+      // 7.298 títulos marcados "recebida" SEM baixa lançada (R$ 2.381.043,93), baixas
+      // sem data de pagamento lançadas no vencimento, e 56 NFs que existem NAS DUAS
+      // origens. Quem quiser números limpos usa ?origem=integra.
+      const origem = String(req.query.origem || "todas").toLowerCase();
+      const filtroOrigem =
+        origem === "integra" ? sql` AND COALESCE(r.import_origin, '') <> 'omie_historico'`
+        : origem === "omie" ? sql` AND COALESCE(r.import_origin, '') = 'omie_historico'`
+        : sql``;
       const start = req.query.start ? new Date(String(req.query.start)) : null;
       const end = req.query.end ? new Date(String(req.query.end)) : null;
       if (end) end.setHours(23, 59, 59, 999);
@@ -211,11 +222,11 @@ export function registerCustomerStatementRoutes(app: Express): void {
         SELECT r.id, r.title_number, r.customer_name, r.description, r.category,
                r.issue_date, r.due_date, r.amount, r.amount_paid, r.status,
                r.payment_method, r.notes, r.fiscal_invoice_id, r.billing_pipeline_id, r.sales_card_id,
-               r.cancel_reason,
+               r.cancel_reason, r.import_origin,
                r.omie_instance_id, r.created_at
         FROM receivables r
         WHERE r.deleted_at IS NULL
-          AND (r.customer_id = ${customerId} ${docCond})
+          AND (r.customer_id = ${customerId} ${docCond})${filtroOrigem}
         ORDER BY r.issue_date ASC, r.due_date ASC
       `);
       const receivables: any[] = recRes?.rows || recRes || [];
@@ -345,6 +356,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
         devolucao: boolean;
         /** Justificativa da devolução. Vem da parcela CANCELADA, que não entra em `titulos`. */
         motivoDevolucao: string | null;
+        /** true enquanto TODAS as parcelas vierem do histórico migrado do Omie. */
+        historico: boolean;
         /** sales_card_id de qualquer parcela — é por ele que se acha a operação e o motivo. */
         cardIds: string[];
         fantasma?: boolean;
@@ -394,6 +407,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
             marcadores: `${r.description || ""} ${r.category || ""}`,
             devolucao: String(r.cancel_reason || "") === "devolucao",
             motivoDevolucao: String(r.cancel_reason || "") === "devolucao" ? motivoDoTexto(r.notes) : null,
+            historico: String(r.import_origin || "") === "omie_historico",
             cardIds: r.sales_card_id ? [String(r.sales_card_id)] : [],
             fantasma,
             titulos: cancelado ? [] : [r],
@@ -415,6 +429,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
             if (!cur.motivoDevolucao) cur.motivoDevolucao = motivoDoTexto(r.notes);
           }
           if (r.sales_card_id && !cur.cardIds.includes(String(r.sales_card_id))) cur.cardIds.push(String(r.sales_card_id));
+          if (String(r.import_origin || "") !== "omie_historico") cur.historico = false;
           if (!cur.pedido && pedido) cur.pedido = pedido;
           if (!cur.bpId && r.billing_pipeline_id) cur.bpId = r.billing_pipeline_id;
           if (!cur.scId && r.sales_card_id) cur.scId = r.sales_card_id;
@@ -691,6 +706,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           origem: n.origem,
           tipoMovimento,
           motivo,
+          historico: n.historico,
           natureza,
           informativa: natureza !== null,
           duplicado: !!n.fantasma,
@@ -745,6 +761,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
                 origem: "baixa",
                 natureza,
                 informativa: natureza !== null,
+                historico: n.historico,
                 formaPagamento: PM_LABEL[p.payment_method] || p.payment_method || null,
                 conta: p.account_name || null,
                 estimado: false,
@@ -861,6 +878,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
         Array.from(notas.values())
           .filter((n) => !n.fantasma && tipoMovimentoDa(n) === tipo)
           .reduce((s, n) => s + n.valor + n.valorCancelado, 0);
+      const historicas = notasVivas.filter((n) => n.historico);
       const totalDevolucoes = porTipo("Devolução");
       const totalTrocas = porTipo("Troca");
 
@@ -890,6 +908,9 @@ export function registerCustomerStatementRoutes(app: Express): void {
         ).length,
         baixasEstimadas: linhas.filter((l) => l.estimado).length,
         // Operações informativas: VISÍVEIS na lista, fora dos KPIs de venda.
+        origem,
+        notasHistorico: historicas.length,
+        valorHistorico: Math.round(historicas.reduce((s2, n) => s2 + n.valor, 0) * 100) / 100,
         notasInformativas: informativas.length,
         valorInformativas: Math.round(informativas.reduce((s2, n) => s2 + n.valor, 0) * 100) / 100,
         // Duplicatas de reparo de órfãos: visíveis, marcadas e com débito zero.
