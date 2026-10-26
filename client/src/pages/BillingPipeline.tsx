@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import RoutePlannerDialog from "@/components/RoutePlannerDialog";
+import RelatorioProdutosSelecionados from '@/components/RelatorioProdutosSelecionados';
 import { Link } from 'wouter';
 import { toast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
@@ -417,6 +418,8 @@ export default function BillingPipeline() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchStageTarget, setBatchStageTarget] = useState<string | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  // (26/out/2026) Relatório de quantidade de produtos dos pedidos selecionados
+  const [relatorioProdutosOpen, setRelatorioProdutosOpen] = useState(false);
   // Agendamento de faturamento ("Faturar em"): ao mover p/ "Agendado" pedimos a data antes de mover.
   const [scheduleTarget, setScheduleTarget] = useState<{ item: BillingPipelineItem; stage: string } | null>(null);
   const [scheduleDate, setScheduleDate] = useState('');
@@ -1668,6 +1671,18 @@ export default function BillingPipeline() {
                   Imprimir Completo ({selectedItems.length})
                 </Button>
               )}
+              {selectedItems.length > 0 && (
+                <Button
+                  size="sm"
+                  className="text-xs h-7 bg-teal-600 hover:bg-teal-700 text-white"
+                  onClick={() => setRelatorioProdutosOpen(true)}
+                  title="Soma das quantidades por produto nos pedidos selecionados"
+                  data-testid="button-relatorio-produtos"
+                >
+                  <Package className="h-3 w-3 mr-1" />
+                  Qtd. Produtos ({selectedItems.length})
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="destructive"
@@ -1690,6 +1705,13 @@ export default function BillingPipeline() {
             </div>
           </div>
         )}
+
+        <RelatorioProdutosSelecionados
+          open={relatorioProdutosOpen}
+          onOpenChange={setRelatorioProdutosOpen}
+          items={selectedItems}
+          stageLabel={(s) => STAGES.find((st) => st.key === s)?.label || s}
+        />
 
         <RoutePlannerDialog
           open={routePlannerOpen}
