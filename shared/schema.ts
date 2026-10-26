@@ -3042,6 +3042,14 @@ export const inventoryLots = pgTable("inventory_lots", {
   productionOrderId: varchar("production_order_id"),
   isActive: boolean("is_active").notNull().default(true),
   notes: text("notes"),
+  // Responsavel pelo DESBLOQUEIO (recebimento com conferencia, 22/out/2026):
+  // quem passou este saldo de bloqueado para em uso, quando, e o recebimento
+  // (lote_recebimentos) que registrou a conferencia. Gravado na linha do lote
+  // em uso (destino) e tambem na linha bloqueada que foi desbloqueada.
+  desbloqueadoPor: varchar("desbloqueado_por"),
+  desbloqueadoPorNome: varchar("desbloqueado_por_nome"),
+  desbloqueadoEm: timestamp("desbloqueado_em"),
+  recebimentoId: varchar("recebimento_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [

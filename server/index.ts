@@ -960,6 +960,8 @@ run();
   try { const { registerChamados } = await import('./chamados-routes'); registerChamados(app); } catch (e: any) { console.error('[chamados]', e?.message || e); }
   // ABERTURA DE ESTOQUE DO DIA (22/out/2026): contagem física GYN+SERV obrigatória antes do 1º faturamento;
   // bloqueio + chamados de notificação. Rotas /api/abertura-estoque*. Kill-switch: system_settings abertura_estoque_ativa='off'.
+  // Recebimento de transferência com conferência + responsável pelo desbloqueio (22/out/2026).
+  try { const { registerRecebimentoLote } = await import('./recebimento-lote'); registerRecebimentoLote(app); } catch (e: any) { console.error('[recebimento-lote]', e?.message || e); }
   try { const { registerAberturaEstoque, ensureAberturaEstoqueSchema } = await import('./abertura-estoque-routes'); registerAberturaEstoque(app); ensureAberturaEstoqueSchema().catch((e: any) => console.error('[abertura-estoque] schema', e?.message || e)); } catch (e: any) { console.error('[abertura-estoque]', e?.message || e); }
 
 
@@ -3261,6 +3263,8 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // com o lote X (do produto Y), com a instancia emissora; sem transferencias — 22/out/2026.
   // Rotas /api/rastreabilidade-lote*.
   try { registerRastreabilidadeLoteRoutes(app); } catch (e) { console.error('[rastreabilidade-lote]', e); }
+  // Destino das entradas de estoque (entrada → NF de saída), 23/out/2026.
+  try { const { registerDestinoEstoqueRoutes } = await import('./destino-estoque-routes'); registerDestinoEstoqueRoutes(app); } catch (e) { console.error('[destino-estoque]', e); }
   // Checklist de producao + manutencao de maquinas (Flavio 05/set) — mesmo guard /api/industria
   try { registerFabricaRoutes(app); } catch (e) { console.error('[fabrica]', e); }
   // Programacao de Producao (aba Programacao do modulo Industria): saidas por

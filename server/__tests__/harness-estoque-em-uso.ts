@@ -149,6 +149,18 @@ async function main() {
   await db.execute(sql`INSERT INTO inventory_lots (id, product_id, instance_id, stock_type, lot_number, quantity, is_active, created_at) VALUES
     ('e-bb', 'e-b', 'e-ind', 'blocked', 'BB', 500, true, now() - interval '1 day'),
     ('e-bc', 'e-b', 'e-ind', 'blocked', 'BC', 300, true, now())`);
+  // 22/out/2026: por PADRAO o bloqueado NAO e promovido (so sai pelo recebimento com conferencia).
+  await db.execute(sql`DELETE FROM system_settings WHERE key = 'estoque_promover_bloqueado'`);
+  v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-b', name: 'SUCO B', quantity: 50 }]);
+  t('padrao: bloqueado NAO conta (5 em uso + 800 bloqueado -> falta para 50, blocked informado)', !v.valid && v.shortages[0]?.available === 5 && v.shortages[0]?.blocked === 800, v);
+  const movP = await nMov();
+  err = null;
+  try { await baixarEstoqueEmUso({ instanceId: 'e-ind', products: [{ id: 'e-b', name: 'SUCO B', quantity: 50 }], sourceId: 'pr-p', rotulo: 'PP', createdBy: null }); } catch (e) { err = e; }
+  t('padrao: baixa bloqueada, nada promovido, nada baixado', ehBloqueioEstoque(err) && (await nMov()) === movP
+    && (await q(sql`SELECT stock_type FROM inventory_lots WHERE id = 'e-bb'`))[0]?.stock_type === 'blocked'
+    && /CONFER/i.test(String((err as any)?.details || '')), (err as any)?.details);
+  // Religa o comportamento antigo para os testes de promocao abaixo.
+  await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('estoque_promover_bloqueado', 'on', 'harness') ON CONFLICT (key) DO UPDATE SET value = 'on'`);
   v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-b', name: 'SUCO B', quantity: 50 }]);
   t('conferencia soma o bloqueado (5 em uso + 800 bloqueado cobre 50)', v.valid, v);
   v = await verificarEstoqueEmUso('e-ind', [{ id: 'e-b', name: 'SUCO B', quantity: 900 }]);
@@ -167,6 +179,7 @@ async function main() {
   // devolve o cenario para os testes seguintes (LB com 5, sem os bloqueados)
   await db.execute(sql`UPDATE inventory_lots SET quantity = 5 WHERE id = 'e-lb'`);
   await db.execute(sql`DELETE FROM inventory_lots WHERE id IN ('e-bb', 'e-bc')`);
+  await db.execute(sql`DELETE FROM system_settings WHERE key = 'estoque_promover_bloqueado'`);
 
   console.log('\n8) NF manual transmitida pela tela (/emit): prepararEstoqueParaEmissao');
   await db.execute(sql`INSERT INTO fiscal_invoices (id, status, operation_type, invoice_number, series, customer_name, total_invoice, omie_instance_id, fin_nfe)
