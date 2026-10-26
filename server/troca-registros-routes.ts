@@ -12,7 +12,9 @@
 // valor trocado é descontada do vendedor:
 //   valor da troca  = qtd trocada × preço unitário da ÚLTIMA NF de venda
 //                     faturada para o MESMO cliente (fallback: preço do card)
-//   % da comissão   = % aplicada ao vendedor que faturou essa NF, no mês da NF
+//   (26/10/2026) vendedor = QUEM REGISTROU o pedido de troca; NF = a última que ELE
+//   faturou para o cliente (sem NF dele: última NF do cliente, só para o preço)
+//   % da comissão   = % do registrante no mês dessa NF (sem NF dele: mês da troca)
 //                     (collab_remuneracao_config 'fixo' → comissao_pct;
 //                      'faixa' ou sem config → sales_goal_history.commission_pct)
 //   desconto        = valor da troca × % ; lançado no MÊS DA TROCA, para o
@@ -77,7 +79,12 @@ export function ensureTrocaSchema(): Promise<void> {
         "CREATE INDEX IF NOT EXISTS idx_troca_registros_card ON troca_registros (sales_card_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_troca_registros_cliente ON troca_registros (customer_id, motivo, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_troca_registros_ym ON troca_registros (ym, nf_seller_id)",
+        // 26/10/2026: desconto passa a ser de quem registrou a troca (regra_versao 2).
+        // sem DEFAULT: linhas antigas ficam NULL (= regra 1) e são recalculadas abaixo.
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS regra_versao integer",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_do_vendedor boolean",
       ]) await db.execute(sql.raw(ix)).catch(() => {});
+      await recalcularRegraRegistrante().catch((e) => console.error("[TROCA] recalculo:", e?.message || e));
     })().catch((e) => {
       schemaReady = null;
       throw e;
@@ -135,38 +142,55 @@ const normalizar = (s: any) =>
   String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 
 /** Calcula (sem gravar) os dados da troca a partir do card. */
-async function calcularTroca(card: any, motivo: MotivoTroca) {
+/** Chaves com que um usuário aparece como vendedor da NF (id, código Omie, 'omie-vendor-<código>'). */
+async function chavesDoUsuario(userId: string): Promise<{ chaves: string[]; nome: string | null }> {
+  const u: any = await db.execute(sql`
+    SELECT id, omie_vendor_code, TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS nome
+    FROM users WHERE id = ${userId} LIMIT 1`);
+  const x = u.rows?.[0];
+  if (!x) return { chaves: [userId], nome: null };
+  const chaves = [String(x.id)];
+  if (x.omie_vendor_code) chaves.push(String(x.omie_vendor_code), `omie-vendor-${x.omie_vendor_code}`);
+  return { chaves, nome: x.nome || null };
+}
+
+/**
+ * Calcula (sem gravar) os dados da troca.
+ * REGRA (Flavio, 26/10/2026): o desconto cai para QUEM REGISTROU o pedido de troca, e o
+ * valor/percentual vêm da ÚLTIMA NF que ESSE vendedor faturou para o cliente. Se ele nunca
+ * vendeu para o cliente, usa a última NF do cliente (de qualquer vendedor) só para o preço,
+ * e o percentual do próprio registrante no mês da troca.
+ */
+async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: string | null) {
   const produtos: any[] = Array.isArray(card.products) ? card.products : [];
+  const vendedorId = registranteId || (card.seller_id ? String(card.seller_id) : null);
+  const { chaves, nome: vendedorNome } = vendedorId ? await chavesDoUsuario(vendedorId) : { chaves: [] as string[], nome: null };
 
-  // Última NF de venda autorizada do mesmo cliente (pelo id do cliente ou CNPJ/CPF).
-  let nf: any = null;
-  if (card.customer_id) {
+  const esc = (v: string) => String(v).replace(/'/g, "''");
+  const ultimaNf = async (soDoVendedor: boolean) => {
+    if (!card.customer_id) return null;
+    const filtroVend = soDoVendedor && chaves.length
+      ? `WHERE x.seller_key IN (${chaves.map((k) => `'${esc(k)}'`).join(",")})`
+      : "";
     const r: any = await db.execute(sql.raw(`
-      SELECT fi.id, fi.invoice_number, to_char((${nfData("fi")})::date, 'YYYY-MM-DD') AS data, ${vendedorImplantou("fi")} AS seller_key
-      FROM ${nfVendaFrom("fi")}
-      WHERE ${nfVendaWhere("fi")}
-        AND (fi.customer_id = '${String(card.customer_id).replace(/'/g, "''")}'
-             OR (NULLIF(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'') IS NOT NULL
-                 AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') IN (
-                   SELECT regexp_replace(COALESCE(c.cnpj, c.cpf, ''),'[^0-9]','','g')
-                   FROM customers c WHERE c.id = '${String(card.customer_id).replace(/'/g, "''")}')))
-      ORDER BY ${nfData("fi")} DESC LIMIT 1`));
-    nf = r.rows?.[0] || null;
-  }
+      SELECT * FROM (
+        SELECT fi.id, fi.invoice_number, ${nfData("fi")} AS dt,
+               to_char((${nfData("fi")})::date, 'YYYY-MM-DD') AS data, ${vendedorImplantou("fi")} AS seller_key
+        FROM ${nfVendaFrom("fi")}
+        WHERE ${nfVendaWhere("fi")}
+          AND (fi.customer_id = '${esc(card.customer_id)}'
+               OR (NULLIF(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'') IS NOT NULL
+                   AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') IN (
+                     SELECT regexp_replace(COALESCE(c.cnpj, c.cpf, ''),'[^0-9]','','g')
+                     FROM customers c WHERE c.id = '${esc(card.customer_id)}')))
+      ) x ${filtroVend}
+      ORDER BY x.dt DESC LIMIT 1`));
+    return r.rows?.[0] || null;
+  };
 
-  // Vendedor da NF (id de usuário) e nome.
-  let nfSellerId: string | null = null;
-  let nfSellerName: string | null = null;
-  const sellerKey = nf?.seller_key ? String(nf.seller_key) : null;
-  const chave = sellerKey || (card.seller_id ? String(card.seller_id) : null);
-  if (chave) {
-    const u: any = await db.execute(sql`
-      SELECT id, TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS nome FROM users
-      WHERE id = ${chave} OR omie_vendor_code = ${chave} OR omie_vendor_code = ${chave.replace("omie-vendor-", "")}
-      LIMIT 1`);
-    nfSellerId = u.rows?.[0]?.id || null;
-    nfSellerName = u.rows?.[0]?.nome || null;
-  }
+  let nf: any = vendedorId ? await ultimaNf(true) : null;
+  const nfDoVendedor = !!nf;
+  if (!nf) nf = await ultimaNf(false);
 
   // Preços da NF por produto.
   const precosNf: Array<{ product_id: string | null; nome: string; preco: number }> = [];
@@ -179,19 +203,22 @@ async function calcularTroca(card: any, motivo: MotivoTroca) {
   }
 
   const itens = produtos.map((p) => {
-    const qtd = n(p.quantity);
+    const qtd = n(p.quantity ?? p.quantidade);
+    const pid = p.id ?? p.produtoId;
+    const pnome = p.name ?? p.produto;
     const achado =
-      precosNf.find((x) => x.product_id && String(p.id) === x.product_id) ||
-      precosNf.find((x) => x.nome && x.nome === normalizar(p.name));
-    const preco = achado ? achado.preco : n(p.unitPrice);
-    return { produtoId: String(p.id ?? ""), produto: String(p.name ?? ""), quantidade: qtd, precoUnit: preco, fontePreco: achado ? "nf" : "card", valor: r2(qtd * preco) };
+      precosNf.find((x) => x.product_id && String(pid) === x.product_id) ||
+      precosNf.find((x) => x.nome && x.nome === normalizar(pnome));
+    const preco = achado ? achado.preco : n(p.unitPrice ?? p.precoUnit);
+    return { produtoId: String(pid ?? ""), produto: String(pnome ?? ""), quantidade: qtd, precoUnit: preco, fontePreco: achado ? "nf" : "card", valor: r2(qtd * preco) };
   });
   const valorTroca = r2(itens.reduce((s, i) => s + i.valor, 0));
 
   let pct = 0;
-  if (motivo === "vencido" && nfSellerId) {
-    const [a, m] = String(nf?.data || ymBrasil()).split("-").map(Number);
-    pct = await pctComissao(nfSellerId, a, m);
+  if (motivo === "vencido" && vendedorId) {
+    // % do registrante no mês da NF dele; sem NF dele para o cliente, o % dele no mês da troca.
+    const [a, m] = String(nfDoVendedor ? nf.data : ymBrasil()).split("-").map(Number);
+    pct = await pctComissao(vendedorId, a, m);
   }
   const desconto = motivo === "vencido" ? r2((valorTroca * pct) / 100) : 0;
 
@@ -200,8 +227,35 @@ async function calcularTroca(card: any, motivo: MotivoTroca) {
     nfId: nf?.id || null,
     nfNumero: nf?.invoice_number != null ? String(nf.invoice_number) : null,
     nfData: nf?.data ? String(nf.data) : null,
-    nfSellerId, nfSellerName,
+    nfDoVendedor,
+    // nf_seller_* = vendedor DESCONTADO (quem registrou a troca)
+    nfSellerId: vendedorId,
+    nfSellerName: vendedorNome,
   };
+}
+
+/** Recalcula pela regra de 26/10 os registros de vencido gravados antes dela. Idempotente. */
+async function recalcularRegraRegistrante(): Promise<void> {
+  const r: any = await db.execute(sql`
+    SELECT id, customer_id, card_seller_id, created_by, itens FROM troca_registros
+    WHERE motivo = 'vencido' AND COALESCE(regra_versao, 1) < 2`);
+  for (const x of r.rows || []) {
+    try {
+      const calc = await calcularTroca(
+        { customer_id: x.customer_id, seller_id: x.card_seller_id, products: Array.isArray(x.itens) ? x.itens : [] },
+        "vencido", x.created_by ? String(x.created_by) : null);
+      await db.execute(sql`
+        UPDATE troca_registros SET
+          valor_troca = ${calc.valorTroca}, itens = ${JSON.stringify(calc.itens)}::jsonb, nf_id = ${calc.nfId},
+          nf_numero = ${calc.nfNumero}, nf_data = ${calc.nfData}, nf_seller_id = ${calc.nfSellerId},
+          nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct}, desconto = ${calc.desconto},
+          nf_do_vendedor = ${calc.nfDoVendedor}, regra_versao = 2, updated_at = now()
+        WHERE id = ${x.id}`);
+      console.log(`[TROCA] registro ${x.id} recalculado pela regra do registrante: ${calc.nfSellerName} R$ ${calc.desconto}`);
+    } catch (e: any) {
+      console.error("[TROCA] recalculo", x.id, e?.message || e);
+    }
+  }
 }
 
 /** Troca anterior do cliente pelo mesmo motivo, antes de `antesDe` (ou a mais recente). */
@@ -238,7 +292,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       const card = c.rows?.[0];
       if (!card) return res.status(404).json({ message: "Card não encontrado" });
       const produtos = Array.isArray(req.body?.products) ? req.body.products : card.products;
-      const calc = await calcularTroca({ ...card, products: produtos }, "vencido");
+      const calc = await calcularTroca({ ...card, products: produtos }, "vencido", req.currentUser?.id ? String(req.currentUser.id) : null);
       return res.json(calc);
     } catch (e: any) {
       console.error("[TROCA] previa:", e?.message || e);
@@ -269,10 +323,10 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       const card = c.rows?.[0];
       if (!card) return res.status(404).json({ message: "Card não encontrado" });
 
-      const calc = await calcularTroca(card, motivo);
+      const user = req.currentUser;
+      const calc = await calcularTroca(card, motivo, user?.id ? String(user.id) : null);
       const categoria = motivo === "vencido" ? "comercial" : "qualidade";
       const ym = ymBrasil();
-      const user = req.currentUser;
 
       // Reenvio do MESMO pedido (o vendedor tenta de novo em poucas horas) atualiza o registro;
       // um pedido novo no mesmo card permanente gera registro novo.
@@ -291,17 +345,18 @@ export function registerTrocaRegistrosRoutes(app: Express) {
             valor_troca = ${calc.valorTroca}, itens = ${JSON.stringify(calc.itens)}::jsonb, nf_id = ${calc.nfId},
             nf_numero = ${calc.nfNumero}, nf_data = ${calc.nfData}, nf_seller_id = ${calc.nfSellerId},
             nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct},
-            desconto = ${calc.desconto}, observacao = ${card.notes || null}, updated_at = now()
+            desconto = ${calc.desconto}, observacao = ${card.notes || null}, nf_do_vendedor = ${calc.nfDoVendedor},
+            regra_versao = 2, created_by = COALESCE(created_by, ${user?.id || null}), updated_at = now()
           WHERE id = ${recenteId}`);
       } else {
         await db.execute(sql`
           INSERT INTO troca_registros
             (sales_card_id, customer_id, customer_name, card_seller_id, motivo, categoria, temperatura_c,
              valor_troca, itens, nf_id, nf_numero, nf_data, nf_seller_id, nf_seller_name,
-             comissao_pct, desconto, ym, observacao, created_by)
+             comissao_pct, desconto, ym, observacao, created_by, nf_do_vendedor, regra_versao)
           VALUES (${id}, ${card.customer_id}, ${card.customer_name}, ${card.seller_id}, ${motivo}, ${categoria}, ${temperatura},
              ${calc.valorTroca}, ${JSON.stringify(calc.itens)}::jsonb, ${calc.nfId}, ${calc.nfNumero}, ${calc.nfData},
-             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null})`);
+             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null}, ${calc.nfDoVendedor}, 2)`);
       }
 
       // Auditoria junto das fotos da troca.

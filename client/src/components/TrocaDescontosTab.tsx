@@ -1,6 +1,6 @@
 // Aba "Descontos por troca" do módulo Metas (política de trocas 23/10/2026).
 // Troca por VENCIMENTO é comercial: a comissão sobre o valor trocado (preço da
-// última NF do cliente × % de comissão do vendedor que faturou essa NF) é
+// última NF que o vendedor que registrou a troca faturou ao cliente × % dele) é
 // descontada da comissão do mês da troca. Trocas de qualidade aparecem com
 // "Mostrar também trocas de qualidade", sem desconto.
 import { useState } from "react";
@@ -68,8 +68,8 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
             <div>
               <CardTitle className="text-lg">Descontos por troca</CardTitle>
               <CardDescription>
-                Troca por vencimento: a comissão sobre o valor trocado (preço da última NF faturada ao cliente) é descontada
-                do vendedor que faturou essa NF, no mês da troca. Trocas por qualidade não geram desconto.
+                Troca por vencimento: a comissão sobre o valor trocado é descontada de quem registrou o pedido de troca, pelo preço
+                e % da última NF que esse vendedor faturou ao cliente, no mês da troca. Trocas por qualidade não geram desconto.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -155,7 +155,7 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                   <TableHead>Cliente</TableHead>
                   <TableHead>Motivo</TableHead>
                   <TableHead>Última NF</TableHead>
-                  <TableHead>Vendedor da NF</TableHead>
+                  <TableHead>Vendedor (registrou a troca)</TableHead>
                   <TableHead className="text-right">Valor da troca</TableHead>
                   <TableHead className="text-right">% comissão</TableHead>
                   <TableHead className="text-right">Desconto</TableHead>
