@@ -594,6 +594,24 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
   const done: Array<{ receivableId: string; status?: string }> = [];
   let remaining = amount;
 
+  // JUROS/MULTA DE ATRASO (26/10/2026). Quando o cliente paga MAIS do que o saldo dos
+  // titulos (boleto com juros/multa pagos depois do vencimento — ex.: NF-107018, titulo
+  // R$ 399,60 pago R$ 408,92), a diferenca e receita financeira. Antes ela sumia: a
+  // baixa era limitada ao saldo e os R$ 9,32 nao entravam em lugar nenhum (a conta
+  // bancaria ja recebia o valor cheio, mas a DRE nao via a mora). A DRE le a mora de
+  // receivable_payments.interest (linha Receitas Financeiras, por data de pagamento),
+  // entao gravamos o excedente em `interest` no primeiro pagamento lancado.
+  let moraPendente = 0;
+  try {
+    let saldoTotal = 0;
+    for (const t of targets) {
+      const rr: any = await storage.getReceivable(t.receivableId);
+      if (!rr || String(rr.status) === 'cancelada') continue;
+      saldoTotal += Math.max(0, parseFloat(rr.amount) - parseFloat(rr.amountPaid || '0'));
+    }
+    if (saldoTotal > 0 && amount > saldoTotal + 0.005) moraPendente = Number((amount - saldoTotal).toFixed(2));
+  } catch (e: any) { moraPendente = 0; }
+
   for (const t of targets) {
     try {
       const receivable: any = await storage.getReceivable(t.receivableId);
@@ -664,9 +682,11 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
           paymentMethod: 'boleto' as any,
           financialAccountId: account?.id || receivable.financialAccountId || null,
           reference: charge.nosso_numero || null,
-          notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}${targets.length > 1 ? ' [boleto unificado]' : ''}`,
+          interest: moraPendente > 0 ? moraPendente.toFixed(2) : undefined,
+          notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}${targets.length > 1 ? ' [boleto unificado]' : ''}${moraPendente > 0 ? ` - juros/multa R$ ${moraPendente.toFixed(2)}` : ''}`,
           createdBy: 'sistema',
         } as any), `createReceivablePayment ${t.receivableId}`);
+        if (moraPendente > 0) { console.log(`[BB-BOLETO] juros/multa de atraso R$ ${moraPendente.toFixed(2)} lancados no titulo ${t.receivableId} (pago R$ ${amount.toFixed(2)})`); moraPendente = 0; }
       } catch (e: any) { console.warn('[BB-BOLETO] createReceivablePayment falhou:', e?.message); }
       remaining -= pay;
       done.push({ receivableId: t.receivableId, status: receivableStatus });
