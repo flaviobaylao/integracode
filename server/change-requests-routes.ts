@@ -668,10 +668,11 @@ export function registerChangeRequestsRoutes(app: Express) {
       // se o vendedor tinha mesmo que passar lá naquela semana.
       const diasByKey = new Map<string, string[]>();
       const semanaByKey = new Map<string, string>();
+      const virtualSet = new Set<string>();
       const repescagemSet = new Set<string>();
       if (custIds.length) {
         const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
-        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity, weekdays, semana_atendimento FROM customers WHERE id IN (${inCust})`));
+        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity, weekdays, semana_atendimento, virtual_service FROM customers WHERE id IN (${inCust})`));
         for (const c of cr) {
           if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
           if (c.city) cityByKey.set("customer:" + c.id, String(c.city));
@@ -682,6 +683,8 @@ export function registerChangeRequestsRoutes(app: Express) {
           if (typeof dias === "string") { try { dias = JSON.parse(dias); } catch { dias = null; } }
           if (Array.isArray(dias) && dias.length) diasByKey.set("customer:" + c.id, dias.map((d: any) => String(d)).filter(Boolean));
           if (c.semana_atendimento) semanaByKey.set("customer:" + c.id, String(c.semana_atendimento));
+          // 💻 26/out/2026 — cliente de atendimento VIRTUAL ganha a marcação "Virtual" no card.
+          if (c.virtual_service === true) virtualSet.add("customer:" + c.id);
         }
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
         const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
@@ -724,6 +727,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.periodicidade = periodicidadeByKey.get(key) || null;
         m.diasRota = diasByKey.get(key) || null;
         m.semanaAtendimento = semanaByKey.get(key) || null;
+        if (virtualSet.has(key)) m.virtual = true;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
       // 📷 temFoto: qualquer report com foto de check-in de visita sem venda (ou link de foto).
