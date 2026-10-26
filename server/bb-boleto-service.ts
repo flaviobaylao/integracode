@@ -490,6 +490,26 @@ async function findFinancialAccountForConvenio(numeroConvenio: string | null): P
   } catch { return null; }
 }
 
+// Repete uma operacao de banco ate 3x quando o erro e transitorio — exatamente o que
+// um redeploy provoca: lock_timeout (ALTER TABLE do boot da instancia nova na fila),
+// conexao encerrada, pool fechando. Erro de regra de negocio (BAIXA_TRAVADA, NOT NULL,
+// FK) nao e repetido: repetir nao muda o resultado.
+const ERRO_TRANSITORIO = /lock timeout|statement timeout|canceling statement|terminat|Connection terminated|ECONNRESET|ECONNREFUSED|ETIMEDOUT|too many clients|pool.*end|Client has encountered a connection error|deadlock detected|could not serialize/i;
+async function comRetryTransitorio<T>(fn: () => Promise<T>, rotulo: string, tentativas = 3): Promise<T> {
+  let ultimo: any;
+  for (let i = 1; i <= tentativas; i++) {
+    try { return await fn(); }
+    catch (e: any) {
+      ultimo = e;
+      const msg = String(e?.message || e);
+      if (!ERRO_TRANSITORIO.test(msg) || i === tentativas) throw e;
+      console.warn(`[BB-BOLETO] ${rotulo}: erro transitorio (${msg.slice(0, 120)}) — tentativa ${i}/${tentativas}, repetindo em ${i * 700}ms`);
+      await new Promise(r => setTimeout(r, i * 700));
+    }
+  }
+  throw ultimo;
+}
+
 export interface SettleResult {
   ok: boolean;
   alreadyPaid?: boolean;
@@ -562,7 +582,13 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
     console.warn(`[BB-BOLETO] REPARO: boleto ${charge.id} (nosso ${charge.nosso_numero}) esta liquidado com ${pendentes} titulo(s) em aberto - completando a baixa que faltou (${source})`);
   }
 
-  try { await db.execute(sql`UPDATE boleto_charges SET status = 'liquidado' WHERE id = ${charge.id}`); } catch (e: any) { /* tolerante */ }
+  // FIX (26/10/2026): o boleto NAO e mais marcado 'liquidado' aqui. Marcar antes da
+  // baixa foi a causa dos titulos orfaos (DU CARLOS NF-107525 e mais 8 em 12-13/10):
+  // o processo morria no meio (redeploy do Railway sem SIGTERM tratado / lock_timeout
+  // atras dos ALTER TABLE do boot), o boleto ficava 'liquidado' e o titulo 'vencida',
+  // e nenhuma rotina voltava nele. Agora o status so muda DEPOIS dos titulos (fim da
+  // funcao); se a baixa falhar, o boleto continua aberto e a varredura horaria tenta
+  // de novo sozinha.
 
   const account = await findFinancialAccountForConvenio(charge.numero_convenio);
   const done: Array<{ receivableId: string; status?: string }> = [];
@@ -622,14 +648,16 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
       const receivableStatus = totalPaid >= parseFloat(receivable.amount) - 0.005
         ? 'recebida'
         : (/^\d{4}-\d{2}-\d{2}$/.test(venc) && venc < hojeBR ? 'vencida' : 'a_vencer');
-      await storage.updateReceivable(t.receivableId, {
+      // Retry curto em erro transitorio (lock_timeout, conexao derrubada, pool fechando):
+      // e o que acontece durante um redeploy. Erro de regra (BAIXA_TRAVADA) nao repete.
+      await comRetryTransitorio(() => storage.updateReceivable(t.receivableId, {
         amountPaid: totalPaid.toFixed(2),
         status: receivableStatus as any,
         paymentMethod: 'boleto' as any,
         financialAccountId: account?.id || receivable.financialAccountId || null,
-      } as any);
+      } as any), `updateReceivable ${t.receivableId}`);
       try {
-        await storage.createReceivablePayment({
+        await comRetryTransitorio(() => storage.createReceivablePayment({
           receivableId: t.receivableId,
           paidAt,
           amount: pay.toFixed(2),
@@ -638,7 +666,7 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
           reference: charge.nosso_numero || null,
           notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}${targets.length > 1 ? ' [boleto unificado]' : ''}`,
           createdBy: 'sistema',
-        } as any);
+        } as any), `createReceivablePayment ${t.receivableId}`);
       } catch (e: any) { console.warn('[BB-BOLETO] createReceivablePayment falhou:', e?.message); }
       remaining -= pay;
       done.push({ receivableId: t.receivableId, status: receivableStatus });
@@ -674,6 +702,31 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
         omieInstanceId: account.omieInstanceId || null, createdBy: 'sistema', idempotente: true,
       });
     } catch (e: any) { console.warn('[BB-BOLETO] movimento de conta falhou:', e?.message); }
+  }
+
+  // So agora o boleto vira 'liquidado' — e somente se nao sobrou titulo pendente deste
+  // boleto. Sobrou (falha no laco)? O status fica como estava, o erro vira log explicito
+  // e a varredura horaria (que so olha boletos NAO liquidados) reprocessa na proxima hora.
+  let pendentesApos = 0;
+  for (const t of targets) {
+    try {
+      const rr: any = await storage.getReceivable(t.receivableId);
+      if (!rr || String(rr.status) === 'cancelada') continue;
+      if (parseFloat(rr.amountPaid || '0') >= parseFloat(rr.amount || '0') - 0.005) continue;
+      const nn = String(charge.nosso_numero || '').trim();
+      const pr: any = nn
+        ? await db.execute(sql`SELECT 1 FROM receivable_payments WHERE receivable_id = ${t.receivableId} AND deleted_at IS NULL AND (reference = ${nn} OR notes LIKE ${'%nosso ' + nn + '%'}) LIMIT 1`)
+        : await db.execute(sql`SELECT 1 FROM receivable_payments WHERE receivable_id = ${t.receivableId} AND deleted_at IS NULL LIMIT 1`);
+      if (pr.rows && pr.rows.length > 0) continue;
+      pendentesApos++;
+    } catch (e: any) { pendentesApos++; }
+  }
+  if (pendentesApos === 0) {
+    try {
+      await comRetryTransitorio(() => db.execute(sql`UPDATE boleto_charges SET status = 'liquidado', valor_pago = COALESCE(valor_pago, ${amount.toFixed(2)}), data_pagamento = COALESCE(data_pagamento, ${paidAt}), updated_at = now() WHERE id = ${charge.id}`), `status liquidado ${charge.id}`);
+    } catch (e: any) { console.warn('[BB-BOLETO] nao conseguiu marcar o boleto como liquidado (a varredura repete):', e?.message); }
+  } else {
+    console.error(`❌ [BB-BOLETO] BAIXA INCOMPLETA (${source}): boleto ${charge.id} (nosso ${charge.nosso_numero}) ficou com ${pendentesApos} titulo(s) sem baixa — status do boleto NAO alterado; a varredura horaria vai reprocessar`);
   }
 
   const receivableStatus = done[0]?.status;
@@ -760,7 +813,7 @@ export async function checkAndSettleBoleto(boletoChargeId: string, source = 'con
 
 // FASE 1c - Varredura de boletos em aberto (consulta BB e da baixa nos pagos).
 // Movida do endpoint HTTP para o agendador interno; o endpoint agora so dispara.
-export async function sweepOpenBoletos(limit = 300, days = 120): Promise<{ candidates: number; checked: number; falhas: number; paid: number; settled: number; veredito: string }> {
+export async function sweepOpenBoletos(limit = 600, days = 120): Promise<{ candidates: number; checked: number; falhas: number; paid: number; settled: number; veredito: string }> {
   const r: any = await db.execute(sql`SELECT bc.id FROM boleto_charges bc JOIN receivables rr ON rr.id = bc.receivable_id WHERE COALESCE(bc.status,'') NOT IN ('liquidado','pago','recebido','cancelado','baixado') AND rr.status IN ('a_vencer','vencida') AND rr.deleted_at IS NULL AND bc.created_at > now() - make_interval(days => ${days}) ORDER BY bc.created_at DESC LIMIT ${limit}`);
   const ids = (r.rows || []).map((x: any) => x.id);
   // FALHA DE CONSULTA NAO E "NAO PAGO". checkAndSettleBoleto devolve {ok:false}
@@ -780,10 +833,39 @@ export async function sweepOpenBoletos(limit = 300, days = 120): Promise<{ candi
       if (o.paid) { paid++; if (!o.alreadyPaid) settled++; }
     } catch (e: any) { falhas++; anota(id, e?.message || e); }
   }
+  // AUTO-REPARO (26/10/2026): boleto ja 'liquidado' com titulo aberto e SEM pagamento
+  // deste boleto — o orfao que a varredura acima nunca via (ela filtra status NOT IN
+  // liquidado). Mesmo criterio do endpoint repair-boleto-liquidado-sem-baixa; o BB e
+  // consultado de novo e a baixa usa valor/data reais do banco (settleBoletoCharge em
+  // modo reparo, idempotente). Titulo aberto por desconto (pagou menos que o emitido)
+  // ja tem pagamento do boleto e fica de fora.
+  let reparoCandidatos = 0, reparados = 0, reparoFalhas = 0;
+  try {
+    const ro: any = await db.execute(sql`
+      SELECT bc.id FROM boleto_charges bc JOIN receivables r ON r.id = bc.receivable_id
+      WHERE lower(COALESCE(bc.status,'')) IN ('liquidado','pago','recebido') AND bc.deleted_at IS NULL
+        AND r.deleted_at IS NULL AND r.status IN ('a_vencer','vencida')
+        AND COALESCE(r.amount_paid, 0)::numeric < r.amount::numeric - 0.005
+        AND NOT EXISTS (SELECT 1 FROM receivable_payments rp WHERE rp.receivable_id = r.id AND rp.deleted_at IS NULL AND (
+              (COALESCE(bc.nosso_numero,'') <> '' AND (rp.reference = bc.nosso_numero OR rp.notes LIKE '%nosso ' || bc.nosso_numero || '%'))
+              OR COALESCE(bc.nosso_numero,'') = ''))
+        AND bc.created_at > now() - make_interval(days => ${days})
+      ORDER BY bc.created_at DESC LIMIT 30`);
+    const rids = (ro.rows || []).map((x: any) => x.id);
+    reparoCandidatos = rids.length;
+    for (const id of rids) {
+      try {
+        const o: any = await checkAndSettleBoleto(id, 'varredura-reparo');
+        if (o?.ok && o.paid && Number(o.settledCount || 0) > 0) { reparados++; console.warn(`[BB-BOLETO] AUTO-REPARO: boleto ${id} baixado (${o.settledCount} titulo(s), R$ ${Number(o.amount || 0).toFixed(2)})`); }
+        else if (!o || o.ok === false) { reparoFalhas++; anota(id, o?.error || 'reparo sem resposta'); }
+      } catch (e: any) { reparoFalhas++; anota(id, e?.message || e); }
+    }
+  } catch (e: any) { console.warn('[BB-BOLETO] auto-reparo falhou:', e?.message || e); }
+
   // veredito e o que o painel de saude le: "ok" so quando o banco respondeu
   // sobre TODOS os boletos da fila.
-  const veredito = ids.length === 0 ? 'sem_fila' : falhas === 0 ? 'ok' : checked === 0 ? 'cega' : 'parcial';
-  try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, falhas, paid, settled, veredito, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
-  console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} falhas=${falhas} paid=${paid} settled=${settled} veredito=${veredito}`);
+  const veredito = ids.length === 0 && reparoCandidatos === 0 ? 'sem_fila' : (falhas + reparoFalhas) === 0 ? 'ok' : checked === 0 ? 'cega' : 'parcial';
+  try { await db.execute(sql`INSERT INTO system_settings (key, value, updated_by) VALUES ('boleto_check_open_last', ${JSON.stringify({ at: new Date().toISOString(), candidates: ids.length, checked, falhas, paid, settled, reparoCandidatos, reparados, reparoFalhas, veredito, errors: errors.slice(0, 10) })}, 'cron-boleto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`); } catch (e) {}
+  console.log(`[BB-BOLETO] check-open concluido: candidates=${ids.length} checked=${checked} falhas=${falhas} paid=${paid} settled=${settled} reparo=${reparados}/${reparoCandidatos} veredito=${veredito}`);
   return { candidates: ids.length, checked, falhas, paid, settled, veredito };
 }

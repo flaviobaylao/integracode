@@ -522,9 +522,15 @@ export default function Dashboard() {
           <div className="text-[11px] text-indigo-600">Realizado {brl(grandTotals.mensal)} + previsão {brl(forecast.total)} — por cliente da carteira (periodicidade e dia da semana, últimos ~3 meses)</div>
           <button type="button" onClick={() => setShowForecast((s) => !s)} className={"mt-1 inline-flex items-center gap-1 text-[11px] font-medium rounded px-2 py-0.5 border " + (showForecast ? "bg-sky-100 border-sky-300 text-sky-700" : "bg-white border-gray-300 text-gray-500")}>{showForecast ? "Previsões: ligadas" : "Previsões: desligadas"}</button>
         </div>
-        <div className="text-right pr-6">
-          <div className="text-3xl font-bold text-indigo-800 whitespace-nowrap">{brl(projTotal)}</div>
-          <div className="text-[11px] font-medium text-indigo-500 whitespace-nowrap" title="Projeção linear: realizado do mês (incluindo domingos) dividido pelos dias úteis (seg-sex) já decorridos, multiplicado pelo total de dias úteis do mês.">Linear (dias úteis seg-sex): {brl(projLinear)}</div>
+        <div className="flex flex-wrap items-end justify-end gap-x-8 gap-y-2 text-right pr-6">
+          <div>
+            <div className="text-[11px] font-medium text-indigo-500 whitespace-nowrap">Por histórico (carteira)</div>
+            <div className="text-3xl font-bold text-indigo-800 whitespace-nowrap">{brl(projTotal)}</div>
+          </div>
+          <div title="Projeção linear: realizado do mês (incluindo domingos) dividido pelos dias úteis (seg-sex) já decorridos, multiplicado pelo total de dias úteis do mês.">
+            <div className="text-[11px] font-medium text-sky-600 whitespace-nowrap">Linear (dias úteis seg-sex)</div>
+            <div className="text-3xl font-bold text-sky-700 whitespace-nowrap">{brl(projLinear)}</div>
+          </div>
         </div>
       </div>
 

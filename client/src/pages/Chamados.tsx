@@ -305,11 +305,15 @@ export default function Chamados() {
 
   const todos = listaQ.data?.chamados || [];
   const uid = perfil?.usuario?.id;
+  // Os contadores de cada aba consideram só o que aparece nela: um chamado encerrado
+  // (solucionado/cancelado) com novidade é contado na aba Arquivados, onde ele está.
+  const abertos = todos.filter((c) => !encerrado(c.status));
   const contagem = {
-    tudo: todos.filter((c) => c.naoLido).length,
-    meus: todos.filter((c) => c.autorId === uid && c.naoLido).length,
-    recebidos: todos.filter((c) => c.papel === "dono" && (c.naoLido || c.status === "novo")).length,
-    consultas: todos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
+    tudo: abertos.filter((c) => c.naoLido).length,
+    meus: abertos.filter((c) => c.autorId === uid && c.naoLido).length,
+    recebidos: abertos.filter((c) => c.papel === "dono" && (c.naoLido || c.status === "novo")).length,
+    consultas: abertos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
+    arquivados: todos.filter((c) => encerrado(c.status) && c.naoLido).length,
   };
   const q = busca.trim().toLowerCase();
   const pedeEncerrado = statusSel.some(encerrado);
@@ -357,7 +361,7 @@ export default function Chamados() {
   ];
   if (atendeAlgum) abas.push(["recebidos", "Recebidos", contagem.recebidos]);
   if (atendeAlgum || todos.some((c) => c.papel === "consultado")) abas.push(["consultas", "Consultas para mim", contagem.consultas]);
-  abas.push(["arquivados", `Arquivados${qtdArquivados ? ` (${qtdArquivados})` : ""}`, 0]);
+  abas.push(["arquivados", `Arquivados${qtdArquivados ? ` (${qtdArquivados})` : ""}`, contagem.arquivados]);
   if (perfil?.admin) abas.push(["todos", "Todos (admin)", 0]);
 
   const refresh = () => {
@@ -397,8 +401,17 @@ export default function Chamados() {
             className={`w-full lg:w-[var(--lw)] lg:flex-shrink-0 bg-white border rounded-xl ${selId ? "hidden lg:block" : ""}`}>
             <div className="p-3 border-b flex flex-col gap-2">
               <label htmlFor="busca-chamado" className="sr-only">Buscar chamado</label>
-              <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa (inclui arquivados)"
-                className="w-full h-10 px-3 border rounded-lg text-sm" />
+              <div className="relative">
+                <input id="busca-chamado" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nº, assunto ou pessoa (inclui arquivados)"
+                  className="w-full h-10 pl-3 pr-10 border rounded-lg text-sm" />
+                {busca && (
+                  <button type="button" aria-label="Limpar busca" title="Limpar busca" data-testid="limpar-busca"
+                    onClick={() => setBusca("")}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full text-gray-500 hover:text-red-600 hover:bg-gray-100 flex items-center justify-center">
+                    <i className="fas fa-times" aria-hidden="true"></i>
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <div className="relative" ref={statusRef}>
                   <button type="button" onClick={() => setStatusAberto((v) => !v)} data-testid="filtro-status" aria-expanded={statusAberto}
@@ -430,9 +443,12 @@ export default function Chamados() {
                   <input type="date" value={dataAte} min={dataDe || undefined} onChange={(e) => setDataAte(e.target.value)} data-testid="filtro-data-ate"
                     className={`h-9 px-2 border rounded-lg bg-white ${dataAte ? "border-green-700" : ""}`} />
                 </label>
-                {filtrosAtivos && (
-                  <button type="button" className="text-xs text-gray-600 underline" onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); }}>Limpar filtros</button>
-                )}
+                <button type="button" data-testid="limpar-filtros" disabled={!filtrosAtivos && !busca}
+                  title="Limpar busca, status e período"
+                  onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); setBusca(""); setStatusAberto(false); }}
+                  className={`h-9 px-2.5 rounded-lg border text-sm flex items-center gap-1.5 ${filtrosAtivos || busca ? "border-red-300 text-red-700 bg-red-50 hover:bg-red-100 font-semibold" : "text-gray-400 bg-white cursor-default"}`}>
+                  <i className="fas fa-times" aria-hidden="true"></i>Limpar
+                </button>
               </div>
             </div>
             <div className="px-4 py-1.5 border-b flex justify-between items-center text-xs text-gray-500">

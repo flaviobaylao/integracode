@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
+import { SalesCycleDotsCliente } from "@/components/SalesCycleDots";
 import ClientActionsModal from "@/components/ClientActionsModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
 import { useMotivoInativacao } from "@/components/useMotivoInativacao";
@@ -22,7 +23,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target } from "lucide-react";
+import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -47,17 +49,6 @@ const fmtDiaBR = (s?: string) => {
   try { return new Date(s).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric" }); }
   catch { return ""; }
 };
-function UltimaCompra({ iso }: { iso?: string | null }) {
-  if (!iso) return <span className="text-[11px] text-muted-foreground flex items-center gap-1"><ShoppingCart className="h-3 w-3" /> Sem compra registrada</span>;
-  const dias = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
-  const cls = dias >= 60 ? "text-red-700" : dias >= 30 ? "text-amber-700" : "text-emerald-700";
-  return (
-    <span className={`text-[11px] flex items-center gap-1 ${cls}`} title="Data do último pedido faturado deste cliente">
-      <ShoppingCart className="h-3 w-3" /> Última compra: <b>{fmtDiaBR(iso)}</b> ({dias === 0 ? "hoje" : dias === 1 ? "há 1 dia" : `há ${dias} dias`})
-    </span>
-  );
-}
-
 const fmtDate = (s?: string) => {
   if (!s) return "";
   try { return new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
@@ -110,41 +101,93 @@ function fmtPeriodicidade(v?: string | null): string {
   if (!k) return "";
   return PERIODICIDADE_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1));
 }
-// Dia(s) de rota do cadastro: ["segunda","quinta"] -> "Segunda/Quinta".
-function fmtDiasRota(v?: any): string {
-  if (!Array.isArray(v) || v.length === 0) return "";
-  return v.map((d: any) => { const k = String(d || "").trim(); return k ? k.charAt(0).toUpperCase() + k.slice(1) : ""; })
-    .filter(Boolean).join("/");
-}
-// Semana do mês em que o cliente é atendido (contada pela segunda-feira, igual ao cadastro).
-// "toda" é o padrão e não vira rótulo — a periodicidade já diz a cadência.
-const SEMANA_LABEL: Record<string, string> = {
-  impar: "1ª e 3ª sem.", par: "2ª e 4ª sem.",
-  "1": "1ª sem.", "2": "2ª sem.", "3": "3ª sem.", "4": "4ª sem.", ultima: "Última sem.",
-};
-function fmtSemanaAtendimento(v?: string | null): string {
-  const k = String(v || "").trim().toLowerCase();
-  if (!k || k === "toda") return "";
-  return SEMANA_LABEL[k] || "";
-}
-
 // Linha cinza sob o cabeçalho do card: onde fica o cliente e quando ele é visitado
 // (bairro · cidade · periodicidade · dia de rota · semana do mês). O que não existe no
 // cadastro simplesmente não aparece — lead, por exemplo, não tem nenhuma das três últimas.
 function LinhaCadastro({ r }: { r: any }) {
+  // 24/out/2026 — periodicidade/dia/semana saíram daqui: agora vêm no cabeçalho igual ao card da
+  // Rota do Dia (CabecalhoRota), sem duplicar. Aqui fica só onde o cliente está.
   const local = [r.neighborhood, r.city].filter(Boolean).join(" · ");
-  const agenda = [fmtPeriodicidade(r.periodicidade), fmtDiasRota(r.diasRota), fmtSemanaAtendimento(r.semanaAtendimento)]
-    .filter(Boolean).join(" · ");
-  if (!local && !agenda) return null;
+  if (!local) return null;
+  return <div className="text-[11px] text-muted-foreground mt-0.5">{local}</div>;
+}
+
+// 🧾📅 Cabeçalho igual ao card da Rota do Dia (24/out/2026):
+//   📅 Seg • Quinzenal • 2ª e 4ª do mês
+//   🧾 Último faturamento: 28/09/2026 - R$ 294,00 (Seg-4ªSem-26 dias)
+const DIA_ABREV: Record<string, string> = { seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sab: "Sáb", "sáb": "Sáb", dom: "Dom" };
+function fmtUltimoFaturamento(r: any): string {
+  if (!r.lastOrderAt) return "Sem registro";
+  let d: Date;
+  if (r.lastOrderDia && /^\d{4}-\d{2}-\d{2}$/.test(r.lastOrderDia)) { const [y, m, dd] = String(r.lastOrderDia).split("-").map(Number); d = new Date(y, m - 1, dd); }
+  else d = new Date(r.lastOrderAt);
+  if (isNaN(d.getTime())) return "Sem registro";
+  const dow = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.getDay()];
+  let sem = "";
+  try { sem = `-${semanaDoMesDaData(d).n}ªSem`; } catch { /* sem semana */ }
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const base = new Date(d); base.setHours(0, 0, 0, 0);
+  const dias = Math.max(0, Math.round((hoje.getTime() - base.getTime()) / 86400000));
+  const txtDias = dias === 0 ? "hoje" : dias === 1 ? "1 dia" : `${dias} dias`;
+  const valor = r.lastOrderValue != null ? ` - R$ ${Number(r.lastOrderValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "";
+  return `${d.toLocaleDateString("pt-BR")}${valor} (${dow}${sem}-${txtDias})`;
+}
+function CabecalhoRota({ r }: { r: any }) {
+  if (r.entityType !== "customer") return null;
+  const dias = Array.isArray(r.diasRota)
+    ? r.diasRota.map((x: any) => { const k = String(x || "").trim().toLowerCase().slice(0, 3); return DIA_ABREV[k] || String(x); }).filter(Boolean).join(", ")
+    : "";
+  const per = fmtPeriodicidade(r.periodicidade);
+  const sem = r.periodicidade || r.semanaAtendimento ? ROTULO_SEMANA[normalizarSemana(r.semanaAtendimento)] : "";
+  const agenda = [dias, per, sem].filter(Boolean).join(" • ");
   return (
-    <div className="text-[11px] text-muted-foreground mt-0.5">
-      {local}
+    <div className="mt-0.5 space-y-0.5">
+      {/* 26/out/2026 — agenda (dia • periodicidade • semana) primeiro; último faturamento abaixo. */}
       {agenda && (
-        <>
-          {local ? " · " : ""}
-          <span className="font-medium text-foreground/80">{agenda}</span>
-        </>
+        <div className="text-[11px] text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1" data-testid={`cr-agenda-${r.id}`}>
+          <CalendarClock className="h-3 w-3" /> {agenda}
+        </div>
       )}
+      <div className="text-[11px] text-gray-600 dark:text-gray-300" data-testid={`cr-ultimo-faturamento-${r.id}`}>
+        🧾 Último faturamento: {fmtUltimoFaturamento(r)}
+      </div>
+    </div>
+  );
+}
+
+// 💰 Débito vencido de HOJE nos reports de débito (24/out/2026) — mesma régua e mesmo selo
+// vermelho do card da Rota do Dia. O servidor só manda o campo nos reports de débito; abaixo
+// do piso de R$ 50 vem 0 e o card avisa que não há débito vencido no momento.
+function DebitoVencido({ r }: { r: any }) {
+  if (r?.debitoVencido === undefined || r?.debitoVencido === null) return null;
+  const v = Number(r.debitoVencido) || 0;
+  if (v <= 0) {
+    return <div className="text-[11px] text-emerald-700 dark:text-emerald-400">Sem débito vencido no momento.</div>;
+  }
+  return (
+    <div>
+      <Badge variant="destructive" className="text-xs" data-testid={`cr-debito-${r.id}`}>
+        <DollarSign className="h-3 w-3 mr-1" />
+        Débito vencido: R$ {v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </Badge>
+    </div>
+  );
+}
+
+// 📷 Foto do check-in da Rota do Dia (24/out/2026). Só aparece quando o servidor diz que o
+// report tem foto (r.temFoto); a imagem vem sob demanda de /api/change-requests/:id/foto-checkin
+// — base64 pesado não trafega na listagem. Clicar abre a foto inteira numa aba nova.
+function FotoCheckin({ r, tamanho }: { r: any; tamanho: string }) {
+  const [falhou, setFalhou] = useState(false);
+  if (!r?.temFoto || falhou) return null;
+  const src = `/api/change-requests/${encodeURIComponent(String(r.id))}/foto-checkin`;
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Foto do check-in</div>
+      <a href={src} target="_blank" rel="noreferrer" data-testid={`cr-foto-${r.id}`}>
+        <img src={src} alt="Foto tirada no check-in" loading="lazy" onError={() => setFalhou(true)}
+          className={`mt-1 ${tamanho} rounded border object-contain bg-white`} />
+      </a>
     </div>
   );
 }
@@ -398,6 +441,10 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               <span>{r.entityName || r.entityId}</span>
             )}
             {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
+            {/* 🟢🟡🔴 Efetividade em vendas por ciclo — as mesmas bolinhas da Rota do Dia (26/out/2026) */}
+            {r.entityType === "customer" && <SalesCycleDotsCliente customerId={r.customerId || r.entityId} />}
+            {/* 💻 Só aparece para cliente de atendimento virtual (26/out/2026) */}
+            {r.virtual && <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" data-testid={`cr-virtual-${r.id}`}>Virtual</span>}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
@@ -412,7 +459,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
           </div>
           <LinhaCadastro r={r} />
-          {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
+          <CabecalhoRota r={r} />
         </div>
       </div>
 
@@ -424,20 +471,14 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               <div>{rd.motivo}</div>
             </div>
           )}
+          <DebitoVencido r={r} />
           {rd.texto && (
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Observação do vendedor</div>
               <div className="whitespace-pre-wrap break-words">{rd.texto}</div>
             </div>
           )}
-          {rd.fotoUrl && (
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Foto</div>
-              <a href={rd.fotoUrl} target="_blank" rel="noreferrer" data-testid={`cr-foto-${r.id}`}>
-                <img src={rd.fotoUrl} alt="Foto anexada pelo vendedor" className="mt-1 max-h-40 rounded border object-contain" />
-              </a>
-            </div>
-          )}
+          <FotoCheckin r={r} tamanho="max-h-48" />
         </div>
       ) : (
         <>
@@ -655,6 +696,10 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
               <span>{r.entityName || r.entityId}</span>
             )}
             {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
+            {/* 🟢🟡🔴 Efetividade em vendas por ciclo — as mesmas bolinhas da Rota do Dia (26/out/2026) */}
+            {r.entityType === "customer" && <SalesCycleDotsCliente customerId={r.customerId || r.entityId} />}
+            {/* 💻 Só aparece para cliente de atendimento virtual (26/out/2026) */}
+            {r.virtual && <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" data-testid={`cr-virtual-${r.id}`}>Virtual</span>}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
@@ -665,7 +710,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
             <span>{fmtDate(r.createdAt)}</span>
           </div>
           <LinhaCadastro r={r} />
-          {r.entityType === "customer" && <div className="mt-0.5"><UltimaCompra iso={r.lastOrderAt} /></div>}
+          <CabecalhoRota r={r} />
           {rd?.previsaoPagamento && (
             <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
               <CalendarClock className="h-3 w-3" /> Previsão de pagamento: <b>{fmtDiaBR(rd.previsaoPagamento)}</b>
@@ -678,10 +723,9 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
       {isReport ? (
         <div className="rounded-md bg-muted/50 border p-2.5 text-sm space-y-1">
           {rd.motivo && <div><span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Motivo: </span>{rd.motivo}</div>}
+          <DebitoVencido r={r} />
           {rd.texto && <div className="whitespace-pre-wrap break-words">{rd.texto}</div>}
-          {rd.fotoUrl && (
-            <a href={rd.fotoUrl} target="_blank" rel="noreferrer"><img src={rd.fotoUrl} alt="Foto anexada pelo vendedor" className="mt-1 max-h-32 rounded border object-contain" /></a>
-          )}
+          <FotoCheckin r={r} tamanho="max-h-32" />
         </div>
       ) : (<>
       <div className="flex flex-wrap gap-1">

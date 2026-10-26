@@ -29,7 +29,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Customer } from "@shared/schema";
 import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Search } from "lucide-react";
+import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { SeloRedeDoCliente } from "@/pages/RedeClientes";
 
 interface CustomerEditModalProps {
@@ -126,6 +127,7 @@ export default function CustomerEditModal({
   const { data: instances = [] } = useQuery<any[]>({ queryKey: ["/api/companies/public"] });
 
   const [ieLoading, setIeLoading] = useState(false);
+  const [cnpjLoading, setCnpjLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     fantasyName: "",
@@ -455,6 +457,84 @@ export default function CustomerEditModal({
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  // 🔎 Lupa de busca do CNPJ (igual ao cadastro da Gestão de Clientes): consulta a Receita
+  // Federal (/api/receita/cnpj), autopreenche Razão Social, Nome Fantasia, Endereço, Cidade,
+  // UF, CEP, telefone/e-mail e a Inscrição Estadual (SEFAZ/CNPJ.ws). Antes avisa se o CNPJ já
+  // está cadastrado (abre o aviso de cadastro existente, com opção de reativar/abrir).
+  const buscarCNPJ = async () => {
+    const digits = String(formData.cnpj || '').replace(/\D/g, '');
+    if (digits.length !== 14) {
+      toast({ title: 'CNPJ necessário', description: 'Preencha o CNPJ (14 dígitos) para buscar na Receita.', variant: 'destructive' });
+      return;
+    }
+    setCnpjLoading(true);
+    try {
+      // 1) Duplicidade — avisa se o CNPJ já existe no sistema (não bloqueia a consulta da Receita).
+      try {
+        const exclude = (customer as any)?.id ? `&excludeId=${encodeURIComponent((customer as any).id)}` : '';
+        const dupResp = await fetch(`/api/customers/cnpj-lookup?cnpj=${encodeURIComponent(digits)}${exclude}`, { credentials: 'same-origin' });
+        if (dupResp.ok) {
+          const dup = await dupResp.json();
+          if (dup?.exists && Array.isArray(dup.matches) && dup.matches.length && !customer?.id) {
+            const m = dup.matches[0];
+            setDupCustomer({ id: m.id, name: m.nome || m.name, cnpj: digits, isActive: m.isActive, naLista: m.naLista, seller: m.vendedor || m.seller });
+          }
+        }
+      } catch { /* não bloqueia */ }
+
+      // 2) Receita Federal — dados cadastrais.
+      const response = await fetch('/api/receita/cnpj', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cnpj: digits }),
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Erro ao consultar CNPJ');
+      }
+      const data: any = await response.json();
+
+      // 3) Autopreenche (sem sobrescrever a IE se já estiver preenchida).
+      let ieMsg = '';
+      try {
+        const ieResp = await fetch('/api/sintegra/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cnpj: digits }),
+          credentials: 'same-origin',
+        });
+        if (ieResp.ok) {
+          const ieData = await ieResp.json();
+          if (ieData.success && ieData.ie) { data.__ie = ieData.ie; ieMsg = ` IE ${ieData.ie} preenchida (SEFAZ).`; }
+          else if (ieData.success && !ieData.ie) { ieMsg = ' CNPJ sem IE ativa (não contribuinte).'; }
+        }
+      } catch { /* segue sem IE */ }
+
+      setFormData((prev: any) => ({
+        ...prev,
+        customerType: 'pessoa_juridica',
+        cpf: '',
+        companyName: data.razaoSocial || prev.companyName,
+        fantasyName: data.nomeFantasia || prev.fantasyName,
+        name: prev.name || data.nomeFantasia || data.razaoSocial || '',
+        address: data.endereco || prev.address,
+        city: data.cidade ? cidadeCanonica(data.cidade) : prev.city,
+        state: data.estado || prev.state,
+        zipCode: data.cep || prev.zipCode,
+        phone: prev.phone || data.telefone || '',
+        email: prev.email || data.email || '',
+        stateRegistration: (String(prev.stateRegistration || '').trim() || data.__ie || prev.stateRegistration),
+      }));
+
+      toast({ title: 'Dados do CNPJ carregados', description: `Cadastro preenchido pela Receita Federal.${ieMsg}` });
+    } catch (e: any) {
+      toast({ title: 'Erro na consulta de CNPJ', description: e?.message || 'Falha ao consultar', variant: 'destructive' });
+    } finally {
+      setCnpjLoading(false);
+    }
+  };
+
   const toggleWeekday = (day: string) => {
     setFormData((prev) => ({
       ...prev,
@@ -659,13 +739,27 @@ export default function CustomerEditModal({
             </div>
             <div>
               <Label htmlFor="cnpj">CNPJ</Label>
-              <Input
-                id="cnpj"
-                name="cnpj"
-                value={formData.cnpj}
-                onChange={handleChange}
-                data-testid="input-customer-cnpj"
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="cnpj"
+                  name="cnpj"
+                  value={formData.cnpj}
+                  onChange={handleChange}
+                  data-testid="input-customer-cnpj"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 px-3"
+                  onClick={buscarCNPJ}
+                  disabled={cnpjLoading || String(formData.cnpj || '').replace(/\D/g, '').length !== 14}
+                  title="Buscar dados do cliente pelo CNPJ (Receita Federal + IE)"
+                  data-testid="button-buscar-cnpj"
+                >
+                  {cnpjLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
           </div>
 

@@ -121,6 +121,7 @@ import Cupons from "@/pages/Cupons";
 import Marketing from "@/pages/Marketing";
 import MarketingHoje from "@/pages/MarketingHoje";
 import Fornecedores from "@/pages/Fornecedores";
+import FornecedoresCriticos from "@/pages/FornecedoresCriticos";
 import RecuperacaoFaturamento from "@/pages/RecuperacaoFaturamento";
 import ConciliacaoBancaria from "@/pages/ConciliacaoBancaria";
 import AuditoriaCobrancas from "@/pages/AuditoriaCobrancas";
@@ -344,6 +345,7 @@ function Router() {
           <Route path="/marketing" component={Marketing} />
           <Route path="/marketing/hoje" component={MarketingHoje} />
           <Route path="/fornecedores" component={Fornecedores} />
+          <Route path="/fornecedores-criticos" component={FornecedoresCriticos} />
           <Route path="/recuperacao-faturamento" component={RecuperacaoFaturamento} />
           <Route path="/conciliacao-bancaria" component={ConciliacaoBancaria} />
           <Route path="/auditoria-cobrancas" component={AuditoriaCobrancas} />

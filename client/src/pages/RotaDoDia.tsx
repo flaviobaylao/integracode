@@ -36,6 +36,8 @@ import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportRe
 import CampanhaRotaAvisos from "@/components/CampanhaRotaAvisos";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
+import { safeParseWeekdays } from "@/lib/weekdayParser";
+import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 
 // Vendedores/canais ocultados do seletor de Vendedor da Rota do Dia (por id).
 // (HOTSITE, INSTAGRAM, Fabio H. e Lorenna Pina.)
@@ -57,12 +59,32 @@ const isHiddenRouteSeller = (s: any): boolean => {
   return HIDDEN_ROUTE_SELLER_NAME_PREFIXES.some(p => nm.startsWith(p));
 };
 
+// 🧾 "21/09/2026 - R$ 260,40 (Seg-3ªSem-40 dias)": data do último faturamento com o dia da semana e a
+// semana do mês — mesma contagem da Semana de Atendimento do cadastro (semana pela segunda-feira).
+function formatUltimoFaturamento(lo: { date: string; value: number; dia?: string } | null | undefined): string {
+  if (!lo) return 'Sem registro';
+  let d: Date;
+  if (lo.dia && /^\d{4}-\d{2}-\d{2}$/.test(lo.dia)) { const [y, m, dd] = lo.dia.split('-').map(Number); d = new Date(y, m - 1, dd); }
+  else d = new Date(lo.date);
+  if (isNaN(d.getTime())) return 'Sem registro';
+  const dow = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][d.getDay()];
+  let sem = '';
+  try { const sm = semanaDoMesDaData(d); sem = `-${sm.n}ªSem`; } catch { /* sem semana */ }
+  const valor = Number(lo.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+  // Dias passados desde a compra até HOJE (datas de calendário, sem efeito de fuso/horário).
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const base = new Date(d); base.setHours(0, 0, 0, 0);
+  const dias = Math.max(0, Math.round((hoje.getTime() - base.getTime()) / 86400000));
+  const txtDias = dias === 0 ? 'hoje' : dias === 1 ? '1 dia' : `${dias} dias`;
+  return `${d.toLocaleDateString('pt-BR')} - R$ ${valor} (${dow}${sem}-${txtDias})`;
+}
+
 // Funções auxiliares para formatar dados de agendamento
 function formatWeekdaysLocal(weekdaysJson: string | null | undefined): string {
   if (!weekdaysJson) return '';
   
   try {
-    const { safeParseWeekdays } = require('@/lib/weekdayParser');
+    // import estático: o require() não existe no navegador (Vite/ESM) e o dia de rota sumia do card.
     const days = safeParseWeekdays(weekdaysJson);
     if (!Array.isArray(days) || days.length === 0) return '';
     
@@ -404,7 +426,7 @@ export default function RotaDoDia() {
     orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
     debts: Record<string, number>;
     periodicity?: Record<string, string>;
-    lastOrders?: Record<string, { date: string; value: number }>;
+    lastOrders?: Record<string, { date: string; value: number; sellerName?: string | null; dia?: string; foraRota?: boolean }>;
     phones?: Record<string, string>;
     cities?: Record<string, string>;
     trocasBloqueadas?: Record<string, boolean>;
@@ -432,6 +454,47 @@ export default function RotaDoDia() {
     enabled: !!routeId && !!selectedDate,
     staleTime: 60000, // Cache por 1 minuto
   });
+
+  // 🕑 Horário de atendimento ao FORNECEDOR (marcado pelo vendedor). Mapa customerId → janela.
+  const { data: horarioFornData } = useQuery<{ horarios: Record<string, { inicio: string | null; fim: string | null }> }>({
+    queryKey: ['/api/horario-fornecedor', routeCustomerIds.join(',')],
+    queryFn: async () => {
+      if (!routeCustomerIds.length) return { horarios: {} };
+      const res = await fetch(`/api/horario-fornecedor?ids=${encodeURIComponent(routeCustomerIds.join(','))}`, { credentials: 'include' });
+      if (!res.ok) return { horarios: {} };
+      return res.json();
+    },
+    enabled: routeCustomerIds.length > 0,
+    staleTime: 60000,
+  });
+  const horarioForn = horarioFornData?.horarios || {};
+  const rotuloHorarioForn = (h?: { inicio: string | null; fim: string | null } | null) => {
+    if (!h || (!h.inicio && !h.fim)) return '';
+    if (h.inicio && h.fim) return `${h.inicio}–${h.fim}`;
+    return h.inicio ? `a partir das ${h.inicio}` : `até ${h.fim}`;
+  };
+  const [editHorario, setEditHorario] = useState<{ customerId: string; nome: string; inicio: string; fim: string } | null>(null);
+  const [salvandoHorario, setSalvandoHorario] = useState(false);
+  const salvarHorarioForn = async (limpar = false) => {
+    if (!editHorario) return;
+    const inicio = limpar ? '' : editHorario.inicio;
+    const fim = limpar ? '' : editHorario.fim;
+    if (!limpar && !inicio && !fim) {
+      toast({ title: 'Informe o horário', description: 'Preencha pelo menos o horário inicial.', variant: 'destructive' });
+      return;
+    }
+    setSalvandoHorario(true);
+    try {
+      await apiRequest('PUT', `/api/horario-fornecedor/${editHorario.customerId}`, { inicio, fim });
+      await queryClient.invalidateQueries({ queryKey: ['/api/horario-fornecedor'] });
+      toast({ title: limpar ? 'Horário removido' : 'Horário salvo', description: limpar ? editHorario.nome : `${editHorario.nome}: atende fornecedor ${rotuloHorarioForn({ inicio: inicio || null, fim: fim || null })}` });
+      setEditHorario(null);
+    } catch (e: any) {
+      toast({ title: 'Erro ao salvar horário', description: e?.message || 'Tente novamente.', variant: 'destructive' });
+    } finally {
+      setSalvandoHorario(false);
+    }
+  };
 
   // 🟢🔴 Efetividade em vendas (bolinhas por ciclo) — reaproveita a mesma fonte do
   // Resumo de Visitas (/api/visit-summary), que já calcula os ciclos por cliente a
@@ -2258,11 +2321,7 @@ export default function RotaDoDia() {
                       )}
                       {r.customerId && (
                         <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                          🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[r.customerId] || r.visitPeriodicity || '') || '—'}
-                          {' • '}
-                          🧾 Último faturamento: {customerInfo?.lastOrders?.[r.customerId] ? `${new Date(customerInfo.lastOrders[r.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[r.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
-                          {' • '}
-                          💰 Débitos: R$ {Number(customerInfo?.debts?.[r.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          🧾 Último faturamento: {formatUltimoFaturamento(customerInfo?.lastOrders?.[r.customerId])}
                         </p>
                       )}
                       {((r.weekdays && r.weekdays.length) || r.visitPeriodicity) && (
@@ -2271,6 +2330,7 @@ export default function RotaDoDia() {
                           {formatWeekdaysLocal(r.weekdays)}
                           {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
                           {formatPeriodicity(r.visitPeriodicity)}
+                          {` • ${ROTULO_SEMANA[normalizarSemana((r as any).semanaAtendimento)]}`}
                         </p>
                       )}
                       </>)}
@@ -2684,7 +2744,60 @@ export default function RotaDoDia() {
                                 >
                                   <Copy className="h-3.5 w-3.5" />
                                 </button>
+                                {!isLead && !(visit as any).isVirtual && !rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setEditHorario({ customerId: String(visit.customerId), nome: visit.customerName || '', inicio: '', fim: '' }); }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    draggable={false}
+                                    title="Marcar horário de atendimento ao fornecedor"
+                                    aria-label="Marcar horário de atendimento ao fornecedor"
+                                    className="shrink-0 text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
+                                    data-testid={`horario-forn-add-${visit.customerId}`}
+                                  >
+                                    <Clock className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                               </p>
+                              {/* ⚠️ COMPRA FORA DO DIA DE ROTA (24/out/2026): só um alerta discreto para o vendedor rever
+                                  — a última compra caiu num dia SEM visita na agenda do cliente (a agenda inclui a
+                                  visita deslocada por feriado). Mouse em cima (PC) ou toque (celular) mostra o aviso. */}
+                              {!isLead && customerInfo?.lastOrders?.[visit.customerId]?.foraRota && (() => {
+                                const lo = customerInfo.lastOrders[visit.customerId];
+                                const quemRaw = (lo.sellerName || '').trim().split(/\s+/)[0] || '';
+                                const quem = quemRaw ? quemRaw.charAt(0).toUpperCase() + quemRaw.slice(1).toLowerCase() : '';
+                                const aviso = `Verificar: compra feita fora do dia de rota e periodicidade${quem ? ` por ${quem}` : ''}`;
+                                return (
+                                  <button
+                                    type="button"
+                                    title={aviso}
+                                    aria-label={aviso}
+                                    onClick={(e) => { e.stopPropagation(); toast({ title: '⚠️ Verificar', description: `Compra feita fora do dia de rota e periodicidade${quem ? ` por ${quem}` : ''}.` }); }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    draggable={false}
+                                    className="shrink-0 text-sm leading-none cursor-help"
+                                    data-testid={`alerta-fora-rota-${visit.customerId}`}
+                                  >
+                                    ⚠️
+                                  </button>
+                                );
+                              })()}
+                              {!isLead && rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (() => {
+                                const h = horarioForn[String(visit.customerId)];
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setEditHorario({ customerId: String(visit.customerId), nome: visit.customerName || '', inicio: h?.inicio || '', fim: h?.fim || '' }); }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    draggable={false}
+                                    title="Horário em que o cliente atende fornecedor (toque para editar)"
+                                    className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                                    data-testid={`badge-horario-forn-${visit.customerId}`}
+                                  >
+                                    <Clock className="h-3 w-3" /> Fornecedor {rotuloHorarioForn(h)}
+                                  </button>
+                                );
+                              })()}
                               {holidayNotes[String(visit.customerId)] && (
                                 <Badge variant="outline" className="text-[11px] border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title={holidayNotes[String(visit.customerId)]} data-testid={`badge-feriado-${visit.customerId}`}>
                                   🎌 {holidayNotes[String(visit.customerId)]}
@@ -2830,11 +2943,7 @@ export default function RotaDoDia() {
 
                             {visit.customerId && (
                               <p className="text-xs text-gray-600 dark:text-gray-300 mb-1">
-                                🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || '') || '—'}
-                                {' • '}
-                                🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
-                                {' • '}
-                                💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                🧾 Último faturamento: {formatUltimoFaturamento(customerInfo?.lastOrders?.[visit.customerId])}
                               </p>
                             )}
 
@@ -2864,6 +2973,8 @@ export default function RotaDoDia() {
                                 {formatWeekdaysLocal((visit as any).weekdays)}
                                 {(visit as any).weekdays && (visit as any).visitPeriodicity && ' • '}
                                 {formatPeriodicity((visit as any).visitPeriodicity)}
+                                {/* Semana do mês do cadastro (Semana de Atendimento) logo após a periodicidade */}
+                                {` • ${ROTULO_SEMANA[normalizarSemana((visit as any).semanaAtendimento)]}`}
                               </p>
                             )}
 
@@ -3279,9 +3390,9 @@ export default function RotaDoDia() {
                                     <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                                       🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
                                       {' • '}
-                                      🧾 Último faturamento: {customerInfo?.lastOrders?.[visit.customerId] ? `${new Date(customerInfo.lastOrders[visit.customerId].date).toLocaleDateString('pt-BR')} - R$ ${Number(customerInfo.lastOrders[visit.customerId].value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Sem registro'}
+                                      📅 Dia de rota: {formatWeekdaysLocal((visit as any).weekdays) || '—'}
                                       {' • '}
-                                      💰 Débitos: R$ {Number(customerInfo?.debts?.[visit.customerId] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      🧾 Último faturamento: {formatUltimoFaturamento(customerInfo?.lastOrders?.[visit.customerId])}
                                     </p>
                                   )}
                                   </>)}
@@ -3549,6 +3660,52 @@ export default function RotaDoDia() {
           card={selectedCard}
         />
       )}
+
+      {/* 🕑 Horário de atendimento ao FORNECEDOR (o vendedor marca; aparece no card do dia de rota) */}
+      <Dialog open={!!editHorario} onOpenChange={(o) => { if (!o && !salvandoHorario) setEditHorario(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Clock className="h-5 w-5 text-amber-600" /> Atendimento ao fornecedor</DialogTitle>
+          </DialogHeader>
+          {editHorario && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Em que horário <b className="text-foreground">{editHorario.nome}</b> atende fornecedor/vendedor?
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm font-medium space-y-1">
+                  <span>Das</span>
+                  <Input type="time" value={editHorario.inicio} onChange={(e) => setEditHorario({ ...editHorario, inicio: e.target.value })} data-testid="input-horario-forn-inicio" />
+                </label>
+                <label className="text-sm font-medium space-y-1">
+                  <span>Às <span className="text-xs text-muted-foreground">(opcional)</span></span>
+                  <Input type="time" value={editHorario.fim} onChange={(e) => setEditHorario({ ...editHorario, fim: e.target.value })} data-testid="input-horario-forn-fim" />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[['08:00', '11:00'], ['09:00', '12:00'], ['14:00', '17:00']].map(([a, b]) => (
+                  <Button key={a + b} type="button" variant="outline" size="sm" onClick={() => setEditHorario({ ...editHorario, inicio: a, fim: b })}>
+                    {a}–{b}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-2 border-t">
+                {rotuloHorarioForn(horarioForn[editHorario.customerId]) ? (
+                  <Button type="button" variant="ghost" size="sm" className="text-red-600" disabled={salvandoHorario} onClick={() => salvarHorarioForn(true)} data-testid="button-horario-forn-limpar">
+                    Remover
+                  </Button>
+                ) : <span />}
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" disabled={salvandoHorario} onClick={() => setEditHorario(null)}>Cancelar</Button>
+                  <Button type="button" disabled={salvandoHorario} onClick={() => salvarHorarioForn(false)} data-testid="button-horario-forn-salvar">
+                    {salvandoHorario ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showPhotoModal} onOpenChange={setShowPhotoModal}>
         <DialogContent className="max-w-4xl">

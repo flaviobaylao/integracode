@@ -17,6 +17,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
+import { whereDebitoVivoSql, PISO_DEBITO_BLOQUEIO } from "./divida-viva";
 
 const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : Array.isArray(r) ? r : []);
 
@@ -75,6 +76,10 @@ const DDL: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS ux_cr_pending_sol ON change_requests (entity_type, entity_id) WHERE status = 'pending' AND kind = 'solicitacao';`,
   // 💬 Histórico de conversa (vendedor ⇄ admin) — mensagens da solicitação.
   `ALTER TABLE change_requests ADD COLUMN IF NOT EXISTS messages jsonb NOT NULL DEFAULT '[]'::jsonb;`,
+  // 📷 24/out/2026 — Report que vai para Resolvidas perde a foto DE VEZ (fotoRemovida=true),
+  // mesmo se for reaberto depois. Esta linha cobre os que já estavam resolvidos e qualquer
+  // caminho que resolva sem passar pelo /resolve. A foto original segue no card de visita.
+  `UPDATE change_requests SET details = (COALESCE(details, '{}'::jsonb) - 'fotoUrl') || '{"fotoRemovida": true}'::jsonb WHERE kind = 'report' AND status <> 'pending' AND COALESCE(details->>'fotoRemovida', '') <> 'true';`,
 ];
 
 let _tablesReady: Promise<void> | null = null;
@@ -134,6 +139,43 @@ async function nomeDaEntidade(id: string, onde: "customer" | "lead"): Promise<st
       ? rowsOf(await db.execute(sql`SELECT NULLIF(btrim(fantasy_name),'') AS nome FROM leads WHERE id::text = ${id} LIMIT 1`))
       : rowsOf(await db.execute(sql`SELECT COALESCE(NULLIF(btrim(fantasy_name),''), NULLIF(btrim(name),'')) AS nome FROM customers WHERE id::text = ${id} LIMIT 1`));
     return r[0]?.nome || null;
+  } catch { return null; }
+}
+
+// 📷 FOTO DO CHECK-IN NOS REPORTS — 24/out/2026.
+//   Reports (qualquer motivo) de visita SEM venda mostram a foto que o vendedor tirou
+//   no check-in da Rota do Dia (sales_cards.check_in_photo_url), quando houver. A foto é base64
+//   e pesada, então NÃO vai na listagem: a lista só diz se existe (temFoto) e a imagem é servida
+//   card a card por GET /api/change-requests/:id/foto-checkin.
+//   Qual card de visita: o gravado no report (details.salesCardId, reports novos) ou, nos
+//   antigos, o card do mesmo cliente e vendedor mais próximo do horário do report.
+// 24/out/2026 (2ª versão) — vale para QUALQUER report, seja qual for o motivo (não-venda,
+// justificativa, débito, outro…): se houve check-in com foto e a visita NÃO virou venda, a foto vem.
+const casaCardDoReport = sql`
+  ( ( ((cr.details->>'salesCardId') IS NOT NULL AND sc.id::text = cr.details->>'salesCardId')
+      OR ( sc.customer_id::text = COALESCE(cr.customer_id, cr.entity_id)::text
+           AND (cr.seller_id IS NULL OR sc.seller_id IS NULL OR sc.seller_id::text = cr.seller_id::text)
+           AND COALESCE(sc.check_in_time, sc.updated_at)::timestamptz
+               BETWEEN cr.created_at - interval '20 hours' AND cr.created_at + interval '4 hours' ) )
+    -- visita sem venda: sem valor vendido e sem status de venda concluída/faturada
+    AND NOT (COALESCE(sc.sale_value, 0) > 0 OR sc.status IN ('completed', 'invoiced')) )`;
+async function fotoCheckinDoReport(crId: string): Promise<string | null> {
+  try {
+    const r = rowsOf(await db.execute(sql`
+      SELECT sc.check_in_photo_url AS foto
+        FROM change_requests cr
+        JOIN sales_cards sc ON sc.check_in_photo_url IS NOT NULL AND ${casaCardDoReport}
+       WHERE cr.id::text = ${crId}
+         AND COALESCE(cr.details->>'fotoRemovida', '') <> 'true'
+       ORDER BY (sc.id::text = COALESCE(cr.details->>'salesCardId','')) DESC,
+                abs(extract(epoch from (COALESCE(sc.check_in_time, sc.updated_at)::timestamptz - cr.created_at))) ASC
+       LIMIT 1`));
+    const f = String(r[0]?.foto || "").trim();
+    if (f) return f;
+    // Sem card com foto: usa a foto anexada no próprio report, se for um link válido.
+    const d = rowsOf(await db.execute(sql`SELECT details->>'fotoUrl' AS f FROM change_requests WHERE id::text = ${crId} AND COALESCE(details->>'fotoRemovida', '') <> 'true' LIMIT 1`));
+    const fu = String(d[0]?.f || "").trim();
+    return /^https?:\/\//i.test(fu) ? fu : null;
   } catch { return null; }
 }
 
@@ -197,6 +239,7 @@ export async function registrarReportInbox(p: {
   texto: string;           // observação escrita (obrigatória — só cria se tiver conteúdo)
   sempre?: boolean;        // true = registra mesmo sem texto (usa o motivo como texto). Ex.: Não Venda.
   fotoUrl?: string | null; // foto anexada pelo vendedor (exibida no Inbox)
+  salesCardId?: string | null; // card da visita (Rota do Dia) — de onde sai a foto do check-in
 }): Promise<void> {
   try {
     let texto = String(p?.texto || "").trim();
@@ -232,6 +275,7 @@ export async function registrarReportInbox(p: {
     const catLabel = REPORT_KIND_LABEL[p.reportKind] || "Report";
     const details: any = { reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000) };
     if (p.fotoUrl) details.fotoUrl = String(p.fotoUrl).slice(0, 500);
+    if (p.salesCardId) details.salesCardId = String(p.salesCardId);
     const seedMsg = {
       id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
       text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
@@ -603,6 +647,7 @@ export function registerChangeRequestsRoutes(app: Express) {
     // Contagem de pendentes (para o badge do menu).
     const cnt = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM change_requests WHERE status = 'pending'`));
     const mapped = rows.map(mapRow);
+    let fotoErro = ""; // diagnóstico da foto do check-in (aparece na resposta só se a consulta falhar)
     // 📲 Enriquece cada card: telefone (cliente/lead) + flag de REPESCAGEM (assignment pendente).
     try {
       const custIds = Array.from(new Set(mapped.filter((m: any) => m.entityType === "customer").map((m: any) => m.customerId || m.entityId).filter(Boolean)));
@@ -611,6 +656,8 @@ export function registerChangeRequestsRoutes(app: Express) {
       const cityByKey = new Map<string, string>();
       const bairroByKey = new Map<string, string>();
       const lastOrderByKey = new Map<string, string>();
+      const lastOrderValueByKey = new Map<string, number>();
+      const lastOrderDiaByKey = new Map<string, string>();
       // 15/out/2026 — Periodicidade do cliente no card: ao ler um report de não-venda o admin
       // precisa saber de quanto em quanto tempo aquele cliente é visitado para julgar o caso
       // (ex.: "sugestão não gera pedido mínimo" pesa diferente num mensal e num semanal).
@@ -621,10 +668,11 @@ export function registerChangeRequestsRoutes(app: Express) {
       // se o vendedor tinha mesmo que passar lá naquela semana.
       const diasByKey = new Map<string, string[]>();
       const semanaByKey = new Map<string, string>();
+      const virtualSet = new Set<string>();
       const repescagemSet = new Set<string>();
       if (custIds.length) {
         const inCust = sql.join((custIds as string[]).map((id) => sql`${id}`), sql`, `);
-        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity, weekdays, semana_atendimento FROM customers WHERE id IN (${inCust})`));
+        const cr = rowsOf(await db.execute(sql`SELECT id, phone, city, neighborhood, visit_periodicity, weekdays, semana_atendimento, virtual_service FROM customers WHERE id IN (${inCust})`));
         for (const c of cr) {
           if (c.phone) phoneByKey.set("customer:" + c.id, String(c.phone));
           if (c.city) cityByKey.set("customer:" + c.id, String(c.city));
@@ -635,6 +683,8 @@ export function registerChangeRequestsRoutes(app: Express) {
           if (typeof dias === "string") { try { dias = JSON.parse(dias); } catch { dias = null; } }
           if (Array.isArray(dias) && dias.length) diasByKey.set("customer:" + c.id, dias.map((d: any) => String(d)).filter(Boolean));
           if (c.semana_atendimento) semanaByKey.set("customer:" + c.id, String(c.semana_atendimento));
+          // 💻 26/out/2026 — cliente de atendimento VIRTUAL ganha a marcação "Virtual" no card.
+          if (c.virtual_service === true) virtualSet.add("customer:" + c.id);
         }
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
         const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
@@ -642,12 +692,20 @@ export function registerChangeRequestsRoutes(app: Express) {
         // 🛒 Última compra (18/set/2026): mesma fonte do resto do sistema — último item do
         // billing_pipeline com nota fiscal atribuída (faturado→entregue), por cliente.
         try {
+          // 24/out/2026 — também o VALOR e o dia BR da última compra, para o cabeçalho igual ao
+          // card da Rota do Dia: "Último faturamento: dd/mm/aaaa - R$ x (Seg-4ªSem-26 dias)".
           const lo = rowsOf(await db.execute(sql`
-            SELECT customer_id, MAX(created_at) AS ultima
+            SELECT DISTINCT ON (customer_id) customer_id, created_at AS ultima, sale_value,
+                   ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
             FROM billing_pipeline
             WHERE invoice_number IS NOT NULL AND invoice_number <> '' AND customer_id IN (${inCust})
-            GROUP BY customer_id`));
-          for (const r of lo) if (r.customer_id && r.ultima) lastOrderByKey.set("customer:" + r.customer_id, new Date(r.ultima).toISOString());
+            ORDER BY customer_id, created_at DESC`));
+          for (const r of lo) {
+            if (!r.customer_id || !r.ultima) continue;
+            lastOrderByKey.set("customer:" + r.customer_id, new Date(r.ultima).toISOString());
+            lastOrderValueByKey.set("customer:" + r.customer_id, r.sale_value != null ? Number(r.sale_value) : 0);
+            if (r.dia) lastOrderDiaByKey.set("customer:" + r.customer_id, String(r.dia));
+          }
         } catch (_e: any) { console.warn("[INBOX] ultima compra:", _e?.message); }
       }
       if (leadIds.length) {
@@ -664,11 +722,72 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.city = cityByKey.get(key) || null;
         m.neighborhood = bairroByKey.get(key) || null;
         m.lastOrderAt = lastOrderByKey.get(key) || null;
+        m.lastOrderValue = lastOrderValueByKey.has(key) ? lastOrderValueByKey.get(key) : null;
+        m.lastOrderDia = lastOrderDiaByKey.get(key) || null;
         m.periodicidade = periodicidadeByKey.get(key) || null;
         m.diasRota = diasByKey.get(key) || null;
         m.semanaAtendimento = semanaByKey.get(key) || null;
+        if (virtualSet.has(key)) m.virtual = true;
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
+      // 📷 temFoto: qualquer report com foto de check-in de visita sem venda (ou link de foto).
+      try {
+        const reps = (mapped as any[]).filter((m) => m.kind === "report");
+        if (reps.length) {
+          const inRep = sql.join(reps.map((m) => sql`${String(m.id)}`), sql`, `);
+          const fr = rowsOf(await db.execute(sql`
+            SELECT cr.id::text AS id FROM change_requests cr
+             WHERE cr.id::text IN (${inRep})
+               AND COALESCE(cr.details->>'fotoRemovida', '') <> 'true'
+               AND EXISTS (SELECT 1 FROM sales_cards sc WHERE sc.check_in_photo_url IS NOT NULL AND ${casaCardDoReport})`));
+          const comFoto = new Set(fr.map((x: any) => String(x.id)));
+          for (const m of reps) {
+            const removida = String((m.details || {}).fotoRemovida || "") === "true" || (m.details || {}).fotoRemovida === true;
+            const link = /^https?:\/\//i.test(String((m.details || {}).fotoUrl || ""));
+            m.temFoto = !removida && (comFoto.has(String(m.id)) || link);
+          }
+        }
+      } catch (_e: any) { console.warn("[INBOX] foto check-in:", _e?.message); fotoErro = String(_e?.message || _e).slice(0, 300); }
+      // 💰 24/out/2026 — Report de DÉBITO traz o débito vencido de hoje, com a MESMA régua do
+      // badge da Rota do Dia (whereDebitoVivoSql + piso de R$ 50; casa por customer_id ou pelo
+      // documento do cadastro). É o valor vivo, não o do dia do report.
+      try {
+        const ehDebito = (m: any) => m.kind === "report" && m.entityType === "customer" &&
+          (String((m.details || {}).reportKind || "") === "debito" || /d[eé]bito/i.test(String((m.details || {}).motivo || "")));
+        const repsDeb = (mapped as any[]).filter(ehDebito);
+        const cids = Array.from(new Set(repsDeb.map((m) => String(m.customerId || m.entityId || "")).filter(Boolean)));
+        if (cids.length) {
+          const inC = sql.join(cids.map((id) => sql`${id}`), sql`, `);
+          const docs = rowsOf(await db.execute(sql`
+            SELECT id, REGEXP_REPLACE(COALESCE(NULLIF(cnpj, ''), cpf, ''), '[^0-9]', '', 'g') AS doc
+              FROM customers WHERE id IN (${inC})`));
+          const docToCid: Record<string, string> = {};
+          for (const d of docs) if (d.doc) docToCid[String(d.doc)] = String(d.id);
+          const docList = Object.keys(docToCid);
+          const rr = rowsOf(await db.execute(sql`
+            SELECT r.customer_id AS cid,
+                   REGEXP_REPLACE(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') AS ndoc,
+                   (r.amount - COALESCE(r.amount_paid, 0)) AS saldo
+              FROM receivables r
+             WHERE ${whereDebitoVivoSql("r")}
+               AND ( r.customer_id IN (${inC})
+                     ${docList.length ? sql`OR REGEXP_REPLACE(COALESCE(r.customer_document, ''), '[^0-9]', '', 'g') IN (${sql.join(docList.map((d) => sql`${d}`), sql`, `)})` : sql``} )`));
+          const wanted = new Set(cids);
+          const saldoPor: Record<string, number> = {};
+          for (const row of rr) {
+            const saldo = parseFloat(String(row.saldo || "0"));
+            if (!(saldo > 0)) continue;
+            let alvo: string | undefined;
+            if (row.cid && wanted.has(String(row.cid))) alvo = String(row.cid);
+            else { const nd = String(row.ndoc || ""); if (nd && docToCid[nd]) alvo = docToCid[nd]; }
+            if (alvo) saldoPor[alvo] = (saldoPor[alvo] || 0) + saldo;
+          }
+          for (const m of repsDeb) {
+            const v = saldoPor[String(m.customerId || m.entityId || "")] || 0;
+            m.debitoVencido = v > PISO_DEBITO_BLOQUEIO ? Math.round(v * 100) / 100 : 0;
+          }
+        }
+      } catch (_e: any) { console.warn("[INBOX] debito:", _e?.message); }
       // 09/out/2026 — Cards antigos gravados sem entity_name apareciam no Inbox com o UUID no
       // lugar do nome. Aqui o nome é resolvido na leitura (cliente e, se não achar, lead), sem
       // precisar migrar nada: os cards novos já nascem com o nome certo.
@@ -679,7 +798,24 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.entityName = (await nomeDaEntidade(id, "customer")) || (await nomeDaEntidade(id, "lead")) || null;
       }
     } catch { /* enriquecimento opcional — nunca quebra a listagem */ }
-    res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped });
+    res.json({ pendingCount: cnt[0]?.n || 0, requests: mapped, ...(fotoErro ? { _fotoErro: fotoErro } : {}) });
+  }));
+
+  // --------------------------------------------------------------------------
+  // GET /api/change-requests/:id/foto-checkin — devolve a IMAGEM (binário) da foto do
+  //   check-in ligada ao report. 404 quando não há foto. Usado direto num <img src>.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/:id/foto-checkin", authenticateUser, requireRole(["admin", "coordinator", "administrative"]), safe(async (req, res) => {
+    const foto = await fotoCheckinDoReport(String(req.params.id));
+    if (!foto) return res.status(404).end();
+    if (/^https?:\/\//i.test(foto)) return res.redirect(foto);
+    const m = foto.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+    if (!m) return res.status(404).end();
+    const buf = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]));
+    if (!buf.length) return res.status(404).end();
+    res.setHeader("Content-Type", m[1] || "image/jpeg");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.end(buf);
   }));
 
   // --------------------------------------------------------------------------
@@ -1047,7 +1183,11 @@ export function registerChangeRequestsRoutes(app: Express) {
       UPDATE change_requests
       SET status = ${status}, resolution_note = ${note},
           resolved_by = ${u?.id || null}, resolved_by_name = ${userName(u)}, resolved_at = now(),
-          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([adminMsg])}::jsonb
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([adminMsg])}::jsonb,
+          -- 📷 Report resolvido perde a foto de vez (ver DDL acima).
+          details = CASE WHEN kind = 'report'
+                         THEN (COALESCE(details, '{}'::jsonb) - 'fotoUrl') || '{"fotoRemovida": true}'::jsonb
+                         ELSE details END
       WHERE id = ${id}
       RETURNING *`));
     if (updated.length === 0) return res.status(404).json({ error: "Solicitação não encontrada." });

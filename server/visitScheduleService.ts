@@ -303,11 +303,28 @@ async function __getPresentialMonthly(customerId: string): Promise<{ enabled: bo
   } catch { return { enabled: false, weekday: null }; }
 }
 
+// 📞 Carteiras de TELEMARKETING: o atendimento é sempre VIRTUAL (a regeneração semanal de
+// telemarketing gravava is_virtual=true). Cache curto dos ids de usuários telemarketing para o
+// motor único aplicar a mesma regra sem consultar users a cada cliente.
+let __tmIdsCache: { at: number; ids: Set<string> } | null = null;
+async function __telemarketingSellerIds(): Promise<Set<string>> {
+  if (__tmIdsCache && Date.now() - __tmIdsCache.at < 10 * 60 * 1000) return __tmIdsCache.ids;
+  const ids = new Set<string>();
+  try {
+    const r: any = await db.execute(sql`SELECT id, omie_vendor_code FROM users WHERE role = 'telemarketing'`);
+    for (const u of ((r.rows || r) as any[])) { if (u.id) ids.add(String(u.id)); if (u.omie_vendor_code) ids.add(String(u.omie_vendor_code)); }
+  } catch { /* sem cache: segue sem forçar virtual */ }
+  __tmIdsCache = { at: Date.now(), ids };
+  return ids;
+}
+
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
   const { calculateNextVisitDate, datasPelaRegra, normalizarSemana } = await import('../shared/visitSchedule');
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
   if (!rows.length) return 0;
-  const c: any = rows[0];
+  const c: any = { ...rows[0] };
+  // Cliente de carteira de telemarketing → agenda sempre virtual (mesma regra da antiga regen TM).
+  try { if (c.sellerId && (await __telemarketingSellerIds()).has(String(c.sellerId))) c.virtualService = true; } catch { /* noop */ }
   // 🚫 LEADS não geram agenda por periodicidade — aparecem só pela DATA do próximo contato.
   if (c.isLead === true) return 0;
   // 🚫 FORNECEDOR / COLABORADOR não entram em rota nem em agenda de visitas.

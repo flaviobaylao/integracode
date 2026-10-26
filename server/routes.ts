@@ -9889,7 +9889,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const VENCIDOS_REPROG_KEY = 'reprog_vencidos_last_day';
 
   async function runTelemarketingRegen(sellerIdsFilter?: string[]): Promise<any> {
-    const { calculateNextVisitDate } = await import('../shared/visitSchedule');
+    // 🗓️ MOTOR ÚNICO (24/out/2026): cada cliente da carteira de telemarketing é regenerado por
+    // regenerateCustomerAgenda — o mesmo cálculo da Rota do Dia (semana do mês, início do
+    // fornecimento, BSB, feriados). O motor já grava a agenda de telemarketing como VIRTUAL.
     // Escopo opcional: se sellerIdsFilter vier preenchido, regenera SÓ esses vendedores
     // (não toca nos demais). Sem filtro, roda para todos os telemarketing (auto-regen semanal).
     let sellerIds: string[];
@@ -9902,60 +9904,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (sellerIds.length === 0) return { message: 'Nenhum vendedor telemarketing', custProcessed: 0 };
 
     const custRes = await db.execute(sql`
-      SELECT id, name, fantasy_name, seller_id, visit_periodicity, weekdays, latitude, longitude, address, service_start_date
+      SELECT id, seller_id
       FROM customers
       WHERE seller_id = ANY(string_to_array(${sellerIds.join(',')}, ','))
         AND is_active = true
+        AND (is_supplier IS NOT TRUE) AND (is_lead IS NOT TRUE) AND (is_colaborador IS NOT TRUE)
         AND weekdays IS NOT NULL AND weekdays NOT IN ('[]', 'null', '')`);
 
-    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-    // A regeneração NUNCA toca em HOJE nem no passado: só cuida das ocorrências FUTURAS
-    // (a partir de amanhã). Assim a lista de atendimentos virtuais do dia nunca encolhe
-    // quando a regeneração semanal roda no meio do dia.
-    const tomorrow = new Date(today); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
     let custProcessed = 0, agendaCreated = 0;
     const routeKeys = new Set<string>();
-
     for (const c of custRes.rows as any[]) {
-      let weekdays: any;
-      try { weekdays = typeof c.weekdays === 'string' ? JSON.parse(c.weekdays) : c.weekdays; } catch { continue; }
-      if (!Array.isArray(weekdays) || weekdays.length === 0) continue;
-      const periodicity = c.visit_periodicity || 'semanal';
-
-      // Limpa apenas a agenda FUTURA pendente (>= amanhã) deste cliente e regenera.
-      // Hoje e o passado ficam intactos (preserva os atendimentos virtuais já programados para hoje).
-      await db.execute(sql`DELETE FROM visit_agenda WHERE customer_id = ${c.id} AND visit_status = 'pending' AND scheduled_date >= ${tomorrow.toISOString()}`);
-
-      let dates: Date[] = [];
       try {
-        const _ssd = c.service_start_date ? new Date(c.service_start_date) : undefined;
-        const first = calculateNextVisitDate({ weekdays, periodicity, referenceDate: today, serviceStartDate: _ssd }).nextDate;
-        dates.push(first);
-        let last = first;
-        for (let i = 0; i < 3; i++) { const nx = calculateNextVisitDate({ weekdays, periodicity, lastCompletedDate: last }).nextDate; dates.push(nx); last = nx; }
-      } catch { continue; }
-
-      for (const dt of dates) {
-        const ds = new Date(dt); ds.setUTCHours(12, 0, 0, 0);
-        if (ds.getTime() < today.getTime()) continue;
-        const iso = ds.toISOString();
-        if (ds.getTime() < tomorrow.getTime()) {
-          const exToday: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${c.id} AND DATE(scheduled_date) = ${iso.slice(0, 10)}::date LIMIT 1`);
-          if ((exToday.rows || []).length > 0) continue;
-          await db.execute(sql`
-            INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
-            VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
-          agendaCreated++;
-          continue;
-        }
-        await db.execute(sql`
-          INSERT INTO visit_agenda (customer_id, seller_id, scheduled_date, route_day, recurrence_type, is_virtual, visit_status, customer_name, customer_latitude, customer_longitude, customer_address)
-          VALUES (${c.id}, ${c.seller_id}, ${iso}, ${days[ds.getUTCDay()]}, ${periodicity}, true, 'pending', ${c.fantasy_name || c.name}, ${c.latitude}, ${c.longitude}, ${c.address})`);
-        agendaCreated++;
-        routeKeys.add(`${c.seller_id}|${iso.slice(0, 10)}`);
-      }
-      custProcessed++;
+        const n = await regenerateCustomerAgenda(String(c.id));
+        agendaCreated += n > 0 ? n : 0;
+        custProcessed++;
+        const fut: any = await db.execute(sql`
+          SELECT scheduled_date::date::text AS d FROM visit_agenda
+           WHERE customer_id = ${c.id} AND visit_status = 'pending'
+             AND scheduled_date::date > ((now() AT TIME ZONE 'America/Sao_Paulo')::date)`);
+        for (const r of ((fut.rows || fut) as any[])) if (r.d) routeKeys.add(`${c.seller_id}|${r.d}`);
+      } catch (e: any) { console.warn('[TM-REGEN] cliente', c.id, e?.message); }
     }
 
     // Garante uma rota (vazia) por vendedor/dia para o GET montar os atendimentos virtuais;
@@ -16618,7 +16586,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Route to finalize sale with Omie integration
-  app.post('/api/sales-cards/:id/finalize-sale', isAuthenticated, async (req: any, res) => {
+  // authenticateUser (e nao isAuthenticated): preenche req.currentUser com o usuario logado.
+  // Sem isto, a ATRIBUICAO DO IMPLANTADOR abaixo nunca rodava e o pipeline recebia
+  // 'finalize-sale' como e-mail -> o pedido ficava com o vendedor que ja estava no card
+  // (ex.: SANTA CEIA lancado pelo Gilmar saiu no nome da Leticia).
+  app.post('/api/sales-cards/:id/finalize-sale', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
       const { 
@@ -18923,6 +18895,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               isVirtual: customer.virtualService,
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
               visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
+              semanaAtendimento: (customer as any).semanaAtendimento || 'toda', // Semana do mês do cadastro
               isAutoCheckout: visitAgendaInfo?.isAutoCheckout ?? false,
               visitDuration: visitAgendaInfo?.visitDuration ?? null,
               omieInstanceId: customer.omieInstanceId // Tag multi-tenant
@@ -19018,6 +18991,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               isVirtual: true, // Forçar isVirtual = true
               weekdays: vc.weekdays,
               visitPeriodicity: vc.visitPeriodicity,
+              semanaAtendimento: (vc as any).semanaAtendimento || 'toda',
               isAutoCheckout: false,
               visitDuration: null
             }));
@@ -21475,34 +21449,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Data do último pedido FATURADO (todo o histórico do pipeline) por cliente.
       // "Faturado" = item do pipeline com nota fiscal atribuída (invoice_number), cobre faturado→entregue.
       // Agora retorna { date, value } do ÚLTIMO faturamento (não só a data).
-      const lastOrdersMap: Record<string, { date: string; value: number }> = {};
+      // + (23/out/2026) vendedor que lançou e se a venda foi FORA DO DIA DE ROTA (sem visita na agenda
+      //   real naquele dia — a agenda inclui a visita deslocada por feriado). O card da Rota do Dia
+      //   destaca só as vendas fora do dia de rota: "Venda fora do dia de rota - dd/mm - R$ - Vendedor".
+      const lastOrdersMap: Record<string, { date: string; value: number; sellerName?: string | null; dia?: string; foraRota?: boolean }> = {};
       try {
         const lastOrdersResult = await db.execute(sql`
           SELECT customer_id,
                  REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') as ndoc,
-                 created_at, sale_value
+                 created_at, sale_value, seller_id, seller_name,
+                 ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
           FROM billing_pipeline
           WHERE invoice_number IS NOT NULL AND invoice_number <> ''
             AND (customer_id = ANY(string_to_array(${customerIds.join(',')}, ','))
                  OR REGEXP_REPLACE(COALESCE(customer_document,''), '[^0-9]', '', 'g') = ANY(string_to_array(${documentsForLookup.join(',')}, ',')))
         `);
-        const loByCid: Record<string, { t: number; value: number }> = {};
-        const loByDoc: Record<string, { t: number; value: number }> = {};
+        type LO = { t: number; value: number; sellerId: string | null; sellerName: string | null; dia: string };
+        const loByCid: Record<string, LO> = {};
+        const loByDoc: Record<string, LO> = {};
         (lastOrdersResult.rows as any[]).forEach(row => {
           if (!row.created_at) return;
           const t = new Date(row.created_at).getTime();
           const value = row.sale_value != null ? parseFloat(String(row.sale_value)) : 0;
-          if (row.customer_id && (!loByCid[row.customer_id] || t > loByCid[row.customer_id].t)) loByCid[row.customer_id] = { t, value };
-          if (row.ndoc && (!loByDoc[row.ndoc] || t > loByDoc[row.ndoc].t)) loByDoc[row.ndoc] = { t, value };
+          const lo: LO = { t, value, sellerId: row.seller_id ? String(row.seller_id) : null, sellerName: row.seller_name ? String(row.seller_name) : null, dia: String(row.dia || '') };
+          if (row.customer_id && (!loByCid[row.customer_id] || t > loByCid[row.customer_id].t)) loByCid[row.customer_id] = lo;
+          if (row.ndoc && (!loByDoc[row.ndoc] || t > loByDoc[row.ndoc].t)) loByDoc[row.ndoc] = lo;
         });
         customerIds.forEach(cid => {
           const a = loByCid[cid];
           const b = loByDoc[customerDocuments[cid]];
-          let best: { t: number; value: number } | null = null;
+          let best: LO | null = null;
           if (a && (!best || a.t > best.t)) best = a;
           if (b && (!best || b.t > best.t)) best = b;
-          if (best) lastOrdersMap[cid] = { date: new Date(best.t).toISOString(), value: best.value };
+          if (best) lastOrdersMap[cid] = { date: new Date(best.t).toISOString(), value: best.value, sellerName: best.sellerName, dia: best.dia, foraRota: false };
         });
+        // Nome do vendedor pelo seller_id quando o pipeline não guardou o nome (users.id ou omie_vendor_code).
+        try {
+          const semNome = Object.entries(lastOrdersMap).filter(([, v]) => !v.sellerName).map(([cid]) => (loByCid[cid] || loByDoc[customerDocuments[cid]])?.sellerId).filter(Boolean) as string[];
+          if (semNome.length) {
+            const ur: any = await db.execute(sql`SELECT id, omie_vendor_code, COALESCE(NULLIF(name,''), email) AS nome FROM users WHERE id = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")}) OR omie_vendor_code = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")})`);
+            const nomePorId: Record<string, string> = {};
+            for (const u of ((ur.rows || ur) as any[])) { if (u.id) nomePorId[String(u.id)] = String(u.nome || ''); if (u.omie_vendor_code) nomePorId[String(u.omie_vendor_code)] = String(u.nome || ''); }
+            for (const [cid, v] of Object.entries(lastOrdersMap)) {
+              if (v.sellerName) continue;
+              const sid = (loByCid[cid] || loByDoc[customerDocuments[cid]])?.sellerId;
+              if (sid && nomePorId[sid]) v.sellerName = nomePorId[sid];
+            }
+          }
+        } catch (e) { console.warn('[CUSTOMER-INFO] nome do vendedor da última compra:', (e as any)?.message); }
+        // FORA DO DIA DE ROTA (regra do Flavio, 24/out/2026): olha SÓ a última compra. Ela é
+        // "fora" quando caiu num dia da semana que NÃO é dia de rota do cliente (ex.: semanal de
+        // segunda que comprou na quarta). Compra no dia de rota (qualquer semana) ou num dia que
+        // tinha visita na agenda (visita deslocada por feriado) NÃO alerta. Como só a última compra
+        // conta, a próxima compra feita no dia certo faz o alerta sumir.
+        try {
+          const pares = Object.entries(lastOrdersMap).filter(([, v]) => !!v.dia);
+          if (pares.length) {
+            const cidsLO = Array.from(new Set(pares.map(([cid]) => cid)));
+            const diasLO = Array.from(new Set(pares.map(([, v]) => String(v.dia))));
+            const arr = (xs: string[]) => sql.raw("ARRAY[" + xs.map((x) => "'" + String(x).replace(/'/g, "''") + "'").join(',') + "]");
+            const vr: any = await db.execute(sql`
+              SELECT customer_id, scheduled_date::date::text AS dia
+                FROM visit_agenda
+               WHERE customer_id = ANY(${arr(cidsLO)}::text[])
+                 AND scheduled_date::date = ANY(${arr(diasLO)}::date[])
+                 AND COALESCE(visit_status, 'pending') <> 'cancelled'`);
+            const naRota = new Set<string>();
+            for (const r of ((vr.rows || vr) as any[])) naRota.add(String(r.customer_id) + '|' + String(r.dia));
+            // Dias de rota do cadastro (0=Dom … 6=Sáb).
+            const DOW_TOK: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6, 'sáb': 6 };
+            const diasRotaPorCliente = new Map<string, Set<number>>();
+            const wr: any = await db.execute(sql`SELECT id, weekdays FROM customers WHERE id = ANY(${arr(cidsLO)}::text[])`);
+            for (const r of ((wr.rows || wr) as any[])) {
+              let w: any = r.weekdays;
+              if (typeof w === 'string') { try { w = JSON.parse(w); } catch { w = []; } }
+              const set = new Set<number>();
+              for (const t of (Array.isArray(w) ? w : [])) { const n = DOW_TOK[String(t || '').trim().toLowerCase().slice(0, 3)]; if (n !== undefined) set.add(n); }
+              diasRotaPorCliente.set(String(r.id), set);
+            }
+            for (const [cid, v] of pares) {
+              const [y, m, d] = String(v.dia).split('-').map(Number);
+              const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+              const diaDeRota = (diasRotaPorCliente.get(cid) || new Set<number>()).has(dow);
+              v.foraRota = !diaDeRota && !naRota.has(cid + '|' + v.dia);
+            }
+          }
+        } catch (e) { console.warn('[CUSTOMER-INFO] venda fora do dia de rota:', (e as any)?.message); }
       } catch (e) {
         console.warn('[CUSTOMER-INFO] falha ao buscar último faturamento:', (e as any)?.message);
       }

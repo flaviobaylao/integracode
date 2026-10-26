@@ -193,6 +193,8 @@ function brTodayStr(): string {
 // ÚLTIMA visita registrada (passada) é "vermelha" (agendada não efetuada
 // e SEM pedido na data).
 type SkipCiclo = { customerId: string; anchor: string };
+// Pular ciclo automatico por venda fora do dia de rota: desligado (ver gatilho abaixo).
+const AUTO_PULAR_CICLO = false;
 async function computeRedCandidates(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]): Promise<any[]> {
   try { return await __computeRedCandidatesRaw(opts, skipOut); } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
 }
@@ -293,6 +295,28 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const dates = getScheduledDates(wd, c.periodicity || 'semanal', startDate, endDate);
     if (dates.length > 0) scheduledByCustomer.set(c.id, new Set(dates));
   }
+  // 2c) DIA DE ROTA REAL (23/out/2026, pedido do Flavio): a data da agenda (visit_agenda) e o dia
+  // de rota de verdade — inclui a visita POSTERGADA/ANTECIPADA por feriado (ex.: feriado 12/10,
+  // visita na terca 13/10). Antes so valia o calendario puro (toda segunda), entao a venda feita
+  // na visita deslocada era lida como "venda fora do dia de rota" e o cliente perdia o ciclo
+  // seguinte (ZOI, Della, Padoca sumiram da rota de 19/10). Une a agenda real ao calendario e
+  // retira do calendario o dia original de uma visita deslocada por feriado.
+  try {
+    const ag: any = await db.execute(sql`
+      SELECT customer_id, scheduled_date::date::text AS d, holiday_original_date::date::text AS orig
+        FROM visit_agenda
+       WHERE scheduled_date::date >= ${startDate}::date
+         AND scheduled_date::date <= ${endDate}::date
+         AND COALESCE(visit_status, 'pending') <> 'cancelled'
+         AND customer_id = ANY(${sql.raw("ARRAY[" + customerIds.map((id) => "'" + String(id).replace(/'/g, "''") + "'").join(',') + "]::text[]")})`);
+    for (const r of ((ag.rows || ag) as any[])) {
+      const cid = String(r.customer_id || ''); if (!cid || !r.d) continue;
+      let set = scheduledByCustomer.get(cid);
+      if (!set) { set = new Set<string>(); scheduledByCustomer.set(cid, set); }
+      set.add(String(r.d));
+      if (r.orig) set.delete(String(r.orig)); // o dia do feriado deixou de ser dia de rota
+    }
+  } catch (e) { console.warn('[computeRedCandidates][agenda-real] falha (segue so com calendario):', (e as any)?.message); }
 
   // 3) Checkpoints (route check-ins indicam visita efetuada)
   const cps = await db.select({
@@ -520,8 +544,12 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     if (scheduled.length === 0) continue;
     const lastDate = scheduled[scheduled.length - 1];
 
-    // GATILHO "PULAR CICLO" (inalterado): venda fora do dia de rota apos a ultima visita -> pula 1 ciclo.
-    if (skipOut) {
+    // GATILHO "PULAR CICLO" — DESLIGADO (23/out/2026, decisao do Flavio): venda fora do dia de rota
+    // NAO pula mais a proxima visita; o cliente segue a periodicidade normalmente e a Rota do Dia
+    // destaca a ultima compra no card. (Este gatilho apagava a visita seguinte da agenda — ex.: ZOI
+    // vendeu na visita postergada pelo feriado e sumiu de 19/10 e 26/10.) O endpoint manual de
+    // "pular ciclo" continua disponivel para uso consciente do admin.
+    if (skipOut && AUTO_PULAR_CICLO) {
       const vendaDates = vendaOrderDatesByCustomer.get(c.id);
       if (vendaDates) {
         const scheduledSet = scheduledByCustomer.get(c.id) || new Set<string>();
@@ -2257,6 +2285,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         neighborhood: customers.neighborhood,
         address: customers.address, weekdays: customers.weekdays,
         visitPeriodicity: customers.visitPeriodicity,
+        semanaAtendimento: customers.semanaAtendimento,
         virtualService: customers.virtualService,
         latitude: customers.latitude, longitude: customers.longitude,
         sellerId: customers.sellerId,
@@ -2309,6 +2338,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           address: c?.address || null, weekdays: (c?.weekdays as any) || [],
           latitude: c?.latitude ?? null, longitude: c?.longitude ?? null,
           visitPeriodicity: per,
+          semanaAtendimento: (c as any)?.semanaAtendimento || 'toda',
           repescagemCount: countReds(r.customerId, per),
           repescagemWindowMonths: per === 'mensal' ? 3 : 2,
           phase: r.phase, isVirtualClient: !!c?.virtualService,

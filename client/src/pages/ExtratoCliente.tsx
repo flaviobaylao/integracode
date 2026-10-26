@@ -40,10 +40,15 @@ type Linha = {
   credito: number;
   saldo: number;
   valorNota?: number;
+  valorBruto?: number;
   pagoNota?: number;
   saldoNota?: number;
   situacao: string | null;
   origem: string;
+  tipoMovimento?: string | null;
+  motivo?: string | null;
+  historico?: boolean;
+  semCobranca?: boolean;
   natureza?: string | null;
   informativa?: boolean;
   duplicado?: boolean;
@@ -78,6 +83,8 @@ type DetalheNota = {
   parcelasQtd: number;
   origem?: string | null;
   situacao: string | null;
+  tipoMovimento?: string | null;
+  motivo?: string | null;
   natureza?: string | null;
   duplicado?: boolean;
   cancelada?: boolean;
@@ -112,6 +119,11 @@ type Extrato = {
     totalPago: number;
     saldoDevedor: number;
     totalVencido: number;
+    clienteDesde?: string | null;
+    totalDevolucoes?: number;
+    totalTrocas?: number;
+    qtdDevolucoes?: number;
+    qtdTrocas?: number;
     totalAVencer: number;
     qtdNotas: number;
     qtdNotasAbertas: number;
@@ -123,6 +135,11 @@ type Extrato = {
     atrasoMedioDias: number | null;
     notasCanceladas: number;
     baixasEstimadas: number;
+    origem?: string;
+    notasHistorico?: number;
+    valorHistorico?: number;
+    ocorrenciasSemCobranca?: number;
+    valorSemCobranca?: number;
     notasInformativas?: number;
     valorInformativas?: number;
     titulosFantasma?: number;
@@ -133,6 +150,14 @@ type Extrato = {
   linhas: Linha[];
   totalLinhas: number;
 };
+
+interface TrocaRegistro {
+  id: string; salesCardId: string; motivo: string; categoria: string; temperatura: number | null;
+  valorTroca: number; itens: Array<{ produto: string; quantidade: number }>;
+  nfNumero: string | null; nfData: string | null; vendedorNf: string | null; vendedorCard: string | null;
+  comissaoPct: number; desconto: number; observacao: string | null; data: string;
+}
+const MOTIVO_TROCA_LABEL: Record<string, string> = { fermentado: "Fermentado", lacre: "Lacre", tampa: "Tampa", avaria: "Avaria / deformação / rótulo", vencido: "Vencido" };
 
 const fmtBRL = (v?: number | null) =>
   (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -158,7 +183,13 @@ const SIT_COR: Record<string, string> = {
   Vencida: "bg-red-100 text-red-800 border-red-200",
   Cancelada: "bg-gray-200 text-gray-600 border-gray-300",
   Recebido: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  // Ocorrências que não são venda: aparecem no histórico, fora dos totais de venda.
+  "Sem cobrança": "bg-gray-100 text-gray-600 border-gray-200",
+};
+
+// Tipo de movimento: o QUE a linha é. Venda fica neutra para não poluir; o que não
+// é venda ganha cor, porque é a exceção que o usuário precisa enxergar de longe.
+const MOV_COR: Record<string, string> = {
+  Venda: "bg-gray-100 text-gray-600 border-gray-200",
   Duplicado: "bg-gray-200 text-gray-600 border-gray-300",
   "Outra praça": "bg-violet-100 text-violet-800 border-violet-200",
   "Transferência": "bg-violet-100 text-violet-800 border-violet-200",
@@ -167,6 +198,92 @@ const SIT_COR: Record<string, string> = {
   Amostra: "bg-sky-100 text-sky-800 border-sky-200",
   "Outra saída": "bg-sky-100 text-sky-800 border-sky-200",
 };
+const MOVIMENTOS = ["Venda", "Devolução", "Troca", "Amostra", "Outra saída", "Outra praça", "Transferência", "Duplicado"];
+
+// O que cada tipo de movimento quer dizer — vira o "i" no cabeçalho da coluna.
+const MOV_AJUDA: Array<[string, string]> = [
+  ["Venda", "Venda normal para este cliente. É o que entra no total faturado e no saldo devedor."],
+  ["Devolução", "A mercadoria voltou: o título foi cancelado por devolução de venda. Não é compra nem dívida — fica no histórico e no card Devoluções. A coluna Motivo traz a justificativa de quem devolveu."],
+  ["Troca", "Pedido registrado como troca de mercadoria (produto fermentado, lacre, tampa ou vencido). A troca é cobrada normalmente, então continua no faturado e no saldo devedor."],
+  ["Amostra", "Pedido registrado como amostra/bonificação. Quando gera título, é cobrado como venda."],
+  ["Outra praça", "Nota faturada por OUTRA unidade do grupo — [GYN] Goiânia, [BSB] Brasília, [IND] Puro Indústria, [SERV] Puro Serviços. Aparece no histórico do cliente por rastreabilidade, mas a cobrança é da outra praça: fica fora do faturado, do saldo devedor e do vencido."],
+  ["Transferência", "Transferência de mercadoria entre estabelecimentos da própria empresa (CFOP 5151/6151). Não é venda para o cliente; entra só como ocorrência."],
+  ["Outra saída", "CFOP 5949/6949 — \"outra saída de mercadoria ou prestação de serviço não especificado\": bonificação, remessa, brinde. Sai mercadoria, mas não há cobrança."],
+  ["Duplicado", "Título repetido criado por rotina de reparo: a mesma NF já tem outro título ligado à nota fiscal, e este nasceu depois, sem NF-e e sem pedido. Fica na lista com valor zero, só para conferência com o Contas a Receber."],
+];
+
+/**
+ * Filtro de MÚLTIPLA ESCOLHA. Mostra todas as opções de uma vez, com caixa de seleção.
+ * Lista vazia = nenhum filtro (todos), que é o estado inicial.
+ */
+function MultiFiltro(props: {
+  label: string;
+  opcoes: Array<{ valor: string; rotulo: string }>;
+  selecionados: string[];
+  onChange: (v: string[]) => void;
+  testId?: string;
+  rotuloVazio: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const caixa = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const fora = (e: MouseEvent) => {
+      if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false);
+    };
+    document.addEventListener("mousedown", fora);
+    return () => document.removeEventListener("mousedown", fora);
+  }, []);
+  const n = props.selecionados.length;
+  const resumo =
+    n === 0 ? props.rotuloVazio
+    : n === 1 ? (props.opcoes.find((o) => o.valor === props.selecionados[0])?.rotulo || props.selecionados[0])
+    : `${n} selecionados`;
+  const alterna = (v: string) => {
+    const atual = props.selecionados;
+    props.onChange(atual.includes(v) ? atual.filter((x) => x !== v) : [...atual, v]);
+  };
+  return (
+    <div className="relative" ref={caixa}>
+      <label className="text-xs text-gray-500 dark:text-gray-400 block">{props.label}</label>
+      <button
+        type="button"
+        onClick={() => setAberto((a) => !a)}
+        className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm min-w-[11rem] text-left flex items-center justify-between gap-2"
+        data-testid={props.testId}
+      >
+        <span className={n ? "font-medium" : "text-gray-600 dark:text-gray-300"}>{resumo}</span>
+        <span className="text-[10px] text-gray-400">▾</span>
+      </button>
+      {aberto ? (
+        <div className="absolute z-40 mt-1 min-w-full w-max max-w-[22rem] max-h-72 overflow-auto rounded-md border bg-white dark:bg-gray-800 dark:border-gray-700 shadow-lg py-1">
+          <button
+            type="button"
+            onClick={() => props.onChange([])}
+            className="w-full text-left px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+          >
+            {props.rotuloVazio} (limpar)
+          </button>
+          <div className="border-t dark:border-gray-700 my-1" />
+          {props.opcoes.map((o) => (
+            <label
+              key={o.valor}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={props.selecionados.includes(o.valor)}
+                onChange={() => alterna(o.valor)}
+                className="rounded border-gray-300"
+                data-testid={props.testId ? `${props.testId}-${o.valor}` : undefined}
+              />
+              <span>{o.rotulo}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const ORIGEM_LABEL: Record<string, string> = {
   financeiro: "Financeiro",
@@ -180,21 +297,30 @@ const ORIGEM_LABEL: Record<string, string> = {
 // Todos os KPIs são de VIDA INTEIRA: não mudam quando o filtro de período é aplicado.
 const KPI_INFO = {
   faturado:
-    "Soma de todas as notas emitidas para este cliente desde a primeira compra — vida inteira, não muda com o filtro de período. Notas canceladas não entram. Abaixo, a quantidade de notas.",
+    "Soma das notas de VENDA que estão na lista agora — acompanha período, tipo, situação, movimento, rede, origem e busca. Devolução, troca sem cobrança, outra praça, duplicata e nota cancelada não entram. Abaixo, a quantidade de notas.",
   pago:
-    "Soma de todas as baixas recebidas deste cliente, lançadas na data real do pagamento. Baixas vindas do histórico importado sem data entram na data de vencimento e aparecem marcadas como (est.). Abaixo, a quantidade de pagamentos.",
+    "Soma das baixas que estão na lista agora, lançadas na data real do pagamento. Baixas vindas do histórico importado sem data entram na data de vencimento e aparecem marcadas como (est.). Abaixo, a quantidade de pagamentos.",
   saldo:
-    "Total faturado menos total pago: o que o cliente ainda deve hoje. Abaixo, a quantidade de notas com saldo em aberto.",
+    "Parte do que o cliente deve que AINDA NÃO venceu: notas em aberto com vencimento de hoje em diante. Vencido + A vencer é a dívida total. Abaixo, a quantidade de notas com saldo em aberto.",
   vencido:
     "Parte do saldo devedor cujo vencimento já passou. Nota que vence hoje NÃO conta como vencida — só a partir do dia seguinte.",
+  devolucoes:
+    "Quanto este cliente já devolveu: soma das notas canceladas por devolução de venda. Não é dívida nem compra — entra só como histórico. Abaixo, a quantidade de devoluções.",
+  trocas:
+    "Quanto este cliente já trocou: soma das notas cujo pedido foi registrado como troca. A troca é cobrada normalmente, então continua dentro do faturado e do saldo devedor. Abaixo, a quantidade de trocas.",
   ticket:
     "Total faturado dividido pela quantidade de notas. Abaixo, a média de dias entre o vencimento e o pagamento efetivo (só de baixas com data real).",
   relacionamento:
-    "Data da primeira compra do cliente. Abaixo, a data da última compra e há quantos dias ele não compra.",
+    "Primeira compra dentro do recorte filtrado. Abaixo, a última compra, há quantos dias ele não compra e — quando o filtro esconde algo mais antigo — desde quando o cliente existe, olhando todas as origens.",
 } as const;
 
 // "i" no canto do card: abre a explicação no hover e também no clique (toque no celular).
-function InfoDot(props: { text: string; testId?: string }) {
+function InfoDot(props: {
+  text: string;
+  testId?: string;
+  /** Lista termo → explicação. Quando vem, o balão vira glossário e fica mais largo. */
+  itens?: Array<[string, string]>;
+}) {
   const [aberto, setAberto] = useState(false);
   return (
     <span className="relative inline-flex shrink-0">
@@ -217,9 +343,24 @@ function InfoDot(props: { text: string; testId?: string }) {
       {aberto ? (
         <span
           role="tooltip"
-          className="absolute right-0 top-5 z-50 w-60 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          className={`absolute top-5 z-50 rounded-md border border-gray-200 bg-white p-2 text-[11px] font-normal normal-case whitespace-normal break-words leading-snug tracking-normal text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 ${
+            props.itens ? "left-0 w-[26rem] max-h-80 overflow-auto" : "right-0 w-60"
+          }`}
         >
-          {props.text}
+          {props.itens ? (
+            <span className="block space-y-1.5">
+              {props.text ? <span className="block pb-1 text-gray-500 dark:text-gray-400">{props.text}</span> : null}
+              {props.itens.map(([termo, desc]) => (
+                <span key={termo} className="block">
+                  <strong className="text-gray-900 dark:text-gray-100">{termo}</strong>
+                  {" — "}
+                  {desc}
+                </span>
+              ))}
+            </span>
+          ) : (
+            props.text
+          )}
         </span>
       ) : null}
     </span>
@@ -250,8 +391,15 @@ export default function ExtratoCliente() {
   const [selected, setSelected] = useState<CustomerHit | null>(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [tipo, setTipo] = useState<"todos" | "NF" | "PAGAMENTO">("todos");
-  const [situacaoFiltro, setSituacaoFiltro] = useState<string>("todos");
+  // Filtros de múltipla escolha: lista vazia = sem filtro (mostra tudo).
+  const [tiposSel, setTiposSel] = useState<string[]>([]);
+  const [situacoesSel, setSituacoesSel] = useState<string[]>([]);
+  const [movimentosSel, setMovimentosSel] = useState<string[]>([]);
+  // REDE: consolida o extrato de todos os clientes do grupo num só histórico.
+  // Escolher uma rede substitui o cliente; escolher um cliente limpa a rede.
+  const [redeSel, setRedeSel] = useState<string>("");
+  // Origem dos DADOS (não é filtro de tela: vai ao servidor e refaz os KPIs).
+  const [origem, setOrigem] = useState<"todas" | "integra" | "omie">("integra");
   const [busca, setBusca] = useState("");
   const [detalheLinha, setDetalheLinha] = useState<Linha | null>(null);
   const [sortCol, setSortCol] = useState<"data" | "documento" | "descricao" | "vencimento" | "situacao">("data");
@@ -271,7 +419,19 @@ export default function ExtratoCliente() {
     setTerm("");
     setDebounced("");
     setSelected(null);
+    setRedeSel("");
     setOpen(false);
+  };
+
+  /** Escolher uma rede troca o titular do extrato; o cliente escolhido sai. */
+  const escolherRede = (id: string) => {
+    setRedeSel(id);
+    if (!id) { setSelected(null); setTerm(""); return; }
+    const r = redes.find((x) => x.id === id);
+    setTerm("");
+    setDebounced("");
+    setOpen(false);
+    setSelected({ id: `rede:${id}`, name: `Rede ${r?.nome || ""}`.trim() } as any);
   };
 
   // Permite abrir já num cliente: /extrato-cliente?customerId=...
@@ -303,25 +463,51 @@ export default function ExtratoCliente() {
     enabled: debounced.length >= 2,
   });
 
+  const { data: redes = [] } = useQuery<Array<{ id: string; nome: string; membros: number }>>({
+    queryKey: ["extrato-redes"],
+    queryFn: () => apiRequest("GET", "/api/customer-statement/redes"),
+  });
+
   const { data: extrato, isLoading, isError, error } = useQuery<Extrato>({
-    queryKey: ["customer-statement", selected?.id, start, end],
+    queryKey: ["customer-statement", selected?.id, start, end, origem],
     queryFn: () => {
       const p = new URLSearchParams();
       if (start) p.set("start", start);
       if (end) p.set("end", end);
+      p.set("origem", origem);
       const qs = p.toString();
       return apiRequest("GET", `/api/customer-statement/${selected!.id}${qs ? "?" + qs : ""}`);
     },
     enabled: !!selected?.id,
   });
 
+  // Trocas registradas (política de trocas): motivo, valor e desconto de comissão.
+  const { data: trocas = [] } = useQuery<TrocaRegistro[]>({
+    queryKey: ["trocas-cliente", selected?.id],
+    queryFn: () => apiRequest("GET", `/api/trocas/cliente/${selected!.id}`),
+    enabled: !!selected?.id && !String(selected?.id).startsWith("rede:"),
+  });
+  // Link do aviso "troca pelo mesmo motivo" abre com ?secao=trocas: rola até o bloco.
+  const secaoTrocas = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("secao") === "trocas";
+  const trocasRef = useRef<HTMLDivElement | null>(null);
+  const rolouTrocas = useRef(false);
+  useEffect(() => {
+    if (secaoTrocas && !rolouTrocas.current && extrato && trocasRef.current) {
+      rolouTrocas.current = true;
+      setTimeout(() => trocasRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    }
+  }, [secaoTrocas, extrato, trocas.length]);
+
   const linhas = useMemo(() => {
     let out = extrato?.linhas || [];
-    if (tipo !== "todos") out = out.filter((l) => l.tipo === tipo);
-    if (situacaoFiltro !== "todos") {
+    if (tiposSel.length) out = out.filter((l) => tiposSel.includes(l.tipo));
+    if (situacoesSel.length) {
       out = out.filter((l) =>
-        situacaoFiltro === "__sem__" ? !l.situacao : String(l.situacao || "") === situacaoFiltro
+        situacoesSel.includes(l.situacao ? String(l.situacao) : "__sem__")
       );
+    }
+    if (movimentosSel.length) {
+      out = out.filter((l) => movimentosSel.includes(String(l.tipoMovimento || "")));
     }
     const q = busca.trim().toLowerCase();
     if (q) {
@@ -352,7 +538,7 @@ export default function ExtratoCliente() {
       return String(a.documento).localeCompare(String(b.documento));
     });
     return out;
-  }, [extrato, tipo, situacaoFiltro, busca, sortCol, sortDir]);
+  }, [extrato, tiposSel, situacoesSel, movimentosSel, busca, sortCol, sortDir]);
 
   const totaisVisiveis = useMemo(() => {
     const deb = linhas.reduce((s, l) => s + (l.debito || 0), 0);
@@ -360,17 +546,78 @@ export default function ExtratoCliente() {
     return { deb, cre, saldo: deb - cre };
   }, [linhas]);
 
+  // ── BIG NUMBERS DO QUE ESTÁ NA TELA (25/out/2026) ──────────────────────────
+  // Antes os cards eram sempre de vida inteira e ignoravam período, tipo, situação,
+  // movimento e busca — filtrar maio em diante continuava mostrando o faturado de
+  // 200 notas. Agora eles saem das MESMAS linhas que a tabela mostra, então o que
+  // está no card é o que está na lista. Rede e Origem já eram aplicados no servidor.
+  const kpis = useMemo(() => {
+    const notas = linhas.filter((l) => l.tipo !== "PAGAMENTO");
+    const pagtos = linhas.filter((l) => l.tipo === "PAGAMENTO");
+    // VENDA = o que é compra deste cliente. Fora: operação informativa (outra praça,
+    // transferência, devolução, CFOP 5949), ocorrência sem cobrança, duplicata e nota
+    // cancelada. Mesma régua do servidor, agora sobre o recorte visível.
+    const vendas = notas.filter(
+      (l) => !l.informativa && !l.semCobranca && !l.duplicado && !l.cancelada
+    );
+    const soma = (arr: Linha[], f: (l: Linha) => number) => arr.reduce((acc, l) => acc + (f(l) || 0), 0);
+    const cent = (v: number) => Math.round(v * 100) / 100;
+
+    const totalFaturado = soma(vendas, (l) => l.valorNota || 0);
+    const totalPago = soma(pagtos.filter((l) => !l.informativa), (l) => l.credito || 0);
+    const abertas = vendas.filter((l) => (l.saldoNota || 0) > 0.009);
+    const vencidas = abertas.filter((l) => l.situacao === "Vencida");
+    const aVencer = abertas.filter((l) => l.situacao !== "Vencida");
+    const porMov = (mov: string) => notas.filter((l) => l.tipoMovimento === mov);
+    const devolucoes = porMov("Devolução");
+    const trocas = porMov("Troca");
+    const atrasos = pagtos.filter((l) => !l.estimado && l.diasAtraso != null).map((l) => l.diasAtraso as number);
+    const datas = vendas.map((l) => l.data).filter(Boolean).sort() as string[];
+    const ultima = datas[datas.length - 1] || null;
+
+    return {
+      totalFaturado: cent(totalFaturado),
+      totalPago: cent(totalPago),
+      totalAVencer: cent(soma(aVencer, (l) => l.saldoNota || 0)),
+      totalVencido: cent(soma(vencidas, (l) => l.saldoNota || 0)),
+      totalDevolucoes: cent(soma(devolucoes, (l) => l.valorBruto ?? l.valorNota ?? 0)),
+      totalTrocas: cent(soma(trocas, (l) => l.valorBruto ?? l.valorNota ?? 0)),
+      qtdDevolucoes: devolucoes.length,
+      qtdTrocas: trocas.length,
+      qtdNotas: vendas.length,
+      qtdNotasAbertas: abertas.length,
+      qtdPagamentos: pagtos.length,
+      ticketMedio: vendas.length ? cent(totalFaturado / vendas.length) : 0,
+      primeiraCompra: datas[0] || null,
+      ultimaCompra: ultima,
+      diasSemComprar: ultima ? Math.floor((Date.now() - new Date(ultima).getTime()) / 86400000) : null,
+      atrasoMedioDias: atrasos.length ? Math.round(atrasos.reduce((a, b) => a + b, 0) / atrasos.length) : null,
+      // Avisos: também do recorte visível, senão o texto contradiz a lista.
+      baixasEstimadas: pagtos.filter((l) => l.estimado).length,
+      notasHistorico: notas.filter((l) => l.historico).length,
+      valorHistorico: cent(soma(notas.filter((l) => l.historico), (l) => l.valorNota || 0)),
+      ocorrenciasSemCobranca: notas.filter((l) => l.semCobranca).length,
+      valorSemCobranca: cent(soma(notas.filter((l) => l.semCobranca), (l) => l.valorNota || 0)),
+      notasInformativas: notas.filter((l) => l.informativa).length,
+      valorInformativas: cent(soma(notas.filter((l) => l.informativa), (l) => l.valorNota || 0)),
+      titulosFantasma: notas.filter((l) => l.duplicado).length,
+      valorFantasma: cent(soma(notas.filter((l) => l.duplicado), (l) => l.valorBruto ?? l.valorNota ?? 0)),
+    };
+  }, [linhas]);
+
   const exportar = () => {
     const rows = linhas.map((l) => ({
       Data: fmtData(l.data),
       Tipo: l.tipo === "NF" ? "Nota faturada" : "Pagamento",
+      "Tipo de movimento": l.tipoMovimento || "",
+      "Motivo da troca": l.motivo || "",
       Documento: l.documento,
       Pedido: l.pedido || "",
       Descricao: l.descricao || "",
       Vencimento: fmtData(l.vencimento),
       Parcelas: l.parcelas || "",
       "Forma de pagamento": l.formaPagamento || "",
-      Debito: l.debito || 0,
+      "Valor do DOC": l.debito || 0,
       Credito: l.credito || 0,
       Saldo: l.saldo,
       Situacao: l.situacao,
@@ -382,7 +629,10 @@ export default function ExtratoCliente() {
     exportToExcel(rows, `extrato_${nome}`);
   };
 
-  const r = extrato?.resumo;
+  // `r` é o que os cards mostram: o recorte da tela. `clienteDesde` e
+  // `duplicadasComBaixa` seguem vindo do servidor — não dependem do filtro.
+  const r = extrato ? { ...extrato.resumo, ...kpis } : undefined;
+  const clienteDesde = extrato?.resumo?.clienteDesde || null;
 
   return (
     <div className="space-y-4" data-testid="page-extrato-cliente">
@@ -440,6 +690,7 @@ export default function ExtratoCliente() {
                         type="button"
                         onClick={() => {
                           setSelected(h);
+                          setRedeSel("");
                           setTerm(h.fantasyName || h.name);
                           setOpen(false);
                         }}
@@ -465,47 +716,89 @@ export default function ExtratoCliente() {
             </div>
 
             <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400 block">Período</label>
-              <DateRangeFilter start={start} end={end} onChange={(s, e) => { setStart(s); setEnd(e); }} />
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400 block">Tipo</label>
+              <label className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                Rede
+                <InfoDot
+                  testId="info-rede"
+                  text="Consolida num só extrato todos os clientes do grupo — útil quando a rede tem várias lojas com CNPJs diferentes. Escolher uma rede substitui o cliente selecionado; escolher um cliente limpa a rede."
+                />
+              </label>
               <select
-                value={tipo}
-                onChange={(e) => setTipo(e.target.value as any)}
-                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
-                data-testid="select-tipo-linha"
+                value={redeSel}
+                onChange={(e) => escolherRede(e.target.value)}
+                className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm max-w-[13rem]"
+                data-testid="select-rede"
               >
-                <option value="todos">Notas + Pagamentos</option>
-                <option value="NF">Somente notas</option>
-                <option value="PAGAMENTO">Somente pagamentos</option>
+                <option value="">Sem rede (cliente)</option>
+                {redes.map((rd) => (
+                  <option key={rd.id} value={rd.id}>
+                    {rd.nome} ({rd.membros})
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400 block">Situação</label>
+              <label className="text-xs text-gray-500 dark:text-gray-400 block">Período</label>
+              <DateRangeFilter start={start} end={end} onChange={(s, e) => { setStart(s); setEnd(e); }} />
+            </div>
+
+            <MultiFiltro
+              label="Tipo"
+              rotuloVazio="Notas + Pagamentos"
+              testId="select-tipo-linha"
+              opcoes={[
+                { valor: "NF", rotulo: "Notas" },
+                { valor: "PAGAMENTO", rotulo: "Pagamentos" },
+              ]}
+              selecionados={tiposSel}
+              onChange={setTiposSel}
+            />
+
+            <MultiFiltro
+              label="Situação"
+              rotuloVazio="Todas as situações"
+              testId="select-situacao"
+              opcoes={[
+                { valor: "Em aberto", rotulo: "Em aberto" },
+                { valor: "Vencida", rotulo: "Vencida" },
+                { valor: "Parcial", rotulo: "Parcial" },
+                { valor: "Quitada", rotulo: "Quitada" },
+                { valor: "Recebido", rotulo: "Recebido" },
+                { valor: "Cancelada", rotulo: "Cancelada" },
+                { valor: "Sem cobrança", rotulo: "Sem cobrança" },
+                { valor: "__sem__", rotulo: "Sem situação" },
+              ]}
+              selecionados={situacoesSel}
+              onChange={setSituacoesSel}
+            />
+
+            <MultiFiltro
+              label="Movimento"
+              rotuloVazio="Todos os movimentos"
+              testId="select-movimento"
+              opcoes={MOVIMENTOS.map((m) => ({ valor: m, rotulo: m }))}
+              selecionados={movimentosSel}
+              onChange={setMovimentosSel}
+            />
+
+            <div>
+              <label className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                Origem
+                <InfoDot
+                  testId="info-origem"
+                  text="De onde vêm os lançamentos. O INTEGRA 2.0 começou a gerar títulos próprios em 31/03/2026; tudo que é anterior veio da migração do Omie (emissões desde 28/01/2020), importada a partir de 28/04/2026. O histórico tem defeitos conhecidos — títulos marcados como recebidos sem a baixa correspondente, baixas sem data de pagamento lançadas no vencimento e algumas NFs que existem nas duas origens —, então para conferir número financeiro escolha Somente INTEGRA 2.0."
+                />
+              </label>
               <select
-                value={situacaoFiltro}
-                onChange={(e) => setSituacaoFiltro(e.target.value)}
+                value={origem}
+                onChange={(e) => setOrigem(e.target.value as any)}
                 className="px-3 py-2 border rounded-md bg-white dark:bg-gray-800 dark:border-gray-700 text-sm"
-                data-testid="select-situacao"
+                data-testid="select-origem"
               >
-                <option value="todos">Todas as situações</option>
-                <option value="Em aberto">Em aberto</option>
-                <option value="Vencida">Vencida</option>
-                <option value="Parcial">Parcial</option>
-                <option value="Quitada">Quitada</option>
-                <option value="Recebido">Recebido</option>
-                <option value="Cancelada">Cancelada</option>
-                <option value="Duplicado">Duplicado</option>
-                <option value="Outra praça">Outra praça</option>
-                <option value="Transferência">Transferência</option>
-                <option value="Devolução">Devolução</option>
-                <option value="Troca">Troca</option>
-                <option value="Amostra">Amostra</option>
-                <option value="Outra saída">Outra saída</option>
-                <option value="__sem__">Sem situação</option>
+                <option value="todas">INTEGRA 2.0 + histórico</option>
+                <option value="integra">Somente INTEGRA 2.0</option>
+                <option value="omie">Somente histórico Omie</option>
               </select>
             </div>
 
@@ -555,23 +848,43 @@ export default function ExtratoCliente() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
                 <Kpi label="Total faturado" value={fmtBRL(r?.totalFaturado)} sub={`${r?.qtdNotas || 0} notas`} testId="kpi-faturado" info={KPI_INFO.faturado} />
                 <Kpi label="Total pago" value={fmtBRL(r?.totalPago)} sub={`${r?.qtdPagamentos || 0} pagamentos`} tone="bg-emerald-50 dark:bg-emerald-900/20" testId="kpi-pago" info={KPI_INFO.pago} />
                 <Kpi
-                  label="Saldo devedor"
-                  value={fmtBRL(r?.saldoDevedor)}
+                  label="A vencer"
+                  value={fmtBRL(r?.totalAVencer)}
                   sub={`${r?.qtdNotasAbertas || 0} em aberto`}
-                  tone={(r?.saldoDevedor || 0) > 0.009 ? "bg-amber-50 dark:bg-amber-900/20" : "bg-white dark:bg-gray-800"}
+                  tone={(r?.totalAVencer || 0) > 0.009 ? "bg-amber-50 dark:bg-amber-900/20" : "bg-white dark:bg-gray-800"}
                   testId="kpi-saldo"
                   info={KPI_INFO.saldo}
                 />
                 <Kpi label="Vencido" value={fmtBRL(r?.totalVencido)} tone={(r?.totalVencido || 0) > 0.009 ? "bg-red-50 dark:bg-red-900/20" : ""} testId="kpi-vencido" info={KPI_INFO.vencido} />
+                <Kpi
+                  label="Devoluções"
+                  value={fmtBRL(r?.totalDevolucoes)}
+                  sub={`${r?.qtdDevolucoes || 0} nota(s)`}
+                  tone={(r?.totalDevolucoes || 0) > 0.009 ? "bg-sky-50 dark:bg-sky-900/20" : ""}
+                  testId="kpi-devolucoes"
+                  info={KPI_INFO.devolucoes}
+                />
+                <Kpi
+                  label="Trocas"
+                  value={fmtBRL(r?.totalTrocas)}
+                  sub={`${r?.qtdTrocas || 0} nota(s)`}
+                  tone={(r?.totalTrocas || 0) > 0.009 ? "bg-sky-50 dark:bg-sky-900/20" : ""}
+                  testId="kpi-trocas"
+                  info={KPI_INFO.trocas}
+                />
                 <Kpi label="Ticket médio" value={fmtBRL(r?.ticketMedio)} sub={r?.atrasoMedioDias != null ? `atraso médio: ${r.atrasoMedioDias}d` : undefined} testId="kpi-ticket" info={KPI_INFO.ticket} />
                 <Kpi
                   label="Relacionamento"
                   value={fmtData(r?.primeiraCompra)}
-                  sub={`última: ${fmtData(r?.ultimaCompra)}${r?.diasSemComprar != null ? ` (${r.diasSemComprar}d)` : ""}`}
+                  sub={`última: ${fmtData(r?.ultimaCompra)}${r?.diasSemComprar != null ? ` (${r.diasSemComprar}d)` : ""}${
+                    clienteDesde && r?.primeiraCompra && clienteDesde < r.primeiraCompra
+                      ? ` · cliente desde ${fmtData(clienteDesde)}`
+                      : ""
+                  }`}
                   testId="kpi-relacionamento"
                   info={KPI_INFO.relacionamento}
                 />
@@ -580,6 +893,22 @@ export default function ExtratoCliente() {
                 <div className="mt-3 text-[11px] text-amber-700 dark:text-amber-300">
                   ⚠ {r?.baixasEstimadas} baixa(s) vieram do histórico importado sem data de pagamento — foram lançadas na data
                   de vencimento e aparecem marcadas como <em>data estimada</em>.
+                </div>
+              ) : null}
+              {(r?.ocorrenciasSemCobranca || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.ocorrenciasSemCobranca} ocorrência(s) de {fmtBRL(r?.valorSemCobranca)} —{" "}
+                  <strong>troca, amostra ou transferência que não gerou conta a receber</strong> — aparecem no histórico com o
+                  valor em cinza e <strong>sem débito</strong>: não houve cobrança, então ficam fora do faturado e do saldo
+                  devedor. Elas somam nos cards de Trocas e Devoluções.
+                </div>
+              ) : null}
+              {(r?.notasHistorico || 0) > 0 ? (
+                <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  {r?.notasHistorico} nota(s) de {fmtBRL(r?.valorHistorico)} vieram do{" "}
+                  <strong>histórico migrado do Omie</strong> (emissões anteriores a 31/03/2026, quando o INTEGRA 2.0 passou a
+                  gerar títulos próprios). Esse acervo tem baixas sem data de pagamento e títulos quitados sem a baixa
+                  correspondente — para conferir número financeiro, use o filtro <strong>Origem → Somente INTEGRA 2.0</strong>.
                 </div>
               ) : null}
               {(r?.notasInformativas || 0) > 0 ? (
@@ -606,6 +935,62 @@ export default function ExtratoCliente() {
             </CardContent>
           </Card>
 
+          {/* Trocas registradas */}
+          {(trocas.length > 0 || secaoTrocas) && (
+            <div ref={trocasRef} id="trocas" className="scroll-mt-4">
+              <Card className={secaoTrocas ? "ring-2 ring-red-400" : undefined}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Trocas registradas ({trocas.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {trocas.length === 0 ? (
+                    <div className="px-4 py-6 text-sm text-gray-500">Nenhuma troca registrada com motivo para este cliente.</div>
+                  ) : (
+                    <div className="overflow-auto max-h-[50vh]">
+                      <table className="w-full text-sm" data-testid="tabela-trocas-cliente">
+                        <thead className="text-gray-600 dark:text-gray-300">
+                          <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:bg-gray-100 [&>th]:dark:bg-gray-800 [&>th]:px-3 [&>th]:py-2 [&>th]:whitespace-nowrap">
+                            <th>Data</th>
+                            <th>Motivo</th>
+                            <th>Produtos</th>
+                            <th className="text-right">Valor</th>
+                            <th>Vendedor</th>
+                            <th>Última NF</th>
+                            <th className="text-right">Desconto comissão</th>
+                            <th>Observação</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trocas.map((t) => (
+                            <tr key={t.id} className="border-t align-top [&>td]:px-3 [&>td]:py-2">
+                              <td className="whitespace-nowrap">{new Date(t.data).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}</td>
+                              <td className="whitespace-nowrap">
+                                <Badge variant="outline" className={t.motivo === "vencido" ? "border-red-300 text-red-700" : "border-amber-300 text-amber-800"}>
+                                  {MOTIVO_TROCA_LABEL[t.motivo] || t.motivo}
+                                </Badge>
+                                {t.temperatura != null && <span className="ml-1 text-xs text-gray-500">{String(t.temperatura).replace(".", ",")} °C</span>}
+                              </td>
+                              <td className="text-xs">
+                                {(t.itens || []).map((i, k) => (
+                                  <div key={k}>{i.quantidade} × {i.produto}</div>
+                                ))}
+                              </td>
+                              <td className="text-right whitespace-nowrap">{fmtBRL(t.valorTroca)}</td>
+                              <td className="whitespace-nowrap">{t.vendedorCard || t.vendedorNf || "—"}</td>
+                              <td className="whitespace-nowrap">{t.nfNumero ? `NF ${t.nfNumero} · ${fmtData(t.nfData)}` : "—"}</td>
+                              <td className="text-right whitespace-nowrap text-red-700">{t.desconto > 0 ? `− ${fmtBRL(t.desconto)}` : "—"}</td>
+                              <td className="text-xs text-gray-600 dark:text-gray-300 max-w-[22rem] whitespace-pre-line">{t.observacao || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Extrato */}
           <Card>
             <CardHeader className="pb-2">
@@ -623,6 +1008,17 @@ export default function ExtratoCliente() {
                       </th>
                       <th className="px-3 py-2 whitespace-nowrap">Tipo</th>
                       <th className="px-3 py-2 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1">
+                          Tipo de movimento
+                          <InfoDot
+                            testId="info-tipo-movimento"
+                            text="O que cada linha é. Só Venda, Troca e Amostra entram no faturado e no saldo devedor."
+                            itens={MOV_AJUDA}
+                          />
+                        </span>
+                      </th>
+                      <th className="px-3 py-2 whitespace-nowrap">Motivo da troca</th>
+                      <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Documento" col="documento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
                       <th className="px-3 py-2">
@@ -631,17 +1027,28 @@ export default function ExtratoCliente() {
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Vencimento" col="vencimento" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
-                      <th className="px-3 py-2 text-right whitespace-nowrap">Venda (D)</th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap">Valor do DOC</th>
                       <th className="px-3 py-2 text-right whitespace-nowrap">Pagamento (C)</th>
                       <th className="px-3 py-2 whitespace-nowrap">
                         <SortHeader label="Situação" col="situacao" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                       </th>
                     </tr>
+                    {/* Totais do que está na tela AGORA: acompanham período, tipo,
+                        movimento, situação e busca. Ficam colados no cabeçalho para
+                        serem lidos junto com as colunas que somam. */}
+                    <tr className="text-left font-semibold [&>th]:sticky [&>th]:top-9 [&>th]:z-20 [&>th]:bg-gray-50 [&>th]:dark:bg-gray-900 [&>th]:shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.12)]">
+                      <th className="px-3 py-1.5 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400" colSpan={7}>
+                        Valor total dos filtros
+                      </th>
+                      <th className="px-3 py-1.5 text-right whitespace-nowrap" data-testid="total-valor-doc">{fmtBRL(totaisVisiveis.deb)}</th>
+                      <th className="px-3 py-1.5 text-right whitespace-nowrap text-emerald-700 dark:text-emerald-300" data-testid="total-pagamento">{fmtBRL(totaisVisiveis.cre)}</th>
+                      <th className="px-3 py-1.5"></th>
+                    </tr>
                   </thead>
                   <tbody>
                     {linhas.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
+                        <td colSpan={10} className="px-3 py-8 text-center text-gray-500">
                           Nenhum lançamento no período/filtro selecionado.
                         </td>
                       </tr>
@@ -676,6 +1083,18 @@ export default function ExtratoCliente() {
                                 <><i className="fas fa-hand-holding-dollar text-[11px]" /> Pagamento</>
                               )}
                             </button>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {l.tipo === "NF" && l.tipoMovimento ? (
+                              <span className={`px-2 py-0.5 rounded-full border text-[11px] ${MOV_COR[l.tipoMovimento] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                                {l.tipoMovimento}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 dark:text-gray-600">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 max-w-[200px] truncate" title={l.motivo || ""}>
+                            {l.motivo || <span className="text-gray-300 dark:text-gray-600">—</span>}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">
                             {l.tipo === "NF" ? (
@@ -716,7 +1135,18 @@ export default function ExtratoCliente() {
                             ) : null}
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap font-medium">
-                            {l.debito ? fmtBRL(l.debito) : ""}
+                            {l.debito ? (
+                              fmtBRL(l.debito)
+                            ) : l.semCobranca && (l.valorNota || 0) > 0 ? (
+                              <span
+                                className="font-normal text-gray-400 dark:text-gray-500"
+                                title="Ocorrência sem conta a receber: o valor não entra no saldo devedor nem nos totais."
+                              >
+                                {fmtBRL(l.valorNota)}
+                              </span>
+                            ) : (
+                              ""
+                            )}
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-emerald-700 dark:text-emerald-300">
                             {l.credito ? fmtBRL(l.credito) : ""}
@@ -735,16 +1165,6 @@ export default function ExtratoCliente() {
                       ))
                     )}
                   </tbody>
-                  {linhas.length ? (
-                    <tfoot className="font-semibold">
-                      <tr className="[&>td]:sticky [&>td]:bottom-0 [&>td]:z-20 [&>td]:bg-gray-100 [&>td]:dark:bg-gray-800 [&>td]:shadow-[inset_0_1px_0_0_rgba(0,0,0,0.12)]">
-                        <td className="px-3 py-2" colSpan={5}>Totais do filtro</td>
-                        <td className="px-3 py-2 text-right">{fmtBRL(totaisVisiveis.deb)}</td>
-                        <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">{fmtBRL(totaisVisiveis.cre)}</td>
-                        <td className="px-3 py-2"></td>
-                      </tr>
-                    </tfoot>
-                  ) : null}
                 </table>
               </div>
             </CardContent>
@@ -866,6 +1286,11 @@ function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void })
                 <i className="fas fa-hand-holding-dollar" /> Pagamento{dPag?.nf ? ` — NF ${dPag.nf}` : ""}
               </span>
             )}
+            {linha.tipoMovimento ? (
+              <span className={`px-2 py-0.5 rounded-full border text-[11px] ${MOV_COR[linha.tipoMovimento] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                {linha.tipoMovimento}
+              </span>
+            ) : null}
             {linha.situacao ? (
               <span className={`px-2 py-0.5 rounded-full border text-[11px] ${SIT_COR[linha.situacao] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
                 {linha.situacao}

@@ -7720,230 +7720,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   async generateNextVisitsForActiveCustomers(): Promise<{ processed: number; generated: number; errors: number; corrected?: number }> {
-    const WEEKDAY_MAP: Record<string, number> = {
-      'Seg': 1, 'Segunda': 1, 'segunda': 1,
-      'Ter': 2, 'Terça': 2, 'terça': 2,
-      'Qua': 3, 'Quarta': 3, 'quarta': 3,
-      'Qui': 4, 'Quinta': 4, 'quinta': 4,
-      'Sex': 5, 'Sexta': 5, 'sexta': 5,
-      'Sab': 6, 'Sábado': 6, 'sábado': 6,
-      'Dom': 0, 'Domingo': 0, 'domingo': 0
-    };
-
-    const REVERSE_WEEKDAY_MAP: Record<number, string> = {
-      0: 'Dom', 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sab'
-    };
-
+    // 🗓️ MOTOR ÚNICO (24/out/2026): a geração da meia-noite usava um cálculo próprio (intervalo
+    // de 7/14/30 dias a partir de hoje) que IGNORAVA a Semana de Atendimento do cadastro, a âncora
+    // de Brasília e os feriados — e reescrevia toda noite a agenda feita pela regra certa. Ex.: Santa
+    // Ceia (quinzenal, 2ª e 4ª semana) caiu em 10/09 e 08/10 e perdeu 17/09 e 15/10. Agora cada
+    // cliente ativo é regenerado por regenerateCustomerAgenda — o mesmo cálculo do botão
+    // "Regenerar", que preserva HOJE e o passado, respeita semana do mês, data de início do
+    // fornecimento, BSB, visita presencial mensal e reaplica os deslocamentos de feriado.
     try {
-      // 1. Obter todos os clientes ativos
       const activeCustomersList = await db
-        .select()
+        .select({ customerId: activeCustomers.customerId })
         .from(activeCustomers)
         .where(eq(activeCustomers.isActive, true));
-
-      console.log(`📅 [VISIT-SCHEDULER] Processando ${activeCustomersList.length} clientes ativos`);
-
-      let processed = 0;
-      let skipped = 0;
-      let generated = 0;
-      let corrected = 0;
-      let errors = 0;
-
-      const today = dataCalendario(hojeBR());
-      today.setHours(0, 0, 0, 0);
-      // 🛡️ BLINDAGEM (31/jul/2026): a regeneração NUNCA remove visitas de HOJE nem do passado —
-      // só reescreve o FUTURO (>= amanhã). Antes apagava tudo `>= hoje`, o que fazia a Rota do
-      // Dia (sobretudo telemarketing/virtual) encolher no meio do dia quando este job rodava.
-      // A geração das próximas visitas já tem checagem anti-duplicata por dia, então hoje é
-      // preservado sem duplicar. Mesma regra já aplicada em runTelemarketingRegen.
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      for (const activeCustomer of activeCustomersList) {
+      const ids = Array.from(new Set(activeCustomersList.map((r) => r.customerId).filter(Boolean) as string[]));
+      console.log(`📅 [VISIT-SCHEDULER] Regenerando agenda de ${ids.length} clientes ativos (motor regenerateCustomerAgenda)`);
+      const { regenerateCustomerAgenda } = await import('./visitScheduleService');
+      let processed = 0, generated = 0, errors = 0;
+      for (const id of ids) {
         try {
-          if (!activeCustomer.customerId) {
-            skipped++;
-            continue;
-          }
           processed++;
-
-          // 2. Obter dados do cliente
-          const customer = await db
-            .select()
-            .from(customers)
-            .where(eq(customers.id, activeCustomer.customerId))
-            .then(rows => rows[0]);
-
-          if (!customer) {
-            console.warn(`⚠️ [VISIT-SCHEDULER] Cliente ${activeCustomer.customerId} não encontrado`);
-            skipped++;
-            continue;
-          }
-
-          if (!customer.weekdays) {
-            console.warn(`⚠️ [VISIT-SCHEDULER] Cliente ${customer.id} sem weekdays configurados`);
-            skipped++;
-            continue;
-          }
-
-          // Parse weekdays
-          let weekdaysArray = [];
-          try {
-            weekdaysArray = typeof customer.weekdays === 'string' ? JSON.parse(customer.weekdays) : customer.weekdays || [];
-          } catch (e) {
-            console.warn(`⚠️ [VISIT-SCHEDULER] Erro ao parsear weekdays para ${customer.id}:`, customer.weekdays);
-            skipped++;
-            continue;
-          }
-
-          // 🗓️ DIAS ÚTEIS (seg–sex): nunca agendar sábado/domingo. Remove o fim de
-          // semana dos dias-alvo; se o cliente estiver configurado SOMENTE em fim de
-          // semana, reprograma para dias úteis (seg–sex), mantendo a periodicidade.
-          let effectiveWeekdays = (Array.isArray(weekdaysArray) ? weekdaysArray : [])
-            .filter((d: any) => { const n = WEEKDAY_MAP[d]; return n !== undefined && n !== 0 && n !== 6; });
-          if (effectiveWeekdays.length === 0) {
-            effectiveWeekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
-          }
-
-          // 3. AGRESSIVAMENTE: Deletar TODAS as próximas visitas futuras para este cliente
-          // Isso força a regeneração completa quando o dia da rota muda
-          const futureCutoff = new Date(today);
-          futureCutoff.setDate(futureCutoff.getDate() + 90); // Próximos 90 dias
-
-          // Deletar TODAS as visitas futuras (não apenas as em dias incorretos)
-          const visitsToDelete = await db
-            .select()
-            .from(visitAgenda)
-            .where(
-              and(
-                eq(visitAgenda.customerId, activeCustomer.customerId),
-                gte(visitAgenda.scheduledDate, tomorrow) // 🛡️ preserva HOJE e o passado
-              )
-            );
-
-          if (visitsToDelete.length > 0) {
-            console.log(`🔧 [VISIT-SCHEDULER] ${customer.name}: Deletando ${visitsToDelete.length} visita(s) futuras (>= amanhã) para regeneração...`);
-            await db
-              .delete(visitAgenda)
-              .where(
-                and(
-                  eq(visitAgenda.customerId, activeCustomer.customerId),
-                  gte(visitAgenda.scheduledDate, tomorrow) // 🛡️ nunca remove a visita de HOJE
-                )
-              );
-            corrected += visitsToDelete.length;
-          }
-
-          // Após deletar, contar visitas restantes (deve ser 0)
-          const validFutureVisits = 0;
-
-          console.log(`📊 [VISIT-SCHEDULER] Cliente ${customer.name}: ${validFutureVisits} visitas futuras válidas`);
-
-          // 5. Se tiver menos de 3 visitas, gerar as que faltam
-          if (validFutureVisits < 3) {
-            const visitsNeeded = 3 - validFutureVisits;
-            console.log(`📋 [VISIT-SCHEDULER] Gerando ${visitsNeeded} visita(s) para ${customer.name}`);
-            const periodicity = customer.visitPeriodicity || 'semanal';
-
-            let daysToAdd = 7;
-            if (periodicity === 'quinzenal') daysToAdd = 14;
-            else if (periodicity === 'mensal') daysToAdd = 30;
-
-            // Buscar a ÚLTIMA VISITA FUTURA (não histórica) para manter sequência
-            const lastFutureVisit = await db
-              .select()
-              .from(visitAgenda)
-              .where(
-                and(
-                  eq(visitAgenda.customerId, activeCustomer.customerId),
-                  gte(visitAgenda.scheduledDate, today)
-                )
-              )
-              .orderBy(desc(visitAgenda.scheduledDate))
-              .limit(1)
-              .then(rows => rows[0]);
-
-            // Começar a partir de HOJE, procurando o primeiro dia da semana válido
-            let baseDate = new Date(today);
-            if (lastFutureVisit) {
-              baseDate = new Date(lastFutureVisit.scheduledDate);
-              baseDate.setDate(baseDate.getDate() + daysToAdd);
-            }
-
-            // Gerar as 3 próximas visitas
-            for (let i = 0; i < visitsNeeded; i++) {
-              let currentDate = new Date(baseDate);
-              let attempts = 0;
-              const maxAttempts = 14; // Aumentado para 14 dias (2 semanas) para garantir encontrar o dia
-
-              // Procurar o próximo dia válido dentro dos próximos dias
-              while (attempts < maxAttempts) {
-                const dayOfWeek = currentDate.getDay();
-                const dayName = Object.keys(WEEKDAY_MAP).find(key => WEEKDAY_MAP[key] === dayOfWeek);
-
-                if (dayName && effectiveWeekdays.includes(dayName) && dayOfWeek !== 0 && dayOfWeek !== 6) {
-                  console.log(`🔍 [VISIT-SCHEDULER] ${customer.name}: Tentativa ${attempts + 1}, verificando ${dayName} em ${currentDate.toISOString().split('T')[0]}`);
-                  // Verificar se já existe visita nesse dia
-                  const dateStr = currentDate.toISOString().split('T')[0];
-                  const dateStart = new Date(dateStr + 'T00:00:00');
-                  const dateEnd = new Date(dateStr + 'T23:59:59');
-                  
-                  const exists = await db
-                    .select()
-                    .from(visitAgenda)
-                    .where(
-                      and(
-                        eq(visitAgenda.customerId, activeCustomer.customerId),
-                        gte(visitAgenda.scheduledDate, dateStart),
-                        lte(visitAgenda.scheduledDate, dateEnd)
-                      )
-                    )
-                    .then(rows => rows.length > 0);
-
-                  if (!exists) {
-                    console.log(`✅ [VISIT-SCHEDULER] Gerando visita para ${customer.name} em ${currentDate.toISOString().split('T')[0]}`);
-                    // Criar visita
-                    await db.insert(visitAgenda).values({
-                      customerId: activeCustomer.customerId,
-                      sellerId: customer.sellerId,
-                      scheduledDate: currentDate,
-                      routeDay: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][currentDate.getDay()],
-                      recurrenceType: customer.visitPeriodicity || 'semanal',
-                      isVirtual: customer.virtualService || false,
-                      visitStatus: 'pending',
-                      customerName: customer.name,
-                      customerLatitude: customer.latitude || null,
-                      customerLongitude: customer.longitude || null,
-                      customerAddress: customer.address || null,
-                      createdAt: agora()
-                    });
-                    generated++;
-                    break;
-                  }
-                }
-
-                currentDate.setDate(currentDate.getDate() + 1);
-                attempts++;
-              }
-
-              // Próxima iteração começa a partir da data atual + dias
-              baseDate = new Date(currentDate);
-              baseDate.setDate(baseDate.getDate() + daysToAdd);
-            }
-          }
+          const n = await regenerateCustomerAgenda(id);
+          if (n > 0) generated += n;
         } catch (error: any) {
-          console.error(`❌ Erro ao processar cliente ${activeCustomer.id}:`, error.message);
           errors++;
+          console.error(`❌ [VISIT-SCHEDULER] Erro ao regenerar agenda do cliente ${id}:`, error?.message);
         }
       }
-
-      console.log(`✅ [VISIT-SCHEDULER] Processamento concluído:`);
-      console.log(`   - ${processed} processados`);
-      console.log(`   - ${corrected} visita(s) corrigida(s) (dias incorretos removidos)`);
-      console.log(`   - ${generated} visitas geradas`);
-      console.log(`   - ${skipped} pulados (sem customer_id ou weekdays)`);
-      console.log(`   - ${errors} erros`);
-      return { processed, generated, errors, corrected };
+      // Rede de segurança: nenhuma pendência futura em domingo.
+      try {
+        await db.execute(sql`
+          DELETE FROM visit_agenda
+          WHERE visit_status = 'pending' AND EXTRACT(DOW FROM scheduled_date) = 0
+            AND scheduled_date >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '1 day')`);
+      } catch { /* noop */ }
+      console.log(`✅ [VISIT-SCHEDULER] Concluído: ${processed} processados, ${generated} visitas geradas, ${errors} erros`);
+      return { processed, generated, errors, corrected: 0 };
     } catch (error: any) {
       console.error(`❌ [VISIT-SCHEDULER] Erro crítico:`, error.message);
       return { processed: 0, generated: 0, errors: 1 };

@@ -34,6 +34,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { registerHolidaysRoutes } from "./holidays-routes";
+import { registerHorarioFornecedorRoutes } from "./horario-fornecedor-routes";
 import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { registerFichaLogisticaRoutes } from "./ficha-logistica";
 import { registerTemperaturaEntregasRoutes } from "./temperatura-entregas";
@@ -85,6 +86,7 @@ import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
 import { registerSellerDocumentsRoutes } from './seller-documents-routes';
 import { registerResumoRecebiveisRoutes } from './resumo-recebiveis-routes';
+import { registerTrocaRegistrosRoutes } from './troca-registros-routes';
 import { registerChecklistIndustriaRoutes } from './checklist-industria-routes';
 import { registerTrocasIndustriaRoutes } from './trocas-industria-routes';
 import { registerRastreabilidadeLoteRoutes } from './rastreabilidade-lote-routes';
@@ -416,6 +418,8 @@ run();
   // index.html do SPA ("Failed to parse JSON response"). Re-registrado. (29/jul/2026)
   registerChangeRequestsRoutes(app);
   try { registerHolidaysRoutes(app); } catch (e) { console.error('[feriados]', e); }
+  // Horário de atendimento ao FORNECEDOR (marcado pelo vendedor no card da Rota do Dia).
+  try { registerHorarioFornecedorRoutes(app); } catch (e) { console.error('[horario-fornecedor]', e); }
   try { const { registerPresentialMonthlyJob } = await import('./presential-monthly-job'); registerPresentialMonthlyJob(app); } catch (e) { console.error('[visita-mensal]', e); }
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
@@ -3245,6 +3249,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // comissao, bonus e km por colaborador no mes — 18/out/2026.
   // Rotas /api/resumo-recebiveis*.
   try { registerResumoRecebiveisRoutes(app); } catch (e) { console.error('[resumo-receb]', e); }
+  try { registerTrocaRegistrosRoutes(app); } catch (e) { console.error('[troca-registros]', e); }
 
   // Check-list da industria (modelos + execucoes com foto, responsavel e
   // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
@@ -3546,8 +3551,12 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   app.post("/api/webhooks/bb-boleto", webhookTokenGuard, async (req, res) => {
     try {
       const payload = req.body || {};
-      try { await db.execute(sql`INSERT INTO webhook_debug_log (raw_remote_jid, payload, created_at) VALUES (${'BB-BOLETO'}, ${JSON.stringify(payload)}, now())`); } catch {}
+      // FIX (26/10/2026): a coluna da tabela e raw_payload (nao 'payload'); o INSERT
+      // falhava em silencio e NENHUM webhook do BB ficou gravado — sem trilha para
+      // apurar os boletos liquidados sem baixa de 12-13/10.
+      try { await db.execute(sql`INSERT INTO webhook_debug_log (raw_remote_jid, raw_payload, created_at) VALUES (${'BB-BOLETO'}, ${JSON.stringify(payload)}, now())`); } catch (e: any) { console.warn('[BB-BOLETO] webhook_debug_log falhou:', e?.message); }
       const out = await processBoletoWebhook(payload);
+      console.log(`[BB-BOLETO] webhook processado: ${JSON.stringify(out).slice(0, 600)}`);
       res.status(200).json({ ok: true, ...out });
     } catch (e: any) { res.status(200).json({ ok: false, error: e?.message || String(e) }); }
   });
@@ -3556,7 +3565,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Batch (cron-friendly, GET): dispara em 2o plano a varredura de boletos em aberto e baixa os pagos.
   app.get("/api/admin/boleto/check-open", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
-      const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 2000);
+      const limit = Math.min(parseInt(String((req.query as any).limit || "600"), 10) || 600, 2000);
       const days = parseInt(String((req.query as any).days || "120"), 10) || 120;
       // FASE 1c - a varredura roda no agendador interno; aqui apenas dispara sob demanda.
       void sweepOpenBoletos(limit, days);
@@ -3716,18 +3725,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const recId = req.params.id;
       const resolved = await boletoParamsFromReceivable(recId);
       if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado, ja quitado ou cancelado" });
-      // SERV (PURO SERVICOS, CNPJ ...0105) nao emite PIX — mesma regra do hook de faturamento.
-      try {
-        const _ref = String(resolved.omieInstanceId || '');
-        if (_ref) {
-          const iq: any = await db.execute(sql`SELECT name, cnpj FROM omie_instances WHERE id = ${_ref} LIMIT 1`);
-          const _row = iq.rows?.[0];
-          const _c = String(_row?.cnpj || '').replace(/\D/g, '');
-          if (String(_row?.name || '').toUpperCase() === 'SERV' || _c === '52921727000105') {
-            return res.status(422).json({ error: "A instancia SERV nao emite PIX — mantenha o boleto." });
-          }
-        }
-      } catch { /* sem instancia resolvida: segue */ }
+      // [22/out/2026] SERV volta a emitir PIX pela conta do IND (guard de 06/jul removido).
       const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
       const accId = accq.rows?.[0]?.id;
       if (!accId) return res.status(422).json({ error: "nenhuma conta com PIX BB habilitado" });
@@ -3936,18 +3934,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       if (ex.rows?.[0]) return res.json({ ok: true, success: true, alreadyExists: true, pixChargeId: ex.rows[0].id, viewUrl: `/api/pix-view/${ex.rows[0].id}` });
       const resolved = await boletoParamsFromReceivable(recId);
       if (!resolved) return res.status(404).json({ error: "recebivel nao encontrado, ja quitado ou cancelado" });
-      // SERV (PURO SERVICOS, CNPJ ...0105) nao emite PIX — decisao de 06/jul, a mesma do hook.
-      try {
-        const _ref = String(resolved.omieInstanceId || '');
-        if (_ref) {
-          const iq: any = await db.execute(sql`SELECT name, cnpj FROM omie_instances WHERE id = ${_ref} LIMIT 1`);
-          const _row = iq.rows?.[0];
-          const _c = String(_row?.cnpj || '').replace(/\D/g, '');
-          if (String(_row?.name || '').toUpperCase() === 'SERV' || _c === '52921727000105') {
-            return res.status(422).json({ error: "A instancia SERV nao emite PIX — gere boleto.", pixIndisponivel: true });
-          }
-        }
-      } catch { /* sem instancia resolvida: segue e deixa o BB decidir */ }
+      // [22/out/2026] SERV volta a emitir PIX pela conta do IND (guard de 06/jul removido).
       const accq: any = await db.execute(sql`SELECT id FROM financial_accounts WHERE bb_pix_enabled = true AND pix_key IS NOT NULL ORDER BY (omie_instance_id = ${resolved.omieInstanceId}) DESC NULLS LAST LIMIT 1`);
       const accId = accq.rows?.[0]?.id;
       if (!accId) return res.status(422).json({ error: "nenhuma conta com PIX BB habilitado", pixIndisponivel: true });
@@ -4963,11 +4950,15 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const text =
         "SELECT bp.id AS item_id, r.id AS receivable_id, fi.id AS fiscal_invoice_id, " +
         "COALESCE((SELECT to_jsonb(b) FROM boleto_charges b WHERE b.receivable_id = r.id ORDER BY b.created_at DESC LIMIT 1), " +
+        "(SELECT to_jsonb(b) FROM boleto_charges b WHERE r.id IS NOT NULL AND b.id IN (SELECT jr.boleto_charge_id FROM boleto_charge_receivables jr WHERE jr.receivable_id = r.id) AND b.status NOT IN ('cancelado','cancelada') ORDER BY b.created_at DESC LIMIT 1), " +
         "(SELECT to_jsonb(b) FROM boleto_charges b WHERE fi.id IS NOT NULL AND b.fiscal_invoice_id = fi.id ORDER BY b.created_at DESC LIMIT 1)) AS boleto, " +
         "(SELECT to_jsonb(p) FROM pix_charges p WHERE p.receivable_id = r.id ORDER BY p.created_at DESC LIMIT 1) AS pix " +
         "FROM billing_pipeline bp " +
         "LEFT JOIN receivables r ON r.billing_pipeline_id = bp.id " +
-        "LEFT JOIN fiscal_invoices fi ON fi.invoice_number::text = regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g') " +
+        // [22/out/2026] NUNCA casar a NF so pelo numero: cada CNPJ tem numeracao propria e o mesmo
+        // numero existe em SERV/BSB/GYN — a NF-104170 da Super Box (SERV) puxou o boleto do Mercado
+        // Coqueiro (BSB). Vinculo real: o titulo (fiscal_invoice_id). Sem titulo, numero + MESMO cliente.
+        "LEFT JOIN fiscal_invoices fi ON fi.id = COALESCE(r.fiscal_invoice_id, (SELECT f2.id FROM fiscal_invoices f2 WHERE r.id IS NULL AND f2.customer_id = bp.customer_id AND f2.invoice_number::text = regexp_replace(COALESCE(bp.invoice_number, ''), '[^0-9]', '', 'g') AND f2.status NOT IN ('cancelled','cancelada') ORDER BY f2.created_at DESC LIMIT 1)) " +
         "WHERE bp.id IN (" + inList + ")";
       const rows = (await db.execute(sql.raw(text))).rows;
       res.json(rows);
@@ -5020,7 +5011,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
   // volta no card) — então a impressão "completo"/DANFE saía SEM a nota. Aqui achamos a NF
   // pelo cartão de venda (à prova de colisão de número entre emitentes/clientes), retornamos
   // no MESMO formato do /batch e AINDA cicatrizamos o card (grava o NF-xxxx que faltava).
-  app.post("/api/billing-pipeline/danfes", async (req, res) => {
+  app.post("/api/billing-pipeline/danfes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'industria']), async (req, res) => {
     try {
       const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
       const valid = ids.filter((x: any) => typeof x === "string" && /^[0-9a-fA-F-]{36}$/.test(x));
@@ -5053,7 +5044,13 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
           const inv: any = await storage.getFiscalInvoice(nf.id);
           if (!inv) continue;
           const invItems = await storage.getFiscalInvoiceItems(nf.id);
-          results.push({ itemId: id, ...inv, items: invItems });
+          // FATURA/DUPLICATA espelhada nos titulos (mesma regra do /api/fiscal-invoices/batch).
+          let duplicatas: any[] = [];
+          try {
+            const dq: any = await db.execute(sql`SELECT due_date, amount, payment_method, title_number FROM receivables WHERE fiscal_invoice_id = ${nf.id} AND deleted_at IS NULL AND COALESCE(status::text,'') <> 'cancelada' ORDER BY due_date ASC, title_number ASC`);
+            duplicatas = (dq?.rows ?? dq ?? []).map((r: any, i: number) => ({ nDup: String(i + 1).padStart(3, '0'), dVenc: r.due_date ? new Date(r.due_date).toISOString().slice(0, 10) : null, vDup: Number(parseFloat(String(r.amount || '0')).toFixed(2)), paymentMethod: r.payment_method || null, titleNumber: r.title_number || null }));
+          } catch {}
+          results.push({ itemId: id, ...inv, items: invItems, duplicatas });
           // Cicatriza o card: grava o número da NF que faltava (idempotente).
           if (!item.invoiceNumber && nf.invoice_number) {
             try { await storage.updateBillingPipelineItem(id, { invoiceNumber: `NF-${nf.invoice_number}` } as any); } catch (e) {}
@@ -5910,4 +5907,27 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
   }, () => {
     log(`serving on port ${port}`);
   });
+
+  // ENCERRAMENTO GRACIOSO (26/10/2026). O Railway manda SIGTERM a cada redeploy (ate
+  // 30 por dia em 13/10). Sem tratar o sinal, o Node morre na hora e qualquer webhook
+  // do BB em andamento e cortado no meio — foi assim que boletos ficaram 'liquidado'
+  // com o titulo 'vencida'. Agora: para de aceitar conexoes novas, deixa as requisicoes
+  // em voo terminarem (ate 25 s) e so entao fecha o pool e sai. Respostas HTTP ja
+  // iniciadas nao sao interrompidas.
+  let encerrando = false;
+  const encerrar = (sinal: string) => {
+    if (encerrando) return;
+    encerrando = true;
+    console.log(`[SHUTDOWN] ${sinal} recebido — parando de aceitar conexoes e esperando as requisicoes em voo`);
+    const forcar = setTimeout(() => { console.warn('[SHUTDOWN] tempo esgotado (25 s) — saindo'); process.exit(0); }, 25_000);
+    forcar.unref();
+    server.close(() => {
+      import('./db').then(({ pool }) => pool.end().catch(() => {})).catch(() => {}).finally(() => {
+        console.log('[SHUTDOWN] concluido');
+        process.exit(0);
+      });
+    });
+  };
+  process.on('SIGTERM', () => encerrar('SIGTERM'));
+  process.on('SIGINT', () => encerrar('SIGINT'));
 })();

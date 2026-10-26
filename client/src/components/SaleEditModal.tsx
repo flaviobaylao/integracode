@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PaymentLinkDialog from "./PaymentLinkDialog";
+import TrocaAnteriorAviso from "./TrocaAnteriorAviso";
+import TrocaPreviaDesconto from "./TrocaPreviaDesconto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,6 +82,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // Ate TROCA_MAX_FOTOS imagens, vindas da camera OU da galeria/arquivos do PC.
   const [trocaPhotos, setTrocaPhotos] = useState<string[]>([]);
   const [uploadingTrocaPhoto, setUploadingTrocaPhoto] = useState(false);
+  // Troca: motivo obrigatorio (politica de trocas 23/10/2026). Fermentado exige a
+  // temperatura lida no display do refrigerador. Vencido = comercial, com desconto
+  // da comissao sobre o valor trocado.
+  const [trocaMotivo, setTrocaMotivo] = useState('');
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -151,6 +157,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setOperationType(card.operationType || 'venda');
       setNotes(card.notes || '');
       setTrocaPhotos([]);
+      setTrocaMotivo('');
       setGravandoObs(false);
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
@@ -678,6 +685,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       });
       return;
     }
+    // 🔒 TRAVA Troca: motivo obrigatório (Fermentado, Lacre, Tampa ou Vencido).
+    if (operationType === 'troca' && !trocaMotivo) {
+      toast({
+        title: 'Motivo da troca obrigatório',
+        description: 'Selecione o motivo da troca: Fermentado, Lacre, Tampa, Avaria/deformação/rótulo ou Vencido.',
+        variant: 'destructive',
+      });
+      return;
+    }
     // 🔒 TRAVA Troca: foto dos produtos obrigatória.
     if (operationType === 'troca' && trocaPhotos.length === 0) {
       toast({
@@ -752,6 +768,28 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       }
       // Primeiro finalizar a venda
       await handleFinalizeSale();
+
+      // Troca: registra o motivo (e, se vencido, o desconto de comissão). Não bloqueia o envio.
+      if (operationType === 'troca' && trocaMotivo) {
+        try {
+          const _r = await fetch(`/api/sales-cards/${card.id}/troca-motivo`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ motivo: trocaMotivo }),
+          });
+          if (!_r.ok) throw new Error((await _r.json().catch(() => ({})))?.message || 'Falha ao registrar o motivo');
+          const _d = await _r.json();
+          if (trocaMotivo === 'vencido' && Number(_d?.desconto) > 0) {
+            toast({
+              title: 'Troca por vencimento registrada',
+              description: `Valor da troca R$ ${Number(_d.valorTroca).toFixed(2).replace('.', ',')} — desconto de comissão R$ ${Number(_d.desconto).toFixed(2).replace('.', ',')} (${Number(_d.pct).toFixed(2).replace('.', ',')}%).`,
+            });
+          }
+        } catch (e: any) {
+          toast({ title: 'Motivo da troca não registrado', description: e?.message || 'Tente novamente.', variant: 'destructive' });
+        }
+      }
       
       // Aguardar um pouco para garantir que a venda foi salva
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -1760,6 +1798,47 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   data-testid="textarea-notes"
                 />
               </div>
+
+              {/* Troca: motivo obrigatório (política de trocas). Vencido desconta comissão. */}
+              {operationType === 'troca' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <div>
+                    <Label>Motivo da troca <span className="text-red-600">*</span></Label>
+                    <Select value={trocaMotivo} onValueChange={setTrocaMotivo}>
+                      <SelectTrigger data-testid="select-troca-motivo">
+                        <SelectValue placeholder="Selecione o motivo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fermentado">Fermentado</SelectItem>
+                        <SelectItem value="lacre">Lacre</SelectItem>
+                        <SelectItem value="tampa">Tampa</SelectItem>
+                        <SelectItem value="avaria">Avaria / deformação / rótulo</SelectItem>
+                        <SelectItem value="vencido">Vencido</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {trocaMotivo && (
+                    <TrocaAnteriorAviso customerId={(card as any)?.customerId} motivo={trocaMotivo} />
+                  )}
+                  {/* Foto exigida por motivo (25/10/2026): a temperatura não é digitada —
+                      no fermentado a prova é a foto do display do refrigerador. */}
+                  {trocaMotivo && (
+                    <div className="flex items-start gap-2 rounded-md border-2 border-red-500 bg-red-100 px-3 py-2 text-sm font-bold text-red-800" data-testid="aviso-foto-troca">
+                      <Camera className="h-5 w-5 mt-0.5 shrink-0" />
+                      <span>
+                        {trocaMotivo === 'fermentado' && 'OBRIGATÓRIO: foto do DISPLAY DE TEMPERATURA do refrigerador do cliente.'}
+                        {trocaMotivo === 'lacre' && 'OBRIGATÓRIO: foto nítida do LACRE com problema.'}
+                        {trocaMotivo === 'tampa' && 'OBRIGATÓRIO: foto nítida da TAMPA com problema.'}
+                        {trocaMotivo === 'avaria' && 'OBRIGATÓRIO: foto nítida do item com a AVARIA / DEFORMAÇÃO / RÓTULO com problema.'}
+                        {trocaMotivo === 'vencido' && 'OBRIGATÓRIO: foto nítida da MARCAÇÃO DE VALIDADE.'}
+                      </span>
+                    </div>
+                  )}
+                  {trocaMotivo === 'vencido' && (
+                    <TrocaPreviaDesconto cardId={card?.id} products={products} />
+                  )}
+                </div>
+              )}
 
               {/* Troca: fotos obrigatórias dos produtos (câmera OU galeria/arquivos, até 3) */}
               {operationType === 'troca' && (

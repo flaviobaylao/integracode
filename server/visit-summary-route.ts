@@ -62,7 +62,9 @@ export function registerVisitSummary(app: Express) {
       // Check-in (visita efetuada) — sales_cards.check_in_time (esparso; gap conhecido)
       const checkins = await q(`SELECT customer_id, (scheduled_date)::date::text AS d FROM sales_cards WHERE scheduled_date IS NOT NULL AND ${winSC} AND check_in_time IS NOT NULL AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // Pedidos (billing_pipeline)
-      const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n FROM billing_pipeline WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+      // vendedores = quem LANCOU o(s) pedido(s) do dia (pode diferir do vendedor da carteira:
+      // telemarketing, hotsite, outro vendedor cobrindo a rota). Vai para o tooltip da celula.
+      const orders = await q(`SELECT customer_id, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d, COALESCE(SUM(sale_value),0) AS v, COUNT(*) AS n, STRING_AGG(DISTINCT NULLIF(TRIM(seller_name), ''), ', ') AS vendedores FROM billing_pipeline WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
       // FATURAMENTOS reais (ultimos ~130 dias) p/ a coluna "Efetividade em vendas" (bolinhas por ciclo).
       // VERDE = houve FATURAMENTO no ciclo. Data de faturamento = data em que o card do pipeline chegou
       // a etapa 'faturado' (changedAt no stage_history). Somente INTEGRA 2.0 (sem Omie). O changedAt e
@@ -95,11 +97,11 @@ export function registerVisitSummary(app: Express) {
       const metaMap = new Map<string, number>();
       for (const m of metas) metaMap.set(m.customer_id, Number(m.meta) || 0);
 
-      type Cell = { isScheduled: boolean; hasVisit: boolean; hasOrder: boolean; hasVirtualAttendance: boolean; orderValue: number };
+      type Cell = { isScheduled: boolean; hasVisit: boolean; hasOrder: boolean; hasVirtualAttendance: boolean; orderValue: number; orderSellerName: string };
       const checkinMap = new Map<string, Set<string>>();
       for (const c of checkins) { let s = checkinMap.get(c.customer_id); if (!s) { s = new Set(); checkinMap.set(c.customer_id, s); } s.add(c.d); }
       const orderMap = new Map<string, Map<string, any>>();
-      for (const o of orders) { let m = orderMap.get(o.customer_id); if (!m) { m = new Map(); orderMap.set(o.customer_id, m); } m.set(o.d, { v: Number(o.v) || 0, n: Number(o.n) || 0 }); }
+      for (const o of orders) { let m = orderMap.get(o.customer_id); if (!m) { m = new Map(); orderMap.set(o.customer_id, m); } m.set(o.d, { v: Number(o.v) || 0, n: Number(o.n) || 0, s: String(o.vendedores || '') }); }
       const virtMap = new Map<string, Set<string>>();
       for (const v of virt) { let s = virtMap.get(v.customer_id); if (!s) { s = new Set(); virtMap.set(v.customer_id, s); } s.add(v.d); }
       const allDates: string[] = [];
@@ -116,12 +118,12 @@ export function registerVisitSummary(app: Express) {
         const om = orderMap.get(cid);
         const vm = virtMap.get(cid);
         const cells = new Map<string, Cell>();
-        const ensure = (d: string): Cell => { let c = cells.get(d); if (!c) { c = { isScheduled: false, hasVisit: false, hasOrder: false, hasVirtualAttendance: false, orderValue: 0 }; cells.set(d, c); } return c; };
+        const ensure = (d: string): Cell => { let c = cells.get(d); if (!c) { c = { isScheduled: false, hasVisit: false, hasOrder: false, hasVirtualAttendance: false, orderValue: 0, orderSellerName: '' }; cells.set(d, c); } return c; };
         for (const d of allDates) { if (isPlanned(d, dows, cl.periodicity)) ensure(d).isScheduled = true; }
         if (ci) for (const d of ci) ensure(d).hasVisit = true;
-        if (om) for (const [d, o] of om) { const c = ensure(d); c.hasOrder = o.n > 0; c.orderValue = o.v; }
+        if (om) for (const [d, o] of om) { const c = ensure(d); c.hasOrder = o.n > 0; c.orderValue = o.v; c.orderSellerName = o.s || ''; }
         if (vm) for (const d of vm) ensure(d).hasVirtualAttendance = true;
-        const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
+        const visits = Array.from(cells.entries()).map(([d, cell]) => ({ date: d, isPast: d <= todayStr, isScheduled: cell.isScheduled, hasVisit: cell.hasVisit, hasOrder: cell.hasOrder, hasVirtualAttendance: cell.hasVirtualAttendance, orderValue: cell.orderValue, orderSellerName: cell.orderSellerName, metaValue: meta, nextSaleValue: 0, visitStatus: null }));
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
         // Verde = pedido; amarelo = atendido sem pedido; vermelho = nada; sem cor = a visita
         // do ciclo corrente ainda nao chegou. O gatilho da repescagem continua no computeCycles.
