@@ -2,7 +2,9 @@
 //
 // Regra da transportadora:
 //   Cleber   : pedidos que entraram na raia "Pedidos" de QUINTA a TERCA  -> entrega QUARTA  -> envia QUARTA  18h
-//   Radilton : pedidos que entraram na raia "Pedidos" de TERCA  a SEXTA  -> entrega SEGUNDA -> envia SEGUNDA 18h
+//   Radilton : pedidos que entraram na raia "Pedidos" de TERCA  a SEXTA  -> entrega SEGUNDA -> envia SEGUNDA e SEXTA 18h
+//              ACUMULADO DO MES: do dia 1 do mes ate a data do envio (nos primeiros 3 dias do mes,
+//              ainda manda o acumulado do mes anterior inteiro).
 //
 // Colunas: Cliente, data de entrada do pedido (raia Pedidos), data de entrega (raia Entregue) e
 // dias entre as duas datas. Desconsidera pedidos excluidos (raia Lixeira).
@@ -20,7 +22,7 @@ interface VendCfg { id: string; nome: string; janela: "cleber" | "radilton"; des
 
 const VENDEDORES: Record<VendKey, VendCfg> = {
   cleber:   { id: "883af1f5-0400-40b5-8add-091a29bbbe1e", nome: "Cleber",   janela: "cleber",   destinos: ["5561999875248", "5562994511997"] },
-  radilton: { id: "e9149282-adfc-448e-8d0e-a07765a06637", nome: "Radilton", janela: "radilton", destinos: ["5561998201773", "5562994511997"] },
+  radilton: { id: "e9149282-adfc-448e-8d0e-a07765a06637", nome: "Radilton", janela: "radilton", destinos: ["5562994511997", "5562995782812", "5562993275962", "5561998201773"] }, // Cinthia, Flavio, Lanucy, Radilton
 };
 
 // "hoje" em America/Sao_Paulo como YYYY-MM-DD
@@ -36,7 +38,13 @@ function addDias(iso: string, n: number): string {
 // baseISO = data do envio (quarta p/ Cleber, segunda p/ Radilton)
 function janela(tipo: "cleber" | "radilton", baseISO: string): { from: string; to: string } {
   if (tipo === "cleber") return { from: addDias(baseISO, -6), to: addDias(baseISO, -1) }; // qui -> ter
-  return { from: addDias(baseISO, -6), to: addDias(baseISO, -3) };                        // ter -> sex
+  // acumulado do mes ate a data-base; nos dias 1-3 manda o mes anterior completo
+  const [y, m, d] = baseISO.split("-").map(Number);
+  if (d <= 3) {
+    const ultimo = addDias(`${y}-${String(m).padStart(2, "0")}-01`, -1);
+    return { from: ultimo.slice(0, 8) + "01", to: ultimo };
+  }
+  return { from: baseISO.slice(0, 8) + "01", to: baseISO };
 }
 function fmtBR(iso?: string | null): string {
   if (!iso) return "—";
@@ -75,29 +83,28 @@ async function gerarRows(v: VendCfg, jan: { from: string; to: string }) {
   return rows;
 }
 
-function montarTexto(v: VendCfg, jan: { from: string; to: string }, rows: any[]): string {
-  // Cabecalho em negrito (fonte normal) FORA do bloco; a lista vai dentro de um bloco
-  // monospace (```), que o WhatsApp renderiza numa fonte menor e mais compacta no mobile.
-  const L: string[] = [];
-  L.push(`📦 *Entregas — ${v.nome}*  ·  ${fmtBR(jan.from)} a ${fmtBR(jan.to)}`);
-  if (!rows.length) {
-    L.push("");
-    L.push("_Nenhum pedido na janela._");
-    return L.join("\n");
-  }
-  let total = 0;
-  const body: string[] = [];
+function montarTexto(v: VendCfg, jan: { from: string; to: string }, rows: any[]): string[] {
+  // Cabecalho em negrito FORA do bloco; a lista vai num bloco monospace (```), mais compacta no mobile.
+  // O acumulado do mes passa do limite do WhatsApp (~2000 chars): quebra em partes.
+  const titulo = `📦 *Entregas — ${v.nome}${v.janela === "radilton" ? " (acumulado do mês)" : ""}*  ·  ${fmtBR(jan.from)} a ${fmtBR(jan.to)}`;
+  if (!rows.length) return [titulo + "\n\n_Nenhum pedido na janela._"];
+  let total = 0, entregues = 0;
+  const linhas: string[] = [];
   rows.forEach((r, i) => {
     const dd = diasEntre(r.dataPedido, r.dataEntrega);
     total += parseFloat(String(r.valor || 0)) || 0;
-    body.push(`${i + 1}. ${r.cliente} · ${fmtBR(r.dataPedido).slice(0, 5)}→${fmtBR(r.dataEntrega).slice(0, 5)} (${dd == null ? "—" : dd + "d"})`);
+    if (r.dataEntrega) entregues++;
+    linhas.push(`${i + 1}. ${r.cliente} · ${fmtBR(r.dataPedido).slice(0, 5)}→${fmtBR(r.dataEntrega).slice(0, 5)} (${dd == null ? "—" : dd + "d"})`);
   });
-  body.push("");
-  body.push(`Total: ${rows.length} ped · R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`);
-  L.push("```");
-  L.push(body.join("\n"));
-  L.push("```");
-  return L.join("\n");
+  const rodape = ["", `Total: ${rows.length} ped · R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, `Entregues: ${entregues} · Pendentes: ${rows.length - entregues}`];
+  const partes: string[][] = [];
+  let cur: string[] = [], tam = 0;
+  for (const l of linhas) {
+    if (tam + l.length + 1 > 1600 && cur.length) { partes.push(cur); cur = []; tam = 0; }
+    cur.push(l); tam += l.length + 1;
+  }
+  partes.push(cur.concat(rodape));
+  return partes.map((p, i) => `${titulo}${partes.length > 1 ? `  ·  parte ${i + 1}/${partes.length}` : ""}\n\`\`\`\n${p.join("\n")}\n\`\`\``);
 }
 
 export async function gerarRelatorio(vk: VendKey, baseISO?: string) {
@@ -112,20 +119,23 @@ export async function enviarRelatorio(vk: VendKey, opts?: { baseISO?: string; to
   const destinos = opts?.toOverride && opts.toOverride.length ? opts.toOverride : vend.destinos;
   const res: any[] = [];
   for (const to of destinos) {
-    try {
-      const r = await sendUmblerTalkText(to, texto, CANAL_ENVIO);
-      res.push({ to, ...r });
-    } catch (e: any) {
-      res.push({ to, success: false, error: e?.message || String(e) });
+    for (const parte of texto) {
+      try {
+        const r = await sendUmblerTalkText(to, parte, CANAL_ENVIO);
+        res.push({ to, ...r });
+      } catch (e: any) {
+        res.push({ to, success: false, error: e?.message || String(e) });
+      }
+      await new Promise((ok) => setTimeout(ok, 1500));
     }
   }
   return { vend: vend.nome, enviados: res };
 }
 
 export function registerRelatorioEntregas(app: Express): void {
-  // Crons (America/Sao_Paulo): Radilton segunda 18h; Cleber quarta 18h.
+  // Crons (America/Sao_Paulo): Radilton segunda e sexta 18h; Cleber quarta 18h.
   try {
-    cron.schedule("0 18 * * 1", () => {
+    cron.schedule("0 18 * * 1,5", () => {
       enviarRelatorio("radilton")
         .then((r) => console.log("[REL-ENTREGAS] radilton:", JSON.stringify(r)))
         .catch((e) => console.error("[REL-ENTREGAS] radilton:", e?.message));
@@ -135,7 +145,7 @@ export function registerRelatorioEntregas(app: Express): void {
         .then((r) => console.log("[REL-ENTREGAS] cleber:", JSON.stringify(r)))
         .catch((e) => console.error("[REL-ENTREGAS] cleber:", e?.message));
     }, { timezone: "America/Sao_Paulo" });
-    console.log("[REL-ENTREGAS] crons registrados (radilton seg 18h, cleber qua 18h)");
+    console.log("[REL-ENTREGAS] crons registrados (radilton seg+sex 18h, cleber qua 18h)");
   } catch (e: any) {
     console.error("[REL-ENTREGAS] cron setup:", e?.message);
   }
