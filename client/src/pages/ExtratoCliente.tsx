@@ -976,7 +976,7 @@ export default function ExtratoCliente() {
                                 ))}
                               </td>
                               <td className="text-right whitespace-nowrap">{fmtBRL(t.valorTroca)}</td>
-                              <td className="whitespace-nowrap">{t.vendedorCard || t.vendedorNf || "—"}</td>
+                              <td className="whitespace-nowrap">{t.vendedorNf || t.vendedorCard || "—"}</td>
                               <td className="whitespace-nowrap">{t.nfNumero ? `NF ${t.nfNumero} · ${fmtData(t.nfData)}` : "—"}</td>
                               <td className="text-right whitespace-nowrap text-red-700">{t.desconto > 0 ? `− ${fmtBRL(t.desconto)}` : "—"}</td>
                               <td className="text-xs text-gray-600 dark:text-gray-300 max-w-[22rem] whitespace-pre-line">{t.observacao || "—"}</td>
