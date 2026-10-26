@@ -79,6 +79,7 @@ function casaTermos(texto: string, busca: string): boolean {
   const t = String(texto || "").toLowerCase();
   return termos.some((q) => t.includes(q));
 }
+function fmtMinM(m: number): string { const v = Math.max(0, Math.round(Number(m) || 0)); return v >= 60 ? `${Math.floor(v / 60)}h${String(v % 60).padStart(2, "0")}m` : `${v}m`; }
 function fmtDiaCurto(iso: string): string { const [, m, d] = (iso || "").split("-"); return d ? `${d}/${m}` : iso; }
 function fmtKm(n: number): string { return (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function fmtBRL(n: number): string { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -329,9 +330,9 @@ export default function KmVendedores() {
   const totalJornadaMin = jornadas.reduce((a, j) => a + (j.fim - j.ini), 0);
 
   function exportarTrechos() {
-    const headers = ["Dia", "Vendedor", "De", "Para", "Check-in no De", "Saida (estim.)", "Chegada", "Km", "Min deslocamento", "Min atendimento (estim.)", "Tipo"];
-    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, t.saida, saidaEst(t), t.chegada, t.km, t.min, atendMin(t) ?? "", t.tipo]);
-    const totalRow: any[] = ["Total", "", "", "", "", "", Number(totalTrechosKm.toFixed(1)), totalTrechosMin, totalAtendMin, ""];
+    const headers = ["Dia", "Vendedor", "De", "Para", "Saida", "Km", "Chegada", "Tempo de desloc. (min)", "Tempo estimado atendimento (min)", "Tipo"];
+    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, saidaEst(t), t.km, t.chegada, t.min, atendMin(t) ?? "", t.tipo]);
+    const totalRow: any[] = ["Total", "", "", "", "", Number(totalTrechosKm.toFixed(1)), "", totalTrechosMin, totalAtendMin, ""];
     const linhas = [...dataRows, totalRow].map((linha) =>
       Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
     );
@@ -698,12 +699,11 @@ export default function KmVendedores() {
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">De</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Para</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no ponto de partida (De). Na ida (casa) fica “—”.">Check-in<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Saída estimada do De = check-in + tempo de atendimento. Na ida, saída de casa = chegada no 1º cliente − deslocamento.">Saída<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no destino (Para). No retorno fica “—” (não há check-in em casa).">Chegada<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b">Km</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Minutos de deslocamento do trecho pela rota de ruas (OSRM), não o tempo entre check-ins.">Min<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Tempo de atendimento ESTIMADO no cliente de partida (De): intervalo entre os dois check-ins menos o deslocamento. Inclui espera e estacionar. Ida, retorno e acréscimo ficam “—”.">Atend.<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no destino (Para). No retorno fica “—” (não há check-in em casa).">Chegada<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Minutos de deslocamento do trecho pela rota de ruas (OSRM), não o tempo entre check-ins.">Tempo de desloc.<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Tempo de atendimento ESTIMADO no cliente de partida (De): intervalo entre os dois check-ins menos o deslocamento. Inclui espera e estacionar. Ida, retorno e acréscimo ficam “—”.">Tempo estimado Atendimento<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-center font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="urbano: trecho < 10 km · intermunicipal: ≥ 10 km · ida: casa → 1º check-in · retorno: último check-in → casa · acréscimo: +10% da km do dia · prospecção: visita a lead · mesmo ponto: 0 km.">Tipo<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                       </tr>
                     </thead>
@@ -714,22 +714,22 @@ export default function KmVendedores() {
                           <td className="py-2 px-3 whitespace-nowrap">{t.sellerName}</td>
                           <td className="py-2 px-3">{t.de}</td>
                           <td className="py-2 px-3">{t.para}</td>
-                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.saida || "—"}</td>
                           <td className="py-2 px-3 text-right tabular-nums">{saidaEst(t)}</td>
-                          <td className="py-2 px-3 text-right tabular-nums">{t.chegada || "—"}</td>
                           <td className="py-2 px-3 text-right tabular-nums font-semibold">{fmtKm(t.km)}</td>
-                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.min}</td>
-                          <td className="py-2 px-3 text-right tabular-nums">{atendMin(t) ?? "—"}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{t.chegada || "—"}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtMinM(t.min)}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{atendMin(t) == null ? "—" : fmtMinM(atendMin(t) as number)}</td>
                           <td className="py-2 px-3 text-center"><span className={`chip-tipo tipo-${t.tipo === "intermunicipal" ? "i" : t.tipo === "retorno" ? "r" : t.tipo === "prospecção" ? "p" : t.tipo === "mesmo ponto" ? "z" : t.tipo === "ida" ? "a" : t.tipo === "acréscimo" ? "x" : "u"}`}>{t.tipo}</span></td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 bg-muted/30 font-bold">
-                        <td className="py-2 px-3" colSpan={7}>Total</td>
+                        <td className="py-2 px-3" colSpan={5}>Total</td>
                         <td className="py-2 px-3 text-right tabular-nums">{fmtKm(totalTrechosKm)}</td>
-                        <td className="py-2 px-3 text-right tabular-nums">{totalTrechosMin}</td>
-                        <td className="py-2 px-3 text-right tabular-nums">{totalAtendMin}</td>
+                        <td></td>
+                        <td className="py-2 px-3 text-right tabular-nums">{fmtHM(totalTrechosMin)}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{fmtHM(totalAtendMin)}</td>
                         <td></td>
                       </tr>
                     </tfoot>
