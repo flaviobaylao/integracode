@@ -2,7 +2,8 @@
 //
 // Regra da transportadora:
 //   Cleber   : pedidos que entraram na raia "Pedidos" de QUINTA a TERCA  -> entrega QUARTA  -> envia QUARTA  18h
-//   Radilton : pedidos que entraram na raia "Pedidos" de TERCA  a SEXTA  -> entrega SEGUNDA -> envia SEGUNDA 18h
+//   Radilton : pedidos que entraram na raia "Pedidos" de TERCA  a SEXTA  -> entrega SEGUNDA -> envia SEGUNDA e SEXTA 18h
+//              (segunda: bloco ter-sex da semana anterior; sexta: bloco ter-sex da semana corrente)
 //
 // Colunas: Cliente, data de entrada do pedido (raia Pedidos), data de entrega (raia Entregue) e
 // dias entre as duas datas. Desconsidera pedidos excluidos (raia Lixeira).
@@ -20,7 +21,7 @@ interface VendCfg { id: string; nome: string; janela: "cleber" | "radilton"; des
 
 const VENDEDORES: Record<VendKey, VendCfg> = {
   cleber:   { id: "883af1f5-0400-40b5-8add-091a29bbbe1e", nome: "Cleber",   janela: "cleber",   destinos: ["5561999875248", "5562994511997"] },
-  radilton: { id: "e9149282-adfc-448e-8d0e-a07765a06637", nome: "Radilton", janela: "radilton", destinos: ["5561998201773", "5562994511997"] },
+  radilton: { id: "e9149282-adfc-448e-8d0e-a07765a06637", nome: "Radilton", janela: "radilton", destinos: ["5562994511997", "5562995782812", "5562993275962", "5561998201773"] }, // Cinthia, Flavio, Lanucy, Radilton
 };
 
 // "hoje" em America/Sao_Paulo como YYYY-MM-DD
@@ -36,7 +37,11 @@ function addDias(iso: string, n: number): string {
 // baseISO = data do envio (quarta p/ Cleber, segunda p/ Radilton)
 function janela(tipo: "cleber" | "radilton", baseISO: string): { from: string; to: string } {
   if (tipo === "cleber") return { from: addDias(baseISO, -6), to: addDias(baseISO, -1) }; // qui -> ter
-  return { from: addDias(baseISO, -6), to: addDias(baseISO, -3) };                        // ter -> sex
+  // ter -> sex do bloco mais recente: a sexta mais recente <= data-base (seg -> sexta anterior; sex -> a propria)
+  const [y, m, d] = baseISO.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const sexta = addDias(baseISO, -((dow - 5 + 7) % 7));
+  return { from: addDias(sexta, -3), to: sexta };
 }
 function fmtBR(iso?: string | null): string {
   if (!iso) return "—";
@@ -123,9 +128,9 @@ export async function enviarRelatorio(vk: VendKey, opts?: { baseISO?: string; to
 }
 
 export function registerRelatorioEntregas(app: Express): void {
-  // Crons (America/Sao_Paulo): Radilton segunda 18h; Cleber quarta 18h.
+  // Crons (America/Sao_Paulo): Radilton segunda e sexta 18h; Cleber quarta 18h.
   try {
-    cron.schedule("0 18 * * 1", () => {
+    cron.schedule("0 18 * * 1,5", () => {
       enviarRelatorio("radilton")
         .then((r) => console.log("[REL-ENTREGAS] radilton:", JSON.stringify(r)))
         .catch((e) => console.error("[REL-ENTREGAS] radilton:", e?.message));
@@ -135,7 +140,7 @@ export function registerRelatorioEntregas(app: Express): void {
         .then((r) => console.log("[REL-ENTREGAS] cleber:", JSON.stringify(r)))
         .catch((e) => console.error("[REL-ENTREGAS] cleber:", e?.message));
     }, { timezone: "America/Sao_Paulo" });
-    console.log("[REL-ENTREGAS] crons registrados (radilton seg 18h, cleber qua 18h)");
+    console.log("[REL-ENTREGAS] crons registrados (radilton seg+sex 18h, cleber qua 18h)");
   } catch (e: any) {
     console.error("[REL-ENTREGAS] cron setup:", e?.message);
   }
