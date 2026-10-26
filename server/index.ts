@@ -72,6 +72,7 @@ import { registerReconciliation } from "./reconciliation-routes";
 import { initConferenciaAlerta } from "./conferencia-alerta";
 import { initAuditoriaEstoque, ensureAuditoriaEstoqueSchema } from "./auditoria-estoque";
 import { registerChargeGuarantee } from "./charge-guarantee-routes";
+import { registerAgenda } from "./agenda-routes";
 import { registerInstagram } from "./instagram-routes";
 import { registerLeadCapture } from "./lead-capture";
 import { sql } from "drizzle-orm";
@@ -953,6 +954,7 @@ run();
   initConferenciaAlerta(app); // Etapa 5 — alerta diario dos furos de gravidade alta
   initAuditoriaEstoque(app); // Auditoria de movimentações de estoque (20/out/2026): rotas + cron horário + alerta 07:40
   registerChargeGuarantee(app);
+  registerAgenda(app);
   registerInstagram(app);
   registerLeadCapture(app);
   registerDelegationRoutes(app);
