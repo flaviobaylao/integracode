@@ -1338,7 +1338,24 @@ export function registerNfeRoutes(app: Express) {
         }
       }
 
-      const originalItems = await storage.getFiscalInvoiceItems(req.params.id);
+      const todosItensOriginais = await storage.getFiscalInvoiceItems(req.params.id);
+      // 🧹 Linha fantasma (quantidade 0) da nota original NAO entra na devolucao.
+      // As NF 104366/104367 (31/ago/2026) foram autorizadas com item em QUANT 0;
+      // a trava ZERO_QTY_ITEM do sefaz-service barrava a devolucao inteira por
+      // causa dessa linha, que nem compoe o total. Devolve-se so o que tem
+      // quantidade; o itemNumber original e preservado (DFeReferenciado/nItem).
+      const qtdDe = (it: any) => {
+        const q = parseFloat(String(it?.quantity ?? '0').replace(',', '.'));
+        return Number.isFinite(q) ? q : 0;
+      };
+      const originalItems = todosItensOriginais.filter((it: any) => qtdDe(it) > 0);
+      const itensFantasma = todosItensOriginais.filter((it: any) => qtdDe(it) <= 0);
+      if (itensFantasma.length) {
+        console.warn(`🧹 [NF-e RETURN] NF ${originalInvoice.invoiceNumber}: ${itensFantasma.length} item(ns) sem quantidade ignorado(s) na devolucao: ${itensFantasma.map((it: any) => it.productName || it.productCode).join(', ')}`);
+      }
+      if (originalItems.length === 0) {
+        return res.status(400).json({ message: 'NF-e original não possui itens com quantidade para devolver' });
+      }
       const user = req.currentUser || req.user;
       // CFOP/natureza espelhados na nota original (transferencia devolve 1409/2409,
       // venda devolve 1202/2202) — antes era 1.202 fixo para tudo.
@@ -1364,6 +1381,8 @@ export function registerNfeRoutes(app: Express) {
             notes: `NF-e de DEVOLUÇÃO referente à NF-e nº ${originalInvoice.invoiceNumber || 'N/A'} (chave: ${originalInvoice.accessKey || 'N/A'}). Motivo: ${justification}`,
           } as any);
           for (const it of await storage.getFiscalInvoiceItems(prevId)) {
+            // Rascunho anterior pode ter herdado a linha fantasma — remove.
+            if (qtdDe(it) <= 0) { await storage.deleteFiscalInvoiceItem(it.id); continue; }
             await storage.updateFiscalInvoiceItem(it.id, { cfop: dev.cfopItem } as any);
           }
           console.log(`♻️ [NF-e RETURN] Reaproveitando devolução em ${returnInvoice.status} nº ${returnInvoice.invoiceNumber} (CFOP ${dev.cfopItem})`);
