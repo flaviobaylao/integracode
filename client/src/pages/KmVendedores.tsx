@@ -297,6 +297,14 @@ export default function KmVendedores() {
     if (!isFinite(iv) || iv < 0) return null;
     return Math.max(0, iv - (t.min || 0));
   };
+  // Saida ESTIMADA do ponto De = check-in no De + atendimento estimado (chegada no Para
+  // menos o deslocamento). Na ida, saida de casa = chegada no 1o cliente - deslocamento.
+  const saidaEst = (t: Trecho): string => {
+    if (t.tipo === "ida") return t.chegada ? fmtHora(hhmmMin(t.chegada) - (t.min || 0)) : "—";
+    const a = atendMin(t);
+    if (a != null && t.saida) return fmtHora(hhmmMin(t.saida) + a);
+    return t.saida || "—";
+  };
   const totalAtendMin = useMemo(() => trechosFiltrados.reduce((a, t) => a + (atendMin(t) || 0), 0), [trechosFiltrados]);
   // Jornada estimada por vendedor/dia: saida de casa = chegada no 1o cliente − tempo da ida;
   // fim = ultimo check-in + atendimento medio do dia (o ultimo cliente nao tem proximo
@@ -321,8 +329,8 @@ export default function KmVendedores() {
   const totalJornadaMin = jornadas.reduce((a, j) => a + (j.fim - j.ini), 0);
 
   function exportarTrechos() {
-    const headers = ["Dia", "Vendedor", "De", "Para", "Saida", "Chegada", "Km", "Min deslocamento", "Min atendimento (estim.)", "Tipo"];
-    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, t.saida, t.chegada, t.km, t.min, atendMin(t) ?? "", t.tipo]);
+    const headers = ["Dia", "Vendedor", "De", "Para", "Check-in no De", "Saida (estim.)", "Chegada", "Km", "Min deslocamento", "Min atendimento (estim.)", "Tipo"];
+    const dataRows = trechosFiltrados.map((t) => [fmtDiaCurto(t.dia), t.sellerName, t.de, t.para, t.saida, saidaEst(t), t.chegada, t.km, t.min, atendMin(t) ?? "", t.tipo]);
     const totalRow: any[] = ["Total", "", "", "", "", "", Number(totalTrechosKm.toFixed(1)), totalTrechosMin, totalAtendMin, ""];
     const linhas = [...dataRows, totalRow].map((linha) =>
       Object.fromEntries(headers.map((h, i) => [h, linha[i]])) as Record<string, any>,
@@ -690,7 +698,8 @@ export default function KmVendedores() {
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Vendedor</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">De</th>
                         <th className="text-left font-bold py-2 px-3 bg-background border-b">Para</th>
-                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no ponto de partida do trecho (De). Na ida (saindo de casa) fica “—”.">Saída<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no ponto de partida (De). Na ida (casa) fica “—”.">Check-in<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
+                        <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Saída estimada do De = check-in + tempo de atendimento. Na ida, saída de casa = chegada no 1º cliente − deslocamento.">Saída<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Hora do check-in no destino (Para). No retorno fica “—” (não há check-in em casa).">Chegada<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b">Km</th>
                         <th className="text-right font-bold py-2 px-3 bg-background border-b"><span className="inline-flex items-center gap-1" title="Minutos de deslocamento do trecho pela rota de ruas (OSRM), não o tempo entre check-ins.">Min<Info className="w-3 h-3 text-indigo-500 cursor-help" /></span></th>
@@ -705,7 +714,8 @@ export default function KmVendedores() {
                           <td className="py-2 px-3 whitespace-nowrap">{t.sellerName}</td>
                           <td className="py-2 px-3">{t.de}</td>
                           <td className="py-2 px-3">{t.para}</td>
-                          <td className="py-2 px-3 text-right tabular-nums">{t.saida || "—"}</td>
+                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.saida || "—"}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{saidaEst(t)}</td>
                           <td className="py-2 px-3 text-right tabular-nums">{t.chegada || "—"}</td>
                           <td className="py-2 px-3 text-right tabular-nums font-semibold">{fmtKm(t.km)}</td>
                           <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{t.min}</td>
@@ -716,7 +726,7 @@ export default function KmVendedores() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 bg-muted/30 font-bold">
-                        <td className="py-2 px-3" colSpan={6}>Total</td>
+                        <td className="py-2 px-3" colSpan={7}>Total</td>
                         <td className="py-2 px-3 text-right tabular-nums">{fmtKm(totalTrechosKm)}</td>
                         <td className="py-2 px-3 text-right tabular-nums">{totalTrechosMin}</td>
                         <td className="py-2 px-3 text-right tabular-nums">{totalAtendMin}</td>
