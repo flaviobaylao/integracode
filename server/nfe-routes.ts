@@ -25,7 +25,8 @@ const CERT_ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.SESSI
 // de transferencia tem CFOP proprio (1409/2409, 1152/2152) e, com 1202, entra na
 // apuracao como devolucao de venda — bagunca o livro fiscal das duas pontas.
 // A devolucao espelha o CFOP da original: 5->1, 6->2, 7->3, mesmo sufixo, com a
-// excecao das vendas (101/102/... viram 201/202), que e a regra do CFOP.
+// excecao das vendas (101/102/... viram 201/202) e das transferencias de GO
+// (5151/5152 viram 1208/1209 — devolucao de transferencia), que e a regra do CFOP.
 // ============================================================================
 const SUFIXO_DEVOLUCAO_VENDA: Record<string, string> = {
   '101': '201', '102': '202', '103': '201', '104': '202',
@@ -37,6 +38,13 @@ const SUFIXO_DEVOLUCAO_VENDA: Record<string, string> = {
   // Devolucao de venda com ST: 1410/2410 (producao propria, 5401/5402/6401/6402)
   // e 1411/2411 (mercadoria de terceiros, 5403/5405/6403/6404 — caso do BSB).
   '401': '410', '402': '410', '403': '411', '404': '411', '405': '411',
+  // DEVOLUCAO DE TRANSFERENCIA (Flavio, 19/out/2026): a transferencia entre os
+  // estabelecimentos de GO sai 5151 (producao) / 5152 (mercadoria adquirida) e a
+  // devolucao tem CFOP proprio — 1208/2208 (producao) e 1209/2209 (adquirida),
+  // "Devolucao de producao/mercadoria recebida em transferencia". O espelho
+  // "mesmo sufixo" devolvia 1151/1152, que sao CFOPs de ENTRADA por transferencia
+  // (a nota de quem RECEBE a transferencia), nao de devolucao.
+  '151': '208', '152': '209',
 };
 
 export function cfopDevolucao(cfopOriginal: string | null | undefined): { cfop: string; cfopItem: string; natureza: string } {
@@ -1340,8 +1348,8 @@ export function registerNfeRoutes(app: Express) {
 
       const originalItems = await storage.getFiscalInvoiceItems(req.params.id);
       const user = req.currentUser || req.user;
-      // CFOP/natureza espelhados na nota original (transferencia devolve 1409/2409,
-      // venda devolve 1202/2202) — antes era 1.202 fixo para tudo.
+      // CFOP/natureza espelhados na nota original (transferencia GO 5151 devolve
+      // 1208, BSB 6409 devolve 2409, venda devolve 1202/2202) — antes era 1.202 fixo.
       // CFOP da original: o do cabecalho ou, se vazio, o do 1o item.
       const dev = cfopDevolucao(originalInvoice.cfop || (originalItems[0] as any)?.cfop);
 
