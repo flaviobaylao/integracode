@@ -12,7 +12,7 @@
 // As próximas seções da Central (Aprovações, Calendário, Criativos, Réguas)
 // entram aqui nos buracos seguintes.
 // ============================================================================
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -917,6 +917,9 @@ function SecaoCriativos() {
   const [recortes, setRecortes] = useState<string[]>(["feed_4x5"]);
   const [logSubida, setLogSubida] = useState<{ texto: string; erro?: boolean }[]>([]);
   const inputArquivo = useRef<HTMLInputElement>(null);
+  // Visualizador: índice da peça aberta na lista filtrada (null = fechado)
+  const [aberto, setAberto] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(false);
 
   const pan = useQuery<any>({
     queryKey: ["/api/mkt/assets/panorama"],
@@ -1374,9 +1377,11 @@ function SecaoCriativos() {
           )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {(lista.data || []).map((a: any) => (
+            {(lista.data || []).map((a: any, idx: number) => (
               <div key={a.id} className="rounded-lg border overflow-hidden flex flex-col">
-                <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden">
+                <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden cursor-zoom-in"
+                  title="Clique para ampliar"
+                  onClick={() => { if (a.url) { setAberto(idx); setZoom(false); } }}>
                   {a.url
                     ? <img src={a.url} alt={a.titulo || ""} className="w-full h-full object-cover" loading="lazy" />
                     : <i className="fas fa-image text-2xl text-muted-foreground" />}
@@ -1416,7 +1421,74 @@ function SecaoCriativos() {
           </div>
         </div>
       </CardContent>
+      {aberto !== null && (lista.data || [])[aberto] && (
+        <VisualizadorCriativo
+          item={(lista.data || [])[aberto]}
+          pos={aberto + 1}
+          total={(lista.data || []).length}
+          zoom={zoom}
+          onZoom={() => setZoom((z) => !z)}
+          onFechar={() => setAberto(null)}
+          onAnterior={() => { setZoom(false); setAberto((i) => (i !== null && i > 0 ? i - 1 : i)); }}
+          onProximo={() => { setZoom(false); setAberto((i) => (i !== null && i < (lista.data || []).length - 1 ? i + 1 : i)); }}
+          onLiberar={() => alternarDireitos((lista.data || [])[aberto])}
+        />
+      )}
     </Card>
+  );
+}
+
+// Visualizador em tela cheia da peça: ver detalhe do rótulo antes de liberar.
+// Clique na imagem alterna entre "caber na tela" e 1:1 (com rolagem); ← → navegam; Esc fecha.
+function VisualizadorCriativo(props: {
+  item: any; pos: number; total: number; zoom: boolean;
+  onZoom: () => void; onFechar: () => void; onAnterior: () => void; onProximo: () => void; onLiberar: () => void;
+}) {
+  const { item: a, pos, total, zoom, onZoom, onFechar, onAnterior, onProximo, onLiberar } = props;
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onFechar();
+      else if (e.key === "ArrowLeft") onAnterior();
+      else if (e.key === "ArrowRight") onProximo();
+    };
+    window.addEventListener("keydown", h);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", h); document.body.style.overflow = prev; };
+  }, [onFechar, onAnterior, onProximo]);
+  const tags: string[] = ([] as string[]).concat(
+    ...["gancho", "cenario", "publico", "produto", "livre"].map((e) => (a.tags?.[e] || []) as string[])
+  );
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/90 text-white flex flex-col" onClick={onFechar}>
+      <div className="flex items-center gap-3 px-4 py-2 text-xs bg-black/60" onClick={(e) => e.stopPropagation()}>
+        <div className="font-medium truncate flex-1">{a.titulo || a.produto_nome || "sem título"}</div>
+        <span className="opacity-70">{pos}/{total}</span>
+        {a.largura && a.altura && <span className="opacity-70">{a.largura}×{a.altura}</span>}
+        <Badge variant="outline" className="text-[10px] border-white/40 text-white">{a.formato}</Badge>
+        {a.origem === "ia_gerado" && <Badge variant="destructive" className="text-[10px]">IA</Badge>}
+        <Button size="sm" variant={a.direitos_ok ? "secondary" : "default"} className="h-7 text-xs" onClick={onLiberar}>
+          {a.direitos_ok ? "liberado ✓ (bloquear)" : "liberar direitos"}
+        </Button>
+        <a href={a.url} target="_blank" rel="noreferrer" className="underline opacity-80 hover:opacity-100">abrir original</a>
+        <Button size="sm" variant="ghost" className="h-7 text-white" onClick={onFechar} title="fechar (Esc)">✕</Button>
+      </div>
+      <div className={"flex-1 relative " + (zoom ? "overflow-auto" : "overflow-hidden flex items-center justify-center")}
+        onClick={(e) => e.stopPropagation()}>
+        <button className="absolute left-2 top-1/2 -translate-y-1/2 z-10 text-3xl px-3 py-6 bg-black/40 rounded hover:bg-black/70"
+          onClick={onAnterior} disabled={pos <= 1} title="anterior (←)">‹</button>
+        <img src={a.url} alt={a.titulo || ""}
+          className={zoom ? "cursor-zoom-out max-w-none m-auto block" : "cursor-zoom-in max-h-full max-w-full object-contain"}
+          style={zoom ? { width: a.largura || undefined } : undefined}
+          onClick={onZoom} />
+        <button className="absolute right-2 top-1/2 -translate-y-1/2 z-10 text-3xl px-3 py-6 bg-black/40 rounded hover:bg-black/70"
+          onClick={onProximo} disabled={pos >= total} title="próxima (→)">›</button>
+      </div>
+      <div className="px-4 py-2 text-[11px] bg-black/60 flex flex-wrap gap-1 items-center" onClick={(e) => e.stopPropagation()}>
+        <span className="opacity-70 mr-1">{zoom ? "1:1 — clique na imagem para caber na tela" : "clique na imagem para ver em 1:1"}</span>
+        {tags.map((t) => <Badge key={t} variant="outline" className="text-[10px] border-white/40 text-white">{t}</Badge>)}
+        {a.observacao && <span className="opacity-60 ml-2 truncate">{a.observacao}</span>}
+      </div>
+    </div>
   );
 }
 
