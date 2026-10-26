@@ -17,6 +17,7 @@ type Visit = {
   hasOrder?: boolean;
   hasVirtualAttendance?: boolean;
   orderValue?: number;
+  orderSellerName?: string;
   metaValue?: number;
   nextSaleValue?: number;
 };
@@ -454,7 +455,9 @@ export default function ResumoVisitas() {
                       const st = STATUS[k];
                       const sale = v && (k === "green" || k === "orange" || k === "lilac" || k === "blue") ? v.orderValue || 0 : 0;
                       const next = v && k === "future" ? v.nextSaleValue || v.metaValue || 0 : 0;
-                      const title = st.t + (sale ? ` • ${money(sale)}` : "") + (next ? ` • Próxima Venda: ${money(next)}` : "");
+                      // Quem LANCOU o pedido — pode não ser o vendedor da carteira (telemarketing, hotsite, cobertura).
+                      const quemVendeu = sale && v?.orderSellerName ? ` • Pedido por: ${v.orderSellerName}` : "";
+                      const title = st.t + (sale ? ` • ${money(sale)}` : "") + quemVendeu + (next ? ` • Próxima Venda: ${money(next)}` : "");
                       return (
                         <td key={d} title={title} style={{ textAlign: "center", padding: "3px 2px", background: st.bg, color: st.c, fontWeight: 700, borderLeft: "1px solid #f1f5f9" }}>
                           {sale ? (
