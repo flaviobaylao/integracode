@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { QuarentenaTag } from "@/components/QuarentenaTag";
+import { SalesCycleDotsCliente } from "@/components/SalesCycleDots";
 import ClientActionsModal from "@/components/ClientActionsModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
 import { useMotivoInativacao } from "@/components/useMotivoInativacao";
@@ -439,6 +440,8 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               <span>{r.entityName || r.entityId}</span>
             )}
             {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
+            {/* 🟢🟡🔴 Efetividade em vendas por ciclo — as mesmas bolinhas da Rota do Dia (26/out/2026) */}
+            {r.entityType === "customer" && <SalesCycleDotsCliente customerId={r.customerId || r.entityId} />}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
@@ -690,6 +693,8 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
               <span>{r.entityName || r.entityId}</span>
             )}
             {r.entityType === "customer" && <QuarentenaTag customerId={r.customerId || r.entityId} />}
+            {/* 🟢🟡🔴 Efetividade em vendas por ciclo — as mesmas bolinhas da Rota do Dia (26/out/2026) */}
+            {r.entityType === "customer" && <SalesCycleDotsCliente customerId={r.customerId || r.entityId} />}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
