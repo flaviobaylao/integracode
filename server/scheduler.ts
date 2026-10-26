@@ -219,7 +219,7 @@ cron.schedule('25 * * * *', async () => {
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {
-  try { await sweepOpenBoletos(300, 120); }
+  try { await sweepOpenBoletos(600, 120); }
   catch (e: any) { console.error('[BB-BOLETO] sweep erro:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
@@ -798,6 +798,25 @@ cron.schedule('20 7 * * 1-5', async () => {
       INSERT INTO system_settings (key, value, updated_by)
       VALUES ('saude_cobranca_last', ${JSON.stringify(snap)}, 'cron-saude-cobranca')
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by`);
+    // ALERTA (26/10/2026): "boleto pago sem baixa" so ficava no WARN do log e ninguem
+    // via — 17 titulos (R$ 2.774,93) passaram semanas assim. Agora avisa por WhatsApp os
+    // mesmos numeros do alerta da varredura ('debitos_fixos'), com a lista dos titulos.
+    if (snap.boletoPagoSemBaixa.n > 0) {
+      try {
+        const lst: any = await db.execute(sql`
+          SELECT r.title_number, r.customer_name, (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric)::float AS aberto, b.nosso_numero
+          FROM boleto_charges b JOIN receivables r ON r.id = b.receivable_id
+          WHERE lower(COALESCE(b.status, '')) IN ('liquidado', 'pago', 'recebido') AND b.deleted_at IS NULL
+            AND r.deleted_at IS NULL AND r.status IN ('a_vencer', 'vencida')
+            AND (r.amount::numeric - COALESCE(r.amount_paid, 0)::numeric) > 0.005
+          ORDER BY r.due_date LIMIT 15`);
+        const linhas = ((lst.rows || lst) as any[]).map((x: any) => `• ${x.title_number} ${String(x.customer_name || '').slice(0, 28)} — R$ ${Number(x.aberto || 0).toFixed(2)}`);
+        const fq: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'debitos_fixos' LIMIT 1`);
+        const fixos = String((fq as any).rows?.[0]?.value || '5562995782812').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const msg = `⚠️ INTEGRA 2.0 - BOLETO PAGO SEM BAIXA\n${snap.boletoPagoSemBaixa.n} titulo(s) com boleto liquidado no BB e titulo em aberto (R$ ${snap.boletoPagoSemBaixa.valor.toFixed(2)}).\n${linhas.join('\n')}${snap.boletoPagoSemBaixa.n > 15 ? '\n…' : ''}\nA varredura horaria tenta reparar sozinha; se persistir, use Financeiro > reparo de boleto liquidado sem baixa.`;
+        for (const numero of fixos) { try { await whatsappService.sendMessage(numero, msg); } catch {} }
+      } catch (e: any) { console.warn('[SAUDE-COBRANCA] alerta WhatsApp falhou:', e?.message || e); }
+    }
     const total = snap.tituloSemCobranca.n + snap.boletoPagoSemBaixa.n + snap.cobrancaDuplicada.n;
     if (total > 0) {
       console.warn(`⚠️  [SAUDE-COBRANCA] sem cobranca: ${snap.tituloSemCobranca.n} (R$ ${snap.tituloSemCobranca.valor.toFixed(2)}) | boleto pago sem baixa: ${snap.boletoPagoSemBaixa.n} (R$ ${snap.boletoPagoSemBaixa.valor.toFixed(2)}) | cobranca duplicada: ${snap.cobrancaDuplicada.n} titulo(s). Detalhe: GET /api/admin/financial/saude-cobranca`);

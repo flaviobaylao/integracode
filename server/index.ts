@@ -3547,8 +3547,12 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   app.post("/api/webhooks/bb-boleto", webhookTokenGuard, async (req, res) => {
     try {
       const payload = req.body || {};
-      try { await db.execute(sql`INSERT INTO webhook_debug_log (raw_remote_jid, payload, created_at) VALUES (${'BB-BOLETO'}, ${JSON.stringify(payload)}, now())`); } catch {}
+      // FIX (26/10/2026): a coluna da tabela e raw_payload (nao 'payload'); o INSERT
+      // falhava em silencio e NENHUM webhook do BB ficou gravado — sem trilha para
+      // apurar os boletos liquidados sem baixa de 12-13/10.
+      try { await db.execute(sql`INSERT INTO webhook_debug_log (raw_remote_jid, raw_payload, created_at) VALUES (${'BB-BOLETO'}, ${JSON.stringify(payload)}, now())`); } catch (e: any) { console.warn('[BB-BOLETO] webhook_debug_log falhou:', e?.message); }
       const out = await processBoletoWebhook(payload);
+      console.log(`[BB-BOLETO] webhook processado: ${JSON.stringify(out).slice(0, 600)}`);
       res.status(200).json({ ok: true, ...out });
     } catch (e: any) { res.status(200).json({ ok: false, error: e?.message || String(e) }); }
   });
@@ -3557,7 +3561,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Batch (cron-friendly, GET): dispara em 2o plano a varredura de boletos em aberto e baixa os pagos.
   app.get("/api/admin/boleto/check-open", authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req, res) => {
     try {
-      const limit = Math.min(parseInt(String((req.query as any).limit || "300"), 10) || 300, 2000);
+      const limit = Math.min(parseInt(String((req.query as any).limit || "600"), 10) || 600, 2000);
       const days = parseInt(String((req.query as any).days || "120"), 10) || 120;
       // FASE 1c - a varredura roda no agendador interno; aqui apenas dispara sob demanda.
       void sweepOpenBoletos(limit, days);
@@ -5899,4 +5903,27 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
   }, () => {
     log(`serving on port ${port}`);
   });
+
+  // ENCERRAMENTO GRACIOSO (26/10/2026). O Railway manda SIGTERM a cada redeploy (ate
+  // 30 por dia em 13/10). Sem tratar o sinal, o Node morre na hora e qualquer webhook
+  // do BB em andamento e cortado no meio — foi assim que boletos ficaram 'liquidado'
+  // com o titulo 'vencida'. Agora: para de aceitar conexoes novas, deixa as requisicoes
+  // em voo terminarem (ate 25 s) e so entao fecha o pool e sai. Respostas HTTP ja
+  // iniciadas nao sao interrompidas.
+  let encerrando = false;
+  const encerrar = (sinal: string) => {
+    if (encerrando) return;
+    encerrando = true;
+    console.log(`[SHUTDOWN] ${sinal} recebido — parando de aceitar conexoes e esperando as requisicoes em voo`);
+    const forcar = setTimeout(() => { console.warn('[SHUTDOWN] tempo esgotado (25 s) — saindo'); process.exit(0); }, 25_000);
+    forcar.unref();
+    server.close(() => {
+      import('./db').then(({ pool }) => pool.end().catch(() => {})).catch(() => {}).finally(() => {
+        console.log('[SHUTDOWN] concluido');
+        process.exit(0);
+      });
+    });
+  };
+  process.on('SIGTERM', () => encerrar('SIGTERM'));
+  process.on('SIGINT', () => encerrar('SIGINT'));
 })();
