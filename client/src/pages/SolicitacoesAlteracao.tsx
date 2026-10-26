@@ -113,8 +113,8 @@ function LinhaCadastro({ r }: { r: any }) {
 }
 
 // 🧾📅 Cabeçalho igual ao card da Rota do Dia (24/out/2026):
-//   🧾 Último faturamento: 28/09/2026 - R$ 294,00 (Seg-4ªSem-26 dias)
 //   📅 Seg • Quinzenal • 2ª e 4ª do mês
+//   🧾 Último faturamento: 28/09/2026 - R$ 294,00 (Seg-4ªSem-26 dias)
 const DIA_ABREV: Record<string, string> = { seg: "Seg", ter: "Ter", qua: "Qua", qui: "Qui", sex: "Sex", sab: "Sáb", "sáb": "Sáb", dom: "Dom" };
 function fmtUltimoFaturamento(r: any): string {
   if (!r.lastOrderAt) return "Sem registro";
@@ -142,14 +142,15 @@ function CabecalhoRota({ r }: { r: any }) {
   const agenda = [dias, per, sem].filter(Boolean).join(" • ");
   return (
     <div className="mt-0.5 space-y-0.5">
-      <div className="text-[11px] text-gray-600 dark:text-gray-300" data-testid={`cr-ultimo-faturamento-${r.id}`}>
-        🧾 Último faturamento: {fmtUltimoFaturamento(r)}
-      </div>
+      {/* 26/out/2026 — agenda (dia • periodicidade • semana) primeiro; último faturamento abaixo. */}
       {agenda && (
         <div className="text-[11px] text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1" data-testid={`cr-agenda-${r.id}`}>
           <CalendarClock className="h-3 w-3" /> {agenda}
         </div>
       )}
+      <div className="text-[11px] text-gray-600 dark:text-gray-300" data-testid={`cr-ultimo-faturamento-${r.id}`}>
+        🧾 Último faturamento: {fmtUltimoFaturamento(r)}
+      </div>
     </div>
   );
 }
