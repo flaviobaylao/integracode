@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera, ShieldCheck, Info , Phone } from "lucide-react";
+import { SatelliteDish, Save, RefreshCw, Loader2, Image as ImageIcon, Gauge, Users, Check, Camera, ShieldCheck, Info , Phone, MapPin, Search } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
@@ -57,6 +57,10 @@ export default function RecursosProspeccao() {
   const [usoLoading, setUsoLoading] = useState(false);
   const [avancado, setAvancado] = useState(false);
   const [infoCobranca, setInfoCobranca] = useState(false);
+  // 🏘️ Bairros / setores (filtro do radar) — lista vinda dos cadastros de clientes e leads
+  const [bairros, setBairros] = useState<{ chave: string; nome: string; clientes: number; leads: number }[]>([]);
+  const [bairroBusca, setBairroBusca] = useState("");
+  const [bairrosTodos, setBairrosTodos] = useState(false);
 
   const carregarCfg = useCallback(async () => {
     setLoading(true);
@@ -78,7 +82,14 @@ export default function RecursosProspeccao() {
     } finally { setUsoLoading(false); }
   }, [toast]);
 
-  useEffect(() => { carregarCfg(); carregarUso(); }, [carregarCfg, carregarUso]);
+  const carregarBairros = useCallback(async () => {
+    try {
+      const d: any = await apiRequest("GET", "/api/admin/recursos/bairros");
+      if (d && d.ok && Array.isArray(d.bairros)) setBairros(d.bairros);
+    } catch (_e) { /* lista é complementar */ }
+  }, []);
+
+  useEffect(() => { carregarCfg(); carregarUso(); carregarBairros(); }, [carregarCfg, carregarUso, carregarBairros]);
 
   const set = (k: string, v: string) => setCfg((c) => ({ ...(c || {}), [k]: v }));
   const bool = (k: string) => String(cfg?.[k]) === "true";
@@ -104,6 +115,23 @@ export default function RecursosProspeccao() {
     else g.codes.forEach((c) => next.add(c));
     set("radar_segmentos", Array.from(next).join(","));
   };
+  // --- seletor de bairros / setores (vazio = todos) ---
+  const bairrosSel = (cfg?.radar_bairros || "").split("|").map((s) => s.trim()).filter(Boolean);
+  const bairrosSelSet = new Set(bairrosSel);
+  const toggleBairro = (chave: string) => {
+    const next = new Set(bairrosSelSet);
+    if (next.has(chave)) next.delete(chave); else next.add(chave);
+    set("radar_bairros", Array.from(next).join("|"));
+  };
+  const semAcento = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const nomeBairro = (chave: string) => bairros.find((b) => b.chave === chave)?.nome || chave;
+  const bairrosFiltrados = (() => {
+    const q = semAcento(bairroBusca.trim());
+    const base = q ? bairros.filter((b) => semAcento(b.nome).includes(q) || b.chave.includes(q)) : bairros;
+    const naoSel = base.filter((b) => !bairrosSelSet.has(b.chave));
+    return q || bairrosTodos ? naoSel : naoSel.slice(0, 30);
+  })();
+
   // códigos que o admin digitou manualmente e não pertencem a nenhum grupo conhecido
   const codesConhecidos = new Set(SEG_GROUPS.flatMap((g) => g.codes));
   const extras = Array.from(selectedCodes).filter((c) => !codesConhecidos.has(c));
@@ -273,6 +301,48 @@ export default function RecursosProspeccao() {
                       {extras.length > 0 && <> Códigos extras digitados por você: <span className="font-mono">{extras.join(", ")}</span>.</>}
                     </p>
                   </div>
+                )}
+              </div>
+
+              {/* 🏘️ Região: bairros / setores */}
+              <div data-testid="radar-bairros">
+                <Label className="text-xs flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Região: bairros / setores</Label>
+                <p className="text-[11px] text-muted-foreground mt-0.5 mb-2">
+                  {bairrosSel.length === 0
+                    ? "Nenhum marcado = o radar mostra pontos de todos os bairros."
+                    : `Mostrando só pontos de ${bairrosSel.length} bairro${bairrosSel.length > 1 ? "s" : ""}/setor${bairrosSel.length > 1 ? "es" : ""}. A busca no Google continua sendo cobrada igual; o filtro só esconde os demais.`}
+                  {" "}O número ao lado é a quantidade de clientes ativos no bairro.
+                </p>
+                {bairrosSel.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {bairrosSel.map((ch) => (
+                      <button key={ch} type="button" onClick={() => toggleBairro(ch)} data-testid={`bairro-sel-${ch}`}
+                        className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm bg-emerald-600 border-emerald-600 text-white">
+                        <Check className="h-3.5 w-3.5" /> {nomeBairro(ch)}
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => set("radar_bairros", "")} className="text-[11px] text-red-600 underline px-1" data-testid="bairros-limpar">
+                      Limpar (todos os bairros)
+                    </button>
+                  </div>
+                )}
+                <div className="relative mb-2 max-w-sm">
+                  <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input value={bairroBusca} onChange={(e) => setBairroBusca(e.target.value)} placeholder="Buscar bairro ou setor…" className="pl-8 h-9 text-sm" data-testid="bairros-busca" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {bairrosFiltrados.map((b) => (
+                    <button key={b.chave} type="button" onClick={() => toggleBairro(b.chave)} data-testid={`bairro-${b.chave}`}
+                      className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm bg-background border-input text-muted-foreground hover:border-emerald-400">
+                      {b.nome}<span className="text-[10px] opacity-70">{b.clientes}</span>
+                    </button>
+                  ))}
+                  {bairros.length === 0 && <span className="text-[11px] text-muted-foreground">Carregando bairros…</span>}
+                </div>
+                {!bairroBusca && bairros.length - bairrosSel.length > 30 && (
+                  <button type="button" onClick={() => setBairrosTodos((v) => !v)} className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-2 underline">
+                    {bairrosTodos ? "Mostrar só os principais" : `Mostrar todos (${bairros.length})`}
+                  </button>
                 )}
               </div>
 
