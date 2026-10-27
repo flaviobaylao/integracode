@@ -5,7 +5,7 @@
 // cada colaborador tem a receber: vendedores internos, externos, administrativo
 // e motoristas.
 //
-// Colunas fixas: Fixo Mensal · Meta · Faturamento · Comissão Mês · Km · Total
+// Colunas fixas: Fixo Mensal · Ajuda de Custo · Meta · Faturamento · Comissão Mês · Km · Total
 // Colunas dinâmicas: uma por CAMPANHA VIGENTE no mês + Bônus (avulso).
 // Uma linha de valores por colaborador.
 //
@@ -17,8 +17,8 @@
 //     Comissão ..... regra do próprio colaborador aplicada ao faturamento
 //     Km ........... daily_routes x tarifa de config_global
 //     Campanhas .... campanha-outubro.computeCampaign
-//   Fixo Mensal continua sendo valor de cadastro: nenhum módulo do sistema
-//   calcula salário ou ajuda de custo. Bônus é o único campo que, quando
+//   Fixo Mensal e Ajuda de Custo continuam sendo valores de cadastro: nenhum
+//   módulo do sistema calcula folha. Bônus é o único campo que, quando
 //   flagado, abre para o admin informar o valor por usuário e por mês.
 //
 // CAMPANHAS COMO COLUNA
@@ -72,12 +72,14 @@ function limitesDoMes(ym: string) {
 type Cfg = {
   incluirNoResumo: boolean;
   fixoMensal: number;
+  ajudaCusto: number;
   comissaoTipo: "nenhum" | "fixo" | "faixa";
   comissaoPct: number;
   comissaoDescontoFixo: number;
   comissaoProporcionalMeta: boolean;
   faixaTipo: string;
   usaFixo: boolean;
+  usaAjudaCusto: boolean;
   usaMeta: boolean;
   usaFaturamento: boolean;
   usaComissao: boolean;
@@ -91,12 +93,14 @@ type Cfg = {
 const CFG_PADRAO: Cfg = {
   incluirNoResumo: true,
   fixoMensal: 0,
+  ajudaCusto: 0,
   comissaoTipo: "nenhum",
   comissaoPct: 0,
   comissaoDescontoFixo: 0,
   comissaoProporcionalMeta: false,
   faixaTipo: FAIXA_PADRAO,
   usaFixo: true,
+  usaAjudaCusto: false,
   usaMeta: true,
   usaFaturamento: true,
   usaComissao: true,
@@ -155,7 +159,9 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
       // as linhas que já existem em produção.
       for (const col of [
         "incluir_no_resumo boolean NOT NULL DEFAULT true",
+        "ajuda_custo numeric NOT NULL DEFAULT 0",
         "usa_fixo boolean NOT NULL DEFAULT true",
+        "usa_ajuda_custo boolean NOT NULL DEFAULT false",
         "usa_meta boolean NOT NULL DEFAULT true",
         "usa_faturamento boolean NOT NULL DEFAULT true",
         "usa_comissao boolean NOT NULL DEFAULT true",
@@ -460,9 +466,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       // 7. Configuração vigente: a linha mais recente com vigência <= ym
       const cfgMap: Record<string, Cfg> = {};
       const cf: any = await db.execute(sql`
-        SELECT DISTINCT ON (user_id) user_id, vigencia_ym, fixo_mensal, comissao_tipo,
+        SELECT DISTINCT ON (user_id) user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo,
                comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta,
-               faixa_tipo, incluir_no_resumo, usa_fixo, usa_meta, usa_faturamento,
+               faixa_tipo, incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento,
                usa_comissao, usa_km, usa_campanhas, usa_bonus, observacao
         FROM collab_remuneracao_config
         WHERE user_id = ANY(${arraySql(ids)}) AND vigencia_ym <= ${ym}
@@ -471,12 +477,14 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         cfgMap[String(r.user_id)] = {
           incluirNoResumo: r.incluir_no_resumo !== false,
           fixoMensal: n(r.fixo_mensal),
+          ajudaCusto: n(r.ajuda_custo),
           comissaoTipo: (r.comissao_tipo || "nenhum") as Cfg["comissaoTipo"],
           comissaoPct: n(r.comissao_pct),
           comissaoDescontoFixo: n(r.comissao_desconto_fixo),
           comissaoProporcionalMeta: r.comissao_proporcional_meta === true,
           faixaTipo: r.faixa_tipo || FAIXA_PADRAO,
           usaFixo: r.usa_fixo !== false,
+          usaAjudaCusto: r.usa_ajuda_custo === true,
           usaMeta: r.usa_meta !== false,
           usaFaturamento: r.usa_faturamento !== false,
           usaComissao: r.usa_comissao !== false,
@@ -498,6 +506,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         const meta = cfg.usaMeta ? (metaMap[id] || 0) : null;
         const faturamento = cfg.usaFaturamento ? (fatMap[id] || 0) : null;
         const fixo = cfg.usaFixo ? cfg.fixoMensal : null;
+        const ajudaCusto = cfg.usaAjudaCusto ? cfg.ajudaCusto : null;
         const comissao = cfg.usaComissao
           ? calcularComissao(cfg, fatMap[id] || 0, metaMap[id] || 0)
           : null;
@@ -518,13 +527,13 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         const bonus = cfg.usaBonus ? lancamentos.reduce((s, l) => s + l.valor, 0) : null;
 
         const total =
-          (fixo || 0) + (comissao || 0) + (kmValor || 0) + (bonus || 0) +
+          (fixo || 0) + (ajudaCusto || 0) + (comissao || 0) + (kmValor || 0) + (bonus || 0) +
           campanhas.reduce((s, c) => s + (porCampanha[c.id] || 0), 0);
 
         return {
           id, nome, role: u.role, sellerType: u.seller_type || null,
           config: cfg,
-          fixoMensal: fixo, meta, faturamento,
+          fixoMensal: fixo, ajudaCusto, meta, faturamento,
           atingimentoPct: metaMap[id] > 0 ? ((fatMap[id] || 0) / metaMap[id]) * 100 : 0,
           comissao,
           campanhas: porCampanha,
@@ -539,6 +548,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const soma = (f: (c: any) => number) => colaboradores.reduce((s, c) => s + f(c), 0);
       const totais = {
         fixoMensal: soma((c) => c.fixoMensal || 0),
+        ajudaCusto: soma((c) => c.ajudaCusto || 0),
         meta: soma((c) => c.meta || 0),
         faturamento: soma((c) => c.faturamento || 0),
         comissao: soma((c) => c.comissao || 0),
@@ -566,9 +576,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
       const r: any = await db.execute(sql`
-        SELECT c.id, c.user_id, c.vigencia_ym, c.fixo_mensal, c.comissao_tipo, c.comissao_pct,
+        SELECT c.id, c.user_id, c.vigencia_ym, c.fixo_mensal, c.ajuda_custo, c.comissao_tipo, c.comissao_pct,
                c.comissao_desconto_fixo, c.comissao_proporcional_meta, c.faixa_tipo,
-               c.incluir_no_resumo, c.usa_fixo, c.usa_meta, c.usa_faturamento, c.usa_comissao,
+               c.incluir_no_resumo, c.usa_fixo, c.usa_ajuda_custo, c.usa_meta, c.usa_faturamento, c.usa_comissao,
                c.usa_km, c.usa_campanhas, c.usa_bonus, c.observacao, c.created_at,
                COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
                u.role
@@ -615,19 +625,20 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
       const r: any = await db.execute(sql`
         INSERT INTO collab_remuneracao_config
-          (user_id, vigencia_ym, fixo_mensal, comissao_tipo, comissao_pct,
+          (user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo, comissao_pct,
            comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo, paga_km,
-           incluir_no_resumo, usa_fixo, usa_meta, usa_faturamento, usa_comissao,
+           incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento, usa_comissao,
            usa_km, usa_campanhas, usa_bonus, observacao, created_by)
-        VALUES (${b.userId}, ${b.vigenciaYm}, ${n(b.fixoMensal)}, ${tipo}, ${n(b.comissaoPct)},
+        VALUES (${b.userId}, ${b.vigenciaYm}, ${n(b.fixoMensal)}, ${n(b.ajudaCusto)}, ${tipo}, ${n(b.comissaoPct)},
                 ${n(b.comissaoDescontoFixo)}, ${b.comissaoProporcionalMeta === true}, ${faixa},
                 ${bool(b.usaKm, true)},
-                ${bool(b.incluirNoResumo, true)}, ${bool(b.usaFixo, true)}, ${bool(b.usaMeta, true)},
+                ${bool(b.incluirNoResumo, true)}, ${bool(b.usaFixo, true)}, ${b.usaAjudaCusto === true}, ${bool(b.usaMeta, true)},
                 ${bool(b.usaFaturamento, true)}, ${bool(b.usaComissao, true)}, ${bool(b.usaKm, true)},
                 ${bool(b.usaCampanhas, true)}, ${b.usaBonus === true},
                 ${String(b.observacao || "").slice(0, 500) || null}, ${req.currentUser?.id || null})
         ON CONFLICT (user_id, vigencia_ym) DO UPDATE SET
           fixo_mensal = EXCLUDED.fixo_mensal,
+          ajuda_custo = EXCLUDED.ajuda_custo,
           comissao_tipo = EXCLUDED.comissao_tipo,
           comissao_pct = EXCLUDED.comissao_pct,
           comissao_desconto_fixo = EXCLUDED.comissao_desconto_fixo,
@@ -636,6 +647,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           paga_km = EXCLUDED.paga_km,
           incluir_no_resumo = EXCLUDED.incluir_no_resumo,
           usa_fixo = EXCLUDED.usa_fixo,
+          usa_ajuda_custo = EXCLUDED.usa_ajuda_custo,
           usa_meta = EXCLUDED.usa_meta,
           usa_faturamento = EXCLUDED.usa_faturamento,
           usa_comissao = EXCLUDED.usa_comissao,
