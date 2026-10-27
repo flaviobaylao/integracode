@@ -31,6 +31,9 @@ type Ev = {
 type Draft = Partial<Omit<Ev, "start" | "end">> & { start: Date; end?: Date | null };
 
 const COR_PADRAO = "#2a78d6";
+// Cores por vendedor no modo Clientes (fixas por posicao na lista).
+const CORES_VEND = ["#2a78d6", "#16a34a", "#d03b3b", "#7c3aed", "#eda100", "#0891b2", "#db2777", "#475569", "#65a30d", "#c2410c"];
+type CliRota = { dia: string; id: string; nome: string; cidade: string; bairro: string; periodicidade: string; semana: string | null; virtual: boolean; sellerId: string; sellerNome: string };
 const CORES_SUGERIDAS = ["#2a78d6", "#d03b3b", "#7c3aed", "#eda100", "#16a34a", "#0891b2", "#db2777", "#6b7280"];
 const VIEWS: Array<[string, string]> = [["timeGridDay", "Dia"], ["timeGridWeek", "Semana"], ["dayGridMonth", "Mês"], ["listWeek", "Lista"]];
 
@@ -56,12 +59,48 @@ export default function MinhaAgenda() {
   const [quickTitle, setQuickTitle] = useState("");
   const [sel, setSel] = useState<{ ev: Ev; x: number; y: number } | null>(null);
   const [modal, setModal] = useState<{ draft: Draft; mode: "new" | "edit" | "dup" } | null>(null);
+  // Modo do calendario: "agenda" (eventos pessoais) ou "clientes" (clientes da Rota do Dia).
+  // Um esconde o outro.
+  const [modo, setModo] = useState<"agenda" | "clientes">(() => { try { return localStorage.getItem("agenda-modo") === "clientes" ? "clientes" : "agenda"; } catch { return "agenda"; } });
+  useEffect(() => { try { localStorage.setItem("agenda-modo", modo); } catch {} }, [modo]);
+  const [vendSel, setVendSel] = useState<string[]>([]);
+  const [cliSel, setCliSel] = useState<{ c: CliRota; x: number; y: number } | null>(null);
 
   const { data: eventos = [], isLoading } = useQuery<Ev[]>({
     queryKey: ["/api/agenda/items", range?.start, range?.end],
     queryFn: () => apiRequest("GET", `/api/agenda/items?start=${encodeURIComponent(range!.start)}&end=${encodeURIComponent(range!.end)}`),
     enabled: !!range,
   });
+  const { data: cliResp, isLoading: cliLoading } = useQuery<{ admin: boolean; clientes: CliRota[] }>({
+    queryKey: ["/api/agenda/clientes-rota", range?.start, range?.end, vendSel.join(",")],
+    queryFn: () => apiRequest("GET", `/api/agenda/clientes-rota?start=${encodeURIComponent(range!.start)}&end=${encodeURIComponent(range!.end)}${vendSel.length ? `&sellers=${encodeURIComponent(vendSel.join(","))}` : ""}`),
+    enabled: !!range && modo === "clientes",
+    staleTime: 60_000,
+  });
+  const { data: vendedores = [] } = useQuery<{ id: string; nome: string }[]>({
+    queryKey: ["/api/agenda/vendedores"],
+    queryFn: () => apiRequest("GET", "/api/agenda/vendedores"),
+    enabled: modo === "clientes",
+    staleTime: 300_000,
+  });
+  const ehAdmin = !!cliResp?.admin;
+  const clientes = cliResp?.clientes || [];
+  const corVend = useMemo(() => {
+    const ids = Array.from(new Set([...vendedores.map((v) => v.id), ...clientes.map((c) => c.sellerId)]));
+    const m: Record<string, string> = {};
+    ids.forEach((id, i) => { m[id] = CORES_VEND[i % CORES_VEND.length]; });
+    return m;
+  }, [vendedores, clientes]);
+  const cliEvents = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return clientes
+      .filter((c) => !q || `${c.nome} ${c.cidade} ${c.bairro} ${c.sellerNome}`.toLowerCase().includes(q))
+      .map((c) => ({
+        id: `cli:${c.id}:${c.dia}`, title: `${c.virtual ? "☎ " : ""}${c.nome}${ehAdmin ? ` · ${c.sellerNome}` : ""}`, start: c.dia, allDay: true,
+        backgroundColor: corVend[c.sellerId] || COR_PADRAO, borderColor: corVend[c.sellerId] || COR_PADRAO, editable: false,
+        extendedProps: { cli: c },
+      }));
+  }, [clientes, busca, corVend, ehAdmin]);
   const { data: cores = [] } = useQuery<{ color: string; n: number }[]>({
     queryKey: ["/api/agenda/colors"],
     queryFn: () => apiRequest("GET", "/api/agenda/colors"),
@@ -173,6 +212,12 @@ export default function MinhaAgenda() {
           <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
           <Input id="agenda-busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pesquisar" className="pl-8 w-[150px] md:w-[220px] h-9" />
         </div>
+        <div className="flex rounded-md border overflow-hidden" role="group" aria-label="Mostrar">
+          {([["agenda", "Agenda"], ["clientes", "Clientes"]] as const).map(([m, l]) => (
+            <button key={m} className={`px-3 py-1.5 text-sm ${modo === m ? "bg-emerald-600 text-white" : "hover:bg-muted"}`}
+              onClick={() => { setModo(m); fechar(); setCliSel(null); }} data-testid={`agenda-modo-${m}`}>{l}</button>
+          ))}
+        </div>
         <div className="flex rounded-md border overflow-hidden">
           {VIEWS.map(([v, l]) => (
             <button key={v} className={`px-3 py-1.5 text-sm ${view === v ? "bg-blue-600 text-white" : "hover:bg-muted"}`}
@@ -183,9 +228,9 @@ export default function MinhaAgenda() {
 
       <div className="flex gap-4 agenda" style={{ height: "calc(100vh - 150px)", minHeight: 520 }}>
         <aside className="hidden md:flex w-[240px] flex-none flex-col gap-4 overflow-auto pr-1">
-          <Button onClick={abrirNovo} className="rounded-full self-start shadow bg-white text-foreground border hover:bg-muted h-11 px-5 dark:bg-background" data-testid="agenda-criar">
+          {modo === "agenda" && <Button onClick={abrirNovo} className="rounded-full self-start shadow bg-white text-foreground border hover:bg-muted h-11 px-5 dark:bg-background" data-testid="agenda-criar">
             <Plus className="h-5 w-5 text-blue-600 mr-2" /> Criar
-          </Button>
+          </Button>}
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-semibold">{mini.label}</span>
@@ -211,6 +256,36 @@ export default function MinhaAgenda() {
               ))}</tbody>
             </table>
           </div>
+          {modo === "clientes" ? (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">{ehAdmin ? "Vendedores" : "Meus clientes"}</div>
+              {ehAdmin ? (
+                <>
+                  <div className="flex gap-3 text-xs mb-1">
+                    <button className="text-blue-600 hover:underline" onClick={() => setVendSel([])}>Todos</button>
+                  </div>
+                  {vendedores.map((v) => {
+                    const on = vendSel.length === 0 || vendSel.includes(v.id);
+                    const n = clientes.filter((c) => c.sellerId === v.id).length;
+                    return (
+                      <label key={v.id} className="flex items-center gap-2 py-1 text-sm cursor-pointer">
+                        <Checkbox checked={on} onCheckedChange={(ck) => setVendSel((s0) => {
+                          const base = s0.length === 0 ? vendedores.map((x) => x.id) : s0;
+                          const n2 = ck ? Array.from(new Set([...base, v.id])) : base.filter((x) => x !== v.id);
+                          return n2.length === vendedores.length ? [] : n2;
+                        })} />
+                        <span className="h-3 w-3 rounded-sm flex-none" style={{ background: corVend[v.id] }} />
+                        <span className="flex-1 truncate">{v.nome}</span>
+                        {vendSel.length === 0 || vendSel.includes(v.id) ? <span className="text-xs text-muted-foreground">{n}</span> : null}
+                      </label>
+                    );
+                  })}
+                </>
+              ) : (
+                <div className="text-xs text-muted-foreground">{clientes.length} visita(s) no período.</div>
+              )}
+            </div>
+          ) : (
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Cores</div>
             {cores.length === 0 && <div className="text-xs text-muted-foreground">Crie o primeiro evento para ver as cores aqui.</div>}
@@ -223,13 +298,16 @@ export default function MinhaAgenda() {
               </label>
             ))}
           </div>
+          )}
           <div className="text-[11.5px] text-muted-foreground leading-relaxed border-t pt-2">
-            Clique num horário vazio para criar, arraste para mover, estique a borda para mudar a duração. Só você vê esta agenda.
+            {modo === "clientes"
+              ? "Clientes da Rota do Dia pela periodicidade, dia da semana e semana do mês do cadastro. Muda sozinho quando o cadastro muda. ☎ = atendimento virtual."
+              : "Clique num horário vazio para criar, arraste para mover, estique a borda para mudar a duração. Só você vê esta agenda."}
           </div>
         </aside>
 
         <section className="flex-1 min-w-0 relative">
-          {isLoading && <div className="absolute right-2 top-2 text-xs text-muted-foreground z-10">Carregando…</div>}
+          {(modo === "agenda" ? isLoading : cliLoading) && <div className="absolute right-2 top-2 text-xs text-muted-foreground z-10">Carregando…</div>}
           <FullCalendar
             ref={calRef}
             plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
@@ -248,11 +326,11 @@ export default function MinhaAgenda() {
             moreLinkText={(n) => `+${n} mais`}
             slotLabelFormat={{ hour: "numeric", minute: "2-digit", hour12: false }}
             eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
-            selectable
-            editable
+            selectable={modo === "agenda"}
+            editable={modo === "agenda"}
             eventResizableFromStart
             selectMirror
-            events={fcEvents}
+            events={modo === "agenda" ? fcEvents : cliEvents}
             datesSet={(a) => {
               setTitle(a.view.title);
               setDataCal(a.view.calendar.getDate());
@@ -265,6 +343,8 @@ export default function MinhaAgenda() {
             }}
             eventClick={(info) => {
               info.jsEvent.preventDefault();
+              const cli = (info.event.extendedProps as any)?.cli as CliRota | undefined;
+              if (cli) { setQuick(null); setSel(null); setCliSel({ c: cli, x: info.jsEvent.clientX, y: info.jsEvent.clientY }); return; }
               const ev = eventos.find((e) => e.id === info.event.id);
               if (ev) { setQuick(null); setSel({ ev, x: info.jsEvent.clientX, y: info.jsEvent.clientY }); }
             }}
@@ -286,6 +366,20 @@ export default function MinhaAgenda() {
             <Button variant="outline" size="sm" onClick={() => { const t = quickTitle; fechar(); setModal({ draft: { title: t, start: quick.start, end: quick.end, allDay: quick.allDay, color: cores[0]?.color || COR_PADRAO }, mode: "new" }); }}>Mais opções</Button>
             <div className="flex-1" />
             <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" onClick={salvarQuick} data-testid="agenda-quick-salvar">Salvar</Button>
+          </div>
+        </div>
+      )}
+
+      {/* resumo do cliente da rota */}
+      {cliSel && (
+        <div className="fixed z-50 w-[320px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(cliSel.x, cliSel.y, 320, 200)} data-testid="agenda-cliente">
+          <button className="absolute right-2 top-2 h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center" onClick={() => setCliSel(null)} aria-label="Fechar"><X className="h-4 w-4" /></button>
+          <h3 className="text-base font-semibold pr-7 mt-1">{cliSel.c.nome}</h3>
+          <p className="text-sm text-muted-foreground mt-1">{fmtDia(new Date(cliSel.c.dia + "T12:00:00"))}</p>
+          <div className="text-sm mt-2 grid gap-1">
+            {(cliSel.c.bairro || cliSel.c.cidade) && <div className="flex gap-2"><MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />{[cliSel.c.bairro, cliSel.c.cidade].filter(Boolean).join(" · ")}</div>}
+            <div>Periodicidade: <b>{cliSel.c.periodicidade}</b>{cliSel.c.semana && cliSel.c.semana !== "toda" ? ` · semana ${cliSel.c.semana}` : ""}{cliSel.c.virtual ? " · virtual" : ""}</div>
+            <div>Vendedor: <b>{cliSel.c.sellerNome}</b></div>
           </div>
         </div>
       )}
