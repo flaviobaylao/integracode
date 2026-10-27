@@ -40,6 +40,11 @@ export function registerAgendaForcadaRoutes(app: Express) {
       // Semana atual (segunda a sexta).
       const segunda = addDias(hoje, -((dowDe(hoje) + 6) % 7));
       const sexta = addDias(segunda, 4);
+      // Opcional: quem só tem dia de rota JÁ PASSADO nesta semana vai para esta data (>= hoje, dia útil).
+      const diaPassadoPara = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.diaPassadoPara || "")) ? String(req.body.diaPassadoPara) : null;
+      if (diaPassadoPara && (diaPassadoPara < hoje || diaPassadoPara > sexta || [0, 6].includes(dowDe(diaPassadoPara)))) {
+        return res.status(400).json({ ok: false, error: "diaPassadoPara deve ser um dia útil entre hoje e sexta desta semana." });
+      }
       const diasRestantes: string[] = [];
       for (let d = hoje; d <= sexta; d = addDias(d, 1)) { const w = dowDe(d); if (w >= 1 && w <= 5) diasRestantes.push(d); }
 
@@ -91,7 +96,7 @@ export function registerAgendaForcadaRoutes(app: Express) {
         if (jaNaSemana.has(String(c.id))) { jaTinhamVisita++; continue; }
         let w: any = c.weekdays; if (typeof w === "string") { try { w = JSON.parse(w); } catch { w = []; } }
         const dows = new Set<number>((Array.isArray(w) ? w : []).map((t: any) => DOW_TOK[String(t || "").trim().toLowerCase().slice(0, 3)]).filter((n: any) => n !== undefined && n >= 1 && n <= 5));
-        const alvo = diasRestantes.find((d) => dows.has(dowDe(d)));
+        const alvo = diasRestantes.find((d) => dows.has(dowDe(d))) || diaPassadoPara || undefined;
         const item = { customerId: c.id, nome: c.nome, vendedor: c.vendedor, periodicidade: c.visit_periodicity, diasRota: Array.from(dows).map((n) => DIAS[n]).join("/"), data: alvo || null };
         if (!alvo) { diaJaPassou.push(item); continue; }
         const virtual = c.virtual_service === true || String(c.seller_role || "") === "telemarketing";
