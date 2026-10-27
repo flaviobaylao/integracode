@@ -96,6 +96,15 @@ export function garantirTabelaExtincao(): Promise<void> {
       // Marca o boleto 'liquidado' cujo estado real ja foi conferido no BB (o banco
       // recusou a baixa por ja estar liquidado). Evita reconsultar toda hora.
       await db.execute(sql`ALTER TABLE boleto_charges ADD COLUMN IF NOT EXISTS bb_conferido_at timestamp`);
+      // Indices (27/out/2026): sem eles o levantamento do passado estourava o statement_timeout.
+      for (const ddl of [
+        sql`CREATE INDEX IF NOT EXISTS ix_boleto_charges_receivable ON boleto_charges (receivable_id)`,
+        sql`CREATE INDEX IF NOT EXISTS ix_boleto_charges_nosso_numero ON boleto_charges (nosso_numero)`,
+        sql`CREATE INDEX IF NOT EXISTS ix_pix_charges_receivable ON pix_charges (receivable_id)`,
+        sql`CREATE INDEX IF NOT EXISTS ix_receivable_payments_receivable ON receivable_payments (receivable_id)`,
+        sql`CREATE INDEX IF NOT EXISTS ix_receivable_payments_reference ON receivable_payments (reference)`,
+        sql`CREATE INDEX IF NOT EXISTS ix_bcr_receivable ON boleto_charge_receivables (receivable_id)`,
+      ]) { try { await db.execute(ddl); } catch (e: any) { console.warn('[EXTINCAO] indice:', e?.message || e); } }
       // Corte: a varredura automatica so trata titulos fechados a partir daqui.
       await db.execute(sql`INSERT INTO system_settings (key, value, updated_by)
         VALUES ('extincao_cobranca_corte', ${new Date().toISOString()}, 'sistema')
@@ -326,6 +335,12 @@ async function executar(receivableId: string, origem: string): Promise<Resultado
 // ============================================================================
 async function candidatos(opts: { desde?: string | null; limit: number }) {
   const desde = opts.desde || null;
+  // 27/out/2026 — a versao anterior estourava o statement_timeout (120 s) em producao
+  // quando rodava sem `desde` (levantamento do passado): JOIN com OR entre
+  // boleto_charges.receivable_id e boleto_charge_receivables impedia indice, e o
+  // teste "liquidado pelo proprio BB" fazia um LIKE em receivable_payments por boleto.
+  // Agora: (1) o conjunto de nosso-numeros pagos pelo BB e materializado UMA vez,
+  // (2) os dois vinculos boleto<->titulo sao um UNION, (3) indices criados no boot.
   return rowsOf(await db.execute(sql`
     WITH fechados AS (
       SELECT r.id, r.title_number, r.customer_name, r.status::text AS status, r.amount, r.amount_paid,
@@ -334,26 +349,40 @@ async function candidatos(opts: { desde?: string | null; limit: number }) {
       WHERE (r.deleted_at IS NOT NULL OR r.status::text IN ('recebida', 'cancelada'))
         AND (${desde}::timestamp IS NULL OR GREATEST(r.updated_at, r.deleted_at) >= ${desde}::timestamp)
     ),
+    pagos_bb AS (
+      SELECT DISTINCT COALESCE(NULLIF(rp.reference, ''), substring(rp.notes from 'nosso ([0-9A-Za-z]+)')) AS nn
+      FROM receivable_payments rp
+      WHERE rp.deleted_at IS NULL
+        AND rp.notes LIKE 'Baixa automatica boleto BB (%'
+        AND rp.notes NOT LIKE 'Baixa automatica boleto BB (conciliacao%'
+        AND rp.notes NOT LIKE 'Baixa automatica boleto BB (planilha%'
+    ),
+    vinculo AS (
+      SELECT bc.receivable_id AS rid, bc.id AS charge_id FROM boleto_charges bc
+       JOIN fechados f ON f.id = bc.receivable_id
+      UNION
+      SELECT bcr.receivable_id, bcr.boleto_charge_id FROM boleto_charge_receivables bcr
+       JOIN fechados f ON f.id = bcr.receivable_id
+    ),
     bol AS (
-      SELECT DISTINCT ON (bc.id) f.id AS rid, bc.id AS charge_id, bc.nosso_numero AS chave,
+      SELECT DISTINCT ON (bc.id) v.rid, bc.id AS charge_id, bc.nosso_numero AS chave,
              lower(COALESCE(bc.status, '')) AS st, bc.valor_original::numeric AS valor, bc.bb_conferido_at
-      FROM fechados f
-      JOIN boleto_charges bc ON (bc.receivable_id = f.id
-            OR bc.id IN (SELECT boleto_charge_id FROM boleto_charge_receivables WHERE receivable_id = f.id))
+      FROM vinculo v JOIN boleto_charges bc ON bc.id = v.charge_id
       WHERE bc.deleted_at IS NULL AND lower(COALESCE(bc.status, '')) NOT IN ('cancelado', 'cancelada', 'baixado')
         AND NOT (lower(COALESCE(bc.status, '')) IN ('liquidado', 'pago', 'recebido') AND (
-              bc.bb_conferido_at IS NOT NULL OR EXISTS (
-                SELECT 1 FROM receivable_payments rp WHERE rp.deleted_at IS NULL
-                  AND (rp.reference = bc.nosso_numero OR rp.notes LIKE '%nosso ' || bc.nosso_numero || '%')
-                  AND rp.notes LIKE 'Baixa automatica boleto BB (%'
-                  AND rp.notes NOT LIKE 'Baixa automatica boleto BB (conciliacao%'
-                  AND rp.notes NOT LIKE 'Baixa automatica boleto BB (planilha%')))
+              bc.bb_conferido_at IS NOT NULL OR EXISTS (SELECT 1 FROM pagos_bb pb WHERE pb.nn = bc.nosso_numero)))
     ),
     px AS (
       SELECT f.id AS rid, p.id AS charge_id, p.txid AS chave, p.status::text AS st, p.amount::numeric AS valor
       FROM fechados f JOIN pix_charges p ON p.receivable_id = f.id
       WHERE p.deleted_at IS NULL AND p.bank_removed_at IS NULL
         AND p.status::text IN ('ATIVA', 'REMOVIDA_PELO_USUARIO_RECEBEDOR')
+    ),
+    alvo AS (
+      SELECT f.* FROM fechados f
+      WHERE EXISTS (SELECT 1 FROM bol b WHERE b.rid = f.id) OR EXISTS (SELECT 1 FROM px x WHERE x.rid = f.id)
+      ORDER BY f.fechado_em DESC NULLS LAST
+      LIMIT ${opts.limit}
     )
     SELECT f.*,
       (SELECT COALESCE(json_agg(json_build_object('id', b.charge_id, 'chave', b.chave, 'st', b.st, 'valor', b.valor)), '[]'::json) FROM bol b WHERE b.rid = f.id) AS boletos,
@@ -361,10 +390,8 @@ async function candidatos(opts: { desde?: string | null; limit: number }) {
       EXISTS (SELECT 1 FROM receivable_payments rp WHERE rp.receivable_id = f.id AND rp.deleted_at IS NULL) AS tem_baixa,
       EXISTS (SELECT 1 FROM receivable_payments rp WHERE rp.receivable_id = f.id AND rp.deleted_at IS NULL AND rp.financial_account_id IS NULL) AS sem_lastro,
       (SELECT COUNT(*) FROM cobranca_extincao_log l WHERE l.receivable_id = f.id AND l.acao = 'erro')::int AS erros_anteriores
-    FROM fechados f
-    WHERE EXISTS (SELECT 1 FROM bol b WHERE b.rid = f.id) OR EXISTS (SELECT 1 FROM px x WHERE x.rid = f.id)
-    ORDER BY f.fechado_em DESC NULLS LAST
-    LIMIT ${opts.limit}`));
+    FROM alvo f
+    ORDER BY f.fechado_em DESC NULLS LAST`));
 }
 
 // Mesma trava da auditoria de cobrancas vivas: titulo com estado incoerente vai para
