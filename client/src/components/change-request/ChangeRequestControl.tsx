@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { ClipboardList, Hourglass, CheckCircle2, AlertTriangle, XCircle, Loader2, Mic, Square, Bell } from "lucide-react";
+import { AnexosMensagem, type AnexoSalvo } from "./Anexos";
 
 // ---------------------------------------------------------------------------
 // Tipos e rótulos
@@ -38,6 +39,7 @@ export interface CRMessage {
   at?: string;
   kind?: string;
   status?: string;
+  attachments?: AnexoSalvo[];
 }
 
 export interface ChangeRequestState {
@@ -128,7 +130,11 @@ export function MessageThread({ messages }: { messages?: CRMessage[] }) {
               <div className="font-semibold text-[10px] opacity-80 mb-0.5">
                 {admin ? "Admin" : "Vendedor"}{m.byName ? ` · ${m.byName}` : ""}{m.at ? ` · ${fmtWhen(m.at)}` : ""}
               </div>
-              <div className="whitespace-pre-wrap break-words">{m.text}</div>
+              {/* 📎 Mensagem só com anexo: o texto é a lista de nomes — não repete. */}
+              {!(Array.isArray(m.attachments) && m.attachments.length > 0 && String(m.text || "").startsWith("📎 ")) && (
+                <div className="whitespace-pre-wrap break-words">{m.text}</div>
+              )}
+              <AnexosMensagem anexos={m.attachments} />
             </div>
           </div>
         );
