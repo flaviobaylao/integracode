@@ -84,6 +84,7 @@ import { registerRepescagemAtiva } from './repescagem-ativa';
 import { registerDashboardHistoryRoutes } from './dashboard-history';
 import { authenticateUser, requireRole, gone } from './authMiddleware';
 import { registerIndustriaRoutes } from './industria-routes';
+import { registerTuyaRoutes } from './tuya-routes';
 import { registerRe15AssinaturaRoutes } from './re15-assinatura-routes';
 import { registerRawMaterialAttachmentRoutes } from './raw-material-attachments-routes';
 import { registerCompanyDocumentsRoutes } from './company-documents-routes';
@@ -3228,6 +3229,11 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Modulo Industria completo (materia-prima, movimentacoes, ordens de producao,
   // finalizacao com qualidade/CMV e integracao com inventory_lots) — 18/ago/2026
   try { registerIndustriaRoutes(app); } catch (e) { console.error('[industria routes]', e); }
+
+  // Temperaturas Tuya (controladores Coel E34B via nuvem Tuya) — 27/out/2026
+  // Rotas /api/tuya/* (auth rota a rota: authenticateUser + requireRole admin);
+  // cria tuya_devices / tuya_device_dps / tuya_temperature_readings no boot (IF NOT EXISTS).
+  try { registerTuyaRoutes(app); } catch (e) { console.error('[tuya routes]', e); }
   // RELATORIO PRD/PP/INSUMO — movimentacao de insumos no periodo (04/out/2026)
   try { registerRelatorioInsumosRoutes(app); } catch (e) { console.error('[relatorio-insumos]', e); }
 

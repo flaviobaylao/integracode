@@ -216,6 +216,31 @@ cron.schedule('25 * * * *', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// 🌡️ TEMPERATURAS TUYA (27/out/2026) — a cada 60 s lê os controladores Coel E34B
+// vinculados ao projeto Tuya "Integra Honest" (nuvem, Western America) e grava em
+// tuya_temperature_readings (dedupe pelo carimbo do aparelho; SEM purga — histórico
+// permanente). Lista de aparelhos relistada a cada 10 min. Se TUYA_ACCESS_SECRET
+// não estiver no ambiente o coletor só registra o aviso e não chama a nuvem.
+// Rodada anterior ainda em andamento → a nova é pulada (sem acúmulo).
+// Tela: /temperaturas. Estado: GET /api/tuya/status e system_settings 'tuya_collector_last'.
+cron.schedule('* * * * *', async () => {
+  try {
+    const { runTuyaCollector } = await import('./tuya-collector');
+    await runTuyaCollector();
+  } catch (error: any) {
+    console.error('[SCHEDULER] erro no coletor Tuya:', error?.message || error);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+// Primeira leitura logo no boot (não espera o próximo minuto cheio).
+(async () => {
+  try {
+    const { runTuyaCollector } = await import('./tuya-collector');
+    await runTuyaCollector({ forceDeviceRefresh: true });
+  } catch (error: any) {
+    console.error('[SCHEDULER] coletor Tuya no boot:', error?.message || error);
+  }
+})();
+
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {
