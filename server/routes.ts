@@ -21487,7 +21487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const semNome = Object.entries(lastOrdersMap).filter(([, v]) => !v.sellerName).map(([cid]) => (loByCid[cid] || loByDoc[customerDocuments[cid]])?.sellerId).filter(Boolean) as string[];
           if (semNome.length) {
-            const ur: any = await db.execute(sql`SELECT id, omie_vendor_code, COALESCE(NULLIF(name,''), email) AS nome FROM users WHERE id = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")}) OR omie_vendor_code = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")})`);
+            const ur: any = await db.execute(sql`SELECT id, omie_vendor_code, COALESCE(NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')),''), email) AS nome FROM users WHERE id = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")}) OR omie_vendor_code = ANY(${sql.raw("ARRAY[" + Array.from(new Set(semNome)).map((x) => "'" + x.replace(/'/g, "''") + "'").join(',') + "]::text[]")})`);
             const nomePorId: Record<string, string> = {};
             for (const u of ((ur.rows || ur) as any[])) { if (u.id) nomePorId[String(u.id)] = String(u.nome || ''); if (u.omie_vendor_code) nomePorId[String(u.omie_vendor_code)] = String(u.nome || ''); }
             for (const [cid, v] of Object.entries(lastOrdersMap)) {

@@ -47,7 +47,7 @@ export function registerAgendaForcadaRoutes(app: Express) {
       const cust = rowsOf(await db.execute(sql`
         SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.seller_id, c.weekdays, c.visit_periodicity,
                c.virtual_service, c.cnpj, c.cpf, c.latitude, c.longitude, c.address, c.service_start_date,
-               COALESCE(NULLIF(u.name,''), u.email, c.seller_id) AS vendedor, u.role AS seller_role
+               COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),''), u.email, c.seller_id) AS vendedor, u.role AS seller_role
           FROM customers c
           LEFT JOIN users u ON u.id = c.seller_id OR u.omie_vendor_code = c.seller_id
          WHERE c.is_active = true AND (c.is_supplier IS NOT TRUE) AND (c.is_lead IS NOT TRUE)
