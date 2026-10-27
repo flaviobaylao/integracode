@@ -15,6 +15,8 @@
 //   GET  /api/tuya/devices/:id/dps              catálogo dos DPs do aparelho (tipo, nome, último valor)
 //   GET  /api/tuya/devices/:id/latest           último valor gravado de cada DP
 //   POST /api/tuya/collect-now                  dispara uma rodada do coletor agora
+//   GET  /api/tuya/alerta/preview               relatório WhatsApp montado (sem enviar) + destinos
+//   POST /api/tuya/alerta/enviar-agora          envia o relatório WhatsApp agora
 // ============================================================================
 import type { Express, Request, Response } from 'express';
 import { db } from './db';
@@ -285,6 +287,27 @@ export function registerTuyaRoutes(app: Express) {
         FROM tuya_temperature_readings WHERE device_id = ${id}
         ORDER BY code, read_at DESC`);
       res.json({ device_id: id, dps: (r.rows || []).map((x: any) => ({ ...x, label: TUYA_DP_LABELS[x.code] || x.code, celsius: x.celsius == null ? null : Number(x.celsius) })) });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // ------------------------------------------------------------ relatório WhatsApp (tuya-alerta.ts)
+  // GET  /api/tuya/alerta/preview      → mensagem montada + destinos resolvidos (não envia)
+  // POST /api/tuya/alerta/enviar-agora → envia agora (ignora kill-switch/anti-duplicata)
+  app.get('/api/tuya/alerta/preview', ...guard, async (_req: Request, res: Response) => {
+    try {
+      const { lerCamaras, montarMensagem, resolverDestinos } = await import('./tuya-alerta');
+      const camaras = await lerCamaras();
+      const last: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'tuya_alerta_last' LIMIT 1`);
+      const ativo: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'tuya_alerta_ativo' LIMIT 1`);
+      res.json({ mensagem: montarMensagem(camaras), camaras: camaras.length, destinos: await resolverDestinos(),
+        ultimoEnvio: last.rows?.[0]?.value || null, ativo: (ativo.rows?.[0]?.value || 'on') !== 'off', horarios: '07h, 09h, 11h, 13h, 15h, 17h, 19h, 21h (BRT, todos os dias)' });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+  app.post('/api/tuya/alerta/enviar-agora', ...guard, async (req: Request, res: Response) => {
+    try {
+      const { enviarRelatorioTemperaturas } = await import('./tuya-alerta');
+      const r = await enviarRelatorioTemperaturas({ force: true, origem: 'manual:' + (str((req as any).currentUser?.email, 80) || 'admin') });
+      res.json({ ok: r.enviado, ...r });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 

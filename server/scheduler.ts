@@ -241,6 +241,20 @@ cron.schedule('* * * * *', async () => {
   }
 })();
 
+// 🌡️📲 RELATÓRIO DE TEMPERATURAS POR WHATSAPP (27/out/2026, pedido Flavio) — a cada 2 h
+// entre 07h e 22h BRT (07,09,11,13,15,17,19,21), TODOS os dias (sáb/dom/feriados incluídos),
+// para Flavio e Naiara (destinos dos Chamados → users.phone; config tuya_alerta_destinos),
+// com a temperatura atual de TODAS as câmaras Tuya conhecidas (tuya_devices — inclui as
+// que forem pareadas depois). Kill-switch: system_settings tuya_alerta_ativo='off'.
+cron.schedule('0 7-22/2 * * *', async () => {
+  try {
+    const { enviarRelatorioTemperaturas } = await import('./tuya-alerta');
+    await enviarRelatorioTemperaturas({ origem: 'cron' });
+  } catch (error: any) {
+    console.error('[SCHEDULER] erro no relatório de temperaturas:', error?.message || error);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // FASE 1c - Varredura horaria de boletos em aberto (dias uteis, 07h-20h BRT).
 // Substitui o cron externo via HTTP; da baixa automatica nos boletos pagos.
 cron.schedule('35 7-20 * * 1-5', async () => {
