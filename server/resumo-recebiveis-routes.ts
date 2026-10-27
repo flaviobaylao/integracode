@@ -41,6 +41,7 @@ import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import { sqlFaturamentoPorVendedor } from "./faturamento-oficial";
 import { computeCampaign } from "./campanha-outubro";
+import ExcelJS from "exceljs";
 
 const PAPEIS = ["vendedor", "telemarketing", "administrative", "motorista"];
 
@@ -86,6 +87,7 @@ type Cfg = {
   usaKm: boolean;
   usaCampanhas: boolean;
   usaBonus: boolean;
+  consolidaTotais: boolean;
   observacao: string;
   vigenciaYm: string | null;
 };
@@ -107,6 +109,7 @@ const CFG_PADRAO: Cfg = {
   usaKm: true,
   usaCampanhas: true,
   usaBonus: false,
+  consolidaTotais: false,
   observacao: "",
   vigenciaYm: null,
 };
@@ -168,6 +171,7 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "usa_km boolean NOT NULL DEFAULT true",
         "usa_campanhas boolean NOT NULL DEFAULT true",
         "usa_bonus boolean NOT NULL DEFAULT false",
+        "consolida_totais boolean NOT NULL DEFAULT false",
       ]) {
         await db.execute(sql.raw(
           `ALTER TABLE collab_remuneracao_config ADD COLUMN IF NOT EXISTS ${col}`
@@ -223,6 +227,16 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "user_id varchar PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, " +
         "incluir boolean NOT NULL DEFAULT true, " +
         "updated_by varchar, updated_at timestamptz DEFAULT now())"
+      ));
+
+      // Resultado congelado do mês. Uma vez fechado, a planilha daquele mês sai
+      // daqui e para de ser recalculada.
+      await db.execute(sql.raw(
+        "CREATE TABLE IF NOT EXISTS resumo_fechamentos (" +
+        "ym varchar(7) PRIMARY KEY, " +
+        "fechado_em timestamptz NOT NULL DEFAULT now(), " +
+        "fechado_por varchar, fechado_por_nome varchar, " +
+        "dados jsonb NOT NULL)"
       ));
 
       // Trilha de alterações: quem mexeu, quando e no quê. Só o módulo escreve;
@@ -339,6 +353,15 @@ async function semearNaoParticipantes(): Promise<void> {
     SELECT u.id, true, 'sistema' FROM users u
     WHERE ${nome} = ANY(${arraySql(DENTRO_DO_RESUMO)})
     ON CONFLICT (user_id) DO NOTHING`);
+  // A gestora enxerga meta e faturamento da equipe inteira.
+  await db.execute(sql`
+    INSERT INTO collab_remuneracao_config
+      (user_id, vigencia_ym, comissao_tipo, usa_fixo, usa_comissao, usa_km,
+       usa_campanhas, consolida_totais, observacao, created_by)
+    SELECT u.id, '2026-01', 'nenhum', false, false, false, false, true,
+           'Meta e faturamento somam a equipe inteira.', 'sistema'
+    FROM users u WHERE ${nome} = 'cinthia marques'
+    ON CONFLICT (user_id, vigencia_ym) DO NOTHING`).catch(() => {});
   console.log(`[RESUMO-RECEB] ${fora.rowCount ?? 0} contas fora e ${dentro.rowCount ?? 0} dentro do resumo`);
 }
 
@@ -350,7 +373,7 @@ function ehAdmin(req: any): boolean {
 
 // Registra uma alteração na trilha. Nunca derruba a operação: auditoria que
 // quebra o fluxo vira auditoria desligada.
-async function auditar(req: any, acao: string, descricao: string, alvoNome?: string, detalhe?: any) {
+async function auditar(req: any, acao: string, descricao: string, alvoNome?: string | null, detalhe?: any) {
   try {
     const u = req.currentUser || {};
     const autor = [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || u.email || "—";
@@ -376,6 +399,11 @@ const dinheiro = (v: number) =>
   "R$ " + (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Campanhas que valem no mês informado.
+async function mesFechado(ym: string): Promise<boolean> {
+  const r: any = await db.execute(sql`SELECT ym FROM resumo_fechamentos WHERE ym = ${ym}`);
+  return !!r.rows?.length;
+}
+
 async function campanhasDoMes(ym: string): Promise<any[]> {
   const r: any = await db.execute(sql`
     SELECT id, nome, origem, ym_inicio, ym_fim, ordem, observacao
@@ -386,21 +414,14 @@ async function campanhasDoMes(ym: string): Promise<any[]> {
 }
 
 export function registerResumoRecebiveisRoutes(app: Express) {
-  // -------------------------------------------------------------------------
-  // A planilha do mês.
-  // -------------------------------------------------------------------------
-  app.get("/api/resumo-recebiveis", authenticateUser, async (req: any, res) => {
-    try {
-      await ensureResumoRecebiveisSchema();
-      const ym = ymValido(req.query?.ym) ? String(req.query.ym) : new Date().toISOString().slice(0, 7);
+  // montarResumo roda a apuração do mês do zero. É usada pela planilha e pelo
+  // fechamento — assim o que é congelado é exatamente o que a tela mostrava.
+  async function montarResumo(ym: string) {
       const { ini, fim, ano, mes } = limitesDoMes(ym);
-      const admin = ehAdmin(req);
-      const eu = req.currentUser;
 
       // 1. Quem entra na planilha — só usuários ATIVOS, e só os marcados para
       //    aparecer no resumo (a flag exclui contas de sistema).
-      const colabs: any = admin
-        ? await db.execute(sql`
+      const colabs: any = await db.execute(sql`
             SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.seller_type
             FROM users u
             LEFT JOIN resumo_participantes p ON p.user_id = u.id
@@ -409,16 +430,11 @@ export function registerResumoRecebiveisRoutes(app: Express) {
                 (u.role::text = ANY(${arraySql(PAPEIS)}) AND COALESCE(p.incluir, true) = true)
                 OR p.incluir = true
               )
-            ORDER BY u.role, u.first_name, u.last_name`)
-        : await db.execute(sql`
-            SELECT id, first_name, last_name, email, role, seller_type
-            FROM users WHERE id = ${eu.id} AND is_active = true`);
+            ORDER BY u.role, u.first_name, u.last_name`);
 
       const linhas = (colabs.rows || []) as any[];
       const campanhas = await campanhasDoMes(ym);
-      if (!linhas.length) {
-        return res.json({ ym, admin, campanhas, colaboradores: [], totais: null });
-      }
+      if (!linhas.length) return { ym, campanhas, colaboradores: [], totais: null };
       const ids = linhas.map((r) => String(r.id));
 
       // 2. Faturamento — mesma fonte do Dashboard
@@ -510,7 +526,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         SELECT DISTINCT ON (user_id) user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo,
                comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta,
                faixa_tipo, incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento,
-               usa_comissao, usa_km, usa_campanhas, usa_bonus, observacao
+               usa_comissao, usa_km, usa_campanhas, usa_bonus, consolida_totais, observacao
         FROM collab_remuneracao_config
         WHERE user_id = ANY(${arraySql(ids)}) AND vigencia_ym <= ${ym}
         ORDER BY user_id, vigencia_ym DESC`);
@@ -532,6 +548,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           usaKm: r.usa_km !== false,
           usaCampanhas: r.usa_campanhas !== false,
           usaBonus: r.usa_bonus === true,
+          consolidaTotais: r.consolida_totais === true,
           observacao: r.observacao || "",
           vigenciaYm: r.vigencia_ym || null,
         };
@@ -573,6 +590,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
         return {
           id, nome, role: u.role, sellerType: u.seller_type || null,
+          consolidador: cfg.consolidaTotais === true,
           config: cfg,
           fixoMensal: fixo, ajudaCusto, meta, faturamento,
           atingimentoPct: metaMap[id] > 0 ? ((fatMap[id] || 0) / metaMap[id]) * 100 : 0,
@@ -586,12 +604,34 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         };
       });
 
+      // Consolidador (ex.: a gestora): a meta e o faturamento dele são a SOMA
+      // de todo mundo. Some os demais, nunca outro consolidador, senão o número
+      // se multiplicaria a cada gestor cadastrado.
+      const base = colaboradores.filter((c) => !c.config?.consolidaTotais);
+      const metaEquipe = base.reduce((s, c) => s + (c.meta || 0), 0);
+      const fatEquipe = base.reduce((s, c) => s + (c.faturamento || 0), 0);
+      for (const c of colaboradores) {
+        if (!c.config?.consolidaTotais) continue;
+        if (c.config.usaMeta) c.meta = metaEquipe;
+        if (c.config.usaFaturamento) c.faturamento = fatEquipe;
+        c.atingimentoPct = metaEquipe > 0 ? (fatEquipe / metaEquipe) * 100 : 0;
+        c.consolidador = true;
+        if (c.config.usaComissao) {
+          c.comissao = calcularComissao(c.config as Cfg, fatEquipe, metaEquipe);
+          c.totalMes = (c.fixoMensal || 0) + (c.ajudaCusto || 0) + (c.comissao || 0) +
+            (c.kmValor || 0) + (c.bonus || 0) +
+            campanhas.reduce((s, k) => s + (c.campanhas?.[k.id] || 0), 0);
+        }
+      }
+
       const soma = (f: (c: any) => number) => colaboradores.reduce((s, c) => s + f(c), 0);
+      // Meta e faturamento do rodapé ignoram o consolidador: ele já é a soma.
+      const somaBase = (f: (c: any) => number) => base.reduce((s, c) => s + f(c), 0);
       const totais = {
         fixoMensal: soma((c) => c.fixoMensal || 0),
         ajudaCusto: soma((c) => c.ajudaCusto || 0),
-        meta: soma((c) => c.meta || 0),
-        faturamento: soma((c) => c.faturamento || 0),
+        meta: somaBase((c) => c.meta || 0),
+        faturamento: somaBase((c) => c.faturamento || 0),
         comissao: soma((c) => c.comissao || 0),
         bonus: soma((c) => c.bonus || 0),
         kmRodado: soma((c) => c.kmRodado || 0),
@@ -602,12 +642,180 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         ),
       };
 
-      res.json({ ym, admin, campanhas, colaboradores, totais });
+      return { ym, campanhas, colaboradores, totais };
+  }
+  // -------------------------------------------------------------------------
+  // A planilha do mês. Mês fechado devolve o retrato congelado, não recalcula.
+  // -------------------------------------------------------------------------
+  app.get("/api/resumo-recebiveis", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureResumoRecebiveisSchema();
+      const ym = ymValido(req.query?.ym) ? String(req.query.ym) : new Date().toISOString().slice(0, 7);
+      const admin = ehAdmin(req);
+      const eu = req.currentUser;
+
+      const f: any = await db.execute(sql`
+        SELECT ym, fechado_em, fechado_por_nome, dados FROM resumo_fechamentos WHERE ym = ${ym}`);
+      const fech = f.rows?.[0];
+
+      const dados = fech ? fech.dados : await montarResumo(ym);
+      const payload: any = {
+        ...dados,
+        ym,
+        admin,
+        fechado: !!fech,
+        fechadoEm: fech?.fechado_em || null,
+        fechadoPor: fech?.fechado_por_nome || null,
+        podeFechar: admin && !fech && ym < new Date().toISOString().slice(0, 7),
+      };
+
+      if (!admin) {
+        payload.colaboradores = (payload.colaboradores || []).filter((c: any) => c.id === eu.id);
+        payload.totais = null;
+      }
+      res.json(payload);
     } catch (e: any) {
       console.error("[RESUMO-RECEB] planilha:", e?.message || e);
       res.status(500).json({ message: "Falha ao montar o resumo de recebíveis" });
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Exportação em Excel. Gerada aqui, no servidor, porque a lib do front não
+  // escreve congelamento de painel. Colunas com largura 10, cabeçalho em
+  // negrito e congelado, quebra automática de texto em todas as células.
+  // Respeita o mesmo acesso da tela: vendedor exporta só a própria linha.
+  // -------------------------------------------------------------------------
+  app.get("/api/resumo-recebiveis/xlsx", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureResumoRecebiveisSchema();
+      const ym = ymValido(req.query?.ym) ? String(req.query.ym) : new Date().toISOString().slice(0, 7);
+      const admin = ehAdmin(req);
+      const eu = req.currentUser;
+
+      const f: any = await db.execute(sql`SELECT dados FROM resumo_fechamentos WHERE ym = ${ym}`);
+      const dados: any = f.rows?.[0]?.dados || (await montarResumo(ym));
+      const campanhas: any[] = dados.campanhas || [];
+      let colaboradores: any[] = dados.colaboradores || [];
+      const totais = admin ? dados.totais : null;
+      if (!admin) colaboradores = colaboradores.filter((c: any) => c.id === eu.id);
+
+      const PAPEL: Record<string, string> = {
+        vendedor: "Externo", telemarketing: "Interno",
+        administrative: "Administrativo", motorista: "Motorista",
+      };
+
+      const cab = ["Colaborador", "Função", "Fixo Mensal", "Ajuda de Custo", "Meta", "Faturamento",
+        "Comissão Mês", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês"];
+
+      const wb = new ExcelJS.Workbook();
+      wb.creator = "Integra 2.0 — Honest Sucos";
+      wb.created = new Date();
+      const ws = wb.addWorksheet(ym);
+
+      ws.columns = cab.map((h) => ({ header: h, width: 10 }));
+      // Cabeçalho congelado: a primeira linha fica fixa ao rolar.
+      ws.views = [{ state: "frozen", ySplit: 1 }];
+
+      // "—" quando a rubrica não vale para o colaborador; nunca um zero que
+      // pareça valor apurado.
+      const cel = (v: any) => (v === null || v === undefined ? "—" : Number(v));
+
+      for (const c of colaboradores) {
+        ws.addRow([
+          c.nome, PAPEL[c.role] || c.role,
+          cel(c.fixoMensal), cel(c.ajudaCusto), cel(c.meta), cel(c.faturamento), cel(c.comissao),
+          ...campanhas.map((k) => cel(c.campanhas?.[k.id] ?? null)),
+          cel(c.bonus), Number(c.kmRodado || 0), cel(c.kmValor), Number(c.totalMes || 0),
+        ]);
+      }
+      if (totais && colaboradores.length > 1) {
+        ws.addRow([
+          "TOTAL", "", totais.fixoMensal, totais.ajudaCusto, totais.meta, totais.faturamento,
+          totais.comissao, ...campanhas.map((k) => totais.campanhas?.[k.id] || 0),
+          totais.bonus, totais.kmRodado, totais.kmValor, totais.totalMes,
+        ]);
+      }
+
+      const ultima = ws.rowCount;
+      ws.eachRow((row, i) => {
+        row.alignment = { wrapText: true, vertical: "middle" };
+        row.font = { size: 10, bold: i === 1 || (!!totais && colaboradores.length > 1 && i === ultima) };
+        row.eachCell((cell, col) => {
+          cell.alignment = { wrapText: true, vertical: "middle", horizontal: col <= 2 ? "left" : "right" };
+          // Km rodado é distância, não dinheiro.
+          if (i > 1 && col >= 3 && col !== cab.length - 1 && typeof cell.value === "number") {
+            cell.numFmt = 'R$ #,##0.00';
+          }
+        });
+        if (i === 1) {
+          row.height = 30;
+          row.eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6E4DC" } };
+            cell.alignment = { wrapText: true, vertical: "middle", horizontal: "center" };
+          });
+        }
+      });
+
+      const buf = await wb.xlsx.writeBuffer();
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="resumo-recebiveis-${ym}.xlsx"`);
+      res.setHeader("Content-Length", String((buf as ArrayBuffer).byteLength));
+      res.end(Buffer.from(buf as ArrayBuffer));
+    } catch (e: any) {
+      console.error("[RESUMO-RECEB] xlsx:", e?.message || e);
+      res.status(500).json({ message: "Falha ao gerar a planilha" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Fechamento do mês: congela o resultado. Depois disso a planilha daquele mês
+  // para de recalcular — mudar configuração não mexe mais no que já foi pago.
+  // -------------------------------------------------------------------------
+  app.post("/api/resumo-recebiveis/fechar", authenticateUser, async (req: any, res) => {
+    try {
+      if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
+      await ensureResumoRecebiveisSchema();
+      const ym = String(req.body?.ym || "");
+      if (!ymValido(ym)) return res.status(400).json({ message: "Mês inválido" });
+      if (ym >= new Date().toISOString().slice(0, 7)) {
+        return res.status(400).json({ message: "Só dá para fechar um mês que já terminou" });
+      }
+      const ja: any = await db.execute(sql`SELECT ym FROM resumo_fechamentos WHERE ym = ${ym}`);
+      if (ja.rows?.length) return res.status(400).json({ message: "Este mês já está fechado" });
+
+      const dados = await montarResumo(ym);
+      const u = req.currentUser || {};
+      const autor = [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || u.email || "—";
+      await db.execute(sql`
+        INSERT INTO resumo_fechamentos (ym, fechado_por, fechado_por_nome, dados)
+        VALUES (${ym}, ${u.id || null}, ${autor}, ${JSON.stringify(dados)}::jsonb)`);
+      await auditar(req, "Fechamento",
+        `Mês ${ym} fechado — total ${dinheiro((dados as any)?.totais?.totalMes || 0)} para ${((dados as any)?.colaboradores || []).length} colaboradores`,
+        null, { ym });
+      res.json({ message: "Mês fechado" });
+    } catch (e: any) {
+      console.error("[RESUMO-RECEB] fechar:", e?.message || e);
+      res.status(500).json({ message: "Falha ao fechar o mês" });
+    }
+  });
+
+  app.post("/api/resumo-recebiveis/reabrir", authenticateUser, async (req: any, res) => {
+    try {
+      if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
+      await ensureResumoRecebiveisSchema();
+      const ym = String(req.body?.ym || "");
+      if (!ymValido(ym)) return res.status(400).json({ message: "Mês inválido" });
+      const r: any = await db.execute(sql`DELETE FROM resumo_fechamentos WHERE ym = ${ym} RETURNING ym`);
+      if (!r.rows?.length) return res.status(404).json({ message: "Este mês não está fechado" });
+      await auditar(req, "Fechamento", `Mês ${ym} REABERTO — o resultado voltou a ser recalculado`, null, { ym });
+      res.json({ message: "Mês reaberto" });
+    } catch (e: any) {
+      console.error("[RESUMO-RECEB] reabrir:", e?.message || e);
+      res.status(500).json({ message: "Falha ao reabrir o mês" });
+    }
+  });
+
 
   // -------------------------------------------------------------------------
   // Gestor: configuração de remuneração + flags (somente admin).
@@ -620,7 +828,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         SELECT c.id, c.user_id, c.vigencia_ym, c.fixo_mensal, c.ajuda_custo, c.comissao_tipo, c.comissao_pct,
                c.comissao_desconto_fixo, c.comissao_proporcional_meta, c.faixa_tipo,
                c.incluir_no_resumo, c.usa_fixo, c.usa_ajuda_custo, c.usa_meta, c.usa_faturamento, c.usa_comissao,
-               c.usa_km, c.usa_campanhas, c.usa_bonus, c.observacao, c.created_at,
+               c.usa_km, c.usa_campanhas, c.usa_bonus, c.consolida_totais, c.observacao, c.created_at,
                COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
                u.role
         FROM collab_remuneracao_config c
@@ -669,13 +877,13 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           (user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo, comissao_pct,
            comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo, paga_km,
            incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento, usa_comissao,
-           usa_km, usa_campanhas, usa_bonus, observacao, created_by)
+           usa_km, usa_campanhas, usa_bonus, consolida_totais, observacao, created_by)
         VALUES (${b.userId}, ${b.vigenciaYm}, ${n(b.fixoMensal)}, ${n(b.ajudaCusto)}, ${tipo}, ${n(b.comissaoPct)},
                 ${n(b.comissaoDescontoFixo)}, ${b.comissaoProporcionalMeta === true}, ${faixa},
                 ${bool(b.usaKm, true)},
                 ${bool(b.incluirNoResumo, true)}, ${bool(b.usaFixo, true)}, ${b.usaAjudaCusto === true}, ${bool(b.usaMeta, true)},
                 ${bool(b.usaFaturamento, true)}, ${bool(b.usaComissao, true)}, ${bool(b.usaKm, true)},
-                ${bool(b.usaCampanhas, true)}, ${b.usaBonus === true},
+                ${bool(b.usaCampanhas, true)}, ${b.usaBonus === true}, ${b.consolidaTotais === true},
                 ${String(b.observacao || "").slice(0, 500) || null}, ${req.currentUser?.id || null})
         ON CONFLICT (user_id, vigencia_ym) DO UPDATE SET
           fixo_mensal = EXCLUDED.fixo_mensal,
@@ -695,6 +903,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           usa_km = EXCLUDED.usa_km,
           usa_campanhas = EXCLUDED.usa_campanhas,
           usa_bonus = EXCLUDED.usa_bonus,
+          consolida_totais = EXCLUDED.consolida_totais,
           observacao = EXCLUDED.observacao
         RETURNING id`);
 
@@ -861,6 +1070,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       await ensureResumoRecebiveisSchema();
       const b = req.body || {};
       if (!b.userId || !ymValido(b.ym)) return res.status(400).json({ message: "Colaborador e mês são obrigatórios" });
+      if (await mesFechado(b.ym)) return res.status(400).json({ message: `${b.ym} está fechado; reabra o mês para alterar` });
       await db.execute(sql`
         INSERT INTO resumo_campanha_valores (campanha_id, user_id, ym, valor, observacao, created_by)
         VALUES (${req.params.id}, ${b.userId}, ${b.ym}, ${n(b.valor)},
@@ -890,6 +1100,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (!b.userId || !ymValido(b.ym)) return res.status(400).json({ message: "Colaborador e mês são obrigatórios" });
       const descricao = String(b.descricao || "").trim().slice(0, 300);
       if (!descricao) return res.status(400).json({ message: "Descreva o bônus" });
+      if (await mesFechado(b.ym)) return res.status(400).json({ message: `${b.ym} está fechado; reabra o mês para alterar` });
 
       const cf: any = await db.execute(sql`
         SELECT usa_bonus FROM collab_remuneracao_config
