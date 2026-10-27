@@ -150,6 +150,10 @@ export function registerAgenda(app: Express) {
   // Vendedor ve so os proprios clientes (carteira atual); admin/adm/coordenacao veem
   // todos, com filtro opcional ?sellers=id1,id2 (ids de usuario).
   const ADM_ROLES = ["admin", "administrative", "coordinator"];
+  // So carteiras de vendedores externos e telemarketing. Contas de sistema/canal
+  // (HOTSITE, INSTAGRAM, SISTEMA, Flavio, "Honest ...") ficam fora do calendario.
+  const filtroCarteira = (a: string) => sql.raw(`${a}.role IN ('vendedor','telemarketing')
+          AND COALESCE(${a}.first_name,'') || ' ' || COALESCE(${a}.last_name,'') !~* '(hotsite|instagram|sistema|flavio|fl[aá]vio|honest)'`);
   app.get("/api/agenda/clientes-rota", authenticateUser, async (req: Request, res: Response) => {
     try {
       const u: any = (req as any).currentUser || (req as any).user || null;
@@ -181,6 +185,7 @@ export function registerAgenda(app: Express) {
           AND COALESCE(c.is_supplier, false) = false
           AND COALESCE(c.is_lead, false) = false
           AND (c.service_start_date IS NULL OR c.service_start_date::date <= v.scheduled_date::date)
+          AND ${filtroCarteira("u")}
           ${escopo.length ? sql`AND u.id IN (${sql.join(escopo.map((x) => sql`${x}`), sql`, `)})` : sql``}
         ORDER BY c.id, to_char(v.scheduled_date, 'YYYY-MM-DD'), u.id`);
       const rows = (r.rows || []) as any[];
@@ -198,8 +203,8 @@ export function registerAgenda(app: Express) {
     if (!u?.id || !ADM_ROLES.includes(String(u.role || ""))) { res.json([]); return; }
     try {
       const r: any = await db.execute(sql`
-        SELECT id, NULLIF(TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')), '') AS nome
-        FROM users WHERE role = 'vendedor' AND is_active = true ORDER BY 2`);
+        SELECT u.id, NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS nome
+        FROM users u WHERE u.is_active = true AND ${filtroCarteira("u")} ORDER BY 2`);
       res.json((r.rows || []).filter((x: any) => x.nome).map((x: any) => ({ id: String(x.id), nome: x.nome })));
     } catch (e: any) { res.status(500).json({ message: e?.message || "Erro" }); }
   });
