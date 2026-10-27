@@ -489,6 +489,9 @@ export async function estornarRecebimentoBalcao(
       updated_at = now(),
       updated_by = 'lio-app'
     WHERE id = ${receivableId}`);
+  // Titulo cancelado por SQL direto (fora do storage.updateReceivable): extingue a
+  // cobranca no banco aqui mesmo, para o boleto/PIX nao continuar vivo no BB.
+  try { const { dispararExtincao } = await import('./cobranca-extincao'); dispararExtincao(receivableId, 'lio-cancelamento'); } catch {}
 
   // Auditoria e desejavel, nao critica: se falhar, o estorno ja aconteceu e
   // derrubar a resposta aqui so faria o app achar que o cancelamento falhou.

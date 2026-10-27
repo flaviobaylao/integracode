@@ -223,6 +223,15 @@ cron.schedule('35 7-20 * * 1-5', async () => {
   catch (e: any) { console.error('[BB-BOLETO] sweep erro:', e?.message || e); }
 }, { timezone: 'America/Sao_Paulo' });
 
+// Extincao da cobranca no banco (23/set/2026) - rede de seguranca da baixa imediata:
+// titulo fechado no Integra DEPOIS do corte com boleto/PIX ainda vivo no BB (falha
+// do banco na hora, ou caminho que fecha titulo por SQL direto) e baixado aqui.
+// Roda depois da varredura de boletos (que baixa os pagos pelo proprio boleto).
+cron.schedule('45 7-20 * * 1-5', async () => {
+  try { const { varreduraExtincaoCobrancas } = await import('./cobranca-extincao'); await varreduraExtincaoCobrancas(200); }
+  catch (e: any) { console.error('[EXTINCAO] varredura erro:', e?.message || e); }
+}, { timezone: 'America/Sao_Paulo' });
+
 // FASE 3.2 - Alerta por WhatsApp se a varredura de boletos falhar ou parar (checa 15min
 // apos cada varredura; anti-spam de 3h; numeros em system_settings 'debitos_fixos').
 cron.schedule('50 7-20 * * 1-5', async () => {

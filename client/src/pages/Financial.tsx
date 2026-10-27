@@ -903,6 +903,14 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
       const j = await rr.json();
       if (!(j.ok || j.success)) { alert('Falha na baixa: ' + (j.message || j.error || 'erro')); return; }
       setShowBaixa(false);
+      {
+        const cb = j.cobrancaBanco;
+        const extintas = cb ? Number(cb.boletosBaixados || 0) + Number(cb.pixRemovidos || 0) : 0;
+        const msg = (extintas > 0 ? `Cobrança extinta no banco: ${cb.boletosBaixados || 0} boleto(s) baixado(s), ${cb.pixRemovidos || 0} PIX removido(s).` : '')
+          + (cb?.erros?.length ? `\n\nATENÇÃO — o banco NÃO baixou a cobrança: ${cb.erros.join(' | ')}\nO sistema tenta de novo a cada hora.` : '')
+          + (cb?.alertas?.length ? `\n\nConferir: ${cb.alertas.join(' | ')}` : '');
+        if (msg) alert('Baixa administrativa registrada.\n\n' + msg);
+      }
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
     } catch (e: any) { alert('Erro ao dar baixa: ' + (e?.message || e)); }
     finally { setBaixaBusy(false); }
@@ -945,11 +953,16 @@ function ReceivablesTab({ readOnly = false, canBoleto = false }: { readOnly?: bo
 
   const paymentMutation = useMutation({
     mutationFn: (data: any) => apiRequest('POST', `/api/financial/receivables/${selectedItem?.id}/payments`, data),
-    onSuccess: () => {
+    onSuccess: (resp: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/financial/receivables'] });
       setShowPayment(false);
       setPaymentForm({ amount: '', discount: '', fine: '', interest: '', paymentMethod: '', financialAccountId: '', paymentDate: '', reference: '', notes: '' });
-      toast({ title: 'Pagamento registrado com sucesso' });
+      // Titulo quitado: a cobranca e extinta no banco na mesma hora (sai do DDA do cliente).
+      const cb = resp?.cobrancaBanco;
+      const extintas = cb ? Number(cb.boletosBaixados || 0) + Number(cb.pixRemovidos || 0) : 0;
+      toast({ title: 'Pagamento registrado com sucesso', description: extintas > 0 ? `Cobrança extinta no banco (${cb.boletosBaixados || 0} boleto(s) baixado(s), ${cb.pixRemovidos || 0} PIX removido(s)) — sai do DDA do cliente.` : undefined });
+      if (cb?.erros?.length) toast({ title: 'Atenção: o banco não baixou a cobrança', description: cb.erros.join(' | ') + ' — o sistema tenta de novo a cada hora.', variant: 'destructive' });
+      if (cb?.alertas?.length) toast({ title: 'Conferir possível pagamento em duplicidade', description: cb.alertas.join(' | '), variant: 'destructive' });
     },
     onError: (e: any) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
