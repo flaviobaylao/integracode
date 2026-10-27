@@ -16,11 +16,14 @@ import { hojeBR } from "@shared/tempo";
 //     esperado = estoque em sistema GYN (em uso + bloqueado)
 //              + estoque em sistema SERV (em uso + bloqueado)
 //              + itens JÁ FATURADOS que AINDA NÃO ENTRARAM EM ROTA
-//                (cards do pipeline das instâncias GYN/SERV nas etapas entre
-//                 'faturado' e 'em_rota': faturado, impresso, aguardando_rota,
-//                 bsb, aguardando_rota_bsb, outras_cidades — a baixa de estoque
-//                 já aconteceu no faturamento, mas a mercadoria ainda está no
-//                 depósito até sair em rota)
+//                (cards do pipeline das instâncias GYN/SERV já faturados — a
+//                 baixa de estoque já aconteceu, mas a mercadoria ainda está
+//                 no depósito). Regra do Flavio (27/out/2026): conta TODO card
+//                 já faturado, em qualquer etapa, EXCETO em_rota, entregue,
+//                 lixeira e as etapas de BSB (bsb, aguardando_rota_bsb,
+//                 em_rota_bsb). "Já faturado" = etapa de faturado em diante OU
+//                 card que voltou para agendado/pedido/a_faturar com baixa de
+//                 estoque vigente (não estornada).
 //
 // Regras:
 //   - Sem abertura do dia, NENHUM faturamento pelo pipeline acontece: a rota
@@ -43,9 +46,14 @@ import { hojeBR } from "@shared/tempo";
 const rows = (r: any): any[] => (r?.rows ?? r ?? []) as any[];
 const EPS = 0.0001;
 const INSTANCIAS_CONTADAS = ["GYN", "SERV"]; // nome em omie_instances.name (maiúsculo)
-// Etapas do pipeline em que o pedido JÁ FOI FATURADO (estoque baixado) mas a
-// mercadoria AINDA NÃO SAIU do depósito.
-export const ETAPAS_FATURADO_SEM_ROTA = ["faturado", "impresso", "aguardando_rota", "bsb", "aguardando_rota_bsb", "outras_cidades"];
+// Etapas que NUNCA entram no "faturado s/ rota": mercadoria já saiu (em rota,
+// entregue), card descartado (lixeira) ou fluxo BSB (fora da contagem por regra).
+export const ETAPAS_FORA_DA_CONTAGEM = ["em_rota", "entregue", "lixeira", "bsb", "aguardando_rota_bsb", "em_rota_bsb"];
+// Etapas ANTERIORES ao faturamento: só contam se o card tiver baixa de estoque
+// vigente (foi faturado e voltou de etapa sem estorno).
+export const ETAPAS_PRE_FATURAMENTO = ["agendado", "pedido", "a_faturar"];
+// Compat: etapas pós-faturamento que contam (todas as demais).
+export const ETAPAS_FATURADO_SEM_ROTA = ["faturado", "impresso", "aguardando_rota", "outras_cidades"];
 const DESTINOS_ABERTURA = ["flavio", "lanucy", "cinthia", "naiara"]; // quem pode abrir o dia
 const DESTINOS_NOTIFICACAO = ["flavio", "lanucy", "naiara"];          // quem é notificado
 export const TITULO_SEM_ABERTURA = "NOTIFICACAO - TENTATIVA DE FATURAMENTO SEM ABERTURA DE ESTOQUE DIA";
@@ -209,12 +217,27 @@ export async function calcularEsperado(): Promise<{ linhas: LinhaEsperada[]; ins
 
     // 2) Faturado e ainda não em rota (estoque já baixado, mercadoria no depósito).
     //    Exclui cards cuja NF mais recente foi cancelada/devolvida (estoque estornado).
-    const etapas = sql.join(ETAPAS_FATURADO_SEM_ROTA.map((s) => sql`${s}`), sql`, `);
+    const fora = sql.join(ETAPAS_FORA_DA_CONTAGEM.map((s) => sql`${s}`), sql`, `);
+    const pre = sql.join(ETAPAS_PRE_FATURAMENTO.map((s) => sql`${s}`), sql`, `);
     const cards = rows(await db.execute(sql`
       SELECT bp.id, bp.order_number, bp.customer_name, bp.stage::text AS stage, bp.omie_instance_id, bp.products
       FROM billing_pipeline bp
-      WHERE bp.stage::text IN (${etapas})
+      WHERE bp.stage::text NOT IN (${fora})
         AND bp.omie_instance_id IN (${ids})
+        AND (
+          bp.stage::text NOT IN (${pre})
+          OR EXISTS (
+            -- voltou para antes do faturamento mas a baixa continua vigente
+            SELECT 1 FROM inventory_movements m
+            WHERE m.source_type = 'invoice' AND m.movement_type = 'consume' AND m.source_id = bp.id
+              AND COALESCE(m.notes, '') NOT LIKE '%[estorno-transferencia]%'
+              AND COALESCE(m.notes, '') NOT LIKE '%[estornado]%'
+              AND m.created_at > COALESCE((
+                SELECT MAX(e.created_at) FROM inventory_movements e
+                WHERE e.movement_type = 'cancel_reversal' AND e.source_type = 'invoice'
+                  AND (e.source_id = bp.id
+                       OR e.source_id IN (SELECT fi.id FROM fiscal_invoices fi WHERE bp.sales_card_id IS NOT NULL AND fi.sales_card_id = bp.sales_card_id))
+              ), '-infinity'::timestamp)))
         AND NOT EXISTS (
           SELECT 1 FROM fiscal_invoices f
           WHERE f.sales_card_id = bp.sales_card_id
