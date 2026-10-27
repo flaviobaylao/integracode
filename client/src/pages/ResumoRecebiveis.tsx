@@ -23,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone,
+  Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone, Lock, Unlock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -47,6 +47,7 @@ const ACAO_COR: Record<string, string> = {
   "Campanha": "bg-amber-100 text-amber-800",
   "Bônus": "bg-emerald-100 text-emerald-800",
   "Participação": "bg-violet-100 text-violet-800",
+  "Fechamento": "bg-slate-800 text-white",
 };
 
 // Carimbo sempre no horário de Brasília, independente do fuso de quem olha.
@@ -95,43 +96,43 @@ interface Colab {
   bonus: number | null;
   lancamentos: Array<{ id: string; descricao: string; valor: number }>;
   kmRodado: number; kmTarifa: number; kmRegiao?: string; kmTarifaPropria?: boolean; kmValor: number | null; totalMes: number;
+  consolidador?: boolean;
 }
 
 export default function ResumoRecebiveis() {
   const [ym, setYm] = useState(() => new Date().toISOString().slice(0, 7));
   const [abrirGestor, setAbrirGestor] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ ym: string; admin: boolean; campanhas: Campanha[]; colaboradores: Colab[]; totais: any }>({
+  const { data, isLoading } = useQuery<{ ym: string; admin: boolean; campanhas: Campanha[]; colaboradores: Colab[]; totais: any; fechado: boolean; fechadoEm: string | null; fechadoPor: string | null; podeFechar: boolean }>({
     queryKey: ["/api/resumo-recebiveis", ym],
     queryFn: () => apiRequest("GET", `/api/resumo-recebiveis?ym=${ym}`),
   });
 
   const admin = data?.admin === true;
+  const fechado = data?.fechado === true;
+
+  const fecharMes = useMutation({
+    mutationFn: (acao: "fechar" | "reabrir") =>
+      apiRequest("POST", `/api/resumo-recebiveis/${acao}`, { ym }),
+    onSuccess: (r: any) => {
+      toast({ title: r?.message || "Mês atualizado" });
+      queryClient.invalidateQueries({ queryKey: ["/api/resumo-recebiveis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/resumo-recebiveis/auditoria"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível", description: e?.message, variant: "destructive" }),
+  });
   const colabs = data?.colaboradores || [];
   const campanhas = data?.campanhas || [];
   const totais = data?.totais;
   const semFixo = colabs.filter((c) => c.config?.usaFixo !== false && !c.fixoMensal).length;
 
-  const exportarCsv = () => {
-    const sep = ";";
-    const cab = ["Colaborador", "Função", "Fixo Mensal", "Ajuda de Custo", "Meta", "Faturamento", "Comissão Mês",
-      ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês"];
-    const num = (v: number | null) => (v === null ? "" : v.toFixed(2));
-    const linhas = [cab.join(sep)];
-    for (const c of colabs) {
-      linhas.push([
-        c.nome, PAPEL_LABEL[c.role] || c.role,
-        num(c.fixoMensal), num(c.ajudaCusto), num(c.meta), num(c.faturamento), num(c.comissao),
-        ...campanhas.map((k) => num(c.campanhas?.[k.id] ?? null)),
-        num(c.bonus), c.kmRodado.toFixed(1), num(c.kmValor), c.totalMes.toFixed(2),
-      ].join(sep));
-    }
-    const blob = new Blob(["﻿" + linhas.join("\n")], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `resumo-recebiveis-${ym}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  // O arquivo é gerado no servidor: a lib do front não escreve congelamento de
+  // painel. Lá vai com largura 10, cabeçalho em negrito e congelado e quebra
+  // automática de texto.
+  const exportarXls = () => {
+    window.location.href = `/api/resumo-recebiveis/xlsx?ym=${ym}`;
   };
 
   return (
@@ -155,19 +156,44 @@ export default function ResumoRecebiveis() {
               {mesesDisponiveis().map((m) => <SelectItem key={m} value={m}>{nomeDoMes(m)}</SelectItem>)}
             </SelectContent>
           </Select>
-          {admin && (
+          {admin && data?.podeFechar && (
+            <Button variant="outline" size="sm" className="text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+              onClick={() => fecharMes.mutate("fechar")} disabled={fecharMes.isPending}
+              data-testid="button-fechar-mes">
+              <Lock className="h-4 w-4 mr-1" /> Fechar mês
+            </Button>
+          )}
+          {admin && fechado && (
+            <Button variant="outline" size="sm" className="text-amber-700 border-amber-300 hover:bg-amber-50"
+              onClick={() => fecharMes.mutate("reabrir")} disabled={fecharMes.isPending}
+              data-testid="button-reabrir-mes">
+              <Unlock className="h-4 w-4 mr-1" /> Reabrir
+            </Button>
+          )}
+          {admin && !fechado && (
             <Button variant="outline" size="sm" onClick={() => setAbrirGestor(true)} data-testid="button-gestor">
               <Settings2 className="h-4 w-4 mr-1" /> Configurações
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={exportarCsv} disabled={!colabs.length}>
-            <Download className="h-4 w-4 mr-1" /> CSV
+          <Button variant="outline" size="sm" onClick={exportarXls} disabled={!colabs.length}>
+            <Download className="h-4 w-4 mr-1" /> Excel
           </Button>
           <BackToDashboardButton />
         </div>
       </div>
 
-      {admin && semFixo > 0 && (
+      {fechado && (
+        <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>
+            <strong>Mês fechado</strong> por {data?.fechadoPor || "—"} em {dataHora(data?.fechadoEm)}. Os valores
+            abaixo são o retrato daquele momento e não mudam mais, mesmo que a configuração de alguém seja
+            alterada depois. Lançamentos de bônus e de campanha neste mês ficam bloqueados.
+          </span>
+        </div>
+      )}
+
+      {admin && !fechado && semFixo > 0 && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
           <span>
@@ -225,9 +251,14 @@ export default function ResumoRecebiveis() {
                     <tr key={c.id} className="border-t hover:bg-muted/30" data-testid={`linha-${c.id}`}>
                       <td className="px-3 py-2 sticky left-0 bg-background">
                         <div className="font-medium leading-tight">{c.nome}</div>
-                        <Badge className={`${PAPEL_COR[c.role] || "bg-gray-100 text-gray-800"} mt-0.5`}>
+                        <Badge className={`${PAPEL_COR[c.role] || "bg-slate-100 text-slate-700"} mt-0.5`}>
                           {PAPEL_LABEL[c.role] || c.role}
                         </Badge>
+                        {c.consolidador && (
+                          <Badge className="bg-slate-800 text-white ml-1" title="Meta e faturamento somam a equipe inteira">
+                            consolidado
+                          </Badge>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right">{brl(c.fixoMensal)}</td>
                       <td className="px-3 py-2 text-right">{brl(c.ajudaCusto)}</td>
@@ -288,7 +319,9 @@ export default function ResumoRecebiveis() {
           fonte do Dashboard (NF-e de venda autorizada, atribuída a quem implantou o pedido), Km na
           Kilometragem Vendedores e as campanhas no módulo da campanha. Fixo Mensal, Ajuda de Custo e Bônus são
           valores de cadastro, informados em Configurações. Uma célula com <strong>—</strong> significa que a rubrica
-          não está habilitada para aquele colaborador, e por isso não entra no total.
+          não está habilitada para aquele colaborador, e por isso não entra no total. Quem está marcado como
+          <strong> consolidado</strong> tem meta e faturamento iguais à soma da equipe; para não contar duas
+          vezes, o rodapé soma essas duas colunas apenas dos demais.
         </span>
       </div>
 
@@ -309,6 +342,7 @@ const FLAGS: Array<{ k: string; label: string; modulo: string; ajuda: string }> 
   { k: "usaKm", label: "Km", modulo: "Kilometragem Vendedores", ajuda: "Km rodado no mês x tarifa do colaborador" },
   { k: "usaCampanhas", label: "Campanhas", modulo: "Módulos de campanha", ajuda: "Uma coluna por campanha vigente" },
   { k: "usaBonus", label: "Bônus manual", modulo: "Lançamento avulso", ajuda: "Abre o lançamento por usuário na aba Bônus" },
+  { k: "consolidaTotais", label: "Consolida a equipe", modulo: "Soma dos demais", ajuda: "Meta e faturamento desta pessoa passam a ser a soma de todos os outros — para quem gerencia a equipe" },
 ];
 
 function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
@@ -322,7 +356,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     comissaoPct: "", comissaoDescontoFixo: "", comissaoProporcionalMeta: false,
     faixaTipo: "telemarketing",
     usaFixo: true, usaAjudaCusto: false, usaMeta: true, usaFaturamento: true, usaComissao: true,
-    usaKm: true, usaCampanhas: true, usaBonus: false, observacao: "",
+    usaKm: true, usaCampanhas: true, usaBonus: false, consolidaTotais: false, observacao: "",
   };
   const [form, setForm] = useState<any>(vazio);
   const [buscaPart, setBuscaPart] = useState("");
@@ -360,7 +394,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
       comissaoProporcionalMeta: form.comissaoProporcionalMeta, faixaTipo: form.faixaTipo,
       usaFixo: form.usaFixo, usaAjudaCusto: form.usaAjudaCusto, usaMeta: form.usaMeta, usaFaturamento: form.usaFaturamento,
       usaComissao: form.usaComissao, usaKm: form.usaKm, usaCampanhas: form.usaCampanhas,
-      usaBonus: form.usaBonus, observacao: form.observacao,
+      usaBonus: form.usaBonus, consolidaTotais: form.consolidaTotais, observacao: form.observacao,
     }),
     onSuccess: () => { toast({ title: "Configuração salva" }); setForm(vazio); invalidar(); },
     onError: (e: any) => toast({ title: "Falha ao salvar", description: e?.message, variant: "destructive" }),
@@ -606,8 +640,10 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 const itens: Array<[string, string, string]> = [
                   ["Fixo mensal", "Cadastro (esta tela)", form.fixoMensal ? brl(num(form.fixoMensal)) : "a preencher"],
                   ["Ajuda de custo", "Cadastro (esta tela)", form.usaAjudaCusto ? (form.ajudaCusto ? brl(num(form.ajudaCusto)) : "a preencher") : "não recebe"],
-                  ["Meta", "Metas de Vendas", alvo?.meta ? brl(alvo.meta) : "sem meta cadastrada em " + nomeDoMes(ym)],
-                  ["Faturamento", "Faturamento oficial", alvo?.faturamento != null ? brl(alvo.faturamento) : "—"],
+                  ["Meta", form.consolidaTotais ? "Soma das metas da equipe" : "Metas de Vendas",
+                    alvo?.meta ? brl(alvo.meta) : "sem meta cadastrada em " + nomeDoMes(ym)],
+                  ["Faturamento", form.consolidaTotais ? "Soma do faturamento da equipe" : "Faturamento oficial",
+                    alvo?.faturamento != null ? brl(alvo.faturamento) : "—"],
                   ["Comissão mês", "Regra do colaborador", regraCom],
                   ["Km", "Kilometragem Vendedores",
                     alvo ? `${brl(alvo.kmTarifa)}/km · ${(alvo as any).kmTarifaPropria ? "tarifa própria" : `tarifa da região ${(alvo as any).kmRegiao || "GO"}`}` : "—"],
@@ -669,7 +705,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       <td className="px-2 py-1.5 text-[11px] text-muted-foreground">
                         {[c.usa_fixo && "fixo", c.usa_ajuda_custo && "ajuda", c.usa_meta && "meta", c.usa_faturamento && "fat.",
                           c.usa_comissao && "com.", c.usa_km && "km", c.usa_campanhas && "camp.",
-                          c.usa_bonus && "bônus"].filter(Boolean).join(" · ") || "nenhuma"}
+                          c.usa_bonus && "bônus", c.consolida_totais && "consolida"].filter(Boolean).join(" · ") || "nenhuma"}
                       </td>
                       <td className="px-2 py-1.5 text-right">
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-600"
