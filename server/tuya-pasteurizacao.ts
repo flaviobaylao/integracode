@@ -77,7 +77,7 @@ export interface SensorResolvido extends SensorCfg { device_id: string | null; d
 
 export async function resolverSensores(): Promise<SensorResolvido[]> {
   const cfg = await getSettingJson<SensorCfg[]>('tuya_pasteurizacao_sensores', DEFAULT_PASTEUR_SENSORS);
-  const devs = rows(await db.execute(sql`SELECT device_id, name, online FROM tuya_devices`));
+  const devs = rows(await db.execute(sql`SELECT device_id, name, online FROM tuya_devices WHERE COALESCE(kind, 'temperatura') = 'temperatura'`));
   return (Array.isArray(cfg) ? cfg : DEFAULT_PASTEUR_SENSORS).map((s) => {
     const d = devs.find((x) => norm(x.name) === norm(s.device)) || devs.find((x) => norm(x.name).startsWith(norm(s.device)));
     return { ...s, device_id: d ? String(d.device_id) : null, device_name: d ? String(d.name) : null, online: d ? d.online === true : false };

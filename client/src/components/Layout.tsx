@@ -44,7 +44,7 @@ const MENU_CARD: Record<string, string> = {
   telemarketing: "Central de Telemarketing", "telemarketing-analysis": "Dashboard de Conversas",
   "telemarketing-disparo": "Disparo em Massa", "automacoes-comunicacao": "Automações de Comunicação",
   "painel-comunicacao": "Painel de Comunicação",
-  industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas", temperaturas: "Temperaturas",
+  industria: "Módulo Indústria", "industria-dados": "Matéria-Prima e Receitas", temperaturas: "Temperaturas", "qualidade-agua": "Qualidade da Água",
   relatorios: "Relatórios Dinâmicos", "relatorios-ia": "Relatórios IA",
   "empresas-grupo": "Empresas do Grupo", "ambiente-fiscal": "Ambiente Fiscal",
   "agentes-ia": "Agentes IA", rh: "RH / Métricas",
@@ -509,6 +509,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'industria', label: 'Módulo Indústria', icon: 'fas fa-industry', available: canAccessIndustria, badge: null },
         { id: 'industria-dados', label: 'Matéria-Prima e Receitas', icon: 'fas fa-flask', available: canAccessIndustria, badge: null },
         { id: 'temperaturas', label: 'Temperaturas', icon: 'fas fa-temperature-half', available: canAccessIndustria, badge: null },
+        { id: 'qualidade-agua', label: 'Qualidade da Água', icon: 'fas fa-droplet', available: canAccessIndustria, badge: null },
       ],
     },
     {
@@ -693,7 +694,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['chamados', 'resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'fornecedores-criticos', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'temperaturas', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque', 'abertura-estoque', 'recebimento-estoque'];
+    const routePages = ['chamados', 'resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'fornecedores-criticos', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'temperaturas', 'qualidade-agua', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque', 'abertura-estoque', 'recebimento-estoque'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');

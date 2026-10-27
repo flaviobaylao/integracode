@@ -76,6 +76,9 @@ export async function ensureTuyaTables(): Promise<void> {
       read_at      timestamptz NOT NULL,
       collected_at timestamptz NOT NULL DEFAULT now()
     )`);
+  // Tipo do aparelho (27/out, Fase 3): 'temperatura' (controladores Coel, categoria wk) ou 'agua'
+  // (analisador de qualidade de água, categoria dgnbj). Separa as telas Temperaturas × Qualidade da Água.
+  await db.execute(sql`ALTER TABLE tuya_devices ADD COLUMN IF NOT EXISTS kind varchar(20)`);
   // Colunas p/ guardar qualquer tipo de DP (27/out): id do DP, tipo Tuya e valor em texto (enum/string/bitmap/json).
   await db.execute(sql`ALTER TABLE tuya_temperature_readings ADD COLUMN IF NOT EXISTS dp_id integer`);
   await db.execute(sql`ALTER TABLE tuya_temperature_readings ADD COLUMN IF NOT EXISTS value_type varchar(20)`);
@@ -105,17 +108,25 @@ export async function ensureTuyaTables(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Dispositivos (lista da Tuya + cache no banco)
 // ---------------------------------------------------------------------------
+/** Tipo do aparelho pela categoria Tuya: dgnbj = detector de qualidade de água; demais = temperatura. */
+export function deviceKind(d: { category: string | null; product_name: string | null; name: string }): 'temperatura' | 'agua' {
+  const cat = String(d.category || '').toLowerCase();
+  const txt = `${d.product_name || ''} ${d.name || ''}`.toLowerCase();
+  if (cat === 'dgnbj') return 'agua';
+  if (cat !== 'wk' && /\b(tester|ph|orp|tds|water|agua|água)\b/.test(txt)) return 'agua';
+  return 'temperatura';
+}
 export async function refreshTuyaDevices(force = false): Promise<TuyaDevice[]> {
   if (!force && deviceCache && Date.now() - deviceCache.at < DEVICE_CACHE_MS) return deviceCache.list;
   const list = await tuyaListDevices();
   await ensureTuyaTables();
   for (const d of list) {
     await db.execute(sql`
-      INSERT INTO tuya_devices (device_id, name, product_name, category, online, last_seen_at, raw)
-      VALUES (${d.id}, ${d.name}, ${d.product_name}, ${d.category}, ${d.online}, now(), ${JSON.stringify(d)}::jsonb)
+      INSERT INTO tuya_devices (device_id, name, product_name, category, online, last_seen_at, raw, kind)
+      VALUES (${d.id}, ${d.name}, ${d.product_name}, ${d.category}, ${d.online}, now(), ${JSON.stringify(d)}::jsonb, ${deviceKind(d)})
       ON CONFLICT (device_id) DO UPDATE SET
         name = EXCLUDED.name, product_name = EXCLUDED.product_name, category = EXCLUDED.category,
-        online = EXCLUDED.online, last_seen_at = now(), raw = EXCLUDED.raw`);
+        online = EXCLUDED.online, last_seen_at = now(), raw = EXCLUDED.raw, kind = EXCLUDED.kind`);
   }
   // Aparelho que sumiu da lista (desvinculado no app) fica como offline, mas o histórico permanece.
   if (list.length) {

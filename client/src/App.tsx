@@ -130,6 +130,7 @@ import PainelComunicacao from "@/pages/PainelComunicacao";
 import Cielo from "@/pages/Cielo";
 import IndustriaDados from "@/pages/IndustriaDados";
 import Temperaturas from "@/pages/Temperaturas";
+import QualidadeAgua from "@/pages/QualidadeAgua";
 import TodasAsContas from "@/pages/TodasAsContas";
 import FluxoCaixa from "@/pages/FluxoCaixa";
 import ConferenciaPagamentos from "@/pages/ConferenciaPagamentos";
@@ -376,6 +377,7 @@ function Router() {
           <Route path="/financeiro" component={Financial} />
           <Route path="/industria" component={Industry} />
           <Route path="/temperaturas" component={Temperaturas} />
+          <Route path="/qualidade-agua" component={QualidadeAgua} />
           <Route path="/relatorios" component={Reports} />
           <Route path="/radar-compras" component={PurchaseRadar} />
           <Route path="/relatorios-ia" component={RelatoriosIA} />

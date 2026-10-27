@@ -26,6 +26,7 @@ import { authenticateUser, requireRole } from './authMiddleware';
 import { ensureTuyaTables, getTuyaCollectorState, refreshTuyaDevices, runTuyaCollector } from './tuya-collector';
 import { isTuyaConfigured, tuyaTestConnection, TUYA_HOST, TUYA_ACCESS_ID, TUYA_TEMP_CODES, TUYA_STATUS_CODES, TUYA_DP_LABELS } from './tuya-service';
 import { getSensorLabels, labelFor, ensurePasteurizacaoColumns, estadoPasteurizacao, iniciarPasteurizacao, finalizarPasteurizacao, resolverSensores } from './tuya-pasteurizacao';
+import { registerTuyaAguaRoutes } from './tuya-agua';
 
 const str = (v: any, max = 120): string | null => {
   if (v == null) return null;
@@ -147,6 +148,8 @@ export function registerTuyaRoutes(app: Express) {
       await ensureTuyaTables();
       let refreshError: string | null = null;
       const wantRefresh = String(req.query.refresh || '') === '1';
+      // kind=temperatura (padrão: controladores Coel) | agua (analisador — tela Qualidade da Água) | todos
+      const kind = String(req.query.kind || 'temperatura');
       const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS n FROM tuya_devices`);
       const empty = (Number(cnt.rows?.[0]?.n) || 0) === 0;
       if ((wantRefresh || empty) && isTuyaConfigured()) {
@@ -161,6 +164,7 @@ export function registerTuyaRoutes(app: Express) {
         FROM tuya_devices d
         LEFT JOIN LATERAL (SELECT celsius, read_at FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = ${MAIN_CODE} ORDER BY read_at DESC LIMIT 1) m ON true
         LEFT JOIN LATERAL (SELECT celsius, read_at FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = ${EVAP_CODE} ORDER BY read_at DESC LIMIT 1) ev ON true
+        WHERE (${kind} = 'todos' OR COALESCE(d.kind, 'temperatura') = ${kind})
         ORDER BY d.online DESC, d.name`);
       const labels = await getSensorLabels();
       const devices = (r.rows || []).map((d: any) => ({
@@ -362,6 +366,8 @@ export function registerTuyaRoutes(app: Express) {
       res.json({ ok: st.errors.length === 0, ...st });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
+
+  registerTuyaAguaRoutes(app, guard);
 
   console.log('🌡️ [TUYA] rotas /api/tuya/* registradas' + (isTuyaConfigured() ? '' : ' (TUYA_ACCESS_SECRET ausente — coletor inativo)'));
 }

@@ -86,6 +86,7 @@ export async function lerCamaras(): Promise<LinhaCamara[]> {
     LEFT JOIN LATERAL (SELECT value_raw FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = 'status_do_compressor' ORDER BY read_at DESC LIMIT 1) co ON true
     LEFT JOIN LATERAL (SELECT value_raw FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = 'status_do_alarme_hi' ORDER BY read_at DESC LIMIT 1) hi ON true
     LEFT JOIN LATERAL (SELECT value_raw FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = 'status_do_alarme_lo' ORDER BY read_at DESC LIMIT 1) lo ON true
+    WHERE COALESCE(d.kind, 'temperatura') = 'temperatura'
     ORDER BY d.name`));
   const b = (v: any) => (v == null ? null : Number(v) === 1);
   const n = (v: any) => (v == null ? null : Number(v));
