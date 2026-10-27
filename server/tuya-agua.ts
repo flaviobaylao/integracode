@@ -28,17 +28,19 @@ import { isTuyaConfigured } from './tuya-service';
 
 const rows = (r: any): any[] => (r?.rows || []);
 
-export interface ParamDef { label: string; unit: string; div: number; decimals: number; nota?: string }
+export interface ParamDef { label: string; unit: string; div: number; decimals: number; nota?: string; hidden?: boolean }
+// Lista e ordem confirmadas pelo Flavio (27/out): pH, ORP, EC, TDS, Sal/Salinidade, S.G., CF (+ temperatura da água).
 export const DEFAULT_AGUA_PARAMS: Record<string, ParamDef> = {
-  ph_current:       { label: 'pH',                  unit: '',      div: 100,  decimals: 2 },
-  orp_current:      { label: 'ORP (potencial redox)', unit: 'mV',  div: 1,    decimals: 0 },
-  tds_current:      { label: 'TDS (sólidos dissolvidos)', unit: 'ppm', div: 1, decimals: 0 },
-  ec_current:       { label: 'Condutividade (EC)',  unit: 'µS/cm', div: 1,    decimals: 0 },
-  salinity_current: { label: 'Salinidade',          unit: 'ppm',   div: 1,    decimals: 0 },
-  cf_current:       { label: 'CF (fator de condutividade)', unit: '', div: 1, decimals: 0 },
-  pro_current:      { label: 'Densidade (S.G.)',    unit: '',      div: 1000, decimals: 3 },
-  temp_current:     { label: 'Temperatura da água', unit: '°C',    div: 10,   decimals: 1 },
-  rh_current:       { label: 'RH',                  unit: '',      div: 1,    decimals: 0, nota: 'parâmetro do aparelho ainda sem significado confirmado (cloro residual?) — conferir com a sonda imersa' },
+  ph_current:       { label: 'pH',                                unit: '',      div: 100,  decimals: 2 },
+  orp_current:      { label: 'ORP (potencial de redução/oxidação)', unit: 'mV', div: 1,    decimals: 0, nota: 'indica a atividade do cloro/sanitizantes' },
+  ec_current:       { label: 'EC (condutividade elétrica)',       unit: 'µS/cm', div: 1,    decimals: 0 },
+  tds_current:      { label: 'TDS (sólidos totais dissolvidos)',  unit: 'ppm',   div: 1,    decimals: 0 },
+  salinity_current: { label: 'Sal / Salinidade',                  unit: 'ppm',   div: 1,    decimals: 0 },
+  pro_current:      { label: 'S.G. (gravidade específica)',       unit: '',      div: 1000, decimals: 3 },
+  cf_current:       { label: 'CF (fator de condutividade)',       unit: '',      div: 1,    decimals: 0 },
+  temp_current:     { label: 'Temperatura da água',               unit: '°C',    div: 10,   decimals: 1 },
+  // DP que o aparelho manda mas não faz parte dos dados do analisador: fica gravado, não aparece na tela.
+  rh_current:       { label: 'RH', unit: '', div: 1, decimals: 0, hidden: true },
 };
 const ORDER = Object.keys(DEFAULT_AGUA_PARAMS);
 
@@ -75,8 +77,9 @@ function parsePeriod(q: any): { from: Date; to: Date; bucket: string; secs: numb
 
 /** Parâmetros (códigos *_current) que o aparelho já reportou. */
 async function paramCodes(deviceId: string): Promise<string[]> {
+  const map = await getParams();
   const r = rows(await db.execute(sql`SELECT code FROM tuya_device_dps WHERE device_id = ${deviceId} AND code LIKE '%\\_current' ESCAPE '\\'`));
-  return sortCodes(r.map((x) => String(x.code)));
+  return sortCodes(r.map((x) => String(x.code)).filter((c) => !defFor(map, c).hidden));
 }
 
 async function latest(deviceId: string) {
@@ -84,7 +87,7 @@ async function latest(deviceId: string) {
   const dps = rows(await db.execute(sql`SELECT code, dp_id, value_type, last_value_raw AS value_raw, last_value_text AS value_text, last_read_at FROM tuya_device_dps WHERE device_id = ${deviceId}`));
   const byCode: Record<string, any> = {};
   for (const d of dps) byCode[d.code] = d;
-  const codes = sortCodes(Object.keys(byCode).filter((c) => c.endsWith('_current')));
+  const codes = sortCodes(Object.keys(byCode).filter((c) => c.endsWith('_current') && !defFor(map, c).hidden));
   const params = codes.map((code) => {
     const def = defFor(map, code);
     const base = code.replace(/_current$/, '');
