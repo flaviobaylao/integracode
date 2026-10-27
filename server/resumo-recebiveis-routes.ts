@@ -70,11 +70,17 @@ function limitesDoMes(ym: string) {
   return { ini: `${ym}-01`, fim: prox, ano: a, mes: m };
 }
 
+// Faixa por VALOR de faturamento (não por % da meta). `ate` nulo = sem teto.
+// A alíquota da faixa incide sobre o faturamento inteiro, não só sobre o que
+// passou do piso — é como a regra foi definida.
+type FaixaValor = { de: number; ate: number | null; pct: number };
+
 type Cfg = {
   incluirNoResumo: boolean;
   fixoMensal: number;
   ajudaCusto: number;
-  comissaoTipo: "nenhum" | "fixo" | "faixa";
+  comissaoTipo: "nenhum" | "fixo" | "faixa" | "escalonado";
+  comissaoFaixas: FaixaValor[];
   comissaoPct: number;
   comissaoDescontoFixo: number;
   comissaoProporcionalMeta: boolean;
@@ -97,6 +103,7 @@ const CFG_PADRAO: Cfg = {
   fixoMensal: 0,
   ajudaCusto: 0,
   comissaoTipo: "nenhum",
+  comissaoFaixas: [],
   comissaoPct: 0,
   comissaoDescontoFixo: 0,
   comissaoProporcionalMeta: false,
@@ -130,6 +137,12 @@ function calcularComissao(cfg: Cfg, faturamento: number, meta: number): number {
   const atingimento = meta > 0 ? (faturamento / meta) * 100 : 0;
   if (cfg.comissaoTipo === "faixa") {
     return (faturamento * aliquotaDaFaixa(cfg.faixaTipo, atingimento)) / 100;
+  }
+  if (cfg.comissaoTipo === "escalonado") {
+    const faixa = (cfg.comissaoFaixas || [])
+      .filter((f) => faturamento >= f.de && (f.ate === null || faturamento <= f.ate))
+      .sort((a, b) => b.de - a.de)[0];
+    return faixa ? (faturamento * faixa.pct) / 100 : 0;
   }
   if (cfg.comissaoProporcionalMeta) {
     if (meta <= 0) return 0;
@@ -172,6 +185,7 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "usa_campanhas boolean NOT NULL DEFAULT true",
         "usa_bonus boolean NOT NULL DEFAULT false",
         "consolida_totais boolean NOT NULL DEFAULT false",
+        "comissao_faixas jsonb",
       ]) {
         await db.execute(sql.raw(
           `ALTER TABLE collab_remuneracao_config ADD COLUMN IF NOT EXISTS ${col}`
@@ -263,6 +277,7 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
       await semearRegrasAtuais();
       await semearCampanhaOutubro();
       await semearNaoParticipantes();
+      await semearRegraEscalonadaDaGestora();
     })().catch((e) => {
       schemaReady = null;
       throw e;
@@ -363,6 +378,27 @@ async function semearNaoParticipantes(): Promise<void> {
     FROM users u WHERE ${nome} = 'cinthia marques'
     ON CONFLICT (user_id, vigencia_ym) DO NOTHING`).catch(() => {});
   console.log(`[RESUMO-RECEB] ${fora.rowCount ?? 0} contas fora e ${dentro.rowCount ?? 0} dentro do resumo`);
+}
+
+// Escalonamento da gestora, definido pelo Flavio em 27/10/2026: até R$ 299.999,99
+// paga 2%; de R$ 300.000,00 a R$ 399.999,99 paga 2,2%; de R$ 400.000,00 em
+// diante, 2,5%. A alíquota incide sobre o faturamento inteiro da faixa.
+// Só aplica em quem consolida a equipe e ainda está sem regra — depois disso o
+// UPDATE não casa mais, então mexer na tela não é desfeito no próximo boot.
+async function semearRegraEscalonadaDaGestora(): Promise<void> {
+  const faixas = [
+    { de: 0, ate: 299999.99, pct: 2 },
+    { de: 300000, ate: 399999.99, pct: 2.2 },
+    { de: 400000, ate: null, pct: 2.5 },
+  ];
+  const r: any = await db.execute(sql`
+    UPDATE collab_remuneracao_config
+       SET comissao_tipo = 'escalonado',
+           comissao_faixas = ${JSON.stringify(faixas)}::jsonb,
+           usa_comissao = true,
+           observacao = 'Escalonado sobre o faturamento consolidado da equipe.'
+     WHERE consolida_totais = true AND comissao_tipo = 'nenhum' AND comissao_faixas IS NULL`).catch(() => null);
+  if (r?.rowCount) console.log(`[RESUMO-RECEB] regra escalonada aplicada a ${r.rowCount} gestor(es)`);
 }
 
 // Admin de verdade: 'industria' e 'contador' são elevados a admin pelo
@@ -526,7 +562,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         SELECT DISTINCT ON (user_id) user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo,
                comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta,
                faixa_tipo, incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento,
-               usa_comissao, usa_km, usa_campanhas, usa_bonus, consolida_totais, observacao
+               usa_comissao, usa_km, usa_campanhas, usa_bonus, consolida_totais,
+               comissao_faixas, observacao
         FROM collab_remuneracao_config
         WHERE user_id = ANY(${arraySql(ids)}) AND vigencia_ym <= ${ym}
         ORDER BY user_id, vigencia_ym DESC`);
@@ -536,6 +573,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           fixoMensal: n(r.fixo_mensal),
           ajudaCusto: n(r.ajuda_custo),
           comissaoTipo: (r.comissao_tipo || "nenhum") as Cfg["comissaoTipo"],
+          comissaoFaixas: Array.isArray(r.comissao_faixas) ? r.comissao_faixas : [],
           comissaoPct: n(r.comissao_pct),
           comissaoDescontoFixo: n(r.comissao_desconto_fixo),
           comissaoProporcionalMeta: r.comissao_proporcional_meta === true,
@@ -828,7 +866,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         SELECT c.id, c.user_id, c.vigencia_ym, c.fixo_mensal, c.ajuda_custo, c.comissao_tipo, c.comissao_pct,
                c.comissao_desconto_fixo, c.comissao_proporcional_meta, c.faixa_tipo,
                c.incluir_no_resumo, c.usa_fixo, c.usa_ajuda_custo, c.usa_meta, c.usa_faturamento, c.usa_comissao,
-               c.usa_km, c.usa_campanhas, c.usa_bonus, c.consolida_totais, c.observacao, c.created_at,
+               c.usa_km, c.usa_campanhas, c.usa_bonus, c.consolida_totais, c.comissao_faixas,
+               c.observacao, c.created_at,
                COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
                u.role
         FROM collab_remuneracao_config c
@@ -868,7 +907,19 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const b = req.body || {};
       if (!b.userId) return res.status(400).json({ message: "Informe o colaborador" });
       if (!ymValido(b.vigenciaYm)) return res.status(400).json({ message: "Vigência inválida (use AAAA-MM)" });
-      const tipo = ["nenhum", "fixo", "faixa"].includes(String(b.comissaoTipo)) ? String(b.comissaoTipo) : "nenhum";
+      const tipo = ["nenhum", "fixo", "faixa", "escalonado"].includes(String(b.comissaoTipo))
+        ? String(b.comissaoTipo) : "nenhum";
+      // Faixas por valor: só entram linhas com percentual e piso numéricos.
+      const faixasValor: FaixaValor[] = Array.isArray(b.comissaoFaixas)
+        ? b.comissaoFaixas
+            .map((f: any) => ({
+              de: n(f?.de),
+              ate: f?.ate === null || f?.ate === undefined || f?.ate === "" ? null : n(f.ate),
+              pct: n(f?.pct),
+            }))
+            .filter((f: FaixaValor) => f.pct > 0 && (f.ate === null || f.ate >= f.de))
+            .sort((a: FaixaValor, b2: FaixaValor) => a.de - b2.de)
+        : [];
       const faixa = FAIXAS[String(b.faixaTipo)] ? String(b.faixaTipo) : FAIXA_PADRAO;
       const bool = (v: any, padrao: boolean) => (typeof v === "boolean" ? v : padrao);
 
@@ -877,13 +928,14 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           (user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo, comissao_pct,
            comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo, paga_km,
            incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento, usa_comissao,
-           usa_km, usa_campanhas, usa_bonus, consolida_totais, observacao, created_by)
+           usa_km, usa_campanhas, usa_bonus, consolida_totais, comissao_faixas, observacao, created_by)
         VALUES (${b.userId}, ${b.vigenciaYm}, ${n(b.fixoMensal)}, ${n(b.ajudaCusto)}, ${tipo}, ${n(b.comissaoPct)},
                 ${n(b.comissaoDescontoFixo)}, ${b.comissaoProporcionalMeta === true}, ${faixa},
                 ${bool(b.usaKm, true)},
                 ${bool(b.incluirNoResumo, true)}, ${bool(b.usaFixo, true)}, ${b.usaAjudaCusto === true}, ${bool(b.usaMeta, true)},
                 ${bool(b.usaFaturamento, true)}, ${bool(b.usaComissao, true)}, ${bool(b.usaKm, true)},
                 ${bool(b.usaCampanhas, true)}, ${b.usaBonus === true}, ${b.consolidaTotais === true},
+                ${JSON.stringify(faixasValor)}::jsonb,
                 ${String(b.observacao || "").slice(0, 500) || null}, ${req.currentUser?.id || null})
         ON CONFLICT (user_id, vigencia_ym) DO UPDATE SET
           fixo_mensal = EXCLUDED.fixo_mensal,
@@ -904,6 +956,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           usa_campanhas = EXCLUDED.usa_campanhas,
           usa_bonus = EXCLUDED.usa_bonus,
           consolida_totais = EXCLUDED.consolida_totais,
+          comissao_faixas = EXCLUDED.comissao_faixas,
           observacao = EXCLUDED.observacao
         RETURNING id`);
 
@@ -914,7 +967,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         bool(b.usaComissao, true) && "comissão", bool(b.usaKm, true) && "km",
         bool(b.usaCampanhas, true) && "campanhas", b.usaBonus === true && "bônus manual",
       ].filter(Boolean).join(", ") || "nenhuma";
-      const regra = tipo === "faixa" ? `faixa (${faixa})`
+      const regra = tipo === "escalonado"
+          ? `escalonado por faturamento: ${faixasValor.map((f) => `${dinheiro(f.de)}${f.ate === null ? "+" : ` a ${dinheiro(f.ate)}`} = ${f.pct}%`).join(" · ")}`
+        : tipo === "faixa" ? `faixa (${faixa})`
         : tipo === "fixo" ? `${n(b.comissaoPct)}%${n(b.comissaoDescontoFixo) > 0 ? ` menos ${dinheiro(n(b.comissaoDescontoFixo))}` : ""}${b.comissaoProporcionalMeta === true ? ", proporcional à meta" : ""}`
         : "sem comissão";
       await auditar(req, "Remuneração",
