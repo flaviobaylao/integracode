@@ -9321,6 +9321,12 @@ export class DatabaseStorage implements IStorage {
     await this.assertBaixaLock('receivable', id, data);
     const { __allowUnsettle, ...clean } = data as any;
     const [item] = await db.update(receivables).set({ ...clean, updatedAt: new Date() }).where(eq(receivables.id, id)).returning();
+    // Titulo FECHADO no Integra = cobranca extinta no banco (boleto baixado no BB,
+    // PIX removido) — fato unico, some do DDA do cliente. Ver server/cobranca-extincao.ts.
+    const stNovo = String((clean as any).status || '');
+    if (stNovo === 'recebida' || stNovo === 'cancelada') {
+      import('./cobranca-extincao').then((m) => m.dispararExtincao(id, 'status:' + stNovo)).catch(() => {});
+    }
     return item;
   }
 
@@ -9328,6 +9334,7 @@ export class DatabaseStorage implements IStorage {
     await this.assertNaoConciliado('receivable', id);
     // FASE 1b: soft-delete - nada e apagado fisicamente; marca deleted_at/deleted_by.
     await db.update(receivables).set({ deletedAt: new Date(), deletedBy: deletedBy ?? null } as any).where(eq(receivables.id, id));
+    import('./cobranca-extincao').then((m) => m.dispararExtincao(id, 'exclusao')).catch(() => {});
   }
 
   async restoreReceivable(id: string): Promise<Receivable | undefined> {

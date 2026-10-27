@@ -8,6 +8,7 @@ import * as bbPixService from './bb-pix-service';
 import { cancelarBoleto } from './bb-boleto-service';
 import { lancarNaConta, estornarLancamento, previaEstornoLancamento } from './account-ledger';
 import { removerCobrancaPix } from './bb-pix-service';
+import { extinguirCobrancasDoTitulo } from './cobranca-extincao';
 import { logFinancialAudit, actorOf } from './financial-audit';
 import { nfVendaWhere, nfData } from './faturamento-oficial';
 import { webhookTokenGuard } from './webhook-security';
@@ -3144,8 +3145,20 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           } catch (e: any) { console.error('[FINANCEIRO] credito da conta na baixa de recebivel falhou:', e?.message || e); }
         }
       }
-      
-      res.status(201).json(payment);
+
+      // Titulo quitado -> a cobranca morre no banco NA MESMA HORA (boleto baixado no
+      // BB, PIX removido), para sair do DDA do cliente. Se o banco recusar, a baixa
+      // do Integra vale e a tela e avisada; a varredura horaria tenta de novo.
+      let cobrancaBanco: any = null;
+      try {
+        const rNow: any = await storage.getReceivable(req.params.id);
+        if (rNow && String(rNow.status) === 'recebida') {
+          const ex = await extinguirCobrancasDoTitulo(req.params.id, 'baixa-manual:' + (user?.email || '?'));
+          cobrancaBanco = { boletosBaixados: ex.boletosBaixados, pixRemovidos: ex.pixRemovidos, erros: ex.erros, alertas: ex.alertas };
+        }
+      } catch (e: any) { cobrancaBanco = { erros: ['extincao da cobranca no banco falhou: ' + String(e?.message || e).slice(0, 200)] }; }
+
+      res.status(201).json({ ...(payment as any), cobrancaBanco });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -3250,7 +3263,13 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
         updatedBy: user?.email || null,
       } as any);
       await logFinancialAudit({ req, action: 'status', entity: 'receivable', entityId: req.params.id, amount: saldo, note: `baixa administrativa (100%) [${cancelReason}]: ` + reason });
-      res.json({ ok: true, saldoBaixado: saldo, status: 'cancelada', cancelReason, duplicateOfId });
+      // Titulo fechado -> cobranca extinta no banco na mesma hora (sai do DDA).
+      let cobrancaBanco: any = null;
+      try {
+        const ex = await extinguirCobrancasDoTitulo(req.params.id, 'baixa-administrativa:' + (user?.email || '?'));
+        cobrancaBanco = { boletosBaixados: ex.boletosBaixados, pixRemovidos: ex.pixRemovidos, erros: ex.erros, alertas: ex.alertas };
+      } catch (e: any) { cobrancaBanco = { erros: ['extincao da cobranca no banco falhou: ' + String(e?.message || e).slice(0, 200)] }; }
+      res.json({ ok: true, saldoBaixado: saldo, status: 'cancelada', cancelReason, duplicateOfId, cobrancaBanco });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
