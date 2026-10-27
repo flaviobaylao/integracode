@@ -42,8 +42,9 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Pencil, Trash2, X, RefreshCw,
   ArrowDownCircle, PlayCircle, ExternalLink, FlaskConical, Printer, FileSpreadsheet, RotateCcw,
   Paperclip, Upload, Download, Eye, ClipboardCheck, Users,
-  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat, CalendarClock, PenLine,
+  Truck, DollarSign, Lock, ListChecks, Wrench, Repeat, CalendarClock, PenLine, Thermometer, Square,
 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -684,6 +685,26 @@ function OrdensTab() {
     } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
   };
 
+  // Pasteurização (27/out): iniciar/finalizar a medição dos sensores Tuya na OP.
+  const pasteurizar = async (o: any, acao: 'iniciar' | 'finalizar') => {
+    const refazer = acao === 'iniciar' && !!o.pasteurization_finished_at;
+    if (refazer && !window.confirm(`A ordem ${o.order_number} já tem uma pasteurização registrada. Refazer apaga a curva gravada e começa uma nova medição. Continuar?`)) return;
+    if (acao === 'finalizar' && !window.confirm(`Finalizar a pasteurização da ordem ${o.order_number}? A medição será encerrada e a curva gravada na OP.`)) return;
+    try {
+      const j = await jfetch(`/api/tuya/pasteurizacao/${o.id}/${acao}`, { method: 'POST', body: JSON.stringify(refazer ? { reiniciar: true } : {}) });
+      const faltando = (j.sensores || []).filter((s: any) => !s.encontrado).map((s: any) => s.label);
+      toast({
+        title: acao === 'iniciar' ? `Pasteurização iniciada — ${o.order_number}` : `Pasteurização finalizada — ${o.order_number}`,
+        description: acao === 'iniciar'
+          ? (faltando.length ? `⚠️ Sensor não encontrado na Tuya: ${faltando.join(', ')} (pareie o controlador no Smart Life)` : 'Gravando Temp. do Produto, Temp. de vapor e Resfriamento a cada minuto.')
+          : `${j.duracao_min ?? '-'} min · ${(j.series || []).map((s: any) => `${s.label}: ${s.min ?? '-'}–${s.max ?? '-'} °C`).join(' · ')}`,
+        variant: faltando.length && acao === 'iniciar' ? 'destructive' : 'default',
+      });
+      invalidate();
+      setDetailsDialog((d: any) => (d && d.id === o.id ? { ...d, pasteurization_started_at: j.started_at, pasteurization_finished_at: j.finished_at } : d));
+    } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
+  };
+
   // Reabrir ordem finalizada (Flavio 29/ago): o servidor ESTORNA o estoque da
   // finalização antes de destravar — MP consumida volta, lote acabado é baixado.
   const reopenOrder = async (o: any) => {
@@ -829,7 +850,15 @@ function OrdensTab() {
                   <TableCell className="font-medium">{o.product_name}</TableCell>
                   <TableCell className="text-right">{fmtQty(o.quantity)}</TableCell>
                   <TableCell>{o.instance_name || '-'}</TableCell>
-                  <TableCell><Badge className={st.cls}>{st.label}</Badge></TableCell>
+                  <TableCell>
+                    <Badge className={st.cls}>{st.label}</Badge>
+                    {o.pasteurization_started_at && !o.pasteurization_finished_at && (
+                      <Badge className="ml-1 bg-red-100 text-red-700 hover:bg-red-100 gap-1"><Thermometer className="h-3 w-3" /> Pasteurizando</Badge>
+                    )}
+                    {o.pasteurization_finished_at && (
+                      <Badge variant="outline" className="ml-1 text-emerald-700 border-emerald-300 gap-1" title="Curva de pasteurização gravada na OP"><Thermometer className="h-3 w-3" /> Past. OK</Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{(o.items || []).length} material(is)</TableCell>
                   <TableCell>{fmtDate(o.production_date || o.created_at)}</TableCell>
                   <TableCell className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
@@ -840,6 +869,16 @@ function OrdensTab() {
                     )}
                     {(o.status === 'planejada' || o.status === 'em_producao') && (
                       <>
+                        {/* Pasteurização via sensores Tuya (27/out): inicia/encerra a medição na OP */}
+                        {o.pasteurization_started_at && !o.pasteurization_finished_at ? (
+                          <Button variant="ghost" size="sm" title="Finalizar Pasteurização (encerra a medição e grava na OP)" onClick={() => pasteurizar(o, 'finalizar')}>
+                            <Square className="h-4 w-4 text-red-600 animate-pulse" />
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" size="sm" title={o.pasteurization_finished_at ? 'Pasteurização já registrada — clique para refazer' : 'Início de Pasteurização (começa a gravar Temp. do Produto, Temp. de vapor e Resfriamento)'} onClick={() => pasteurizar(o, 'iniciar')}>
+                            <Thermometer className={`h-4 w-4 ${o.pasteurization_finished_at ? 'text-gray-400' : 'text-red-500'}`} />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" title="Finalizar ordem" onClick={() => setFinalizeDialog(o)}>
                           <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                         </Button>
@@ -1360,7 +1399,7 @@ function OrderDetailsDialog({ order, onClose }: any) {
   const st = ORDER_STATUS[order.status] || { label: order.status, cls: '' };
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{order.order_number} — {order.product_name}</DialogTitle></DialogHeader>
         <div className="space-y-3 text-sm">
           <div className="flex items-center gap-2 flex-wrap">
@@ -1402,10 +1441,135 @@ function OrderDetailsDialog({ order, onClose }: any) {
               </TableBody>
             </Table>
           </div>
+          <PasteurizacaoPanel order={order} />
           {order.notes && <p className="text-xs text-gray-500 whitespace-pre-wrap">{order.notes}</p>}
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ===========================================================================
+// PASTEURIZAÇÃO NA OP (27/out/2026) — sensores Tuya: Temp. do Produto e Temp. de
+// vapor (controlador "Pasteurizador") + Resfriamento da Pasteurização (evaporador
+// do Banco de gelo). Botões Início/Finalizar gravam na OP; enquanto corre, o
+// gráfico atualiza a cada 30 s; ao finalizar, o snapshot fica em
+// production_orders.pasteurization_data. Backend: /api/tuya/pasteurizacao/*.
+// ===========================================================================
+const fmtC = (v: any, d = 1) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d })} °C`);
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const hhmmss = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+function PasteurizacaoPanel({ order }: { order: any }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const podeOperar = order.status === 'planejada' || order.status === 'em_producao';
+  const q = useQuery({
+    queryKey: ['/api/tuya/pasteurizacao', order.id],
+    queryFn: () => jfetch(`/api/tuya/pasteurizacao/${order.id}`),
+    refetchInterval: (query: any) => (query.state.data?.em_andamento ? 30_000 : false),
+  });
+  const st = q.data;
+  const series: any[] = st?.series || [];
+  const emAndamento = !!st?.em_andamento;
+
+  // Une as séries num único eixo de tempo (chave = ts em ms), uma coluna por role
+  const chartData = useMemo(() => {
+    const byT = new Map<number, any>();
+    for (const s of series) for (const [iso, c] of (s.points || [])) {
+      const t = new Date(iso).getTime();
+      const row = byT.get(t) || { ts: t };
+      row[s.role] = c;
+      byT.set(t, row);
+    }
+    return Array.from(byT.values()).sort((a, b) => a.ts - b.ts);
+  }, [series]);
+
+  const acao = async (tipo: 'iniciar' | 'finalizar', reiniciar = false) => {
+    if (tipo === 'finalizar' && !window.confirm(`Finalizar a pasteurização da ordem ${order.order_number}? A medição será encerrada e a curva gravada na OP.`)) return;
+    if (reiniciar && !window.confirm('Refazer apaga a curva já gravada nesta OP e inicia uma nova medição. Continuar?')) return;
+    try {
+      const j = await jfetch(`/api/tuya/pasteurizacao/${order.id}/${tipo}`, { method: 'POST', body: JSON.stringify(reiniciar ? { reiniciar: true } : {}) });
+      const faltando = (j.sensores || []).filter((x: any) => !x.encontrado).map((x: any) => x.label);
+      if (tipo === 'iniciar' && faltando.length) toast({ title: 'Pasteurização iniciada com sensor faltando', description: `Não encontrado na Tuya: ${faltando.join(', ')}. Pareie o controlador no Smart Life — as leituras entram assim que ele aparecer.`, variant: 'destructive' });
+      else toast({ title: tipo === 'iniciar' ? 'Pasteurização iniciada' : 'Pasteurização finalizada e gravada na OP' });
+      q.refetch();
+      qc.invalidateQueries({ queryKey: ['/api/industria/production-orders'] });
+    } catch (e: any) { toast({ title: 'Erro', description: String(e.message || e), variant: 'destructive' }); }
+  };
+
+  const faltando = (st?.sensores || []).filter((x: any) => !x.encontrado);
+  const offline = (st?.sensores || []).filter((x: any) => x.encontrado && !x.online);
+
+  return (
+    <div className="rounded-lg border p-3 text-xs space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="font-semibold text-sm flex items-center gap-1.5"><Thermometer className="h-4 w-4 text-red-500" /> Pasteurização (sensores)
+          {emAndamento && <Badge className="bg-red-100 text-red-700 hover:bg-red-100 animate-pulse">em andamento</Badge>}
+          {st?.finished_at && <Badge variant="outline" className="text-emerald-700 border-emerald-300">gravada</Badge>}
+        </p>
+        <div className="flex items-center gap-1.5">
+          {podeOperar && !st?.started_at && (
+            <Button size="sm" className="bg-red-600 hover:bg-red-700 h-7" onClick={() => acao('iniciar')}><PlayCircle className="h-3.5 w-3.5 mr-1" /> Início de Pasteurização</Button>
+          )}
+          {podeOperar && emAndamento && (
+            <Button size="sm" variant="outline" className="h-7 border-red-300 text-red-700" onClick={() => acao('finalizar')}><Square className="h-3.5 w-3.5 mr-1" /> Finalizar Pasteurização</Button>
+          )}
+          {podeOperar && st?.finished_at && (
+            <Button size="sm" variant="ghost" className="h-7 text-gray-500" onClick={() => acao('iniciar', true)} title="Apaga a curva gravada e mede de novo"><RotateCcw className="h-3.5 w-3.5 mr-1" /> Refazer</Button>
+          )}
+          <Button size="sm" variant="ghost" className="h-7" onClick={() => q.refetch()} disabled={q.isFetching}><RefreshCw className={`h-3.5 w-3.5 ${q.isFetching ? 'animate-spin' : ''}`} /></Button>
+        </div>
+      </div>
+
+      {q.isLoading && <p className="text-gray-500 flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Carregando…</p>}
+      {q.error && <p className="text-red-600">{(q.error as any).message}</p>}
+      {st && !st.started_at && (
+        <p className="text-gray-500">Nenhuma medição nesta ordem. Ao clicar em <b>Início de Pasteurização</b>, o sistema passa a gravar a cada minuto a Temp. do Produto, a Temp. de vapor (controlador Pasteurizador) e o Resfriamento da Pasteurização (evaporador do Banco de gelo).</p>
+      )}
+      {faltando.length > 0 && (
+        <p className="text-amber-700 flex items-start gap-1"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Sensor não encontrado na Tuya: <b>{faltando.map((x: any) => `${x.label} (${x.device})`).join(', ')}</b> — pareie o controlador no Smart Life com esse nome.</p>
+      )}
+      {offline.length > 0 && <p className="text-amber-700">Offline agora: {offline.map((x: any) => x.device_name).join(', ')}.</p>}
+
+      {st?.started_at && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="rounded border p-2"><div className="text-[10px] uppercase text-gray-500">Início</div><div className="font-semibold">{hhmmss(st.started_at)}</div></div>
+            <div className="rounded border p-2"><div className="text-[10px] uppercase text-gray-500">Fim</div><div className="font-semibold">{st.finished_at ? hhmmss(st.finished_at) : 'em andamento'}</div></div>
+            <div className="rounded border p-2"><div className="text-[10px] uppercase text-gray-500">Duração</div><div className="font-semibold">{st.duracao_min ?? 0} min</div></div>
+            <div className="rounded border p-2"><div className="text-[10px] uppercase text-gray-500">Leituras</div><div className="font-semibold">{series.reduce((a: number, s: any) => a + (s.n || 0), 0)}</div></div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {series.map((s: any) => (
+              <div key={s.role} className="rounded border p-2" style={{ borderLeft: `4px solid ${s.color}` }}>
+                <div className="font-semibold" style={{ color: s.color }}>{s.label}</div>
+                <div className="text-gray-600">{s.device_name || s.device}{!s.device_id ? ' · não encontrado' : ''}</div>
+                <div>atual <b>{fmtC(s.last)}</b> · mín {fmtC(s.min)} · máx {fmtC(s.max)} · méd {fmtC(s.avg, 2)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="h-[280px]">
+            {chartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-gray-500">Sem leituras ainda — o primeiro ponto entra em até 1 minuto.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="ts" type="number" domain={['dataMin', 'dataMax']} scale="time" tickFormatter={(v) => hhmm(new Date(Number(v)).toISOString())} minTickGap={40} tick={{ fontSize: 10 }} />
+                  <YAxis tickFormatter={(v) => `${v}°`} width={40} tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
+                  <ChartTooltip labelFormatter={(v) => hhmmss(new Date(Number(v)).toISOString())} formatter={(v: any, name: any) => [fmtC(v), name]} />
+                  <Legend />
+                  {series.map((s: any) => (
+                    <Line key={s.role} type="linear" dataKey={s.role} name={s.label} stroke={s.color} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

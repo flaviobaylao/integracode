@@ -18,6 +18,7 @@
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { getSensorLabels, labelFor } from './tuya-pasteurizacao';
 
 const rows = (r: any): any[] => (r?.rows || []);
 
@@ -95,7 +96,7 @@ export async function lerCamaras(): Promise<LinhaCamara[]> {
   }));
 }
 
-export function montarMensagem(camaras: LinhaCamara[], agora = new Date()): string {
+export function montarMensagem(camaras: LinhaCamara[], agora = new Date(), labels: Record<string, string> = {}): string {
   const linhas: string[] = [];
   linhas.push(`🌡️ *Temperaturas das câmaras* — ${fmtData(agora)} ${fmtHora(agora)}`);
   linhas.push('');
@@ -104,8 +105,11 @@ export function montarMensagem(camaras: LinhaCamara[], agora = new Date()): stri
     const idadeMin = c.main_at ? (agora.getTime() - c.main_at.getTime()) / 60000 : Infinity;
     const semSinal = !c.online || idadeMin > 15;
     const icone = semSinal ? '⚠️' : (c.alarme_hi || c.alarme_lo) ? '🚨' : '✅';
-    let l = `${icone} *${c.name}*: ${fmtTemp(c.main)}`;
-    if (c.evap != null) l += ` (evap. ${fmtTemp(c.evap)})`;
+    // Rótulos específicos do aparelho (Banco de gelo → "Temperatura do Banco de gelo" / "Resfriamento da
+    // Pasteurização"; Pasteurizador → "Temp. do Produto" / "Temp. de vapor"); sem rótulo → formato curto.
+    const lm = labelFor(labels, c.name, 'temp_current'), le = labelFor(labels, c.name, 'temperatura_do_evaporador');
+    let l = lm.custom ? `${icone} *${c.name}*: ${lm.label} ${fmtTemp(c.main)}` : `${icone} *${c.name}*: ${fmtTemp(c.main)}`;
+    if (c.evap != null) l += le.custom ? ` · ${le.label} ${fmtTemp(c.evap)}` : ` (evap. ${fmtTemp(c.evap)})`;
     if (c.setpoint != null) l += ` · set ${fmtTemp(c.setpoint)}`;
     const avisos: string[] = [];
     if (!c.online) avisos.push('OFFLINE');
@@ -129,7 +133,7 @@ export interface ResultadoEnvio { enviado: boolean; motivo?: string; destinos: s
 export async function enviarRelatorioTemperaturas(opts: { force?: boolean; origem?: string } = {}): Promise<ResultadoEnvio> {
   const agora = new Date();
   const camaras = await lerCamaras();
-  const mensagem = montarMensagem(camaras, agora);
+  const mensagem = montarMensagem(camaras, agora, await getSensorLabels());
   const base: ResultadoEnvio = { enviado: false, destinos: [], enviados: 0, falhas: [], mensagem };
   if (!opts.force) {
     if ((await getSetting('tuya_alerta_ativo')) === 'off') return { ...base, motivo: 'desligado (tuya_alerta_ativo=off)' };

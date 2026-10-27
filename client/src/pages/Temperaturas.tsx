@@ -90,6 +90,7 @@ type Device = {
   last_main_celsius: number | null; last_main_at: string | null;
   last_evap_celsius: number | null; last_evap_at: string | null;
   readings_main: number; first_reading_at: string | null;
+  main_label?: string; evap_label?: string;   // rótulos por aparelho (ex.: Resfriamento da Pasteurização)
 };
 type Point = {
   t: string; n: number;
@@ -181,6 +182,9 @@ export default function Temperaturas() {
   const summary = readingsQ.data?.summary || null;
   const isRaw = bucket === 'raw';
   const truncated: boolean = readingsQ.data?.truncated === true;
+  // Rótulos das séries: específicos do aparelho quando configurados (tuya_sensor_labels), senão genéricos
+  const mainLabel: string = readingsQ.data?.codes?.main_label || selected?.main_label || 'Sonda principal';
+  const evapLabel: string = readingsQ.data?.codes?.evap_label || selected?.evap_label || 'Evaporador';
 
   const chartData = useMemo(() => points.map((p) => ({ ...p, ts: new Date(p.t).getTime() })), [points]);
   const xTick = (ts: number) => {
@@ -293,7 +297,7 @@ export default function Temperaturas() {
                         <span>{ago(d.last_main_at)}</span>
                       </div>
                       {d.last_evap_celsius != null && (
-                        <div className="text-[11px] text-gray-500 flex items-center gap-1"><Snowflake className="h-3 w-3" /> evaporador {fmtTemp(d.last_evap_celsius)}</div>
+                        <div className="text-[11px] text-gray-500 flex items-center gap-1"><Snowflake className="h-3 w-3" /> {(d.evap_label || "evaporador").toLowerCase()} {fmtTemp(d.last_evap_celsius)}</div>
                       )}
                       {d.last_error && <div className="text-[11px] text-red-600 truncate" title={d.last_error}>⚠ {d.last_error}</div>}
                     </button>
@@ -330,7 +334,7 @@ export default function Temperaturas() {
                     </Select>
                   </div>
                   <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
-                    <input type="checkbox" checked={showEvap} onChange={(e) => setShowEvap(e.target.checked)} /> Evaporador
+                    <input type="checkbox" checked={showEvap} onChange={(e) => setShowEvap(e.target.checked)} /> {evapLabel}
                   </label>
                   {!isRaw && (
                     <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
@@ -397,10 +401,10 @@ export default function Temperaturas() {
                           formatter={(v: any, name: any) => [fmtTemp(v == null ? null : Number(v), 1), name]}
                         />
                         <Legend />
-                        {!isRaw && showMinMax && <Line type="linear" dataKey="main_max" name="Sonda máx" stroke="#f59e0b" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false} connectNulls />}
-                        <Line type="linear" dataKey="main_avg" name={isRaw ? 'Sonda principal' : 'Sonda média'} stroke="#059669" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
-                        {!isRaw && showMinMax && <Line type="linear" dataKey="main_min" name="Sonda mín" stroke="#2563eb" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false} connectNulls />}
-                        {showEvap && <Line type="linear" dataKey="evap_avg" name={isRaw ? 'Evaporador' : 'Evaporador média'} stroke="#7c3aed" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />}
+                        {!isRaw && showMinMax && <Line type="linear" dataKey="main_max" name={`${mainLabel} máx`} stroke="#f59e0b" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false} connectNulls />}
+                        <Line type="linear" dataKey="main_avg" name={isRaw ? mainLabel : `${mainLabel} média`} stroke="#059669" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                        {!isRaw && showMinMax && <Line type="linear" dataKey="main_min" name={`${mainLabel} mín`} stroke="#2563eb" strokeWidth={1} strokeDasharray="4 3" dot={false} isAnimationActive={false} connectNulls />}
+                        {showEvap && <Line type="linear" dataKey="evap_avg" name={isRaw ? evapLabel : `${evapLabel} média`} stroke="#7c3aed" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -468,17 +472,17 @@ export default function Temperaturas() {
                         {!isRaw && <TableHead className="text-right">Leituras</TableHead>}
                         {isRaw ? (
                           <>
-                            <TableHead className="text-right">Sonda principal</TableHead>
-                            <TableHead className="text-right">Evaporador</TableHead>
+                            <TableHead className="text-right">{mainLabel}</TableHead>
+                            <TableHead className="text-right">{evapLabel}</TableHead>
                           </>
                         ) : (
                           <>
-                            <TableHead className="text-right">Sonda mín</TableHead>
-                            <TableHead className="text-right">Sonda méd</TableHead>
-                            <TableHead className="text-right">Sonda máx</TableHead>
-                            <TableHead className="text-right">Evap. mín</TableHead>
-                            <TableHead className="text-right">Evap. méd</TableHead>
-                            <TableHead className="text-right">Evap. máx</TableHead>
+                            <TableHead className="text-right">{mainLabel} mín</TableHead>
+                            <TableHead className="text-right">{mainLabel} méd</TableHead>
+                            <TableHead className="text-right">{mainLabel} máx</TableHead>
+                            <TableHead className="text-right">{evapLabel} mín</TableHead>
+                            <TableHead className="text-right">{evapLabel} méd</TableHead>
+                            <TableHead className="text-right">{evapLabel} máx</TableHead>
                           </>
                         )}
                       </TableRow>

@@ -15,6 +15,7 @@
 //   GET  /api/tuya/devices/:id/dps              catálogo dos DPs do aparelho (tipo, nome, último valor)
 //   GET  /api/tuya/devices/:id/latest           último valor gravado de cada DP
 //   POST /api/tuya/collect-now                  dispara uma rodada do coletor agora
+//   GET  /api/tuya/pasteurizacao/sensores|:orderId, POST .../:orderId/iniciar|finalizar  (tuya-pasteurizacao.ts)
 //   GET  /api/tuya/alerta/preview               relatório WhatsApp montado (sem enviar) + destinos
 //   POST /api/tuya/alerta/enviar-agora          envia o relatório WhatsApp agora
 // ============================================================================
@@ -24,6 +25,7 @@ import { sql } from 'drizzle-orm';
 import { authenticateUser, requireRole } from './authMiddleware';
 import { ensureTuyaTables, getTuyaCollectorState, refreshTuyaDevices, runTuyaCollector } from './tuya-collector';
 import { isTuyaConfigured, tuyaTestConnection, TUYA_HOST, TUYA_ACCESS_ID, TUYA_TEMP_CODES, TUYA_STATUS_CODES, TUYA_DP_LABELS } from './tuya-service';
+import { getSensorLabels, labelFor, ensurePasteurizacaoColumns, estadoPasteurizacao, iniciarPasteurizacao, finalizarPasteurizacao, resolverSensores } from './tuya-pasteurizacao';
 
 const str = (v: any, max = 120): string | null => {
   if (v == null) return null;
@@ -120,6 +122,7 @@ export function registerTuyaRoutes(app: Express) {
 
   // Garante as tabelas no boot (idempotente) — não bloqueia o start.
   ensureTuyaTables().catch((e) => console.error('[tuya] ensureTuyaTables:', e?.message || e));
+  ensurePasteurizacaoColumns().catch((e) => console.error('[tuya] ensurePasteurizacaoColumns:', e?.message || e));
 
   // ------------------------------------------------------------ status
   app.get('/api/tuya/status', ...guard, async (req: Request, res: Response) => {
@@ -159,11 +162,15 @@ export function registerTuyaRoutes(app: Express) {
         LEFT JOIN LATERAL (SELECT celsius, read_at FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = ${MAIN_CODE} ORDER BY read_at DESC LIMIT 1) m ON true
         LEFT JOIN LATERAL (SELECT celsius, read_at FROM tuya_temperature_readings t WHERE t.device_id = d.device_id AND t.code = ${EVAP_CODE} ORDER BY read_at DESC LIMIT 1) ev ON true
         ORDER BY d.online DESC, d.name`);
+      const labels = await getSensorLabels();
       const devices = (r.rows || []).map((d: any) => ({
         ...d,
         last_main_celsius: d.last_main_celsius == null ? null : Number(d.last_main_celsius),
         last_evap_celsius: d.last_evap_celsius == null ? null : Number(d.last_evap_celsius),
         readings_main: Number(d.readings_main) || 0,
+        // rótulos por aparelho (ex.: Banco de gelo → "Temperatura do Banco de gelo" / "Resfriamento da Pasteurização")
+        main_label: labelFor(labels, d.name, MAIN_CODE).label,
+        evap_label: labelFor(labels, d.name, EVAP_CODE).label,
       }));
       res.json({ total: devices.length, devices, configured: isTuyaConfigured(), refreshError, collector: getTuyaCollectorState() });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
@@ -177,6 +184,7 @@ export function registerTuyaRoutes(app: Express) {
       const p = parsePeriod(req.query);
       if ('error' in p) return res.status(400).json(p);
       const device = await loadDevice(id);
+      const labels = await getSensorLabels();
       const { points, truncated } = await queryPoints(id, p);
       // resumo do período (sobre os pontos devolvidos)
       const mains = points.filter((x) => x.main_avg != null);
@@ -189,7 +197,8 @@ export function registerTuyaRoutes(app: Express) {
       res.json({
         device: device || { device_id: id, name: id },
         from: p.from.toISOString(), to: p.to.toISOString(), bucket: p.bucket, bucketSeconds: p.secs,
-        codes: { main: p.main, evap: p.evap, main_label: TUYA_DP_LABELS[p.main] || p.main, evap_label: TUYA_DP_LABELS[p.evap] || p.evap },
+        codes: (() => { const lb = (c: string) => labelFor(labels, device?.name || '', c); const lm = lb(p.main), le = lb(p.evap);
+          return { main: p.main, evap: p.evap, main_label: lm.custom ? lm.label : (TUYA_DP_LABELS[p.main] || p.main), evap_label: le.custom ? le.label : (TUYA_DP_LABELS[p.evap] || p.evap) }; })(),
         total: points.length, truncated, summary, points,
       });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
@@ -299,7 +308,7 @@ export function registerTuyaRoutes(app: Express) {
       const camaras = await lerCamaras();
       const last: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'tuya_alerta_last' LIMIT 1`);
       const ativo: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'tuya_alerta_ativo' LIMIT 1`);
-      res.json({ mensagem: montarMensagem(camaras), camaras: camaras.length, destinos: await resolverDestinos(),
+      res.json({ mensagem: montarMensagem(camaras, new Date(), await getSensorLabels()), camaras: camaras.length, destinos: await resolverDestinos(),
         ultimoEnvio: last.rows?.[0]?.value || null, ativo: (ativo.rows?.[0]?.value || 'on') !== 'off', horarios: '07h, 09h, 11h, 13h, 15h, 17h, 19h, 21h (BRT, todos os dias)' });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
@@ -309,6 +318,40 @@ export function registerTuyaRoutes(app: Express) {
       const r = await enviarRelatorioTemperaturas({ force: true, origem: 'manual:' + (str((req as any).currentUser?.email, 80) || 'admin') });
       res.json({ ok: r.enviado, ...r });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // ------------------------------------------------------------ pasteurização nas OPs (tuya-pasteurizacao.ts)
+  // GET  /api/tuya/pasteurizacao/sensores            sensores configurados + se o aparelho já existe/online
+  // GET  /api/tuya/pasteurizacao/:orderId            estado (snapshot ou séries ao vivo)
+  // POST /api/tuya/pasteurizacao/:orderId/iniciar    body { reiniciar?: true }
+  // POST /api/tuya/pasteurizacao/:orderId/finalizar
+  const userOf = (req: any) => str((req as any).currentUser?.email || (req as any).currentUser?.id, 120) || 'admin-2.0';
+  app.get('/api/tuya/pasteurizacao/sensores', ...guard, async (_req: Request, res: Response) => {
+    try { res.json({ sensores: await resolverSensores() }); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+  app.get('/api/tuya/pasteurizacao/:orderId', ...guard, async (req: Request, res: Response) => {
+    try {
+      const id = str(req.params.orderId, 80);
+      if (!id) return res.status(400).json({ error: 'ordem invalida' });
+      const st = await estadoPasteurizacao(id);
+      if (!st) return res.status(404).json({ error: 'ordem nao encontrada' });
+      res.json(st);
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+  app.post('/api/tuya/pasteurizacao/:orderId/iniciar', ...guard, async (req: Request, res: Response) => {
+    try {
+      const id = str(req.params.orderId, 80);
+      if (!id) return res.status(400).json({ error: 'ordem invalida' });
+      res.json({ ok: true, ...(await iniciarPasteurizacao(id, userOf(req), (req.body || {}).reiniciar === true)) });
+    } catch (e: any) { res.status(e?.status || 500).json({ error: e?.message || String(e) }); }
+  });
+  app.post('/api/tuya/pasteurizacao/:orderId/finalizar', ...guard, async (req: Request, res: Response) => {
+    try {
+      const id = str(req.params.orderId, 80);
+      if (!id) return res.status(400).json({ error: 'ordem invalida' });
+      res.json({ ok: true, ...(await finalizarPasteurizacao(id, userOf(req))) });
+    } catch (e: any) { res.status(e?.status || 500).json({ error: e?.message || String(e) }); }
   });
 
   // ------------------------------------------------------------ rodada manual
