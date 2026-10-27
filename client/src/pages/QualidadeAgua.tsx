@@ -280,7 +280,7 @@ export default function QualidadeAgua() {
 
 
 // ---------------------------------------------------------------------------
-// CLORO RESIDUAL (mg/L) — registro MANUAL diário (pedido Flavio 27/out). O analisador
+// CLORO RESIDUAL (ppm) — registro MANUAL diário (pedido Flavio 27/out). O analisador
 // não mede cloro livre (só ORP); o valor do kit/colorímetro é anotado aqui, 1 por dia
 // (salvar de novo no mesmo dia substitui). Backend: /api/tuya/agua/cloro.
 // ---------------------------------------------------------------------------
@@ -295,22 +295,22 @@ function CloroResidualPanel() {
   const q = useQuery({ queryKey: ['/api/tuya/agua/cloro'], queryFn: () => jfetch('/api/tuya/agua/cloro') });
   const regs: any[] = q.data?.registros || [];
   const registradoHoje = q.data?.registrado_hoje === true;
-  const chart = useMemo(() => regs.slice().reverse().map((r) => ({ d: r.data, ts: new Date(r.data + 'T12:00:00').getTime(), v: r.valor_mg_l })), [regs]);
+  const chart = useMemo(() => regs.slice().reverse().map((r) => ({ d: r.data, ts: new Date(r.data + 'T12:00:00').getTime(), v: r.valor_ppm })), [regs]);
 
   const salvar = async () => {
     const v = Number(String(valor).replace(',', '.'));
-    if (!isFinite(v)) { toast({ title: 'Informe o valor em mg/L', variant: 'destructive' }); return; }
+    if (!isFinite(v)) { toast({ title: 'Informe o valor em ppm', variant: 'destructive' }); return; }
     setSaving(true);
     try {
-      await jfetch('/api/tuya/agua/cloro', { method: 'POST', body: JSON.stringify({ data, valor_mg_l: v, observacao: obs || null }) });
-      toast({ title: 'Cloro residual registrado', description: `${data.split('-').reverse().join('/')}: ${v.toLocaleString('pt-BR')} mg/L` });
+      await jfetch('/api/tuya/agua/cloro', { method: 'POST', body: JSON.stringify({ data, valor_ppm: v, observacao: obs || null }) });
+      toast({ title: 'Cloro residual registrado', description: `${data.split('-').reverse().join('/')}: ${v.toLocaleString('pt-BR')} ppm` });
       setValor(''); setObs('');
       qc.invalidateQueries({ queryKey: ['/api/tuya/agua/cloro'] });
     } catch (e: any) { toast({ title: 'Erro', description: e.message, variant: 'destructive' }); }
     finally { setSaving(false); }
   };
   const excluir = async (r: any) => {
-    if (!window.confirm(`Excluir o registro de ${r.data.split('-').reverse().join('/')} (${r.valor_mg_l} mg/L)?`)) return;
+    if (!window.confirm(`Excluir o registro de ${r.data.split('-').reverse().join('/')} (${r.valor_ppm} ppm)?`)) return;
     try { await jfetch(`/api/tuya/agua/cloro/${r.id}`, { method: 'DELETE' }); qc.invalidateQueries({ queryKey: ['/api/tuya/agua/cloro'] }); }
     catch (e: any) { toast({ title: 'Erro', description: e.message, variant: 'destructive' }); }
   };
@@ -326,7 +326,7 @@ function CloroResidualPanel() {
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <div><Label className="text-xs text-gray-500">Data</Label><Input type="date" value={data} max={hojeLocal} onChange={(e) => setData(e.target.value)} className="h-9 w-[160px]" /></div>
-          <div><Label className="text-xs text-gray-500">Cloro residual (mg/L)</Label><Input inputMode="decimal" placeholder="ex.: 1,5" value={valor} onChange={(e) => setValor(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') salvar(); }} className="h-9 w-[150px]" /></div>
+          <div><Label className="text-xs text-gray-500">Cloro residual (ppm)</Label><Input inputMode="decimal" placeholder="ex.: 1,5" value={valor} onChange={(e) => setValor(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') salvar(); }} className="h-9 w-[150px]" /></div>
           <div className="flex-1 min-w-[200px]"><Label className="text-xs text-gray-500">Observação (opcional)</Label><Input placeholder="ponto de coleta, kit usado…" value={obs} onChange={(e) => setObs(e.target.value)} className="h-9" /></div>
           <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 h-9" onClick={salvar} disabled={saving || !valor}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar</Button>
         </div>
@@ -338,19 +338,19 @@ function CloroResidualPanel() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="ts" type="number" domain={['dataMin', 'dataMax']} scale="time" tickFormatter={(v) => { const d = new Date(Number(v)); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`; }} minTickGap={30} tick={{ fontSize: 10 }} />
                   <YAxis width={40} tick={{ fontSize: 10 }} domain={[0, 'auto']} />
-                  <Tooltip labelFormatter={(v) => new Date(Number(v)).toLocaleDateString('pt-BR')} formatter={(v: any) => [`${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} mg/L`, 'Cloro residual']} />
+                  <Tooltip labelFormatter={(v) => new Date(Number(v)).toLocaleDateString('pt-BR')} formatter={(v: any) => [`${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ppm`, 'Cloro residual']} />
                   <Line type="linear" dataKey="v" name="Cloro residual" stroke="#0e7490" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
             <div className="max-h-[180px] overflow-y-auto border rounded">
               <Table>
-                <TableHeader className="sticky top-0 bg-white dark:bg-gray-800"><TableRow><TableHead>Data</TableHead><TableHead className="text-right">mg/L</TableHead><TableHead>Obs. / por</TableHead><TableHead></TableHead></TableRow></TableHeader>
+                <TableHeader className="sticky top-0 bg-white dark:bg-gray-800"><TableRow><TableHead>Data</TableHead><TableHead className="text-right">ppm</TableHead><TableHead>Obs. / por</TableHead><TableHead></TableHead></TableRow></TableHeader>
                 <TableBody>
                   {regs.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap text-xs">{r.data.split('-').reverse().join('/')}</TableCell>
-                      <TableCell className="text-right font-medium">{Number(r.valor_mg_l).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right font-medium">{Number(r.valor_ppm).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
                       <TableCell className="text-[11px] text-gray-500 max-w-[160px] truncate" title={`${r.observacao || ''} — ${r.registrado_por || ''}`}>{r.observacao ? r.observacao + ' · ' : ''}{(r.registrado_por || '').split('@')[0]}</TableCell>
                       <TableCell><button className="text-gray-400 hover:text-red-600" onClick={() => excluir(r)} title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button></TableCell>
                     </TableRow>

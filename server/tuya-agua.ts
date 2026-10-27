@@ -118,12 +118,17 @@ async function ensureCloroTable() {
     CREATE TABLE IF NOT EXISTS agua_cloro_residual (
       id            bigserial PRIMARY KEY,
       data          date NOT NULL UNIQUE,
-      valor_mg_l    numeric(6,2) NOT NULL,
+      valor_ppm    numeric(6,2) NOT NULL,
       observacao    text,
       registrado_por varchar(120),
       created_at    timestamptz NOT NULL DEFAULT now(),
       updated_at    timestamptz NOT NULL DEFAULT now()
     )`);
+  // A 1ª versão (27/out 14h) criou a coluna como valor_mg_l; a unidade é ppm — renomeia se existir.
+  await db.execute(sql`DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'agua_cloro_residual' AND column_name = 'valor_mg_l') THEN
+      ALTER TABLE agua_cloro_residual RENAME COLUMN valor_mg_l TO valor_ppm;
+    END IF; END $$`);
   cloroReady = true;
 }
 
@@ -137,32 +142,32 @@ export function registerTuyaAguaRoutes(app: Express, guard: any[]) {
       await ensureCloroTable();
       const to = str(req.query.to, 10) || new Date().toISOString().slice(0, 10);
       const from = str(req.query.from, 10) || new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
-      const r = rows(await db.execute(sql`SELECT id, to_char(data, 'YYYY-MM-DD') AS data, valor_mg_l, observacao, registrado_por, created_at, updated_at
+      const r = rows(await db.execute(sql`SELECT id, to_char(data, 'YYYY-MM-DD') AS data, valor_ppm, observacao, registrado_por, created_at, updated_at
         FROM agua_cloro_residual WHERE data >= ${from}::date AND data <= ${to}::date ORDER BY data DESC`));
       const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       res.json({ from, to, hoje, registrado_hoje: r.some((x) => x.data === hoje), total: r.length,
-        registros: r.map((x) => ({ ...x, valor_mg_l: Number(x.valor_mg_l) })) });
+        registros: r.map((x) => ({ ...x, valor_ppm: Number(x.valor_ppm) })) });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
-  // POST /api/tuya/agua/cloro { data: 'YYYY-MM-DD' (padrão hoje BRT), valor_mg_l, observacao }
+  // POST /api/tuya/agua/cloro { data: 'YYYY-MM-DD' (padrão hoje BRT), valor_ppm, observacao }
   app.post('/api/tuya/agua/cloro', ...guard, async (req: any, res: Response) => {
     try {
       await ensureCloroTable();
       const b = req.body || {};
       const data = str(b.data, 10) || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ error: 'data invalida (YYYY-MM-DD)' });
-      const valor = Number(String(b.valor_mg_l ?? b.valor ?? '').replace(',', '.'));
-      if (!isFinite(valor) || valor < 0 || valor > 100) return res.status(400).json({ error: 'valor de cloro invalido (mg/L entre 0 e 100)' });
+      const valor = Number(String(b.valor_ppm ?? b.valor ?? '').replace(',', '.'));
+      if (!isFinite(valor) || valor < 0 || valor > 100) return res.status(400).json({ error: 'valor de cloro invalido (ppm entre 0 e 100)' });
       const obs = str(b.observacao, 500);
       const r = rows(await db.execute(sql`
-        INSERT INTO agua_cloro_residual (data, valor_mg_l, observacao, registrado_por)
+        INSERT INTO agua_cloro_residual (data, valor_ppm, observacao, registrado_por)
         VALUES (${data}::date, ${valor}, ${obs}, ${userOf(req)})
-        ON CONFLICT (data) DO UPDATE SET valor_mg_l = EXCLUDED.valor_mg_l, observacao = EXCLUDED.observacao,
+        ON CONFLICT (data) DO UPDATE SET valor_ppm = EXCLUDED.valor_ppm, observacao = EXCLUDED.observacao,
           registrado_por = EXCLUDED.registrado_por, updated_at = now()
-        RETURNING id, to_char(data, 'YYYY-MM-DD') AS data, valor_mg_l, observacao, registrado_por, created_at, updated_at`));
-      console.log(`💧 [AGUA] cloro residual ${data} = ${valor} mg/L por ${userOf(req)}`);
-      res.json({ ok: true, registro: { ...r[0], valor_mg_l: Number(r[0].valor_mg_l) } });
+        RETURNING id, to_char(data, 'YYYY-MM-DD') AS data, valor_ppm, observacao, registrado_por, created_at, updated_at`));
+      console.log(`💧 [AGUA] cloro residual ${data} = ${valor} ppm por ${userOf(req)}`);
+      res.json({ ok: true, registro: { ...r[0], valor_ppm: Number(r[0].valor_ppm) } });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
