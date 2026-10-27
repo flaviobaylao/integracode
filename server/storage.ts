@@ -677,6 +677,19 @@ export function cycleWindowFor(routeDateStr: string, periodicity: string): { sta
   return { start: isoD(mon), end: isoD(end) };
 }
 
+// 📌 Visitas FORÇADAS do dia (visit_agenda.forcada, ex.: "não positivados do mês"): o admin
+// mandou o cliente para a rota de propósito, então o filtro JÁ-COMPROU-NO-CICLO não o tira.
+async function forcadasDoDia(dateStr: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const r: any = await db.execute(sql`SELECT DISTINCT customer_id FROM visit_agenda
+      WHERE scheduled_date::date = ${dateStr}::date AND COALESCE(forcada, '') <> ''
+        AND COALESCE(visit_status, 'pending') <> 'cancelled'`);
+    for (const x of ((r.rows || r) as any[])) if (x.customer_id) out.add(String(x.customer_id));
+  } catch { /* coluna ainda não existe */ }
+  return out;
+}
+
 export async function customersBoughtInCycle(
   rows: Array<{ id: string; periodicity: string | null; omieClientCode?: string | null }>,
   routeDateStr: string,
@@ -1362,6 +1375,7 @@ export class DatabaseStorage implements IStorage {
           dateStr,
         );
         if (boughtSet.size > 0) {
+          for (const fid of await forcadasDoDia(dateStr)) boughtSet.delete(fid);
           const filtered = custs.filter((c: any) => !boughtSet.has(c.id));
           console.log(`[JA-COMPROU] getCustomersForDate: ${custs.length - filtered.length} cliente(s) ja compraram no ciclo - fora da rota ${dateStr} (restam ${filtered.length})`);
           return filtered;
@@ -1441,7 +1455,10 @@ export class DatabaseStorage implements IStorage {
       try {
         if (_vcusts.length > 0) {
           const boughtSet = await customersBoughtInCycle(_vcusts.map((c: any) => ({ id: c.id, periodicity: (c as any).visitPeriodicity, omieClientCode: (c as any).omieClientCode })), dateStr);
-          if (boughtSet.size > 0) return _vcusts.filter((c: any) => !boughtSet.has(c.id));
+          if (boughtSet.size > 0) {
+            for (const fid of await forcadasDoDia(dateStr)) boughtSet.delete(fid);
+            return _vcusts.filter((c: any) => !boughtSet.has(c.id));
+          }
         }
       } catch (e) { console.warn('[virtual ja-comprou-no-ciclo] falhou (mantendo todos):', (e as any)?.message); }
       return _vcusts;
