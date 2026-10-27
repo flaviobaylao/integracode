@@ -148,6 +148,11 @@ export default function MinhaAgenda() {
         .agenda .fc-event.agenda-done{opacity:.55;text-decoration:line-through}
         .agenda .fc .fc-timegrid-slot{height:2.6em}
         .agenda .fc .fc-list-event-title a{color:inherit}
+        /* Lista: fc-list-event tambem tem a classe fc-event (texto branco) e sumia no fundo claro */
+        .agenda .fc .fc-list-event{color:hsl(var(--foreground));padding:0;border-radius:0;font-size:13px}
+        .agenda .fc .fc-list-event td{color:hsl(var(--foreground))}
+        .agenda .fc .fc-list-event-time{color:hsl(var(--muted-foreground))}
+        .agenda .fc .fc-list-day-cushion{background:hsl(var(--muted))}
         .agenda .fc .fc-scrollgrid{border-radius:8px;overflow:hidden}
       `}</style>
 
