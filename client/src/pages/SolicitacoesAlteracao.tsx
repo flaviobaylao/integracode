@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
+import { AnexosPicker, prepararAnexos, arquivosDoColar, type AnexoNovo } from "@/components/change-request/Anexos";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign } from "lucide-react";
@@ -227,6 +228,19 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   const { toast } = useToast();
   const { pedirMotivo, MotivoModal } = useMotivoInativacao();
   const [note, setNote] = useState("");
+  // 📎 Anexos da réplica (imagens e arquivos) — 27/out/2026
+  const [anexos, setAnexos] = useState<AnexoNovo[]>([]);
+  const [preparandoAnexo, setPreparandoAnexo] = useState(false);
+  const adicionarAnexos = async (files: File[]) => {
+    if (!files.length) return;
+    setPreparandoAnexo(true);
+    try {
+      const { anexos: novos, avisos } = await prepararAnexos(files, anexos.length);
+      if (novos.length) setAnexos((p) => [...p, ...novos].slice(0, 5));
+      if (avisos.length) toast({ title: "Alguns anexos não entraram", description: avisos.join(" "), variant: "destructive" });
+    } finally { setPreparandoAnexo(false); }
+  };
+  const temResposta = !!note.trim() || anexos.length > 0;
   // Item 4: ao retornar "Efetuadas", a rota do dia do vendedor é reotimizada automaticamente.
   // Para "Parcial"/"Rejeitadas" não há otimização automática.
   async function otimizarRotaAposEfetuada() {
@@ -276,12 +290,16 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   // continua recebendo a resposta no card do atendimento.
   const replyMut = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", `/api/change-requests/${r.id}/reply`, { text: note.trim() });
+      await apiRequest("POST", `/api/change-requests/${r.id}/reply`, {
+        text: note.trim(),
+        attachments: anexos.length ? anexos.map((a) => ({ name: a.name, type: a.type, dataUrl: a.dataUrl })) : undefined,
+      });
       return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
     },
     onSuccess: () => {
       toast({ title: "Réplica enviada", description: "O vendedor recebe a resposta e o card saiu de pendentes." });
       setNote("");
+      setAnexos([]);
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
     },
@@ -499,13 +517,26 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
       )}
 
       <div className="space-y-1">
-        <Textarea placeholder={isReport ? "Escreva uma réplica ao vendedor (ou observação ao marcar como lido)…" : "Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado"} value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
-        <VoiceDictateButton onText={(t) => setNote((p) => (p ? p.trim() + " " : "") + t)} testId="cr-admin-obs-audio" />
+        <Textarea placeholder={isReport ? "Escreva uma réplica ao vendedor (ou observação ao marcar como lido)… Pode colar imagens (Ctrl+V)." : "Observação (opcional) — ex.: o que foi feito ou por que foi rejeitado"} value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+          onPaste={isReport ? (e) => {
+            const fs = arquivosDoColar(e);
+            if (!fs.length) return;
+            if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+            adicionarAnexos(fs);
+          } : undefined} />
+        <div className="flex flex-wrap items-center gap-2">
+          <VoiceDictateButton onText={(t) => setNote((p) => (p ? p.trim() + " " : "") + t)} testId="cr-admin-obs-audio" />
+          {isReport && (
+            <AnexosPicker value={anexos} onAdd={adicionarAnexos} onRemove={(i) => setAnexos((p) => p.filter((_, j) => j !== i))}
+              disabled={replyMut.isPending || preparandoAnexo} testId={`cr-anexar-${r.id}`} />
+          )}
+          {preparandoAnexo && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
         {isReport ? (<>
-          <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" disabled={busy || replyMut.isPending || !note.trim()} onClick={() => replyMut.mutate()}>
+          <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" disabled={busy || replyMut.isPending || preparandoAnexo || !temResposta} onClick={() => replyMut.mutate()}>
             {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Réplica</>}
           </Button>
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={busy} onClick={() => resolveMut.mutate("lido")}>
