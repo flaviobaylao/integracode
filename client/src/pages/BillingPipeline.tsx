@@ -1445,19 +1445,17 @@ export default function BillingPipeline() {
               )}
               Atualizar
             </Button>
-            {draftsTotal > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-300"
-                onClick={() => setShowDrafts(true)}
-                title={draftsData?.seeAll ? 'Rascunhos de pedido por vendedor' : 'Seus rascunhos de pedido'}
-                data-testid="button-rascunhos-pipeline"
-              >
-                <FileText className="h-4 w-4 mr-1" />
-                Rascunhos ({draftsTotal})
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-300"
+              onClick={() => setShowDrafts(true)}
+              title={draftsData?.seeAll ? 'Rascunhos de pedido por vendedor' : 'Seus rascunhos de pedido'}
+              data-testid="button-rascunhos-pipeline"
+            >
+              <FileText className="h-4 w-4 mr-1" />
+              Rascunhos ({draftsTotal})
+            </Button>
             <Button
               variant="outline"
               size="sm"
