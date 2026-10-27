@@ -100,6 +100,8 @@ export default function MinhaAgenda() {
       document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", up);
     };
   }, [allDayRows]);
+  // vendSel: [] = todos; [NENHUM] = nenhum marcado; senao a lista de ids marcados
+  const NENHUM = "__nenhum__";
   const [vendSel, setVendSel] = useState<string[]>([]);
   const [cliSel, setCliSel] = useState<{ c: CliRota; x: number; y: number } | null>(null);
 
@@ -303,7 +305,8 @@ export default function MinhaAgenda() {
               {ehAdmin ? (
                 <>
                   <div className="flex gap-3 text-xs mb-1">
-                    <button className="text-blue-600 hover:underline" onClick={() => setVendSel([])}>Todos</button>
+                    <button className="text-blue-600 hover:underline" onClick={() => setVendSel([])} data-testid="agenda-vend-todos">Marcar todos</button>
+                    <button className="text-blue-600 hover:underline" onClick={() => setVendSel([NENHUM])} data-testid="agenda-vend-nenhum">Desmarcar todos</button>
                   </div>
                   {vendedores.map((v) => {
                     const on = vendSel.length === 0 || vendSel.includes(v.id);
@@ -311,8 +314,9 @@ export default function MinhaAgenda() {
                     return (
                       <label key={v.id} className="flex items-center gap-2 py-1 text-sm cursor-pointer">
                         <Checkbox checked={on} onCheckedChange={(ck) => setVendSel((s0) => {
-                          const base = s0.length === 0 ? vendedores.map((x) => x.id) : s0;
+                          const base = s0.length === 0 ? vendedores.map((x) => x.id) : s0.filter((x) => x !== NENHUM);
                           const n2 = ck ? Array.from(new Set([...base, v.id])) : base.filter((x) => x !== v.id);
+                          if (n2.length === 0) return [NENHUM];
                           return n2.length === vendedores.length ? [] : n2;
                         })} />
                         <span className="h-3 w-3 rounded-sm flex-none" style={{ background: corVend[v.id] }} />
