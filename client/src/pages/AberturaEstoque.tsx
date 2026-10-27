@@ -35,7 +35,7 @@ type Hoje = {
 const fmtN = (v: any) => (v === null || v === undefined || v === "" ? "–" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 2 }));
 const fmtDT = (s?: string | null) => (s ? new Date(s).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–");
 const fmtData = (iso: string) => iso.split("-").reverse().join("/");
-const STAGE_LABEL: Record<string, string> = { faturado: "Faturado", impresso: "Impresso", aguardando_rota: "Aguard. rota", bsb: "BSB", aguardando_rota_bsb: "Aguard. rota BSB", outras_cidades: "Outras cidades" };
+const STAGE_LABEL: Record<string, string> = { faturado: "Faturado", impresso: "Impresso", aguardando_rota: "Aguard. rota", outras_cidades: "Outras cidades", agendado: "Agendado (já faturado)", pedido: "Pedido (já faturado)", a_faturar: "A faturar (já faturado)" };
 
 async function api(url: string, init?: RequestInit) {
   const r = await fetch(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" }, ...init });
@@ -165,7 +165,7 @@ export default function AberturaEstoque() {
                   <th className="p-2">Produto</th>
                   <th className="p-2 text-right" title="Lotes ativos na instância GYN (em uso + bloqueado)">Sistema GYN</th>
                   <th className="p-2 text-right" title="Lotes ativos na instância SERV (em uso + bloqueado)">Sistema SERV</th>
-                  <th className="p-2 text-right" title="Pedidos faturados nas etapas Faturado, Impresso, Aguardando rota, BSB, Aguardando rota BSB e Outras cidades">Faturado s/ rota</th>
+                  <th className="p-2 text-right" title="Pedidos já faturados em qualquer etapa, exceto Em rota, Entregue, Lixeira e as etapas de BSB (BSB, Aguardando rota BSB, Em rota BSB)">Faturado s/ rota</th>
                   <th className="p-2 text-right font-bold">Esperado</th>
                   <th className="p-2 text-right font-bold w-36">Físico</th>
                   <th className="p-2 text-right">Diferença</th>
