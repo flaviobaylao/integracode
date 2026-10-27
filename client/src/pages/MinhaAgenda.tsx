@@ -63,6 +63,43 @@ export default function MinhaAgenda() {
   // Um esconde o outro.
   const [modo, setModo] = useState<"agenda" | "clientes">(() => { try { return localStorage.getItem("agenda-modo") === "clientes" ? "clientes" : "agenda"; } catch { return "agenda"; } });
   useEffect(() => { try { localStorage.setItem("agenda-modo", modo); } catch {} }, [modo]);
+
+  // Altura da faixa "dia inteiro": quantas linhas de evento aparecem antes do "+N mais".
+  // Regulada arrastando a barra divisória (fc-timegrid-divider). Lembrada por navegador.
+  const ALLDAY_PADRAO = 3, ALLDAY_MIN = 1, ALLDAY_MAX = 40, LINHA_PX = 24;
+  const [allDayRows, setAllDayRows] = useState<number>(() => {
+    try { const n = parseInt(localStorage.getItem("agenda-allday-rows") || "", 10); return n >= ALLDAY_MIN && n <= ALLDAY_MAX ? n : ALLDAY_PADRAO; } catch { return ALLDAY_PADRAO; }
+  });
+  useEffect(() => { try { localStorage.setItem("agenda-allday-rows", String(allDayRows)); } catch {} }, [allDayRows]);
+  const secRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{ y0: number; rows0: number } | null>(null);
+  useEffect(() => {
+    const sec = secRef.current; if (!sec) return;
+    const ehAlca = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.(".fc-timegrid-divider");
+    const down = (e: PointerEvent) => {
+      if (!ehAlca(e.target)) return;
+      e.preventDefault();
+      dragRef.current = { y0: e.clientY, rows0: allDayRows };
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+    };
+    const move = (e: PointerEvent) => {
+      const d = dragRef.current; if (!d) return;
+      const n = Math.max(ALLDAY_MIN, Math.min(ALLDAY_MAX, d.rows0 + Math.round((e.clientY - d.y0) / LINHA_PX)));
+      setAllDayRows((cur) => (cur === n ? cur : n));
+    };
+    const up = () => { if (!dragRef.current) return; dragRef.current = null; document.body.style.cursor = ""; document.body.style.userSelect = ""; };
+    const dbl = (e: MouseEvent) => { if (ehAlca(e.target)) setAllDayRows(ALLDAY_PADRAO); };
+    sec.addEventListener("pointerdown", down);
+    sec.addEventListener("dblclick", dbl);
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+    return () => {
+      sec.removeEventListener("pointerdown", down); sec.removeEventListener("dblclick", dbl);
+      document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", up);
+    };
+  }, [allDayRows]);
   const [vendSel, setVendSel] = useState<string[]>([]);
   const [cliSel, setCliSel] = useState<{ c: CliRota; x: number; y: number } | null>(null);
 
@@ -193,6 +230,10 @@ export default function MinhaAgenda() {
         .agenda .fc .fc-list-event-time{color:var(--muted-foreground)}
         .agenda .fc .fc-list-day-cushion{background:var(--muted)}
         .agenda .fc .fc-scrollgrid{border-radius:8px;overflow:hidden}
+        /* Barra entre "dia inteiro" e as horas = alça: arrasta p/ ampliar/reduzir a faixa; duplo clique volta ao padrão */
+        .agenda .fc .fc-timegrid-divider{cursor:row-resize;height:10px;padding:0;background:var(--muted);position:relative;touch-action:none;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+        .agenda .fc .fc-timegrid-divider:hover{background:color-mix(in srgb, #2a78d6 25%, var(--muted))}
+        .agenda .fc .fc-timegrid-divider::after{content:"";position:absolute;left:50%;top:3px;width:44px;height:3px;margin-left:-22px;border-radius:2px;background:var(--muted-foreground);opacity:.55}
         /* Linhas verticais suaves separando os dias (Semana e Mes) e horas mais leves */
         .agenda .fc .fc-timegrid-col,.agenda .fc .fc-col-header-cell,.agenda .fc .fc-daygrid-day{border-left:1px solid var(--border) !important;border-right:1px solid var(--border) !important}
         .agenda .fc .fc-daygrid-day{border-top:1px solid var(--border) !important;border-bottom:1px solid var(--border) !important}
@@ -303,10 +344,11 @@ export default function MinhaAgenda() {
             {modo === "clientes"
               ? "Clientes da Rota do Dia pela periodicidade, dia da semana e semana do mês do cadastro. Muda sozinho quando o cadastro muda. ☎ = atendimento virtual."
               : "Clique num horário vazio para criar, arraste para mover, estique a borda para mudar a duração. Só você vê esta agenda."}
+            <div className="mt-1">Arraste a barra entre "dia inteiro" e as horas para ampliar ou reduzir a faixa ({allDayRows} {allDayRows === 1 ? "linha" : "linhas"}); duplo clique volta ao padrão.</div>
           </div>
         </aside>
 
-        <section className="flex-1 min-w-0 relative">
+        <section ref={secRef} className="flex-1 min-w-0 relative">
           {(modo === "agenda" ? isLoading : cliLoading) && <div className="absolute right-2 top-2 text-xs text-muted-foreground z-10">Carregando…</div>}
           <FullCalendar
             ref={calRef}
@@ -322,7 +364,7 @@ export default function MinhaAgenda() {
             scrollTime="08:00:00"
             allDaySlot
             allDayText="dia inteiro"
-            dayMaxEvents={3}
+            dayMaxEvents={allDayRows}
             moreLinkText={(n) => `+${n} mais`}
             slotLabelFormat={{ hour: "numeric", minute: "2-digit", hour12: false }}
             eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
