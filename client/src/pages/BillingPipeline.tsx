@@ -1371,14 +1371,14 @@ export default function BillingPipeline() {
   return (
     <div className="bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 56px)' }}>
       <div className="p-4 flex flex-col flex-1 min-h-0">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-3">
             <BackToDashboardButton />
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
               Pipeline de Faturamento
             </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {modeStatus?.active && (
               <Badge className="bg-green-100 text-green-800 border-green-300 animate-pulse text-xs">
                 Modo Interno ATIVO
