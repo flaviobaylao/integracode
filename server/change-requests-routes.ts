@@ -80,6 +80,20 @@ const DDL: string[] = [
   // mesmo se for reaberto depois. Esta linha cobre os que já estavam resolvidos e qualquer
   // caminho que resolva sem passar pelo /resolve. A foto original segue no card de visita.
   `UPDATE change_requests SET details = (COALESCE(details, '{}'::jsonb) - 'fotoUrl') || '{"fotoRemovida": true}'::jsonb WHERE kind = 'report' AND status <> 'pending' AND COALESCE(details->>'fotoRemovida', '') <> 'true';`,
+  // 📎 27/out/2026 — Anexos (imagens e arquivos) da conversa do report. O binário fica nesta
+  // tabela (base64) e a mensagem guarda só {id, name, mime, size} — a lista do Inbox não pesa.
+  `CREATE TABLE IF NOT EXISTS change_request_attachments (
+     id                 varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+     change_request_id  varchar NOT NULL,
+     message_id         varchar,
+     name               varchar,
+     mime               varchar,
+     size               integer,
+     data               text NOT NULL,
+     created_by         varchar,
+     created_at         timestamptz DEFAULT now()
+   );`,
+  `CREATE INDEX IF NOT EXISTS idx_cra_cr ON change_request_attachments (change_request_id);`,
 ];
 
 let _tablesReady: Promise<void> | null = null;
@@ -187,6 +201,35 @@ function newMsgId(): string {
 // sem apagar o report nem a conversa. Uma NOVA réplica do admin reabre normalmente.
 const pendenciaRemovida = (msgs: any[], lastAdminReply: number) =>
   msgs.some((m: any, i: number) => i > lastAdminReply && m && m.role === "admin" && m.kind === "pendencia_removida");
+// 📎 Anexos da conversa (27/out/2026): até 5 arquivos por mensagem, 10 MB cada, 20 MB no total.
+const ANEXO_MAX_QTD = 5;
+const ANEXO_MAX_BYTES = 10 * 1024 * 1024;
+const ANEXO_MAX_TOTAL = 20 * 1024 * 1024;
+const ANEXO_MIME_OK = /^(image\/(jpeg|png|gif|webp|heic|heif|bmp)|application\/pdf|text\/(plain|csv)|application\/(msword|vnd\.openxmlformats-officedocument\.[a-z.]+|vnd\.ms-excel|vnd\.ms-powerpoint|zip|x-zip-compressed)|audio\/[a-z0-9.+-]+|video\/(mp4|quicktime|webm))$/i;
+type AnexoIn = { name: string; mime: string; size: number; base64: string };
+function lerAnexos(raw: any): { ok: AnexoIn[]; erro?: string } {
+  const lista = Array.isArray(raw) ? raw : [];
+  if (lista.length === 0) return { ok: [] };
+  if (lista.length > ANEXO_MAX_QTD) return { ok: [], erro: `Máximo de ${ANEXO_MAX_QTD} anexos por mensagem.` };
+  const ok: AnexoIn[] = [];
+  let total = 0;
+  for (const a of lista) {
+    const m = String(a?.dataUrl || "").match(/^data:([^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/);
+    if (!m) return { ok: [], erro: "Anexo inválido." };
+    const mime = String(m[1] || a?.type || "application/octet-stream").toLowerCase();
+    const nome = String(a?.name || "anexo").replace(/[\r\n"\\/]+/g, " ").trim().slice(0, 160) || "anexo";
+    if (!ANEXO_MIME_OK.test(mime)) return { ok: [], erro: `Tipo de arquivo não permitido: ${nome}` };
+    const base64 = m[2].replace(/\s+/g, "");
+    const size = Math.floor(base64.length * 3 / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
+    if (size <= 0) return { ok: [], erro: `Arquivo vazio: ${nome}` };
+    if (size > ANEXO_MAX_BYTES) return { ok: [], erro: `${nome} passa de 10 MB.` };
+    total += size;
+    if (total > ANEXO_MAX_TOTAL) return { ok: [], erro: "Os anexos passam de 20 MB no total." };
+    ok.push({ name: nome, mime, size, base64 });
+  }
+  return { ok };
+}
+
 function mkMsg(role: "seller" | "admin", u: any, text: string, kind: string, extra?: any) {
   return {
     id: newMsgId(), role, by: u?.id || null, byName: userName(u),
@@ -1293,9 +1336,13 @@ export function registerChangeRequestsRoutes(app: Express) {
     await ensureTables();
     const u = (req as any).currentUser;
     const id = String(req.params.id);
-    const text = String((req.body || {}).text || "").trim();
+    let text = String((req.body || {}).text || "").trim();
     const resend = (req.body || {}).resend === true;
-    if (!text && !resend) return res.status(400).json({ error: "Escreva uma mensagem." });
+    const anexosIn = lerAnexos((req.body || {}).attachments);
+    if (anexosIn.erro) return res.status(400).json({ error: anexosIn.erro });
+    if (!text && !resend && anexosIn.ok.length === 0) return res.status(400).json({ error: "Escreva uma mensagem." });
+    // Só anexo, sem texto: a mensagem leva os nomes (o histórico/WhatsApp leem só o texto).
+    if (!text && anexosIn.ok.length > 0) text = "📎 " + anexosIn.ok.map((a) => a.name).join(", ");
     const role: "admin" | "seller" = (u?.role === "admin") ? "admin" : "seller";
 
     const cur = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE id = ${id} LIMIT 1`));
@@ -1317,7 +1364,18 @@ export function registerChangeRequestsRoutes(app: Express) {
     // respeita a trava de 1 pendente por cadastro.
     const reabrirReport = role === "seller" && (row.kind || "solicitacao") === "report" && row.status !== "pending" && !resend;
 
-    const msg = mkMsg(role, u, text || "Solicitação reenviada para nova análise.", resend ? "resend" : "reply");
+    const msg: any = mkMsg(role, u, text || "Solicitação reenviada para nova análise.", resend ? "resend" : "reply");
+    if (anexosIn.ok.length > 0) {
+      const salvos: any[] = [];
+      for (const a of anexosIn.ok) {
+        const ins = rowsOf(await db.execute(sql`
+          INSERT INTO change_request_attachments (change_request_id, message_id, name, mime, size, data, created_by)
+          VALUES (${id}, ${msg.id}, ${a.name}, ${a.mime}, ${a.size}, ${a.base64}, ${u?.id || null})
+          RETURNING id`));
+        salvos.push({ id: String(ins[0].id), name: a.name, mime: a.mime, size: a.size });
+      }
+      msg.attachments = salvos;
+    }
     let updated;
     try {
       if (resend || reabrirReport) {
@@ -1341,6 +1399,27 @@ export function registerChangeRequestsRoutes(app: Express) {
       throw e;
     }
     res.json(mapRow(updated[0]));
+  }));
+
+  // --------------------------------------------------------------------------
+  // GET /api/change-requests/anexo/:attId — devolve o anexo (binário) de uma mensagem da
+  //   conversa. Qualquer usuário logado (o vendedor vê a réplica no card dele). ?download=1
+  //   força o download; sem ele, imagens/PDF abrem no navegador.
+  // --------------------------------------------------------------------------
+  app.get("/api/change-requests/anexo/:attId", authenticateUser, safe(async (req, res) => {
+    await ensureTables();
+    const r = rowsOf(await db.execute(sql`SELECT name, mime, data FROM change_request_attachments WHERE id = ${String(req.params.attId)} LIMIT 1`));
+    if (r.length === 0) return res.status(404).end();
+    const buf = Buffer.from(String(r[0].data || ""), "base64");
+    const mime = String(r[0].mime || "application/octet-stream");
+    const nome = String(r[0].name || "anexo");
+    const inline = !req.query.download && /^(image\/|application\/pdf|audio\/|video\/|text\/plain)/i.test(mime);
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Content-Length", String(buf.length));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${nome.replace(/[^\x20-\x7e]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(nome)}`);
+    res.end(buf);
   }));
 
   // --------------------------------------------------------------------------
