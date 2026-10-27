@@ -25419,6 +25419,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     telefone_cota_gratis: '1000',
     auto_off_enabled: 'true',
     auto_off_margem: '5',
+    // 🏘️ Filtro por bairro/setor (vazio = todos). Nomes separados por "|"; comparação normalizada
+    // (acentos, "St."/"Set." → Setor, "Jd." → Jardim…). O radar busca normal e só LISTA os pontos desses bairros.
+    radar_bairros: '',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
   };
   async function _getRecursos(): Promise<Record<string, string>> {
@@ -25487,6 +25490,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { allowed: true, limite, usados };
   }
 
+  // ----- 🏘️ Bairro / setor: normalização e extração do endereço do Google -----
+  const _BAIRRO_PREFIXOS: Record<string, string> = { st: 'setor', set: 'setor', sto: 'setor', str: 'setor', jd: 'jardim', jard: 'jardim', jdm: 'jardim', vl: 'vila', res: 'residencial', resid: 'residencial', rsd: 'residencial', pq: 'parque', pque: 'parque', prq: 'parque', cj: 'conjunto', conj: 'conjunto', cjto: 'conjunto', lot: 'loteamento', loteam: 'loteamento', cond: 'condominio', chac: 'chacara' };
+  function _normBairro(s: any): string {
+    const t = String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    const tk = t.split(' ');
+    if (tk[0] === 'bairro' && tk.length > 1) tk.shift();
+    if (_BAIRRO_PREFIXOS[tk[0]]) tk[0] = _BAIRRO_PREFIXOS[tk[0]];
+    return tk.join(' ');
+  }
+  function _bairroDoPlace(p: any): string {
+    try {
+      const comps: any[] = Array.isArray(p?.addressComponents) ? p.addressComponents : [];
+      for (const tipo of ['sublocality_level_1', 'sublocality', 'neighborhood']) {
+        const c = comps.find((x: any) => Array.isArray(x?.types) && x.types.includes(tipo));
+        if (c && (c.longText || c.shortText)) return String(c.longText || c.shortText);
+      }
+    } catch (_e) {}
+    // Fallback: "Rua X, 17 - St. Bueno, Goiânia - GO, 74210-310" → "St. Bueno"
+    const seg = String(p?.formattedAddress || '').split(/,\s*/);
+    const i = seg.findIndex((x) => /\S\s-\s[A-Z]{2}$/.test(x.trim()));
+    if (i > 0) {
+      const prev = seg[i - 1].trim();
+      const parte = prev.includes(' - ') ? prev.slice(prev.lastIndexOf(' - ') + 3) : prev;
+      if (parte && !/^\d/.test(parte) && !/^(s\/?n|qd|lt|quadra|lote)\b/i.test(parte)) return parte.trim();
+    }
+    return '';
+  }
+  // Lista de bairros/setores para o filtro do radar: tirada dos cadastros de clientes e leads.
+  app.get('/api/admin/recursos/bairros', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`
+        SELECT neighborhood AS nome, 'cliente' AS tipo, COUNT(1)::int AS n FROM customers
+          WHERE COALESCE(TRIM(neighborhood), '') <> '' AND is_active = true GROUP BY neighborhood
+        UNION ALL
+        SELECT neighborhood, 'lead', COUNT(1)::int FROM leads
+          WHERE COALESCE(TRIM(neighborhood), '') <> '' GROUP BY neighborhood`);
+      const map = new Map<string, { chave: string; nomes: Map<string, number>; clientes: number; leads: number }>();
+      for (const row of (r?.rows || []) as any[]) {
+        const chave = _normBairro(row.nome); if (!chave) continue;
+        let g = map.get(chave);
+        if (!g) { g = { chave, nomes: new Map(), clientes: 0, leads: 0 }; map.set(chave, g); }
+        const n = Number(row.n) || 0;
+        if (row.tipo === 'cliente') g.clientes += n; else g.leads += n;
+        const nm = String(row.nome).trim();
+        g.nomes.set(nm, (g.nomes.get(nm) || 0) + n);
+      }
+      const bairros = Array.from(map.values()).map((g) => {
+        // nome exibido: a grafia mais usada, preferindo a forma por extenso ("Setor Bueno" a "SET BUENO")
+        const nomes = Array.from(g.nomes.entries()).sort((a, b) => b[1] - a[1]);
+        const abreviado = (nm: string) => !!_BAIRRO_PREFIXOS[String(nm).toLowerCase().replace(/[^a-z ]/g, ' ').trim().split(/\s+/)[0]];
+        const extenso = nomes.find(([nm]) => !abreviado(nm) && nm !== nm.toUpperCase()) || nomes.find(([nm]) => !abreviado(nm));
+        const titulo = (t: string) => t.toLowerCase().replace(/(^|\s)(\S)/g, (m) => m.toUpperCase());
+        let nome = (extenso || nomes[0])[0];
+        if (nome === nome.toUpperCase() || abreviado(nome)) {
+          const tk = nome.toLowerCase().replace(/\./g, ' ').split(/\s+/).filter(Boolean);
+          if (_BAIRRO_PREFIXOS[tk[0]]) tk[0] = _BAIRRO_PREFIXOS[tk[0]];
+          nome = titulo(tk.join(' '));
+        }
+        return { chave: g.chave, nome, clientes: g.clientes, leads: g.leads };
+      }).sort((a, b) => b.clientes - a.clientes || b.leads - a.leads || a.nome.localeCompare(b.nome, 'pt-BR'));
+      return res.json({ ok: true, bairros });
+    } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
+  });
+
   // Config (admin): ler
   app.get('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (_req: any, res) => {
     try { await _ensureRecursosSchema; const cfg = await _getRecursos(); await _autoResetRecursos(cfg); return res.json({ ok: true, config: cfg }); }
@@ -25496,7 +25565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'telefone_cota_gratis', 'telefone_preco_mil', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'telefone_cota_gratis', 'telefone_preco_mil', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos', 'radar_bairros'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
@@ -25692,7 +25761,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         places = Array.isArray(cachedPayload) ? cachedPayload : (cachedPayload.places || []);
       } else {
         billable = true;
-        const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.location,places.businessStatus,places.formattedAddress';
+        const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.location,places.businessStatus,places.formattedAddress,places.addressComponents';
         const body: any = {
           maxResultCount: 20, rankPreference: 'DISTANCE', languageCode: 'pt-BR', regionCode: 'BR',
           locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: raio } },
@@ -25776,12 +25845,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           match: ehPrimario ? 'primario' : 'secundario',
           distancia: dist,
           endereco: p.formattedAddress || '',
+          bairro: _bairroDoPlace(p) || null,
           businessStatus: p.businessStatus || '',
           jaVisitado: !!resgatavel,
           disponivel: !!livre,
           leadId: livre ? livre.leadId : (resgatavel ? resgatavel.leadId : null),
           lat: pLat, lng: pLng, placeId: p.id || '',
         });
+      }
+      // 🏘️ Filtro por bairro/setor (config do admin): busca normal, mas só lista os bairros marcados.
+      const _bairrosCfg = String(cfg.radar_bairros || '').split('|').map((x) => _normBairro(x)).filter(Boolean);
+      let foraDaRegiao = 0, semBairro = 0;
+      if (_bairrosCfg.length) {
+        const setB = new Set(_bairrosCfg);
+        for (let i = novos.length - 1; i >= 0; i--) {
+          const nb = _normBairro(novos[i].bairro);
+          if (nb && setB.has(nb)) continue;
+          if (!nb) semBairro++; else foraDaRegiao++;
+          novos.splice(i, 1);
+        }
       }
       // 📞 Telefones já consultados (cache, sem custo): o card já mostra o número, sem novo toque.
       try {
@@ -25800,7 +25882,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Ordena primeiro os de tipo primário (por distância), depois os de tipo secundário (por distância).
       novos.sort((a, b) => (a.match === 'primario' ? 0 : 1) - (b.match === 'primario' ? 0 : 1) || (a.distancia ?? 9999) - (b.distancia ?? 9999));
       const nPrim = novos.filter((n) => n.match === 'primario').length;
-      return res.json({ ok: true, total: novos.length, primarios: nPrim, secundarios: novos.length - nPrim, fromCache: !billable, raio, segmentos, resultados: novos });
+      return res.json({ ok: true, total: novos.length, primarios: nPrim, secundarios: novos.length - nPrim, fromCache: !billable, raio, segmentos, resultados: novos,
+        filtroBairros: _bairrosCfg.length > 0, bairrosFiltro: _bairrosCfg.length, ocultosForaDaRegiao: foraDaRegiao + semBairro, ocultosSemBairro: semBairro });
     } catch (e: any) { console.error('[radar] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
