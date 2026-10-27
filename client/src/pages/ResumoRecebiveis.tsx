@@ -42,6 +42,25 @@ const PAPEL_COR: Record<string, string> = {
   motorista: "bg-orange-100 text-orange-800",
 };
 
+const ACAO_COR: Record<string, string> = {
+  "Remuneração": "bg-blue-100 text-blue-800",
+  "Campanha": "bg-amber-100 text-amber-800",
+  "Bônus": "bg-emerald-100 text-emerald-800",
+  "Participação": "bg-violet-100 text-violet-800",
+};
+
+// Carimbo sempre no horário de Brasília, independente do fuso de quem olha.
+const dataHora = (v: any) => {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  return d.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+};
+
 const brl = (v: number | null | undefined) =>
   v === null || v === undefined
     ? "—"
@@ -314,6 +333,11 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     queryFn: () => apiRequest("GET", "/api/resumo-recebiveis/config"),
     enabled: open,
   });
+  const { data: auditData } = useQuery<{ registros: any[] }>({
+    queryKey: ["/api/resumo-recebiveis/auditoria"],
+    queryFn: () => apiRequest("GET", "/api/resumo-recebiveis/auditoria?limite=200"),
+    enabled: open,
+  });
   const { data: campData } = useQuery<{ campanhas: any[] }>({
     queryKey: ["/api/resumo-recebiveis/campanhas"],
     queryFn: () => apiRequest("GET", "/api/resumo-recebiveis/campanhas"),
@@ -324,6 +348,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     queryClient.invalidateQueries({ queryKey: ["/api/resumo-recebiveis/config"] });
     queryClient.invalidateQueries({ queryKey: ["/api/resumo-recebiveis/campanhas"] });
     queryClient.invalidateQueries({ queryKey: ["/api/resumo-recebiveis"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/resumo-recebiveis/auditoria"] });
   };
   const num = (v: any) => Number(String(v).replace(",", ".")) || 0;
 
@@ -404,11 +429,27 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
         <DialogHeader><DialogTitle>Configurações do Resumo Recebíveis</DialogTitle></DialogHeader>
 
         <Tabs defaultValue="colaboradores">
-          <TabsList>
-            <TabsTrigger value="colaboradores">Colaboradores</TabsTrigger>
-            <TabsTrigger value="campanhas">Campanhas</TabsTrigger>
-            <TabsTrigger value="bonus">Bônus e lançamentos</TabsTrigger>
-            <TabsTrigger value="participantes">Participantes</TabsTrigger>
+          <TabsList className="flex-wrap h-auto">
+            <TabsTrigger value="colaboradores"
+              className="font-semibold text-blue-700 data-[state=active]:bg-blue-100 data-[state=active]:text-blue-900">
+              Colaboradores
+            </TabsTrigger>
+            <TabsTrigger value="campanhas"
+              className="font-semibold text-amber-700 data-[state=active]:bg-amber-100 data-[state=active]:text-amber-900">
+              Campanhas
+            </TabsTrigger>
+            <TabsTrigger value="bonus"
+              className="font-semibold text-emerald-700 data-[state=active]:bg-emerald-100 data-[state=active]:text-emerald-900">
+              Bônus e lançamentos
+            </TabsTrigger>
+            <TabsTrigger value="participantes"
+              className="font-semibold text-violet-700 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-900">
+              Participantes
+            </TabsTrigger>
+            <TabsTrigger value="historico"
+              className="font-semibold text-slate-700 data-[state=active]:bg-slate-200 data-[state=active]:text-slate-900">
+              Histórico
+            </TabsTrigger>
           </TabsList>
 
           {/* ---------------- COLABORADORES ---------------- */}
@@ -879,6 +920,48 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 </div>
               ))}
             </div>
+          </TabsContent>
+          {/* ---------------- HISTÓRICO ---------------- */}
+          <TabsContent value="historico" className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Tudo que foi alterado nas configurações do resumo: quem fez, quando e o quê. A trilha é só
+              leitura — não há como editar nem apagar um registro pela tela. Horário de Brasília, 200
+              alterações mais recentes.
+            </p>
+            {!(auditData?.registros || []).length ? (
+              <div className="rounded-md border bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
+                Nenhuma alteração registrada ainda.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/60">
+                      <th className="text-left px-2 py-1.5 whitespace-nowrap">Data e hora</th>
+                      <th className="text-left px-2 py-1.5 whitespace-nowrap">Quem alterou</th>
+                      <th className="text-left px-2 py-1.5 whitespace-nowrap">Tipo</th>
+                      <th className="text-left px-2 py-1.5 whitespace-nowrap">Sobre</th>
+                      <th className="text-left px-2 py-1.5">O que foi alterado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(auditData?.registros || []).map((a: any) => (
+                      <tr key={a.id} className="border-t align-top">
+                        <td className="px-2 py-1.5 whitespace-nowrap text-muted-foreground">
+                          {dataHora(a.quando)}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap font-medium">{a.autor_nome || "—"}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <Badge className={ACAO_COR[a.acao] || "bg-gray-100 text-gray-800"}>{a.acao}</Badge>
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{a.alvo_nome || "—"}</td>
+                        <td className="px-2 py-1.5">{a.descricao}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </DialogContent>
