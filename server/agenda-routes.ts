@@ -144,6 +144,66 @@ export function registerAgenda(app: Express) {
   });
 
   // Cores ja usadas pelo usuario (vira a lista de "categorias" da lateral)
+  // CLIENTES DA ROTA DO DIA no calendario (27/out/2026). Mesma regua da Rota do Dia:
+  // visit_agenda (gerada pela periodicidade, dia da semana e semana do mes do cadastro e
+  // regravada quando o cadastro muda) + cliente ativo, nao fornecedor/lead, ja iniciado.
+  // Vendedor ve so os proprios clientes (carteira atual); admin/adm/coordenacao veem
+  // todos, com filtro opcional ?sellers=id1,id2 (ids de usuario).
+  const ADM_ROLES = ["admin", "administrative", "coordinator"];
+  app.get("/api/agenda/clientes-rota", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const u: any = (req as any).currentUser || (req as any).user || null;
+      if (!u?.id) { res.status(401).json({ message: "Unauthorized" }); return; }
+      const adm = ADM_ROLES.includes(String(u.role || ""));
+      const start = parseDate(req.query.start) || new Date(Date.now() - 7 * 86400_000);
+      const end = parseDate(req.query.end) || new Date(Date.now() + 35 * 86400_000);
+      if (end.getTime() - start.getTime() > 62 * 86400_000) { res.status(400).json({ message: "Período máximo de 62 dias" }); return; }
+      const ini = start.toISOString().slice(0, 10), fim = end.toISOString().slice(0, 10);
+      const pedidos = String(req.query.sellers || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const escopo: string[] = adm ? pedidos : [String(u.id)];
+      const r: any = await db.execute(sql`
+        SELECT DISTINCT ON (c.id, to_char(v.scheduled_date, 'YYYY-MM-DD'))
+               to_char(v.scheduled_date, 'YYYY-MM-DD') AS dia,
+               c.id AS customer_id,
+               COALESCE(NULLIF(c.fantasy_name, ''), c.name) AS nome,
+               c.city AS cidade, c.neighborhood AS bairro,
+               LOWER(COALESCE(c.visit_periodicity::text, 'semanal')) AS periodicidade,
+               c.semana_atendimento AS semana,
+               (COALESCE(v.is_virtual, false) OR COALESCE(c.virtual_service, false)) AS virtual,
+               u.id AS seller_id,
+               NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS seller_nome
+        FROM visit_agenda v
+        JOIN customers c ON c.id = v.customer_id
+        JOIN users u ON (u.id = c.seller_id OR u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id, ''), 'omie-vendor-', ''))
+        WHERE v.scheduled_date::date >= ${ini}::date AND v.scheduled_date::date < ${fim}::date
+          AND COALESCE(v.visit_status, 'pending') <> 'cancelled'
+          AND c.is_active = true
+          AND COALESCE(c.is_supplier, false) = false
+          AND COALESCE(c.is_lead, false) = false
+          AND (c.service_start_date IS NULL OR c.service_start_date::date <= v.scheduled_date::date)
+          ${escopo.length ? sql`AND u.id IN (${sql.join(escopo.map((x) => sql`${x}`), sql`, `)})` : sql``}
+        ORDER BY c.id, to_char(v.scheduled_date, 'YYYY-MM-DD'), u.id`);
+      const rows = (r.rows || []) as any[];
+      rows.sort((a, b) => String(a.dia).localeCompare(String(b.dia)) || String(a.seller_nome || "").localeCompare(String(b.seller_nome || "")) || String(a.nome).localeCompare(String(b.nome)));
+      res.json({ admin: adm, clientes: rows.map((x) => ({ dia: x.dia, id: x.customer_id, nome: x.nome, cidade: x.cidade || "", bairro: x.bairro || "", periodicidade: x.periodicidade, semana: x.semana ?? null, virtual: !!x.virtual, sellerId: String(x.seller_id), sellerNome: x.seller_nome || "" })) });
+    } catch (e: any) {
+      console.error("[AGENDA] clientes-rota:", e);
+      res.status(500).json({ message: e?.message || "Erro ao listar clientes da rota" });
+    }
+  });
+
+  // Vendedores para o filtro (somente admin/adm/coordenacao).
+  app.get("/api/agenda/vendedores", authenticateUser, async (req: Request, res: Response) => {
+    const u: any = (req as any).currentUser || (req as any).user || null;
+    if (!u?.id || !ADM_ROLES.includes(String(u.role || ""))) { res.json([]); return; }
+    try {
+      const r: any = await db.execute(sql`
+        SELECT id, NULLIF(TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')), '') AS nome
+        FROM users WHERE role = 'vendedor' AND is_active = true ORDER BY 2`);
+      res.json((r.rows || []).filter((x: any) => x.nome).map((x: any) => ({ id: String(x.id), nome: x.nome })));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Erro" }); }
+  });
+
   app.get("/api/agenda/colors", authenticateUser, async (req: Request, res: Response) => {
     const uid = await guard(req, res); if (!uid) return;
     try {
