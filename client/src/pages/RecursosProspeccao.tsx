@@ -20,6 +20,7 @@ type Uso = {
   custoRadarUSD?: number; custoFotoUSD?: number;
   fotoTotal?: number; fotoCobravel?: number; fotoCota?: number; fotoPreco?: number; fotoPrecoBRL?: number; fotoPago?: number;
   fichaCobravel?: number; fichaCota?: number;
+  notaMin?: number;
   telefoneTotal?: number; telefoneCobravel?: number; telefoneCota?: number; telefonePreco?: number; custoTelefoneUSD?: number; limiteTelefone?: number;
   blindagem?: boolean; margem?: number;
   limites?: { radar: number; foto: number; ficha: number };
@@ -344,6 +345,35 @@ export default function RecursosProspeccao() {
                     {bairrosTodos ? "Mostrar só os principais" : `Mostrar todos (${bairros.length})`}
                   </button>
                 )}
+              </div>
+
+              {/* ⭐ Avaliação mínima no Google */}
+              <div data-testid="radar-nota-min">
+                <Label className="text-xs">Avaliação mínima no Google</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <Input
+                    type="text" inputMode="decimal"
+                    value={(cfg.radar_nota_min || "").replace(".", ",")}
+                    onChange={(e) => set("radar_nota_min", e.target.value.replace(/[^0-9.,]/g, "").replace(",", ".").slice(0, 4))}
+                    onBlur={(e) => {
+                      const v = e.target.value.replace(",", ".");
+                      if (!v) return set("radar_nota_min", "");
+                      const n = Number(v);
+                      set("radar_nota_min", isFinite(n) ? String(Math.round(Math.min(5, Math.max(1, n)) * 10) / 10) : "");
+                    }}
+                    placeholder="sem filtro"
+                    className="w-32"
+                    data-testid="input-nota-min"
+                  />
+                  <span className="text-sm text-muted-foreground">★ ou mais (1 a 5)</span>
+                  {cfg.radar_nota_min && (
+                    <button type="button" onClick={() => set("radar_nota_min", "")} className="text-[11px] text-red-600 underline" data-testid="nota-min-limpar">Tirar filtro</button>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Vazio = mostra todos. Com nota mínima, os Novos pontos só listam quem tem essa nota ou mais (sem nota não aparece) e o card mostra a nota.
+                  <span className="text-amber-700 dark:text-amber-400"> Custo: pedir a nota muda a busca do Google para a faixa Enterprise (US$ 35 / 1.000, 1.000 grátis/mês, em vez de US$ 32 e 5.000 grátis). A blindagem passa a desligar o radar ao chegar em 1.000 buscas no mês.</span>
+                </p>
               </div>
 
               <Button onClick={salvar} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700">

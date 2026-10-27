@@ -64,6 +64,8 @@ type NovoPonto = {
   disponivel?: boolean; // lead de Novos Pontos liberado (sem vendedor) — qualquer vendedor pode pegar
   telefone?: string | null;       // telefone do Google já consultado (cache)
   telefoneConsultado?: boolean;   // true = já consultado (pode não ter telefone)
+  nota?: number | null;           // ⭐ nota no Google (só vem com o filtro de nota mínima ligado)
+  avaliacoes?: number | null;
   leadId?: string | null;
   lat: number;
   lng: number;
@@ -264,6 +266,7 @@ export default function ConsultaLocal() {
   const [novosRaio, setNovosRaio] = useState<number>(300);
   // 🏘️ Pontos escondidos pelo filtro de bairros/setores configurado pelo admin
   const [novosOcultos, setNovosOcultos] = useState<number>(0);
+  const [novosOcultosNota, setNovosOcultosNota] = useState<{ n: number; min: number }>({ n: 0, min: 0 });
   const [cadastrados, setCadastrados] = useState<Record<string, "ok" | "loading">>({});
   // 📷 Foto do lead recém-registrado nos Novos pontos (câmera ou galeria) → PATCH leads.photo
   const [leadIdPorPonto, setLeadIdPorPonto] = useState<Record<string, string>>({});
@@ -402,6 +405,7 @@ export default function ConsultaLocal() {
         setNovos(Array.isArray(data.resultados) ? data.resultados : []);
         setNovosRaio(Number(data.raio) || raio || 300);
         setNovosOcultos(data.filtroBairros ? Number(data.ocultosForaDaRegiao) || 0 : 0);
+        setNovosOcultosNota({ n: Number(data.ocultosNota) || 0, min: Number(data.notaMin) || 0 });
         setNovosFase("pronto");
       } else if (data && data.disabled) {
         setNovosFase("disabled");
@@ -918,12 +922,12 @@ export default function ConsultaLocal() {
               <Card className="border-l-4 border-l-red-500"><CardContent className="py-5 text-sm space-y-3"><div className="flex items-start gap-2 text-red-600 dark:text-red-400"><XCircle className="h-5 w-5 shrink-0 mt-0.5" /><span>{novosMsg}</span></div><Button variant="outline" size="sm" onClick={() => buscarNovos()} className="w-full"><RefreshCw className="h-4 w-4 mr-2" /> Tentar de novo</Button></CardContent></Card>
             )}
             {novosFase === "pronto" && novos.length === 0 && (
-              <Card className="border-l-4 border-l-slate-400"><CardContent className="py-8 text-center text-sm space-y-3"><HelpCircle className="h-10 w-10 mx-auto text-slate-400" /><p className="font-medium">Nenhum ponto novo em {novosRaio} m</p><p className="text-muted-foreground">Tudo por perto já está no Integra, ou não há estabelecimentos dos segmentos buscados.</p>{novosOcultos > 0 && <p className="text-[11px] text-amber-700 dark:text-amber-400">{novosOcultos} ponto{novosOcultos > 1 ? "s" : ""} fora dos bairros/setores escolhidos pelo administrador {novosOcultos > 1 ? "foram ocultados" : "foi ocultado"}.</p>}{novosRaio < 500 && <Button variant="outline" size="sm" onClick={() => buscarNovos(500)} className="mt-1"><Crosshair className="h-4 w-4 mr-2" /> Ampliar raio para 500 m</Button>}</CardContent></Card>
+              <Card className="border-l-4 border-l-slate-400"><CardContent className="py-8 text-center text-sm space-y-3"><HelpCircle className="h-10 w-10 mx-auto text-slate-400" /><p className="font-medium">Nenhum ponto novo em {novosRaio} m</p><p className="text-muted-foreground">Tudo por perto já está no Integra, ou não há estabelecimentos dos segmentos buscados.</p>{novosOcultos > 0 && <p className="text-[11px] text-amber-700 dark:text-amber-400">{novosOcultos} ponto{novosOcultos > 1 ? "s" : ""} fora dos bairros/setores escolhidos pelo administrador {novosOcultos > 1 ? "foram ocultados" : "foi ocultado"}.</p>}{novosOcultosNota.n > 0 && <p className="text-[11px] text-amber-700 dark:text-amber-400">{novosOcultosNota.n} ponto{novosOcultosNota.n > 1 ? "s" : ""} com nota no Google abaixo de {novosOcultosNota.min.toLocaleString("pt-BR")} (ou sem nota) {novosOcultosNota.n > 1 ? "foram ocultados" : "foi ocultado"}.</p>}{novosRaio < 500 && <Button variant="outline" size="sm" onClick={() => buscarNovos(500)} className="mt-1"><Crosshair className="h-4 w-4 mr-2" /> Ampliar raio para 500 m</Button>}</CardContent></Card>
             )}
             {novosFase === "pronto" && novos.length > 0 && (
               <>
                 <p className="text-xs text-muted-foreground">{novos.length} estabelecimento{novos.length > 1 ? "s" : ""} em até {novosRaio} m · ainda não cadastrado{novos.length > 1 ? "s" : ""}</p>
-                {novosOcultos > 0 && <p className="text-[11px] text-amber-700 dark:text-amber-400">{novosOcultos} ponto{novosOcultos > 1 ? "s" : ""} fora dos bairros/setores escolhidos pelo administrador {novosOcultos > 1 ? "foram ocultados" : "foi ocultado"}.</p>}
+                {novosOcultos > 0 && <p className="text-[11px] text-amber-700 dark:text-amber-400">{novosOcultos} ponto{novosOcultos > 1 ? "s" : ""} fora dos bairros/setores escolhidos pelo administrador {novosOcultos > 1 ? "foram ocultados" : "foi ocultado"}.</p>}{novosOcultosNota.n > 0 && <p className="text-[11px] text-amber-700 dark:text-amber-400">{novosOcultosNota.n} ponto{novosOcultosNota.n > 1 ? "s" : ""} com nota no Google abaixo de {novosOcultosNota.min.toLocaleString("pt-BR")} (ou sem nota) {novosOcultosNota.n > 1 ? "foram ocultados" : "foi ocultado"}.</p>}
                 {novos.map((p) => {
                   const st = cadastrados[p.placeId];
                   return (
@@ -941,6 +945,7 @@ export default function ConsultaLocal() {
                               </div>
                               <div className="mt-1 flex items-center gap-2 flex-wrap">
                                 {p.categoria && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">{p.categoria}</span>}
+                                {typeof p.nota === "number" && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-800 border border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-800" data-testid="nota-google">★ {p.nota.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}{p.avaliacoes ? ` (${p.avaliacoes})` : ""}</span>}
                                 {p.disponivel ? (
                                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">Lead disponível — sem vendedor</span>
                                 ) : p.jaVisitado ? (
