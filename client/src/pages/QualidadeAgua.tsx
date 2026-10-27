@@ -8,7 +8,7 @@
 // Backend: /api/tuya/agua/* (server/tuya-agua.ts). Menu: Indústria › Qualidade da Água.
 // ============================================================================
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import BackToDashboardButton from '@/components/BackToDashboardButton';
-import { Droplets, RefreshCw, Download, Loader2, Wifi, WifiOff, AlertTriangle, Clock } from 'lucide-react';
+import { Droplets, RefreshCw, Download, Loader2, Wifi, WifiOff, AlertTriangle, Clock, FlaskConical, Trash2, CheckCircle2 } from 'lucide-react';
 
 const jfetch = async (url: string, opts: any = {}) => {
   const r = await fetch(url, { credentials: 'include', headers: opts.body ? { 'Content-Type': 'application/json' } : undefined, ...opts });
@@ -172,6 +172,9 @@ export default function QualidadeAgua() {
               </Card>
             )}
 
+            {/* Cloro residual — registro manual diário */}
+            <CloroResidualPanel />
+
             {/* Filtros */}
             <Card>
               <CardContent className="p-3 md:p-4">
@@ -272,5 +275,93 @@ export default function QualidadeAgua() {
         </div>
       </div>
     </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// CLORO RESIDUAL (mg/L) — registro MANUAL diário (pedido Flavio 27/out). O analisador
+// não mede cloro livre (só ORP); o valor do kit/colorímetro é anotado aqui, 1 por dia
+// (salvar de novo no mesmo dia substitui). Backend: /api/tuya/agua/cloro.
+// ---------------------------------------------------------------------------
+function CloroResidualPanel() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const hojeLocal = toLocalInput(new Date()).slice(0, 10);
+  const [data, setData] = useState(hojeLocal);
+  const [valor, setValor] = useState('');
+  const [obs, setObs] = useState('');
+  const [saving, setSaving] = useState(false);
+  const q = useQuery({ queryKey: ['/api/tuya/agua/cloro'], queryFn: () => jfetch('/api/tuya/agua/cloro') });
+  const regs: any[] = q.data?.registros || [];
+  const registradoHoje = q.data?.registrado_hoje === true;
+  const chart = useMemo(() => regs.slice().reverse().map((r) => ({ d: r.data, ts: new Date(r.data + 'T12:00:00').getTime(), v: r.valor_mg_l })), [regs]);
+
+  const salvar = async () => {
+    const v = Number(String(valor).replace(',', '.'));
+    if (!isFinite(v)) { toast({ title: 'Informe o valor em mg/L', variant: 'destructive' }); return; }
+    setSaving(true);
+    try {
+      await jfetch('/api/tuya/agua/cloro', { method: 'POST', body: JSON.stringify({ data, valor_mg_l: v, observacao: obs || null }) });
+      toast({ title: 'Cloro residual registrado', description: `${data.split('-').reverse().join('/')}: ${v.toLocaleString('pt-BR')} mg/L` });
+      setValor(''); setObs('');
+      qc.invalidateQueries({ queryKey: ['/api/tuya/agua/cloro'] });
+    } catch (e: any) { toast({ title: 'Erro', description: e.message, variant: 'destructive' }); }
+    finally { setSaving(false); }
+  };
+  const excluir = async (r: any) => {
+    if (!window.confirm(`Excluir o registro de ${r.data.split('-').reverse().join('/')} (${r.valor_mg_l} mg/L)?`)) return;
+    try { await jfetch(`/api/tuya/agua/cloro/${r.id}`, { method: 'DELETE' }); qc.invalidateQueries({ queryKey: ['/api/tuya/agua/cloro'] }); }
+    catch (e: any) { toast({ title: 'Erro', description: e.message, variant: 'destructive' }); }
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-3 md:p-4">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <h2 className="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2"><FlaskConical className="h-4 w-4 text-cyan-700" /> Cloro residual da água — registro manual diário</h2>
+          {q.data && (registradoHoje
+            ? <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 gap-1"><CheckCircle2 className="h-3 w-3" /> registrado hoje</Badge>
+            : <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 gap-1"><AlertTriangle className="h-3 w-3" /> ainda não registrado hoje</Badge>)}
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div><Label className="text-xs text-gray-500">Data</Label><Input type="date" value={data} max={hojeLocal} onChange={(e) => setData(e.target.value)} className="h-9 w-[160px]" /></div>
+          <div><Label className="text-xs text-gray-500">Cloro residual (mg/L)</Label><Input inputMode="decimal" placeholder="ex.: 1,5" value={valor} onChange={(e) => setValor(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') salvar(); }} className="h-9 w-[150px]" /></div>
+          <div className="flex-1 min-w-[200px]"><Label className="text-xs text-gray-500">Observação (opcional)</Label><Input placeholder="ponto de coleta, kit usado…" value={obs} onChange={(e) => setObs(e.target.value)} className="h-9" /></div>
+          <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 h-9" onClick={salvar} disabled={saving || !valor}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar</Button>
+        </div>
+        {regs.length > 0 && (
+          <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-3 mt-3">
+            <div className="h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chart} margin={{ top: 6, right: 10, left: 0, bottom: 2 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="ts" type="number" domain={['dataMin', 'dataMax']} scale="time" tickFormatter={(v) => { const d = new Date(Number(v)); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`; }} minTickGap={30} tick={{ fontSize: 10 }} />
+                  <YAxis width={40} tick={{ fontSize: 10 }} domain={[0, 'auto']} />
+                  <Tooltip labelFormatter={(v) => new Date(Number(v)).toLocaleDateString('pt-BR')} formatter={(v: any) => [`${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} mg/L`, 'Cloro residual']} />
+                  <Line type="linear" dataKey="v" name="Cloro residual" stroke="#0e7490" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="max-h-[180px] overflow-y-auto border rounded">
+              <Table>
+                <TableHeader className="sticky top-0 bg-white dark:bg-gray-800"><TableRow><TableHead>Data</TableHead><TableHead className="text-right">mg/L</TableHead><TableHead>Obs. / por</TableHead><TableHead></TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {regs.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="whitespace-nowrap text-xs">{r.data.split('-').reverse().join('/')}</TableCell>
+                      <TableCell className="text-right font-medium">{Number(r.valor_mg_l).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-[11px] text-gray-500 max-w-[160px] truncate" title={`${r.observacao || ''} — ${r.registrado_por || ''}`}>{r.observacao ? r.observacao + ' · ' : ''}{(r.registrado_por || '').split('@')[0]}</TableCell>
+                      <TableCell><button className="text-gray-400 hover:text-red-600" onClick={() => excluir(r)} title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+        {q.data && !regs.length && <p className="text-xs text-gray-500 mt-2">Nenhum registro nos últimos 60 dias.</p>}
+      </CardContent>
+    </Card>
   );
 }

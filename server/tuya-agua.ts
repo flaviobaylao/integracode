@@ -19,6 +19,7 @@
 //   GET /api/tuya/agua/devices/:id/latest              todos os parâmetros com escala, unidade e limites
 //   GET /api/tuya/agua/devices/:id/readings?from&to&bucket=raw|1m|1h|4h|8h|12h|24h  → por parâmetro: min/avg/max
 //   GET /api/tuya/agua/devices/:id/readings.csv        mesmos parâmetros (; vírgula decimal, BRT)
+//   GET/POST /api/tuya/agua/cloro, DELETE /cloro/:id   cloro residual MANUAL diário (agua_cloro_residual)
 // ============================================================================
 import type { Express, Request, Response } from 'express';
 import { db } from './db';
@@ -104,7 +105,77 @@ async function latest(deviceId: string) {
   return { params, outros };
 }
 
+// ---------------------------------------------------------------------------
+// CLORO RESIDUAL — registro MANUAL diário (pedido Flavio 27/out). O analisador não
+// mede cloro livre diretamente (só ORP); o operador anota o valor do kit/colorímetro.
+// Tabela agua_cloro_residual: 1 registro por dia (UNIQUE data) — salvar de novo no
+// mesmo dia substitui. Sem purga.
+// ---------------------------------------------------------------------------
+let cloroReady = false;
+async function ensureCloroTable() {
+  if (cloroReady) return;
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agua_cloro_residual (
+      id            bigserial PRIMARY KEY,
+      data          date NOT NULL UNIQUE,
+      valor_mg_l    numeric(6,2) NOT NULL,
+      observacao    text,
+      registrado_por varchar(120),
+      created_at    timestamptz NOT NULL DEFAULT now(),
+      updated_at    timestamptz NOT NULL DEFAULT now()
+    )`);
+  cloroReady = true;
+}
+
 export function registerTuyaAguaRoutes(app: Express, guard: any[]) {
+  ensureCloroTable().catch((e) => console.error('[tuya-agua] ensureCloroTable:', e?.message || e));
+  const userOf = (req: any) => str(req.currentUser?.email || req.currentUser?.id, 120) || 'admin-2.0';
+
+  // GET /api/tuya/agua/cloro?from=YYYY-MM-DD&to=YYYY-MM-DD (padrão: últimos 60 dias)
+  app.get('/api/tuya/agua/cloro', ...guard, async (req: Request, res: Response) => {
+    try {
+      await ensureCloroTable();
+      const to = str(req.query.to, 10) || new Date().toISOString().slice(0, 10);
+      const from = str(req.query.from, 10) || new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+      const r = rows(await db.execute(sql`SELECT id, to_char(data, 'YYYY-MM-DD') AS data, valor_mg_l, observacao, registrado_por, created_at, updated_at
+        FROM agua_cloro_residual WHERE data >= ${from}::date AND data <= ${to}::date ORDER BY data DESC`));
+      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      res.json({ from, to, hoje, registrado_hoje: r.some((x) => x.data === hoje), total: r.length,
+        registros: r.map((x) => ({ ...x, valor_mg_l: Number(x.valor_mg_l) })) });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // POST /api/tuya/agua/cloro { data: 'YYYY-MM-DD' (padrão hoje BRT), valor_mg_l, observacao }
+  app.post('/api/tuya/agua/cloro', ...guard, async (req: any, res: Response) => {
+    try {
+      await ensureCloroTable();
+      const b = req.body || {};
+      const data = str(b.data, 10) || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ error: 'data invalida (YYYY-MM-DD)' });
+      const valor = Number(String(b.valor_mg_l ?? b.valor ?? '').replace(',', '.'));
+      if (!isFinite(valor) || valor < 0 || valor > 100) return res.status(400).json({ error: 'valor de cloro invalido (mg/L entre 0 e 100)' });
+      const obs = str(b.observacao, 500);
+      const r = rows(await db.execute(sql`
+        INSERT INTO agua_cloro_residual (data, valor_mg_l, observacao, registrado_por)
+        VALUES (${data}::date, ${valor}, ${obs}, ${userOf(req)})
+        ON CONFLICT (data) DO UPDATE SET valor_mg_l = EXCLUDED.valor_mg_l, observacao = EXCLUDED.observacao,
+          registrado_por = EXCLUDED.registrado_por, updated_at = now()
+        RETURNING id, to_char(data, 'YYYY-MM-DD') AS data, valor_mg_l, observacao, registrado_por, created_at, updated_at`));
+      console.log(`💧 [AGUA] cloro residual ${data} = ${valor} mg/L por ${userOf(req)}`);
+      res.json({ ok: true, registro: { ...r[0], valor_mg_l: Number(r[0].valor_mg_l) } });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  app.delete('/api/tuya/agua/cloro/:id', ...guard, async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!isFinite(id)) return res.status(400).json({ error: 'id invalido' });
+      const r = rows(await db.execute(sql`DELETE FROM agua_cloro_residual WHERE id = ${id} RETURNING id`));
+      if (!r.length) return res.status(404).json({ error: 'registro nao encontrado' });
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   app.get('/api/tuya/agua/devices', ...guard, async (req: Request, res: Response) => {
     try {
       await ensureTuyaTables();
