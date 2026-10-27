@@ -25422,6 +25422,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // 🏘️ Filtro por bairro/setor (vazio = todos). Nomes separados por "|"; comparação normalizada
     // (acentos, "St."/"Set." → Setor, "Jd." → Jardim…). O radar busca normal e só LISTA os pontos desses bairros.
     radar_bairros: '',
+    // ⭐ Avaliação mínima no Google (1 a 5; vazio = sem filtro). Quando ligada, a busca pede a nota ao
+    // Google → a Nearby Search passa da faixa Pro (US$ 32, 5.000 grátis) p/ Enterprise (US$ 35, 1.000 grátis).
+    radar_nota_min: '',
     radar_segmentos: 'bakery,supermarket,grocery_store,convenience_store,restaurant,meal_takeaway,fast_food_restaurant,sandwich_shop,hamburger_restaurant,cafe,coffee_shop,school,primary_school,secondary_school,university,preschool,gym,fitness_center',
   };
   async function _getRecursos(): Promise<Record<string, string>> {
@@ -25449,11 +25452,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return Number((r?.rows?.[0] as any)?.n || 0);
     } catch { return 0; }
   }
+  // ⭐ Nota mínima do Google configurada para o radar (0 = filtro desligado)
+  function _notaMinRadar(cfg: Record<string, string>): number {
+    const n = Number(String(cfg?.radar_nota_min ?? '').replace(',', '.'));
+    return isFinite(n) && n >= 1 && n <= 5 ? Math.round(n * 10) / 10 : 0;
+  }
   function _limiteFeature(cfg: Record<string, string>, feature: string): number {
     const margem = Math.max(0, Number(cfg.auto_off_margem) || 0);
     const cotaKey = feature === 'radar' ? 'radar_cota_gratis' : feature === 'foto' ? 'foto_cota_gratis' : feature === 'telefone' ? 'telefone_cota_gratis' : 'ficha_cota_gratis';
     const cotaDefault = feature === 'radar' ? 5000 : 1000;
-    const cota = Number(cfg[cotaKey]) || cotaDefault;
+    let cota = Number(cfg[cotaKey]) || cotaDefault;
+    // Com filtro de nota a busca é Enterprise no Google: a cota grátis cai para 1.000/mês.
+    if (feature === 'radar' && _notaMinRadar(cfg) > 0) cota = Math.min(cota, 1000);
     return Math.max(0, cota - margem);
   }
   // Religa automaticamente, no mês novo, o que foi desligado pela blindagem (não o que o admin desligou).
@@ -25565,7 +25575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/admin/recursos', authenticateUser, requireRole(['admin', 'coordinator', 'administrative']), async (req: any, res) => {
     try {
       await _ensureRecursosSchema;
-      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'telefone_cota_gratis', 'telefone_preco_mil', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos', 'radar_bairros'];
+      const allowed = ['radar_enabled', 'ficha_google_enabled', 'foto_enabled', 'radar_raio', 'radar_cache_ttl_min', 'radar_preco_mil', 'radar_cota_gratis', 'radar_cambio', 'foto_preco_mil', 'foto_cota_gratis', 'ficha_cota_gratis', 'telefone_cota_gratis', 'telefone_preco_mil', 'auto_off_enabled', 'auto_off_margem', 'radar_segmentos', 'radar_bairros', 'radar_nota_min'];
       const who = req.currentUser?.email || req.currentUser?.id || 'admin';
       const body = req.body || {};
       for (const k of allowed) { if (body[k] !== undefined && body[k] !== null) await _setRecurso(k, String(body[k]), who); }
@@ -25598,8 +25608,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cfg = await _getRecursos();
       await _autoResetRecursos(cfg);
       const mesAtual = _mesAtual();
-      const preco = Number(cfg.radar_preco_mil) || 32;
-      const cota = Number(cfg.radar_cota_gratis) || 5000;
+      const notaMin = _notaMinRadar(cfg);
+      // ⭐ Filtro de nota ligado → Nearby Search Enterprise (US$ 35 / 1.000; 1.000 grátis/mês)
+      const preco = notaMin > 0 ? Math.max(Number(cfg.radar_preco_mil) || 32, 35) : (Number(cfg.radar_preco_mil) || 32);
+      const cota = notaMin > 0 ? Math.min(Number(cfg.radar_cota_gratis) || 5000, 1000) : (Number(cfg.radar_cota_gratis) || 5000);
       const cambio = Number(cfg.radar_cambio) || 5.2;
       const fotoPreco = Number(cfg.foto_preco_mil) || 1.5;
       const fotoCota = Number(cfg.foto_cota_gratis) || 1000;
@@ -25646,7 +25658,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const blindagem = String(cfg.auto_off_enabled) === 'true';
       const margem = Math.max(0, Number(cfg.auto_off_margem) || 0);
       return res.json({
-        ok: true, mes: mesAtual, preco, cota, cambio, precoBRL,
+        ok: true, mes: mesAtual, preco, cota, cambio, precoBRL, notaMin,
         totalRadar: Number(t.radar_total || 0), totalCobravel, cobravelPago, custoUSD, custoBRL,
         custoRadarUSD, custoFotoUSD,
         fotoTotal, fotoCobravel, fotoCota, fotoPreco, fotoPrecoBRL, fotoPago,
@@ -25748,7 +25760,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const glat = Math.round(lat / 0.00045) * 0.00045, glng = Math.round(lng / 0.00045) * 0.00045;
       const segHash = segmentos.slice().sort().join('|');
       const ttlMin = Math.max(5, Number(cfg.radar_cache_ttl_min) || 360);
-      const gridkey = `${glat.toFixed(5)},${glng.toFixed(5)}|r${raio}|${segHash}`;
+      const notaMin = _notaMinRadar(cfg);
+      const gridkey = `${glat.toFixed(5)},${glng.toFixed(5)}|r${raio}|${segHash}${notaMin > 0 ? '|nota' : ''}`;
       let cachedPayload: any = null;
       try {
         const cr: any = await db.execute(sql`SELECT payload FROM places_cache WHERE gridkey = ${gridkey} AND created_at > now() - (${ttlMin} * interval '1 minute') LIMIT 1`);
@@ -25761,7 +25774,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         places = Array.isArray(cachedPayload) ? cachedPayload : (cachedPayload.places || []);
       } else {
         billable = true;
-        const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.location,places.businessStatus,places.formattedAddress,places.addressComponents';
+        const FIELD_MASK = 'places.id,places.displayName,places.types,places.primaryType,places.primaryTypeDisplayName,places.location,places.businessStatus,places.formattedAddress,places.addressComponents'
+          + (notaMin > 0 ? ',places.rating,places.userRatingCount' : '');
         const body: any = {
           maxResultCount: 20, rankPreference: 'DISTANCE', languageCode: 'pt-BR', regionCode: 'BR',
           locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: raio } },
@@ -25846,6 +25860,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           distancia: dist,
           endereco: p.formattedAddress || '',
           bairro: _bairroDoPlace(p) || null,
+          nota: typeof p.rating === 'number' ? p.rating : null,
+          avaliacoes: typeof p.userRatingCount === 'number' ? p.userRatingCount : null,
           businessStatus: p.businessStatus || '',
           jaVisitado: !!resgatavel,
           disponivel: !!livre,
@@ -25863,6 +25879,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (nb && setB.has(nb)) continue;
           if (!nb) semBairro++; else foraDaRegiao++;
           novos.splice(i, 1);
+        }
+      }
+      // ⭐ Filtro de nota mínima no Google: só lista quem tem nota ≥ mínimo (sem nota também sai).
+      let ocultosNota = 0;
+      if (notaMin > 0) {
+        for (let i = novos.length - 1; i >= 0; i--) {
+          if (typeof novos[i].nota === 'number' && novos[i].nota >= notaMin) continue;
+          ocultosNota++; novos.splice(i, 1);
         }
       }
       // 📞 Telefones já consultados (cache, sem custo): o card já mostra o número, sem novo toque.
@@ -25883,7 +25907,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       novos.sort((a, b) => (a.match === 'primario' ? 0 : 1) - (b.match === 'primario' ? 0 : 1) || (a.distancia ?? 9999) - (b.distancia ?? 9999));
       const nPrim = novos.filter((n) => n.match === 'primario').length;
       return res.json({ ok: true, total: novos.length, primarios: nPrim, secundarios: novos.length - nPrim, fromCache: !billable, raio, segmentos, resultados: novos,
-        filtroBairros: _bairrosCfg.length > 0, bairrosFiltro: _bairrosCfg.length, ocultosForaDaRegiao: foraDaRegiao + semBairro, ocultosSemBairro: semBairro });
+        filtroBairros: _bairrosCfg.length > 0, bairrosFiltro: _bairrosCfg.length, ocultosForaDaRegiao: foraDaRegiao + semBairro, ocultosSemBairro: semBairro, notaMin, ocultosNota });
     } catch (e: any) { console.error('[radar] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
