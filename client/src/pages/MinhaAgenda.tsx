@@ -138,10 +138,10 @@ export default function MinhaAgenda() {
   return (
     <div className="p-4 md:p-6 flex flex-col">
       <style>{`
-        .agenda .fc{--fc-border-color:hsl(var(--border));--fc-page-bg-color:hsl(var(--background));--fc-neutral-bg-color:hsl(var(--muted));--fc-today-bg-color:transparent;--fc-now-indicator-color:#d03b3b;--fc-list-event-hover-bg-color:hsl(var(--muted));--fc-highlight-color:rgba(42,120,214,.18);font-size:12.5px}
+        .agenda .fc{--fc-border-color:var(--border);--fc-page-bg-color:var(--background);--fc-neutral-bg-color:var(--muted);--fc-today-bg-color:transparent;--fc-now-indicator-color:#d03b3b;--fc-list-event-hover-bg-color:var(--muted);--fc-highlight-color:rgba(42,120,214,.18);font-size:12.5px}
         .agenda .fc a{color:inherit;text-decoration:none}
-        .agenda .fc .fc-col-header-cell-cushion{padding:8px 4px;text-transform:uppercase;font-size:11px;letter-spacing:.04em;color:hsl(var(--muted-foreground))}
-        .agenda .fc .fc-timegrid-slot-label-cushion,.agenda .fc .fc-timegrid-axis-cushion{color:hsl(var(--muted-foreground));font-size:11px}
+        .agenda .fc .fc-col-header-cell-cushion{padding:8px 4px;text-transform:uppercase;font-size:11px;letter-spacing:.04em;color:var(--muted-foreground)}
+        .agenda .fc .fc-timegrid-slot-label-cushion,.agenda .fc .fc-timegrid-axis-cushion{color:var(--muted-foreground);font-size:11px}
         .agenda .fc .fc-day-today .fc-col-header-cell-cushion{color:#2a78d6;font-weight:700}
         .agenda .fc .fc-day-today .fc-daygrid-day-number{background:#2a78d6;color:#fff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;margin:3px}
         .agenda .fc-event{border:0;border-radius:4px;padding:1px 4px;font-size:12px;cursor:pointer;color:#fff}
@@ -149,16 +149,16 @@ export default function MinhaAgenda() {
         .agenda .fc .fc-timegrid-slot{height:2.6em}
         .agenda .fc .fc-list-event-title a{color:inherit}
         /* Lista: fc-list-event tambem tem a classe fc-event (texto branco) e sumia no fundo claro */
-        .agenda .fc .fc-list-event{color:hsl(var(--foreground));padding:0;border-radius:0;font-size:13px}
-        .agenda .fc .fc-list-event td{color:hsl(var(--foreground))}
-        .agenda .fc .fc-list-event-time{color:hsl(var(--muted-foreground))}
-        .agenda .fc .fc-list-day-cushion{background:hsl(var(--muted))}
+        .agenda .fc .fc-list-event{color:var(--foreground);padding:0;border-radius:0;font-size:13px}
+        .agenda .fc .fc-list-event td{color:var(--foreground)}
+        .agenda .fc .fc-list-event-time{color:var(--muted-foreground)}
+        .agenda .fc .fc-list-day-cushion{background:var(--muted)}
         .agenda .fc .fc-scrollgrid{border-radius:8px;overflow:hidden}
         /* Linhas verticais suaves separando os dias (Semana e Mes) e horas mais leves */
-        .agenda .fc .fc-timegrid-col,.agenda .fc .fc-col-header-cell,.agenda .fc .fc-daygrid-day{border-left:1px solid hsl(var(--border)) !important;border-right:1px solid hsl(var(--border)) !important}
-        .agenda .fc .fc-daygrid-day{border-top:1px solid hsl(var(--border)) !important;border-bottom:1px solid hsl(var(--border)) !important}
-        .agenda .fc .fc-timegrid-slot{border-top:1px solid hsl(var(--border) / .6) !important}
-        .agenda .fc .fc-timegrid-slot-minor{border-top:1px dotted hsl(var(--border) / .4) !important}
+        .agenda .fc .fc-timegrid-col,.agenda .fc .fc-col-header-cell,.agenda .fc .fc-daygrid-day{border-left:1px solid var(--border) !important;border-right:1px solid var(--border) !important}
+        .agenda .fc .fc-daygrid-day{border-top:1px solid var(--border) !important;border-bottom:1px solid var(--border) !important}
+        .agenda .fc .fc-timegrid-slot{border-top:1px solid color-mix(in srgb, var(--border) 60%, transparent) !important}
+        .agenda .fc .fc-timegrid-slot-minor{border-top:1px dotted color-mix(in srgb, var(--border) 40%, transparent) !important}
       `}</style>
 
       <div className="flex items-center gap-2 flex-wrap mb-3">
