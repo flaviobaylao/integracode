@@ -225,8 +225,22 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "updated_by varchar, updated_at timestamptz DEFAULT now())"
       ));
 
+      // Trilha de alterações: quem mexeu, quando e no quê. Só o módulo escreve;
+      // ninguém edita nem apaga pela tela.
+      await db.execute(sql.raw(
+        "CREATE TABLE IF NOT EXISTS resumo_auditoria (" +
+        "id varchar PRIMARY KEY DEFAULT gen_random_uuid()::varchar, " +
+        "quando timestamptz NOT NULL DEFAULT now(), " +
+        "autor_id varchar, autor_nome varchar, " +
+        "acao varchar NOT NULL, " +
+        "alvo_nome varchar, " +
+        "descricao text NOT NULL, " +
+        "detalhe jsonb)"
+      ));
+
       for (const ix of [
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_collab_cfg_user_ym ON collab_remuneracao_config (user_id, vigencia_ym)",
+        "CREATE INDEX IF NOT EXISTS idx_resumo_auditoria_quando ON resumo_auditoria (quando DESC)",
         "CREATE INDEX IF NOT EXISTS idx_collab_bonus_ym ON collab_bonus_lancamentos (ym, user_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_camp_valor ON resumo_campanha_valores (campanha_id, user_id, ym)",
         "CREATE INDEX IF NOT EXISTS idx_camp_valor_ym ON resumo_campanha_valores (ym)",
@@ -333,6 +347,33 @@ async function semearNaoParticipantes(): Promise<void> {
 function ehAdmin(req: any): boolean {
   return req.currentUser?.role === "admin" && !req.perfilIndustria && !req.perfilContador;
 }
+
+// Registra uma alteração na trilha. Nunca derruba a operação: auditoria que
+// quebra o fluxo vira auditoria desligada.
+async function auditar(req: any, acao: string, descricao: string, alvoNome?: string, detalhe?: any) {
+  try {
+    const u = req.currentUser || {};
+    const autor = [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || u.email || "—";
+    await db.execute(sql`
+      INSERT INTO resumo_auditoria (autor_id, autor_nome, acao, alvo_nome, descricao, detalhe)
+      VALUES (${u.id || null}, ${autor}, ${acao}, ${alvoNome || null}, ${descricao},
+              ${detalhe ? JSON.stringify(detalhe) : null}::jsonb)`);
+  } catch (e: any) {
+    console.error("[RESUMO-RECEB] auditoria:", e?.message || e);
+  }
+}
+
+async function nomeDoUsuario(id: string): Promise<string> {
+  try {
+    const r: any = await db.execute(sql`
+      SELECT COALESCE(NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')), ''), email) AS nome
+      FROM users WHERE id = ${id}`);
+    return String(r.rows?.[0]?.nome || id);
+  } catch { return id; }
+}
+
+const dinheiro = (v: number) =>
+  "R$ " + (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Campanhas que valem no mês informado.
 async function campanhasDoMes(ym: string): Promise<any[]> {
@@ -656,6 +697,21 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           usa_bonus = EXCLUDED.usa_bonus,
           observacao = EXCLUDED.observacao
         RETURNING id`);
+
+      const alvo = await nomeDoUsuario(String(b.userId));
+      const rubricas = [
+        bool(b.usaFixo, true) && "fixo", b.usaAjudaCusto === true && "ajuda de custo",
+        bool(b.usaMeta, true) && "meta", bool(b.usaFaturamento, true) && "faturamento",
+        bool(b.usaComissao, true) && "comissão", bool(b.usaKm, true) && "km",
+        bool(b.usaCampanhas, true) && "campanhas", b.usaBonus === true && "bônus manual",
+      ].filter(Boolean).join(", ") || "nenhuma";
+      const regra = tipo === "faixa" ? `faixa (${faixa})`
+        : tipo === "fixo" ? `${n(b.comissaoPct)}%${n(b.comissaoDescontoFixo) > 0 ? ` menos ${dinheiro(n(b.comissaoDescontoFixo))}` : ""}${b.comissaoProporcionalMeta === true ? ", proporcional à meta" : ""}`
+        : "sem comissão";
+      await auditar(req, "Remuneração",
+        `Vigência ${b.vigenciaYm}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra} · rubricas: ${rubricas}`,
+        alvo, b);
+
       res.json({ message: "Configuração salva", id: r.rows?.[0]?.id });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] config salvar:", e?.message || e);
@@ -667,11 +723,39 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     try {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
+      const antes: any = await db.execute(sql`
+        SELECT c.vigencia_ym, c.fixo_mensal,
+               COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome
+        FROM collab_remuneracao_config c JOIN users u ON u.id = c.user_id WHERE c.id = ${req.params.id}`);
+      const a = antes.rows?.[0];
       await db.execute(sql`DELETE FROM collab_remuneracao_config WHERE id = ${req.params.id}`);
+      if (a) {
+        await auditar(req, "Remuneração",
+          `Vigência ${a.vigencia_ym} removida (fixo era ${dinheiro(n(a.fixo_mensal))})`, String(a.nome), a);
+      }
       res.json({ message: "Vigência removida" });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] config remover:", e?.message || e);
       res.status(500).json({ message: "Falha ao remover a vigência" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Histórico de alterações (somente admin). Somente leitura — a trilha não
+  // tem rota de edição nem de exclusão de propósito.
+  // -------------------------------------------------------------------------
+  app.get("/api/resumo-recebiveis/auditoria", authenticateUser, async (req: any, res) => {
+    try {
+      if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
+      await ensureResumoRecebiveisSchema();
+      const limite = Math.min(500, Math.max(1, Math.trunc(n(req.query?.limite)) || 200));
+      const r: any = await db.execute(sql`
+        SELECT id, quando, autor_nome, acao, alvo_nome, descricao
+        FROM resumo_auditoria ORDER BY quando DESC LIMIT ${limite}`);
+      res.json({ registros: r.rows || [] });
+    } catch (e: any) {
+      console.error("[RESUMO-RECEB] auditoria listar:", e?.message || e);
+      res.status(500).json({ message: "Falha ao carregar o histórico" });
     }
   });
 
@@ -689,6 +773,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         VALUES (${b.userId}, ${b.incluir !== false}, ${req.currentUser?.id || null}, now())
         ON CONFLICT (user_id) DO UPDATE SET
           incluir = EXCLUDED.incluir, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      const alvo = await nomeDoUsuario(String(b.userId));
+      await auditar(req, "Participação",
+        b.incluir !== false ? "Incluído na planilha" : "Retirado da planilha", alvo, b);
       res.json({ message: b.incluir !== false ? "Colaborador incluído no resumo" : "Colaborador retirado do resumo" });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] participacao:", e?.message || e);
@@ -731,6 +818,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
             ativa = ${b.ativa !== false}, ordem = ${Math.trunc(n(b.ordem))},
             observacao = ${String(b.observacao || "").slice(0, 500) || null}
           WHERE id = ${b.id}`);
+        await auditar(req, "Campanha",
+          `"${nome}" atualizada — ${origem === "campanha" ? "módulo" : "manual"}, de ${b.ymInicio} ${b.ymFim ? `até ${b.ymFim}` : "sem prazo"}${b.ativa === false ? ", inativa" : ""}`,
+          nome, b);
         return res.json({ message: "Campanha atualizada", id: b.id });
       }
       const r: any = await db.execute(sql`
@@ -739,6 +829,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
                 ${Math.trunc(n(b.ordem))}, ${String(b.observacao || "").slice(0, 500) || null},
                 ${req.currentUser?.id || null})
         RETURNING id`);
+      await auditar(req, "Campanha",
+        `"${nome}" criada — ${origem === "campanha" ? "módulo" : "manual"}, de ${b.ymInicio} ${b.ymFim ? `até ${b.ymFim}` : "sem prazo"}`,
+        nome, b);
       res.json({ message: "Campanha criada", id: r.rows?.[0]?.id });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] campanha salvar:", e?.message || e);
@@ -750,7 +843,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     try {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
+      const antes: any = await db.execute(sql`SELECT nome FROM resumo_campanhas WHERE id = ${req.params.id}`);
       await db.execute(sql`DELETE FROM resumo_campanhas WHERE id = ${req.params.id}`);
+      await auditar(req, "Campanha", `"${antes.rows?.[0]?.nome || req.params.id}" removida`,
+        antes.rows?.[0]?.nome || null);
       res.json({ message: "Campanha removida" });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] campanha remover:", e?.message || e);
@@ -771,6 +867,11 @@ export function registerResumoRecebiveisRoutes(app: Express) {
                 ${String(b.observacao || "").slice(0, 300) || null}, ${req.currentUser?.id || null})
         ON CONFLICT (campanha_id, user_id, ym) DO UPDATE SET
           valor = EXCLUDED.valor, observacao = EXCLUDED.observacao`);
+      const camp: any = await db.execute(sql`SELECT nome FROM resumo_campanhas WHERE id = ${req.params.id}`);
+      const alvo = await nomeDoUsuario(String(b.userId));
+      await auditar(req, "Campanha",
+        `Valor de ${dinheiro(n(b.valor))} na campanha "${camp.rows?.[0]?.nome || req.params.id}" em ${b.ym}`,
+        alvo, b);
       res.json({ message: "Valor lançado" });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] campanha valor:", e?.message || e);
@@ -802,6 +903,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         INSERT INTO collab_bonus_lancamentos (user_id, ym, descricao, valor, created_by)
         VALUES (${b.userId}, ${b.ym}, ${descricao}, ${n(b.valor)}, ${req.currentUser?.id || null})
         RETURNING id`);
+      const alvo = await nomeDoUsuario(String(b.userId));
+      await auditar(req, "Bônus", `${dinheiro(n(b.valor))} em ${b.ym} — ${descricao}`, alvo, b);
       res.json({ message: "Bônus lançado", id: r.rows?.[0]?.id });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] bonus criar:", e?.message || e);
@@ -813,7 +916,16 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     try {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
+      const antes: any = await db.execute(sql`
+        SELECT l.ym, l.descricao, l.valor,
+               COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome
+        FROM collab_bonus_lancamentos l JOIN users u ON u.id = l.user_id WHERE l.id = ${req.params.id}`);
+      const a = antes.rows?.[0];
       await db.execute(sql`DELETE FROM collab_bonus_lancamentos WHERE id = ${req.params.id}`);
+      if (a) {
+        await auditar(req, "Bônus",
+          `Lançamento removido: ${dinheiro(n(a.valor))} em ${a.ym} — ${a.descricao}`, String(a.nome), a);
+      }
       res.json({ message: "Lançamento removido" });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] bonus remover:", e?.message || e);
