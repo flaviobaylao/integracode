@@ -220,10 +220,19 @@ export async function calcularEsperado(): Promise<{ linhas: LinhaEsperada[]; ins
     const fora = sql.join(ETAPAS_FORA_DA_CONTAGEM.map((s) => sql`${s}`), sql`, `);
     const pre = sql.join(ETAPAS_PRE_FATURAMENTO.map((s) => sql`${s}`), sql`, `);
     const cards = rows(await db.execute(sql`
-      SELECT bp.id, bp.order_number, bp.customer_name, bp.stage::text AS stage, bp.omie_instance_id, bp.products
+      SELECT bp.id, bp.order_number, bp.customer_name, bp.stage::text AS stage, bp.products,
+             -- Card sem instância (ex.: troca antiga com baixa retroativa): vale a
+             -- instância do lote de onde o estoque foi baixado.
+             COALESCE(bp.omie_instance_id, (
+               SELECT il.instance_id FROM inventory_movements m JOIN inventory_lots il ON il.id = m.lot_id
+               WHERE m.source_type = 'invoice' AND m.movement_type = 'consume' AND m.source_id = bp.id
+               ORDER BY m.created_at DESC LIMIT 1)) AS omie_instance_id
       FROM billing_pipeline bp
       WHERE bp.stage::text NOT IN (${fora})
-        AND bp.omie_instance_id IN (${ids})
+        AND COALESCE(bp.omie_instance_id, (
+               SELECT il.instance_id FROM inventory_movements m JOIN inventory_lots il ON il.id = m.lot_id
+               WHERE m.source_type = 'invoice' AND m.movement_type = 'consume' AND m.source_id = bp.id
+               ORDER BY m.created_at DESC LIMIT 1)) IN (${ids})
         AND (
           bp.stage::text NOT IN (${pre})
           OR EXISTS (
