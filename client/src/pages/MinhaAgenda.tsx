@@ -154,6 +154,11 @@ export default function MinhaAgenda() {
         .agenda .fc .fc-list-event-time{color:hsl(var(--muted-foreground))}
         .agenda .fc .fc-list-day-cushion{background:hsl(var(--muted))}
         .agenda .fc .fc-scrollgrid{border-radius:8px;overflow:hidden}
+        /* Linhas verticais suaves separando os dias (Semana e Mes) e horas mais leves */
+        .agenda .fc .fc-timegrid-col,.agenda .fc .fc-col-header-cell,.agenda .fc .fc-daygrid-day{border-left:1px solid hsl(var(--border)) !important;border-right:1px solid hsl(var(--border)) !important}
+        .agenda .fc .fc-daygrid-day{border-top:1px solid hsl(var(--border)) !important;border-bottom:1px solid hsl(var(--border)) !important}
+        .agenda .fc .fc-timegrid-slot{border-top:1px solid hsl(var(--border) / .6) !important}
+        .agenda .fc .fc-timegrid-slot-minor{border-top:1px dotted hsl(var(--border) / .4) !important}
       `}</style>
 
       <div className="flex items-center gap-2 flex-wrap mb-3">
