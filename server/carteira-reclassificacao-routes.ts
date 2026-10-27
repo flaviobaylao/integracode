@@ -328,12 +328,14 @@ async function reprogramarAgenda(customerId: string, dias: string[], periodicida
 /** Apaga as pendentes futuras e regrava as datas passadas. */
 async function gravarAgenda(customerId: string, c: any, per: string, datas: Date[], hojeStr: string): Promise<number> {
   if (!datas.length) return 0;
+  try { const { ensureAgendaForcadaColumn } = await import("./visitScheduleService"); await ensureAgendaForcadaColumn(); } catch { /* noop */ }
 
   // 🛡️ NUNCA remove a ocorrência de HOJE (nem o passado): limpa só o pendente de AMANHÃ em
   // diante. A visita de hoje já agendada é preservada — a Rota do Dia não encolhe no meio do dia.
   await db.execute(sql`
     DELETE FROM visit_agenda
-    WHERE customer_id = ${customerId} AND visit_status = 'pending' AND scheduled_date::date > ${hojeStr}::date`);
+    WHERE customer_id = ${customerId} AND visit_status = 'pending' AND scheduled_date::date > ${hojeStr}::date
+      AND COALESCE(forcada, '') = ''`);
 
   let n = 0;
   for (const d of datas) {

@@ -35,6 +35,7 @@ import { registerRoutes } from "./routes";
 import { registerChangeRequestsRoutes } from "./change-requests-routes";
 import { registerHolidaysRoutes } from "./holidays-routes";
 import { registerHorarioFornecedorRoutes } from "./horario-fornecedor-routes";
+import { registerAgendaForcadaRoutes } from "./agenda-forcada-routes";
 import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { registerFichaLogisticaRoutes } from "./ficha-logistica";
 import { registerTemperaturaEntregasRoutes } from "./temperatura-entregas";
@@ -422,6 +423,8 @@ run();
   try { registerHolidaysRoutes(app); } catch (e) { console.error('[feriados]', e); }
   // Horário de atendimento ao FORNECEDOR (marcado pelo vendedor no card da Rota do Dia).
   try { registerHorarioFornecedorRoutes(app); } catch (e) { console.error('[horario-fornecedor]', e); }
+  // Visitas FORÇADAS na agenda (ex.: não positivados do mês na rota da semana).
+  try { registerAgendaForcadaRoutes(app); } catch (e) { console.error('[agenda-forcada]', e); }
   try { const { registerPresentialMonthlyJob } = await import('./presential-monthly-job'); registerPresentialMonthlyJob(app); } catch (e) { console.error('[visita-mensal]', e); }
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.

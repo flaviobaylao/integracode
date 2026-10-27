@@ -306,6 +306,20 @@ async function __getPresentialMonthly(customerId: string): Promise<{ enabled: bo
 // 📞 Carteiras de TELEMARKETING: o atendimento é sempre VIRTUAL (a regeneração semanal de
 // telemarketing gravava is_virtual=true). Cache curto dos ids de usuários telemarketing para o
 // motor único aplicar a mesma regra sem consultar users a cada cliente.
+// 📌 VISITA FORÇADA (27/out/2026): linhas da agenda incluídas por uma ação do admin (ex.: "não
+// positivados do mês entram na rota desta semana") têm visit_agenda.forcada preenchido. A
+// regeneração NÃO apaga essas linhas — senão a geração da meia-noite as removeria.
+let __forcadaReady: Promise<void> | null = null;
+export function ensureAgendaForcadaColumn(): Promise<void> {
+  if (!__forcadaReady) {
+    __forcadaReady = db.execute(sql`ALTER TABLE visit_agenda ADD COLUMN IF NOT EXISTS forcada varchar`)
+      .then(() => undefined)
+      .catch((e: any) => { __forcadaReady = null; throw e; });
+  }
+  return __forcadaReady;
+}
+const __naoForcada = sql`COALESCE(forcada, '') = ''`;
+
 let __tmIdsCache: { at: number; ids: Set<string> } | null = null;
 async function __telemarketingSellerIds(): Promise<Set<string>> {
   if (__tmIdsCache && Date.now() - __tmIdsCache.at < 10 * 60 * 1000) return __tmIdsCache.ids;
@@ -320,6 +334,7 @@ async function __telemarketingSellerIds(): Promise<Set<string>> {
 
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
   const { calculateNextVisitDate, datasPelaRegra, normalizarSemana } = await import('../shared/visitSchedule');
+  await ensureAgendaForcadaColumn();
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
   if (!rows.length) return 0;
   const c: any = { ...rows[0] };
@@ -353,6 +368,7 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
       eq(visitAgenda.customerId, customerId),
       eq(visitAgenda.visitStatus, 'pending'),
       lt(visitAgenda.scheduledDate, ss),
+      __naoForcada,
     ));
   }
   // 🛡️ NUNCA remove a ocorrência de HOJE (nem o passado) — exceto o caso de início futuro acima:
@@ -362,6 +378,7 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     eq(visitAgenda.customerId, customerId),
     eq(visitAgenda.visitStatus, 'pending'),
     gte(visitAgenda.scheduledDate, tomorrow),
+    __naoForcada,
   ));
 
   let periodicity = c.visitPeriodicity || 'semanal';
@@ -1651,10 +1668,12 @@ export async function recalcularAgendaPulandoCiclo(
     }
 
     // Reescrever visit_agenda pendente futura: apagar e inserir as 3 novas datas.
+    await ensureAgendaForcadaColumn();
     await db.delete(visitAgenda).where(and(
       eq(visitAgenda.customerId, customerId),
       eq(visitAgenda.visitStatus, 'pending'),
-      gte(visitAgenda.scheduledDate, today)
+      gte(visitAgenda.scheduledDate, today),
+      __naoForcada,
     ));
     for (const d of dates) {
       const dd = new Date(d); dd.setHours(8, 0, 0, 0);
