@@ -119,8 +119,9 @@ export async function refreshTuyaDevices(force = false): Promise<TuyaDevice[]> {
   }
   // Aparelho que sumiu da lista (desvinculado no app) fica como offline, mas o histórico permanece.
   if (list.length) {
-    const ids = list.map((d) => d.id);
-    await db.execute(sql`UPDATE tuya_devices SET online = false WHERE NOT (device_id = ANY(${ids}::varchar[]))`);
+    // drizzle expande array JS como lista (a, b, c) — usar NOT IN, não ::varchar[]
+    const ids = sql.join(list.map((d) => sql`${d.id}`), sql`, `);
+    await db.execute(sql`UPDATE tuya_devices SET online = false WHERE device_id NOT IN (${ids})`);
   }
   deviceCache = { at: Date.now(), list };
   return list;
