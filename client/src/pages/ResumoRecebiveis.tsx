@@ -268,7 +268,9 @@ export default function ResumoRecebiveis() {
                         {brl(c.faturamento)}
                       </td>
                       <td className="px-3 py-2 text-right"
-                        title={c.config?.comissaoTipo === "faixa"
+                        title={c.config?.comissaoTipo === "escalonado"
+                          ? (c.config.comissaoFaixas || []).map((f: any) => `${brl(f.de)}${f.ate === null ? "+" : ` a ${brl(f.ate)}`} = ${f.pct}%`).join(" · ")
+                          : c.config?.comissaoTipo === "faixa"
                           ? "Faixa por atingimento"
                           : c.config?.comissaoTipo === "fixo"
                             ? `${c.config.comissaoPct}%${c.config.comissaoDescontoFixo > 0 ? ` − ${brl(c.config.comissaoDescontoFixo)}` : ""}${c.config.comissaoProporcionalMeta ? " proporcional à meta" : ""}`
@@ -354,6 +356,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const vazio: any = {
     userId: "", vigenciaYm: ym, fixoMensal: "", ajudaCusto: "", comissaoTipo: "nenhum",
     comissaoPct: "", comissaoDescontoFixo: "", comissaoProporcionalMeta: false,
+    comissaoFaixas: [{ de: "0", ate: "", pct: "" }] as any[],
     faixaTipo: "telemarketing",
     usaFixo: true, usaAjudaCusto: false, usaMeta: true, usaFaturamento: true, usaComissao: true,
     usaKm: true, usaCampanhas: true, usaBonus: false, consolidaTotais: false, observacao: "",
@@ -392,6 +395,9 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
       fixoMensal: num(form.fixoMensal), ajudaCusto: num(form.ajudaCusto), comissaoTipo: form.comissaoTipo,
       comissaoPct: num(form.comissaoPct), comissaoDescontoFixo: num(form.comissaoDescontoFixo),
       comissaoProporcionalMeta: form.comissaoProporcionalMeta, faixaTipo: form.faixaTipo,
+      comissaoFaixas: (form.comissaoFaixas || [])
+        .filter((f: any) => String(f.pct).trim() !== "")
+        .map((f: any) => ({ de: num(f.de), ate: String(f.ate).trim() === "" ? null : num(f.ate), pct: num(f.pct) })),
       usaFixo: form.usaFixo, usaAjudaCusto: form.usaAjudaCusto, usaMeta: form.usaMeta, usaFaturamento: form.usaFaturamento,
       usaComissao: form.usaComissao, usaKm: form.usaKm, usaCampanhas: form.usaCampanhas,
       usaBonus: form.usaBonus, consolidaTotais: form.consolidaTotais, observacao: form.observacao,
@@ -553,7 +559,8 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     <SelectContent>
                       <SelectItem value="nenhum">Sem comissão</SelectItem>
                       <SelectItem value="fixo">Percentual fixo</SelectItem>
-                      <SelectItem value="faixa">Faixa por atingimento</SelectItem>
+                      <SelectItem value="faixa">Faixa por atingimento da meta</SelectItem>
+                    <SelectItem value="escalonado">Escalonado por faturamento</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -609,6 +616,46 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     </div>
                   </>
                 )}
+                {form.comissaoTipo === "escalonado" && (
+                  <div className="min-w-0 md:col-span-4">
+                    <Label className="text-xs">Faixas por valor de faturamento</Label>
+                    <p className="text-[11px] text-muted-foreground mb-1">
+                      A alíquota da faixa alcançada incide sobre o faturamento inteiro. Deixe o
+                      <strong> Até</strong> em branco na última faixa para dizer "daí em diante".
+                    </p>
+                    <div className="space-y-1">
+                      {(form.comissaoFaixas || []).map((f: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 min-w-0">
+                          <span className="text-[11px] text-muted-foreground w-6 shrink-0">De</span>
+                          <Input className="h-8" inputMode="decimal" placeholder="0,00" value={f.de}
+                            onChange={(e) => {
+                              const fx = [...form.comissaoFaixas]; fx[i] = { ...fx[i], de: e.target.value };
+                              set("comissaoFaixas", fx);
+                            }} />
+                          <span className="text-[11px] text-muted-foreground w-6 shrink-0">Até</span>
+                          <Input className="h-8" inputMode="decimal" placeholder="sem teto" value={f.ate}
+                            onChange={(e) => {
+                              const fx = [...form.comissaoFaixas]; fx[i] = { ...fx[i], ate: e.target.value };
+                              set("comissaoFaixas", fx);
+                            }} />
+                          <Input className="h-8 w-20 shrink-0" inputMode="decimal" placeholder="%" value={f.pct}
+                            onChange={(e) => {
+                              const fx = [...form.comissaoFaixas]; fx[i] = { ...fx[i], pct: e.target.value };
+                              set("comissaoFaixas", fx);
+                            }} />
+                          <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0 text-red-600"
+                            onClick={() => set("comissaoFaixas", form.comissaoFaixas.filter((_: any, j: number) => j !== i))}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    <Button type="button" variant="outline" size="sm" className="mt-1 h-7 text-xs"
+                      onClick={() => set("comissaoFaixas", [...(form.comissaoFaixas || []), { de: "", ate: "", pct: "" }])}>
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar faixa
+                    </Button>
+                  </div>
+                )}
                 {form.comissaoTipo === "faixa" && (
                   <div className="min-w-0">
                     <Label className="text-xs">Tabela de faixas</Label>
@@ -632,7 +679,13 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
               {(() => {
                 const alvo = colabs.find((c) => c.id === form.userId);
                 if (!form.userId) return null;
-                const regraCom = form.comissaoTipo === "faixa"
+                const regraCom = form.comissaoTipo === "escalonado"
+                  ? ((form.comissaoFaixas || []).filter((f: any) => String(f.pct).trim() !== "").length
+                      ? (form.comissaoFaixas as any[]).filter((f: any) => String(f.pct).trim() !== "")
+                          .map((f: any) => `${brl(num(f.de))}${String(f.ate).trim() === "" ? " ou mais" : ` a ${brl(num(f.ate))}`} = ${f.pct}%`)
+                          .join(" · ")
+                      : "escalonado, sem faixas cadastradas")
+                  : form.comissaoTipo === "faixa"
                   ? `Faixa por atingimento (${form.faixaTipo === "telemarketing" ? "vendas internas" : form.faixaTipo === "vendedor_pj" ? "externo PJ" : "externo CLT"})`
                   : form.comissaoTipo === "fixo"
                     ? `${form.comissaoPct || 0}% sobre o faturamento${num(form.comissaoDescontoFixo) > 0 ? `, menos ${brl(num(form.comissaoDescontoFixo))}` : ""}${form.comissaoProporcionalMeta ? ", proporcional à meta" : ""}`
@@ -697,7 +750,9 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       <td className="px-2 py-1.5 text-right">{brl(Number(c.fixo_mensal))}</td>
                       <td className="px-2 py-1.5 text-right">{c.usa_ajuda_custo ? brl(Number(c.ajuda_custo)) : "—"}</td>
                       <td className="px-2 py-1.5">
-                        {c.comissao_tipo === "faixa" ? "Faixa"
+                        {c.comissao_tipo === "escalonado"
+                      ? `Escalonado (${(c.comissao_faixas || []).length} faixas)`
+                      : c.comissao_tipo === "faixa" ? "Faixa"
                           : c.comissao_tipo === "fixo"
                             ? `${Number(c.comissao_pct)}%${Number(c.comissao_desconto_fixo) > 0 ? ` − ${brl(Number(c.comissao_desconto_fixo))}` : ""}${c.comissao_proporcional_meta ? " prop." : ""}`
                             : "—"}
