@@ -21,6 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone,
 } from "lucide-react";
@@ -69,7 +70,7 @@ interface Campanha { id: string; nome: string; origem: string; ym_inicio: string
 interface Colab {
   id: string; nome: string; role: string; sellerType: string | null;
   config: any;
-  fixoMensal: number | null; meta: number | null; faturamento: number | null;
+  fixoMensal: number | null; ajudaCusto: number | null; meta: number | null; faturamento: number | null;
   atingimentoPct: number; comissao: number | null;
   campanhas: Record<string, number | null>;
   bonus: number | null;
@@ -94,14 +95,14 @@ export default function ResumoRecebiveis() {
 
   const exportarCsv = () => {
     const sep = ";";
-    const cab = ["Colaborador", "Função", "Fixo Mensal", "Meta", "Faturamento", "Comissão Mês",
+    const cab = ["Colaborador", "Função", "Fixo Mensal", "Ajuda de Custo", "Meta", "Faturamento", "Comissão Mês",
       ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês"];
     const num = (v: number | null) => (v === null ? "" : v.toFixed(2));
     const linhas = [cab.join(sep)];
     for (const c of colabs) {
       linhas.push([
         c.nome, PAPEL_LABEL[c.role] || c.role,
-        num(c.fixoMensal), num(c.meta), num(c.faturamento), num(c.comissao),
+        num(c.fixoMensal), num(c.ajudaCusto), num(c.meta), num(c.faturamento), num(c.comissao),
         ...campanhas.map((k) => num(c.campanhas?.[k.id] ?? null)),
         num(c.bonus), c.kmRodado.toFixed(1), num(c.kmValor), c.totalMes.toFixed(2),
       ].join(sep));
@@ -186,6 +187,7 @@ export default function ResumoRecebiveis() {
                   <tr className="bg-muted/60">
                     <th className="text-left px-3 py-2 font-semibold sticky left-0 bg-muted/60 min-w-[190px]">Colaborador</th>
                     <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Fixo Mensal</th>
+                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Ajuda de Custo</th>
                     <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Meta</th>
                     <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Faturamento</th>
                     <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Comissão Mês</th>
@@ -209,6 +211,7 @@ export default function ResumoRecebiveis() {
                         </Badge>
                       </td>
                       <td className="px-3 py-2 text-right">{brl(c.fixoMensal)}</td>
+                      <td className="px-3 py-2 text-right">{brl(c.ajudaCusto)}</td>
                       <td className="px-3 py-2 text-right">{brl(c.meta)}</td>
                       <td className="px-3 py-2 text-right"
                         title={c.meta ? `Atingimento ${c.atingimentoPct.toFixed(1)}% da meta` : ""}>
@@ -240,6 +243,7 @@ export default function ResumoRecebiveis() {
                     <tr className="bg-emerald-50 font-bold border-t-2">
                       <td className="px-3 py-2 sticky left-0 bg-emerald-50">TOTAL</td>
                       <td className="px-3 py-2 text-right">{brl(totais.fixoMensal)}</td>
+                      <td className="px-3 py-2 text-right">{brl(totais.ajudaCusto)}</td>
                       <td className="px-3 py-2 text-right">{brl(totais.meta)}</td>
                       <td className="px-3 py-2 text-right">{brl(totais.faturamento)}</td>
                       <td className="px-3 py-2 text-right">{brl(totais.comissao)}</td>
@@ -263,8 +267,8 @@ export default function ResumoRecebiveis() {
         <span>
           Cada rubrica é buscada no módulo que a calcula: Meta nas Metas de Vendas, Faturamento na mesma
           fonte do Dashboard (NF-e de venda autorizada, atribuída a quem implantou o pedido), Km na
-          Kilometragem Vendedores e as campanhas no módulo da campanha. Fixo Mensal e Bônus são valores de
-          cadastro, informados em Configurações. Uma célula com <strong>—</strong> significa que a rubrica
+          Kilometragem Vendedores e as campanhas no módulo da campanha. Fixo Mensal, Ajuda de Custo e Bônus são
+          valores de cadastro, informados em Configurações. Uma célula com <strong>—</strong> significa que a rubrica
           não está habilitada para aquele colaborador, e por isso não entra no total.
         </span>
       </div>
@@ -279,6 +283,7 @@ export default function ResumoRecebiveis() {
 // ---------------------------------------------------------------------------
 const FLAGS: Array<{ k: string; label: string; modulo: string; ajuda: string }> = [
   { k: "usaFixo", label: "Fixo mensal", modulo: "Cadastro (aqui)", ajuda: "Nenhum módulo calcula salário; o valor é informado nesta tela" },
+  { k: "usaAjudaCusto", label: "Ajuda de custo", modulo: "Cadastro (aqui)", ajuda: "Valor fixo mensal de ajuda de custo, informado nesta tela" },
   { k: "usaMeta", label: "Meta", modulo: "Metas de Vendas", ajuda: "sales_goals: meta de faturamento do mês" },
   { k: "usaFaturamento", label: "Faturamento", modulo: "Faturamento oficial", ajuda: "NF-e de venda autorizada, atribuída a quem implantou o pedido" },
   { k: "usaComissao", label: "Comissão mês", modulo: "Regra do colaborador", ajuda: "Percentual ou faixa definidos abaixo, sobre o faturamento" },
@@ -294,10 +299,10 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const queryClient = useQueryClient();
 
   const vazio: any = {
-    userId: "", vigenciaYm: ym, fixoMensal: "", comissaoTipo: "nenhum",
+    userId: "", vigenciaYm: ym, fixoMensal: "", ajudaCusto: "", comissaoTipo: "nenhum",
     comissaoPct: "", comissaoDescontoFixo: "", comissaoProporcionalMeta: false,
     faixaTipo: "telemarketing",
-    usaFixo: true, usaMeta: true, usaFaturamento: true, usaComissao: true,
+    usaFixo: true, usaAjudaCusto: false, usaMeta: true, usaFaturamento: true, usaComissao: true,
     usaKm: true, usaCampanhas: true, usaBonus: false, observacao: "",
   };
   const [form, setForm] = useState<any>(vazio);
@@ -325,10 +330,10 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const salvarCfg = useMutation({
     mutationFn: () => apiRequest("POST", "/api/resumo-recebiveis/config", {
       userId: form.userId, vigenciaYm: form.vigenciaYm,
-      fixoMensal: num(form.fixoMensal), comissaoTipo: form.comissaoTipo,
+      fixoMensal: num(form.fixoMensal), ajudaCusto: num(form.ajudaCusto), comissaoTipo: form.comissaoTipo,
       comissaoPct: num(form.comissaoPct), comissaoDescontoFixo: num(form.comissaoDescontoFixo),
       comissaoProporcionalMeta: form.comissaoProporcionalMeta, faixaTipo: form.faixaTipo,
-      usaFixo: form.usaFixo, usaMeta: form.usaMeta, usaFaturamento: form.usaFaturamento,
+      usaFixo: form.usaFixo, usaAjudaCusto: form.usaAjudaCusto, usaMeta: form.usaMeta, usaFaturamento: form.usaFaturamento,
       usaComissao: form.usaComissao, usaKm: form.usaKm, usaCampanhas: form.usaCampanhas,
       usaBonus: form.usaBonus, observacao: form.observacao,
     }),
@@ -462,6 +467,11 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     value={form.fixoMensal} onChange={(e) => set("fixoMensal", e.target.value)} />
                 </div>
                 <div className="min-w-0">
+                  <Label className="text-xs">Ajuda de custo (R$)</Label>
+                  <Input className="mt-1" inputMode="decimal" placeholder="0,00"
+                    value={form.ajudaCusto} onChange={(e) => set("ajudaCusto", e.target.value)} />
+                </div>
+                <div className="min-w-0">
                   <Label className="text-xs">Comissão</Label>
                   <Select value={form.comissaoTipo} onValueChange={(v) => set("comissaoTipo", v)}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
@@ -484,9 +494,43 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       <Input className="mt-1" inputMode="decimal" placeholder="0,00"
                         value={form.comissaoDescontoFixo} onChange={(e) => set("comissaoDescontoFixo", e.target.value)} />
                     </div>
-                    <div className="min-w-0 flex items-end gap-2 pb-1">
+                    <div className="min-w-0 flex items-end gap-1.5 pb-1">
                       <Switch checked={form.comissaoProporcionalMeta} onCheckedChange={(v) => set("comissaoProporcionalMeta", v)} />
                       <span className="text-xs">Proporcional à meta</span>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button type="button" aria-label="O que é proporcional à meta"
+                            className="shrink-0 text-muted-foreground hover:text-foreground">
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-96 text-xs leading-relaxed" align="start">
+                          <p className="font-medium mb-1">O que muda com isto ligado</p>
+                          <p className="mb-2">
+                            O percentual e o desconto passam a ser aplicados sobre a <strong>meta</strong>, e o
+                            colaborador recebe no mês a fatia correspondente ao quanto já faturou dela.
+                          </p>
+                          <div className="rounded bg-muted p-2 font-mono text-[10px] mb-2">
+                            desligado: faturamento × % − desconto<br />
+                            ligado: (meta × % − desconto) × (faturamento ÷ meta)
+                          </div>
+                          <p className="mb-2">
+                            <strong>Para que serve:</strong> quando existe desconto fixo, aplicá-lo direto no
+                            faturamento deixa a comissão zerada quase o mês inteiro e ela só salta no fim.
+                            Proporcional, o valor cresce desde o primeiro dia. Batendo a meta cheia, os dois
+                            caminhos chegam no mesmo total.
+                          </p>
+                          <p className="mb-2">
+                            Exemplo — meta R$ 65.000, faturado R$ 28.344, 4% com desconto de R$ 1.400:<br />
+                            ligado = (2.600 − 1.400) × 43,6% = <strong>R$ 523,29</strong><br />
+                            desligado = 1.133 − 1.400 = negativo, piso zero = <strong>R$ 0,00</strong>
+                          </p>
+                          <p className="text-muted-foreground">
+                            Sem desconto fixo o botão não muda nada, e ligado exige meta cadastrada no mês —
+                            sem meta a comissão sai zero.
+                          </p>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </>
                 )}
@@ -520,6 +564,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     : "Sem comissão";
                 const itens: Array<[string, string, string]> = [
                   ["Fixo mensal", "Cadastro (esta tela)", form.fixoMensal ? brl(num(form.fixoMensal)) : "a preencher"],
+                  ["Ajuda de custo", "Cadastro (esta tela)", form.usaAjudaCusto ? (form.ajudaCusto ? brl(num(form.ajudaCusto)) : "a preencher") : "não recebe"],
                   ["Meta", "Metas de Vendas", alvo?.meta ? brl(alvo.meta) : "sem meta cadastrada em " + nomeDoMes(ym)],
                   ["Faturamento", "Faturamento oficial", alvo?.faturamento != null ? brl(alvo.faturamento) : "—"],
                   ["Comissão mês", "Regra do colaborador", regraCom],
@@ -559,6 +604,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     <th className="text-left px-2 py-1.5">Colaborador</th>
                     <th className="text-left px-2 py-1.5">Vigência</th>
                     <th className="text-right px-2 py-1.5">Fixo</th>
+                    <th className="text-right px-2 py-1.5">Ajuda</th>
                     <th className="text-left px-2 py-1.5">Comissão</th>
                     <th className="text-left px-2 py-1.5">Rubricas</th>
                     <th className="px-2 py-1.5"></th>
@@ -572,6 +618,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       </td>
                       <td className="px-2 py-1.5">{nomeDoMes(c.vigencia_ym)}</td>
                       <td className="px-2 py-1.5 text-right">{brl(Number(c.fixo_mensal))}</td>
+                      <td className="px-2 py-1.5 text-right">{c.usa_ajuda_custo ? brl(Number(c.ajuda_custo)) : "—"}</td>
                       <td className="px-2 py-1.5">
                         {c.comissao_tipo === "faixa" ? "Faixa"
                           : c.comissao_tipo === "fixo"
@@ -579,7 +626,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                             : "—"}
                       </td>
                       <td className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                        {[c.usa_fixo && "fixo", c.usa_meta && "meta", c.usa_faturamento && "fat.",
+                        {[c.usa_fixo && "fixo", c.usa_ajuda_custo && "ajuda", c.usa_meta && "meta", c.usa_faturamento && "fat.",
                           c.usa_comissao && "com.", c.usa_km && "km", c.usa_campanhas && "camp.",
                           c.usa_bonus && "bônus"].filter(Boolean).join(" · ") || "nenhuma"}
                       </td>
