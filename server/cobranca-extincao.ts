@@ -472,8 +472,12 @@ export function registerCobrancaExtincao(app: Express) {
 
       const lista = await candidatos({ desde, limit: dryRun ? 5000 : limit * 3 });
       const n2 = (v: any) => Number(Number(v || 0).toFixed(2));
-      const aptos: any[] = [], revisar: any[] = [];
+      const aptos: any[] = [], revisar: any[] = [], desistidos: any[] = [];
       for (const c of lista) {
+        // 27/out/2026: mesmo teto do cron — titulo que ja falhou 5x no banco (ex.: PIX
+        // com vencimento sem escopo /cobv na aplicacao) sai do lote em vez de ocupar
+        // vaga em toda chamada. Volta se a causa for corrigida (basta zerar o log de erro).
+        if (Number(c.erros_anteriores || 0) >= 5) { desistidos.push(c); continue; }
         const mot = motivoRevisar(c);
         (mot && !incluirRevisar ? revisar : aptos).push({ ...c, motivoRevisar: mot });
       }
@@ -495,7 +499,7 @@ export function registerCobrancaExtincao(app: Express) {
 
       if (dryRun) {
         return res.json({
-          dryRun: true, desde, aExtinguir: resumir(aptos), revisarManual: resumir(revisar),
+          dryRun: true, desde, aExtinguir: resumir(aptos), revisarManual: resumir(revisar), desistidos5Erros: resumir(desistidos),
           amostra: amostra(aptos), amostraRevisar: amostra(revisar, 40),
           observacao: 'boletosVivos = registrados/vencidos no Integra; boletosLiquidadosSoNoIntegra = marcados liquidados pela conciliacao/planilha (o BB decide: se ja liquidado, nada muda; se aberto, e baixado). Cada cobranca = 1 chamada ao BB.',
           irreversivel: 'Boleto baixado no BB nao volta - so reemitindo. Aplicar: {dryRun:false, limit:N} (admin).',
@@ -514,7 +518,7 @@ export function registerCobrancaExtincao(app: Express) {
         await logFinancialAudit({ req, action: 'reverse', entity: 'cobrancas', entityId: null, amount: null as any,
           note: `Extincao de cobrancas de titulos fechados: ${tot.boletosBaixados} boleto(s) baixado(s) no BB, ${tot.pixRemovidos} PIX removido(s), ${tot.erros.length} erro(s), ${tot.alertas.length} alerta(s).` } as any);
       } catch {}
-      res.json({ dryRun: false, restantes: Math.max(0, aptos.length - lote.length), revisarManual: revisar.length, ...tot });
+      res.json({ dryRun: false, restantes: Math.max(0, aptos.length - lote.length), revisarManual: revisar.length, desistidos5Erros: desistidos.length, ...tot });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e).slice(0, 400) }); }
   });
 
