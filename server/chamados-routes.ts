@@ -93,6 +93,8 @@ function ensureTables(): Promise<void> {
       await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS solucionado_por varchar`);
       await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS cancelado_em timestamp`);
       await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS reaberto_em timestamp`);
+      await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS cobrancas integer NOT NULL DEFAULT 0`);
+      await db.execute(sql`ALTER TABLE chamados ADD COLUMN IF NOT EXISTS ultima_cobranca_em timestamp`);
       await db.execute(sql`CREATE TABLE IF NOT EXISTS chamado_anexos (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
         chamado_id varchar NOT NULL,
@@ -269,6 +271,23 @@ export async function abrirChamadoSistema(opts: {
   return ids;
 }
 
+// ---------- cobrança (27/out/2026) ----------
+// Quem abriu pode "Cobrar retorno" de um chamado aberto parado: 24h sem ação do
+// responsável (4h se Urgente), contadas da última ação dele ou da última cobrança.
+// 2ª cobrança eleva a prioridade para Urgente; a partir da 3ª o Flávio também é avisado.
+// Os timestamps são gravados em UTC sem fuso; o driver devolve texto cru.
+const tsMs = (v: any): number => {
+  if (!v) return 0;
+  if (v instanceof Date) return v.getTime();
+  const t = String(v).trim();
+  const iso = /[zZ]$|[+-]\d\d(:?\d\d)?$/.test(t) ? t.replace(" ", "T") : t.replace(" ", "T") + "Z";
+  const n = new Date(iso).getTime();
+  return Number.isFinite(n) ? n : 0;
+};
+const isoOuNull = (n: number) => (n ? new Date(n).toISOString() : null);
+const limiteCobrancaMs = (prioridade: string) => (prioridade === "Urgente" ? 4 : 24) * 3600 * 1000;
+const STATUS_COBRAVEL = ["novo", "em_atendimento", "reaberto"];
+
 // ---------- carga de chamados visíveis para um usuário ----------
 async function carregarVisiveis(user: any, caixa: string) {
   await ensureTables();
@@ -306,6 +325,18 @@ async function carregarVisiveis(user: any, caixa: string) {
       ult = Math.max(ult, new Date(m.ult).getTime());
     }
     const lido = lidoMap.get(String(c.id)) || 0;
+    // cobrança: última ação do responsável (qualquer mensagem de alguém que não é o autor)
+    let ultResp = 0, ultAtiv = tsMs(c.created_at);
+    for (const m of ultimas) {
+      if (m.chamado_id !== c.id) continue;
+      const t = tsMs(m.ult);
+      ultAtiv = Math.max(ultAtiv, t);
+      const a = String(m.autor_id || "");
+      if (a && a !== "sistema" && a !== String(c.autor_id)) ultResp = Math.max(ultResp, t);
+    }
+    const ultCob = tsMs(c.ultima_cobranca_em);
+    const cobrancas = Number(c.cobrancas || 0);
+    const baseCob = Math.max(ultResp || tsMs(c.created_at), ultCob);
     const d = destMap.get(c.destino_key);
     const pend = cons.filter((q) => q.pendente);
     const consultaPendenteParaMim = cons.some((q) => q.pendente && minhasKeys.includes(q.destino_key));
@@ -316,6 +347,10 @@ async function carregarVisiveis(user: any, caixa: string) {
       destinoKey: c.destino_key, destinoNome: d?.nome || c.destino_key, destinoSetor: d?.setor || "",
       createdAt: c.created_at, updatedAt: c.updated_at, solucionadoEm: c.solucionado_em || null, canceladoEm: c.cancelado_em || null,
       papel, naoLido: ult > lido,
+      cobrancas, ultimaCobrancaEm: isoOuNull(ultCob), ultimaRespostaEm: isoOuNull(ultResp), paradoDesde: isoOuNull(ultAtiv),
+      cobrancaPendente: cobrancas > 0 && ultCob > ultResp,
+      cobravel: STATUS_COBRAVEL.includes(c.status),
+      podeCobrarEm: STATUS_COBRAVEL.includes(c.status) ? isoOuNull(baseCob + limiteCobrancaMs(c.prioridade)) : null,
       consultas: cons.map((q) => ({ key: q.destino_key, nome: destMap.get(q.destino_key)?.nome || q.destino_key, setor: destMap.get(q.destino_key)?.setor || "", pendente: !!q.pendente })),
       aguardando: papel === "dono" ? pend.map((q) => destMap.get(q.destino_key)?.nome || q.destino_key) : [],
       consultaPendenteParaMim,
@@ -539,6 +574,52 @@ export function registerChamados(app: Express) {
       avisarBg((dono?.userIds || []).filter((x) => x !== uid),
         `🚫 ${nome} cancelou o chamado ${c.codigo}\n${c.assunto}${texto ? `\n"${trecho(texto)}"` : ""}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
       res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
+  // Quem abriu cobra retorno de um chamado parado (recado e anexos opcionais)
+  app.post("/api/chamados/:id/cobrar", authenticateUser, comArquivos, async (req: any, res: Response) => {
+    try {
+      const texto = String(req.body?.texto || "").trim();
+      const files = arquivosDe(req);
+      const { c, vis } = await carregarUm(req.currentUser, req.params.id);
+      if (!c) return res.status(404).json({ message: "Chamado não encontrado" });
+      const uid = String(req.currentUser.id);
+      if (String(c.autorId) !== uid) return res.status(403).json({ message: "Só quem abriu pode cobrar" });
+      if (!STATUS_COBRAVEL.includes(c.status)) {
+        return res.status(400).json({ message: c.status === "respondido" ? "O responsável já respondeu. Use Complementar se ainda falta algo." : "Chamado encerrado. Use Reabrir." });
+      }
+      const libera = tsMs(c.podeCobrarEm);
+      if (libera && Date.now() < libera) {
+        const quando = new Date(libera).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+        return res.status(400).json({ message: `Ainda não dá para cobrar. Liberado a partir de ${quando}.` });
+      }
+      const nome = nomeDe(req.currentUser);
+      const n = Number(c.cobrancas || 0) + 1;
+      if (texto || files.length) {
+        const msgId = await inserirMsg(c.id, uid, nome, "publica", "autor", c.destinoKey, texto || "(anexo)");
+        await salvarAnexos(c.id, msgId, uid, files);
+      }
+      await db.execute(sql`UPDATE chamados SET cobrancas = ${n}, ultima_cobranca_em = now(), updated_at = now() WHERE id = ${c.id}`);
+      await inserirMsg(c.id, uid, nome, "sistema", null, null, `${nome} cobrou retorno (${n}ª cobrança)`);
+      let prioridade = c.prioridade;
+      if (n >= 2 && c.prioridade !== "Urgente") {
+        prioridade = "Urgente";
+        await db.execute(sql`UPDATE chamados SET prioridade = 'Urgente' WHERE id = ${c.id}`);
+        await inserirMsg(c.id, uid, "Sistema", "sistema", null, null, `Prioridade elevada para Urgente após a ${n}ª cobrança`);
+      }
+      const dias = Math.max(0, Math.floor((Date.now() - tsMs(c.createdAt)) / 86400000));
+      const aberto = dias === 0 ? "aberto hoje" : `aberto há ${dias} dia${dias > 1 ? "s" : ""}`;
+      const corpo = `⏰ COBRANÇA (${n}ª) do chamado ${c.codigo} — ${aberto}${prioridade === "Urgente" ? " — URGENTE" : ""}\n${c.assunto}\nCobrado por ${nome}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nResponder no Integra: ${APP_URL}/chamados?id=${c.id}`;
+      const dono = vis.destinos.find((x) => x.key === c.destinoKey);
+      const alvos = new Set((dono?.userIds || []).filter((x) => x !== uid));
+      if (n >= 3) {
+        // escalada: o Flávio também é avisado
+        const flavio = vis.destinos.find((x) => x.key === "flavio");
+        for (const x of flavio?.userIds || []) if (x !== uid) alvos.add(x);
+      }
+      avisarBg(Array.from(alvos), corpo);
+      res.json({ ok: true, cobrancas: n, prioridade });
     } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
   });
 

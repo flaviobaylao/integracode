@@ -16,6 +16,8 @@ type Chamado = {
   autorId: string; autorNome: string; destinoKey: string; destinoNome: string; destinoSetor: string;
   createdAt: string; updatedAt: string; solucionadoEm?: string | null; canceladoEm?: string | null; papel: "autor" | "dono" | "consultado" | "admin"; naoLido: boolean;
   consultas: Consulta[]; aguardando: string[]; consultaPendenteParaMim: boolean;
+  cobrancas?: number; ultimaCobrancaEm?: string | null; ultimaRespostaEm?: string | null; paradoDesde?: string | null;
+  cobrancaPendente?: boolean; cobravel?: boolean; podeCobrarEm?: string | null;
 };
 type Anexo = { id: string; nome: string; mime: string | null; tamanho: number | null };
 type Mensagem = { id: string; tipo: "publica" | "interna" | "sistema"; autorNome: string; deKey: string | null; paraKey: string | null; texto: string; createdAt: string; minha: boolean; anexos?: Anexo[] };
@@ -253,6 +255,25 @@ function Puxador({ dir, alvo, setValor, min, max, rotulo }: {
   );
 }
 
+// Há quanto tempo o chamado está sem ação do responsável (só para chamados aguardando o responsável).
+function paradoMs(c: Chamado): number | null {
+  if (!c.cobravel) return null;
+  const base = paraData(c.ultimaRespostaEm || c.createdAt).getTime();
+  return Number.isFinite(base) ? Math.max(0, Date.now() - base) : null;
+}
+function ChipParado({ c }: { c: Chamado }) {
+  const ms = paradoMs(c);
+  if (ms == null || ms < 3600000) return null;
+  const h = Math.floor(ms / 3600000), d = Math.floor(ms / 86400000);
+  const txt = d >= 1 ? `parado há ${d}d` : `parado há ${h}h`;
+  const cls = d >= 4 ? "bg-red-100 text-red-800" : d >= 2 ? "bg-orange-100 text-orange-800" : "bg-gray-100 text-gray-700";
+  return <span className={`px-2 py-0.5 rounded-full font-semibold ${cls}`} title="Tempo sem ação do responsável">⏱ {txt}</span>;
+}
+function ChipCobrado({ c }: { c: Chamado }) {
+  if (!c.cobrancaPendente || !c.cobrancas) return null;
+  return <span className="px-2 py-0.5 rounded-full font-bold bg-red-600 text-white" title={c.ultimaCobrancaEm ? `Última cobrança em ${dataHora(c.ultimaCobrancaEm)}` : ""}>⏰ Cobrado {c.cobrancas}x</span>;
+}
+
 function diaBrasilia(iso: string) {
   try { return paraData(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; }
 }
@@ -272,6 +293,7 @@ export default function Chamados() {
   const [statusAberto, setStatusAberto] = useState(false);
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
+  const [paradoMin, setParadoMin] = useState(0); // dias; 0 = qualquer
   // Ordem padrão: mais antigos em cima, os novos entram embaixo (A-Z). Seletor discreto troca.
   const [ordem, setOrdem] = useState<"asc" | "desc">(() => {
     try { return localStorage.getItem("chamados-ordem") === "desc" ? "desc" : "asc"; } catch { return "asc"; }
@@ -333,6 +355,11 @@ export default function Chamados() {
     })
     .filter((c) => statusSel.length === 0 || statusSel.includes(c.status) || (caixa === "arquivados" && !statusSel.some(encerrado)))
     .filter((c) => {
+      if (!paradoMin) return true;
+      const ms = paradoMs(c);
+      return ms != null && ms >= paradoMin * 86400000;
+    })
+    .filter((c) => {
       if (!dataDe && !dataAte) return true;
       const d = diaBrasilia(c.createdAt);
       if (dataDe && d < dataDe) return false;
@@ -345,7 +372,7 @@ export default function Chamados() {
     })
     .sort((a, b) => (ordem === "asc" ? a.numero - b.numero : b.numero - a.numero));
   const qtdArquivados = todos.filter((c) => encerrado(c.status)).length;
-  const filtrosAtivos = statusSel.length > 0 || !!dataDe || !!dataAte;
+  const filtrosAtivos = statusSel.length > 0 || !!dataDe || !!dataAte || paradoMin > 0;
 
   // Em ordem crescente os novos ficam embaixo: ao abrir/trocar aba ou ordem, rola até o fim.
   const chaveRolagem = `${caixa}|${ordem}|${listaQ.dataUpdatedAt ? 1 : 0}`;
@@ -443,9 +470,20 @@ export default function Chamados() {
                   <input type="date" value={dataAte} min={dataDe || undefined} onChange={(e) => setDataAte(e.target.value)} data-testid="filtro-data-ate"
                     className={`h-9 px-2 border rounded-lg bg-white ${dataAte ? "border-green-700" : ""}`} />
                 </label>
+                <label htmlFor="filtro-parados" className="sr-only">Parados há mais de</label>
+                <select id="filtro-parados" value={paradoMin} onChange={(e) => setParadoMin(Number(e.target.value))} data-testid="filtro-parados"
+                  title="Chamados sem ação do responsável"
+                  className={`h-9 px-2 border rounded-lg bg-white ${paradoMin ? "border-green-700 text-green-800 font-semibold" : "text-gray-700"}`}>
+                  <option value={0}>Parados: todos</option>
+                  <option value={1}>Parados +1 dia</option>
+                  <option value={2}>Parados +2 dias</option>
+                  <option value={3}>Parados +3 dias</option>
+                  <option value={5}>Parados +5 dias</option>
+                  <option value={7}>Parados +7 dias</option>
+                </select>
                 <button type="button" data-testid="limpar-filtros" disabled={!filtrosAtivos && !busca}
                   title="Limpar busca, status e período"
-                  onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); setBusca(""); setStatusAberto(false); }}
+                  onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); setBusca(""); setParadoMin(0); setStatusAberto(false); }}
                   className={`h-9 px-2.5 rounded-lg border text-sm flex items-center gap-1.5 ${filtrosAtivos || busca ? "border-red-300 text-red-700 bg-red-50 hover:bg-red-100 font-semibold" : "text-gray-400 bg-white cursor-default"}`}>
                   <i className="fas fa-times" aria-hidden="true"></i>Limpar
                 </button>
@@ -480,6 +518,8 @@ export default function Chamados() {
                         : <span className={`px-2 py-0.5 rounded-full font-semibold ${st.cls}`}>{st.label}</span>}
                       {c.aguardando.length > 0 && <span className="text-purple-800 font-semibold">⏳ Aguardando {c.aguardando.join(", ")}</span>}
                       <span className={`font-semibold ${PRIO_CLS[c.prioridade] || ""}`}>{c.prioridade}</span>
+                      <ChipCobrado c={c} />
+                      <ChipParado c={c} />
                       {c.naoLido && <span className="text-orange-700 font-bold">● novidade</span>}
                     </span>
                   </button>
@@ -624,6 +664,9 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         </div>
         <h2 className="text-lg sm:text-xl font-bold text-gray-900">{c.assunto}</h2>
         <span className="text-sm text-gray-600">Aberto por <b>{c.autorNome}</b> em {dataHora(c.createdAt)} · Prioridade <b className={PRIO_CLS[c.prioridade]}>{c.prioridade}</b></span>
+        {(c.cobrancaPendente || (paradoMs(c) || 0) >= 3600000) && (
+          <span className="flex flex-wrap gap-2 text-xs"><ChipCobrado c={c} /><ChipParado c={c} /></span>
+        )}
         {c.papel !== "autor" && c.consultas.length > 0 && (
           <span className="text-sm text-purple-800">Setores consultados: {c.consultas.map((x) => `${x.nome} (${x.pendente ? "aguardando" : "respondeu"})`).join(", ")}</span>
         )}
@@ -658,6 +701,28 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
                 onClick={() => acao(`/api/chamados/${c.id}/complementar`, { texto }, "Mensagem enviada")}>Enviar</Button>
             </div>
           </div>
+          {c.cobravel && (() => {
+            const libera = c.podeCobrarEm ? paraData(c.podeCobrarEm).getTime() : 0;
+            const liberado = !libera || Date.now() >= libera;
+            const n = (c.cobrancas || 0) + 1;
+            const efeito = n >= 3 ? "O responsável e o Flávio serão avisados no WhatsApp." : n === 2 ? "O responsável será avisado e a prioridade sobe para URGENTE." : "O responsável será avisado no WhatsApp.";
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                <span className="text-xs text-amber-900">
+                  {liberado
+                    ? <>Sem retorno? Cobre o responsável{texto.trim() ? " (o texto digitado vai junto como recado)" : ""}. {efeito}</>
+                    : <>Cobrança liberada a partir de <b>{dataHora(c.podeCobrarEm!)}</b> ({c.prioridade === "Urgente" ? "4h" : "24h"} sem retorno do responsável).</>}
+                </span>
+                <Button disabled={busy || !liberado} data-testid="button-cobrar"
+                  className="h-10 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
+                  onClick={() => {
+                    if (window.confirm(`Cobrar retorno do chamado ${c.codigo} (${n}ª cobrança)?\n${efeito}`))
+                      acao(`/api/chamados/${c.id}/cobrar`, { texto }, "Cobrança enviada", { exigeConteudo: false });
+                  }}>
+                  ⏰ Cobrar retorno{c.cobrancas ? ` (${n}ª)` : ""}</Button>
+              </div>
+            );
+          })()}
           <div className="flex justify-end pt-1">
             <button type="button" disabled={busy} data-testid="button-cancelar"
               className="text-sm text-red-700 hover:text-red-800 underline underline-offset-2 disabled:opacity-50"
