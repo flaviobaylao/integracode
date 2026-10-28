@@ -83,7 +83,7 @@ export default function Viagens() {
       <BackToDashboardButton />
       <div className="flex items-end justify-between gap-3 flex-wrap mt-3 mb-4">
         <div>
-          <h1 className="text-xl font-bold">Viagens com adiantamento</h1>
+          <h1 className="text-xl font-bold">Programação de Viagens e Outras Despesas</h1>
           <p className="text-xs text-muted-foreground">Ajuda de custo paga antes da viagem intermunicipal e prestação de contas na volta.</p>
         </div>
         <Button onClick={() => setNova(true)} disabled={!cfg}><Plus className="w-4 h-4 mr-1" /> Nova solicitação</Button>

@@ -304,7 +304,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       icon: 'fas fa-ticket-alt',
       items: [
         { id: 'chamados', label: 'Chamados', icon: 'fas fa-ticket-alt', available: true, badge: chamadosBadge > 0 ? chamadosBadge : null },
-        { id: 'viagens', label: 'Viagens com Adiantamento', icon: 'fas fa-suitcase-rolling', available: true, badge: null },
+        { id: 'viagens', label: 'Programação de Viagens e Outras Despesas', icon: 'fas fa-suitcase-rolling', available: true, badge: null },
       ],
     },
     {
