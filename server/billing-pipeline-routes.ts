@@ -12,8 +12,8 @@ import { baseDescontoCadastro, descontoCadastroJaAbatido, getDescontoBoletoAtivo
 import { createImmediateCharge } from './bb-pix-service';
 import { cieloDiag } from './hotsite-card';
 import { db } from './db';
-import { sql, eq, and, gte, isNull } from 'drizzle-orm';
-import { fiscalInvoices, fiscalInvoiceItems, salesCards, blockedOrders } from '@shared/schema';
+import { sql, eq, and, gte, lte, isNull, inArray } from 'drizzle-orm';
+import { fiscalInvoices, fiscalInvoiceItems, salesCards, blockedOrders, delegations, delegationCustomers } from '@shared/schema';
 import { resolveDestinationUf } from './cep-uf';
 import { escolherDocumentoFiscal } from './fiscal-doc';
 import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
@@ -428,6 +428,32 @@ export async function insertBlockedOrderIdempotent(
   return true;
 }
 
+// DELEGAÇÃO (Flavio, 28/out/2026): o usuário é DELEGADO ATIVO deste cliente? Cliente sob
+// delegação = o pedido é de QUEM IMPLANTOU (o delegado), e não do titular da carteira — mesmo
+// que o delegado não tenha papel vendedor/telemarketing. Falha de consulta = false (segue a regra normal).
+export async function isDelegadoAtivoDoCliente(userId: string, customerId: string): Promise<boolean> {
+  if (!userId || !customerId) return false;
+  try {
+    const now = new Date();
+    const rows = await db
+      .select({ id: delegationCustomers.id })
+      .from(delegationCustomers)
+      .innerJoin(delegations, eq(delegations.id, delegationCustomers.delegationId))
+      .where(and(
+        eq(delegationCustomers.toUserId, String(userId)),
+        eq(delegationCustomers.customerId, String(customerId)),
+        inArray(delegations.status, ['ativa', 'agendada'] as any),
+        lte(delegations.startsAt, now),
+        gte(delegations.endsAt, now),
+      ))
+      .limit(1);
+    return rows.length > 0;
+  } catch (e: any) {
+    console.warn('[BILLING-PIPELINE] checagem de delegação (segue sem):', e?.message);
+    return false;
+  }
+}
+
 export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: string, opts?: { skipDebtCheck?: boolean; scheduledBillingDate?: string | Date | null; skipHistoryGuard?: boolean }) {
   // BLINDAGEM: nunca estourar por card indefinido (ex.: card removido entre a varredura e o envio).
   // Sem isso, o erro "reading saleValue of undefined" abortava o roteamento e o pedido nao entrava.
@@ -521,7 +547,13 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
     // (um vendedor/telemarketing). Admin, coordenação, sistema e varredura só EMPURRAM o pedido —
     // NUNCA herdam a venda/comissão. Por isso o "registrante atual" só é dono do pedido quando ele
     // é vendedor/telemarketing; caso contrário buscamos o implantador durável (order_history/card).
-    const registeringIsSeller = !!registeringUser && ['vendedor', 'telemarketing'].includes(String(registeringUser.role));
+    const _registranteVendedor = !!registeringUser && ['vendedor', 'telemarketing'].includes(String(registeringUser.role));
+    // DELEGAÇÃO: cliente sob delegação ativa para o registrante → o pedido é dele (o delegado),
+    // qualquer que seja o papel. Ex.: PADA PAES SABORES (carteira Carlos, delegada ao Wilson).
+    const _registranteDelegado = !!registeringUser && !_registranteVendedor
+      && await isDelegadoAtivoDoCliente(String(registeringUser.id), String(salesCard.customerId || ''));
+    const registeringIsSeller = _registranteVendedor || _registranteDelegado;
+    if (_registranteDelegado) console.log(`🔁 [BILLING-PIPELINE] Delegação: pedido creditado ao delegado ${registeringUser.email}`);
 
     // ── IMPLANTADOR DURÁVEL (order_history) ─────────────────────────────────────
     // order_history.sellerId guarda QUEM REGISTROU o pedido — "pode ser diferente do
@@ -548,7 +580,8 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
           // o pedido em nome de alguém NÃO herda a comissão — mantém o vendedor do card.
           try {
             const _hu = await storage.getUser(String(_h.sellerId));
-            if (_hu && ['vendedor', 'telemarketing'].includes(String(_hu.role))) {
+            if (_hu && (['vendedor', 'telemarketing'].includes(String(_hu.role))
+                || await isDelegadoAtivoDoCliente(String(_hu.id), String(salesCard.customerId || '')))) {
               histSellerId = String(_h.sellerId);
               histSellerName = `${_hu.firstName || ''} ${_hu.lastName || ''}`.trim() || (_h.sellerName ? String(_h.sellerName) : null);
             }
