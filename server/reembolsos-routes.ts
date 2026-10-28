@@ -10,8 +10,8 @@ import { dataCalendario } from "@shared/tempo";
 // Qualquer usuário pede reembolso de algo que pagou do próprio bolso (gelo, café,
 // material...), com comprovante obrigatório e os dados para receber (Pix ou
 // conta bancária). Mesmo fluxo de aprovação da Programação de Viagens:
-//   aguardando (solicitante) -> aprovado (qualquer Admin, exceto o próprio
-//   solicitante) -> lancado (Financeiro/Lanucy: 1 clique cria a CONTA A PAGAR com
+//   aguardando (solicitante) -> aprovado (qualquer Admin; se o próprio Admin
+//   solicitante aprovar, fica marcado como AUTOAPROVADO para auditoria) -> lancado (Financeiro/Lanucy: 1 clique cria a CONTA A PAGAR com
 //   comprovantes anexados) -> pago (quando a conta a pagar é baixada)
 //   | recusado (admin) | cancelado (solicitante, enquanto aguarda).
 // O formulário já coleta os campos que a Conta a Pagar exige (fornecedor =
@@ -58,6 +58,7 @@ function ensure(): Promise<void> {
         payable_id varchar, lancado_por varchar, lancado_nome varchar, lancado_em timestamp, pago_em timestamp,
         created_at timestamp NOT NULL DEFAULT now(), updated_at timestamp NOT NULL DEFAULT now()
       )`);
+      await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS autoaprovado boolean NOT NULL DEFAULT false`);
       await db.execute(sql`CREATE TABLE IF NOT EXISTS reembolso_itens (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
         reembolso_id varchar NOT NULL, descricao varchar NOT NULL, data date, valor numeric NOT NULL DEFAULT 0, ordem integer NOT NULL DEFAULT 0
@@ -91,6 +92,18 @@ async function chamado(destinos: string[], assunto: string, descricao: string, a
 async function carregar(id: string) {
   return rows(await db.execute(sql`SELECT * FROM reembolsos WHERE id = ${id}`))[0] || null;
 }
+async function nomeCategoria(id: any): Promise<string> {
+  if (!id) return "—";
+  const c = rows(await db.execute(sql`SELECT code, name FROM chart_of_accounts WHERE id = ${String(id)}`))[0];
+  return c ? `${c.code} ${c.name}` : String(id);
+}
+async function mudancas(r: any, cat: any, venc: string, inst: any): Promise<string> {
+  const m: string[] = [];
+  if (String(cat || "") !== String(r.chart_account_id || "")) m.push(`categoria: ${await nomeCategoria(r.chart_account_id)} → ${await nomeCategoria(cat)}`);
+  if (venc !== dia(r.vencimento)) m.push(`vencimento: ${fmtData(dia(r.vencimento))} → ${fmtData(venc)}`);
+  if (String(inst || "") !== String(r.instancia || "")) m.push(`empresa: ${r.instancia || "—"} → ${inst || "—"}`);
+  return m.length ? ` Alterado — ${m.join("; ")}.` : "";
+}
 const podeVer = (u: any, r: any) => ehAprovador(u) || ehFinanceiro(u) || String(r.solicitante_id) === String(u.id);
 
 // Conta a pagar baixada => reembolso pago (sincroniza na leitura)
@@ -111,7 +124,7 @@ function saida(r: any) {
     favorecidoNome: r.favorecido_nome, favorecidoDoc: r.favorecido_doc || "",
     pixTipo: r.pix_tipo || "", pixChave: r.pix_chave || "", banco: r.banco || "", agencia: r.agencia || "", conta: r.conta || "", tipoConta: r.tipo_conta || "",
     obs: r.obs || "", status: r.status,
-    aprovadorNome: r.aprovador_nome, aprovadoEm: r.aprovado_em, valorAprovado: r.valor_aprovado == null ? null : num(r.valor_aprovado), motivoRecusa: r.motivo_recusa,
+    aprovadorNome: r.aprovador_nome, autoaprovado: !!r.autoaprovado, aprovadoEm: r.aprovado_em, valorAprovado: r.valor_aprovado == null ? null : num(r.valor_aprovado), motivoRecusa: r.motivo_recusa,
     payableId: r.payable_id, lancadoNome: r.lancado_nome, lancadoEm: r.lancado_em, pagoEm: r.pago_em, createdAt: r.created_at,
   };
 }
@@ -254,18 +267,25 @@ export function registerReembolsos(app: Express) {
     if (!ehAprovador(u)) return res.status(403).json({ message: "Só Admin aprova reembolso" });
     const r = await carregar(req.params.id);
     if (!r || r.status !== "aguardando") return res.status(400).json({ message: "Reembolso não está aguardando aprovação" });
-    if (String(r.solicitante_id) === String(u.id)) return res.status(403).json({ message: "Outro Admin precisa aprovar o seu próprio reembolso" });
+    const auto = String(r.solicitante_id) === String(u.id);
     const b = req.body || {};
     const valor = b.valorAprovado != null && num(b.valorAprovado) > 0 ? r2(num(b.valorAprovado)) : num(r.valor);
     const venc = ehDia(String(b.vencimento || "")) ? String(b.vencimento) : dia(r.vencimento);
     const inst = INSTANCIAS.includes(String(b.instancia || "")) ? String(b.instancia) : r.instancia;
     const cat = b.chartAccountId ? String(b.chartAccountId) : r.chart_account_id;
+    const alt = await mudancas(r, cat, venc, inst);
     await db.execute(sql`UPDATE reembolsos SET status = 'aprovado', valor_aprovado = ${valor}, vencimento = ${venc}::date, instancia = ${inst}, chart_account_id = ${cat},
-      aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), updated_at = now() WHERE id = ${r.id}`);
+      aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), autoaprovado = ${auto}, updated_at = now() WHERE id = ${r.id}`);
     const cod = codigo(r.numero);
-    await evento(r.id, nomeDe(u), `Aprovado ${fmtBRL(valor)}${valor !== num(r.valor) ? ` (pedido: ${fmtBRL(num(r.valor))})` : ""}. Enviado ao Financeiro para lançar no Contas a Pagar.`);
+    await evento(r.id, nomeDe(u), `${auto ? "⚠ AUTOAPROVADO (o próprio solicitante aprovou) — " : ""}Aprovado ${fmtBRL(valor)}${valor !== num(r.valor) ? ` (pedido: ${fmtBRL(num(r.valor))})` : ""}. Enviado ao Financeiro para lançar no Contas a Pagar.${alt}`);
+    if (auto) {
+      try {
+        const { logFinancialAudit } = await import("./financial-audit");
+        await logFinancialAudit({ req, action: "update" as any, entity: "reembolso", entityId: r.id, amount: valor, note: `AUTOAPROVAÇÃO: ${cod} aprovado pelo próprio solicitante (${nomeDe(u)})` });
+      } catch {}
+    }
     await chamado(["lanucy"], `Reembolso ${cod} — lançar no Contas a Pagar`,
-      `Aprovado por ${nomeDe(u)}: reembolsar ${fmtBRL(valor)} a ${r.favorecido_nome} até ${fmtData(venc)}.\n${dadosPagamento(r)}\nComprovantes no pedido.\n\nLance com 1 clique em: ${APP_URL}/reembolsos?id=${r.id}`, u);
+      `${auto ? "⚠ Autoaprovado (o próprio solicitante aprovou). " : ""}Aprovado por ${nomeDe(u)}: reembolsar ${fmtBRL(valor)} a ${r.favorecido_nome} até ${fmtData(venc)}.\n${dadosPagamento(r)}\nComprovantes no pedido.\n\nLance com 1 clique em: ${APP_URL}/reembolsos?id=${r.id}`, u);
     res.json(saida(await carregar(r.id)));
   });
 
@@ -304,6 +324,7 @@ export function registerReembolsos(app: Express) {
     if (!cat) return res.status(400).json({ message: "Escolha a categoria DRE antes de lançar" });
     const valor = num(r.valor_aprovado ?? r.valor);
     const cod = codigo(r.numero);
+    const alt = await mudancas(r, cat, venc, inst);
     try {
       const { storage } = await import("./storage");
       const itens = rows(await db.execute(sql`SELECT descricao, valor FROM reembolso_itens WHERE reembolso_id = ${r.id} ORDER BY ordem`));
@@ -322,7 +343,7 @@ export function registerReembolsos(app: Express) {
         omieInstanceId: inst || null,
         source: "manual",
         externalId: `reembolso:${r.id}`,
-        notes: `Reembolso ${cod} pedido por ${r.solicitante_nome}, aprovado por ${r.aprovador_nome || "-"}.\nPagar por: ${pagamento}${r.favorecido_doc ? `\nCPF/CNPJ: ${r.favorecido_doc}` : ""}\nItens: ${itens.map((i) => `${i.descricao} ${fmtBRL(num(i.valor))}`).join("; ")}\nOrigem: ${APP_URL}/reembolsos?id=${r.id}`,
+        notes: `Reembolso ${cod} pedido por ${r.solicitante_nome}, aprovado por ${r.aprovador_nome || "-"}${r.autoaprovado ? " (AUTOAPROVADO pelo próprio solicitante)" : ""}.\nPagar por: ${pagamento}${r.favorecido_doc ? `\nCPF/CNPJ: ${r.favorecido_doc}` : ""}\nItens: ${itens.map((i) => `${i.descricao} ${fmtBRL(num(i.valor))}`).join("; ")}\nOrigem: ${APP_URL}/reembolsos?id=${r.id}`,
         createdBy: u.email || null,
       } as any);
       // comprovantes -> anexos da conta a pagar (mesmo armazenamento base64 do módulo financeiro)
@@ -338,7 +359,7 @@ export function registerReembolsos(app: Express) {
       } catch {}
       await db.execute(sql`UPDATE reembolsos SET status = 'lancado', payable_id = ${payable.id}, vencimento = ${venc}::date, instancia = ${inst}, chart_account_id = ${cat},
         lancado_por = ${String(u.id)}, lancado_nome = ${nomeDe(u)}, lancado_em = now(), updated_at = now() WHERE id = ${r.id}`);
-      await evento(r.id, nomeDe(u), `Lançado no Contas a Pagar (título ${cod}, venc. ${fmtData(venc)}, ${fmtBRL(valor)}) com ${anx.length} comprovante(s) anexado(s).`);
+      await evento(r.id, nomeDe(u), `Lançado no Contas a Pagar (título ${cod}, venc. ${fmtData(venc)}, ${fmtBRL(valor)}) com ${anx.length} comprovante(s) anexado(s).${alt}`);
       res.json({ ...saida(await carregar(r.id)), payableId: payable.id });
     } catch (e: any) {
       console.error("[reembolsos] lancar", e);

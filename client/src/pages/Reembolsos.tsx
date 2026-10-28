@@ -20,7 +20,7 @@ type Reembolso = {
   id: string; numero: number; codigo: string; solicitanteId: string; solicitanteNome: string;
   descricao: string; dataDespesa: string; valor: number; vencimento: string; forma: string; instancia: string | null; chartAccountId: string | null;
   favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string; banco: string; agencia: string; conta: string; tipoConta: string;
-  obs: string; status: string; aprovadorNome: string | null; valorAprovado: number | null; motivoRecusa: string | null;
+  obs: string; status: string; aprovadorNome: string | null; autoaprovado?: boolean; valorAprovado: number | null; motivoRecusa: string | null;
   payableId: string | null; lancadoNome: string | null; lancadoEm: string | null; pagoEm: string | null; createdAt: string;
 };
 type Detalhe = Reembolso & {
@@ -136,7 +136,7 @@ export default function Reembolsos() {
                     <td className="p-3 max-w-[320px] truncate">{r.descricao}</td>
                     <td className="p-3 whitespace-nowrap">{DT(r.vencimento)}</td>
                     <td className="p-3 text-right tabular-nums">{BRL(r.valorAprovado ?? r.valor)}</td>
-                    <td className="p-3"><Pill status={r.status} /></td>
+                    <td className="p-3"><Pill status={r.status} />{r.autoaprovado && <span className="ml-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-900" title="Aprovado pelo próprio solicitante">auto</span>}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -303,7 +303,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
       </Card>
 
       <div className="flex justify-between items-center gap-3 flex-wrap">
-        <span className="text-xs text-muted-foreground">{faltando.length ? `Falta: ${faltando.join(", ")}.` : "Tudo certo. Vai para aprovação de um Admin (Flávio, Elbber ou Cinthia)."}</span>
+        <span className="text-xs text-muted-foreground">{faltando.length ? `Falta: ${faltando.join(", ")}.` : "Tudo certo. Vai para aprovação de um Admin (Flávio, Elbber ou Cinthia). Categoria, vencimento e empresa podem ser ajustados por quem aprova e pelo Financeiro."}</span>
         <div className="flex gap-2">
           <Button variant="outline" onClick={onCancel}>Cancelar</Button>
           <Button onClick={enviar} disabled={enviando || preparando} data-testid="button-enviar-reembolso">{enviando ? "Enviando…" : `Enviar pedido de ${BRL(total)}`}</Button>
@@ -382,7 +382,7 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
     <div className="p-4 md:p-6 max-w-5xl mx-auto grid gap-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={onBack}><ArrowLeft className="w-4 h-4" /> Reembolsos</button>
-        <div className="flex items-center gap-2"><b>{r.codigo}</b><Pill status={r.status} /></div>
+        <div className="flex items-center gap-2"><b>{r.codigo}</b><Pill status={r.status} />{r.autoaprovado && <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-900">⚠ Autoaprovado</span>}</div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         {ETAPAS.map((e, i) => (
@@ -407,17 +407,18 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
           {atual === 1 && (<>
             <div className="rounded-lg border p-3"><Resumo /></div>
             <Comprovantes />
-            {r.status === "aguardando" ? (cfg.aprovador && !souSolicitante ? (
+            {r.status === "aguardando" ? (cfg.aprovador ? (
               <div className="grid gap-3">
                 {Ajustes({ comValor: true })}
+                {souSolicitante && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">Este pedido é seu. Você pode aprovar, mas a aprovação fica registrada como <b>autoaprovação</b> no histórico e na auditoria.</p>}
                 <div className="flex gap-2 flex-wrap items-center">
-                  <Button disabled={busy || !cat} data-testid="button-aprovar" onClick={() => acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/aprovar`, { valorAprovado: String(val).replace(",", "."), chartAccountId: cat, vencimento: venc, instancia: inst }), "Aprovado e enviado ao Financeiro")}>Aprovar e enviar ao Financeiro</Button>
+                  <Button disabled={busy || !cat} data-testid="button-aprovar" onClick={() => { if (souSolicitante && !window.confirm(`Autoaprovar o seu próprio pedido ${r.codigo}?\nFica registrado como AUTOAPROVADO para auditoria.`)) return; acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/aprovar`, { valorAprovado: String(val).replace(",", "."), chartAccountId: cat, vencimento: venc, instancia: inst }), "Aprovado e enviado ao Financeiro"); }}>{souSolicitante ? "Autoaprovar e enviar ao Financeiro" : "Aprovar e enviar ao Financeiro"}</Button>
                   <Input className="w-64" placeholder="Motivo da recusa (opcional)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
                   <Button variant="outline" className="text-red-700" disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/recusar`, { motivo }), "Pedido recusado")}>Recusar</Button>
                 </div>
               </div>
-            ) : <p className="text-sm text-muted-foreground">{souSolicitante && cfg.aprovador ? "Outro Admin precisa aprovar o seu próprio pedido." : "Aguardando aprovação de um Admin (Flávio, Elbber ou Cinthia)."}</p>) : (
-              <p className="text-sm">{r.status === "recusado" ? <span className="text-red-700">Recusado por {r.aprovadorNome}{r.motivoRecusa ? `: ${r.motivoRecusa}` : "."}</span> : r.status === "cancelado" ? "Pedido cancelado." : `Aprovado por ${r.aprovadorNome}: ${BRL(r.valorAprovado)}.`}</p>
+            ) : <p className="text-sm text-muted-foreground">Aguardando aprovação de um Admin (Flávio, Elbber ou Cinthia).</p>) : (
+              <p className="text-sm">{r.status === "recusado" ? <span className="text-red-700">Recusado por {r.aprovadorNome}{r.motivoRecusa ? `: ${r.motivoRecusa}` : "."}</span> : r.status === "cancelado" ? "Pedido cancelado." : <>Aprovado por {r.aprovadorNome}: {BRL(r.valorAprovado)}.{r.autoaprovado && <span className="ml-2 inline-block rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-900">⚠ Autoaprovado</span>}</>}</p>
             )}
           </>)}
 
