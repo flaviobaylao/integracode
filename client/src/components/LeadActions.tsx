@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import FotoPicker from "@/components/FotoPicker";
+import CnpjLupa, { mascaraCnpj } from "@/components/CnpjLupa";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle, XCircle, Clock, FileText, MapPin, Camera, UserCheck } from "lucide-react";
 
@@ -434,12 +435,49 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               </div>
               <div>
                 <Label>{(cust.customerType || "pessoa_juridica") === "pessoa_fisica" ? "CPF" : "CNPJ"}</Label>
-                <Input
-                  value={(cust.customerType === "pessoa_fisica" ? cust.cpf : cust.cnpj) || ""}
-                  onChange={(e) => setCust({ ...cust, [cust.customerType === "pessoa_fisica" ? "cpf" : "cnpj"]: e.target.value })}
-                />
+                {cust.customerType === "pessoa_fisica" ? (
+                  <Input value={cust.cpf || ""} onChange={(e) => setCust({ ...cust, cpf: e.target.value })} />
+                ) : (
+                  <div className="flex gap-1.5">
+                    <Input
+                      value={cust.cnpj || ""}
+                      inputMode="numeric"
+                      placeholder="00.000.000/0000-00"
+                      onChange={(e) => setCust({ ...cust, cnpj: mascaraCnpj(e.target.value) })}
+                      data-testid={`input-converter-cnpj-${leadId}`}
+                    />
+                    {/* 🔍 Lupa: busca o CNPJ na Receita e preenche o formulário */}
+                    <CnpjLupa
+                      cnpj={cust.cnpj || ""}
+                      testId={`button-converter-cnpj-lupa-${leadId}`}
+                      onData={(d) => setCust((prev: any) => ({
+                        ...prev,
+                        cnpj: d.cnpj,
+                        companyName: d.razaoSocial || prev.companyName,
+                        name: d.nomeFantasia || d.razaoSocial || prev.name,
+                        address: d.endereco || prev.address,
+                        neighborhood: d.bairro || prev.neighborhood,
+                        city: d.cidade || prev.city,
+                        state: d.estado || prev.state,
+                        zipCode: d.cep || prev.zipCode,
+                        phone: prev.phone || d.telefone,
+                        email: prev.email || d.email,
+                        _receita: d,
+                      }))}
+                    />
+                  </div>
+                )}
               </div>
             </div>
+            {cust._receita && cust.customerType !== "pessoa_fisica" && (
+              <div className={`rounded-md border p-2.5 text-xs space-y-0.5 ${cust._receita.jaCadastrado || (cust._receita.situacao && cust._receita.situacao.toUpperCase() !== "ATIVA") ? "border-red-300 bg-red-50 dark:bg-red-950/30" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"}`} data-testid={`receita-resumo-${leadId}`}>
+                <p className="font-semibold">Receita Federal · {cust._receita.situacao || "—"}</p>
+                <p>Razão social: <span className="font-medium">{cust._receita.razaoSocial || "—"}</span></p>
+                {cust._receita.nomeFantasia && <p>Nome fantasia: {cust._receita.nomeFantasia}</p>}
+                <p className="text-muted-foreground">{[cust._receita.enderecoCompleto, cust._receita.cidade && `${cust._receita.cidade}/${cust._receita.estado}`, cust._receita.cep && `CEP ${cust._receita.cep}`].filter(Boolean).join(" · ")}</p>
+                {cust._receita.jaCadastrado && <p className="text-red-700 dark:text-red-400 font-medium">⚠️ CNPJ já cadastrado: {cust._receita.jaCadastrado.nome}{cust._receita.jaCadastrado.vendedor ? ` · ${cust._receita.jaCadastrado.vendedor}` : ""}{cust._receita.jaCadastrado.isActive ? "" : " (inativo)"}</p>}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Telefone *</Label>
@@ -469,6 +507,20 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               <div>
                 <Label>Bairro</Label>
                 <Input value={cust.neighborhood || ""} onChange={(e) => setCust({ ...cust, neighborhood: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div>
+                <Label>CEP</Label>
+                <Input value={cust.zipCode || ""} inputMode="numeric" onChange={(e) => setCust({ ...cust, zipCode: e.target.value })} />
+              </div>
+              <div>
+                <Label>UF</Label>
+                <Input value={cust.state || ""} maxLength={2} onChange={(e) => setCust({ ...cust, state: e.target.value.toUpperCase() })} />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <Label>E-mail</Label>
+                <Input value={cust.email || ""} type="email" onChange={(e) => setCust({ ...cust, email: e.target.value })} />
               </div>
             </div>
             <p className="text-xs text-muted-foreground">Dias de visita padrão: Segunda. Ajuste depois no cadastro do cliente, se necessário.</p>
