@@ -157,17 +157,20 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
     enabled: !!c,
   });
   useEffect(() => { setTarifa(null); }, [cidade]);
+  // Rodagem local: calculada (25 km por dia extra), mas pode ser digitada; null = automática
+  const [rodagem, setRodagem] = useState<number | null>(null);
   const calc = useMemo(() => {
     if (!c) return null;
     const dias = Math.max(1, Math.round((Date.parse(fim) - Date.parse(ini)) / 864e5) + 1), noites = dias - 1;
     let idaVolta = 0, fonte = "";
     if (est?.historicoIdaVolta?.length) { idaVolta = mediana(est.historicoIdaVolta); fonte = `mediana de ${est.historicoIdaVolta.length} viagem(ns) anterior(es)`; }
     else { const base = est?.casa || { lat: -16.6864, lon: -49.2643 }; idaVolta = 2 * hav(base.lat, base.lon, c[2], c[3]) * 1.3; fonte = est?.casa ? "estimativa a partir da casa do vendedor" : "estimativa a partir de Goiânia (casa do vendedor não cadastrada)"; }
-    const local = dias > 1 ? (dias - 1) * 25 : 0, km = (idaVolta + local) * 1.1;
+    const localAuto = dias > 1 ? (dias - 1) * 25 : 0;
+    const local = rodagem ?? localAuto, km = (idaVolta + local) * 1.1;
     const t = tarifa ?? cfg.tarifa[c[1]] ?? 0.65;
     const vKm = km * t, vAl = alim * dias, vHo = hosp * noites, vOu = cfg.admin ? Math.max(0, outros) : 0;
-    return { dias, noites, idaVolta, local, km, t, vKm, vAl, vHo, vOu, extras: vAl + vHo + vOu, total: vKm + vAl + vHo + vOu, fonte, uf: c[1] };
-  }, [c, ini, fim, est, tarifa, alim, hosp, outros, cfg]);
+    return { dias, noites, idaVolta, local, localAuto, km, t, vKm, vAl, vHo, vOu, extras: vAl + vHo + vOu, total: vKm + vAl + vHo + vOu, fonte, uf: c[1] };
+  }, [c, ini, fim, est, tarifa, alim, hosp, outros, rodagem, cfg]);
   const faltando = [
     !instancia && "a empresa",
     !favNome.trim() && "o favorecido",
@@ -180,7 +183,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
     if (faltando.length) { erro(new Error("Falta informar: " + faltando.join(", "))); return; }
     setEnviando(true);
     try {
-      const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, tarifa: calc.t, alimDia: alim, hospNoite: hosp, outros: calc.vOu, vencimento: venc || ini, obs,
+      const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, rodagemKm: calc.local, tarifa: calc.t, alimDia: alim, hospNoite: hosp, outros: calc.vOu, vencimento: venc || ini, obs,
         instancia, forma, favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, banco, agencia, conta, tipoConta });
       onOk(r.id);
     } catch (e) { erro(e); } finally { setEnviando(false); }
@@ -214,8 +217,15 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
                 <div>
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Km previsto · {calc.uf}</div>
                   <Linha k={`Ida e volta (${calc.fonte})`} v={`${KM(calc.idaVolta)} km`} />
-                  <Linha k={`Rodagem local (${calc.dias > 1 ? `${calc.dias - 1} dia(s) × 25 km` : "bate-volta"})`} v={`${KM(calc.local)} km`} />
-                  <Linha k="Total com +10% (regra da Rota do Dia)" v={`${KM(calc.km)} km`} />
+                  <div className="flex justify-between items-center gap-3 py-1.5 border-b text-sm">
+                    <span className="text-muted-foreground">Rodagem local <span className="text-[11px]">({rodagem == null ? (calc.dias > 1 ? `automático: ${calc.dias - 1} dia(s) × 25 km` : "automático: bate-volta") : <>digitado · <button type="button" className="underline" onClick={() => setRodagem(null)}>voltar ao automático ({KM(calc.localAuto)} km)</button></>})</span></span>
+                    <span className="flex items-center gap-1 shrink-0">
+                      <Input type="number" min="0" step="1" inputMode="decimal" className="h-8 w-24 text-right tabular-nums" data-testid="input-rodagem"
+                        value={Math.round(calc.local * 10) / 10} onChange={(e) => setRodagem(Math.max(0, Number(e.target.value) || 0))} />
+                      <span>km</span>
+                    </span>
+                  </div>
+                  <Linha k="Total (ida e volta + rodagem local) + 10%" v={`${KM(calc.km)} km`} />
                 </div>
                 <div className="grid gap-2 content-start">
                   <label className="grid gap-1 text-sm font-medium">R$ por km <span className="text-xs font-normal text-muted-foreground">{calc.uf === "DF" ? "DF: R$ 0,75" : "GO: R$ 0,65"} · {cfg.admin ? "editável pelo admin" : "definido pelo admin"}</span>

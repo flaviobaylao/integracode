@@ -280,7 +280,9 @@ export function registerViagens(app: Express) {
       if (forma === "pix") { if (!pixChave) return res.status(400).json({ message: "Informe a chave PIX" }); const ep = validarPix(pixTipo, pixChave); if (ep) return res.status(400).json({ message: ep }); }
       if (forma === "transferencia" && (!banco || !agencia || !conta)) return res.status(400).json({ message: "Informe banco, agência e conta" });
       const idaVolta = Math.max(0, num(b.idaVoltaKm));
-      const km = r2((idaVolta + (dias > 1 ? (dias - 1) * 25 : 0)) * 1.1);
+      // rodagem local: automática (25 km por dia extra) ou digitada na solicitação
+      const rodagem = b.rodagemKm != null && b.rodagemKm !== "" && isFinite(Number(b.rodagemKm)) ? Math.max(0, num(b.rodagemKm)) : (dias > 1 ? (dias - 1) * 25 : 0);
+      const km = r2((idaVolta + rodagem) * 1.1);
       const tarifa = adm && b.tarifa != null ? num(b.tarifa, TARIFA[uf]) : TARIFA[uf];
       const alim = adm && b.alimDia != null ? num(b.alimDia, ALIM_PADRAO) : ALIM_PADRAO;
       const hosp = adm && b.hospNoite != null ? num(b.hospNoite, HOSP_PADRAO) : HOSP_PADRAO;
