@@ -8164,10 +8164,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // dono da carteira do cliente. Fixa o vendedor do pedido no implantador (robusto mesmo se o e-mail
             // nao resolver no autoSend). NAO altera o card salvo nem rezoneia o cliente: cardForPipeline e uma
             // copia usada so no pipeline; o cadastro do cliente permanece na carteira/vendedor original.
-            if (user && user.id && (user.role === 'vendedor' || user.role === 'telemarketing')) {
-              cardForPipeline.sellerId = user.id;
+            // `user` desta rota vem de req.userId (inexistente) -> usa o usuario logado de verdade.
+            const _impl: any = req.currentUser || user;
+            const { isDelegadoAtivoDoCliente } = await import('./billing-pipeline-routes.js');
+            if (_impl && _impl.id && (_impl.role === 'vendedor' || _impl.role === 'telemarketing'
+                || await isDelegadoAtivoDoCliente(String(_impl.id), String(salesCard.customerId || '')))) {
+              cardForPipeline.sellerId = _impl.id;
             }
-            await autoSendToBillingPipeline(cardForPipeline, user?.email || 'system');
+            await autoSendToBillingPipeline(cardForPipeline, _impl?.email || 'system');
           }
         } catch (e: any) { console.error('[PUT sales-card] autoSend pipeline (ignorado):', e?.message); }
       } else {
@@ -15790,8 +15794,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: 'Erro ao enviar para faturamento: ' + (error as Error).message });
     }
   };
-  app.post('/api/sales-cards/:id/send-to-billing', isAuthenticated, enviarPedidoParaFaturamento);
-  app.post('/api/sales-cards/:id/send-to-omie', isAuthenticated, enviarPedidoParaFaturamento);
+  // authenticateUser (e nao isAuthenticated): preenche req.currentUser. Sem isto o pipeline recebia
+  // 'system' e o pedido ficava com o vendedor do card, nao com quem lancou (ex.: delegado Wilson
+  // lancando PADA PAES SABORES da carteira do Carlos -> saia Carlos).
+  app.post('/api/sales-cards/:id/send-to-billing', authenticateUser, enviarPedidoParaFaturamento);
+  app.post('/api/sales-cards/:id/send-to-omie', authenticateUser, enviarPedidoParaFaturamento);
 
   // ===== SISTEMA DE VENDAS RECORRENTES =====
 
@@ -16768,7 +16775,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // "Pedido feito por". Admin/coordenação/administrativo NÃO herdam (mantêm o vendedor do card).
       const _fuUser = (req as any).currentUser || (req as any).user;
       const _fuRole = String(_fuUser?.role || '');
-      if (_fuUser?.id && ['vendedor', 'telemarketing'].includes(_fuRole)) {
+      let _fuDelegado = false;
+      if (_fuUser?.id && !['vendedor', 'telemarketing'].includes(_fuRole)) {
+        // DELEGAÇÃO: cliente delegado a quem está finalizando → o pedido é do delegado.
+        try {
+          const { isDelegadoAtivoDoCliente } = await import('./billing-pipeline-routes.js');
+          const _cardFu = await storage.getSalesCard(id);
+          _fuDelegado = await isDelegadoAtivoDoCliente(String(_fuUser.id), String(_cardFu?.customerId || ''));
+        } catch {}
+      }
+      if (_fuUser?.id && (['vendedor', 'telemarketing'].includes(_fuRole) || _fuDelegado)) {
         (updateData as any).sellerId = _fuUser.id;
       }
 
