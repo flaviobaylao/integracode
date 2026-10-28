@@ -87,6 +87,12 @@ async function chamado(destinos: string[], assunto: string, descricao: string, a
 }
 const APP_URL = process.env.APP_URL || "https://integracode-production.up.railway.app";
 
+async function fecharChamados(id: string, etapa: string, texto: string, u: any) {
+  try {
+    const { encerrarChamadosVinculados } = await import("./chamados-routes");
+    await encerrarChamadosVinculados({ modulo: "viagens", id, assuntoContem: etapa, texto, autor: { id: String(u.id), nome: nomeDe(u) } });
+  } catch (e: any) { console.warn("[viagens] fechar chamados:", e?.message || e); }
+}
 async function carregar(id: string) {
   return rows(await db.execute(sql`SELECT * FROM viagens WHERE id = ${id}`))[0] || null;
 }
@@ -251,6 +257,7 @@ export function registerViagens(app: Express) {
     const cod = "VG-" + String(v.numero).padStart(4, "0");
     await recalcRotas(v);
     await evento(v.id, nomeDe(u), `Aprovado ${fmtBRL(valor)}. Enviado ao Financeiro.`);
+    await fecharChamados(v.id, "aprovar", `✅ Aprovado — ${fmtBRL(valor)}`, u);
     await chamado(["lanucy"], `Viagem ${cod} — pagar adiantamento`,
       `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.vendedor_nome} antes de ${fmtData(v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nAnexe o comprovante e marque como pago em: ${APP_URL}/viagens?id=${v.id}`, u);
     res.json(saida(await carregar(v.id)));
@@ -261,9 +268,11 @@ export function registerViagens(app: Express) {
     if (!isAdm(u)) return res.status(403).json({ message: "Só Admin ou Adm recusa" });
     const v = await carregar(req.params.id);
     if (!v || v.status !== "aguardando") return res.status(400).json({ message: "Viagem não está aguardando aprovação" });
-    const motivo = String(req.body?.motivo || "").slice(0, 1000);
+    const motivo = String(req.body?.motivo || "").trim().slice(0, 1000);
+    if (motivo.length < 3) return res.status(400).json({ message: "Escreva o motivo da recusa" });
     await db.execute(sql`UPDATE viagens SET status = 'recusado', motivo_recusa = ${motivo}, aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), updated_at = now() WHERE id = ${v.id}`);
     await evento(v.id, nomeDe(u), `Recusado${motivo ? ": " + motivo : "."}`);
+    await fecharChamados(v.id, "aprovar", `❌ Recusado — motivo: ${motivo}`, u);
     res.json(saida(await carregar(v.id)));
   });
 
@@ -279,6 +288,7 @@ export function registerViagens(app: Express) {
     }
     await db.execute(sql`UPDATE viagens SET status = 'pago', pago_por = ${String(u.id)}, pago_em = now(), updated_at = now() WHERE id = ${v.id}`);
     await evento(v.id, nomeDe(u), `Pago ${fmtBRL(num(v.valor_aprovado))}.`);
+    await fecharChamados(v.id, "pagar", `✅ Adiantamento pago — ${fmtBRL(num(v.valor_aprovado))}`, u);
     res.json(saida(await carregar(v.id)));
   });
 
@@ -371,6 +381,7 @@ export function registerViagens(app: Express) {
     if (!v || v.status !== "prestado") return res.status(400).json({ message: "Viagem não está com prestação enviada" });
     await db.execute(sql`UPDATE viagens SET status = 'encerrado', encerrado_por = ${String(u.id)}, encerrado_em = now(), updated_at = now() WHERE id = ${v.id}`);
     await evento(v.id, nomeDe(u), `Acerto conferido e viagem encerrada.`);
+    await fecharChamados(v.id, "prestação", "✅ Prestação de contas conferida — viagem encerrada", u);
     res.json(saida(await carregar(v.id)));
   });
 

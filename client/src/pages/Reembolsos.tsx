@@ -334,6 +334,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
 // ------------------------------- Detalhe -------------------------------------
 function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; cfg: Cfg; onBack: () => void; recarregar: () => void; erro: (e: any) => void }) {
   const { toast } = useToast();
+  const deChamado = useMemo(() => new URLSearchParams(window.location.search).get("de"), []);
   const { data: r, isLoading, refetch } = useQuery<Detalhe>({ queryKey: ["/api/reembolsos", id], queryFn: () => apiRequest("GET", `/api/reembolsos/${id}`) });
   const [etapa, setEtapa] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -400,7 +401,10 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto grid gap-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={onBack}><ArrowLeft className="w-4 h-4" /> Reembolsos</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {deChamado && <a href={`/chamados?id=${deChamado}`} data-testid="button-voltar-chamado" className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-green-700 text-green-800 text-sm font-semibold hover:bg-green-50"><ArrowLeft className="w-4 h-4" /> Voltar para Chamados</a>}
+          <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={onBack}><ArrowLeft className="w-4 h-4" /> Reembolsos</button>
+        </div>
         <div className="flex items-center gap-2"><b>{r.codigo}</b><Pill status={r.status} />{r.autoaprovado && <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-900">⚠ Autoaprovado</span>}</div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">

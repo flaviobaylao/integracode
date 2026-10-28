@@ -223,6 +223,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
 // ------------------------------- Detalhe -------------------------------------
 function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg: Cfg; onBack: () => void; recarregar: () => void; erro: (e: any) => void }) {
   const { toast } = useToast();
+  const deChamado = useMemo(() => new URLSearchParams(window.location.search).get("de"), []);
   const { data: v, isLoading } = useQuery<Detalhe>({ queryKey: ["/api/viagens", id], queryFn: () => apiRequest("GET", `/api/viagens/${id}`) });
   const [etapa, setEtapa] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -276,7 +277,10 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto grid gap-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={onBack}><ArrowLeft className="w-4 h-4" /> Viagens</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {deChamado && <a href={`/chamados?id=${deChamado}`} data-testid="button-voltar-chamado" className="inline-flex items-center gap-1 h-9 px-3 rounded-lg border border-green-700 text-green-800 text-sm font-semibold hover:bg-green-50"><ArrowLeft className="w-4 h-4" /> Voltar para Chamados</a>}
+          <button className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={onBack}><ArrowLeft className="w-4 h-4" /> Viagens</button>
+        </div>
         <div className="flex items-center gap-2"><b>{v.codigo}</b><Pill status={v.status} /></div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -305,8 +309,8 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
                 </div>
                 <div className="flex gap-2 flex-wrap items-center">
                   <Button disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/aprovar`, { tarifa: apr.tarifa, alimDia: apr.alim, hospNoite: apr.hosp, valorAprovado: valorApr }), "Aprovado e enviado ao Financeiro")}>Aprovar e enviar ao Financeiro</Button>
-                  <Input className="w-64" placeholder="Motivo da recusa (opcional)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
-                  <Button variant="outline" className="text-red-700" disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/recusar`, { motivo }), "Solicitação recusada")}>Recusar</Button>
+                  <Input className="w-72" placeholder="Motivo da recusa (obrigatório)" value={motivo} onChange={(e) => setMotivo(e.target.value)} data-testid="input-motivo-recusa" />
+                  <Button variant="outline" className="text-red-700" disabled={busy || motivo.trim().length < 3} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/recusar`, { motivo: motivo.trim() }), "Solicitação recusada")}>Recusar</Button>
                 </div>
               </div>
             ) : <p className="text-sm text-muted-foreground">Aguardando aprovação de um Admin ou Adm.</p>) : (

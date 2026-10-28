@@ -271,6 +271,46 @@ export async function abrirChamadoSistema(opts: {
   return ids;
 }
 
+// ---------- fecha chamados de aviso vinculados a um módulo (28/out/2026) ----------
+// Os chamados abertos por Reembolsos/Viagens levam o link do item na descrição
+// (".../reembolsos?id=X" ou ".../viagens?id=X"). Quando a etapa é decidida no módulo
+// (aprovar/recusar, lançar, pagar...), os chamados daquela etapa ainda abertos recebem
+// a resposta automática (ex.: "Aprovado" / "Recusado — motivo: ...") e são finalizados
+// como solucionados, com registro de quem decidiu. O autor do chamado é avisado 1 vez.
+export async function encerrarChamadosVinculados(opts: {
+  modulo: "reembolsos" | "viagens";
+  id: string;
+  assuntoContem: string;           // identifica a etapa (ex.: "aprovar", "lançar", "pagar")
+  texto: string;                   // resposta automática
+  autor: { id: string; nome: string };
+}): Promise<number> {
+  try {
+    await ensureTables();
+    const link = `%/${opts.modulo}?id=${opts.id}%`;
+    const abertos = rows(await db.execute(sql`SELECT id, numero, autor_id, destino_key, assunto FROM chamados
+      WHERE descricao LIKE ${link} AND assunto ILIKE ${"%" + opts.assuntoContem + "%"} AND status NOT IN ('solucionado','cancelado')`));
+    if (!abertos.length) return 0;
+    const avisados = new Set<string>();
+    for (const c of abertos) {
+      await inserirMsg(String(c.id), opts.autor.id, opts.autor.nome, "publica", c.destino_key, "autor", opts.texto);
+      await db.execute(sql`UPDATE chamados SET status = 'solucionado', solucionado_em = now(), solucionado_por = ${opts.autor.id},
+        respondido_em = coalesce(respondido_em, now()), recebido_por = coalesce(recebido_por, ${opts.autor.id}), recebido_em = coalesce(recebido_em, now()),
+        updated_at = now() WHERE id = ${String(c.id)}`);
+      await db.execute(sql`UPDATE chamado_consultas SET pendente = false WHERE chamado_id = ${String(c.id)} AND pendente = true`);
+      await inserirMsg(String(c.id), opts.autor.id, opts.autor.nome, "sistema", null, null, `${opts.autor.nome} finalizou o chamado pelo módulo (${opts.modulo === "reembolsos" ? "Reembolso" : "Viagens"})`);
+      // quem decidiu já leu
+      await db.execute(sql`INSERT INTO chamado_leituras (chamado_id, user_id, lido_em) VALUES (${String(c.id)}, ${opts.autor.id}, now())
+        ON CONFLICT (chamado_id, user_id) DO UPDATE SET lido_em = now()`);
+      const autorCh = String(c.autor_id || "");
+      if (autorCh && autorCh !== "sistema" && autorCh !== opts.autor.id && !avisados.has(autorCh)) {
+        avisados.add(autorCh);
+        avisarBg([autorCh], `📌 ${c.assunto}\n${opts.texto}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);
+      }
+    }
+    return abertos.length;
+  } catch (e: any) { console.warn("[chamados] encerrar vinculados:", e?.message || e); return 0; }
+}
+
 // ---------- cobrança (27/out/2026) ----------
 // Quem abriu pode "Cobrar retorno" de um chamado aberto parado: 24h sem ação do
 // responsável (4h se Urgente), contadas da última ação dele ou da última cobrança.

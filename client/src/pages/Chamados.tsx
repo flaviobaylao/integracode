@@ -274,6 +274,17 @@ function ChipCobrado({ c }: { c: Chamado }) {
   return <span className="px-2 py-0.5 rounded-full font-bold bg-red-600 text-white" title={c.ultimaCobrancaEm ? `Última cobrança em ${dataHora(c.ultimaCobrancaEm)}` : ""}>⏰ Cobrado {c.cobrancas}x</span>;
 }
 
+// Chamado aberto por um módulo (Reembolso / Viagens): o link do item vem na descrição.
+function moduloVinculado(c: Chamado): { url: string; rotulo: string; etapa: string } | null {
+  const m = String(c.descricao || "").match(/\/(reembolsos|viagens)\?id=([0-9a-zA-Z-]{8,})/);
+  if (!m) return null;
+  const a = c.assunto.toLowerCase();
+  const etapa = a.includes("aprovar") ? "aprovar" : a.includes("lançar") ? "lançar" : a.includes("pagar") ? "pagar" : a.includes("prestação") ? "conferir" : "abrir";
+  const nome = m[1] === "reembolsos" ? "Reembolso" : "Viagem";
+  const rotulo = etapa === "abrir" ? `Abrir ${nome}` : `Abrir ${nome} para ${etapa}`;
+  return { url: `/${m[1]}?id=${m[2]}&de=${c.id}`, rotulo, etapa };
+}
+
 function diaBrasilia(iso: string) {
   try { return paraData(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; }
 }
@@ -667,6 +678,19 @@ function Detalhe({ id, perfil, onVoltar, onMudou }: { id: string; perfil?: Perfi
         {(c.cobrancaPendente || (paradoMs(c) || 0) >= 3600000) && (
           <span className="flex flex-wrap gap-2 text-xs"><ChipCobrado c={c} /><ChipParado c={c} /></span>
         )}
+        {(() => {
+          const mv = moduloVinculado(c);
+          if (!mv) return null;
+          return (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <a href={mv.url} data-testid="button-abrir-modulo"
+                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm font-semibold ${encerrado(c.status) ? "bg-gray-100 text-gray-800 border" : "bg-green-700 hover:bg-green-800 text-white"}`}>
+                <i className={`fas ${mv.url.startsWith("/reembolsos") ? "fa-receipt" : "fa-suitcase-rolling"}`} aria-hidden="true"></i>{encerrado(c.status) ? mv.rotulo.replace(/ para .*/, "") : mv.rotulo}
+              </a>
+              {!encerrado(c.status) && <span className="self-center text-xs text-gray-600">Decida no módulo: a resposta ("Aprovado" ou "Recusado" com o motivo) volta para este chamado automaticamente.</span>}
+            </div>
+          );
+        })()}
         {c.papel !== "autor" && c.consultas.length > 0 && (
           <span className="text-sm text-purple-800">Setores consultados: {c.consultas.map((x) => `${x.nome} (${x.pendente ? "aguardando" : "respondeu"})`).join(", ")}</span>
         )}

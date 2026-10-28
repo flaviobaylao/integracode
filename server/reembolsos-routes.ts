@@ -117,6 +117,12 @@ async function chamado(destinos: string[], assunto: string, descricao: string, a
     await abrirChamadoSistema({ destinoKeys: destinos, assunto, descricao, autor: autor ? { id: String(autor.id), nome: nomeDe(autor), role: String(autor.role || "") } : null });
   } catch (e: any) { console.warn("[reembolsos] chamado falhou:", e?.message || e); }
 }
+async function fecharChamados(id: string, etapa: string, texto: string, u: any) {
+  try {
+    const { encerrarChamadosVinculados } = await import("./chamados-routes");
+    await encerrarChamadosVinculados({ modulo: "reembolsos", id, assuntoContem: etapa, texto, autor: { id: String(u.id), nome: nomeDe(u) } });
+  } catch (e: any) { console.warn("[reembolsos] fechar chamados:", e?.message || e); }
+}
 async function carregar(id: string) {
   return rows(await db.execute(sql`SELECT * FROM reembolsos WHERE id = ${id}`))[0] || null;
 }
@@ -313,6 +319,7 @@ export function registerReembolsos(app: Express) {
         await logFinancialAudit({ req, action: "update" as any, entity: "reembolso", entityId: r.id, amount: valor, note: `AUTOAPROVAÇÃO: ${cod} aprovado pelo próprio solicitante (${nomeDe(u)})` });
       } catch {}
     }
+    await fecharChamados(r.id, "aprovar", `✅ Aprovado — ${fmtBRL(valor)}${auto ? " (autoaprovado)" : ""}`, u);
     await chamado(["lanucy"], `Reembolso ${cod} — lançar no Contas a Pagar`,
       `${auto ? "⚠ Autoaprovado (o próprio solicitante aprovou). " : ""}Aprovado por ${nomeDe(u)}: reembolsar ${fmtBRL(valor)} a ${r.favorecido_nome} até ${fmtData(venc)}.\n${dadosPagamento(r)}\nComprovantes no pedido.\n\nLance com 1 clique em: ${APP_URL}/reembolsos?id=${r.id}`, u);
     res.json(saida(await carregar(r.id)));
@@ -327,6 +334,7 @@ export function registerReembolsos(app: Express) {
     if (motivo.length < 3) return res.status(400).json({ message: "Escreva o motivo da recusa" });
     await db.execute(sql`UPDATE reembolsos SET status = 'recusado', motivo_recusa = ${motivo || null}, aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), updated_at = now() WHERE id = ${r.id}`);
     await evento(r.id, nomeDe(u), `Recusado${motivo ? ": " + motivo : "."}`);
+    await fecharChamados(r.id, "aprovar", `❌ Recusado — motivo: ${motivo}`, u);
     res.json(saida(await carregar(r.id)));
   });
 
@@ -337,6 +345,7 @@ export function registerReembolsos(app: Express) {
     if (r.status !== "aguardando") return res.status(400).json({ message: "Só dá para cancelar enquanto aguarda aprovação" });
     await db.execute(sql`UPDATE reembolsos SET status = 'cancelado', updated_at = now() WHERE id = ${r.id}`);
     await evento(r.id, nomeDe(u), "Cancelado pelo solicitante.");
+    await fecharChamados(r.id, "aprovar", "🚫 Pedido cancelado pelo solicitante", u);
     res.json(saida(await carregar(r.id)));
   });
 
@@ -389,6 +398,7 @@ export function registerReembolsos(app: Express) {
       } catch {}
       await db.execute(sql`UPDATE reembolsos SET status = 'lancado', payable_id = ${payable.id}, vencimento = ${venc}::date, instancia = ${inst}, chart_account_id = ${cat},
         lancado_por = ${String(u.id)}, lancado_nome = ${nomeDe(u)}, lancado_em = now(), updated_at = now() WHERE id = ${r.id}`);
+      await fecharChamados(r.id, "lançar", `✅ Lançado no Contas a Pagar — ${fmtBRL(valor)}, venc. ${fmtData(venc)}`, u);
       await evento(r.id, nomeDe(u), `Lançado no Contas a Pagar (título ${cod}, venc. ${fmtData(venc)}, ${fmtBRL(valor)}) com ${anx.length} comprovante(s) anexado(s).${alt}`);
       res.json({ ...saida(await carregar(r.id)), payableId: payable.id });
     } catch (e: any) {
