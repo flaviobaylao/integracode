@@ -238,7 +238,30 @@ export async function calculateActualRouteDistance(
   let haveOrigin = false;
   // Regra out/2026: a origem e a CASA — a ida casa -> 1o check-in passa a contar.
   const regraCasa = kmRegraCasa(_diaRota(route));
-  if (regraCasa && coordOk(homeLat, homeLon)) {
+  // PERNOITE FORA (out/2026): em dias cobertos por uma Viagem com Adiantamento aprovada
+  // (aprovado/pago/prestado/encerrado), o vendedor dorme no destino. Entao:
+  //  - 1o dia: sai de casa, mas NAO volta pra casa (fecha no ultimo check-in);
+  //  - dias do meio: comeca no 1o check-in e fecha no ultimo (sem casa);
+  //  - ultimo dia: comeca no 1o check-in e volta pra casa.
+  let semIdaCasa = false, semVoltaCasa = false;
+  if (regraCasa && (route as any).sellerId) {
+    try {
+      const { db } = await import('./db');
+      const { sql } = await import('drizzle-orm');
+      const _sid = String((route as any).sellerId);
+      const _dia = _diaRota(route).slice(0, 10);
+      const vr: any = await db.execute(sql`
+        SELECT to_char(v.data_ini, 'YYYY-MM-DD') AS ini, to_char(v.data_fim, 'YYYY-MM-DD') AS fim
+        FROM viagens v JOIN users u ON u.id = v.vendedor_id
+        WHERE v.status IN ('aprovado','pago','prestado','encerrado')
+          AND ${_dia}::date BETWEEN v.data_ini AND v.data_fim AND v.data_fim > v.data_ini
+          AND (u.id = ${_sid} OR u.omie_vendor_code = ${_sid} OR 'omie-vendor-' || COALESCE(u.omie_vendor_code, '') = ${_sid})
+        ORDER BY v.data_ini LIMIT 1`);
+      const vg = (vr && (vr.rows || vr))[0];
+      if (vg) { semIdaCasa = _dia > vg.ini; semVoltaCasa = _dia < vg.fim; }
+    } catch (e) { /* tabela viagens ainda nao existe: regra normal */ }
+  }
+  if (regraCasa && !semIdaCasa && coordOk(homeLat, homeLon)) {
     previousLat = homeLat;
     previousLon = homeLon;
     haveOrigin = true;
@@ -329,7 +352,7 @@ export async function calculateActualRouteDistance(
 
   // Distancia de RETORNO para casa (ultimo check-in -> casa do vendedor). So conta se
   // houve visita valida e a casa (resolvida acima, com fallback p/ cadastro) e valida.
-  if (validatedVisits > 0 && haveOrigin && coordOk(homeLat, homeLon)) {
+  if (validatedVisits > 0 && haveOrigin && !semVoltaCasa && coordOk(homeLat, homeLon)) {
     try {
       const returnDistanceMeters = await calculateRealDistance(
         previousLat as number,
