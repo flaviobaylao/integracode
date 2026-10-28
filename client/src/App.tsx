@@ -97,6 +97,7 @@ import RecebimentoEstoque from "@/pages/RecebimentoEstoque";
 import LixeiraFinanceira from "@/pages/LixeiraFinanceira";
 import Repescagem from "@/pages/Repescagem";
 import MinhaAgenda from "@/pages/MinhaAgenda";
+import Viagens from "@/pages/Viagens";
 import PixCharges from "@/pages/PixCharges";
 import Visitas from "@/pages/Visitas";
 import ResumoVisitas from "@/pages/ResumoVisitas";
@@ -392,6 +393,7 @@ function Router() {
           <Route path="/lixeira-financeira" component={LixeiraFinanceira} />
           <Route path="/repescagem" component={Repescagem} />
           <Route path="/minha-agenda" component={MinhaAgenda} />
+      <Route path="/viagens" component={Viagens} />
           <Route path="/pix-charges" component={PixCharges} />
           <Route path="/visitas" component={Visitas} />
           <Route path="/resumo-visitas" component={ResumoVisitas} />
