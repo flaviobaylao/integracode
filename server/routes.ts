@@ -11706,6 +11706,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         razaoSocial: dadosCNPJ.nome, // API retorna 'nome' como razão social
         nomeFantasia: dadosCNPJ.fantasia || '', // API retorna 'fantasia' como nome fantasia
         endereco: receitaService.formatarEndereco(dadosCNPJ),
+        // partes do endereço separadas (formulários com campo próprio de bairro)
+        logradouro: dadosCNPJ.logradouro || '',
+        numero: dadosCNPJ.numero || '',
+        complemento: dadosCNPJ.complemento || '',
+        bairro: dadosCNPJ.bairro || '',
         cidade: dadosCNPJ.municipio,
         estado: dadosCNPJ.uf,
         cep: dadosCNPJ.cep,
