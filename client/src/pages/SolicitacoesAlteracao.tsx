@@ -19,13 +19,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { AnexosPicker, prepararAnexos, arquivosDoColar, type AnexoNovo } from "@/components/change-request/Anexos";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -190,6 +191,93 @@ function FotoCheckin({ r, tamanho }: { r: any; tamanho: string }) {
           className={`mt-1 ${tamanho} rounded border object-contain bg-white`} />
       </a>
     </div>
+  );
+}
+
+// 📅 Enviar para Agenda (28/out/2026): cria um evento na Minha Agenda de quem está logado.
+// Título = nome do cliente do report; dia, horário e descrição escolhidos no popup (a descrição
+// já vem com o resumo do report e pode ser editada). Usa o mesmo POST /api/agenda/items da Agenda.
+function ymdLocal(d: Date) {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function resumoDoReport(r: any): string {
+  const rd = r?.details || {};
+  const linhas: string[] = [];
+  if (rd.reportLabel) linhas.push(`Report: ${rd.reportLabel}`);
+  if (rd.motivo) linhas.push(`Motivo: ${rd.motivo}`);
+  if (rd.texto) linhas.push(`Observação do vendedor: ${rd.texto}`);
+  const vend = r?.sellerName || r?.requestedByName;
+  if (vend) linhas.push(`Vendedor: ${vend}`);
+  if (r?.createdAt) { try { linhas.push(`Reportado em: ${new Date(r.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`); } catch {} }
+  return linhas.join("\n");
+}
+function EnviarParaAgenda({ r, compacto }: { r: any; compacto?: boolean }) {
+  const { toast } = useToast();
+  const titulo = String(r?.entityName || r?.entityId || "").trim();
+  const [aberto, setAberto] = useState(false);
+  const [dia, setDia] = useState("");
+  const [hora, setHora] = useState("09:00");
+  const [descricao, setDescricao] = useState("");
+  const abrir = () => {
+    const amanha = new Date(); amanha.setDate(amanha.getDate() + 1);
+    setDia(ymdLocal(amanha)); setHora("09:00"); setDescricao(resumoDoReport(r)); setAberto(true);
+  };
+  const criar = useMutation({
+    mutationFn: async () => {
+      const [y, m, d] = dia.split("-").map(Number);
+      const [hh, mm] = hora.split(":").map(Number);
+      const start = new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+      const end = new Date(start.getTime() + 60 * 60 * 1000);
+      return apiRequest("POST", "/api/agenda/items", { title: titulo, start, end, allDay: false, description: descricao.trim() });
+    },
+    onSuccess: () => {
+      const [y, m, d] = dia.split("-");
+      toast({ title: "Evento criado na Agenda", description: `${titulo} · ${d}/${m}/${y} às ${hora}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/agenda/items"] });
+      setAberto(false);
+    },
+    onError: (e: any) => toast({ title: "Erro ao criar evento", description: String(e?.message || "Tente novamente.").replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
+  });
+  const valido = !!titulo && /^\d{4}-\d{2}-\d{2}$/.test(dia) && /^\d{2}:\d{2}$/.test(hora);
+  return (
+    <>
+      <Button size="sm" variant="outline" className={`border-sky-400 text-sky-700 hover:bg-sky-50${compacto ? " h-7 text-xs" : ""}`}
+        title="Cria um evento na sua Agenda com o nome do cliente" data-testid={`cr-agenda-${r.id}`} onClick={abrir}>
+        <CalendarPlus className={compacto ? "h-3.5 w-3.5 mr-1" : "h-4 w-4 mr-1"} /> Enviar para Agenda
+      </Button>
+      <Dialog open={aberto} onOpenChange={(o) => { if (!criar.isPending) setAberto(o); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enviar para Agenda</DialogTitle>
+            <DialogDescription>O evento entra na sua Agenda com o nome do cliente como título.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-1">Título</div>
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-semibold" data-testid={`cr-agenda-titulo-${r.id}`}>{titulo || "—"}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-medium text-muted-foreground">Dia
+                <Input type="date" value={dia} onChange={(e) => setDia(e.target.value)} className="mt-1" data-testid={`cr-agenda-dia-${r.id}`} />
+              </label>
+              <label className="text-xs font-medium text-muted-foreground">Horário
+                <Input type="time" value={hora} onChange={(e) => setHora(e.target.value)} className="mt-1" data-testid={`cr-agenda-hora-${r.id}`} />
+              </label>
+            </div>
+            <label className="block text-xs font-medium text-muted-foreground">Descrição
+              <Textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={5} className="mt-1 text-sm" data-testid={`cr-agenda-desc-${r.id}`} />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAberto(false)} disabled={criar.isPending}>Cancelar</Button>
+            <Button onClick={() => criar.mutate()} disabled={!valido || criar.isPending} data-testid={`cr-agenda-salvar-${r.id}`}>
+              {criar.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CalendarPlus className="h-4 w-4 mr-1" /> Criar evento</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -548,6 +636,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             onClick={() => whatsappMut.mutate()}>
             {whatsappMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><MessageCircle className="h-4 w-4 mr-1" /> Envio Whatsapp</>}
           </Button>
+          <EnviarParaAgenda r={r} />
           {r.entityType === "customer" && (<>
             <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50" disabled={busy}
               title="Envia este cliente para a repescagem no dia seguinte (decisão do Admin). Depois ele volta a respeitar as regras normais."
@@ -791,6 +880,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
               onClick={() => whatsappMut.mutate()}>
               {whatsappMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><MessageCircle className="h-3.5 w-3.5 mr-1" /> Envio Whatsapp</>}
             </Button>
+            <EnviarParaAgenda r={r} compacto />
           </div>
         )}
       </div>
