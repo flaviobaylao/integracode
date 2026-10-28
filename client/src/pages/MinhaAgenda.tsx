@@ -22,13 +22,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ChevronLeft, ChevronRight, Plus, Search, MapPin, Check, Copy, Pencil, Trash2, X, Mic, Square, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, MapPin, Check, Copy, Pencil, Trash2, X, Mic, Square, Loader2, Paperclip, Download } from "lucide-react";
 
 type Ev = {
   id: string; title: string; description: string; start: string; end: string | null;
   allDay: boolean; location: string; color: string; status: "pending" | "done"; priority: string;
 };
 type Draft = Partial<Omit<Ev, "start" | "end">> & { start: Date; end?: Date | null };
+type Anexo = { id: string; filename: string; mimetype: string; size: number; url: string };
+
+async function enviarAnexos(itemId: string, files: File[]): Promise<Anexo[]> {
+  if (!files.length) return [];
+  const fd = new FormData();
+  files.forEach((f) => fd.append("files", f, f.name));
+  return apiRequestMultipart("POST", `/api/agenda/items/${itemId}/files`, fd);
+}
+const fmtTamanho = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+const ehImagem = (m: string) => /^image\//.test(m || "");
 
 const COR_PADRAO = "#2a78d6";
 // Cores por vendedor no modo Clientes (fixas por posicao na lista).
@@ -443,6 +453,7 @@ export default function MinhaAgenda() {
           {sel.ev.location && <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{sel.ev.location}</p>}
           {sel.ev.description && <p className="text-sm mt-2 whitespace-pre-wrap">{sel.ev.description}</p>}
           <p className="text-xs text-muted-foreground mt-2">{sel.ev.status === "done" ? "✓ Concluído" : "Pendente"}</p>
+          <AnexosResumo itemId={sel.ev.id} />
           <div className="flex gap-1.5 mt-3 flex-wrap">
             <Button variant="outline" size="sm" onClick={() => { const ev = sel.ev; setSel(null); setModal({ draft: { ...ev, start: new Date(ev.start), end: ev.end ? new Date(ev.end) : null }, mode: "edit" }); }}><Pencil className="h-3.5 w-3.5 mr-1" />Editar</Button>
             <Button variant="outline" size="sm" onClick={() => duplicar(sel.ev)} data-testid="agenda-duplicar"><Copy className="h-3.5 w-3.5 mr-1" />Duplicar</Button>
@@ -457,9 +468,16 @@ export default function MinhaAgenda() {
           draft={modal.draft} mode={modal.mode} cores={cores.map((c) => c.color)}
           onClose={() => setModal(null)}
           onDelete={modal.mode === "edit" && modal.draft.id ? () => { excluir.mutate(modal.draft.id!); setModal(null); } : undefined}
-          onSave={(d) => {
+          onSave={(d, pendentes) => {
             if (modal.mode === "edit" && modal.draft.id) alterar.mutate({ id: modal.draft.id, ...d });
-            else criar.mutate(d);
+            else criar.mutate(d, {
+              onSuccess: async (created: any) => {
+                if (created?.id && pendentes?.length) {
+                  try { await enviarAnexos(created.id, pendentes); toast({ title: `${pendentes.length} anexo(s) enviado(s)` }); }
+                  catch (e: any) { erro(e); }
+                }
+              },
+            });
             setModal(null);
             api()?.gotoDate(d.start);
           }}
@@ -471,7 +489,7 @@ export default function MinhaAgenda() {
 
 function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
   draft: Draft; mode: "new" | "edit" | "dup"; cores: string[];
-  onClose: () => void; onSave: (d: any) => void; onDelete?: () => void;
+  onClose: () => void; onSave: (d: any, pendentes: File[]) => void; onDelete?: () => void;
 }) {
   const [titulo, setTitulo] = useState(draft.title || "");
   const [allDay, setAllDay] = useState(!!draft.allDay);
@@ -482,6 +500,36 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
   const [cor, setCor] = useState(draft.color || COR_PADRAO);
   const [status, setStatus] = useState<"pending" | "done">(draft.status || "pending");
   const [erro, setErro] = useState("");
+
+  // Anexos: evento existente -> sobe na hora; evento novo -> fica pendente e sobe apos criar
+  const itemId = mode === "edit" ? draft.id : undefined;
+  const [pendentes, setPendentes] = useState<File[]>([]);
+  const [enviando, setEnviando] = useState(false);
+  const { data: anexos = [], refetch: recarregarAnexos } = useQuery<Anexo[]>({
+    queryKey: ["/api/agenda/items", itemId, "files"],
+    queryFn: () => apiRequest("GET", `/api/agenda/items/${itemId}/files`),
+    enabled: !!itemId,
+  });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const escolherArquivos = async (lista: FileList | null) => {
+    const arr = Array.from(lista || []); if (!arr.length) return;
+    const grandes = arr.filter((f) => f.size > 10 * 1024 * 1024);
+    if (grandes.length) { setErro(`Arquivo acima de 10 MB: ${grandes.map((f) => f.name).join(", ")}`); return; }
+    setErro("");
+    if (itemId) {
+      setEnviando(true);
+      try { await enviarAnexos(itemId, arr); await recarregarAnexos(); }
+      catch (e: any) { setErro(e?.message || "Falha ao anexar"); }
+      finally { setEnviando(false); }
+    } else {
+      setPendentes((p) => [...p, ...arr]);
+    }
+    if (fileRef.current) fileRef.current.value = "";
+  };
+  const removerAnexo = async (id: string) => {
+    try { await apiRequest("DELETE", `/api/agenda/files/${id}`); await recarregarAnexos(); }
+    catch (e: any) { setErro(e?.message || "Falha ao excluir anexo"); }
+  };
 
   // Gravar audio -> transcrever (Whisper) -> texto entra na Descricao
   const [gravando, setGravando] = useState(false);
@@ -544,7 +592,7 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
     const t = titulo.trim(); if (!t) return setErro("Informe o título");
     const s = new Date(inicio); if (isNaN(s.getTime())) return setErro("Informe o início");
     let e: Date | null = fim ? new Date(fim) : null; if (e && isNaN(e.getTime())) e = null;
-    onSave({ title: t, allDay, start: s, end: allDay ? null : e, location: local.trim(), description: desc.trim(), color: cor, status });
+    onSave({ title: t, allDay, start: s, end: allDay ? null : e, location: local.trim(), description: desc.trim(), color: cor, status }, pendentes);
   };
 
   return (
@@ -586,6 +634,37 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
               <input id="agenda-f-cor" type="color" value={cor} onChange={(e) => setCor(e.target.value)} className="h-7 w-9 p-0.5 border rounded cursor-pointer bg-transparent" title="Cor personalizada" />
             </div>
           </div>
+          <div className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Anexos
+            <div className="flex flex-col gap-1.5">
+              {anexos.map((a) => (
+                <div key={a.id} className="flex items-center gap-2 text-sm text-foreground">
+                  {ehImagem(a.mimetype)
+                    ? <a href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.filename} className="h-10 w-10 rounded object-cover border" /></a>
+                    : <Paperclip className="h-4 w-4 text-muted-foreground flex-none" />}
+                  <a href={a.url} target="_blank" rel="noreferrer" className="flex-1 truncate hover:underline">{a.filename}</a>
+                  <span className="text-xs text-muted-foreground">{fmtTamanho(a.size)}</span>
+                  <a href={`${a.url}?download=1`} className="h-7 w-7 rounded hover:bg-muted flex items-center justify-center" title="Baixar"><Download className="h-3.5 w-3.5" /></a>
+                  <button type="button" className="h-7 w-7 rounded hover:bg-muted flex items-center justify-center text-red-600" title="Excluir anexo" onClick={() => removerAnexo(a.id)}><X className="h-3.5 w-3.5" /></button>
+                </div>
+              ))}
+              {pendentes.map((f, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm text-foreground">
+                  {ehImagem(f.type) ? <img src={URL.createObjectURL(f)} alt={f.name} className="h-10 w-10 rounded object-cover border" /> : <Paperclip className="h-4 w-4 text-muted-foreground flex-none" />}
+                  <span className="flex-1 truncate">{f.name}</span>
+                  <span className="text-xs text-muted-foreground">{fmtTamanho(f.size)} · sobe ao salvar</span>
+                  <button type="button" className="h-7 w-7 rounded hover:bg-muted flex items-center justify-center text-red-600" title="Remover" onClick={() => setPendentes((p) => p.filter((_, j) => j !== i))}><X className="h-3.5 w-3.5" /></button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <input ref={fileRef} id="agenda-f-arquivos" type="file" multiple className="hidden" onChange={(e) => escolherArquivos(e.target.files)} />
+                <Button type="button" variant="outline" size="sm" disabled={enviando} onClick={() => fileRef.current?.click()} data-testid="agenda-anexar">
+                  {enviando ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Paperclip className="h-3.5 w-3.5 mr-1" />}
+                  {enviando ? "Enviando…" : "Anexar arquivo ou imagem"}
+                </Button>
+                <span className="text-[11px]">Até 10 MB por arquivo.</span>
+              </div>
+            </div>
+          </div>
           <label className="text-xs text-muted-foreground flex flex-col gap-1">Status
             <select id="agenda-f-status" value={status} onChange={(e) => setStatus(e.target.value as any)} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
               <option value="pending">Pendente</option><option value="done">Concluído</option>
@@ -601,5 +680,23 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AnexosResumo({ itemId }: { itemId: string }) {
+  const { data: anexos = [] } = useQuery<Anexo[]>({
+    queryKey: ["/api/agenda/items", itemId, "files"],
+    queryFn: () => apiRequest("GET", `/api/agenda/items/${itemId}/files`),
+  });
+  if (!anexos.length) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      {anexos.map((a) => (
+        <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm hover:underline">
+          {ehImagem(a.mimetype) ? <img src={a.url} alt="" className="h-8 w-8 rounded object-cover border" /> : <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />}
+          <span className="truncate">{a.filename}</span>
+        </a>
+      ))}
+    </div>
   );
 }

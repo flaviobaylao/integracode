@@ -45,6 +45,18 @@ function ensureTable(): Promise<void> {
       await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS end_at timestamp`);
       await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS updated_at timestamp DEFAULT now()`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_pai_user_start ON personal_agenda_items (user_id, start_at)`);
+      // Anexos (arquivos/imagens) guardados no banco, como chat_media/photo_media
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS personal_agenda_files (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        item_id varchar NOT NULL,
+        user_id varchar NOT NULL,
+        filename varchar NOT NULL,
+        mimetype varchar,
+        size integer,
+        data text NOT NULL,
+        created_at timestamp DEFAULT now()
+      )`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_paf_item ON personal_agenda_files (item_id)`);
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;
@@ -297,11 +309,72 @@ export function registerAgenda(app: Express) {
     }
   });
 
+  // ---------- anexos ----------
+  const uploadFiles = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 10 } });
+  const fileOut = (f: any) => ({ id: f.id, filename: f.filename, mimetype: f.mimetype || "application/octet-stream", size: Number(f.size || 0), createdAt: f.created_at, url: `/api/agenda/files/${f.id}` });
+  const donoDoItem = async (uid: string, itemId: string) => {
+    const r: any = await db.execute(sql`SELECT id FROM personal_agenda_items WHERE id = ${itemId} AND user_id = ${uid}`);
+    return !!r.rows?.length;
+  };
+
+  app.get("/api/agenda/items/:id/files", authenticateUser, async (req: Request, res: Response) => {
+    const uid = await guard(req, res); if (!uid) return;
+    try {
+      if (!(await donoDoItem(uid, req.params.id))) return res.status(404).json({ message: "Evento não encontrado" });
+      const r: any = await db.execute(sql`SELECT id, filename, mimetype, size, created_at FROM personal_agenda_files WHERE item_id = ${req.params.id} ORDER BY created_at`);
+      res.json((r.rows || []).map(fileOut));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Erro ao listar anexos" }); }
+  });
+
+  app.post("/api/agenda/items/:id/files", authenticateUser, uploadFiles.array("files", 10), async (req: Request, res: Response) => {
+    const uid = await guard(req, res); if (!uid) return;
+    try {
+      if (!(await donoDoItem(uid, req.params.id))) return res.status(404).json({ message: "Evento não encontrado" });
+      const files = ((req as any).files || []) as Array<{ buffer: Buffer; mimetype: string; originalname: string; size: number }>;
+      if (!files.length) return res.status(400).json({ message: "Nenhum arquivo recebido" });
+      const out: any[] = [];
+      for (const f of files) {
+        const nome = String(f.originalname || "arquivo").slice(0, 200);
+        const r: any = await db.execute(sql`
+          INSERT INTO personal_agenda_files (id, item_id, user_id, filename, mimetype, size, data, created_at)
+          VALUES (gen_random_uuid()::text, ${req.params.id}, ${uid}, ${nome}, ${f.mimetype || "application/octet-stream"}, ${f.size}, ${f.buffer.toString("base64")}, now())
+          RETURNING id, filename, mimetype, size, created_at`);
+        out.push(fileOut(r.rows[0]));
+      }
+      res.status(201).json(out);
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Erro ao anexar" }); }
+  });
+
+  // Serve o arquivo (cookie same-origin acompanha <img src>/<a href>)
+  app.get("/api/agenda/files/:id", authenticateUser, async (req: Request, res: Response) => {
+    const uid = await guard(req, res); if (!uid) return;
+    try {
+      const r: any = await db.execute(sql`SELECT filename, mimetype, data FROM personal_agenda_files WHERE id = ${req.params.id} AND user_id = ${uid} LIMIT 1`);
+      const row = r.rows?.[0];
+      if (!row) return res.status(404).send("not found");
+      const buf = Buffer.from(String(row.data), "base64");
+      res.setHeader("Content-Type", row.mimetype || "application/octet-stream");
+      res.setHeader("Content-Disposition", `${req.query.download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(row.filename)}`);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.send(buf);
+    } catch (e: any) { res.status(500).send("erro"); }
+  });
+
+  app.delete("/api/agenda/files/:id", authenticateUser, async (req: Request, res: Response) => {
+    const uid = await guard(req, res); if (!uid) return;
+    try {
+      const r: any = await db.execute(sql`DELETE FROM personal_agenda_files WHERE id = ${req.params.id} AND user_id = ${uid} RETURNING id`);
+      if (!r.rows?.length) return res.status(404).json({ message: "Anexo não encontrado" });
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Erro ao excluir anexo" }); }
+  });
+
   app.delete("/api/agenda/items/:id", authenticateUser, async (req: Request, res: Response) => {
     const uid = await guard(req, res); if (!uid) return;
     try {
       const r: any = await db.execute(sql`
         DELETE FROM personal_agenda_items WHERE id = ${req.params.id} AND user_id = ${uid} RETURNING id`);
+      if (r.rows?.length) await db.execute(sql`DELETE FROM personal_agenda_files WHERE item_id = ${req.params.id}`).catch(() => {});
       if (!r.rows?.length) return res.status(404).json({ message: "Evento não encontrado" });
       res.json({ ok: true, id: req.params.id });
     } catch (e: any) {
