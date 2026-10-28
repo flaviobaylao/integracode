@@ -42,6 +42,7 @@ import { authenticateUser } from "./authMiddleware";
 import { sqlFaturamentoPorVendedor } from "./faturamento-oficial";
 import { computeCampaign } from "./campanha-outubro";
 import ExcelJS from "exceljs";
+import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from "@shared/comissao-entrega";
 
 const PAPEIS = ["vendedor", "telemarketing", "administrative", "motorista"];
 
@@ -79,7 +80,7 @@ type Cfg = {
   incluirNoResumo: boolean;
   fixoMensal: number;
   ajudaCusto: number;
-  comissaoTipo: "nenhum" | "fixo" | "faixa" | "escalonado";
+  comissaoTipo: "nenhum" | "fixo" | "faixa" | "escalonado" | "entrega";
   comissaoFaixas: FaixaValor[];
   comissaoPct: number;
   comissaoDescontoFixo: number;
@@ -95,7 +96,7 @@ type Cfg = {
   usaBonus: boolean;
   consolidaTotais: boolean;
   observacao: string;
-  vigenciaYm: string | null;
+  vigenciaData: string | null;
 };
 
 const CFG_PADRAO: Cfg = {
@@ -118,7 +119,7 @@ const CFG_PADRAO: Cfg = {
   usaBonus: false,
   consolidaTotais: false,
   observacao: "",
-  vigenciaYm: null,
+  vigenciaData: null,
 };
 
 function aliquotaDaFaixa(tipo: string, atingimentoPct: number): number {
@@ -186,11 +187,20 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "usa_bonus boolean NOT NULL DEFAULT false",
         "consolida_totais boolean NOT NULL DEFAULT false",
         "comissao_faixas jsonb",
+        "vigencia_data date",
       ]) {
         await db.execute(sql.raw(
           `ALTER TABLE collab_remuneracao_config ADD COLUMN IF NOT EXISTS ${col}`
         )).catch(() => {});
       }
+      // A vigência passou de mês para DATA (28/out/2026). Quem já estava
+      // cadastrado vira o dia 1º do mês que tinha — mesmo efeito de antes.
+      await db.execute(sql.raw(
+        "UPDATE collab_remuneracao_config SET vigencia_data = (vigencia_ym || '-01')::date WHERE vigencia_data IS NULL"
+      )).catch(() => {});
+      // O índice único era por mês; com data, dois ajustes no mesmo mês são válidos.
+      await db.execute(sql.raw("DROP INDEX IF EXISTS ux_collab_cfg_user_ym")).catch(() => {});
+
       // paga_km virou usa_km; preserva a escolha antiga na primeira subida.
       await db.execute(sql.raw(
         "UPDATE collab_remuneracao_config SET usa_km = paga_km WHERE paga_km = false AND usa_km = true"
@@ -267,7 +277,7 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
       ));
 
       for (const ix of [
-        "CREATE UNIQUE INDEX IF NOT EXISTS ux_collab_cfg_user_ym ON collab_remuneracao_config (user_id, vigencia_ym)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_collab_cfg_user_data ON collab_remuneracao_config (user_id, vigencia_data)",
         "CREATE INDEX IF NOT EXISTS idx_resumo_auditoria_quando ON resumo_auditoria (quando DESC)",
         "CREATE INDEX IF NOT EXISTS idx_collab_bonus_ym ON collab_bonus_lancamentos (ym, user_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_camp_valor ON resumo_campanha_valores (campanha_id, user_id, ym)",
@@ -312,12 +322,12 @@ async function semearRegrasAtuais(): Promise<void> {
     const c = { ...CFG_PADRAO, ...achou.cfg };
     await db.execute(sql`
       INSERT INTO collab_remuneracao_config
-        (user_id, vigencia_ym, fixo_mensal, comissao_tipo, comissao_pct,
+        (user_id, vigencia_ym, vigencia_data, fixo_mensal, comissao_tipo, comissao_pct,
          comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo, paga_km, observacao, created_by)
-      VALUES (${row.id}, '2026-01', 0, ${c.comissaoTipo}, ${c.comissaoPct},
+      VALUES (${row.id}, '2026-01', '2026-01-01'::date, 0, ${c.comissaoTipo}, ${c.comissaoPct},
               ${c.comissaoDescontoFixo}, ${c.comissaoProporcionalMeta}, ${c.faixaTipo}, true,
               'Importado da regra que estava fixada no código em 18/10/2026. Fixo mensal a preencher.', 'sistema')
-      ON CONFLICT (user_id, vigencia_ym) DO NOTHING`).catch(() => {});
+      ON CONFLICT (user_id, vigencia_data) DO NOTHING`).catch(() => {});
   }
   console.log("[RESUMO-RECEB] regras de comissão semeadas a partir do código");
 }
@@ -371,12 +381,12 @@ async function semearNaoParticipantes(): Promise<void> {
   // A gestora enxerga meta e faturamento da equipe inteira.
   await db.execute(sql`
     INSERT INTO collab_remuneracao_config
-      (user_id, vigencia_ym, comissao_tipo, usa_fixo, usa_comissao, usa_km,
+      (user_id, vigencia_ym, vigencia_data, comissao_tipo, usa_fixo, usa_comissao, usa_km,
        usa_campanhas, consolida_totais, observacao, created_by)
-    SELECT u.id, '2026-01', 'nenhum', false, false, false, false, true,
+    SELECT u.id, '2026-01', '2026-01-01'::date, 'nenhum', false, false, false, false, true,
            'Meta e faturamento somam a equipe inteira.', 'sistema'
     FROM users u WHERE ${nome} = 'cinthia marques'
-    ON CONFLICT (user_id, vigencia_ym) DO NOTHING`).catch(() => {});
+    ON CONFLICT (user_id, vigencia_data) DO NOTHING`).catch(() => {});
   console.log(`[RESUMO-RECEB] ${fora.rowCount ?? 0} contas fora e ${dentro.rowCount ?? 0} dentro do resumo`);
 }
 
@@ -434,6 +444,88 @@ async function nomeDoUsuario(id: string): Promise<string> {
 const dinheiro = (v: number) =>
   "R$ " + (Number(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// ---------------------------------------------------------------------------
+// COMISSÃO DE ENTREGA — reaproveita a regra do box "Valor entregue por semana
+// (seg a dom)" do Dashboard (shared/comissao-entrega.ts): percentual sobre o
+// entregue de TODOS os participantes na semana, rateado pelos pontos de cada um
+// (dias em que entregou × peso).
+//
+// A semana só fecha no domingo, então o mês leva as semanas cujo DOMINGO cai
+// nele. Uma semana a cavalo entre dois meses é paga inteira no mês em que
+// terminou — do contrário o rateio por pontos teria que ser quebrado no meio e
+// o valor não bateria com o que o box mostra.
+// ---------------------------------------------------------------------------
+async function comissaoEntregaDoMes(ym: string): Promise<Record<string, { valor: number; entregue: number; semanas: number }>> {
+  const out: Record<string, { valor: number; entregue: number; semanas: number }> = {};
+  try {
+    const q: any = await db.execute(sql`
+      SELECT value FROM system_settings WHERE key = 'comissao_entrega_config' LIMIT 1`);
+    const bruto = (q.rows || q)[0]?.value;
+    const cfg = normalizarConfigComissao(bruto ? JSON.parse(bruto) : null);
+    if (!cfg.participantes.length) return out;
+
+    const { ini, fim } = limitesDoMes(ym);
+    const dia = (iso: string, delta: number) => {
+      const d = new Date(`${iso}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + delta);
+      return d.toISOString().slice(0, 10);
+    };
+    // Segundas das semanas cujo domingo cai no mês.
+    const segundas: string[] = [];
+    let cursor = ini;
+    const d0 = new Date(`${ini}T12:00:00Z`);
+    cursor = dia(ini, -(((d0.getUTCDay() + 6) % 7)));   // segunda da semana do dia 1º
+    for (let k = 0; k < 8; k++) {
+      const seg = dia(cursor, 7 * k);
+      const dom = dia(seg, 6);
+      if (dom >= ini && dom < fim) segundas.push(seg);
+      if (seg >= fim) break;
+    }
+    if (!segundas.length) return out;
+
+    const de = segundas[0];
+    const ate = dia(segundas[segundas.length - 1], 6);
+    const r: any = await db.execute(sql`
+      SELECT * FROM (
+        SELECT r.driver_email AS email, r.driver_name AS nome,
+          COALESCE(NULLIF(bp.sale_value::text, '')::numeric,
+                   NULLIF(b.total_value::text, '')::numeric,
+                   NULLIF(sc.sale_value::text, '')::numeric, 0) AS valor,
+          COALESCE((COALESCE(s.completed_at, s.check_out_time) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date,
+                   r.route_date::date) AS dia
+        FROM delivery_route_stops s
+        JOIN delivery_routes r ON r.id = s.route_id
+        LEFT JOIN billing_pipeline bp ON bp.id = s.billing_id
+        LEFT JOIN billings b ON bp.id IS NULL AND b.id = s.billing_id
+        LEFT JOIN sales_cards sc ON bp.id IS NULL AND b.id IS NULL AND sc.id = s.sales_card_id
+        WHERE s.status = 'efetuada' AND COALESCE(r.status, '') NOT IN ('cancelada', 'cancelled')
+      ) x
+      WHERE x.dia BETWEEN ${de}::date AND ${ate}::date`);
+
+    const todas = (r.rows || r) as any[];
+    for (const seg of segundas) {
+      const dom = dia(seg, 6);
+      const daSemana = todas
+        .filter((x) => {
+          const d = String(x.dia).slice(0, 10);
+          return d >= seg && d <= dom;
+        })
+        .map((x) => ({ chave: chaveEntregador(x.email, x.nome), dia: String(x.dia).slice(0, 10), valor: Number(x.valor) || 0 }));
+      const sem = calcularComissaoSemana(daSemana, cfg);
+      for (const c of sem.cotas) {
+        const a = out[c.chave] || { valor: 0, entregue: 0, semanas: 0 };
+        a.valor += Number(c.valor) || 0;
+        a.entregue += Number(c.entregue) || 0;
+        if (c.pontos > 0) a.semanas += 1;
+        out[c.chave] = a;
+      }
+    }
+  } catch (e: any) {
+    console.error("[RESUMO-RECEB] comissão de entrega:", e?.message || e);
+  }
+  return out;
+}
+
 // Campanhas que valem no mês informado.
 async function mesFechado(ym: string): Promise<boolean> {
   const r: any = await db.execute(sql`SELECT ym FROM resumo_fechamentos WHERE ym = ${ym}`);
@@ -472,6 +564,18 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const campanhas = await campanhasDoMes(ym);
       if (!linhas.length) return { ym, campanhas, colaboradores: [], totais: null };
       const ids = linhas.map((r) => String(r.id));
+
+      // 1b. Configuração vigente de cada um — precisa vir antes para saber
+      //     quais fontes realmente precisam ser consultadas.
+      const cfgMapPre: Record<string, any> = {};
+      {
+        const cf0: any = await db.execute(sql`
+          SELECT DISTINCT ON (user_id) user_id, comissao_tipo
+          FROM collab_remuneracao_config
+          WHERE user_id = ANY(${arraySql(ids)}) AND vigencia_data < ${fim}::date
+          ORDER BY user_id, vigencia_data DESC`);
+        for (const r of cf0.rows || []) cfgMapPre[String(r.user_id)] = { comissaoTipo: r.comissao_tipo };
+      }
 
       // 2. Faturamento — mesma fonte do Dashboard
       const fatMap: Record<string, number> = {};
@@ -522,6 +626,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         return rg === "DF" ? rateDF : rg === "PSN" ? ratePSN : rateGO;
       };
 
+      // 4b. Comissão de entrega, para quem é pago por entrega.
+      const precisaEntrega = Object.values(cfgMapPre).some((c: any) => c?.comissaoTipo === "entrega");
+      const entregaMap = precisaEntrega ? await comissaoEntregaDoMes(ym) : {};
+
       // 5. Campanhas: as de origem 'campanha' puxam do módulo; as 'manual'
       //    leem os valores lançados pelo admin.
       const precisaModulo = campanhas.some((c) => c.origem === "campanha");
@@ -559,14 +667,15 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       // 7. Configuração vigente: a linha mais recente com vigência <= ym
       const cfgMap: Record<string, Cfg> = {};
       const cf: any = await db.execute(sql`
-        SELECT DISTINCT ON (user_id) user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo,
+        SELECT DISTINCT ON (user_id) user_id, vigencia_data, fixo_mensal, ajuda_custo, comissao_tipo,
                comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta,
                faixa_tipo, incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento,
                usa_comissao, usa_km, usa_campanhas, usa_bonus, consolida_totais,
                comissao_faixas, observacao
         FROM collab_remuneracao_config
-        WHERE user_id = ANY(${arraySql(ids)}) AND vigencia_ym <= ${ym}
-        ORDER BY user_id, vigencia_ym DESC`);
+        WHERE user_id = ANY(${arraySql(ids)})
+          AND vigencia_data < ${fim}::date
+        ORDER BY user_id, vigencia_data DESC`);
       for (const r of cf.rows || []) {
         cfgMap[String(r.user_id)] = {
           incluirNoResumo: r.incluir_no_resumo !== false,
@@ -588,7 +697,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           usaBonus: r.usa_bonus === true,
           consolidaTotais: r.consolida_totais === true,
           observacao: r.observacao || "",
-          vigenciaYm: r.vigencia_ym || null,
+          vigenciaData: r.vigencia_data ? String(r.vigencia_data).slice(0, 10) : null,
         };
       }
 
@@ -603,9 +712,12 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         const faturamento = cfg.usaFaturamento ? (fatMap[id] || 0) : null;
         const fixo = cfg.usaFixo ? cfg.fixoMensal : null;
         const ajudaCusto = cfg.usaAjudaCusto ? cfg.ajudaCusto : null;
-        const comissao = cfg.usaComissao
-          ? calcularComissao(cfg, fatMap[id] || 0, metaMap[id] || 0)
-          : null;
+        // Comissão de entrega vem pronta do rateio semanal; as demais saem da
+        // regra do colaborador sobre o faturamento.
+        const ent = entregaMap[chaveEntregador(u.email, nome)] || null;
+        const comissao = !cfg.usaComissao ? null
+          : cfg.comissaoTipo === "entrega" ? (ent?.valor || 0)
+          : calcularComissao(cfg, fatMap[id] || 0, metaMap[id] || 0);
 
         const kmRodado = kmMap[id] || 0;
         const tarifa = tarifaDe(id);
@@ -635,6 +747,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           comissao,
           campanhas: porCampanha,
           bonus, lancamentos,
+          entregaValorEntregue: ent?.entregue ?? null,
+          entregaSemanas: ent?.semanas ?? null,
           kmRodado, kmTarifa: tarifa, kmRegiao: String(kmRegioes[id] || "GO").toUpperCase(),
           kmTarifaPropria: Object.prototype.hasOwnProperty.call(kmRates, id),
           kmValor,
@@ -863,7 +977,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
       const r: any = await db.execute(sql`
-        SELECT c.id, c.user_id, c.vigencia_ym, c.fixo_mensal, c.ajuda_custo, c.comissao_tipo, c.comissao_pct,
+        SELECT c.id, c.user_id, c.vigencia_data, c.fixo_mensal, c.ajuda_custo, c.comissao_tipo, c.comissao_pct,
                c.comissao_desconto_fixo, c.comissao_proporcional_meta, c.faixa_tipo,
                c.incluir_no_resumo, c.usa_fixo, c.usa_ajuda_custo, c.usa_meta, c.usa_faturamento, c.usa_comissao,
                c.usa_km, c.usa_campanhas, c.usa_bonus, c.consolida_totais, c.comissao_faixas,
@@ -873,7 +987,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         FROM collab_remuneracao_config c
         JOIN users u ON u.id = c.user_id
         WHERE u.is_active = true
-        ORDER BY nome, c.vigencia_ym DESC`);
+        ORDER BY nome, c.vigencia_data DESC`);
       // O seletor só oferece quem participa do resumo.
       const colabs: any = await db.execute(sql`
         SELECT u.id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
@@ -906,8 +1020,11 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       await ensureResumoRecebiveisSchema();
       const b = req.body || {};
       if (!b.userId) return res.status(400).json({ message: "Informe o colaborador" });
-      if (!ymValido(b.vigenciaYm)) return res.status(400).json({ message: "Vigência inválida (use AAAA-MM)" });
-      const tipo = ["nenhum", "fixo", "faixa", "escalonado"].includes(String(b.comissaoTipo))
+      const vig = String(b.vigenciaData || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(vig)) {
+        return res.status(400).json({ message: "Informe a data de início da vigência" });
+      }
+      const tipo = ["nenhum", "fixo", "faixa", "escalonado", "entrega"].includes(String(b.comissaoTipo))
         ? String(b.comissaoTipo) : "nenhum";
       // Faixas por valor: só entram linhas com percentual e piso numéricos.
       const faixasValor: FaixaValor[] = Array.isArray(b.comissaoFaixas)
@@ -928,16 +1045,18 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           (user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo, comissao_pct,
            comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo, paga_km,
            incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento, usa_comissao,
-           usa_km, usa_campanhas, usa_bonus, consolida_totais, comissao_faixas, observacao, created_by)
-        VALUES (${b.userId}, ${b.vigenciaYm}, ${n(b.fixoMensal)}, ${n(b.ajudaCusto)}, ${tipo}, ${n(b.comissaoPct)},
+           usa_km, usa_campanhas, usa_bonus, consolida_totais, comissao_faixas, observacao, created_by,
+           vigencia_data)
+        VALUES (${b.userId}, ${vig.slice(0, 7)}, ${n(b.fixoMensal)}, ${n(b.ajudaCusto)}, ${tipo}, ${n(b.comissaoPct)},
                 ${n(b.comissaoDescontoFixo)}, ${b.comissaoProporcionalMeta === true}, ${faixa},
                 ${bool(b.usaKm, true)},
                 ${bool(b.incluirNoResumo, true)}, ${bool(b.usaFixo, true)}, ${b.usaAjudaCusto === true}, ${bool(b.usaMeta, true)},
                 ${bool(b.usaFaturamento, true)}, ${bool(b.usaComissao, true)}, ${bool(b.usaKm, true)},
                 ${bool(b.usaCampanhas, true)}, ${b.usaBonus === true}, ${b.consolidaTotais === true},
                 ${JSON.stringify(faixasValor)}::jsonb,
-                ${String(b.observacao || "").slice(0, 500) || null}, ${req.currentUser?.id || null})
-        ON CONFLICT (user_id, vigencia_ym) DO UPDATE SET
+                ${String(b.observacao || "").slice(0, 500) || null}, ${req.currentUser?.id || null},
+                ${vig}::date)
+        ON CONFLICT (user_id, vigencia_data) DO UPDATE SET
           fixo_mensal = EXCLUDED.fixo_mensal,
           ajuda_custo = EXCLUDED.ajuda_custo,
           comissao_tipo = EXCLUDED.comissao_tipo,
@@ -957,6 +1076,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           usa_bonus = EXCLUDED.usa_bonus,
           consolida_totais = EXCLUDED.consolida_totais,
           comissao_faixas = EXCLUDED.comissao_faixas,
+          vigencia_ym = EXCLUDED.vigencia_ym,
           observacao = EXCLUDED.observacao
         RETURNING id`);
 
@@ -967,13 +1087,14 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         bool(b.usaComissao, true) && "comissão", bool(b.usaKm, true) && "km",
         bool(b.usaCampanhas, true) && "campanhas", b.usaBonus === true && "bônus manual",
       ].filter(Boolean).join(", ") || "nenhuma";
-      const regra = tipo === "escalonado"
+      const regra = tipo === "entrega" ? "comissão de entrega (box Valor entregue por semana)"
+        : tipo === "escalonado"
           ? `escalonado por faturamento: ${faixasValor.map((f) => `${dinheiro(f.de)}${f.ate === null ? "+" : ` a ${dinheiro(f.ate)}`} = ${f.pct}%`).join(" · ")}`
         : tipo === "faixa" ? `faixa (${faixa})`
         : tipo === "fixo" ? `${n(b.comissaoPct)}%${n(b.comissaoDescontoFixo) > 0 ? ` menos ${dinheiro(n(b.comissaoDescontoFixo))}` : ""}${b.comissaoProporcionalMeta === true ? ", proporcional à meta" : ""}`
         : "sem comissão";
       await auditar(req, "Remuneração",
-        `Vigência ${b.vigenciaYm}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra} · rubricas: ${rubricas}`,
+        `Vigência a partir de ${vig}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra} · rubricas: ${rubricas}`,
         alvo, b);
 
       res.json({ message: "Configuração salva", id: r.rows?.[0]?.id });
@@ -988,14 +1109,14 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
       const antes: any = await db.execute(sql`
-        SELECT c.vigencia_ym, c.fixo_mensal,
+        SELECT c.vigencia_data, c.fixo_mensal,
                COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome
         FROM collab_remuneracao_config c JOIN users u ON u.id = c.user_id WHERE c.id = ${req.params.id}`);
       const a = antes.rows?.[0];
       await db.execute(sql`DELETE FROM collab_remuneracao_config WHERE id = ${req.params.id}`);
       if (a) {
         await auditar(req, "Remuneração",
-          `Vigência ${a.vigencia_ym} removida (fixo era ${dinheiro(n(a.fixo_mensal))})`, String(a.nome), a);
+          `Vigência de ${String(a.vigencia_data).slice(0, 10)} removida (fixo era ${dinheiro(n(a.fixo_mensal))})`, String(a.nome), a);
       }
       res.json({ message: "Vigência removida" });
     } catch (e: any) {
@@ -1159,8 +1280,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
       const cf: any = await db.execute(sql`
         SELECT usa_bonus FROM collab_remuneracao_config
-        WHERE user_id = ${b.userId} AND vigencia_ym <= ${b.ym}
-        ORDER BY vigencia_ym DESC LIMIT 1`);
+        WHERE user_id = ${b.userId} AND vigencia_data <= (${b.ym} || '-01')::date + INTERVAL '1 month'
+        ORDER BY vigencia_data DESC LIMIT 1`);
       if (cf.rows?.[0]?.usa_bonus !== true) {
         return res.status(400).json({ message: "Ative 'Bônus manual' para este colaborador na Configuração" });
       }
