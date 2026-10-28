@@ -62,6 +62,8 @@ const dataHora = (v: any) => {
   });
 };
 
+const dataBR = (v: any) => (v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—");
+
 const brl = (v: number | null | undefined) =>
   v === null || v === undefined
     ? "—"
@@ -97,6 +99,7 @@ interface Colab {
   lancamentos: Array<{ id: string; descricao: string; valor: number }>;
   kmRodado: number; kmTarifa: number; kmRegiao?: string; kmTarifaPropria?: boolean; kmValor: number | null; totalMes: number;
   consolidador?: boolean;
+  entregaValorEntregue?: number | null; entregaSemanas?: number | null;
 }
 
 export default function ResumoRecebiveis() {
@@ -268,7 +271,9 @@ export default function ResumoRecebiveis() {
                         {brl(c.faturamento)}
                       </td>
                       <td className="px-3 py-2 text-right"
-                        title={c.config?.comissaoTipo === "escalonado"
+                        title={c.config?.comissaoTipo === "entrega"
+                          ? `Comissão de entrega — ${c.entregaSemanas || 0} semana(s), ${brl(c.entregaValorEntregue || 0)} entregues`
+                          : c.config?.comissaoTipo === "escalonado"
                           ? (c.config.comissaoFaixas || []).map((f: any) => `${brl(f.de)}${f.ate === null ? "+" : ` a ${brl(f.ate)}`} = ${f.pct}%`).join(" · ")
                           : c.config?.comissaoTipo === "faixa"
                           ? "Faixa por atingimento"
@@ -340,7 +345,7 @@ const FLAGS: Array<{ k: string; label: string; modulo: string; ajuda: string }> 
   { k: "usaAjudaCusto", label: "Ajuda de custo", modulo: "Cadastro (aqui)", ajuda: "Valor fixo mensal de ajuda de custo, informado nesta tela" },
   { k: "usaMeta", label: "Meta", modulo: "Metas de Vendas", ajuda: "sales_goals: meta de faturamento do mês" },
   { k: "usaFaturamento", label: "Faturamento", modulo: "Faturamento oficial", ajuda: "NF-e de venda autorizada, atribuída a quem implantou o pedido" },
-  { k: "usaComissao", label: "Comissão mês", modulo: "Regra do colaborador", ajuda: "Percentual ou faixa definidos abaixo, sobre o faturamento" },
+  { k: "usaComissao", label: "Comissão mês", modulo: "Regra do colaborador", ajuda: "Percentual, faixa, escalonamento ou comissão de entrega" },
   { k: "usaKm", label: "Km", modulo: "Kilometragem Vendedores", ajuda: "Km rodado no mês x tarifa do colaborador" },
   { k: "usaCampanhas", label: "Campanhas", modulo: "Módulos de campanha", ajuda: "Uma coluna por campanha vigente" },
   { k: "usaBonus", label: "Bônus manual", modulo: "Lançamento avulso", ajuda: "Abre o lançamento por usuário na aba Bônus" },
@@ -354,7 +359,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const queryClient = useQueryClient();
 
   const vazio: any = {
-    userId: "", vigenciaYm: ym, fixoMensal: "", ajudaCusto: "", comissaoTipo: "nenhum",
+    userId: "", vigenciaData: `${ym}-01`, fixoMensal: "", ajudaCusto: "", comissaoTipo: "nenhum",
     comissaoPct: "", comissaoDescontoFixo: "", comissaoProporcionalMeta: false,
     comissaoFaixas: [{ de: "0", ate: "", pct: "" }] as any[],
     faixaTipo: "telemarketing",
@@ -391,7 +396,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
 
   const salvarCfg = useMutation({
     mutationFn: () => apiRequest("POST", "/api/resumo-recebiveis/config", {
-      userId: form.userId, vigenciaYm: form.vigenciaYm,
+      userId: form.userId, vigenciaData: form.vigenciaData,
       fixoMensal: num(form.fixoMensal), ajudaCusto: num(form.ajudaCusto), comissaoTipo: form.comissaoTipo,
       comissaoPct: num(form.comissaoPct), comissaoDescontoFixo: num(form.comissaoDescontoFixo),
       comissaoProporcionalMeta: form.comissaoProporcionalMeta, faixaTipo: form.faixaTipo,
@@ -516,12 +521,11 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 </div>
                 <div className="min-w-0">
                   <Label className="text-xs">Vigência (a partir de)</Label>
-                  <Select value={form.vigenciaYm} onValueChange={(v) => set("vigenciaYm", v)}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {mesesDisponiveis().map((m) => <SelectItem key={m} value={m}>{nomeDoMes(m)}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <Input type="date" className="mt-1" value={form.vigenciaData}
+                    onChange={(e) => set("vigenciaData", e.target.value)} data-testid="input-vigencia-data" />
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    No resumo mensal passa a valer já no mês em que esta data cai.
+                  </p>
                 </div>
               </div>
 
@@ -561,6 +565,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       <SelectItem value="fixo">Percentual fixo</SelectItem>
                       <SelectItem value="faixa">Faixa por atingimento da meta</SelectItem>
                     <SelectItem value="escalonado">Escalonado por faturamento</SelectItem>
+                    <SelectItem value="entrega">Por entrega (semana seg a dom)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -615,6 +620,15 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       </Popover>
                     </div>
                   </>
+                )}
+                {form.comissaoTipo === "entrega" && (
+                  <div className="min-w-0 md:col-span-4 rounded-md border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-900">
+                    O valor vem pronto do box <strong>Valor entregue por semana (seg a dom)</strong>: percentual
+                    sobre o entregue de todos os participantes na semana, rateado pelos pontos de cada um (dias
+                    entregues × peso). Quem participa e com que peso se define naquele box, não aqui. O mês leva
+                    as semanas que <strong>terminaram</strong> nele — uma semana a cavalo entra inteira no mês em
+                    que fechou.
+                  </div>
                 )}
                 {form.comissaoTipo === "escalonado" && (
                   <div className="min-w-0 md:col-span-4">
@@ -679,7 +693,11 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
               {(() => {
                 const alvo = colabs.find((c) => c.id === form.userId);
                 if (!form.userId) return null;
-                const regraCom = form.comissaoTipo === "escalonado"
+                const regraCom = form.comissaoTipo === "entrega"
+                  ? (alvo?.entregaSemanas
+                      ? `${alvo.entregaSemanas} semana(s) · ${brl(alvo.entregaValorEntregue || 0)} entregues`
+                      : "rateio semanal das entregas")
+                  : form.comissaoTipo === "escalonado"
                   ? ((form.comissaoFaixas || []).filter((f: any) => String(f.pct).trim() !== "").length
                       ? (form.comissaoFaixas as any[]).filter((f: any) => String(f.pct).trim() !== "")
                           .map((f: any) => `${brl(num(f.de))}${String(f.ate).trim() === "" ? " ou mais" : ` a ${brl(num(f.ate))}`} = ${f.pct}%`)
@@ -697,7 +715,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     alvo?.meta ? brl(alvo.meta) : "sem meta cadastrada em " + nomeDoMes(ym)],
                   ["Faturamento", form.consolidaTotais ? "Soma do faturamento da equipe" : "Faturamento oficial",
                     alvo?.faturamento != null ? brl(alvo.faturamento) : "—"],
-                  ["Comissão mês", "Regra do colaborador", regraCom],
+                  ["Comissão mês", form.comissaoTipo === "entrega" ? "Valor entregue por semana" : "Regra do colaborador", regraCom],
                   ["Km", "Kilometragem Vendedores",
                     alvo ? `${brl(alvo.kmTarifa)}/km · ${(alvo as any).kmTarifaPropria ? "tarifa própria" : `tarifa da região ${(alvo as any).kmRegiao || "GO"}`}` : "—"],
                   ["Campanhas", "Módulos de campanha",
@@ -746,11 +764,12 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                       <td className="px-2 py-1.5">
                         {c.nome}
                       </td>
-                      <td className="px-2 py-1.5">{nomeDoMes(c.vigencia_ym)}</td>
+                      <td className="px-2 py-1.5">{dataBR(c.vigencia_data)}</td>
                       <td className="px-2 py-1.5 text-right">{brl(Number(c.fixo_mensal))}</td>
                       <td className="px-2 py-1.5 text-right">{c.usa_ajuda_custo ? brl(Number(c.ajuda_custo)) : "—"}</td>
                       <td className="px-2 py-1.5">
-                        {c.comissao_tipo === "escalonado"
+                        {c.comissao_tipo === "entrega" ? "Por entrega"
+                      : c.comissao_tipo === "escalonado"
                       ? `Escalonado (${(c.comissao_faixas || []).length} faixas)`
                       : c.comissao_tipo === "faixa" ? "Faixa"
                           : c.comissao_tipo === "fixo"
