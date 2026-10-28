@@ -275,8 +275,11 @@ async function executar(receivableId: string, origem: string): Promise<Resultado
           WHERE receivable_id = ${receivableId} AND deleted_at IS NULL
             AND (reference = ${chave || '-'} OR notes LIKE ${'%nosso ' + (chave || '-') + '%'}) LIMIT 1`)).length > 0;
         if (foiEste) {
-          await db.execute(sql`UPDATE boleto_charges SET bb_conferido_at = now() WHERE id = ${b.id}`);
-          await registrar({ tipo: 'boleto', chave, chargeId: String(b.id), acao: 'ja_fora_do_banco', detalhe: 'boleto pago - foi ele que quitou o titulo' });
+          // 27/out/2026: alem de conferir, marca 'liquidado' — senao o boleto fica
+          // 'registrado/vencido' no Integra, reaparece em todo levantamento e gasta
+          // uma chamada ao BB por rodada (10 casos na limpeza do passado).
+          await db.execute(sql`UPDATE boleto_charges SET status = 'liquidado', bb_conferido_at = now(), updated_at = now() WHERE id = ${b.id}`);
+          await registrar({ tipo: 'boleto', chave, chargeId: String(b.id), acao: 'ja_fora_do_banco', detalhe: 'boleto pago - foi ele que quitou o titulo (marcado liquidado)' });
           continue;
         }
         await db.execute(sql`UPDATE boleto_charges SET status = 'cancelado', bb_conferido_at = now() WHERE id = ${b.id}`);
