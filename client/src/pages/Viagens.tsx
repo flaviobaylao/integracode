@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Paperclip, Trash2, ArrowLeft, FileText } from "lucide-react";
 import { CIDADES_GO_DF_COORDS as CIDADES_GO_DF } from "@/lib/cidadesGoDfCoords";
+import { PIX_TIPOS, PIX_REGRA } from "@/lib/pix";
 
 type Viagem = {
   id: string; numero: number; codigo: string; vendedorId: string; vendedorNome: string; cidade: string; uf: string;
@@ -23,14 +24,23 @@ type Viagem = {
   valorAprovado: number | null; obs: string; status: string; aprovadorNome: string | null; motivoRecusa: string | null;
   kmReal: number | null; valorKmReal: number | null; valorDespesas: number | null; valorReal: number | null; saldo: number | null;
   createdAt: string;
+  instancia: string | null; forma: string | null; favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string;
+  banco: string; agencia: string; conta: string; tipoConta: string; chartAccountId: string | null; payableId: string | null; lancadoNome: string | null;
 };
 type Detalhe = Viagem & {
   despesas: { id: string; tipo: string; valor: number }[];
   anexos: { id: string; despesaId: string | null; categoria: string; nome: string; mime: string; tamanho: number }[];
   eventos: { autor: string; texto: string; em: string }[];
   kmDias: { dia: string; km: number }[];
+  categoriaNome: string | null;
+  payable: { id: string; titulo: string; status: string; valor: number; vencimento: string } | null;
 };
-type Cfg = { admin: boolean; me: { id: string; nome: string }; vendedores: { id: string; nome: string }[]; tarifa: Record<string, number>; alimPadrao: number; hospPadrao: number };
+type Cfg = { admin: boolean; financeiro: boolean; me: { id: string; nome: string; cpf: string }; vendedores: { id: string; nome: string }[]; tarifa: Record<string, number>; alimPadrao: number; hospPadrao: number;
+  instancias: string[]; categorias: { id: string; code: string; name: string }[] };
+const FORMA_LABEL: Record<string, string> = { pix: "PIX", transferencia: "Transferência bancária", dinheiro: "Dinheiro (Caixinha)" };
+const selCls = "h-10 w-full min-w-0 rounded-md border bg-background px-3 text-sm";
+const pagamentoTxt = (v: { forma: string | null; pixTipo: string; pixChave: string; banco: string; agencia: string; conta: string; tipoConta: string }) =>
+  v.forma === "pix" ? `PIX${v.pixTipo ? ` (${v.pixTipo})` : ""}: ${v.pixChave}` : v.forma === "transferencia" ? `${v.banco} · ag ${v.agencia} · ${v.tipoConta || "conta"} ${v.conta}` : v.forma === "dinheiro" ? "Dinheiro (Caixinha)" : "—";
 
 const BRL = (n: number | null | undefined) => (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const KM = (n: number | null | undefined) => (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -129,6 +139,15 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
   const [hosp, setHosp] = useState(cfg.hospPadrao);
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
+  // dados para o Contas a Pagar (como no Reembolso)
+  const [instancia, setInstancia] = useState("");
+  const [forma, setForma] = useState("pix");
+  const nomeVend = (id: string) => id === cfg.me.id ? cfg.me.nome : (cfg.vendedores.find((x) => x.id === id)?.nome || "");
+  const [favNome, setFavNome] = useState(cfg.me.nome);
+  const [favDoc, setFavDoc] = useState(cfg.me.cpf || "");
+  const [pixTipo, setPixTipo] = useState("CPF");
+  const [pixChave, setPixChave] = useState("");
+  const [banco, setBanco] = useState(""); const [agencia, setAgencia] = useState(""); const [conta, setConta] = useState(""); const [tipoConta, setTipoConta] = useState("Corrente");
   const c = CIDADES_GO_DF.find((x) => x[0] === cidade);
   const { data: est } = useQuery<{ casa: { lat: number; lon: number } | null; historicoIdaVolta: number[] }>({
     queryKey: ["/api/viagens/estimativa", vendedorId, cidade],
@@ -147,11 +166,20 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
     const vKm = km * t, vAl = alim * dias, vHo = hosp * noites;
     return { dias, noites, idaVolta, local, km, t, vKm, vAl, vHo, total: vKm + vAl + vHo, fonte, uf: c[1] };
   }, [c, ini, fim, est, tarifa, alim, hosp, cfg]);
+  const faltando = [
+    !instancia && "a empresa",
+    !favNome.trim() && "o favorecido",
+    forma === "pix" && !pixChave.trim() && "a chave PIX",
+    forma === "pix" && !!pixChave.trim() && !PIX_REGRA[pixTipo].valido(pixChave) && `chave PIX válida (${PIX_REGRA[pixTipo].dica})`,
+    forma === "transferencia" && (!banco.trim() || !agencia.trim() || !conta.trim()) && "banco, agência e conta",
+  ].filter(Boolean) as string[];
   const enviar = async () => {
     if (!c || !calc) return;
+    if (faltando.length) { erro(new Error("Falta informar: " + faltando.join(", "))); return; }
     setEnviando(true);
     try {
-      const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, tarifa: calc.t, alimDia: alim, hospNoite: hosp, obs });
+      const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, tarifa: calc.t, alimDia: alim, hospNoite: hosp, obs,
+        instancia, forma, favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, banco, agencia, conta, tipoConta });
       onOk(r.id);
     } catch (e) { erro(e); } finally { setEnviando(false); }
   };
@@ -164,7 +192,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
             <label className="grid gap-1 text-sm font-medium">Vendedor
               {cfg.admin ? (
-                <select className="rounded-md border bg-background px-2 py-2 text-sm" value={vendedorId} onChange={(e) => setVendedorId(e.target.value)}>
+                <select className="rounded-md border bg-background px-2 py-2 text-sm" value={vendedorId} onChange={(e) => { setVendedorId(e.target.value); setFavNome(nomeVend(e.target.value)); if (e.target.value !== cfg.me.id) setFavDoc(""); }}>
                   <option value={cfg.me.id}>{cfg.me.nome} (eu)</option>
                   {cfg.vendedores.filter((v) => v.id !== cfg.me.id).map((v) => <option key={v.id} value={v.id}>{v.nome}</option>)}
                 </select>
@@ -211,7 +239,50 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
                 <span className="text-sm">{cfg.admin ? "Adiantamento total" : "Adiantamento de km"}{!cfg.admin && <span className="text-xs text-muted-foreground"> (alimentação e hospedagem são definidas pelo admin na aprovação)</span>}</span>
                 <b className="text-2xl tabular-nums">{BRL(cfg.admin ? calc.total : calc.vKm)}</b>
               </div>
-              <div><Button onClick={enviar} disabled={enviando}>{enviando ? "Enviando…" : "Enviar para aprovação"}</Button></div>
+              <div className="rounded-lg border p-3 grid gap-3">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Para o Contas a Pagar · como receber o adiantamento</div>
+                <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <label className="grid gap-1 text-sm font-medium">Empresa (instância) *
+                    <select className={selCls} value={instancia} onChange={(e) => setInstancia(e.target.value)} data-testid="select-instancia">
+                      <option value="">Selecione…</option>{(cfg.instancias || []).map((i) => <option key={i} value={i}>{i}</option>)}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-sm font-medium">Favorecido (nome) *<Input value={favNome} onChange={(e) => setFavNome(e.target.value)} /></label>
+                  <label className="grid gap-1 text-sm font-medium">CPF/CNPJ do favorecido<Input value={favDoc} onChange={(e) => setFavDoc(e.target.value)} placeholder="000.000.000-00" /></label>
+                  <label className="grid gap-1 text-sm font-medium">Pagar até<Input value={DT(ini)} disabled /><span className="text-[11px] font-normal text-muted-foreground">início da viagem</span></label>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {Object.entries(FORMA_LABEL).map(([k, l]) => (
+                    <button key={k} type="button" onClick={() => setForma(k)} className={`h-10 px-4 rounded-full border text-sm font-semibold ${forma === k ? "bg-green-700 text-white border-green-700" : "bg-white"}`}>{l}</button>
+                  ))}
+                </div>
+                <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  {forma === "pix" && (<>
+                    <label className="grid gap-1 text-sm font-medium">Tipo de chave PIX
+                      <select className={selCls} value={pixTipo} data-testid="select-pix-tipo" onChange={(e) => { const t = e.target.value; setPixTipo(t); setPixChave((k) => PIX_REGRA[t].limpar(k)); }}>{PIX_TIPOS.map((t) => <option key={t}>{t}</option>)}</select>
+                    </label>
+                    <label className="grid gap-1 text-sm font-medium sm:col-span-1 md:col-span-2">Chave PIX *
+                      <Input value={pixChave} inputMode={PIX_REGRA[pixTipo].modo} placeholder={PIX_REGRA[pixTipo].placeholder} data-testid="input-pix-chave"
+                        onChange={(e) => setPixChave(PIX_REGRA[pixTipo].limpar(e.target.value))}
+                        className={pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? "border-red-500 focus-visible:ring-red-500" : ""} />
+                      <span className={`text-[11px] ${pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? "font-semibold text-red-600" : "font-normal text-muted-foreground"}`}>
+                        {pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? (pixTipo === "CPF" || pixTipo === "CNPJ" ? `${pixTipo} inválido — confira os números` : "Formato inválido para o tipo escolhido") : PIX_REGRA[pixTipo].dica}
+                      </span>
+                    </label>
+                  </>)}
+                  {forma === "transferencia" && (<>
+                    <label className="grid gap-1 text-sm font-medium">Banco *<Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ex.: 001 Banco do Brasil" /></label>
+                    <label className="grid gap-1 text-sm font-medium">Tipo de conta<select className={selCls} value={tipoConta} onChange={(e) => setTipoConta(e.target.value)}><option>Corrente</option><option>Poupança</option></select></label>
+                    <label className="grid gap-1 text-sm font-medium">Agência *<Input value={agencia} onChange={(e) => setAgencia(e.target.value)} /></label>
+                    <label className="grid gap-1 text-sm font-medium">Conta (com dígito) *<Input value={conta} onChange={(e) => setConta(e.target.value)} /></label>
+                  </>)}
+                  {forma === "dinheiro" && <p className="text-xs text-muted-foreground self-center md:col-span-4">Recebe em dinheiro pela Caixinha.</p>}
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button onClick={enviar} disabled={enviando} data-testid="button-enviar-viagem">{enviando ? "Enviando…" : "Enviar para aprovação"}</Button>
+                {faltando.length > 0 && <span className="text-xs text-muted-foreground">Falta: {faltando.join(", ")}.</span>}
+              </div>
             </>
           )}
         </CardContent>
@@ -231,6 +302,7 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
   const [apr, setApr] = useState<{ tarifa: number; alim: number; hosp: number; valor: number | null }>({ tarifa: 0, alim: 0, hosp: 0, valor: null });
   const [motivo, setMotivo] = useState("");
   const [confirmar, setConfirmar] = useState<string | null>(null);
+  const [lan, setLan] = useState<{ cat: string; venc: string; inst: string }>({ cat: "", venc: "", inst: "" });
   useEffect(() => { if (v) setApr({ tarifa: v.tarifa, alim: v.alimDia, hosp: v.hospNoite, valor: null }); }, [v?.id, v?.status]);
   if (isLoading || !v) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
   const atual = etapa ?? etapaDe(v.status);
@@ -262,6 +334,8 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
         <Linha k="Destino" v={`${v.cidade}-${v.uf}`} />
         <Linha k="Período" v={`${DT(v.dataIni)} a ${DT(v.dataFim)} · ${v.dias} dia(s), ${v.noites} noite(s)`} />
         {v.obs && <Linha k="Observação" v={v.obs} />}
+        {v.forma && <Linha k="Receber por" v={pagamentoTxt(v)} />}
+        {v.instancia && <Linha k="Empresa" v={v.instancia} />}
       </div>
       <div>
         <Linha k="Km previsto (+10%)" v={`${KM(v.kmPrevisto)} km × ${BRL(v.tarifa)}`} />
@@ -320,14 +394,45 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
 
           {atual === 2 && (["aprovado", "pago", "prestado", "encerrado"].includes(v.status) ? (<>
             <div className="max-w-xl">
-              <Linha k="Favorecido" v={v.vendedorNome} />
+              <Linha k="Favorecido" v={`${v.favorecidoNome}${v.favorecidoDoc ? ` · ${v.favorecidoDoc}` : ""}`} />
               <Linha k="Valor" v={<b>{BRL(v.valorAprovado)}</b>} />
+              <Linha k="Receber por" v={pagamentoTxt(v)} />
+              <Linha k="Empresa" v={v.instancia || "—"} />
+              {cfg.financeiro && v.payable && <Linha k="Categoria DRE" v={v.categoriaNome || "—"} />}
               <Linha k="Aprovado por" v={v.aprovadorNome} />
               <Linha k="Viagem" v={`${v.cidade}-${v.uf} · ${DT(v.dataIni)} a ${DT(v.dataFim)}`} />
               <Linha k="Prazo" v={`Até ${DT(v.dataIni)}`} />
             </div>
             <div className="flex gap-2 flex-wrap">{v.anexos.filter((a) => a.categoria === "pagamento").map((a) => <Anexo key={a.id} a={a} podeRemover={false} />)}</div>
-            {v.status === "aprovado" && (cfg.admin ? (
+            {v.payable && (
+              <p className="text-sm">✓ Lançado no Contas a Pagar por {v.lancadoNome}: conta <b>{v.payable.titulo}</b>, venc. {DT(v.payable.vencimento)}, {BRL(v.payable.valor)} — situação: <b>{v.payable.status === "paga" ? "paga" : v.payable.status.replace("_", " ")}</b>. A viagem fica paga quando a conta for baixada.
+                {cfg.financeiro && <> <a className="underline text-indigo-700" href="/financeiro">Abrir no Financeiro</a></>}</p>
+            )}
+            {v.status === "aprovado" && !v.payable && cfg.financeiro && v.forma && (
+              <div className="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+                <div className="grid sm:grid-cols-3 gap-3">
+                  <label className="grid gap-1 text-sm font-medium">Categoria (DRE) *
+                    <select className={selCls} value={lan.cat} onChange={(e) => setLan({ ...lan, cat: e.target.value })} data-testid="select-categoria-lancar">
+                      <option value="">Selecione…</option>{(cfg.categorias || []).map((c) => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
+                    </select>
+                    {!lan.cat && <span className="text-[11px] font-semibold text-red-600">Obrigatória para lançar no Contas a Pagar</span>}
+                  </label>
+                  <label className="grid gap-1 text-sm font-medium">Vencimento *<Input type="date" value={lan.venc || v.dataIni} onChange={(e) => setLan({ ...lan, venc: e.target.value })} /></label>
+                  <label className="grid gap-1 text-sm font-medium">Empresa (instância) *
+                    <select className={selCls} value={lan.inst || v.instancia || ""} onChange={(e) => setLan({ ...lan, inst: e.target.value })}>
+                      {(cfg.instancias || []).map((i) => <option key={i} value={i}>{i}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <Button disabled={busy || !lan.cat} className="bg-indigo-700 hover:bg-indigo-800 text-white" data-testid="button-lancar"
+                    onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/lancar`, { chartAccountId: lan.cat, vencimento: lan.venc || v.dataIni, instancia: lan.inst || v.instancia }), "Lançado no Contas a Pagar")}>
+                    Lançar no Contas a Pagar</Button>
+                  <span className="text-xs text-muted-foreground">Cria a conta a pagar do adiantamento com os dados de pagamento da solicitação.</span>
+                </div>
+              </div>
+            )}
+            {v.status === "aprovado" && !v.payable && (cfg.admin ? (
               <div className="flex gap-2 flex-wrap items-center">
                 <label className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer"><Paperclip className="w-4 h-4" /> Anexar comprovante e marcar como pago
                   <input type="file" className="hidden" accept="image/*,.pdf" multiple onChange={(e) => e.target.files?.length && acao(() => enviarArquivos(`/api/viagens/${v.id}/pagar`, e.target.files!), "Pagamento registrado")} />

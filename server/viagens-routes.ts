@@ -3,6 +3,8 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import multer from "multer";
+import { dataCalendario } from "@shared/tempo";
+import { validarPix, normalizarPix } from "./pix-util";
 
 // ===========================================================================
 // VIAGENS COM ADIANTAMENTO (27/out/2026)
@@ -19,6 +21,13 @@ import multer from "multer";
 // ===========================================================================
 
 const ADM = ["admin", "administrative"];
+// Contas a Pagar (28/out/2026): a solicitação já coleta o que a conta a pagar exige
+// (favorecido, CPF/CNPJ, forma + Pix/conta, empresa); o Financeiro escolhe a categoria
+// DRE e lança com 1 clique (vencimento = início da viagem, valor = aprovado).
+const FINANCEIRO = ["admin", "administrative", "coordinator"];
+const FORMAS = ["pix", "transferencia", "dinheiro"];
+const INSTANCIAS = ["BSB", "GYN", "IND", "SERV", "CAIXINHA"];
+const ehFinanceiro = (u: any) => FINANCEIRO.includes(String(u?.role || ""));
 const TARIFA: Record<string, number> = { DF: 0.75, GO: 0.65 };
 const ALIM_PADRAO = 60;
 const HOSP_PADRAO = 180;
@@ -52,6 +61,11 @@ function ensure(): Promise<void> {
         encerrado_por varchar, encerrado_em timestamp,
         criado_por varchar, created_at timestamp NOT NULL DEFAULT now(), updated_at timestamp NOT NULL DEFAULT now()
       )`);
+      for (const col of ["instancia varchar", "forma varchar", "favorecido_nome varchar", "favorecido_doc varchar", "pix_tipo varchar", "pix_chave varchar",
+        "banco varchar", "agencia varchar", "conta varchar", "tipo_conta varchar", "chart_account_id varchar", "payable_id varchar",
+        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp"]) {
+        await db.execute(sql.raw(`ALTER TABLE viagens ADD COLUMN IF NOT EXISTS ${col}`));
+      }
       await db.execute(sql`CREATE TABLE IF NOT EXISTS viagem_despesas (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
         viagem_id varchar NOT NULL, tipo varchar NOT NULL, valor numeric NOT NULL DEFAULT 0,
@@ -96,6 +110,19 @@ async function fecharChamados(id: string, etapa: string, texto: string, u: any) 
 async function carregar(id: string) {
   return rows(await db.execute(sql`SELECT * FROM viagens WHERE id = ${id}`))[0] || null;
 }
+function dadosPagamento(v: any): string {
+  if (v.forma === "pix") return `PIX ${v.pix_tipo ? `(${v.pix_tipo}) ` : ""}${v.pix_chave || ""}`.trim();
+  if (v.forma === "transferencia") return `Transferência: ${v.banco || "?"} · ag ${v.agencia || "?"} · ${v.tipo_conta || "conta"} ${v.conta || "?"}`;
+  if (v.forma === "dinheiro") return "Dinheiro (Caixinha)";
+  return "não informado";
+}
+// Conta a pagar baixada => adiantamento pago (sincroniza na leitura)
+async function sincronizarPagos() {
+  try {
+    await db.execute(sql`UPDATE viagens v SET status = 'pago', pago_em = COALESCE(v.pago_em, now()), updated_at = now()
+      FROM payables p WHERE p.id = v.payable_id AND v.status = 'aprovado' AND p.status = 'paga' AND p.deleted_at IS NULL`);
+  } catch (e: any) { console.warn("[viagens] sync pagos:", e?.message || e); }
+}
 function podeVer(u: any, v: any) { return isAdm(u) || String(v.vendedor_id) === String(u.id); }
 
 function saida(v: any) {
@@ -111,6 +138,9 @@ function saida(v: any) {
     pagoEm: v.pago_em, kmReal: v.km_real == null ? null : num(v.km_real), valorKmReal: v.valor_km_real == null ? null : num(v.valor_km_real),
     valorDespesas: v.valor_despesas == null ? null : num(v.valor_despesas), valorReal: v.valor_real == null ? null : num(v.valor_real),
     saldo: v.saldo == null ? null : num(v.saldo), prestadoEm: v.prestado_em, encerradoEm: v.encerrado_em, createdAt: v.created_at,
+    instancia: v.instancia || null, forma: v.forma || null, favorecidoNome: v.favorecido_nome || v.vendedor_nome, favorecidoDoc: v.favorecido_doc || "",
+    pixTipo: v.pix_tipo || "", pixChave: v.pix_chave || "", banco: v.banco || "", agencia: v.agencia || "", conta: v.conta || "", tipoConta: v.tipo_conta || "",
+    chartAccountId: v.chart_account_id || null, payableId: v.payable_id || null, lancadoNome: v.lancado_nome || null, lancadoEm: v.lancado_em || null,
   };
 }
 
@@ -167,8 +197,17 @@ export function registerViagens(app: Express) {
       FROM users WHERE is_active = true AND role IN ('vendedor','telemarketing')
         AND COALESCE(first_name,'') || ' ' || COALESCE(last_name,'') !~* '(hotsite|instagram|sistema|flavio|fl[aá]vio|honest)'
       ORDER BY 2`)).filter((x) => x.nome) : [];
-    res.json({ admin: isAdm(u), me: { id: String(u.id), nome: nomeDe(u) }, vendedores: vend.map((x) => ({ id: String(x.id), nome: x.nome })),
-      tarifa: TARIFA, alimPadrao: ALIM_PADRAO, hospPadrao: HOSP_PADRAO });
+    let categorias: any[] = [];
+    if (ehFinanceiro(u)) {
+      try {
+        categorias = rows(await db.execute(sql`SELECT id, code, name FROM chart_of_accounts WHERE is_active = true AND type = 'despesa' AND code LIKE '%.%' ORDER BY code`));
+        if (!categorias.length) categorias = rows(await db.execute(sql`SELECT id, code, name FROM chart_of_accounts WHERE is_active = true AND code LIKE '%.%' ORDER BY code`));
+      } catch {}
+    }
+    const eu = rows(await db.execute(sql`SELECT * FROM users WHERE id = ${String(u.id)}`))[0] || {};
+    res.json({ admin: isAdm(u), financeiro: ehFinanceiro(u), me: { id: String(u.id), nome: nomeDe(u), cpf: eu.cpf || "" }, vendedores: vend.map((x) => ({ id: String(x.id), nome: x.nome })),
+      tarifa: TARIFA, alimPadrao: ALIM_PADRAO, hospPadrao: HOSP_PADRAO,
+      instancias: INSTANCIAS, categorias: categorias.map((c) => ({ id: String(c.id), code: c.code, name: c.name })) });
   });
 
   // Base do vendedor (casa) + histórico de viagens encerradas/prestadas ao destino
@@ -186,6 +225,7 @@ export function registerViagens(app: Express) {
 
   app.get("/api/viagens", authenticateUser, async (req, res) => {
     const u = await guard(req, res); if (!u) return;
+    await sincronizarPagos();
     const r = rows(await db.execute(isAdm(u)
       ? sql`SELECT * FROM viagens ORDER BY created_at DESC LIMIT 300`
       : sql`SELECT * FROM viagens WHERE vendedor_id = ${String(u.id)} ORDER BY created_at DESC LIMIT 300`));
@@ -194,14 +234,21 @@ export function registerViagens(app: Express) {
 
   app.get("/api/viagens/:id", authenticateUser, async (req, res) => {
     const u = await guard(req, res); if (!u) return;
+    await sincronizarPagos();
     const v = await carregar(req.params.id);
     if (!v || !podeVer(u, v)) return res.status(404).json({ message: "Viagem não encontrada" });
+    let payable: any = null;
+    if (v.payable_id) payable = rows(await db.execute(sql`SELECT id, title_number, status::text AS status, amount, due_date FROM payables WHERE id = ${v.payable_id}`))[0] || null;
+    let categoria: any = null;
+    if (v.chart_account_id) categoria = rows(await db.execute(sql`SELECT code, name FROM chart_of_accounts WHERE id = ${v.chart_account_id}`))[0] || null;
     const desp = rows(await db.execute(sql`SELECT id, tipo, valor FROM viagem_despesas WHERE viagem_id = ${v.id} ORDER BY created_at`));
     const anx = rows(await db.execute(sql`SELECT id, despesa_id, categoria, nome, mime, tamanho FROM viagem_anexos WHERE viagem_id = ${v.id} ORDER BY created_at`));
     const evt = rows(await db.execute(sql`SELECT autor_nome, texto, created_at FROM viagem_eventos WHERE viagem_id = ${v.id} ORDER BY created_at`));
     res.json({ ...saida(v), despesas: desp.map((d) => ({ id: d.id, tipo: d.tipo, valor: num(d.valor) })),
       anexos: anx.map((a) => ({ id: a.id, despesaId: a.despesa_id, categoria: a.categoria, nome: a.nome, mime: a.mime, tamanho: a.tamanho })),
-      eventos: evt.map((e) => ({ autor: e.autor_nome, texto: e.texto, em: e.created_at })), kmDias: await kmDoPeriodo(v) });
+      eventos: evt.map((e) => ({ autor: e.autor_nome, texto: e.texto, em: e.created_at })), kmDias: await kmDoPeriodo(v),
+      categoriaNome: categoria ? `${categoria.code} ${categoria.name}` : null,
+      payable: payable ? { id: payable.id, titulo: payable.title_number, status: payable.status, valor: num(payable.amount), vencimento: String(payable.due_date instanceof Date ? payable.due_date.toISOString() : payable.due_date).slice(0, 10) } : null });
   });
 
   // Solicitação (vendedor; admin pode solicitar por um vendedor)
@@ -219,6 +266,18 @@ export function registerViagens(app: Express) {
       const ini = String(b.dataIni || "").slice(0, 10), fim = String(b.dataFim || "").slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(ini) || !/^\d{4}-\d{2}-\d{2}$/.test(fim) || fim < ini) return res.status(400).json({ message: "Datas inválidas" });
       const dias = Math.round((Date.parse(fim) - Date.parse(ini)) / 864e5) + 1, noites = dias - 1;
+      // dados para o Contas a Pagar (mesmos do Reembolso)
+      const instancia = String(b.instancia || "");
+      if (!INSTANCIAS.includes(instancia)) return res.status(400).json({ message: "Escolha a empresa (instância)" });
+      const forma = String(b.forma || "");
+      if (!FORMAS.includes(forma)) return res.status(400).json({ message: "Escolha como receber: PIX, Transferência ou Dinheiro" });
+      const favNome = String(b.favorecidoNome || nomeDe(vu)).trim().slice(0, 200);
+      if (!favNome) return res.status(400).json({ message: "Informe o nome do favorecido" });
+      const favDoc = String(b.favorecidoDoc || "").replace(/[^\d./-]/g, "").slice(0, 20);
+      const pixTipo = String(b.pixTipo || "").slice(0, 20), pixChave = String(b.pixChave || "").trim().slice(0, 120);
+      const banco = String(b.banco || "").trim().slice(0, 80), agencia = String(b.agencia || "").trim().slice(0, 20), conta = String(b.conta || "").trim().slice(0, 30), tipoConta = String(b.tipoConta || "").slice(0, 20);
+      if (forma === "pix") { if (!pixChave) return res.status(400).json({ message: "Informe a chave PIX" }); const ep = validarPix(pixTipo, pixChave); if (ep) return res.status(400).json({ message: ep }); }
+      if (forma === "transferencia" && (!banco || !agencia || !conta)) return res.status(400).json({ message: "Informe banco, agência e conta" });
       const idaVolta = Math.max(0, num(b.idaVoltaKm));
       const km = r2((idaVolta + (dias > 1 ? (dias - 1) * 25 : 0)) * 1.1);
       const tarifa = adm && b.tarifa != null ? num(b.tarifa, TARIFA[uf]) : TARIFA[uf];
@@ -226,9 +285,12 @@ export function registerViagens(app: Express) {
       const hosp = adm && b.hospNoite != null ? num(b.hospNoite, HOSP_PADRAO) : HOSP_PADRAO;
       const vKm = r2(km * tarifa), vAl = r2(alim * dias), vHo = r2(hosp * noites), tot = r2(vKm + vAl + vHo);
       const ins = rows(await db.execute(sql`INSERT INTO viagens (vendedor_id, vendedor_nome, cidade, uf, data_ini, data_fim, dias, noites,
-          ida_volta_km, km_previsto, tarifa, alim_dia, hosp_noite, valor_km, valor_alim, valor_hosp, valor_sugerido, obs, criado_por)
+          ida_volta_km, km_previsto, tarifa, alim_dia, hosp_noite, valor_km, valor_alim, valor_hosp, valor_sugerido, obs, criado_por,
+          instancia, forma, favorecido_nome, favorecido_doc, pix_tipo, pix_chave, banco, agencia, conta, tipo_conta)
         VALUES (${vendedorId}, ${nomeDe(vu)}, ${cidade}, ${uf}, ${ini}::date, ${fim}::date, ${dias}, ${noites},
-          ${r2(idaVolta)}, ${km}, ${tarifa}, ${alim}, ${hosp}, ${vKm}, ${vAl}, ${vHo}, ${tot}, ${String(b.obs || "").slice(0, 2000)}, ${String(u.id)})
+          ${r2(idaVolta)}, ${km}, ${tarifa}, ${alim}, ${hosp}, ${vKm}, ${vAl}, ${vHo}, ${tot}, ${String(b.obs || "").slice(0, 2000)}, ${String(u.id)},
+          ${instancia}, ${forma}, ${favNome}, ${favDoc || null}, ${forma === "pix" ? pixTipo : null}, ${forma === "pix" ? normalizarPix(pixTipo, pixChave) : null},
+          ${forma === "transferencia" ? banco : null}, ${forma === "transferencia" ? agencia : null}, ${forma === "transferencia" ? conta : null}, ${forma === "transferencia" ? tipoConta : null})
         RETURNING *`))[0];
       const cod = "VG-" + String(ins.numero).padStart(4, "0");
       await evento(ins.id, nomeDe(u), `Solicitação enviada: ${cidade}-${uf}, ${fmtData(ini)} a ${fmtData(fim)}, km previsto ${km.toLocaleString("pt-BR")} km, sugerido ${fmtBRL(tot)}.`);
@@ -259,7 +321,7 @@ export function registerViagens(app: Express) {
     await evento(v.id, nomeDe(u), `Aprovado ${fmtBRL(valor)}. Enviado ao Financeiro.`);
     await fecharChamados(v.id, "aprovar", `✅ Aprovado — ${fmtBRL(valor)}`, u);
     await chamado(["lanucy"], `Viagem ${cod} — pagar adiantamento`,
-      `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.vendedor_nome} antes de ${fmtData(v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nAnexe o comprovante e marque como pago em: ${APP_URL}/viagens?id=${v.id}`, u);
+      `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.favorecido_nome || v.vendedor_nome} antes de ${fmtData(v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nReceber por: ${dadosPagamento(v)}${v.instancia ? ` · empresa ${v.instancia}` : ""}\nLance no Contas a Pagar com 1 clique (ou anexe o comprovante e marque como pago) em: ${APP_URL}/viagens?id=${v.id}`, u);
     res.json(saida(await carregar(v.id)));
   });
 
@@ -276,12 +338,64 @@ export function registerViagens(app: Express) {
     res.json(saida(await carregar(v.id)));
   });
 
+  // 1 CLIQUE: cria a Conta a Pagar do adiantamento aprovado (venc. = início da viagem)
+  app.post("/api/viagens/:id/lancar", authenticateUser, async (req: any, res) => {
+    const u = await guard(req, res); if (!u) return;
+    if (!ehFinanceiro(u)) return res.status(403).json({ message: "Só o Financeiro lança no Contas a Pagar" });
+    const v = await carregar(req.params.id);
+    if (!v || v.status !== "aprovado") return res.status(400).json({ message: "Viagem não está aprovada" });
+    if (v.payable_id) return res.status(400).json({ message: "Este adiantamento já foi lançado" });
+    const b = req.body || {};
+    const cat = b.chartAccountId ? String(b.chartAccountId) : v.chart_account_id;
+    if (!cat) return res.status(400).json({ message: "Escolha a categoria DRE (obrigatória para lançar no Contas a Pagar)" });
+    const venc = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : String(v.data_ini instanceof Date ? v.data_ini.toISOString() : v.data_ini).slice(0, 10);
+    const inst = INSTANCIAS.includes(String(b.instancia || "")) ? String(b.instancia) : (v.instancia || null);
+    if (!inst) return res.status(400).json({ message: "Escolha a empresa (instância)" });
+    if (!v.forma) return res.status(400).json({ message: "Esta viagem foi pedida antes dos dados de pagamento: use 'Anexar comprovante e marcar como pago'" });
+    const valor = num(v.valor_aprovado);
+    const cod = "VG-" + String(v.numero).padStart(4, "0");
+    try {
+      const { storage } = await import("./storage");
+      const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const payable: any = await storage.createPayable({
+        titleNumber: cod,
+        supplierName: v.favorecido_nome || v.vendedor_nome,
+        supplierDocument: v.favorecido_doc || null,
+        description: `Adiantamento de viagem ${cod} — ${v.cidade}-${v.uf}, ${fmtData(v.data_ini)} a ${fmtData(v.data_fim)}`.slice(0, 1000),
+        issueDate: dataCalendario(hoje),
+        dueDate: dataCalendario(venc),
+        amount: valor.toFixed(2),
+        originalAmount: valor.toFixed(2),
+        paymentMethod: v.forma,
+        chartAccountId: cat,
+        omieInstanceId: inst,
+        source: "manual",
+        externalId: `viagem:${v.id}`,
+        notes: `Adiantamento ${cod} de ${v.vendedor_nome}, aprovado por ${v.aprovador_nome || "-"}.\nPagar por: ${dadosPagamento(v)}${v.favorecido_doc ? `\nCPF/CNPJ: ${v.favorecido_doc}` : ""}\nKm previsto ${num(v.km_previsto).toLocaleString("pt-BR")} km · alimentação ${fmtBRL(num(v.valor_alim))} · hospedagem ${fmtBRL(num(v.valor_hosp))}\nOrigem: ${APP_URL}/viagens?id=${v.id}`,
+        createdBy: u.email || null,
+      } as any);
+      try {
+        const { logFinancialAudit } = await import("./financial-audit");
+        await logFinancialAudit({ req, action: "create" as any, entity: "payable", entityId: payable.id, after: payable, amount: valor, note: `adiantamento viagem ${cod}` });
+      } catch {}
+      await db.execute(sql`UPDATE viagens SET payable_id = ${payable.id}, chart_account_id = ${cat}, instancia = ${inst},
+        lancado_por = ${String(u.id)}, lancado_nome = ${nomeDe(u)}, lancado_em = now(), updated_at = now() WHERE id = ${v.id}`);
+      await evento(v.id, nomeDe(u), `Lançado no Contas a Pagar (título ${cod}, venc. ${fmtData(venc)}, ${fmtBRL(valor)}, empresa ${inst}). Fica pago quando a conta for baixada.`);
+      await fecharChamados(v.id, "pagar", `✅ Lançado no Contas a Pagar — ${fmtBRL(valor)}, venc. ${fmtData(venc)}`, u);
+      res.json(saida(await carregar(v.id)));
+    } catch (e: any) {
+      console.error("[viagens] lancar", e);
+      res.status(500).json({ message: "Não foi possível lançar: " + (e?.message || e) });
+    }
+  });
+
   // Pagamento (Financeiro / admin): comprovante opcional em "arquivos"
   app.post("/api/viagens/:id/pagar", authenticateUser, comArquivos, async (req: any, res) => {
     const u = await guard(req, res); if (!u) return;
     if (!isAdm(u)) return res.status(403).json({ message: "Só o Financeiro (Admin) marca como pago" });
     const v = await carregar(req.params.id);
     if (!v || v.status !== "aprovado") return res.status(400).json({ message: "Viagem não está aprovada" });
+    if (v.payable_id) return res.status(400).json({ message: "Adiantamento já lançado no Contas a Pagar: dê baixa na conta no Financeiro (a viagem fica paga sozinha)" });
     for (const f of (Array.isArray(req.files) ? req.files : [])) {
       await db.execute(sql`INSERT INTO viagem_anexos (viagem_id, categoria, nome, mime, tamanho, dados, autor_id)
         VALUES (${v.id}, 'pagamento', ${nomeArq(f).slice(0, 200)}, ${String(f.mimetype || "")}, ${Number(f.size || 0)}, ${f.buffer}, ${String(u.id)})`);
