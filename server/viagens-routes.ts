@@ -121,6 +121,20 @@ async function kmDoPeriodo(v: any) {
   return r.map((x) => ({ dia: x.dia, km: r2(num(x.km)) }));
 }
 
+// Recalcula a km das rotas do vendedor no periodo da viagem (regra de pernoite fora
+// em actualRouteService: sem volta pra casa nos dias com pernoite).
+async function recalcRotas(v: any) {
+  try {
+    const { recalculateRouteDistance } = await import("./actualRouteService");
+    const { storage } = await import("./storage");
+    const r = rows(await db.execute(sql`
+      SELECT dr.id FROM daily_routes dr JOIN users u ON u.id = ${v.vendedor_id}
+      WHERE (dr.seller_id = u.id OR dr.seller_id = u.omie_vendor_code OR dr.seller_id = 'omie-vendor-' || COALESCE(u.omie_vendor_code, ''))
+        AND dr.route_date::date >= ${String(v.data_ini).slice(0, 10)}::date AND dr.route_date::date <= ${String(v.data_fim).slice(0, 10)}::date`));
+    for (const x of r) { try { await recalculateRouteDistance(String(x.id), storage as any); } catch (e: any) { console.warn("[viagens] recalc rota", x.id, e?.message); } }
+  } catch (e: any) { console.warn("[viagens] recalc rotas:", e?.message || e); }
+}
+
 const MAX_MB = 15;
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_MB * 1024 * 1024, files: 10 } }).array("arquivos", 10);
 function comArquivos(req: any, res: Response, next: any) {
@@ -235,6 +249,7 @@ export function registerViagens(app: Express) {
       valor_sugerido = ${sug}, valor_aprovado = ${valor}, status = 'aprovado', aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), updated_at = now()
       WHERE id = ${v.id}`);
     const cod = "VG-" + String(v.numero).padStart(4, "0");
+    await recalcRotas(v);
     await evento(v.id, nomeDe(u), `Aprovado ${fmtBRL(valor)}. Enviado ao Financeiro.`);
     await chamado(["lanucy"], `Viagem ${cod} — pagar adiantamento`,
       `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.vendedor_nome} antes de ${fmtData(v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nAnexe o comprovante e marque como pago em: ${APP_URL}/viagens?id=${v.id}`, u);
@@ -329,6 +344,7 @@ export function registerViagens(app: Express) {
     const u = await guard(req, res); if (!u) return;
     const v = await carregar(req.params.id);
     if (!podeEditarPrestacao(u, v)) return res.status(400).json({ message: "Prestação de contas não está aberta" });
+    await recalcRotas(v);
     const kmDias = await kmDoPeriodo(v);
     const kmReal = r2(kmDias.reduce((a, d) => a + d.km, 0));
     const vKm = r2(kmReal * num(v.tarifa));
