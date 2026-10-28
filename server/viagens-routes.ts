@@ -63,7 +63,7 @@ function ensure(): Promise<void> {
       )`);
       for (const col of ["instancia varchar", "forma varchar", "favorecido_nome varchar", "favorecido_doc varchar", "pix_tipo varchar", "pix_chave varchar",
         "banco varchar", "agencia varchar", "conta varchar", "tipo_conta varchar", "chart_account_id varchar", "payable_id varchar",
-        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp"]) {
+        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp", "valor_outros numeric", "vencimento date"]) {
         await db.execute(sql.raw(`ALTER TABLE viagens ADD COLUMN IF NOT EXISTS ${col}`));
       }
       await db.execute(sql`CREATE TABLE IF NOT EXISTS viagem_despesas (
@@ -132,7 +132,8 @@ function saida(v: any) {
     dataIni: String(v.data_ini).slice(0, 10), dataFim: String(v.data_fim).slice(0, 10),
     dias: num(v.dias), noites: num(v.noites), idaVoltaKm: num(v.ida_volta_km), kmPrevisto: num(v.km_previsto),
     tarifa: num(v.tarifa), alimDia: num(v.alim_dia), hospNoite: num(v.hosp_noite),
-    valorKm: num(v.valor_km), valorAlim: num(v.valor_alim), valorHosp: num(v.valor_hosp), valorSugerido: num(v.valor_sugerido),
+    valorKm: num(v.valor_km), valorAlim: num(v.valor_alim), valorHosp: num(v.valor_hosp), valorOutros: num(v.valor_outros), valorSugerido: num(v.valor_sugerido),
+    vencimento: v.vencimento ? String(v.vencimento instanceof Date ? v.vencimento.toISOString() : v.vencimento).slice(0, 10) : null,
     valorAprovado: v.valor_aprovado == null ? null : num(v.valor_aprovado), obs: v.obs || "",
     status: v.status, aprovadorNome: v.aprovador_nome, aprovadoEm: v.aprovado_em, motivoRecusa: v.motivo_recusa,
     pagoEm: v.pago_em, kmReal: v.km_real == null ? null : num(v.km_real), valorKmReal: v.valor_km_real == null ? null : num(v.valor_km_real),
@@ -283,19 +284,21 @@ export function registerViagens(app: Express) {
       const tarifa = adm && b.tarifa != null ? num(b.tarifa, TARIFA[uf]) : TARIFA[uf];
       const alim = adm && b.alimDia != null ? num(b.alimDia, ALIM_PADRAO) : ALIM_PADRAO;
       const hosp = adm && b.hospNoite != null ? num(b.hospNoite, HOSP_PADRAO) : HOSP_PADRAO;
-      const vKm = r2(km * tarifa), vAl = r2(alim * dias), vHo = r2(hosp * noites), tot = r2(vKm + vAl + vHo);
+      const vOu = adm ? r2(Math.max(0, num(b.outros))) : 0;
+      const vKm = r2(km * tarifa), vAl = r2(alim * dias), vHo = r2(hosp * noites), tot = r2(vKm + vAl + vHo + vOu);
+      const vencimento = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : ini;
       const ins = rows(await db.execute(sql`INSERT INTO viagens (vendedor_id, vendedor_nome, cidade, uf, data_ini, data_fim, dias, noites,
           ida_volta_km, km_previsto, tarifa, alim_dia, hosp_noite, valor_km, valor_alim, valor_hosp, valor_sugerido, obs, criado_por,
-          instancia, forma, favorecido_nome, favorecido_doc, pix_tipo, pix_chave, banco, agencia, conta, tipo_conta)
+          instancia, forma, favorecido_nome, favorecido_doc, pix_tipo, pix_chave, banco, agencia, conta, tipo_conta, valor_outros, vencimento)
         VALUES (${vendedorId}, ${nomeDe(vu)}, ${cidade}, ${uf}, ${ini}::date, ${fim}::date, ${dias}, ${noites},
           ${r2(idaVolta)}, ${km}, ${tarifa}, ${alim}, ${hosp}, ${vKm}, ${vAl}, ${vHo}, ${tot}, ${String(b.obs || "").slice(0, 2000)}, ${String(u.id)},
           ${instancia}, ${forma}, ${favNome}, ${favDoc || null}, ${forma === "pix" ? pixTipo : null}, ${forma === "pix" ? normalizarPix(pixTipo, pixChave) : null},
-          ${forma === "transferencia" ? banco : null}, ${forma === "transferencia" ? agencia : null}, ${forma === "transferencia" ? conta : null}, ${forma === "transferencia" ? tipoConta : null})
+          ${forma === "transferencia" ? banco : null}, ${forma === "transferencia" ? agencia : null}, ${forma === "transferencia" ? conta : null}, ${forma === "transferencia" ? tipoConta : null}, ${vOu}, ${vencimento}::date)
         RETURNING *`))[0];
       const cod = "VG-" + String(ins.numero).padStart(4, "0");
       await evento(ins.id, nomeDe(u), `Solicitação enviada: ${cidade}-${uf}, ${fmtData(ini)} a ${fmtData(fim)}, km previsto ${km.toLocaleString("pt-BR")} km, sugerido ${fmtBRL(tot)}.`);
       await chamado(["flavio", "cinthia"], `Viagem com adiantamento ${cod} — aprovar`,
-        `${nomeDe(vu)} pediu adiantamento para ${cidade}-${uf}, de ${fmtData(ini)} a ${fmtData(fim)} (${dias} dia(s)).\nKm previsto: ${km.toLocaleString("pt-BR")} km × ${fmtBRL(tarifa)} = ${fmtBRL(vKm)}\nAlimentação: ${fmtBRL(vAl)} · Hospedagem: ${fmtBRL(vHo)}\nTotal sugerido: ${fmtBRL(tot)}\n\nAprove ou recuse em: ${APP_URL}/viagens?id=${ins.id}`, u);
+        `${nomeDe(vu)} pediu adiantamento para ${cidade}-${uf}, de ${fmtData(ini)} a ${fmtData(fim)} (${dias} dia(s)).\nKm previsto: ${km.toLocaleString("pt-BR")} km × ${fmtBRL(tarifa)} = ${fmtBRL(vKm)}\nAlimentação: ${fmtBRL(vAl)} · Hospedagem: ${fmtBRL(vHo)}${vOu ? ` · Outras despesas: ${fmtBRL(vOu)}` : ""}\nTotal sugerido: ${fmtBRL(tot)} · pagar até ${fmtData(vencimento)}\n\nAprove ou recuse em: ${APP_URL}/viagens?id=${ins.id}`, u);
       res.json(saida(ins));
     } catch (e: any) { console.error("[viagens] criar", e); res.status(500).json({ message: e?.message || "Erro ao solicitar" }); }
   });
@@ -310,10 +313,11 @@ export function registerViagens(app: Express) {
     const tarifa = b.tarifa != null ? num(b.tarifa, num(v.tarifa)) : num(v.tarifa);
     const alim = b.alimDia != null ? num(b.alimDia, num(v.alim_dia)) : num(v.alim_dia);
     const hosp = b.hospNoite != null ? num(b.hospNoite, num(v.hosp_noite)) : num(v.hosp_noite);
+    const vOu = b.outros != null ? r2(Math.max(0, num(b.outros))) : num(v.valor_outros);
     const vKm = r2(num(v.km_previsto) * tarifa), vAl = r2(alim * num(v.dias)), vHo = r2(hosp * num(v.noites));
-    const sug = r2(vKm + vAl + vHo);
+    const sug = r2(vKm + vAl + vHo + vOu);
     const valor = b.valorAprovado != null && num(b.valorAprovado) > 0 ? r2(num(b.valorAprovado)) : sug;
-    await db.execute(sql`UPDATE viagens SET tarifa = ${tarifa}, alim_dia = ${alim}, hosp_noite = ${hosp}, valor_km = ${vKm}, valor_alim = ${vAl}, valor_hosp = ${vHo},
+    await db.execute(sql`UPDATE viagens SET tarifa = ${tarifa}, alim_dia = ${alim}, hosp_noite = ${hosp}, valor_km = ${vKm}, valor_alim = ${vAl}, valor_hosp = ${vHo}, valor_outros = ${vOu},
       valor_sugerido = ${sug}, valor_aprovado = ${valor}, status = 'aprovado', aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), updated_at = now()
       WHERE id = ${v.id}`);
     const cod = "VG-" + String(v.numero).padStart(4, "0");
@@ -321,7 +325,7 @@ export function registerViagens(app: Express) {
     await evento(v.id, nomeDe(u), `Aprovado ${fmtBRL(valor)}. Enviado ao Financeiro.`);
     await fecharChamados(v.id, "aprovar", `✅ Aprovado — ${fmtBRL(valor)}`, u);
     await chamado(["lanucy"], `Viagem ${cod} — pagar adiantamento`,
-      `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.favorecido_nome || v.vendedor_nome} antes de ${fmtData(v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nReceber por: ${dadosPagamento(v)}${v.instancia ? ` · empresa ${v.instancia}` : ""}\nLance no Contas a Pagar com 1 clique (ou anexe o comprovante e marque como pago) em: ${APP_URL}/viagens?id=${v.id}`, u);
+      `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.favorecido_nome || v.vendedor_nome} até ${fmtData(v.vencimento || v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nReceber por: ${dadosPagamento(v)}${v.instancia ? ` · empresa ${v.instancia}` : ""}\nLance no Contas a Pagar com 1 clique (ou anexe o comprovante e marque como pago) em: ${APP_URL}/viagens?id=${v.id}`, u);
     res.json(saida(await carregar(v.id)));
   });
 
@@ -348,7 +352,7 @@ export function registerViagens(app: Express) {
     const b = req.body || {};
     const cat = b.chartAccountId ? String(b.chartAccountId) : v.chart_account_id;
     if (!cat) return res.status(400).json({ message: "Escolha a categoria DRE (obrigatória para lançar no Contas a Pagar)" });
-    const venc = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : String(v.data_ini instanceof Date ? v.data_ini.toISOString() : v.data_ini).slice(0, 10);
+    const venc = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : String((v.vencimento || v.data_ini) instanceof Date ? (v.vencimento || v.data_ini).toISOString() : (v.vencimento || v.data_ini)).slice(0, 10);
     const inst = INSTANCIAS.includes(String(b.instancia || "")) ? String(b.instancia) : (v.instancia || null);
     if (!inst) return res.status(400).json({ message: "Escolha a empresa (instância)" });
     if (!v.forma) return res.status(400).json({ message: "Esta viagem foi pedida antes dos dados de pagamento: use 'Anexar comprovante e marcar como pago'" });
@@ -371,7 +375,7 @@ export function registerViagens(app: Express) {
         omieInstanceId: inst,
         source: "manual",
         externalId: `viagem:${v.id}`,
-        notes: `Adiantamento ${cod} de ${v.vendedor_nome}, aprovado por ${v.aprovador_nome || "-"}.\nPagar por: ${dadosPagamento(v)}${v.favorecido_doc ? `\nCPF/CNPJ: ${v.favorecido_doc}` : ""}\nKm previsto ${num(v.km_previsto).toLocaleString("pt-BR")} km · alimentação ${fmtBRL(num(v.valor_alim))} · hospedagem ${fmtBRL(num(v.valor_hosp))}\nOrigem: ${APP_URL}/viagens?id=${v.id}`,
+        notes: `Adiantamento ${cod} de ${v.vendedor_nome}, aprovado por ${v.aprovador_nome || "-"}.\nPagar por: ${dadosPagamento(v)}${v.favorecido_doc ? `\nCPF/CNPJ: ${v.favorecido_doc}` : ""}\nKm previsto ${num(v.km_previsto).toLocaleString("pt-BR")} km · alimentação ${fmtBRL(num(v.valor_alim))} · hospedagem ${fmtBRL(num(v.valor_hosp))}${num(v.valor_outros) ? ` · outras despesas ${fmtBRL(num(v.valor_outros))}` : ""}\nOrigem: ${APP_URL}/viagens?id=${v.id}`,
         createdBy: u.email || null,
       } as any);
       try {

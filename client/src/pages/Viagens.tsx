@@ -20,7 +20,7 @@ import { PIX_TIPOS, PIX_REGRA } from "@/lib/pix";
 type Viagem = {
   id: string; numero: number; codigo: string; vendedorId: string; vendedorNome: string; cidade: string; uf: string;
   dataIni: string; dataFim: string; dias: number; noites: number; idaVoltaKm: number; kmPrevisto: number; tarifa: number;
-  alimDia: number; hospNoite: number; valorKm: number; valorAlim: number; valorHosp: number; valorSugerido: number;
+  alimDia: number; hospNoite: number; valorKm: number; valorAlim: number; valorHosp: number; valorOutros: number; valorSugerido: number; vencimento: string | null;
   valorAprovado: number | null; obs: string; status: string; aprovadorNome: string | null; motivoRecusa: string | null;
   kmReal: number | null; valorKmReal: number | null; valorDespesas: number | null; valorReal: number | null; saldo: number | null;
   createdAt: string;
@@ -137,6 +137,8 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
   const [tarifa, setTarifa] = useState<number | null>(null);
   const [alim, setAlim] = useState(cfg.alimPadrao);
   const [hosp, setHosp] = useState(cfg.hospPadrao);
+  const [outros, setOutros] = useState(0); // outras despesas (valor total), sempre 0 por padrão
+  const [venc, setVenc] = useState<string | null>(null); // "pagar até": segue o início da viagem até ser alterado
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
   // dados para o Contas a Pagar (como no Reembolso)
@@ -163,9 +165,9 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
     else { const base = est?.casa || { lat: -16.6864, lon: -49.2643 }; idaVolta = 2 * hav(base.lat, base.lon, c[2], c[3]) * 1.3; fonte = est?.casa ? "estimativa a partir da casa do vendedor" : "estimativa a partir de Goiânia (casa do vendedor não cadastrada)"; }
     const local = dias > 1 ? (dias - 1) * 25 : 0, km = (idaVolta + local) * 1.1;
     const t = tarifa ?? cfg.tarifa[c[1]] ?? 0.65;
-    const vKm = km * t, vAl = alim * dias, vHo = hosp * noites;
-    return { dias, noites, idaVolta, local, km, t, vKm, vAl, vHo, total: vKm + vAl + vHo, fonte, uf: c[1] };
-  }, [c, ini, fim, est, tarifa, alim, hosp, cfg]);
+    const vKm = km * t, vAl = alim * dias, vHo = hosp * noites, vOu = cfg.admin ? Math.max(0, outros) : 0;
+    return { dias, noites, idaVolta, local, km, t, vKm, vAl, vHo, vOu, extras: vAl + vHo + vOu, total: vKm + vAl + vHo + vOu, fonte, uf: c[1] };
+  }, [c, ini, fim, est, tarifa, alim, hosp, outros, cfg]);
   const faltando = [
     !instancia && "a empresa",
     !favNome.trim() && "o favorecido",
@@ -178,7 +180,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
     if (faltando.length) { erro(new Error("Falta informar: " + faltando.join(", "))); return; }
     setEnviando(true);
     try {
-      const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, tarifa: calc.t, alimDia: alim, hospNoite: hosp, obs,
+      const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, tarifa: calc.t, alimDia: alim, hospNoite: hosp, outros: calc.vOu, vencimento: venc || ini, obs,
         instancia, forma, favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, banco, agencia, conta, tipoConta });
       onOk(r.id);
     } catch (e) { erro(e); } finally { setEnviando(false); }
@@ -225,16 +227,21 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
               </div>
               {cfg.admin && (
                 <div className="rounded-lg border border-dashed border-amber-400 bg-amber-50/60 dark:bg-amber-950/20 p-3 grid gap-3">
-                  <div className="text-[11px] uppercase tracking-wide text-amber-800 dark:text-amber-300">Só admin · alimentação e hospedagem</div>
+                  <div className="text-[11px] uppercase tracking-wide text-amber-800 dark:text-amber-300">Só admin · alimentação, hospedagem e outras despesas</div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <label className="grid gap-1 text-sm font-medium">Alimentação por dia <span className="text-xs font-normal text-muted-foreground">sugestão {BRL(cfg.alimPadrao)}</span><Input type="number" step="0.01" value={alim} onChange={(e) => setAlim(Number(e.target.value) || 0)} /></label>
                     <label className="grid gap-1 text-sm font-medium">Hospedagem por noite <span className="text-xs font-normal text-muted-foreground">sugestão {BRL(cfg.hospPadrao)}</span><Input type="number" step="0.01" value={hosp} onChange={(e) => setHosp(Number(e.target.value) || 0)} /></label>
-                    <label className="grid gap-1 text-sm font-medium">Alimentação total<Input value={BRL(calc.vAl)} disabled /></label>
-                    <label className="grid gap-1 text-sm font-medium">Hospedagem total<Input value={BRL(calc.vHo)} disabled /></label>
+                    <label className="grid gap-1 text-sm font-medium">Outras despesas <span className="text-xs font-normal text-muted-foreground">valor total (pedágio etc.)</span><Input type="number" step="0.01" min="0" value={outros} onChange={(e) => setOutros(Math.max(0, Number(e.target.value) || 0))} data-testid="input-outras-despesas" /></label>
+                    <label className="grid gap-1 text-sm font-medium">Total <span className="text-xs font-normal text-muted-foreground">alimentação + hospedagem + outras</span><Input value={BRL(calc.extras)} disabled data-testid="total-extras" /></label>
                   </div>
                 </div>
               )}
-              <label className="grid gap-1 text-sm font-medium">Observação (opcional)<Input value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Ex.: clientes a visitar, motivo da viagem" /></label>
+              <label className="grid gap-1 text-sm font-medium">Observação (opcional)
+                <textarea value={obs} onChange={(e) => setObs(e.target.value.slice(0, 2000))} rows={4} maxLength={2000} data-testid="input-obs"
+                  placeholder="Ex.: clientes a visitar, motivo da viagem, roteiro…"
+                  className="min-h-[96px] resize-y rounded-md border bg-background px-3 py-2 text-sm font-normal" />
+                <span className="text-[11px] font-normal text-muted-foreground text-right">{obs.length}/2000 · arraste o canto para ampliar</span>
+              </label>
               <div className="flex items-center justify-between rounded-lg bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 flex-wrap gap-2">
                 <span className="text-sm">{cfg.admin ? "Adiantamento total" : "Adiantamento de km"}{!cfg.admin && <span className="text-xs text-muted-foreground"> (alimentação e hospedagem são definidas pelo admin na aprovação)</span>}</span>
                 <b className="text-2xl tabular-nums">{BRL(cfg.admin ? calc.total : calc.vKm)}</b>
@@ -249,7 +256,8 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
                   </label>
                   <label className="grid gap-1 text-sm font-medium">Favorecido (nome) *<Input value={favNome} onChange={(e) => setFavNome(e.target.value)} /></label>
                   <label className="grid gap-1 text-sm font-medium">CPF/CNPJ do favorecido<Input value={favDoc} onChange={(e) => setFavDoc(e.target.value)} placeholder="000.000.000-00" /></label>
-                  <label className="grid gap-1 text-sm font-medium">Pagar até<Input value={DT(ini)} disabled /><span className="text-[11px] font-normal text-muted-foreground">início da viagem</span></label>
+                  <label className="grid gap-1 text-sm font-medium">Pagar até *<Input type="date" value={venc || ini} onChange={(e) => setVenc(e.target.value || null)} data-testid="input-pagar-ate" />
+                    <span className="text-[11px] font-normal text-muted-foreground">{!venc || venc === ini ? "início da viagem (pode antecipar ou prorrogar)" : venc < ini ? "antecipado" : "prorrogado — depois do início da viagem"}</span></label>
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   {Object.entries(FORMA_LABEL).map(([k, l]) => (
@@ -299,11 +307,11 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
   const [etapa, setEtapa] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [aba, setAba] = useState<"resumo" | "km">("resumo");
-  const [apr, setApr] = useState<{ tarifa: number; alim: number; hosp: number; valor: number | null }>({ tarifa: 0, alim: 0, hosp: 0, valor: null });
+  const [apr, setApr] = useState<{ tarifa: number; alim: number; hosp: number; outros: number; valor: number | null }>({ tarifa: 0, alim: 0, hosp: 0, outros: 0, valor: null });
   const [motivo, setMotivo] = useState("");
   const [confirmar, setConfirmar] = useState<string | null>(null);
   const [lan, setLan] = useState<{ cat: string; venc: string; inst: string }>({ cat: "", venc: "", inst: "" });
-  useEffect(() => { if (v) setApr({ tarifa: v.tarifa, alim: v.alimDia, hosp: v.hospNoite, valor: null }); }, [v?.id, v?.status]);
+  useEffect(() => { if (v) setApr({ tarifa: v.tarifa, alim: v.alimDia, hosp: v.hospNoite, outros: v.valorOutros || 0, valor: null }); }, [v?.id, v?.status]);
   if (isLoading || !v) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
   const atual = etapa ?? etapaDe(v.status);
   const acao = async (fn: () => Promise<any>, ok: string) => {
@@ -312,7 +320,7 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
   };
   const souDono = v.vendedorId === cfg.me.id;
   const editPrest = v.status === "pago" && (cfg.admin || souDono);
-  const valorApr = apr.valor ?? Math.round((v.kmPrevisto * apr.tarifa + apr.alim * v.dias + apr.hosp * v.noites) * 100) / 100;
+  const valorApr = apr.valor ?? Math.round((v.kmPrevisto * apr.tarifa + apr.alim * v.dias + apr.hosp * v.noites + apr.outros) * 100) / 100;
   const anexosDe = (did: string | null) => v.anexos.filter((a) => a.despesaId === did && a.categoria !== "pagamento");
   const despComprovadas = v.despesas.filter((d) => anexosDe(d.id).length).reduce((a, d) => a + d.valor, 0);
   const kmPeriodo = v.kmDias.reduce((a, d) => a + d.km, 0);
@@ -342,6 +350,8 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
         <Linha k="Valor de km" v={BRL(v.valorKm)} />
         {cfg.admin && <Linha k={`Alimentação (${BRL(v.alimDia)}/dia)`} v={BRL(v.valorAlim)} />}
         {cfg.admin && <Linha k={`Hospedagem (${BRL(v.hospNoite)}/noite)`} v={BRL(v.valorHosp)} />}
+        {cfg.admin && <Linha k="Outras despesas" v={BRL(v.valorOutros)} />}
+        {v.vencimento && <Linha k="Pagar até" v={DT(v.vencimento)} />}
         <Linha k="Sugerido" v={BRL(v.valorSugerido)} />
         {v.valorAprovado != null && <Linha k="Aprovado" v={<b>{BRL(v.valorAprovado)}</b>} />}
       </div>
@@ -375,14 +385,15 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
             <div className="rounded-lg border p-3"><Resumo /></div>
             {v.status === "aguardando" ? (cfg.admin ? (
               <div className="grid gap-3">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   <label className="grid gap-1 text-sm font-medium">R$ por km<Input type="number" step="0.01" value={apr.tarifa} onChange={(e) => setApr({ ...apr, tarifa: Number(e.target.value) || 0, valor: null })} /></label>
                   <label className="grid gap-1 text-sm font-medium">Alimentação por dia<Input type="number" step="0.01" value={apr.alim} onChange={(e) => setApr({ ...apr, alim: Number(e.target.value) || 0, valor: null })} /></label>
                   <label className="grid gap-1 text-sm font-medium">Hospedagem por noite<Input type="number" step="0.01" value={apr.hosp} onChange={(e) => setApr({ ...apr, hosp: Number(e.target.value) || 0, valor: null })} /></label>
+                  <label className="grid gap-1 text-sm font-medium">Outras despesas<Input type="number" step="0.01" min="0" value={apr.outros} onChange={(e) => setApr({ ...apr, outros: Math.max(0, Number(e.target.value) || 0), valor: null })} /></label>
                   <label className="grid gap-1 text-sm font-medium">Valor aprovado<Input type="number" step="0.01" value={valorApr} onChange={(e) => setApr({ ...apr, valor: Number(e.target.value) || 0 })} /></label>
                 </div>
                 <div className="flex gap-2 flex-wrap items-center">
-                  <Button disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/aprovar`, { tarifa: apr.tarifa, alimDia: apr.alim, hospNoite: apr.hosp, valorAprovado: valorApr }), "Aprovado e enviado ao Financeiro")}>Aprovar e enviar ao Financeiro</Button>
+                  <Button disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/aprovar`, { tarifa: apr.tarifa, alimDia: apr.alim, hospNoite: apr.hosp, outros: apr.outros, valorAprovado: valorApr }), "Aprovado e enviado ao Financeiro")}>Aprovar e enviar ao Financeiro</Button>
                   <Input className="w-72" placeholder="Motivo da recusa (obrigatório)" value={motivo} onChange={(e) => setMotivo(e.target.value)} data-testid="input-motivo-recusa" />
                   <Button variant="outline" className="text-red-700" disabled={busy || motivo.trim().length < 3} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/recusar`, { motivo: motivo.trim() }), "Solicitação recusada")}>Recusar</Button>
                 </div>
@@ -401,7 +412,7 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
               {cfg.financeiro && v.payable && <Linha k="Categoria DRE" v={v.categoriaNome || "—"} />}
               <Linha k="Aprovado por" v={v.aprovadorNome} />
               <Linha k="Viagem" v={`${v.cidade}-${v.uf} · ${DT(v.dataIni)} a ${DT(v.dataFim)}`} />
-              <Linha k="Prazo" v={`Até ${DT(v.dataIni)}`} />
+              <Linha k="Prazo" v={`Até ${DT(v.vencimento || v.dataIni)}`} />
             </div>
             <div className="flex gap-2 flex-wrap">{v.anexos.filter((a) => a.categoria === "pagamento").map((a) => <Anexo key={a.id} a={a} podeRemover={false} />)}</div>
             {v.payable && (
@@ -417,7 +428,7 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
                     </select>
                     {!lan.cat && <span className="text-[11px] font-semibold text-red-600">Obrigatória para lançar no Contas a Pagar</span>}
                   </label>
-                  <label className="grid gap-1 text-sm font-medium">Vencimento *<Input type="date" value={lan.venc || v.dataIni} onChange={(e) => setLan({ ...lan, venc: e.target.value })} /></label>
+                  <label className="grid gap-1 text-sm font-medium">Vencimento *<Input type="date" value={lan.venc || v.vencimento || v.dataIni} onChange={(e) => setLan({ ...lan, venc: e.target.value })} /></label>
                   <label className="grid gap-1 text-sm font-medium">Empresa (instância) *
                     <select className={selCls} value={lan.inst || v.instancia || ""} onChange={(e) => setLan({ ...lan, inst: e.target.value })}>
                       {(cfg.instancias || []).map((i) => <option key={i} value={i}>{i}</option>)}
@@ -426,7 +437,7 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
                 </div>
                 <div className="flex gap-2 items-center flex-wrap">
                   <Button disabled={busy || !lan.cat} className="bg-indigo-700 hover:bg-indigo-800 text-white" data-testid="button-lancar"
-                    onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/lancar`, { chartAccountId: lan.cat, vencimento: lan.venc || v.dataIni, instancia: lan.inst || v.instancia }), "Lançado no Contas a Pagar")}>
+                    onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/lancar`, { chartAccountId: lan.cat, vencimento: lan.venc || v.vencimento || v.dataIni, instancia: lan.inst || v.instancia }), "Lançado no Contas a Pagar")}>
                     Lançar no Contas a Pagar</Button>
                   <span className="text-xs text-muted-foreground">Cria a conta a pagar do adiantamento com os dados de pagamento da solicitação.</span>
                 </div>
