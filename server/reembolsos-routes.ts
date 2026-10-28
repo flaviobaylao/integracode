@@ -40,6 +40,34 @@ const codigo = (n: number) => "RB-" + String(n).padStart(4, "0");
 const ehAprovador = (u: any) => APROVADORES.includes(String(u?.role || ""));
 const ehFinanceiro = (u: any) => FINANCEIRO.includes(String(u?.role || ""));
 
+// Chave PIX conforme o tipo (CPF/CNPJ com dígito verificador, celular com DDD, e-mail com @, aleatória UUID)
+const soDig = (v: string) => String(v || "").replace(/\D/g, "");
+function cpfValido(d: string) {
+  if (!/^\d{11}$/.test(d) || /^(\d)\1{10}$/.test(d)) return false;
+  const dv = (n: number) => { let s = 0; for (let i = 0; i < n; i++) s += Number(d[i]) * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+  return dv(9) === Number(d[9]) && dv(10) === Number(d[10]);
+}
+function cnpjValido(d: string) {
+  if (!/^\d{14}$/.test(d) || /^(\d)\1{13}$/.test(d)) return false;
+  const dv = (n: number) => { const p = n === 12 ? [5,4,3,2,9,8,7,6,5,4,3,2] : [6,5,4,3,2,9,8,7,6,5,4,3,2]; let s = 0; for (let i = 0; i < n; i++) s += Number(d[i]) * p[i]; const r = s % 11; return r < 2 ? 0 : 11 - r; };
+  return dv(12) === Number(d[12]) && dv(13) === Number(d[13]);
+}
+function normalizarPix(tipo: string, chave: string) {
+  if (["CPF", "CNPJ", "Celular"].includes(tipo)) return soDig(chave);
+  return String(chave || "").trim().toLowerCase();
+}
+function validarPix(tipo: string, chave: string): string | null {
+  const k = normalizarPix(tipo, chave);
+  switch (tipo) {
+    case "CPF": return cpfValido(k) ? null : "Chave PIX CPF inválida: informe os 11 números do CPF";
+    case "CNPJ": return cnpjValido(k) ? null : "Chave PIX CNPJ inválida: informe os 14 números do CNPJ";
+    case "Celular": return /^\d{2}9\d{8}$/.test(k) ? null : "Chave PIX celular inválida: DDD + número, 11 números";
+    case "E-mail": return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(k) ? null : "Chave PIX e-mail inválida: precisa ter @";
+    case "Aleatória": return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(k) ? null : "Chave PIX aleatória inválida";
+    default: return "Escolha o tipo de chave PIX";
+  }
+}
+
 let ensured: Promise<void> | null = null;
 function ensure(): Promise<void> {
   if (!ensured) {
@@ -99,10 +127,10 @@ async function nomeCategoria(id: any): Promise<string> {
 }
 async function mudancas(r: any, cat: any, venc: string, inst: any): Promise<string> {
   const m: string[] = [];
-  if (String(cat || "") !== String(r.chart_account_id || "")) m.push(`categoria: ${await nomeCategoria(r.chart_account_id)} → ${await nomeCategoria(cat)}`);
+  if (String(cat || "") !== String(r.chart_account_id || "")) m.push(r.chart_account_id ? `categoria: ${await nomeCategoria(r.chart_account_id)} → ${await nomeCategoria(cat)}` : `categoria definida: ${await nomeCategoria(cat)}`);
   if (venc !== dia(r.vencimento)) m.push(`vencimento: ${fmtData(dia(r.vencimento))} → ${fmtData(venc)}`);
   if (String(inst || "") !== String(r.instancia || "")) m.push(`empresa: ${r.instancia || "—"} → ${inst || "—"}`);
-  return m.length ? ` Alterado — ${m.join("; ")}.` : "";
+  return m.length ? ` ${m.join("; ")}.` : "";
 }
 const podeVer = (u: any, r: any) => ehAprovador(u) || ehFinanceiro(u) || String(r.solicitante_id) === String(u.id);
 
@@ -228,21 +256,22 @@ export function registerReembolsos(app: Express) {
       if (!FORMAS.includes(forma)) return res.status(400).json({ message: "Escolha como quer receber: PIX, Transferência ou Dinheiro" });
       const instancia = String(b.instancia || "");
       if (!INSTANCIAS.includes(instancia)) return res.status(400).json({ message: "Escolha a empresa (instância)" });
-      const chartAccountId = String(b.chartAccountId || "");
-      if (!chartAccountId) return res.status(400).json({ message: "Escolha a categoria da despesa (DRE)" });
+      // Categoria DRE: definida pelo Financeiro no lançamento (o solicitante não escolhe)
+      const chartAccountId = ehFinanceiro(u) && b.chartAccountId ? String(b.chartAccountId) : "";
       const favNome = String(b.favorecidoNome || nomeDe(u)).trim().slice(0, 200);
       const favDoc = String(b.favorecidoDoc || "").replace(/[^\d./-]/g, "").slice(0, 20);
       if (!favNome) return res.status(400).json({ message: "Informe o nome do favorecido" });
       const pixTipo = String(b.pixTipo || "").slice(0, 20), pixChave = String(b.pixChave || "").trim().slice(0, 120);
       const banco = String(b.banco || "").trim().slice(0, 80), agencia = String(b.agencia || "").trim().slice(0, 20), conta = String(b.conta || "").trim().slice(0, 30), tipoConta = String(b.tipoConta || "").slice(0, 20);
       if (forma === "pix" && !pixChave) return res.status(400).json({ message: "Informe a chave PIX" });
+      if (forma === "pix") { const erroPix = validarPix(pixTipo, pixChave); if (erroPix) return res.status(400).json({ message: erroPix }); }
       if (forma === "transferencia" && (!banco || !agencia || !conta)) return res.status(400).json({ message: "Informe banco, agência e conta" });
       const descricao = String(b.descricao || "").trim().slice(0, 500) || itens.map((i: any) => i.descricao).join(", ").slice(0, 500);
 
       const ins = rows(await db.execute(sql`INSERT INTO reembolsos (solicitante_id, solicitante_nome, descricao, data_despesa, valor, vencimento, forma, instancia, chart_account_id,
           favorecido_nome, favorecido_doc, pix_tipo, pix_chave, banco, agencia, conta, tipo_conta, obs)
-        VALUES (${String(u.id)}, ${nomeDe(u)}, ${descricao}, ${dataDespesa}::date, ${total}, ${vencimento}::date, ${forma}, ${instancia}, ${chartAccountId},
-          ${favNome}, ${favDoc || null}, ${pixTipo || null}, ${pixChave || null}, ${banco || null}, ${agencia || null}, ${conta || null}, ${tipoConta || null}, ${String(b.obs || "").slice(0, 2000) || null})
+        VALUES (${String(u.id)}, ${nomeDe(u)}, ${descricao}, ${dataDespesa}::date, ${total}, ${vencimento}::date, ${forma}, ${instancia}, ${chartAccountId || null},
+          ${favNome}, ${favDoc || null}, ${pixTipo || null}, ${pixChave ? normalizarPix(pixTipo, pixChave) : null}, ${banco || null}, ${agencia || null}, ${conta || null}, ${tipoConta || null}, ${String(b.obs || "").slice(0, 2000) || null})
         RETURNING *`))[0];
       let ordem = 0;
       for (const i of itens) {
@@ -272,7 +301,7 @@ export function registerReembolsos(app: Express) {
     const valor = b.valorAprovado != null && num(b.valorAprovado) > 0 ? r2(num(b.valorAprovado)) : num(r.valor);
     const venc = ehDia(String(b.vencimento || "")) ? String(b.vencimento) : dia(r.vencimento);
     const inst = INSTANCIAS.includes(String(b.instancia || "")) ? String(b.instancia) : r.instancia;
-    const cat = b.chartAccountId ? String(b.chartAccountId) : r.chart_account_id;
+    const cat = r.chart_account_id; // categoria é do Financeiro (definida no lançamento)
     const alt = await mudancas(r, cat, venc, inst);
     await db.execute(sql`UPDATE reembolsos SET status = 'aprovado', valor_aprovado = ${valor}, vencimento = ${venc}::date, instancia = ${inst}, chart_account_id = ${cat},
       aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), autoaprovado = ${auto}, updated_at = now() WHERE id = ${r.id}`);
@@ -294,7 +323,8 @@ export function registerReembolsos(app: Express) {
     if (!ehAprovador(u)) return res.status(403).json({ message: "Só Admin recusa reembolso" });
     const r = await carregar(req.params.id);
     if (!r || r.status !== "aguardando") return res.status(400).json({ message: "Reembolso não está aguardando aprovação" });
-    const motivo = String(req.body?.motivo || "").slice(0, 1000);
+    const motivo = String(req.body?.motivo || "").trim().slice(0, 1000);
+    if (motivo.length < 3) return res.status(400).json({ message: "Escreva o motivo da recusa" });
     await db.execute(sql`UPDATE reembolsos SET status = 'recusado', motivo_recusa = ${motivo || null}, aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, aprovado_em = now(), updated_at = now() WHERE id = ${r.id}`);
     await evento(r.id, nomeDe(u), `Recusado${motivo ? ": " + motivo : "."}`);
     res.json(saida(await carregar(r.id)));
@@ -321,7 +351,7 @@ export function registerReembolsos(app: Express) {
     const venc = ehDia(String(b.vencimento || "")) ? String(b.vencimento) : dia(r.vencimento);
     const inst = INSTANCIAS.includes(String(b.instancia || "")) ? String(b.instancia) : r.instancia;
     const cat = b.chartAccountId ? String(b.chartAccountId) : r.chart_account_id;
-    if (!cat) return res.status(400).json({ message: "Escolha a categoria DRE antes de lançar" });
+    if (!cat) return res.status(400).json({ message: "Escolha a categoria DRE (obrigatória para lançar no Contas a Pagar)" });
     const valor = num(r.valor_aprovado ?? r.valor);
     const cod = codigo(r.numero);
     const alt = await mudancas(r, cat, venc, inst);

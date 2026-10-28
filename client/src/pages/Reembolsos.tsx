@@ -51,6 +51,25 @@ const ETAPAS = ["Solicitação", "Aprovação", "Contas a Pagar", "Pagamento"];
 const etapaDe = (s: string) => ({ aguardando: 1, recusado: 1, cancelado: 0, aprovado: 2, lancado: 3, pago: 3 } as Record<string, number>)[s] ?? 0;
 const FORMA_LABEL: Record<string, string> = { pix: "PIX", transferencia: "Transferência bancária", dinheiro: "Dinheiro (Caixinha)" };
 const PIX_TIPOS = ["CPF", "CNPJ", "Celular", "E-mail", "Aleatória"];
+// Chave PIX conforme o tipo: só aceita os caracteres do tipo e valida o formato.
+const so = (v: string) => v.replace(/\D/g, "");
+const cpfOk = (d: string) => {
+  if (!/^\d{11}$/.test(d) || /^(\d)\1{10}$/.test(d)) return false;
+  const dv = (n: number) => { let s = 0; for (let i = 0; i < n; i++) s += Number(d[i]) * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+  return dv(9) === Number(d[9]) && dv(10) === Number(d[10]);
+};
+const cnpjOk = (d: string) => {
+  if (!/^\d{14}$/.test(d) || /^(\d)\1{13}$/.test(d)) return false;
+  const dv = (n: number) => { const p = n === 12 ? [5,4,3,2,9,8,7,6,5,4,3,2] : [6,5,4,3,2,9,8,7,6,5,4,3,2]; let s = 0; for (let i = 0; i < n; i++) s += Number(d[i]) * p[i]; const r = s % 11; return r < 2 ? 0 : 11 - r; };
+  return dv(12) === Number(d[12]) && dv(13) === Number(d[13]);
+};
+const PIX_REGRA: Record<string, { limpar: (v: string) => string; valido: (v: string) => boolean; dica: string; placeholder: string; max: number; modo: "numeric" | "email" | "text" }> = {
+  "CPF": { limpar: (v) => so(v).slice(0, 11), valido: cpfOk, dica: "11 números, sem pontos e traço", placeholder: "12345678909", max: 11, modo: "numeric" },
+  "CNPJ": { limpar: (v) => so(v).slice(0, 14), valido: cnpjOk, dica: "14 números, sem pontos, barra e traço", placeholder: "12345678000190", max: 14, modo: "numeric" },
+  "Celular": { limpar: (v) => so(v).slice(0, 11), valido: (v) => /^\d{2}9\d{8}$/.test(v), dica: "DDD + número: 11 números, sem espaço ou traço", placeholder: "62999998888", max: 11, modo: "numeric" },
+  "E-mail": { limpar: (v) => v.replace(/\s/g, "").toLowerCase().slice(0, 77), valido: (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), dica: "Precisa ter @ (ex.: nome@empresa.com.br)", placeholder: "nome@empresa.com.br", max: 77, modo: "email" },
+  "Aleatória": { limpar: (v) => v.replace(/[^0-9a-fA-F-]/g, "").toLowerCase().slice(0, 36), valido: (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v), dica: "Chave de 32 letras/números com traços (como aparece no app do banco)", placeholder: "123e4567-e89b-12d3-a456-426614174000", max: 36, modo: "text" },
+};
 
 function Pill({ status }: { status: string }) {
   const [l, c] = STATUS[status] || [status, "bg-muted"];
@@ -155,7 +174,6 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [preparando, setPreparando] = useState(false);
   const [instancia, setInstancia] = useState("");
-  const [categoria, setCategoria] = useState("");
   const [vencimento, setVencimento] = useState(maisDias(3));
   const [forma, setForma] = useState("pix");
   const [favNome, setFavNome] = useState(cfg.me.nome);
@@ -187,10 +205,10 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
     itens.some((i) => !i.descricao.trim() || !(Number(String(i.valor).replace(",", ".")) > 0)) && "o que foi comprado e o valor",
     !arquivos.length && "o comprovante",
     !instancia && "a empresa",
-    !categoria && "a categoria",
     !vencimento && "a data para pagamento",
     !favNome.trim() && "o favorecido",
     forma === "pix" && !pixChave.trim() && "a chave PIX",
+    forma === "pix" && !!pixChave.trim() && !PIX_REGRA[pixTipo].valido(pixChave) && `chave PIX válida (${PIX_REGRA[pixTipo].dica})`,
     forma === "transferencia" && (!banco.trim() || !agencia.trim() || !conta.trim()) && "banco, agência e conta",
   ].filter(Boolean) as string[];
 
@@ -200,7 +218,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
     try {
       const fd = new FormData();
       fd.append("dados", JSON.stringify({
-        itens: itens.map((i) => ({ ...i, valor: String(i.valor).replace(",", ".") })), instancia, chartAccountId: categoria, vencimento, forma,
+        itens: itens.map((i) => ({ ...i, valor: String(i.valor).replace(",", ".") })), instancia, vencimento, forma,
         favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, banco, agencia, conta, tipoConta, obs,
       }));
       arquivos.forEach((f) => fd.append("arquivos", f));
@@ -266,11 +284,6 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
               <option value="">Selecione…</option>{cfg.instancias.map((i) => <option key={i} value={i}>{i}</option>)}
             </select>
           </Campo>
-          <Campo label="Categoria da despesa (DRE)" obrig dica="Se não souber, escolha a mais próxima — quem aprova pode corrigir.">
-            <select className={selCls} value={categoria} onChange={(e) => setCategoria(e.target.value)} data-testid="select-categoria">
-              <option value="">Selecione…</option>{cfg.categorias.map((c) => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
-            </select>
-          </Campo>
           <Campo label="Pagar até (vencimento)" obrig><Input type="date" value={vencimento} min={hoje()} onChange={(e) => setVencimento(e.target.value)} /></Campo>
           <Campo label="Observação"><Input value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Opcional" /></Campo>
         </CardContent>
@@ -288,8 +301,13 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
             <Campo label="Favorecido (nome)" obrig><Input value={favNome} onChange={(e) => setFavNome(e.target.value)} /></Campo>
             <Campo label="CPF/CNPJ do favorecido"><Input value={favDoc} onChange={(e) => setFavDoc(e.target.value)} placeholder="000.000.000-00" /></Campo>
             {forma === "pix" && (<>
-              <Campo label="Tipo de chave PIX"><select className={selCls} value={pixTipo} onChange={(e) => setPixTipo(e.target.value)}>{PIX_TIPOS.map((t) => <option key={t}>{t}</option>)}</select></Campo>
-              <Campo label="Chave PIX" obrig><Input value={pixChave} onChange={(e) => setPixChave(e.target.value)} /></Campo>
+              <Campo label="Tipo de chave PIX"><select className={selCls} value={pixTipo} data-testid="select-pix-tipo" onChange={(e) => { const t = e.target.value; setPixTipo(t); setPixChave((k) => PIX_REGRA[t].limpar(k)); }}>{PIX_TIPOS.map((t) => <option key={t}>{t}</option>)}</select></Campo>
+              <Campo label="Chave PIX" obrig dica={PIX_REGRA[pixTipo].dica}>
+                <Input value={pixChave} inputMode={PIX_REGRA[pixTipo].modo} placeholder={PIX_REGRA[pixTipo].placeholder} data-testid="input-pix-chave"
+                  onChange={(e) => setPixChave(PIX_REGRA[pixTipo].limpar(e.target.value))}
+                  className={pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? "border-red-500 focus-visible:ring-red-500" : ""} />
+                {pixChave && !PIX_REGRA[pixTipo].valido(pixChave) && <span className="text-[11px] font-semibold text-red-600">{pixTipo === "CPF" || pixTipo === "CNPJ" ? `${pixTipo} inválido — confira os números` : "Formato inválido para o tipo escolhido"}</span>}
+              </Campo>
             </>)}
             {forma === "transferencia" && (<>
               <Campo label="Banco" obrig><Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ex.: 001 Banco do Brasil" /></Campo>
@@ -303,7 +321,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
       </Card>
 
       <div className="flex justify-between items-center gap-3 flex-wrap">
-        <span className="text-xs text-muted-foreground">{faltando.length ? `Falta: ${faltando.join(", ")}.` : "Tudo certo. Vai para aprovação de um Admin (Flávio, Elbber ou Cinthia). Categoria, vencimento e empresa podem ser ajustados por quem aprova e pelo Financeiro."}</span>
+        <span className="text-xs text-muted-foreground">{faltando.length ? `Falta: ${faltando.join(", ")}.` : "Tudo certo. Vai para aprovação de um Admin (Flávio, Elbber ou Cinthia)."}</span>
         <div className="flex gap-2">
           <Button variant="outline" onClick={onCancel}>Cancelar</Button>
           <Button onClick={enviar} disabled={enviando || preparando} data-testid="button-enviar-reembolso">{enviando ? "Enviando…" : `Enviar pedido de ${BRL(total)}`}</Button>
@@ -334,14 +352,15 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
   const inst = aj.instancia ?? (r.instancia || "");
   const pagamento = r.forma === "pix" ? `PIX${r.pixTipo ? ` (${r.pixTipo})` : ""}: ${r.pixChave}` : r.forma === "transferencia" ? `${r.banco} · ag ${r.agencia} · ${r.tipoConta || "conta"} ${r.conta}` : "Dinheiro (Caixinha)";
 
-  const Ajustes = ({ comValor }: { comValor: boolean }) => ( // chamado como função (não <Ajustes/>) para não perder o foco ao digitar
+  const Ajustes = ({ comValor, comCategoria }: { comValor: boolean; comCategoria: boolean }) => ( // chamado como função (não <Ajustes/>) para não perder o foco ao digitar
     <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
       {comValor && <Campo label="Valor aprovado (R$)"><Input inputMode="decimal" value={val} onChange={(e) => setAj({ ...aj, valor: e.target.value })} /></Campo>}
-      <Campo label="Categoria (DRE)" obrig>
-        <select className={selCls} value={cat} onChange={(e) => setAj({ ...aj, categoria: e.target.value })}>
+      {comCategoria && <Campo label="Categoria (DRE)" obrig>
+        <select className={selCls} value={cat} data-testid="select-categoria-lancar" onChange={(e) => setAj({ ...aj, categoria: e.target.value })}>
           <option value="">Selecione…</option>{cfg.categorias.map((c) => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
         </select>
-      </Campo>
+        {!cat && <span className="text-[11px] font-semibold text-red-600">Obrigatória para lançar no Contas a Pagar</span>}
+      </Campo>}
       <Campo label="Vencimento" obrig><Input type="date" value={venc} onChange={(e) => setAj({ ...aj, vencimento: e.target.value })} /></Campo>
       <Campo label="Empresa (instância)" obrig>
         <select className={selCls} value={inst} onChange={(e) => setAj({ ...aj, instancia: e.target.value })}>
@@ -365,7 +384,7 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
         <Linha k="Receber por" v={pagamento} />
         <Linha k="Pagar até" v={DT(r.vencimento)} />
         <Linha k="Empresa" v={r.instancia || "—"} />
-        <Linha k="Categoria DRE" v={r.categoriaNome || "—"} />
+        {cfg.financeiro && <Linha k="Categoria DRE" v={r.categoriaNome || "a definir no lançamento"} />}
       </div>
     </div>
   );
@@ -409,12 +428,17 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
             <Comprovantes />
             {r.status === "aguardando" ? (cfg.aprovador ? (
               <div className="grid gap-3">
-                {Ajustes({ comValor: true })}
+                {Ajustes({ comValor: true, comCategoria: false })}
                 {souSolicitante && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">Este pedido é seu. Você pode aprovar, mas a aprovação fica registrada como <b>autoaprovação</b> no histórico e na auditoria.</p>}
                 <div className="flex gap-2 flex-wrap items-center">
-                  <Button disabled={busy || !cat} data-testid="button-aprovar" onClick={() => { if (souSolicitante && !window.confirm(`Autoaprovar o seu próprio pedido ${r.codigo}?\nFica registrado como AUTOAPROVADO para auditoria.`)) return; acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/aprovar`, { valorAprovado: String(val).replace(",", "."), chartAccountId: cat, vencimento: venc, instancia: inst }), "Aprovado e enviado ao Financeiro"); }}>{souSolicitante ? "Autoaprovar e enviar ao Financeiro" : "Aprovar e enviar ao Financeiro"}</Button>
-                  <Input className="w-64" placeholder="Motivo da recusa (opcional)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
-                  <Button variant="outline" className="text-red-700" disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/recusar`, { motivo }), "Pedido recusado")}>Recusar</Button>
+                  <Button disabled={busy} data-testid="button-aprovar" onClick={() => { if (souSolicitante && !window.confirm(`Autoaprovar o seu próprio pedido ${r.codigo}?\nFica registrado como AUTOAPROVADO para auditoria.`)) return; acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/aprovar`, { valorAprovado: String(val).replace(",", "."), vencimento: venc, instancia: inst }), "Aprovado e enviado ao Financeiro"); }}>{souSolicitante ? "Autoaprovar e enviar ao Financeiro" : "Aprovar e enviar ao Financeiro"}</Button>
+                </div>
+                <div className="grid gap-2 rounded-lg border border-red-200 bg-red-50/40 p-3">
+                  <Campo label="Motivo da recusa" obrig dica="Obrigatório para recusar. O solicitante vê este motivo.">
+                    <textarea className="min-h-[64px] rounded-md border bg-background px-3 py-2 text-sm" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: comprovante ilegível, compra não autorizada…" data-testid="input-motivo-recusa" />
+                  </Campo>
+                  <div><Button variant="outline" className="text-red-700 border-red-300" disabled={busy || !motivo.trim()} data-testid="button-recusar"
+                    onClick={() => acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/recusar`, { motivo: motivo.trim() }), "Pedido recusado")}>Recusar pedido</Button></div>
                 </div>
               </div>
             ) : <p className="text-sm text-muted-foreground">Aguardando aprovação de um Admin (Flávio, Elbber ou Cinthia).</p>) : (
@@ -435,7 +459,7 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
             </div>
             {r.status === "aprovado" && (cfg.financeiro ? (
               <div className="grid gap-3 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
-                {Ajustes({ comValor: false })}
+                {Ajustes({ comValor: false, comCategoria: true })}
                 <div className="flex gap-2 items-center flex-wrap">
                   <Button disabled={busy || !cat} className="bg-indigo-700 hover:bg-indigo-800 text-white" data-testid="button-lancar"
                     onClick={() => acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/lancar`, { chartAccountId: cat, vencimento: venc, instancia: inst }), "Lançado no Contas a Pagar")}>
