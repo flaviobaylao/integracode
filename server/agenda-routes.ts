@@ -12,6 +12,8 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
+import multer from "multer";
+import { transcribeAudioSource } from "./chat-routes";
 
 const COR_PADRAO = "#2a78d6";
 const STATUS = new Set(["pending", "done"]);
@@ -57,6 +59,21 @@ function parseDate(v: any): Date | null {
   if (v === null || v === undefined || v === "") return null;
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * A coluna start_at/end_at e' `timestamp` SEM fuso e o driver devolve a string crua
+ * ("2026-10-29 09:00:00"), que a tela interpreta como horario LOCAL (Brasilia).
+ * Entao tudo que entra tem que ser gravado como horario-de-parede de Brasilia —
+ * senao o 09:00 vira 12:00 (UTC) e cada arraste empurra o evento 3h p/ frente.
+ */
+const TZ_BR = "America/Sao_Paulo";
+function toBrtNaive(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ_BR, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+    .formatToParts(d).reduce((o: any, x) => { o[x.type] = x.value; return o; }, {});
+  const hh = parts.hour === "24" ? "00" : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day} ${hh}:${parts.minute}:${parts.second}`;
 }
 
 function corValida(c: any): string {
@@ -108,6 +125,9 @@ function parseBody(b: any, partial: boolean) {
   if (out.start_at && out.end_at && !out.all_day && out.end_at <= out.start_at) {
     out.end_at = new Date(out.start_at.getTime() + 3600_000);
   }
+  // grava como horario-de-parede de Brasilia (ver toBrtNaive)
+  if (has("start") || !partial) out.start_at = toBrtNaive(out.start_at);
+  if (has("end") || !partial) out.end_at = toBrtNaive(out.end_at);
   return out;
 }
 
@@ -132,8 +152,8 @@ export function registerAgenda(app: Express) {
         SELECT * FROM personal_agenda_items
         WHERE user_id = ${uid}
           AND start_at IS NOT NULL
-          AND start_at < ${end}
-          AND COALESCE(end_at, start_at + interval '1 hour') > ${start}
+          AND start_at < ${toBrtNaive(end)}::timestamp
+          AND COALESCE(end_at, start_at + interval '1 hour') > ${toBrtNaive(start)}::timestamp
           ${q ? sql`AND (lower(title) LIKE ${"%" + q + "%"} OR lower(COALESCE(location,'')) LIKE ${"%" + q + "%"} OR lower(COALESCE(description,'')) LIKE ${"%" + q + "%"})` : sql``}
         ORDER BY start_at`);
       res.json((r.rows || []).map(rowOut));
@@ -258,6 +278,22 @@ export function registerAgenda(app: Express) {
     } catch (e: any) {
       const msg = e?.message || "Erro ao salvar evento";
       res.status(/obrigat|inválid/i.test(msg) ? 400 : 500).json({ message: msg });
+    }
+  });
+
+  // Audio gravado no formulario do evento -> texto (OpenAI Whisper, mesma funcao do ChatCenter)
+  const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+  app.post("/api/agenda/transcribe", authenticateUser, uploadAudio.single("audio"), async (req: Request, res: Response) => {
+    try {
+      const f = (req as any).file as { buffer: Buffer; mimetype: string } | undefined;
+      if (!f || !f.buffer?.length) return res.status(400).json({ message: "Nenhum áudio recebido" });
+      if (!process.env.OPENAI_API_KEY) return res.status(503).json({ message: "Transcrição indisponível (OPENAI_API_KEY ausente)" });
+      const mt = f.mimetype || "audio/webm";
+      const text = await transcribeAudioSource(`data:${mt};base64,${f.buffer.toString("base64")}`, mt);
+      if (!text) return res.status(422).json({ message: "Não foi possível transcrever o áudio" });
+      res.json({ text });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Erro na transcrição" });
     }
   });
 

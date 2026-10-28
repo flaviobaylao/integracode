@@ -908,7 +908,7 @@ export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, capt
 }
 
 // -- Transcricao de audio recebido via OpenAI Whisper --
-async function transcribeAudioSource(src: string, mimetype?: string): Promise<string | null> {
+export async function transcribeAudioSource(src: string, mimetype?: string): Promise<string | null> {
   try {
     if (!process.env.OPENAI_API_KEY || !src) return null;
     let buffer: Buffer; let mt = mimetype || 'audio/ogg';
@@ -925,7 +925,7 @@ async function transcribeAudioSource(src: string, mimetype?: string): Promise<st
       return null;
     }
     if (!buffer || buffer.length === 0) return null;
-    const ext = /ogg|opus/.test(mt) ? 'ogg' : /mpeg|mp3/.test(mt) ? 'mp3' : /wav/.test(mt) ? 'wav' : /m4a|mp4|aac/.test(mt) ? 'm4a' : 'ogg';
+    const ext = /webm/.test(mt) ? 'webm' : /ogg|opus/.test(mt) ? 'ogg' : /mpeg|mp3/.test(mt) ? 'mp3' : /wav/.test(mt) ? 'wav' : /m4a|mp4|aac/.test(mt) ? 'm4a' : 'ogg';
     const mod: any = await import('openai');
     const OpenAI = mod.default || mod.OpenAI || mod;
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

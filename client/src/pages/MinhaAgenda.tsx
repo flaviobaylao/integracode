@@ -14,7 +14,7 @@ import listPlugin from "@fullcalendar/list";
 import interactionPlugin from "@fullcalendar/interaction";
 import ptBr from "@fullcalendar/core/locales/pt-br";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, apiRequestMultipart } from "@/lib/queryClient";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ChevronLeft, ChevronRight, Plus, Search, MapPin, Check, Copy, Pencil, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, MapPin, Check, Copy, Pencil, Trash2, X, Mic, Square, Loader2 } from "lucide-react";
 
 type Ev = {
   id: string; title: string; description: string; start: string; end: string | null;
@@ -482,6 +482,57 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
   const [cor, setCor] = useState(draft.color || COR_PADRAO);
   const [status, setStatus] = useState<"pending" | "done">(draft.status || "pending");
   const [erro, setErro] = useState("");
+
+  // Gravar audio -> transcrever (Whisper) -> texto entra na Descricao
+  const [gravando, setGravando] = useState(false);
+  const [transcrevendo, setTranscrevendo] = useState(false);
+  const [segundos, setSegundos] = useState(0);
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<number | null>(null);
+  const podeGravar = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof (window as any).MediaRecorder !== "undefined";
+  const pararGravacao = () => { try { recRef.current?.stop(); } catch {} };
+  const iniciarGravacao = async () => {
+    setErro("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((m) => (window as any).MediaRecorder.isTypeSupported?.(m)) || "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null; }
+        setGravando(false);
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || mime || "audio/webm" });
+        if (blob.size < 1000) { setErro("Áudio muito curto"); return; }
+        setTranscrevendo(true);
+        try {
+          const fd = new FormData();
+          const ext = /mp4/.test(blob.type) ? "m4a" : /ogg/.test(blob.type) ? "ogg" : "webm";
+          fd.append("audio", blob, `gravacao.${ext}`);
+          const r = await apiRequestMultipart("POST", "/api/agenda/transcribe", fd);
+          const t = String(r?.text || "").trim();
+          if (t) setDesc((d) => (d.trim() ? `${d.trimEnd()}\n${t}` : t));
+          else setErro("Não foi possível transcrever o áudio");
+        } catch (e: any) {
+          setErro(e?.message || "Falha na transcrição");
+        } finally {
+          setTranscrevendo(false);
+        }
+      };
+      recRef.current = rec;
+      rec.start();
+      setGravando(true); setSegundos(0);
+      timerRef.current = window.setInterval(() => setSegundos((n) => {
+        if (n + 1 >= 120) pararGravacao(); // teto de 2 min
+        return n + 1;
+      }), 1000);
+    } catch (e: any) {
+      setErro(e?.name === "NotAllowedError" ? "Permita o uso do microfone no navegador para gravar" : (e?.message || "Não foi possível acessar o microfone"));
+    }
+  };
+  useEffect(() => () => { try { recRef.current?.stream?.getTracks().forEach((t) => t.stop()); } catch {} if (timerRef.current) window.clearInterval(timerRef.current); }, []);
   const paleta = Array.from(new Set([...cores, ...CORES_SUGERIDAS]));
 
   const toggleAllDay = (v: boolean) => {
@@ -511,7 +562,22 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
           <label className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Local
             <Input id="agenda-f-local" value={local} onChange={(e) => setLocal(e.target.value)} placeholder="Cliente, endereço, link..." /></label>
           <label className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Descrição
-            <Textarea id="agenda-f-desc" rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+            <Textarea id="agenda-f-desc" rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} />
+            {podeGravar && (
+              <div className="flex items-center gap-2 mt-1">
+                {!gravando ? (
+                  <Button type="button" variant="outline" size="sm" onClick={iniciarGravacao} disabled={transcrevendo} data-testid="agenda-gravar">
+                    {transcrevendo ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Mic className="h-3.5 w-3.5 mr-1" />}
+                    {transcrevendo ? "Transcrevendo…" : "Gravar áudio"}
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" className="text-red-600 border-red-300" onClick={pararGravacao} data-testid="agenda-parar">
+                    <Square className="h-3.5 w-3.5 mr-1 fill-current" /> Parar ({Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, "0")})
+                  </Button>
+                )}
+                <span className="text-[11px]">{gravando ? "Gravando… fale e clique em Parar." : "O texto transcrito entra na descrição."}</span>
+              </div>
+            )}</label>
           <div className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Cor
             <div className="flex items-center gap-1.5 flex-wrap">
               {paleta.map((c) => (
