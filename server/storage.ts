@@ -8692,23 +8692,43 @@ export class DatabaseStorage implements IStorage {
         if (cards.length) conds.push(inArray(fiscalInvoices.salesCardId, cards as any));
         if (refs.length) conds.push(inArray(fiscalInvoices.notes, refs as any));
         if (nums.length) conds.push(inArray(fiscalInvoices.invoiceNumber, nums as any));
-        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status, id: fiscalInvoices.id, card: fiscalInvoices.salesCardId, notes: fiscalInvoices.notes })
+        const fis = await db.select({ n: fiscalInvoices.invoiceNumber, st: fiscalInvoices.status, id: fiscalInvoices.id, card: fiscalInvoices.salesCardId, notes: fiscalInvoices.notes, at: fiscalInvoices.createdAt })
           .from(fiscalInvoices).where(or(...conds));
-        const byCard = new Map<string, any>();
-        const byRef = new Map<string, any>();
-        const byNum = new Map<string, any>();
+        // Um mesmo sales_card pode ter VÁRIAS NFs (ex.: NF cancelada → card na Lixeira → o vendedor
+        // lança de novo no mesmo card → item novo com o mesmo sales_card_id/orderNumber). Antes o
+        // Map guardava uma NF qualquer e o pedido novo, ainda em "Pedido", herdava a NF CANCELADA do
+        // pedido anterior (tag "Cancelado", card vermelho, fora do filtro "Venda" — ex.: ZOI MICRO
+        // PADARIA, 29/out/2026). Agora: lista por chave e escolhe a NF que representa o pedido.
+        const _lc = (v: any) => String(v || '').toLowerCase();
+        const CANCEL_ST = new Set(['cancelled', 'canceled', 'cancelada', 'denied', 'inutilizada']);
+        // Etapas ANTES do faturamento: NF cancelada ali é histórico de um pedido anterior, não o estado atual.
+        const PRE_FAT = new Set(['bloqueado', 'agendado', 'pedido', 'a_faturar']);
+        const byCard = new Map<string, any[]>();
+        const byRef = new Map<string, any[]>();
+        const byNum = new Map<string, any[]>();
+        const _push = (m: Map<string, any[]>, k: string, f: any) => { const l = m.get(k); if (l) l.push(f); else m.set(k, [f]); };
         for (const f of fis as any[]) {
-          if (f.card) byCard.set(String(f.card), f);
-          if (f.notes) byRef.set(String(f.notes), f);
-          if (f.n != null && !byNum.has(String(f.n))) byNum.set(String(f.n), f); // fallback (1º encontrado)
+          if (f.card) _push(byCard, String(f.card), f);
+          if (f.notes) _push(byRef, String(f.notes), f);
+          if (f.n != null) _push(byNum, String(f.n), f);
         }
+        // Prefere NF não cancelada e, entre elas, a mais recente. Antes do faturamento, ignora as canceladas.
+        const _pick = (list: any[] | undefined, preFat: boolean): any => {
+          if (!list || !list.length) return null;
+          const cand = preFat ? list.filter((f) => !CANCEL_ST.has(_lc(f.st))) : list;
+          if (!cand.length) return null;
+          return [...cand].sort((a, b) =>
+            ((CANCEL_ST.has(_lc(a.st)) ? 1 : 0) - (CANCEL_ST.has(_lc(b.st)) ? 1 : 0))
+            || ((b.at ? new Date(b.at).getTime() : 0) - (a.at ? new Date(a.at).getTime() : 0)))[0];
+        };
         const resolved: Array<{ r: any; f: any }> = [];
         const errIds: string[] = [];
         for (const r of rowsA) {
-          let f = (r.salesCardId && byCard.get(String(r.salesCardId)))
-            || (r.orderNumber && byRef.get('Pedido pipeline interno - ' + r.orderNumber))
+          const preFat = PRE_FAT.has(String(r.stage || ''));
+          let f = (r.salesCardId && _pick(byCard.get(String(r.salesCardId)), preFat))
+            || (r.orderNumber && _pick(byRef.get('Pedido pipeline interno - ' + r.orderNumber), preFat))
             || null;
-          if (!f) { const k = String(r.invoiceNumber || '').replace(/\D/g, ''); if (k) f = byNum.get(k) || null; }
+          if (!f) { const k = String(r.invoiceNumber || '').replace(/\D/g, ''); if (k) f = _pick(byNum.get(k), preFat); }
           if (f) { resolved.push({ r, f }); if (['rejected', 'rejeitada', 'draft'].includes(String(f.st))) errIds.push(f.id); }
         }
         // Motivo do erro (último evento de erro) p/ NFs rejeitadas/rascunho — mostra no card + habilita re-tentar.
