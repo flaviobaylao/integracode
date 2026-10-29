@@ -67,7 +67,7 @@ const ORDER_TOOL: any = {
       itens: { type: 'array', description: 'itens do pedido', items: { type: 'object', properties: { produto: { type: 'string', description: 'nome do produto do catálogo' }, quantidade: { type: 'number' } }, required: ['produto', 'quantidade'] } },
       nome: { type: 'string', description: 'nome completo do cliente' },
       documento: { type: 'string', description: 'CPF ou CNPJ' },
-      telefone: { type: 'string' },
+      telefone: { type: 'string', description: 'WhatsApp do cliente com DDD — OBRIGATORIO no Instagram (use o que ele ja informou)' },
       endereco: { type: 'string', description: 'rua/avenida e número' },
       bairro: { type: 'string' },
       cidade: { type: 'string' },
@@ -96,6 +96,14 @@ const CARD_LINK_TOOL: any = {
   name: 'gerar_link_pagamento',
   description: 'Gera e ENVIA ao cliente um LINK seguro para pagar o pedido JA REGISTRADO nesta conversa com CARTAO DE CREDITO ou GOOGLE PAY (a vista, sem parcelamento). Use SOMENTE depois de ja ter chamado registrar_pedido nesta conversa E o cliente dizer que quer pagar no cartao (ou no Google Pay). Nao precisa de parametros: o valor vem do pedido registrado. Depois de chamar, NAO reescreva o link (o sistema ja enviou); apenas avise o cliente, de forma curta, que e so abrir o link e pagar, e que a confirmacao e automatica.',
   input_schema: { type: 'object', properties: {}, required: [] },
+};
+
+// Ferramenta EXTRA (só Instagram, out/2026): grava o WhatsApp que o cliente informou no Direct.
+// Quem chega pelo Instagram nao tem telefone; sem ele fica fora de repescagem, avisos e cobranca.
+const WHATSAPP_TOOL: any = {
+  name: 'salvar_whatsapp',
+  description: 'Grava o WhatsApp (celular com DDD) que o cliente informou nesta conversa do Instagram. Use assim que o cliente mandar o numero. O sistema valida o numero e guarda no cadastro; se responder que e invalido, peca de novo com DDD. Depois de salvar, confirme em poucas palavras e siga o atendimento.',
+  input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'WhatsApp com DDD, como o cliente escreveu (ex.: 62 99999-1234)' } }, required: ['numero'] },
 };
 
 // Garante a tabela de vínculo pedido<->cobrança PIX do Instagram (idempotente).
@@ -163,6 +171,13 @@ function mapWeekday(dateStr: any): string {
 }
 
 export async function resolveCustomerId(ctx: any, documento?: string): Promise<string | null> {
+  // Instagram (out/2026): ctx.phone e o IGSID, nao um telefone. Se o cliente ja informou o
+  // WhatsApp, tenta identificar por ele primeiro; sem achar, segue a busca antiga (cadastros
+  // antigos do Instagram guardaram o IGSID no telefone).
+  if (ctx && String(ctx.channel || '') === 'instagram' && ctx.whatsapp && !ctx.__porWhatsapp) {
+    const r = await resolveCustomerId({ ...ctx, phone: ctx.whatsapp, __porWhatsapp: true }, documento);
+    if (r) return r;
+  }
   if (documento) {
     const d = onlyDigits(documento);
     try {
@@ -395,6 +410,15 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
     if (name === 'enviar_boleto') { const { enviarBoleto } = await import('./ia-financeiro'); return await enviarBoleto(ctx, input || {}); }
     if (name === 'enviar_nota_fiscal') { const { enviarNotaFiscal } = await import('./ia-financeiro'); return await enviarNotaFiscal(ctx, input || {}); }
     if (name === 'segunda_via') return await segundaVia(input || {}, ctx);
+    if (name === 'salvar_whatsapp') {
+      const { salvarWhatsappDaConversa } = await import('./ig-whatsapp');
+      let erpId: string | null = null;
+      try { erpId = await resolveCustomerId(ctx, undefined); } catch {}
+      const r = await salvarWhatsappDaConversa({ conversationId: ctx?.conversationId, numero: String(input?.numero || ''), erpCustomerId: erpId, igsid: String(ctx?.channel || '') === 'instagram' ? String(ctx?.phone || '') : null });
+      if (!r.ok) return 'Numero invalido: "' + String(input?.numero || '') + '". Peca de novo o WhatsApp com DDD (ex.: 62 99999-1234).';
+      if (ctx) (ctx as any).whatsapp = r.numero;
+      return 'WhatsApp salvo: ' + r.numero + '. Confirme ao cliente em poucas palavras e siga o atendimento. Use esse numero no campo telefone do registrar_pedido.';
+    }
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
     if (name === 'gerar_pix') return await gerarPix(input || {}, ctx);
     if (name === 'gerar_link_pagamento') return await gerarLinkPagamento(input || {}, ctx);
@@ -519,6 +543,14 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     if (!String(inp.dia_entrega || '').trim()) faltando.push('dia de entrega');
     if (tipo !== 'consumidor' && tipo !== 'revenda') faltando.push('tipo de cliente (consumidor ou revenda)');
     if (tipo === 'revenda' && !['goiania', 'interior', 'brasilia'].includes(regiao)) faltando.push('região da revenda (goiania, interior ou brasilia)');
+    // Instagram: WhatsApp obrigatorio (out/2026). Usa o informado agora ou o ja salvo na conversa.
+    const _ig = String(ctx?.channel || '') === 'instagram';
+    if (_ig) {
+      const { normalizarWhatsappBR, whatsappDaConversa } = await import('./ig-whatsapp');
+      const _tel = normalizarWhatsappBR(inp.telefone) || normalizarWhatsappBR(ctx?.whatsapp) || (await whatsappDaConversa(ctx?.conversationId));
+      if (_tel) inp.telefone = _tel;
+      else faltando.push(inp.telefone ? 'WhatsApp com DDD valido (o informado nao e um numero valido)' : 'WhatsApp do cliente com DDD (obrigatorio no Instagram)');
+    }
     if (faltando.length) return 'Ainda faltam dados para registrar o pedido: ' + faltando.join('; ') + '. Pergunte ao cliente e só registre quando tiver tudo.';
 
     // Catálogo ativo + matcher por tokens (mesma lógica do consultar_produto).
@@ -661,7 +693,8 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
           cpf: isPJ ? null : doc,
           cnpj: isPJ ? doc : null,
           fantasyName: isPJ ? String(inp.nome || '').trim() : null,
-          phone: onlyDigits(inp.telefone) || onlyDigits(ctx?.phone) || '',
+          // Instagram: ctx.phone e o IGSID — nunca vira telefone do cadastro.
+          phone: onlyDigits(inp.telefone) || (_ig ? '' : onlyDigits(ctx?.phone)) || '',
           address: enderecoFull || 'A confirmar',
           city: String(inp.cidade || '').trim() || null,
           neighborhood: String(inp.bairro || '').trim() || null,
@@ -679,11 +712,18 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
         try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
     }
 
+    if (_ig && inp.telefone) {
+      try {
+        const { salvarWhatsappDaConversa } = await import('./ig-whatsapp');
+        await salvarWhatsappDaConversa({ conversationId: ctx?.conversationId, numero: String(inp.telefone), erpCustomerId: customer?.id || null, igsid: String(ctx?.phone || '') });
+      } catch (e: any) { console.error('[IG-ORDER] whatsapp (segue):', e?.message || e); }
+    }
+
     const notes = [
       'PEDIDO via Instagram Direct (atendente IA) — PENDENTE de confirmação humana',
       'Cliente: ' + inp.nome,
       'CPF/CNPJ: ' + inp.documento,
-      'Contato: ' + (inp.telefone || ctx?.phone || '-') + (ctx?.username ? ' (@' + ctx.username + ')' : ''),
+      'Contato: ' + (inp.telefone || (_ig ? '-' : ctx?.phone) || '-') + (ctx?.username ? ' (@' + ctx.username + ')' : ''),
       'Perfil: ' + (tipo === 'revenda' ? 'Revenda' : 'Consumidor') + ' | Tabela de preço: ' + (tabelaLabel[table] || table),
       'Endereço: ' + inp.endereco + ', ' + inp.bairro + ', ' + inp.cidade + (inp.cep ? ' - CEP ' + inp.cep : ''),
       'Pagamento (informado): ' + inp.forma_pagamento,
@@ -1173,6 +1213,9 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     const _aviso = ctx?.phone ? await contextoDoAviso(String(ctx.phone)) : '';
     // Calendario + retrato do cliente. Sem isso a IA falou em "finalzinho de julho" no dia
     // 05/08 e prometeu prazo sem saber quando o cliente compra nem quando o vendedor passa.
+    if (ctx && String((ctx as any).channel || '') === 'instagram' && !(ctx as any).whatsapp) {
+      try { const { whatsappDaConversa } = await import('./ig-whatsapp'); const w = await whatsappDaConversa((ctx as any).conversationId); if (w) (ctx as any).whatsapp = w; } catch {}
+    }
     let _cal = '', _cli = '';
     try {
       const { blocoCalendario, contextoDoCliente } = await import('./contexto-cliente');
@@ -1183,7 +1226,17 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
         else if (ctx.phone) { try { const { contextoDoLead } = await import('./ia-sdr-mapa'); _cli = await contextoDoLead(String(ctx.phone)); } catch {} }
       }
     } catch (e: any) { console.error('[CTX-CLIENTE]', e?.message || e); }
+    let _igwa = '';
+    if (ctx && String((ctx as any).channel || '') === 'instagram') {
+      try {
+        const { whatsappDaConversa, blocoPromptWhatsappIG } = await import('./ig-whatsapp');
+        const w = (ctx as any).whatsapp || await whatsappDaConversa((ctx as any).conversationId);
+        if (w) (ctx as any).whatsapp = w;
+        _igwa = blocoPromptWhatsappIG(w || null);
+      } catch (e: any) { console.error('[IG-WA] bloco prompt:', e?.message || e); }
+    }
     const systemPrompt = _tempo + '\n\n'
+      + (_igwa ? _igwa + '\n\n' : '')
       + (_cal ? _cal + '\n\n' : '')
       + (_cli ? _cli + '\n\n' : '')
       + (_aviso ? _aviso + '\n\n' : '')
@@ -1209,7 +1262,7 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     const _vendasFora = !!ctx && _canal !== 'instagram' && (await getSetting('ia_wpp_vendas', 'off')) === 'on';
     let tools = ctx
       ? ((_canal === 'instagram' || _vendasFora)
-          ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL, CARD_LINK_TOOL]
+          ? [...TOOL_DEFS, ORDER_TOOL, PIX_TOOL, CARD_LINK_TOOL, ...(_canal === 'instagram' ? [WHATSAPP_TOOL] : [])]
           : [...TOOL_DEFS, CARD_LINK_TOOL])
       : undefined;
     // CAIXA DE DECISOES (set/2026): `agentes_config.ferramentas` era gravado pela tela e
