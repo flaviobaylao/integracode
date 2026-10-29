@@ -205,6 +205,39 @@ export function registerCustomerStatementRoutes(app: Express): void {
     }
   });
 
+  // ── Dados fiscais de uma NF-e, para o ESPELHO ─────────────────────────────
+  // SOMENTE LEITURA. Serve ao espelho da nota: devolve o que já está gravado da
+  // NF-e autorizada para montar um layout igual ao da DANFE. Não emite, não
+  // transmite, não grava — é um SELECT.
+  app.get("/api/customer-statement/nota/:fiscalInvoiceId", authenticateUser, isExtratoAuthorized, async (req: any, res) => {
+    try {
+      const id = String(req.params.fiscalInvoiceId);
+      const fRes: any = await db.execute(sql`
+        SELECT invoice_number, series, access_key, protocol_number, status, invoice_model,
+               nature_of_operation, cfop, emission_date, authorization_date,
+               issuer_name, issuer_cnpj, issuer_ie, issuer_address, issuer_city, issuer_uf, issuer_phone,
+               customer_name, customer_cnpj_cpf, customer_ie, customer_address, customer_bairro,
+               customer_cep, customer_city, customer_uf, customer_phone,
+               total_products, total_discount, total_freight, total_insurance, total_other_expenses,
+               total_icms, total_ipi, total_invoice, payment_method, notes
+        FROM fiscal_invoices WHERE id = ${id} LIMIT 1
+      `);
+      const nf: any = (fRes?.rows || fRes || [])[0];
+      if (!nf) return res.status(404).json({ message: "NF-e não encontrada" });
+      const iRes: any = await db.execute(sql`
+        SELECT item_number, product_code, product_name, ncm, cfop, unit, quantity,
+               unit_price, total_price, discount, csosn, cst_icms,
+               base_icms, aliq_icms, valor_icms, aliq_ipi, valor_ipi
+        FROM fiscal_invoice_items WHERE invoice_id = ${id}
+        ORDER BY COALESCE(item_number, 0), product_name
+      `);
+      res.json({ nota: nf, itens: (iRes?.rows || iRes || []) });
+    } catch (e: any) {
+      console.error("[extrato-cliente] falha ao ler NF-e p/ espelho:", e?.message || e);
+      res.status(500).json({ message: "Não foi possível ler os dados fiscais desta nota." });
+    }
+  });
+
   // ── Extrato completo de um cliente ────────────────────────────────────────
   app.get("/api/customer-statement/:customerId", authenticateUser, isExtratoAuthorized, async (req: any, res) => {
     try {
@@ -867,6 +900,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
             cancelada,
             parcelas: detParcelas,
             pagamentos: detPagsNota,
+            // Identificador da NF-e, para o espelho buscar os dados fiscais completos.
+            fiscalInvoiceId: n.fiId || null,
             produtos: produtosDaNota(n),
             implantadoPor: implantadorDaNota(n).nome,
             implantadoPorTipo: implantadorDaNota(n).tipo,
