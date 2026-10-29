@@ -1898,6 +1898,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const r of ((pmx.rows || pmx) as any[])) pmMap.set(String(r.id), r);
         for (const c of (customers as any[])) { const p = pmMap.get(String(c.id)); (c as any).presentialMonthly = p ? (p.presential_monthly === true) : false; (c as any).presentialMonthlyWeekday = p ? (p.presential_monthly_weekday || null) : null; }
       } catch (_e) { /* colunas ainda não existem (ALTER do boot) → segue sem */ }
+      // 🗂️ Anexa a ÚLTIMA CARTEIRA (último vendedor que atendia o cliente antes da inativação).
+      try {
+        const lsx: any = await db.execute(sql`
+          SELECT c.id, c.last_seller_id, c.last_seller_at,
+                 COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome
+            FROM customers c
+            LEFT JOIN users u ON u.id = c.last_seller_id OR u.omie_vendor_code = c.last_seller_id
+                              OR ('omie-vendor-' || u.omie_vendor_code) = c.last_seller_id
+           WHERE c.last_seller_id IS NOT NULL`);
+        const lsMap = new Map<string, any>();
+        for (const r of ((lsx.rows || lsx) as any[])) { const k = String(r.id); if (!lsMap.has(k) || (!lsMap.get(k).nome && r.nome)) lsMap.set(k, r); }
+        for (const c of (customers as any[])) {
+          const l = lsMap.get(String(c.id));
+          (c as any).lastSellerId = l ? l.last_seller_id : null;
+          (c as any).lastSellerName = l ? (l.nome || l.last_seller_id) : null;
+          (c as any).lastSellerAt = l ? l.last_seller_at : null;
+        }
+      } catch (_e) { /* coluna ainda não existe (ALTER do boot) → segue sem */ }
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);

@@ -690,6 +690,20 @@ async function forcadasDoDia(dateStr: string): Promise<Set<string>> {
   return out;
 }
 
+/**
+ * 🔒 QUARENTENA (out/2026, regra do Flávio): cliente com Data de Início do Fornecimento
+ * FUTURA não entra na positivação — nem na base da carteira (denominador), nem como
+ * positivado — antes dessa data. refDate = 'YYYY-MM-DD' (hoje BRT; para meses passados,
+ * o último dia do mês). A data de início é gravada à meia-noite UTC, então a parte de
+ * data do ISO é o dia do calendário (mesmo critério da agenda forçada).
+ */
+export function emQuarentenaNaData(serviceStartDate: any, refDate: string): boolean {
+  if (!serviceStartDate) return false;
+  const d = new Date(serviceStartDate);
+  if (isNaN(d.getTime())) return false;
+  return d.toISOString().slice(0, 10) > refDate;
+}
+
 export async function customersBoughtInCycle(
   rows: Array<{ id: string; periodicity: string | null; omieClientCode?: string | null }>,
   routeDateStr: string,
@@ -951,14 +965,18 @@ export class DatabaseStorage implements IStorage {
     }
     
     // Montar resultado final
+    const _hojeQuar = hojeBR();
     const customersWithExtendedInfo = result.map((row) => {
       const customerId = row.customers!.id;
       const lastActivityDate = lastActivityMap.get(customerId);
-      
+      // 🔒 Quarentena (início do fornecimento futuro): fora da positivação até a data de início.
+      const _emQuarentena = emQuarentenaNaData((row.customers as any)?.serviceStartDate, _hojeQuar);
+
       return {
         ...row.customers!,
         seller: row.users!,
-        isPositivatedThisMonth: positivationMap.get(customerId) || false,
+        isPositivatedThisMonth: (_emQuarentena ? null : (positivationMap.get(customerId) || false)) as any,
+        emQuarentena: _emQuarentena,
         lastActivityStatus: 'none' as const,
         lastActivityDate: lastActivityDate?.toISOString() || null,
       };
@@ -4323,8 +4341,24 @@ export class DatabaseStorage implements IStorage {
         })));
       }
 
-      // Clientes únicos positivados (que tiveram venda)
-      const uniqueCustomers = new Set(monthBillings.rows.map((b: any) => b.customer_document));
+      // 🔒 Quarentena: cliente com início do fornecimento DEPOIS da data de referência (hoje no
+      // mês corrente; último dia do mês nos meses passados) não entra na positivação.
+      const _docsQuarentena = new Set<string>();
+      try {
+        const qr: any = await db.execute(sql`
+          SELECT cnpj, cpf FROM customers
+          WHERE service_start_date IS NOT NULL AND service_start_date::date > ${endStr}::date`);
+        for (const r of ((qr.rows || []) as any[])) {
+          for (const v of [r.cnpj, r.cpf]) { const d = String(v || '').replace(/\D/g, ''); if (d.length >= 11) _docsQuarentena.add(d); }
+        }
+      } catch (e: any) { console.warn('[getSalesMetrics] quarentena (segue sem):', e?.message); }
+
+      // Clientes únicos positivados (que tiveram venda), fora os em quarentena
+      const uniqueCustomers = new Set(
+        monthBillings.rows
+          .map((b: any) => b.customer_document)
+          .filter((doc: any) => !_docsQuarentena.has(String(doc || '').replace(/\D/g, '')))
+      );
       const positivatedCustomers = uniqueCustomers.size;
 
       // Total de clientes ativos na carteira do vendedor
@@ -4336,6 +4370,8 @@ export class DatabaseStorage implements IStorage {
           INNER JOIN customers c ON ac.customer_id = c.id
           WHERE c.seller_id = ${userSellerId}
             AND ac.is_active = true
+            -- 🔒 Quarentena: fora da carteira de positivação até o início do fornecimento.
+            AND (c.service_start_date IS NULL OR c.service_start_date::date <= ${endStr}::date)
         `);
         totalCustomersInRoute = routeCustomersResult.rows.length;
         console.log(`  👥 CLIENTES NA CARTEIRA (activeCustomers):`, {
@@ -7366,6 +7402,7 @@ export class DatabaseStorage implements IStorage {
       } catch (e) { /* best-effort */ }
 
       // Retornar dados com clientes disponíveis
+      const _hojeQuar = hojeBR();
       const result: ActiveCustomerWithVisits[] = active.map((ac) => {
         let customer = ac.customerId ? customerMap.get(ac.customerId) : undefined;
         if (!customer && (ac as any).document) customer = customerByDoc.get(_digits((ac as any).document));
@@ -7374,6 +7411,8 @@ export class DatabaseStorage implements IStorage {
         
         // Adicionar dados de positivação e última atividade
         const isPositivated = ac.customerId ? (positivationMap.get(ac.customerId) || false) : false;
+        // 🔒 Quarentena (início do fornecimento futuro): fora da positivação até a data de início.
+        const _emQuarentena = customer ? emQuarentenaNaData((customer as any).serviceStartDate, _hojeQuar) : false;
         const lastActivity = ac.customerId ? lastActivityMap.get(ac.customerId) : undefined;
         const monthlyTotals = ac.customerId ? monthlyTotalsMap.get(ac.customerId) : undefined;
         
@@ -7388,7 +7427,8 @@ export class DatabaseStorage implements IStorage {
             ...customer,
             // Fallback: se omieInstanceId nulo, usar instância padrão (todos os clientes ativos pertencem a alguma instância)
             omieInstanceId: customer.omieInstanceId || ac.omieInstanceId || defaultOmieInstanceId,
-            isPositivatedThisMonth: isPositivated,
+            isPositivatedThisMonth: (_emQuarentena ? null : isPositivated) as any,
+            emQuarentena: _emQuarentena,
             lastActivityDate: lastActivity?.toISOString() || null
           } : undefined,
           lastTwoVisits: [],

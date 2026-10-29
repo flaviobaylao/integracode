@@ -35,7 +35,9 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     WHERE ac.is_active IS NOT FALSE AND c.id IS NOT NULL
       AND c.is_active IS NOT FALSE
       AND c.is_supplier IS NOT TRUE
-      AND c.is_colaborador IS NOT TRUE`));
+      AND c.is_colaborador IS NOT TRUE
+      -- 🔒 Quarentena: início do fornecimento futuro não entra na positivação até a data.
+      AND (c.service_start_date IS NULL OR c.service_start_date::date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date)`));
 
   // 2) Positivação do mês (billing_pipeline OU receivable)
   const bp = rowsOf(await db.execute(sql`

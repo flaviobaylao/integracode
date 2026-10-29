@@ -97,6 +97,39 @@ const DDL: string[] = [
   // tiver check-in na visita do dia e devolve a virtual quem tiver. Fora do schema.ts (raw SQL).
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS presential_monthly boolean DEFAULT false;`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS presential_monthly_weekday varchar;`,
+  // ÚLTIMA CARTEIRA (out/2026, regra do Flávio): cliente inativado sai da carteira do vendedor
+  // (fica SEM vendedor) e o vendedor que o atendia fica registrado em last_seller_id. Ao
+  // reativar, NÃO volta para a última carteira: o vendedor fica livre para quem assumir.
+  // Gatilho no banco para valer em TODOS os caminhos de inativação (botões, edição, exclusão,
+  // mescla de duplicados, sincronizações). A trigger de auditoria registra a troca de vendedor.
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_seller_id varchar;`,
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_seller_at timestamptz;`,
+  `CREATE OR REPLACE FUNCTION fn_customers_ultima_carteira() RETURNS trigger AS $fn$
+   BEGIN
+     IF COALESCE(OLD.is_active, true) = true AND NEW.is_active = false THEN
+       -- Inativação: registra a última carteira e tira o cliente dela.
+       IF COALESCE(NULLIF(OLD.seller_id, ''), NULLIF(NEW.seller_id, '')) IS NOT NULL THEN
+         NEW.last_seller_id := COALESCE(NULLIF(OLD.seller_id, ''), NULLIF(NEW.seller_id, ''));
+         NEW.last_seller_at := now();
+       END IF;
+       NEW.seller_id := NULL;
+     ELSIF COALESCE(OLD.is_active, true) = false AND NEW.is_active = true THEN
+       -- Reativação: não volta para a última carteira. Se o vendedor ainda é o da última
+       -- carteira (cadastro inativado antes desta regra), fica sem vendedor; se um vendedor
+       -- NOVO foi escolhido, ele é mantido.
+       IF NULLIF(NEW.seller_id, '') IS NOT NULL AND NEW.seller_id = OLD.seller_id
+          AND NEW.seller_id = COALESCE(OLD.last_seller_id, NEW.last_seller_id) THEN
+         NEW.seller_id := NULL;
+       END IF;
+     END IF;
+     RETURN NEW;
+   END $fn$ LANGUAGE plpgsql;`,
+  `DROP TRIGGER IF EXISTS trg_customers_ultima_carteira ON customers;`,
+  `CREATE TRIGGER trg_customers_ultima_carteira BEFORE UPDATE ON customers FOR EACH ROW EXECUTE PROCEDURE fn_customers_ultima_carteira();`,
+  // Informativo: inativos de antes da regra ganham a "última carteira" = vendedor atual
+  // (não altera o vendedor; idempotente).
+  `UPDATE customers SET last_seller_id = seller_id, last_seller_at = COALESCE(inactivated_at, updated_at, now())
+     WHERE is_active = false AND last_seller_id IS NULL AND NULLIF(seller_id, '') IS NOT NULL;`,
   // Regra fixa por REGIÃO: amarra uma direção à macro (UF) ou micro-região (cidade).
   `CREATE TABLE IF NOT EXISTS holiday_region_rules (
      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),

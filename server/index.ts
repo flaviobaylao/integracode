@@ -5301,7 +5301,16 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         SELECT c.id AS rid, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid
         FROM active_customers ac
         LEFT JOIN customers c ON c.id = ac.customer_id
-        WHERE ac.is_active IS NOT FALSE`));
+        WHERE ac.is_active IS NOT FALSE
+          -- 🔒 Quarentena: início do fornecimento futuro não entra na positivação até a data.
+          AND (c.service_start_date IS NULL OR c.service_start_date::date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date)`));
+      let emQuarentena = 0;
+      try {
+        const q = rowsOf(await db.execute(sql`
+          SELECT COUNT(DISTINCT c.id)::int AS n FROM active_customers ac JOIN customers c ON c.id = ac.customer_id
+          WHERE ac.is_active IS NOT FALSE AND c.service_start_date::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date`));
+        emQuarentena = Number(q[0]?.n || 0);
+      } catch { /* informativo */ }
       const universe: { id: string | null; doc: string; sid: string | null; pos: boolean }[] = [];
       const seen = new Set<string>();
       for (const r of au) {
@@ -5413,7 +5422,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       res.json({
         mes: mo + 1, ano: y,
         porVendedor,
-        totalAtivos, positivados, percentual: pctAtual,
+        totalAtivos, positivados, percentual: pctAtual, emQuarentena,
         diasUteisTotal, diasUteisDecorridos, diasUteisRestantes,
         projetadoPositivados, projetadoPercentual: pctProjetado,
         serie,

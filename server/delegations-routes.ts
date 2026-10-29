@@ -402,7 +402,7 @@ export async function runDelegationReturns(): Promise<void> {
           const atual = _curMap.get(String(c.customerId));
           const delegado = String((c as any).toUserId || "");
           if (!delegado || atual !== delegado) { mantidos++; continue; }
-          await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId));
+          await db.update(customers).set({ sellerId: d.fromUserId }).where(and(eq(customers.id, c.customerId), eq(customers.isActive, true))); // inativo não volta a ter carteira (regra da última carteira)
           ok++;
           await logCustomerNote({ customerId: c.customerId, label: "Delegação encerrada", text: `Carteira devolvida a ${_titularNomeR} (fim do período)`, actor: { name: "Sistema (agendador)" }, source: "delegacao" });
         } catch (e: any) {
@@ -449,7 +449,7 @@ export async function runDelegationActivations(): Promise<void> {
           const atual = _curMap.get(String(c.customerId));
           // move só se ainda está com o titular (ou se não sabemos o titular, mantém o comportamento antigo)
           if (_titular && atual !== _titular) { mantidos++; continue; }
-          await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId));
+          await db.update(customers).set({ sellerId: c.toUserId }).where(and(eq(customers.id, c.customerId), eq(customers.isActive, true))); // inativo não volta a ter carteira (regra da última carteira)
           ok++;
           await logCustomerNote({ customerId: c.customerId, label: "Delegação", text: `Carteira delegada de ${_titularNome} para ${_nomes[String(c.toUserId)] || String(c.toUserId)} — até ${fmtDataBR(d.endsAt)}`, actor: { name: "Sistema (agendador)" }, source: "delegacao" });
         } catch (e: any) {
@@ -632,7 +632,7 @@ export function registerDelegationRoutes(app: Express) {
       const ator = { id: createdBy, name: nomeAtor((req as any).currentUser) };
       for (const c of rows) {
         try {
-          await db.update(customers).set({ sellerId: c.toUserId }).where(eq(customers.id, c.customerId));
+          await db.update(customers).set({ sellerId: c.toUserId }).where(and(eq(customers.id, c.customerId), eq(customers.isActive, true))); // inativo não volta a ter carteira (regra da última carteira)
           const delegado = nomes[String(c.toUserId)] || String(c.toUserId);
           await logCustomerNote({ customerId: c.customerId, label: "Delegação", text: `Carteira delegada de ${titular} para ${delegado} — até ${fmtDataBR(ends)}`, actor: ator, source: "delegacao" });
         }
@@ -716,7 +716,7 @@ export function registerDelegationRoutes(app: Express) {
       const atorRv = { id: (req as any).currentUser?.id, name: nomeAtor((req as any).currentUser) };
       for (const c of rows) {
         try {
-          await db.update(customers).set({ sellerId: d.fromUserId }).where(eq(customers.id, c.customerId));
+          await db.update(customers).set({ sellerId: d.fromUserId }).where(and(eq(customers.id, c.customerId), eq(customers.isActive, true))); // inativo não volta a ter carteira (regra da última carteira)
           await logCustomerNote({ customerId: c.customerId, label: "Delegação revogada", text: `Carteira devolvida a ${titularRv}`, actor: atorRv, source: "delegacao" });
         }
         catch (e: any) { console.error("[acessos-delegacoes] revoke devolução falhou p/ cliente", c.customerId, e?.message); }
