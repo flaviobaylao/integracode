@@ -130,20 +130,6 @@ const DDL: string[] = [
   // (não altera o vendedor; idempotente).
   `UPDATE customers SET last_seller_id = seller_id, last_seller_at = COALESCE(inactivated_at, updated_at, now())
      WHERE is_active = false AND last_seller_id IS NULL AND NULLIF(seller_id, '') IS NOT NULL;`,
-  // Execução ÚNICA (aprovada pelo Flávio em 29/out/2026): inativos de antes da regra saem da
-  // carteira (ficam sem vendedor; a última carteira já está registrada acima). Só limpa quando o
-  // vendedor ainda é o da última carteira — um vendedor novo atribuído depois é preservado.
-  // A marca em system_settings impede que rode de novo nos próximos boots.
-  `DO $do$
-   BEGIN
-     IF NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'ultima_carteira_limpeza_inativos_v1') THEN
-       UPDATE customers SET seller_id = NULL
-        WHERE is_active = false AND NULLIF(seller_id, '') IS NOT NULL
-          AND last_seller_id IS NOT NULL AND seller_id = last_seller_id;
-       INSERT INTO system_settings (key, value, updated_by)
-       VALUES ('ultima_carteira_limpeza_inativos_v1', now()::text, 'migracao-ultima-carteira');
-     END IF;
-   END $do$;`,
   // Regra fixa por REGIÃO: amarra uma direção à macro (UF) ou micro-região (cidade).
   `CREATE TABLE IF NOT EXISTS holiday_region_rules (
      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -439,6 +425,47 @@ export async function reapplyHolidayShiftsForCustomer(customerId: string): Promi
 export function registerHolidaysRoutes(app: Express) {
   void ensureHolidayTables();
   const admin = requireRole(["admin", "coordinator", "administrative"]);
+
+  // ── ÚLTIMA CARTEIRA: diagnóstico (gatilhos instalados + contagens) ──
+  app.get("/api/admin/ultima-carteira/status", authenticateUser, admin, safe(async (_req, res) => {
+    await ensureHolidayTables();
+    const triggers = rowsOf(await db.execute(sql`
+      SELECT tgname, tgenabled FROM pg_trigger
+       WHERE tgname IN ('trg_customers_ultima_carteira', 'trg_customers_audit') AND NOT tgisinternal`));
+    const c = rowsOf(await db.execute(sql`
+      SELECT COUNT(*) FILTER (WHERE is_active = false)::int AS inativos,
+             COUNT(*) FILTER (WHERE is_active = false AND NULLIF(seller_id,'') IS NOT NULL)::int AS inativos_com_vendedor,
+             COUNT(*) FILTER (WHERE is_active = false AND last_seller_id IS NOT NULL)::int AS inativos_com_ultima_carteira,
+             COUNT(*) FILTER (WHERE is_active = false AND NULLIF(seller_id,'') IS NOT NULL
+                                AND last_seller_id IS NOT NULL AND seller_id = last_seller_id)::int AS a_tirar_da_carteira
+        FROM customers`))[0] || {};
+    const flag = rowsOf(await db.execute(sql`SELECT value FROM system_settings WHERE key = 'ultima_carteira_limpeza_inativos_v1' LIMIT 1`))[0]?.value || null;
+    res.json({ triggers, ...c, limpezaInativosAntigos: flag });
+  }));
+
+  // ── ÚLTIMA CARTEIRA: tira da carteira os inativos de ANTES da regra (aprovado pelo Flávio,
+  // 29/out/2026). Só limpa quem ainda está com o vendedor da última carteira (um vendedor novo
+  // atribuído depois é preservado). ?dry=1 só conta. A trigger de auditoria grava cada troca de
+  // vendedor no histórico do cliente, com o ator identificado. Só Admin.
+  app.post("/api/admin/ultima-carteira/limpar-inativos", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    await ensureHolidayTables();
+    const where = sql`is_active = false AND NULLIF(seller_id,'') IS NOT NULL AND last_seller_id IS NOT NULL AND seller_id = last_seller_id`;
+    const alvo = Number(rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM customers WHERE ${where}`))[0]?.n || 0);
+    if (String((req.query as any)?.dry || (req.body as any)?.dry || "") === "1") return res.json({ dry: true, aTirarDaCarteira: alvo });
+    const u: any = (req as any).currentUser || {};
+    const ator = `${[u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || "Admin"} (limpeza da última carteira)`;
+    const limpos = await db.transaction(async (tx: any) => {
+      await tx.execute(sql`SELECT set_config('integra.actor', ${ator}, true), set_config('integra.source', 'ultima-carteira', true)`);
+      const r: any = await tx.execute(sql`UPDATE customers SET seller_id = NULL WHERE ${where}`);
+      const n = Number(r?.rowCount ?? alvo);
+      await tx.execute(sql`
+        INSERT INTO system_settings (key, value, updated_by)
+        VALUES ('ultima_carteira_limpeza_inativos_v1', ${new Date().toISOString() + " n=" + n}, ${u.email || "admin"})
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      return n;
+    });
+    res.json({ ok: true, tiradosDaCarteira: limpos });
+  }));
 
   // Lista por ano.
   app.get("/api/holidays", authenticateUser, safe(async (req, res) => {
