@@ -25,7 +25,7 @@ import { registerOrderJournal } from "./order-journal";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
-import { agora, hojeBR, diaBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
+import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
 import { idsEmRepescagem } from './repescagem-ativa';
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from '@shared/comissao-entrega';
 import { parseJanelas, slotsDoDia, janelasDoDia, janelasRoteirizacao } from '@shared/janelas-entrega';
@@ -7723,16 +7723,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // 📷 Foto do CHECK-IN DE HOJE, quando houver. Cards permanentes são reaproveitados e guardam o
-  // último check-in (checkInTime/checkInPhotoUrl de outra visita), por isso o recorte pelo dia em
-  // Brasília: só a foto tirada HOJE representa esta visita. Devolve a URL/base64 ou null.
-  const fotoCheckInDeHoje = (card: any): string | null => {
-    const url = typeof card?.checkInPhotoUrl === 'string' ? card.checkInPhotoUrl.trim() : '';
-    if (!url || !card?.checkInTime) return null;
-    try { if (diaBR(card.checkInTime) !== hojeBR()) return null; } catch { return null; }
-    return url;
-  };
-
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -7752,17 +7742,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _r = String((data as any).noSaleReason || '');
         if (['com_estoque', 'estab_fechado'].includes(_r) && !_noSalePhotoUrl) {
           // Foto obrigatória SÓ para cliente PRESENCIAL — atendimento virtual não exige foto.
-          // Também NÃO exige quando a foto da visita já foi tirada no CHECK-IN DE HOJE: a foto
-          // do local já está registrada no card, não faz sentido pedir a mesma foto de novo.
           let _ehVirtual = false;
-          let _temFotoCheckIn = false;
           try {
             const _cardNs: any = await storage.getSalesCard(id);
             const _custNs: any = _cardNs?.customerId ? await storage.getCustomer(String(_cardNs.customerId)) : null;
             _ehVirtual = _custNs?.virtualService === true;
-            _temFotoCheckIn = !!fotoCheckInDeHoje(_cardNs);
-          } catch (_e) { /* na dúvida, trata como presencial e sem foto */ }
-          if (!_ehVirtual && !_temFotoCheckIn) return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto (cliente presencial).' });
+          } catch (_e) { /* na dúvida, trata como presencial */ }
+          if (!_ehVirtual) return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto (cliente presencial).' });
         }
         if (['com_debito', 'outro_motivo'].includes(_r) && !String((data as any).notes || '').trim()) {
           return res.status(400).json({ message: 'Para este motivo é obrigatório preencher as Observações Adicionais.' });
@@ -8280,8 +8266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             motivo: _reason ? (NO_SALE_LABEL[_reason] || _reason) : 'Não Venda',
             texto: String((data as any).notes || ''),
             sempre: true,
-            // Sem foto nova (porque a do check-in de hoje já valeu), o report leva a foto do check-in.
-            fotoUrl: _noSalePhotoUrl || fotoCheckInDeHoje(cardBefore),
+            fotoUrl: _noSalePhotoUrl,
           });
         }
       } catch (_e: any) { console.warn('[REPORT-INBOX] no_sale:', _e?.message); }
@@ -25852,29 +25837,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // log de uso (para o módulo de uso/custo por vendedor)
       try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('radar', ${uid}, ${uname}, ${billable}, ${places.length}, ${lat}, ${lng})`); } catch (_e) {}
 
-      // dedup com o Integra (leads + clientes próximos) → mostra só o que ainda NÃO é cadastro
-      const latD = 0.0025, lngD = 0.0025 / (Math.cos((lat * Math.PI) / 180) || 1);
+      // dedup com o Integra (leads + clientes) → mostra só o que ainda NÃO é cadastro.
+      // ⚠️ Correção 29/10: a janela de busca do cadastro era fixa (~275 m) e ficava MENOR que o raio
+      // do radar (300/500 m) → clientes na borda apareciam como "novos". Agora a janela = raio + 400 m.
+      // A comparação de nome também ficou tolerante (razão social × fantasia × nome do Google, palavras
+      // em comum, sem "Ltda/Restaurante/…"), entra o TELEFONE (cache do "Ver telefone") e clientes SEM
+      // coordenada casam por nome + bairro. Vale para externos e internos (mesmo endpoint).
+      const _janelaM = raio + 400;
+      const latD = _janelaM / 111320, lngD = latD / (Math.cos((lat * Math.PI) / 180) || 1);
+      const _dig8 = (s: any) => { const d = String(s || '').replace(/\D/g, ''); return d.length >= 8 ? d.slice(-8) : ''; };
+      // Telefones já consultados no Google (cache do "Ver telefone") dos lugares desta busca
+      const _telPlace = new Map<string, string>();
+      try {
+        const _pids0 = places.map((p: any) => String(p.id || '')).filter(Boolean);
+        if (_pids0.length) {
+          await _ensureTelefoneCache();
+          const tc0: any = await db.execute(sql`SELECT place_id, national_phone, international_phone FROM places_phone_cache
+            WHERE place_id IN (${sql.join(_pids0.map((x: string) => sql`${x}`), sql`, `)})`);
+          for (const r of (tc0?.rows || []) as any[]) { const t8 = _dig8(r.national_phone || r.international_phone); if (t8) _telPlace.set(String(r.place_id), t8); }
+        }
+      } catch (_e) {}
       // Leads trazem id + status: um lead DESCARTADO (não convertido) não "esconde" o ponto —
       // ele reaparece aqui como "já visitado" para o vendedor poder resgatar na hora.
       const exist: any[] = [];
       try {
-        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, status, assigned_to, origin, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
-        const cu: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name, ''), name) AS nome, latitude::float AS la, longitude::float AS lo FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
-        for (const r of (le?.rows || []) as any[]) {
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, phone, status, assigned_to, origin, latitude::float AS la, longitude::float AS lo FROM leads WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
+        const cu: any = await db.execute(sql`SELECT fantasy_name, name, company_name, phone, latitude::float AS la, longitude::float AS lo FROM customers WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude::float BETWEEN ${lat - latD} AND ${lat + latD} AND longitude::float BETWEEN ${lng - lngD} AND ${lng + lngD}`);
+        const _leadExist = (r: any) => {
           // "Disponível": lead de Novos Pontos (origin radar) que foi LIBERADO (sem vendedor) e voltou
           // para a base de novos leads → reaparece aqui para qualquer vendedor capturar ("Pegar lead").
           const disponivel = !r.assigned_to && r.origin === 'radar' && !['converted', 'discarded'].includes(String(r.status));
-          exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: r.status === 'discarded', disponivel, leadId: r.id });
+          return { nomes: [r.nome], tel: _dig8(r.phone), la: r.la, lo: r.lo, discarded: r.status === 'discarded', disponivel, leadId: r.id };
+        };
+        for (const r of (le?.rows || []) as any[]) exist.push(_leadExist(r));
+        for (const r of (cu?.rows || []) as any[]) exist.push({ nomes: [r.fantasy_name, r.name, r.company_name], tel: _dig8(r.phone), la: r.la, lo: r.lo, discarded: false, disponivel: false, leadId: null });
+        // Clientes SEM coordenada: casam por nome + mesmo bairro do ponto (abaixo).
+        const semCoord: any = await db.execute(sql`SELECT fantasy_name, name, company_name, phone, neighborhood FROM customers
+          WHERE (latitude IS NULL OR longitude IS NULL) AND COALESCE(TRIM(neighborhood), '') <> '' LIMIT 5000`);
+        for (const r of (semCoord?.rows || []) as any[]) exist.push({ nomes: [r.fantasy_name, r.name, r.company_name], tel: _dig8(r.phone), la: NaN, lo: NaN, bairro: _normBairro(r.neighborhood), discarded: false, disponivel: false, leadId: null });
+        // Telefone igual em QUALQUER lugar (cliente ou lead) → é cadastro (vale só para aquele ponto).
+        const _tels = Array.from(new Set(Array.from(_telPlace.values())));
+        if (_tels.length) {
+          const ct: any = await db.execute(sql`SELECT fantasy_name, name, company_name, right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'), 8) AS t8 FROM customers
+            WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'), 8) IN (${sql.join(_tels.map((x) => sql`${x}`), sql`, `)})`);
+          const lt: any = await db.execute(sql`SELECT id, fantasy_name AS nome, phone, status, assigned_to, origin, right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'), 8) AS t8 FROM leads
+            WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'), 8) IN (${sql.join(_tels.map((x) => sql`${x}`), sql`, `)})`);
+          for (const r of (ct?.rows || []) as any[]) exist.push({ nomes: [r.fantasy_name, r.name, r.company_name], tel: String(r.t8), la: NaN, lo: NaN, discarded: false, disponivel: false, leadId: null, soTelefone: true });
+          for (const r of (lt?.rows || []) as any[]) exist.push({ ..._leadExist(r), tel: String(r.t8), la: NaN, lo: NaN, soTelefone: true });
         }
-        for (const r of (cu?.rows || []) as any[]) exist.push({ nome: r.nome, la: r.la, lo: r.lo, discarded: false, disponivel: false, leadId: null });
-      } catch (_e) {}
+      } catch (_e) { console.error('[radar] dedup cadastro:', (_e as any)?.message || _e); }
       const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+      // Palavras que não identificam o estabelecimento (tipo de negócio, forma jurídica, conectivos)
+      const _GENERICAS = new Set(['ltda', 'eireli', 'epp', 'mei', 'cia', 'sa', 'comercio', 'comercial', 'industria', 'servicos', 'alimentos', 'alimentacao', 'distribuidora', 'atacado', 'atacadista', 'varejo',
+        'restaurante', 'restaurant', 'lanchonete', 'lanches', 'lanche', 'padaria', 'panificadora', 'panificacao', 'confeitaria', 'doceria', 'doces', 'supermercado', 'supermercados', 'mercado', 'minimercado', 'mercearia', 'conveniencia',
+        'emporio', 'bar', 'bares', 'pizzaria', 'pizza', 'pizzas', 'sorveteria', 'sorvetes', 'acai', 'acaiteria', 'cafe', 'cafeteria', 'coffee', 'hamburgueria', 'burger', 'burguer', 'sanduicheria', 'sanduiches', 'espetinho', 'espetaria',
+        'churrascaria', 'grill', 'food', 'foods', 'bistro', 'gourmet', 'cozinha', 'marmitaria', 'marmitex', 'self', 'service', 'delivery', 'express', 'sucos', 'suco', 'casa', 'loja', 'center', 'shopping', 'store', 'shop',
+        'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del']);
+      const _toks = (s: any) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3 && !_GENERICAS.has(t));
       const hav = (aLa: number, aLo: number, bLa: number, bLo: number) => {
         const R = 6371000, dLa = ((bLa - aLa) * Math.PI) / 180, dLo = ((bLo - aLo) * Math.PI) / 180;
         const s = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
         return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
       };
-      const existNorm = exist.map((e) => ({ n: norm(e.nome), la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, disponivel: !!e.disponivel, leadId: e.leadId || null }));
+      const existNorm = exist.map((e) => {
+        const nomes = (e.nomes || []).filter((x: any) => String(x || '').trim());
+        return { ns: nomes.map((x: any) => norm(x)).filter((x: string) => x.length >= 4), tk: new Set<string>(nomes.flatMap((x: any) => _toks(x))), tel: e.tel || '', bairro: e.bairro || '',
+          soTelefone: !!e.soTelefone, la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, disponivel: !!e.disponivel, leadId: e.leadId || null };
+      });
+      // Nome do Google × nomes do cadastro: 'forte' = igual/contido ou 2+ palavras próprias em comum;
+      // 'fraco' = 1 palavra própria (4+ letras) em comum.
+      const _nomeCasa = (nn: string, tkP: string[], e: any): 'forte' | 'fraco' | null => {
+        if (nn.length >= 4 && e.ns.some((x: string) => x === nn || (Math.min(x.length, nn.length) >= 5 && (x.includes(nn) || nn.includes(x))))) return 'forte';
+        const comuns = tkP.filter((t) => e.tk.has(t));
+        if (comuns.length >= 2 || (comuns.length === 1 && tkP.length === 1 && comuns[0].length >= 5)) return 'forte';
+        if (comuns.some((t) => t.length >= 4)) return 'fraco';
+        return null;
+      };
 
       // Classificação do segmento: "primário" quando o tipo principal do lugar está nos segmentos;
       // "secundário" quando casou por um tipo secundário do lugar (afrouxa o filtro).
@@ -25884,14 +25922,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const pLat = p.location?.latitude, pLng = p.location?.longitude;
         const nome = (p.displayName && p.displayName.text) || '';
         const nnome = norm(nome);
+        const tkP = Array.from(new Set(_toks(nome)));
+        const telP = _telPlace.get(String(p.id || '')) || '';
+        const bairroP = _normBairro(_bairroDoPlace(p));
         let bloqueado = false;            // casou com cadastro ATIVO (lead/cliente) → esconde
         let resgatavel: { leadId: any } | null = null;  // casou só com lead descartado → mostra p/ resgatar
         let resgDist = Infinity;
         let livre: { leadId: any } | null = null;       // casou com lead liberado (sem vendedor) → mostra p/ pegar
         let livreDist = Infinity;
         for (const e of existNorm) {
-          const d = (isFinite(pLat) && isFinite(pLng) && isFinite(e.la) && isFinite(e.lo)) ? hav(pLat, pLng, e.la, e.lo) : 9999;
-          const casou = d < 45 || (nnome && e.n && (nnome === e.n || (nnome.length > 5 && (e.n.includes(nnome) || nnome.includes(e.n)))) && d < 120);
+          const temCoord = isFinite(e.la) && isFinite(e.lo) && isFinite(pLat) && isFinite(pLng);
+          const d = temCoord ? hav(pLat, pLng, e.la, e.lo) : (e.soTelefone ? 0 : 9999);
+          let casou = false;
+          if (telP && e.tel && telP === e.tel) casou = true;                 // mesmo telefone
+          else if (e.soTelefone) casou = false;                               // entrada só p/ telefone
+          else if (temCoord) {
+            if (d < 45) casou = true;                                         // mesmo ponto
+            else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'forte' && d < 300) || (m === 'fraco' && d < 150); }
+          } else if (e.bairro && bairroP && e.bairro === bairroP) {
+            casou = _nomeCasa(nnome, tkP, e) === 'forte';                     // sem coordenada: nome + bairro
+          }
           if (!casou) continue;
           if (e.disponivel) {
             if (d < livreDist) { livreDist = d; livre = { leadId: e.leadId }; }
