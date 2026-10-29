@@ -25909,7 +25909,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'restaurante', 'restaurant', 'lanchonete', 'lanches', 'lanche', 'padaria', 'panificadora', 'panificacao', 'confeitaria', 'doceria', 'doces', 'supermercado', 'supermercados', 'mercado', 'minimercado', 'mercearia', 'conveniencia',
         'emporio', 'bar', 'bares', 'pizzaria', 'pizza', 'pizzas', 'sorveteria', 'sorvetes', 'acai', 'acaiteria', 'cafe', 'cafeteria', 'coffee', 'hamburgueria', 'burger', 'burguer', 'sanduicheria', 'sanduiches', 'espetinho', 'espetaria',
         'churrascaria', 'grill', 'food', 'foods', 'bistro', 'gourmet', 'cozinha', 'marmitaria', 'marmitex', 'self', 'service', 'delivery', 'express', 'sucos', 'suco', 'casa', 'loja', 'center', 'shopping', 'store', 'shop',
-        'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del']);
+        'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del',
+        'consultoria', 'assessoria', 'produtos', 'naturais', 'bebidas', 'bolos', 'bolo', 'quitandas', 'quitanda', 'salgados', 'salgaderia', 'pamonharia', 'pastelaria', 'pastel', 'sushi', 'temakeria', 'hortifruti', 'sacolao', 'acougue',
+        'clinica', 'studio', 'estudio', 'espaco', 'beleza', 'saude', 'farmacia', 'drogaria', 'pet', 'shop', 'boutique', 'kids', 'infantil', 'educacao', 'educacional', 'centro', 'instituto', 'grupo', 'rede', 'unid']);
       // Palavras de nomes de BAIRRO/cidade também não identificam ("Pamonharia 85 Bueno" × "Bolos do Sítio
       // Setor Bueno" não é o mesmo lugar) — vêm dos bairros cadastrados (cache de 6 h).
       const _palBairro = await _palavrasDeBairro();
@@ -25959,7 +25961,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (telP && e.tel && telP === e.tel) casou = true;                 // mesmo telefone
           else if (e.soTelefone) casou = false;                               // entrada só p/ telefone
           else if (temCoord) {
-            if (d < 45) casou = true;                                         // mesmo ponto
+            // Mesmo ponto: só com distância MUITO curta. Antes era 45 m e escondia o vizinho de porta
+            // (loja ao lado de um cliente). Nomes diferentes a mais de 12 m = estabelecimentos diferentes.
+            if (d < 12) casou = true;
             else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'forte' && d < 300) || (m === 'fraco' && d < 120); }
           } else if (e.bairro && bairroP && e.bairro === bairroP) {
             casou = _nomeCasa(nnome, tkP, e) === 'forte';                     // sem coordenada: nome + bairro
