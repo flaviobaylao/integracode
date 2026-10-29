@@ -63,7 +63,7 @@ function ensure(): Promise<void> {
       )`);
       for (const col of ["instancia varchar", "forma varchar", "favorecido_nome varchar", "favorecido_doc varchar", "pix_tipo varchar", "pix_chave varchar",
         "banco varchar", "agencia varchar", "conta varchar", "tipo_conta varchar", "chart_account_id varchar", "payable_id varchar",
-        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp", "valor_outros numeric", "vencimento date"]) {
+        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp", "valor_outros numeric", "vencimento date", "pix_titular varchar"]) {
         await db.execute(sql.raw(`ALTER TABLE viagens ADD COLUMN IF NOT EXISTS ${col}`));
       }
       await db.execute(sql`CREATE TABLE IF NOT EXISTS viagem_despesas (
@@ -111,7 +111,7 @@ async function carregar(id: string) {
   return rows(await db.execute(sql`SELECT * FROM viagens WHERE id = ${id}`))[0] || null;
 }
 function dadosPagamento(v: any): string {
-  if (v.forma === "pix") return `PIX ${v.pix_tipo ? `(${v.pix_tipo}) ` : ""}${v.pix_chave || ""}`.trim();
+  if (v.forma === "pix") return `PIX ${v.pix_tipo ? `(${v.pix_tipo}) ` : ""}${v.pix_chave || ""}${v.pix_titular ? ` · titular ${v.pix_titular}` : ""}${v.banco ? ` · ${v.banco}` : ""}`.trim();
   if (v.forma === "transferencia") return `Transferência: ${v.banco || "?"} · ag ${v.agencia || "?"} · ${v.tipo_conta || "conta"} ${v.conta || "?"}`;
   if (v.forma === "dinheiro") return "Dinheiro (Caixinha)";
   return "não informado";
@@ -140,7 +140,7 @@ function saida(v: any) {
     valorDespesas: v.valor_despesas == null ? null : num(v.valor_despesas), valorReal: v.valor_real == null ? null : num(v.valor_real),
     saldo: v.saldo == null ? null : num(v.saldo), prestadoEm: v.prestado_em, encerradoEm: v.encerrado_em, createdAt: v.created_at,
     instancia: v.instancia || null, forma: v.forma || null, favorecidoNome: v.favorecido_nome || v.vendedor_nome, favorecidoDoc: v.favorecido_doc || "",
-    pixTipo: v.pix_tipo || "", pixChave: v.pix_chave || "", banco: v.banco || "", agencia: v.agencia || "", conta: v.conta || "", tipoConta: v.tipo_conta || "",
+    pixTipo: v.pix_tipo || "", pixChave: v.pix_chave || "", pixTitular: v.pix_titular || "", banco: v.banco || "", agencia: v.agencia || "", conta: v.conta || "", tipoConta: v.tipo_conta || "",
     chartAccountId: v.chart_account_id || null, payableId: v.payable_id || null, lancadoNome: v.lancado_nome || null, lancadoEm: v.lancado_em || null,
   };
 }
@@ -276,6 +276,7 @@ export function registerViagens(app: Express) {
       if (!favNome) return res.status(400).json({ message: "Informe o nome do favorecido" });
       const favDoc = String(b.favorecidoDoc || "").replace(/[^\d./-]/g, "").slice(0, 20);
       const pixTipo = String(b.pixTipo || "").slice(0, 20), pixChave = String(b.pixChave || "").trim().slice(0, 120);
+      const pixTitular = String(b.pixTitular || "").trim().slice(0, 200);
       const banco = String(b.banco || "").trim().slice(0, 80), agencia = String(b.agencia || "").trim().slice(0, 20), conta = String(b.conta || "").trim().slice(0, 30), tipoConta = String(b.tipoConta || "").slice(0, 20);
       if (forma === "pix") { if (!pixChave) return res.status(400).json({ message: "Informe a chave PIX" }); const ep = validarPix(pixTipo, pixChave); if (ep) return res.status(400).json({ message: ep }); }
       if (forma === "transferencia" && (!banco || !agencia || !conta)) return res.status(400).json({ message: "Informe banco, agência e conta" });
@@ -291,11 +292,11 @@ export function registerViagens(app: Express) {
       const vencimento = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : ini;
       const ins = rows(await db.execute(sql`INSERT INTO viagens (vendedor_id, vendedor_nome, cidade, uf, data_ini, data_fim, dias, noites,
           ida_volta_km, km_previsto, tarifa, alim_dia, hosp_noite, valor_km, valor_alim, valor_hosp, valor_sugerido, obs, criado_por,
-          instancia, forma, favorecido_nome, favorecido_doc, pix_tipo, pix_chave, banco, agencia, conta, tipo_conta, valor_outros, vencimento)
+          instancia, forma, favorecido_nome, favorecido_doc, pix_tipo, pix_chave, pix_titular, banco, agencia, conta, tipo_conta, valor_outros, vencimento)
         VALUES (${vendedorId}, ${nomeDe(vu)}, ${cidade}, ${uf}, ${ini}::date, ${fim}::date, ${dias}, ${noites},
           ${r2(idaVolta)}, ${km}, ${tarifa}, ${alim}, ${hosp}, ${vKm}, ${vAl}, ${vHo}, ${tot}, ${String(b.obs || "").slice(0, 2000)}, ${String(u.id)},
-          ${instancia}, ${forma}, ${favNome}, ${favDoc || null}, ${forma === "pix" ? pixTipo : null}, ${forma === "pix" ? normalizarPix(pixTipo, pixChave) : null},
-          ${forma === "transferencia" ? banco : null}, ${forma === "transferencia" ? agencia : null}, ${forma === "transferencia" ? conta : null}, ${forma === "transferencia" ? tipoConta : null}, ${vOu}, ${vencimento}::date)
+          ${instancia}, ${forma}, ${favNome}, ${favDoc || null}, ${forma === "pix" ? pixTipo : null}, ${forma === "pix" ? normalizarPix(pixTipo, pixChave) : null}, ${forma === "pix" ? (pixTitular || null) : null},
+          ${forma === "transferencia" || forma === "pix" ? (banco || null) : null}, ${forma === "transferencia" ? agencia : null}, ${forma === "transferencia" ? conta : null}, ${forma === "transferencia" ? tipoConta : null}, ${vOu}, ${vencimento}::date)
         RETURNING *`))[0];
       const cod = "VG-" + String(ins.numero).padStart(4, "0");
       await evento(ins.id, nomeDe(u), `Solicitação enviada: ${cidade}-${uf}, ${fmtData(ini)} a ${fmtData(fim)}, km previsto ${km.toLocaleString("pt-BR")} km, sugerido ${fmtBRL(tot)}.`);

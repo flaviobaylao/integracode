@@ -24,7 +24,7 @@ type Viagem = {
   valorAprovado: number | null; obs: string; status: string; aprovadorNome: string | null; motivoRecusa: string | null;
   kmReal: number | null; valorKmReal: number | null; valorDespesas: number | null; valorReal: number | null; saldo: number | null;
   createdAt: string;
-  instancia: string | null; forma: string | null; favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string;
+  instancia: string | null; forma: string | null; favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string; pixTitular?: string;
   banco: string; agencia: string; conta: string; tipoConta: string; chartAccountId: string | null; payableId: string | null; lancadoNome: string | null;
 };
 type Detalhe = Viagem & {
@@ -39,8 +39,8 @@ type Cfg = { admin: boolean; financeiro: boolean; me: { id: string; nome: string
   instancias: string[]; categorias: { id: string; code: string; name: string }[] };
 const FORMA_LABEL: Record<string, string> = { pix: "PIX", transferencia: "Transferência bancária", dinheiro: "Dinheiro (Caixinha)" };
 const selCls = "h-10 w-full min-w-0 rounded-md border bg-background px-3 text-sm";
-const pagamentoTxt = (v: { forma: string | null; pixTipo: string; pixChave: string; banco: string; agencia: string; conta: string; tipoConta: string }) =>
-  v.forma === "pix" ? `PIX${v.pixTipo ? ` (${v.pixTipo})` : ""}: ${v.pixChave}` : v.forma === "transferencia" ? `${v.banco} · ag ${v.agencia} · ${v.tipoConta || "conta"} ${v.conta}` : v.forma === "dinheiro" ? "Dinheiro (Caixinha)" : "—";
+const pagamentoTxt = (v: { forma: string | null; pixTipo: string; pixChave: string; pixTitular?: string; banco: string; agencia: string; conta: string; tipoConta: string }) =>
+  v.forma === "pix" ? `PIX${v.pixTipo ? ` (${v.pixTipo})` : ""}: ${v.pixChave}${v.pixTitular ? ` · titular ${v.pixTitular}` : ""}${v.banco ? ` · ${v.banco}` : ""}` : v.forma === "transferencia" ? `${v.banco} · ag ${v.agencia} · ${v.tipoConta || "conta"} ${v.conta}` : v.forma === "dinheiro" ? "Dinheiro (Caixinha)" : "—";
 
 const BRL = (n: number | null | undefined) => (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const KM = (n: number | null | undefined) => (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -149,6 +149,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
   const [favDoc, setFavDoc] = useState(cfg.me.cpf || "");
   const [pixTipo, setPixTipo] = useState("CPF");
   const [pixChave, setPixChave] = useState("");
+  const [pixTitular, setPixTitular] = useState("");
   const [banco, setBanco] = useState(""); const [agencia, setAgencia] = useState(""); const [conta, setConta] = useState(""); const [tipoConta, setTipoConta] = useState("Corrente");
   const c = CIDADES_GO_DF.find((x) => x[0] === cidade);
   const { data: est } = useQuery<{ casa: { lat: number; lon: number } | null; historicoIdaVolta: number[] }>({
@@ -184,7 +185,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
     setEnviando(true);
     try {
       const r: any = await apiRequest("POST", "/api/viagens", { vendedorId, cidade: c[0], uf: c[1], dataIni: ini, dataFim: fim, idaVoltaKm: calc.idaVolta, rodagemKm: calc.local, tarifa: calc.t, alimDia: alim, hospNoite: hosp, outros: calc.vOu, vencimento: venc || ini, obs,
-        instancia, forma, favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, banco, agencia, conta, tipoConta });
+        instancia, forma, favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, pixTitular, banco, agencia, conta, tipoConta });
       onOk(r.id);
     } catch (e) { erro(e); } finally { setEnviando(false); }
   };
@@ -287,6 +288,10 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
                         {pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? (pixTipo === "CPF" || pixTipo === "CNPJ" ? `${pixTipo} inválido — confira os números` : "Formato inválido para o tipo escolhido") : PIX_REGRA[pixTipo].dica}
                       </span>
                     </label>
+                    <label className="grid gap-1 text-sm font-medium md:col-span-2">Nome do titular da chave <span className="text-[11px] font-normal text-muted-foreground -mt-1">opcional</span>
+                      <Input value={pixTitular} onChange={(e) => setPixTitular(e.target.value)} placeholder="Ex.: Maria da Silva" data-testid="input-pix-titular" /></label>
+                    <label className="grid gap-1 text-sm font-medium md:col-span-2">Banco de destino <span className="text-[11px] font-normal text-muted-foreground -mt-1">opcional</span>
+                      <Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ex.: Nubank, Banco do Brasil" data-testid="input-pix-banco" /></label>
                   </>)}
                   {forma === "transferencia" && (<>
                     <label className="grid gap-1 text-sm font-medium">Banco *<Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ex.: 001 Banco do Brasil" /></label>

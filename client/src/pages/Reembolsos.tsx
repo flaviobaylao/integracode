@@ -20,7 +20,7 @@ import { PIX_TIPOS, PIX_REGRA } from "@/lib/pix";
 type Reembolso = {
   id: string; numero: number; codigo: string; solicitanteId: string; solicitanteNome: string;
   descricao: string; dataDespesa: string; valor: number; vencimento: string; forma: string; instancia: string | null; chartAccountId: string | null;
-  favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string; banco: string; agencia: string; conta: string; tipoConta: string;
+  favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string; pixTitular?: string; banco: string; agencia: string; conta: string; tipoConta: string;
   obs: string; status: string; aprovadorNome: string | null; autoaprovado?: boolean; valorAprovado: number | null; motivoRecusa: string | null;
   payableId: string | null; lancadoNome: string | null; lancadoEm: string | null; pagoEm: string | null; createdAt: string;
 };
@@ -162,6 +162,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
   const [favDoc, setFavDoc] = useState(cfg.me.cpf || "");
   const [pixTipo, setPixTipo] = useState("CPF");
   const [pixChave, setPixChave] = useState("");
+  const [pixTitular, setPixTitular] = useState("");
   const [banco, setBanco] = useState(""); const [agencia, setAgencia] = useState(""); const [conta, setConta] = useState(""); const [tipoConta, setTipoConta] = useState("Corrente");
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -201,7 +202,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
       const fd = new FormData();
       fd.append("dados", JSON.stringify({
         itens: itens.map((i) => ({ ...i, valor: String(i.valor).replace(",", ".") })), instancia, vencimento, forma,
-        favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, banco, agencia, conta, tipoConta, obs,
+        favorecidoNome: favNome, favorecidoDoc: favDoc, pixTipo, pixChave, pixTitular, banco, agencia, conta, tipoConta, obs,
       }));
       arquivos.forEach((f) => fd.append("arquivos", f));
       const r = await fetch("/api/reembolsos", { method: "POST", body: fd, credentials: "include" });
@@ -290,6 +291,8 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
                   className={pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? "border-red-500 focus-visible:ring-red-500" : ""} />
                 {pixChave && !PIX_REGRA[pixTipo].valido(pixChave) && <span className="text-[11px] font-semibold text-red-600">{pixTipo === "CPF" || pixTipo === "CNPJ" ? `${pixTipo} inválido — confira os números` : "Formato inválido para o tipo escolhido"}</span>}
               </Campo>
+              <Campo label="Nome do titular da chave" dica="Opcional — confira com o nome que aparece no app do banco"><Input value={pixTitular} onChange={(e) => setPixTitular(e.target.value)} placeholder="Ex.: Maria da Silva" data-testid="input-pix-titular" /></Campo>
+              <Campo label="Banco de destino" dica="Opcional"><Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ex.: Nubank, Banco do Brasil" data-testid="input-pix-banco" /></Campo>
             </>)}
             {forma === "transferencia" && (<>
               <Campo label="Banco" obrig><Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ex.: 001 Banco do Brasil" /></Campo>
@@ -333,7 +336,7 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
   const cat = aj.categoria ?? (r.chartAccountId || "");
   const venc = aj.vencimento ?? r.vencimento;
   const inst = aj.instancia ?? (r.instancia || "");
-  const pagamento = r.forma === "pix" ? `PIX${r.pixTipo ? ` (${r.pixTipo})` : ""}: ${r.pixChave}` : r.forma === "transferencia" ? `${r.banco} · ag ${r.agencia} · ${r.tipoConta || "conta"} ${r.conta}` : "Dinheiro (Caixinha)";
+  const pagamento = r.forma === "pix" ? `PIX${r.pixTipo ? ` (${r.pixTipo})` : ""}: ${r.pixChave}${r.pixTitular ? ` · titular ${r.pixTitular}` : ""}${r.banco ? ` · ${r.banco}` : ""}` : r.forma === "transferencia" ? `${r.banco} · ag ${r.agencia} · ${r.tipoConta || "conta"} ${r.conta}` : "Dinheiro (Caixinha)";
 
   const Ajustes = ({ comValor, comCategoria }: { comValor: boolean; comCategoria: boolean }) => ( // chamado como função (não <Ajustes/>) para não perder o foco ao digitar
     <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">

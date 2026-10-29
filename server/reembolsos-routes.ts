@@ -60,6 +60,7 @@ function ensure(): Promise<void> {
         created_at timestamp NOT NULL DEFAULT now(), updated_at timestamp NOT NULL DEFAULT now()
       )`);
       await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS autoaprovado boolean NOT NULL DEFAULT false`);
+      await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS pix_titular varchar`);
       await db.execute(sql`CREATE TABLE IF NOT EXISTS reembolso_itens (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
         reembolso_id varchar NOT NULL, descricao varchar NOT NULL, data date, valor numeric NOT NULL DEFAULT 0, ordem integer NOT NULL DEFAULT 0
@@ -129,7 +130,7 @@ function saida(r: any) {
     descricao: r.descricao, dataDespesa: dia(r.data_despesa), valor: num(r.valor),
     vencimento: dia(r.vencimento), forma: r.forma, instancia: r.instancia, chartAccountId: r.chart_account_id,
     favorecidoNome: r.favorecido_nome, favorecidoDoc: r.favorecido_doc || "",
-    pixTipo: r.pix_tipo || "", pixChave: r.pix_chave || "", banco: r.banco || "", agencia: r.agencia || "", conta: r.conta || "", tipoConta: r.tipo_conta || "",
+    pixTipo: r.pix_tipo || "", pixChave: r.pix_chave || "", pixTitular: r.pix_titular || "", banco: r.banco || "", agencia: r.agencia || "", conta: r.conta || "", tipoConta: r.tipo_conta || "",
     obs: r.obs || "", status: r.status,
     aprovadorNome: r.aprovador_nome, autoaprovado: !!r.autoaprovado, aprovadoEm: r.aprovado_em, valorAprovado: r.valor_aprovado == null ? null : num(r.valor_aprovado), motivoRecusa: r.motivo_recusa,
     payableId: r.payable_id, lancadoNome: r.lancado_nome, lancadoEm: r.lancado_em, pagoEm: r.pago_em, createdAt: r.created_at,
@@ -137,7 +138,7 @@ function saida(r: any) {
 }
 
 function dadosPagamento(r: any): string {
-  if (r.forma === "pix") return `PIX ${r.pix_tipo ? `(${r.pix_tipo}) ` : ""}${r.pix_chave || ""}`.trim();
+  if (r.forma === "pix") return `PIX ${r.pix_tipo ? `(${r.pix_tipo}) ` : ""}${r.pix_chave || ""}${r.pix_titular ? ` · titular ${r.pix_titular}` : ""}${r.banco ? ` · ${r.banco}` : ""}`.trim();
   if (r.forma === "transferencia") return `Transferência: ${r.banco || "?"} · ag ${r.agencia || "?"} · ${r.tipo_conta || "conta"} ${r.conta || "?"}`;
   return "Dinheiro (Caixinha)";
 }
@@ -241,6 +242,7 @@ export function registerReembolsos(app: Express) {
       const favDoc = String(b.favorecidoDoc || "").replace(/[^\d./-]/g, "").slice(0, 20);
       if (!favNome) return res.status(400).json({ message: "Informe o nome do favorecido" });
       const pixTipo = String(b.pixTipo || "").slice(0, 20), pixChave = String(b.pixChave || "").trim().slice(0, 120);
+      const pixTitular = forma === "pix" ? String(b.pixTitular || "").trim().slice(0, 200) : "";
       const banco = String(b.banco || "").trim().slice(0, 80), agencia = String(b.agencia || "").trim().slice(0, 20), conta = String(b.conta || "").trim().slice(0, 30), tipoConta = String(b.tipoConta || "").slice(0, 20);
       if (forma === "pix" && !pixChave) return res.status(400).json({ message: "Informe a chave PIX" });
       if (forma === "pix") { const erroPix = validarPix(pixTipo, pixChave); if (erroPix) return res.status(400).json({ message: erroPix }); }
@@ -248,9 +250,9 @@ export function registerReembolsos(app: Express) {
       const descricao = String(b.descricao || "").trim().slice(0, 500) || itens.map((i: any) => i.descricao).join(", ").slice(0, 500);
 
       const ins = rows(await db.execute(sql`INSERT INTO reembolsos (solicitante_id, solicitante_nome, descricao, data_despesa, valor, vencimento, forma, instancia, chart_account_id,
-          favorecido_nome, favorecido_doc, pix_tipo, pix_chave, banco, agencia, conta, tipo_conta, obs)
+          favorecido_nome, favorecido_doc, pix_tipo, pix_chave, pix_titular, banco, agencia, conta, tipo_conta, obs)
         VALUES (${String(u.id)}, ${nomeDe(u)}, ${descricao}, ${dataDespesa}::date, ${total}, ${vencimento}::date, ${forma}, ${instancia}, ${chartAccountId || null},
-          ${favNome}, ${favDoc || null}, ${pixTipo || null}, ${pixChave ? normalizarPix(pixTipo, pixChave) : null}, ${banco || null}, ${agencia || null}, ${conta || null}, ${tipoConta || null}, ${String(b.obs || "").slice(0, 2000) || null})
+          ${favNome}, ${favDoc || null}, ${pixTipo || null}, ${pixChave ? normalizarPix(pixTipo, pixChave) : null}, ${pixTitular || null}, ${banco || null}, ${agencia || null}, ${conta || null}, ${tipoConta || null}, ${String(b.obs || "").slice(0, 2000) || null})
         RETURNING *`))[0];
       let ordem = 0;
       for (const i of itens) {
