@@ -94,6 +94,7 @@ type DetalheNota = {
   vendedor?: string | null;
   pagamentos: Array<{ data: string | null; valor: number; formaPagamento?: string | null; conta?: string | null; referencia?: string | null; titulo?: string | null }>;
   produtos?: Array<{ nome: string; quantidade: number; unidade?: string | null; unitPrice?: number; totalPrice?: number }>;
+  fiscalInvoiceId?: string | null;
 };
 
 type DetalhePagamento = {
@@ -1239,6 +1240,8 @@ function escaparHtml(v: any): string {
   );
 }
 
+type EspelhoFiscal = { nota: any; itens: any[] };
+
 const STATUS_TITULO: Record<string, string> = {
   a_vencer: "A vencer",
   vencida: "Vencida",
@@ -1247,173 +1250,313 @@ const STATUS_TITULO: Record<string, string> = {
   pdd: "PDD",
 };
 
-function montarEspelhoHtml(d: DetalheNota, linha: Linha, cliente: any): string {
+function montarEspelhoHtml(d: DetalheNota, linha: Linha, cliente: any, fiscal?: EspelhoFiscal | null): string {
   const e = escaparHtml;
-  const moeda = (v?: number | null) => fmtBRL(v);
-  const data = (v?: string | null) => fmtData(v);
-  const produtos = d.produtos || [];
-  const parcelas = d.parcelas || [];
-  const pagamentos = d.pagamentos || [];
-  const doc = cliente?.document ? fmtDoc(cliente.document) : "—";
-  const local = [cliente?.city, cliente?.state].filter(Boolean).join("/") || "—";
-  const emitidoEm = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const n = fiscal?.nota;
+  const itens = fiscal?.itens || [];
+  const moeda = (v?: any) => fmtBRL(Number(v || 0));
+  const num = (v: any, casas = 2) =>
+    Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+  const dt = (v?: string | null) => fmtData(v);
+  const vazio = "\u00a0";
 
-  const linhasProdutos = produtos.length
-    ? produtos
+  // Chave de acesso formatada em blocos de 4, como na DANFE.
+  const chave = String(n?.access_key || "").replace(/\D/g, "");
+  const chaveFmt = chave ? chave.replace(/(\d{4})(?=\d)/g, "$1 ").trim() : "";
+
+  const emit = {
+    nome: n?.issuer_name || "—",
+    cnpj: n?.issuer_cnpj ? fmtDoc(n.issuer_cnpj) : "—",
+    ie: n?.issuer_ie || "—",
+    endereco: n?.issuer_address || "—",
+    cidade: [n?.issuer_city, n?.issuer_uf].filter(Boolean).join(" - ") || "—",
+    fone: n?.issuer_phone || "—",
+  };
+  const dest = {
+    nome: n?.customer_name || cliente?.name || "—",
+    doc: n?.customer_cnpj_cpf ? fmtDoc(n.customer_cnpj_cpf) : cliente?.document ? fmtDoc(cliente.document) : "—",
+    ie: n?.customer_ie || "—",
+    endereco: n?.customer_address || cliente?.address || "—",
+    bairro: n?.customer_bairro || "—",
+    cep: n?.customer_cep || "—",
+    cidade: n?.customer_city || cliente?.city || "—",
+    uf: n?.customer_uf || cliente?.state || "—",
+    fone: n?.customer_phone || cliente?.phone || "—",
+  };
+
+  // Itens: usa os da NF-e quando houver; senão, os produtos que o extrato já tinha.
+  const linhasItens = itens.length
+    ? itens
+        .map(
+          (it: any) => `<tr>
+            <td>${e(it.product_code || "—")}</td>
+            <td class="desc">${e(it.product_name || "—")}</td>
+            <td>${e(it.ncm || "—")}</td>
+            <td>${e(it.csosn || it.cst_icms || "—")}</td>
+            <td>${e(it.cfop || n?.cfop || "—")}</td>
+            <td>${e(it.unit || "UN")}</td>
+            <td class="num">${e(num(it.quantity, 0))}</td>
+            <td class="num">${e(num(it.unit_price, 4))}</td>
+            <td class="num">${e(num(it.total_price))}</td>
+            <td class="num">${e(num(it.base_icms))}</td>
+            <td class="num">${e(num(it.valor_icms))}</td>
+            <td class="num">${e(num(it.valor_ipi))}</td>
+            <td class="num">${e(num(it.aliq_icms, 2))}</td>
+            <td class="num">${e(num(it.aliq_ipi, 2))}</td>
+          </tr>`
+        )
+        .join("")
+    : (d.produtos || []).length
+    ? (d.produtos || [])
         .map(
           (p) => `<tr>
-            <td>${e(p.nome)}</td>
-            <td class="num">${e(p.quantidade)}${p.unidade ? " " + e(p.unidade) : ""}</td>
-            <td class="num">${e(moeda(p.unitPrice))}</td>
-            <td class="num">${e(moeda(p.totalPrice))}</td>
+            <td>—</td>
+            <td class="desc">${e(p.nome)}</td>
+            <td>—</td><td>—</td><td>${e(n?.cfop || "—")}</td>
+            <td>${e(p.unidade || "UN")}</td>
+            <td class="num">${e(num(p.quantidade, 0))}</td>
+            <td class="num">${e(num(p.unitPrice, 4))}</td>
+            <td class="num">${e(num(p.totalPrice))}</td>
+            <td class="num">0,00</td><td class="num">0,00</td><td class="num">0,00</td>
+            <td class="num">0,00</td><td class="num">0,00</td>
           </tr>`
         )
         .join("")
-    : `<tr><td colspan="4" class="vazio">Sem itens registrados para esta nota.</td></tr>`;
+    : `<tr><td colspan="14" class="vaziolinha">Sem itens registrados para esta nota.</td></tr>`;
 
-  const linhasParcelas = parcelas.length
-    ? parcelas
+  const duplicatas = (d.parcelas || []).length
+    ? (d.parcelas || [])
         .map(
-          (t) => `<tr>
-            <td>${e(t.titulo || "—")}</td>
-            <td>${e(data(t.vencimento))}</td>
-            <td class="num">${e(moeda(t.valor))}</td>
-            <td class="num">${e(moeda(t.pago))}</td>
-            <td>${e(t.formaPagamento || "—")}</td>
-            <td>${e(t.status ? STATUS_TITULO[String(t.status)] || t.status : "—")}</td>
-          </tr>`
+          (t, k) => `<div class="dup"><b>Núm.</b> ${e(t.titulo || k + 1)} &nbsp; <b>Venc.</b> ${e(dt(t.vencimento))} &nbsp; <b>Valor</b> ${e(moeda(t.valor))}</div>`
         )
         .join("")
-    : `<tr><td colspan="6" class="vazio">Sem parcelas registradas.</td></tr>`;
+    : `<div class="dup">—</div>`;
 
-  const blocoPagamentos = pagamentos.length
-    ? `<h2>Pagamentos recebidos</h2>
-       <table>
-         <thead><tr><th>Data</th><th class="num">Valor</th><th>Forma</th><th>Conta</th><th>Referência</th></tr></thead>
-         <tbody>${pagamentos
-           .map(
-             (pg) => `<tr>
-               <td>${e(data(pg.data))}</td>
-               <td class="num">${e(moeda(pg.valor))}</td>
-               <td>${e(pg.formaPagamento || "—")}</td>
-               <td>${e(pg.conta || "—")}</td>
-               <td>${e(pg.referencia || "—")}</td>
-             </tr>`
-           )
-           .join("")}</tbody>
-       </table>`
-    : "";
+  const infoComplementar = [n?.notes, d.pedido ? `Pedido: ${d.pedido}` : "", d.vendedor ? `Vendedor: ${d.vendedor}` : ""]
+    .filter(Boolean)
+    .join(" | ");
+
+  const totalProd = n?.total_products ?? d.valorTotal;
+  const totalNota = n?.total_invoice ?? d.valorTotal;
 
   return `<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
-<title>Espelho da Nota ${e(d.nf)} — sem valor fiscal</title>
+<title>Espelho da NF ${e(n?.invoice_number || d.nf)} — sem valor fiscal</title>
 <style>
-  @page { size: A4; margin: 12mm; }
+  @page { size: A4 portrait; margin: 6mm; }
   * { box-sizing: border-box; }
-  body { font: 12px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #111; margin: 0; position: relative; }
-  .marca { position: fixed; inset: 0; z-index: 0; pointer-events: none;
-           display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: 28px 44px; overflow: hidden; }
-  .marca span { transform: rotate(-30deg); font-size: 30px; font-weight: 800; letter-spacing: 2px;
-                color: rgba(200, 30, 30, 0.13); white-space: nowrap; }
-  .folha { position: relative; z-index: 1; }
-  .aviso { border: 2px solid #c81e1e; color: #c81e1e; background: #fff5f5; font-weight: 700;
-           text-align: center; padding: 7px; letter-spacing: .5px; margin-bottom: 12px; }
-  .aviso small { display: block; font-weight: 500; letter-spacing: 0; margin-top: 3px; }
-  h1 { font-size: 17px; margin: 0 0 2px; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: #555;
-       border-bottom: 1px solid #ccc; padding-bottom: 3px; margin: 16px 0 6px; }
-  .topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-  .grade { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px 14px; }
-  .campo { border: 1px solid #ddd; border-radius: 4px; padding: 5px 7px; }
-  .campo b { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: #777; font-weight: 600; }
-  .campo span { font-size: 12.5px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  th, td { border: 1px solid #ddd; padding: 4px 6px; text-align: left; vertical-align: top; }
-  th { background: #f3f4f6; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
-  td.num, th.num { text-align: right; white-space: nowrap; }
-  .vazio { color: #888; font-style: italic; text-align: center; }
-  .totais { margin-top: 8px; display: flex; justify-content: flex-end; gap: 22px; font-size: 13px; }
-  .totais b { color: #555; font-weight: 600; }
-  .rodape { margin-top: 18px; border-top: 1px solid #ccc; padding-top: 7px; font-size: 10.5px; color: #666; }
-  .rodape strong { color: #c81e1e; }
-  @media print { .naoimprime { display: none !important; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-  .barra { text-align: center; margin-bottom: 10px; }
-  .barra button { font: inherit; padding: 7px 16px; border: 1px solid #333; background: #111; color: #fff; border-radius: 5px; cursor: pointer; }
+  body { font: 7.6px/1.25 Arial, Helvetica, sans-serif; color: #000; margin: 0; background: #fff; }
+  .folha { position: relative; z-index: 1;
+           background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='470' height='300'%3E%3Ctext x='235' y='160' fill='%23000000' fill-opacity='0.055' font-family='Arial,Helvetica,sans-serif' font-size='30' font-weight='bold' letter-spacing='3' text-anchor='middle' transform='rotate(-24 235 160)'%3EESPELHO SEM VALOR FISCAL%3C/text%3E%3C/svg%3E");
+           background-repeat: repeat; background-position: center top; }
+  table { border-collapse: collapse; width: 100%; }
+  .bx { border: .6px solid #000; }
+  .bx td, .bx th { border: .6px solid #000; padding: 1px 3px; vertical-align: top; }
+  .rot { font-size: 5.6px; text-transform: uppercase; letter-spacing: .2px; display: block; line-height: 1.1; }
+  .val { font-size: 8.2px; line-height: 1.25; display: block; min-height: 9px; }
+  .val.g { font-size: 9.6px; font-weight: 700; }
+  .c { text-align: center; } .r { text-align: right; }
+  .num { text-align: right; white-space: nowrap; }
+  .faixa { text-align: center; font-weight: 700; font-size: 8.4px; letter-spacing: .4px;
+           border: .6px solid #000; border-top: 0; padding: 1.5px; }
+  .canhoto { margin-bottom: 2mm; }
+  .corte { border-top: 1px dashed #000; margin: 1.5mm 0 2mm; }
+  .danfe-tit { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+  .danfe-sub { font-size: 5.8px; line-height: 1.15; }
+  .chavebox { border: .6px solid #000; padding: 2px 4px; text-align: center; }
+  .chave { font-family: "Courier New", monospace; font-size: 9px; font-weight: 700; letter-spacing: .3px; word-break: break-all; }
+  .semcodigo { border: .6px dashed #777; color: #555; font-size: 6.4px; letter-spacing: 1px;
+               text-align: center; padding: 5px 2px; margin-bottom: 1px; text-transform: uppercase; }
+  .sec { font-size: 6.4px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+         border: .6px solid #000; border-bottom: 0; padding: 1px 3px; margin-top: 1.5mm; }
+  .itens th { font-size: 5.6px; text-transform: uppercase; background: #fff; }
+  .itens td { font-size: 7.2px; }
+  .itens .desc { width: 34%; }
+  .vaziolinha { text-align: center; font-style: italic; padding: 8px; }
+  .dup { display: inline-block; border: .6px solid #000; padding: 1px 5px; margin: 1px 2px 1px 0; font-size: 7.2px; }
+  .avisoTopo { border: .8px solid #444; background: #f6f6f6; text-align: center; font-size: 7.4px;
+               font-weight: 700; letter-spacing: 1px; padding: 2.5px; margin-bottom: 1.5mm; text-transform: uppercase; }
+  .rodape { font-size: 6.4px; color: #333; margin-top: 1.5mm; line-height: 1.3; }
+  .barra { text-align: center; margin-bottom: 2mm; }
+  .barra button { font: 12px Arial; padding: 6px 14px; border: 1px solid #333; background: #111; color: #fff; border-radius: 4px; cursor: pointer; }
+  @media print { .naoimprime { display: none !important; }
+    body, .folha { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 </style></head>
 <body>
-  <div class="marca">${Array.from({ length: 24 }).map(() => "<span>ESPELHO SEM VALOR FISCAL</span>").join("")}</div>
   <div class="folha">
     <div class="barra naoimprime"><button onclick="window.print()">Imprimir / salvar em PDF</button></div>
-    <div class="aviso">
-      ESPELHO DO ORIGINAL — DOCUMENTO SEM VALOR FISCAL
-      <small>Reprodução para conferência interna. Não é DANFE, não foi transmitido à SEFAZ e não gera cobrança.</small>
-    </div>
-    <div class="topo">
-      <div>
-        <h1>Nota ${e(d.nf)}</h1>
-        <div style="color:#666">${e(linha.tipoMovimento || "Venda")}${d.situacao ? " · " + e(d.situacao) : ""}</div>
-      </div>
-      <div style="text-align:right;color:#666;font-size:11px">
-        Espelho gerado em ${e(emitidoEm)}<br>INTEGRA 2.0 — Honest Sucos
-      </div>
-    </div>
+    <div class="avisoTopo">Espelho do original · documento sem valor fiscal · não é DANFE</div>
 
-    <h2>Cliente</h2>
-    <div class="grade">
-      <div class="campo" style="grid-column: span 2"><b>Nome</b><span>${e(cliente?.name || "—")}</span></div>
-      <div class="campo"><b>CNPJ / CPF</b><span>${e(doc)}</span></div>
-      <div class="campo"><b>Cidade / UF</b><span>${e(local)}</span></div>
-      <div class="campo" style="grid-column: span 2"><b>Endereço</b><span>${e(cliente?.address || "—")}</span></div>
-      <div class="campo"><b>Telefone</b><span>${e(cliente?.phone || "—")}</span></div>
-      <div class="campo"><b>Vendedor</b><span>${e(d.vendedor || cliente?.sellerName || "—")}</span></div>
-    </div>
+    <!-- CANHOTO -->
+    <table class="bx canhoto"><tr>
+      <td style="width:76%">
+        <span class="rot">Recebemos de ${e(emit.nome)} os produtos constantes da nota fiscal indicada ao lado</span>
+        <table style="width:100%;margin-top:1px"><tr>
+          <td class="bx" style="width:30%"><span class="rot">Data de recebimento</span><span class="val">${vazio}</span></td>
+          <td class="bx"><span class="rot">Identificação e assinatura do recebedor</span><span class="val">${vazio}</span></td>
+        </tr></table>
+      </td>
+      <td class="c" style="width:24%">
+        <span class="val g">NF-e</span>
+        <span class="val">Nº ${e(n?.invoice_number || d.nf)}</span>
+        <span class="val">SÉRIE ${e(n?.series || "1")}</span>
+      </td>
+    </tr></table>
+    <div class="corte"></div>
 
-    <h2>Dados da nota</h2>
-    <div class="grade">
-      <div class="campo"><b>Emissão</b><span>${e(data(d.emissao))}</span></div>
-      <div class="campo"><b>Vencimento</b><span>${e(data(d.vencimento))}</span></div>
-      <div class="campo"><b>Pedido</b><span>${e(d.pedido || "—")}</span></div>
-      <div class="campo"><b>Parcelas</b><span>${e(d.parcelasQtd)}</span></div>
-      <div class="campo"><b>Valor total</b><span>${e(moeda(d.valorTotal))}</span></div>
-      <div class="campo"><b>Pago</b><span>${e(moeda(d.pago))}</span></div>
-      <div class="campo"><b>Saldo</b><span>${e(moeda(d.saldo))}</span></div>
-      <div class="campo"><b>Implantado por</b><span>${e(d.implantadoPor || "—")}</span></div>
-    </div>
+    <!-- CABEÇALHO -->
+    <table class="bx"><tr>
+      <td style="width:38%">
+        <span class="val g">${e(emit.nome)}</span>
+        <span class="val">${e(emit.endereco)}</span>
+        <span class="val">${e(emit.cidade)}</span>
+        <span class="val">Fone: ${e(emit.fone)}</span>
+      </td>
+      <td class="c" style="width:26%">
+        <div class="danfe-tit">DANFE</div>
+        <div class="danfe-sub">Documento Auxiliar da<br>Nota Fiscal Eletrônica</div>
+        <div class="danfe-sub" style="margin-top:2px">0 - ENTRADA<br>1 - SAÍDA</div>
+        <div style="border:.6px solid #000;display:inline-block;padding:0 5px;font-weight:700;font-size:10px;margin:1px 0">1</div>
+        <div class="val">Nº ${e(n?.invoice_number || d.nf)}</div>
+        <div class="val">SÉRIE ${e(n?.series || "1")}</div>
+        <div class="val">FOLHA 1/1</div>
+      </td>
+      <td style="width:36%">
+        <div class="semcodigo">Espelho — código de barras suprimido</div>
+        <div class="chavebox">
+          <span class="rot">Chave de acesso</span>
+          <span class="chave">${e(chaveFmt || "—")}</span>
+        </div>
+        <div class="c" style="font-size:6px;margin-top:1px">
+          Consulta de autenticidade no portal nacional da NF-e ou no site da Sefaz autorizadora
+        </div>
+      </td>
+    </tr></table>
+    <table class="bx" style="border-top:0"><tr>
+      <td style="width:62%"><span class="rot">Natureza da operação</span><span class="val">${e(n?.nature_of_operation || linha.descricao || "—")}</span></td>
+      <td><span class="rot">Protocolo de autorização de uso</span><span class="val">${e(n?.protocol_number || "—")}${n?.authorization_date ? " - " + e(dt(n.authorization_date)) : ""}</span></td>
+    </tr></table>
+    <table class="bx" style="border-top:0"><tr>
+      <td style="width:34%"><span class="rot">Inscrição estadual</span><span class="val">${e(emit.ie)}</span></td>
+      <td style="width:34%"><span class="rot">Inscr. estadual do subst. tributário</span><span class="val">—</span></td>
+      <td><span class="rot">CNPJ</span><span class="val">${e(emit.cnpj)}</span></td>
+    </tr></table>
 
-    <h2>Produtos faturados</h2>
-    <table>
-      <thead><tr><th>Produto</th><th class="num">Qtd.</th><th class="num">Preço unit.</th><th class="num">Total</th></tr></thead>
-      <tbody>${linhasProdutos}</tbody>
+    <!-- DESTINATÁRIO -->
+    <div class="sec">Destinatário / Remetente</div>
+    <table class="bx"><tr>
+      <td style="width:52%"><span class="rot">Nome / Razão social</span><span class="val">${e(dest.nome)}</span></td>
+      <td style="width:26%"><span class="rot">CNPJ / CPF</span><span class="val">${e(dest.doc)}</span></td>
+      <td><span class="rot">Data da emissão</span><span class="val">${e(dt(n?.emission_date || d.emissao))}</span></td>
+    </tr><tr>
+      <td><span class="rot">Endereço</span><span class="val">${e(dest.endereco)}</span></td>
+      <td><span class="rot">Bairro / Distrito</span><span class="val">${e(dest.bairro)}</span></td>
+      <td><span class="rot">CEP</span><span class="val">${e(dest.cep)}</span></td>
+    </tr><tr>
+      <td><span class="rot">Município</span><span class="val">${e(dest.cidade)}</span></td>
+      <td><span class="rot">Fone / Fax</span><span class="val">${e(dest.fone)}</span></td>
+      <td><span class="rot">UF</span><span class="val">${e(dest.uf)}</span></td>
+    </tr><tr>
+      <td><span class="rot">Inscrição estadual</span><span class="val">${e(dest.ie)}</span></td>
+      <td><span class="rot">Data da saída / entrada</span><span class="val">${e(dt(n?.emission_date || d.emissao))}</span></td>
+      <td><span class="rot">Hora da saída</span><span class="val">—</span></td>
+    </tr></table>
+
+    <!-- FATURA / DUPLICATAS -->
+    <div class="sec">Fatura / Duplicatas</div>
+    <table class="bx"><tr><td>${duplicatas}</td></tr></table>
+
+    <!-- CÁLCULO DO IMPOSTO -->
+    <div class="sec">Cálculo do imposto</div>
+    <table class="bx"><tr>
+      <td><span class="rot">Base de cálc. do ICMS</span><span class="val r">${e(num(n?.total_icms ? itens.reduce((s2: number, i2: any) => s2 + Number(i2.base_icms || 0), 0) : 0))}</span></td>
+      <td><span class="rot">Valor do ICMS</span><span class="val r">${e(num(n?.total_icms))}</span></td>
+      <td><span class="rot">Base cálc. ICMS ST</span><span class="val r">0,00</span></td>
+      <td><span class="rot">Valor do ICMS ST</span><span class="val r">0,00</span></td>
+      <td><span class="rot">Valor total dos produtos</span><span class="val r">${e(num(totalProd))}</span></td>
+    </tr><tr>
+      <td><span class="rot">Valor do frete</span><span class="val r">${e(num(n?.total_freight))}</span></td>
+      <td><span class="rot">Valor do seguro</span><span class="val r">${e(num(n?.total_insurance))}</span></td>
+      <td><span class="rot">Desconto</span><span class="val r">${e(num(n?.total_discount))}</span></td>
+      <td><span class="rot">Outras despesas</span><span class="val r">${e(num(n?.total_other_expenses))}</span></td>
+      <td><span class="rot">Valor total da nota</span><span class="val g r">${e(num(totalNota))}</span></td>
+    </tr></table>
+
+    <!-- TRANSPORTADOR -->
+    <div class="sec">Transportador / Volumes transportados</div>
+    <table class="bx"><tr>
+      <td style="width:40%"><span class="rot">Nome / Razão social</span><span class="val">—</span></td>
+      <td><span class="rot">Frete por conta</span><span class="val">—</span></td>
+      <td><span class="rot">Código ANTT</span><span class="val">—</span></td>
+      <td><span class="rot">Placa do veículo</span><span class="val">—</span></td>
+      <td><span class="rot">UF</span><span class="val">—</span></td>
+      <td><span class="rot">CNPJ / CPF</span><span class="val">—</span></td>
+    </tr><tr>
+      <td><span class="rot">Quantidade</span><span class="val">—</span></td>
+      <td><span class="rot">Espécie</span><span class="val">—</span></td>
+      <td><span class="rot">Marca</span><span class="val">—</span></td>
+      <td><span class="rot">Numeração</span><span class="val">—</span></td>
+      <td><span class="rot">Peso bruto</span><span class="val">—</span></td>
+      <td><span class="rot">Peso líquido</span><span class="val">—</span></td>
+    </tr></table>
+
+    <!-- PRODUTOS -->
+    <div class="sec">Dados do produto / serviço</div>
+    <table class="bx itens">
+      <thead><tr>
+        <th>Código</th><th>Descrição do produto / serviço</th><th>NCM/SH</th><th>CST</th><th>CFOP</th>
+        <th>Unid.</th><th>Quant.</th><th>Valor unit.</th><th>Valor total</th>
+        <th>B. cálc. ICMS</th><th>Valor ICMS</th><th>Valor IPI</th><th>Alíq. ICMS</th><th>Alíq. IPI</th>
+      </tr></thead>
+      <tbody>${linhasItens}</tbody>
     </table>
-    <div class="totais"><span><b>Valor total da nota:</b> ${e(moeda(d.valorTotal))}</span></div>
 
-    <h2>Parcelas / títulos</h2>
-    <table>
-      <thead><tr><th>Título</th><th>Vencimento</th><th class="num">Valor</th><th class="num">Pago</th><th>Forma</th><th>Status</th></tr></thead>
-      <tbody>${linhasParcelas}</tbody>
-    </table>
+    <!-- DADOS ADICIONAIS -->
+    <div class="sec">Dados adicionais</div>
+    <table class="bx"><tr>
+      <td style="width:68%;height:52px">
+        <span class="rot">Informações complementares</span>
+        <span class="val">${e(infoComplementar || "—")}</span>
+        <span class="val" style="margin-top:3px;font-weight:700">ESPELHO SEM VALOR FISCAL — reprodução para conferência interna.</span>
+      </td>
+      <td><span class="rot">Reservado ao fisco</span><span class="val">—</span></td>
+    </tr></table>
 
-    ${blocoPagamentos}
+    <div class="faixa" style="border-top:.6px solid #000;margin-top:1mm">ESPELHO DO ORIGINAL — SEM VALOR FISCAL</div>
 
     <div class="rodape">
-      <strong>ESPELHO SEM VALOR FISCAL.</strong> Este documento é uma reprodução de tela do INTEGRA 2.0, destinada a
-      conferência interna e atendimento ao cliente. Não possui chave de acesso, protocolo de autorização nem validade
-      perante a SEFAZ, não substitui a DANFE nem qualquer documento fiscal, e sua emissão não gerou faturamento,
-      título ou cobrança.
+      Reprodução de tela do INTEGRA 2.0 para conferência interna e atendimento ao cliente, gerada em
+      ${e(new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }))}.
+      Não é DANFE e não substitui documento fiscal: o código de barras foi suprimido de propósito, o documento não foi
+      transmitido à SEFAZ e sua emissão não gerou faturamento, título ou cobrança.
+      ${chave ? "A autenticidade da nota original pode ser conferida pela chave de acesso acima, no portal da NF-e." : ""}
     </div>
   </div>
 </body></html>`;
 }
 
-/** Abre o espelho numa aba nova. Só monta HTML — nenhuma chamada ao servidor. */
-function abrirEspelho(d: DetalheNota, linha: Linha, cliente: any) {
+/**
+ * Abre o espelho numa aba nova. A única ida ao servidor é um GET de LEITURA dos
+ * dados fiscais já gravados da NF-e — nada é emitido, transmitido ou gravado.
+ * A janela é aberta no próprio clique para o navegador não tratar como pop-up.
+ */
+async function abrirEspelho(d: DetalheNota, linha: Linha, cliente: any) {
   const w = window.open("", "_blank");
   if (!w) {
     alert("O navegador bloqueou a janela do espelho. Libere os pop-ups deste site e tente de novo.");
     return;
   }
+  w.document.write("<p style='font:13px Arial;padding:16px'>Montando o espelho da nota…</p>");
+  let fiscal: EspelhoFiscal | null = null;
+  if (d.fiscalInvoiceId) {
+    try {
+      fiscal = await apiRequest("GET", `/api/customer-statement/nota/${d.fiscalInvoiceId}`);
+    } catch {
+      fiscal = null; // sem NF-e acessível, cai no layout com o que o extrato já tem
+    }
+  }
   w.document.open();
-  w.document.write(montarEspelhoHtml(d, linha, cliente));
+  w.document.write(montarEspelhoHtml(d, linha, cliente, fiscal));
   w.document.close();
 }
 
