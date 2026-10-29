@@ -25,7 +25,7 @@ import { registerOrderJournal } from "./order-journal";
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { formatBrazilDateTime, getBrazilDateString, getBrazilMonth, getBrazilYear, BRAZIL_TZ } from './brazilTimezone';
 // Hora oficial do Brasil — regra unica em shared/tempo.ts.
-import { agora, hojeBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
+import { agora, hojeBR, diaBR, dataCalendario, instanteBR, paredeBR } from '@shared/tempo';
 import { idsEmRepescagem } from './repescagem-ativa';
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from '@shared/comissao-entrega';
 import { parseJanelas, slotsDoDia, janelasDoDia, janelasRoteirizacao } from '@shared/janelas-entrega';
@@ -7723,6 +7723,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // 📷 Foto do CHECK-IN DE HOJE, quando houver. Cards permanentes são reaproveitados e guardam o
+  // último check-in (checkInTime/checkInPhotoUrl de outra visita), por isso o recorte pelo dia em
+  // Brasília: só a foto tirada HOJE representa esta visita. Devolve a URL/base64 ou null.
+  const fotoCheckInDeHoje = (card: any): string | null => {
+    const url = typeof card?.checkInPhotoUrl === 'string' ? card.checkInPhotoUrl.trim() : '';
+    if (!url || !card?.checkInTime) return null;
+    try { if (diaBR(card.checkInTime) !== hojeBR()) return null; } catch { return null; }
+    return url;
+  };
+
   app.put('/api/sales-cards/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -7742,13 +7752,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _r = String((data as any).noSaleReason || '');
         if (['com_estoque', 'estab_fechado'].includes(_r) && !_noSalePhotoUrl) {
           // Foto obrigatória SÓ para cliente PRESENCIAL — atendimento virtual não exige foto.
+          // Também NÃO exige quando a foto da visita já foi tirada no CHECK-IN DE HOJE: a foto
+          // do local já está registrada no card, não faz sentido pedir a mesma foto de novo.
           let _ehVirtual = false;
+          let _temFotoCheckIn = false;
           try {
             const _cardNs: any = await storage.getSalesCard(id);
             const _custNs: any = _cardNs?.customerId ? await storage.getCustomer(String(_cardNs.customerId)) : null;
             _ehVirtual = _custNs?.virtualService === true;
-          } catch (_e) { /* na dúvida, trata como presencial */ }
-          if (!_ehVirtual) return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto (cliente presencial).' });
+            _temFotoCheckIn = !!fotoCheckInDeHoje(_cardNs);
+          } catch (_e) { /* na dúvida, trata como presencial e sem foto */ }
+          if (!_ehVirtual && !_temFotoCheckIn) return res.status(400).json({ message: 'Para este motivo é obrigatório anexar a foto (cliente presencial).' });
         }
         if (['com_debito', 'outro_motivo'].includes(_r) && !String((data as any).notes || '').trim()) {
           return res.status(400).json({ message: 'Para este motivo é obrigatório preencher as Observações Adicionais.' });
@@ -8266,7 +8280,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             motivo: _reason ? (NO_SALE_LABEL[_reason] || _reason) : 'Não Venda',
             texto: String((data as any).notes || ''),
             sempre: true,
-            fotoUrl: _noSalePhotoUrl,
+            // Sem foto nova (porque a do check-in de hoje já valeu), o report leva a foto do check-in.
+            fotoUrl: _noSalePhotoUrl || fotoCheckInDeHoje(cardBefore),
           });
         }
       } catch (_e: any) { console.warn('[REPORT-INBOX] no_sale:', _e?.message); }
