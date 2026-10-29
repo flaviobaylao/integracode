@@ -102,6 +102,7 @@ const DDL: string[] = [
   // reativar, NÃO volta para a última carteira: o vendedor fica livre para quem assumir.
   // Gatilho no banco para valer em TODOS os caminhos de inativação (botões, edição, exclusão,
   // mescla de duplicados, sincronizações). A trigger de auditoria registra a troca de vendedor.
+  // "Sem vendedor" = '' (customers.seller_id é NOT NULL em produção; NULL quebra o UPDATE).
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_seller_id varchar;`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_seller_at timestamptz;`,
   `CREATE OR REPLACE FUNCTION fn_customers_ultima_carteira() RETURNS trigger AS $fn$
@@ -112,14 +113,14 @@ const DDL: string[] = [
          NEW.last_seller_id := COALESCE(NULLIF(OLD.seller_id, ''), NULLIF(NEW.seller_id, ''));
          NEW.last_seller_at := now();
        END IF;
-       NEW.seller_id := NULL;
+       NEW.seller_id := '';
      ELSIF COALESCE(OLD.is_active, true) = false AND NEW.is_active = true THEN
        -- Reativação: não volta para a última carteira. Se o vendedor ainda é o da última
        -- carteira (cadastro inativado antes desta regra), fica sem vendedor; se um vendedor
        -- NOVO foi escolhido, ele é mantido.
        IF NULLIF(NEW.seller_id, '') IS NOT NULL AND NEW.seller_id = OLD.seller_id
           AND NEW.seller_id = COALESCE(OLD.last_seller_id, NEW.last_seller_id) THEN
-         NEW.seller_id := NULL;
+         NEW.seller_id := '';
        END IF;
      END IF;
      RETURN NEW;
@@ -456,7 +457,7 @@ export function registerHolidaysRoutes(app: Express) {
     const ator = `${[u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || "Admin"} (limpeza da última carteira)`;
     const limpos = await db.transaction(async (tx: any) => {
       await tx.execute(sql`SELECT set_config('integra.actor', ${ator}, true), set_config('integra.source', 'ultima-carteira', true)`);
-      const r: any = await tx.execute(sql`UPDATE customers SET seller_id = NULL WHERE ${where}`);
+      const r: any = await tx.execute(sql`UPDATE customers SET seller_id = '' WHERE ${where}`);
       const n = Number(r?.rowCount ?? alvo);
       await tx.execute(sql`
         INSERT INTO system_settings (key, value, updated_by)
