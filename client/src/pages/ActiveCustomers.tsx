@@ -1,7 +1,7 @@
 import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
-import { useState, useRef, useEffect, Fragment } from "react";
+import { useState, useRef, useEffect, Fragment, useMemo, useDeferredValue } from "react";
 import { getBrazilDateISO } from '@/lib/brazilTimezone';
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -112,6 +112,38 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+// ── BUSCA de Clientes Ativos: razão social, nome fantasia, CNPJ/CPF, inscrição estadual,
+// e-mail ou telefone. Sem acento/maiúscula; vários termos = todos precisam casar (em qualquer
+// campo); termo numérico casa só pelos dígitos (aceita CNPJ/IE/telefone com ou sem pontuação,
+// e telefone com ou sem o 55 do país).
+const semAcento = (v: any) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const soDigitos = (v: any) => String(v ?? "").replace(/\D/g, "");
+type IndiceBusca = { texto: string; digitos: string };
+function indiceBuscaCliente(ac: any): IndiceBusca {
+  const c = ac?.customer || {};
+  const texto = [c.companyName, c.name, c.fantasyName, ac?.fantasyNameImported, c.email, c.stateRegistration]
+    .filter(Boolean).map(semAcento).join(" | ");
+  const digitos = [c.cnpj, c.cpf, ac?.document, c.stateRegistration, c.phone]
+    .map(soDigitos).filter(Boolean).join("|");
+  return { texto, digitos };
+}
+function termosDaBusca(q: string): Array<{ t: string; d: string }> {
+  return semAcento(q).trim().split(/\s+/).filter(Boolean).map((t) => ({ t, d: soDigitos(t) }));
+}
+function casaBusca(idx: IndiceBusca | undefined, termos: Array<{ t: string; d: string }>): boolean {
+  if (termos.length === 0) return true;
+  if (!idx) return false;
+  return termos.every(({ t, d }) => {
+    if (idx.texto.includes(t)) return true;
+    // termo numérico (só dígitos e pontuação, ex.: 12.345.678/0001-90, (62) 99999-1234)
+    if (d.length >= 2 && /^[\d.\-\/()+]+$/.test(t)) {
+      if (idx.digitos.includes(d)) return true;
+      if (d.startsWith("55") && d.length >= 12 && idx.digitos.includes(d.slice(2))) return true;
+    }
+    return false;
+  });
+}
+
 interface ActiveCustomerWithVisits {
   id: string;
   document: string;
@@ -127,6 +159,11 @@ interface ActiveCustomerWithVisits {
     id: string;
     name: string;
     fantasyName: string | null;
+    companyName?: string | null;
+    cnpj?: string | null;
+    cpf?: string | null;
+    stateRegistration?: string | null;
+    email?: string | null;
     phone: string;
     contact: string | null;
     address: string;
@@ -775,14 +812,19 @@ export default function ActiveCustomers() {
     }
   };
 
+  // Índice de busca pré-calculado (1x por carga da lista) + termo adiado: digitar não trava a tela.
+  const indiceBusca = useMemo(() => {
+    const m = new Map<string, IndiceBusca>();
+    for (const ac of activeCustomers) m.set(ac.id, indiceBuscaCliente(ac));
+    return m;
+  }, [activeCustomers]);
+  const buscaAdiada = useDeferredValue(searchTerm);
+  const termosBusca = useMemo(() => termosDaBusca(buscaAdiada), [buscaAdiada]);
+
   const filteredCustomers = activeCustomers
     .filter((ac) => {
-      const searchLower = searchTerm.toLowerCase();
-      const name = ac.customer?.fantasyName || ac.customer?.name || ac.fantasyNameImported || "";
-      const doc = ac.document || "";
-      
-      // Filtro de busca
-      const matchesSearch = name.toLowerCase().includes(searchLower) || doc.includes(searchTerm);
+      // Filtro de busca: razão social, fantasia, CNPJ/CPF, IE, e-mail ou telefone
+      const matchesSearch = casaBusca(indiceBusca.get(ac.id), termosBusca);
       
       // Filtro de vendedor (verifica todos os IDs equivalentes entre instâncias)
       let matchesSeller = !selectedSeller;
@@ -1140,10 +1182,11 @@ export default function ActiveCustomers() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar..."
+                  placeholder="Razão social, fantasia, CNPJ, IE, e-mail ou telefone"
+                  title="Busca por razão social, nome fantasia, CNPJ/CPF, inscrição estadual, e-mail ou telefone (com ou sem pontuação)"
                   value={searchTerm}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-8 h-9"
+                  className="pl-10 pr-8 h-9 w-72 sm:w-[22rem]"
                   data-testid="input-search"
                 />
                 {searchTerm && (
