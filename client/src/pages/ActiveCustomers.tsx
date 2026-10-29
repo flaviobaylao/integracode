@@ -143,7 +143,8 @@ interface ActiveCustomerWithVisits {
     virtualService: boolean;
     weekdays?: string;
     visitPeriodicity?: string;
-    isPositivatedThisMonth?: boolean;
+    isPositivatedThisMonth?: boolean | null;
+    emQuarentena?: boolean;
     lastActivityDate?: string | null;
   };
   lastTwoVisits: Array<{ date: string; status: string }>;
@@ -660,7 +661,7 @@ export default function ActiveCustomers() {
         'Tipo': ac.customer?.virtualService ? 'Virtual' : 'Presencial',
         'Dia da Rota': ac.customer?.weekdays ? formatWeekdays(ac.customer.weekdays) : '',
         'Periodicidade': ac.customer?.visitPeriodicity === 'semanal' ? 'Semanal' : ac.customer?.visitPeriodicity === 'quinzenal' ? 'Quinzenal' : ac.customer?.visitPeriodicity === 'mensal' ? 'Mensal' : ac.customer?.visitPeriodicity || '',
-        'Positivado': ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO',
+        'Positivado': ac.customer?.emQuarentena ? 'QUARENTENA' : ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO',
         'Mês Anterior': prev > 0 ? prev.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Mês Atual': curr > 0 ? curr.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Variação': variacao,
@@ -1577,9 +1578,13 @@ export default function ActiveCustomers() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <span className={`font-semibold ${ac.customer?.isPositivatedThisMonth ? 'text-green-600' : 'text-red-500'}`}>
-                                {ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO'}
-                              </span>
+                              {ac.customer?.emQuarentena ? (
+                                <span className="font-semibold text-gray-500" title="Início do fornecimento futuro: não entra na positivação até a data de início">QUARENTENA</span>
+                              ) : (
+                                <span className={`font-semibold ${ac.customer?.isPositivatedThisMonth ? 'text-green-600' : 'text-red-500'}`}>
+                                  {ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO'}
+                                </span>
+                              )}
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm">
                               {ac.previousMonthTotal 
