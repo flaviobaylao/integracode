@@ -5298,30 +5298,22 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       const digits = (v: any) => String(v || '').replace(/[^0-9]/g, '');
 
       const au = rowsOf(await db.execute(sql`
-        SELECT c.id AS rid, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid
+        SELECT c.id AS rid, c.cnpj AS cnpj, c.cpf AS cpf, c.seller_id AS sid,
+               -- 🔒 Quarentena: início do fornecimento depois de hoje (BR).
+               (c.service_start_date IS NOT NULL AND c.service_start_date::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date) AS quar
         FROM active_customers ac
         LEFT JOIN customers c ON c.id = ac.customer_id
-        WHERE ac.is_active IS NOT FALSE
-          -- 🔒 Quarentena: início do fornecimento futuro não entra na positivação até a data.
-          AND (c.service_start_date IS NULL OR c.service_start_date::date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date)`));
-      let emQuarentena = 0;
-      try {
-        const q = rowsOf(await db.execute(sql`
-          SELECT COUNT(DISTINCT c.id)::int AS n FROM active_customers ac JOIN customers c ON c.id = ac.customer_id
-          WHERE ac.is_active IS NOT FALSE AND c.service_start_date::date > (now() AT TIME ZONE 'America/Sao_Paulo')::date`));
-        emQuarentena = Number(q[0]?.n || 0);
-      } catch { /* informativo */ }
-      const universe: { id: string | null; doc: string; sid: string | null; pos: boolean }[] = [];
+        WHERE ac.is_active IS NOT FALSE`));
+      const universe: { id: string | null; doc: string; sid: string | null; pos: boolean; quar: boolean }[] = [];
       const seen = new Set<string>();
       for (const r of au) {
         const rid = r.rid ? String(r.rid) : null;
         const doc = digits(r.cnpj) || digits(r.cpf);
         const key = rid || (doc ? 'doc:' + doc : '');
-        if (!key || seen.has(key)) { if (!key) universe.push({ id: null, doc: '', sid: r.sid ? String(r.sid) : null, pos: false }); continue; }
+        if (!key || seen.has(key)) { if (!key) universe.push({ id: null, doc: '', sid: r.sid ? String(r.sid) : null, pos: false, quar: false }); continue; }
         seen.add(key);
-        universe.push({ id: rid, doc, sid: r.sid ? String(r.sid) : null, pos: false });
+        universe.push({ id: rid, doc, sid: r.sid ? String(r.sid) : null, pos: false, quar: r.quar === true });
       }
-      const totalAtivos = universe.length;
 
       const bp = rowsOf(await db.execute(sql`
         SELECT customer_id AS cid, MIN(created_at) AS first
@@ -5352,6 +5344,11 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         if (u.doc && firstByDoc.has(u.doc)) { const dd = firstByDoc.get(u.doc) as Date; if (!d || dd < d) d = dd; }
         if (d) { positivados++; firstDates.push(d); u.pos = true; }
       }
+      // 🔒 Quarentena sem compra no mês: fora da base até a data de início do fornecimento.
+      // Quem está em quarentena mas já comprou conta normalmente (base + positivado).
+      const emQuarentena = universe.filter(u => u.quar && !u.pos).length;
+      for (let i = universe.length - 1; i >= 0; i--) if (universe[i].quar && !universe[i].pos) universe.splice(i, 1);
+      const totalAtivos = universe.length;
 
       const nowBr = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
       const y = nowBr.getFullYear(), mo = nowBr.getMonth(), todayDay = nowBr.getDate();

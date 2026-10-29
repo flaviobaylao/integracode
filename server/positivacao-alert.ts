@@ -35,9 +35,16 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     WHERE ac.is_active IS NOT FALSE AND c.id IS NOT NULL
       AND c.is_active IS NOT FALSE
       AND c.is_supplier IS NOT TRUE
-      AND c.is_colaborador IS NOT TRUE
-      -- 🔒 Quarentena: início do fornecimento futuro não entra na positivação até a data.
-      AND (c.service_start_date IS NULL OR c.service_start_date::date <= (now() AT TIME ZONE 'America/Sao_Paulo')::date)`));
+      AND c.is_colaborador IS NOT TRUE`));
+  // 🔒 Quarentena (início do fornecimento futuro): quem NÃO comprou fica fora da positivação
+  // até a data de início; quem já comprou conta normalmente como positivado.
+  const hojeQ = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const quarIds = new Set<string>();
+  try {
+    for (const q of rowsOf(await db.execute(sql`
+      SELECT id FROM customers WHERE service_start_date IS NOT NULL
+        AND service_start_date::date > ${hojeQ}::date`))) quarIds.add(String(q.id));
+  } catch { /* sem quarentena */ }
 
   // 2) Positivação do mês (billing_pipeline OU receivable)
   const bp = rowsOf(await db.execute(sql`
@@ -83,6 +90,7 @@ export async function enviarAlertaPositivacaoVendedores(apply: boolean, opts?: {
     if ([r.nome, r.fantasia, r.razao].some((v: any) => { const n = normName(v); return n && nomesExcluir.has(n); })) continue;
     const doc = digits(r.cnpj) || digits(r.cpf);
     const pos = posById.has(rid) || (doc.length >= 11 && posByDoc.has(doc));
+    if (!pos && quarIds.has(rid)) continue; // quarentena sem compra: fora da positivação
     const u = resolveUser(r.sid ? String(r.sid) : null);
     if (!u) continue;
     if (!['vendedor', 'telemarketing'].includes(String(u.role))) continue;

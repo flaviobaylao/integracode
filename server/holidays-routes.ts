@@ -130,6 +130,20 @@ const DDL: string[] = [
   // (não altera o vendedor; idempotente).
   `UPDATE customers SET last_seller_id = seller_id, last_seller_at = COALESCE(inactivated_at, updated_at, now())
      WHERE is_active = false AND last_seller_id IS NULL AND NULLIF(seller_id, '') IS NOT NULL;`,
+  // Execução ÚNICA (aprovada pelo Flávio em 29/out/2026): inativos de antes da regra saem da
+  // carteira (ficam sem vendedor; a última carteira já está registrada acima). Só limpa quando o
+  // vendedor ainda é o da última carteira — um vendedor novo atribuído depois é preservado.
+  // A marca em system_settings impede que rode de novo nos próximos boots.
+  `DO $do$
+   BEGIN
+     IF NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'ultima_carteira_limpeza_inativos_v1') THEN
+       UPDATE customers SET seller_id = NULL
+        WHERE is_active = false AND NULLIF(seller_id, '') IS NOT NULL
+          AND last_seller_id IS NOT NULL AND seller_id = last_seller_id;
+       INSERT INTO system_settings (key, value, updated_by)
+       VALUES ('ultima_carteira_limpeza_inativos_v1', now()::text, 'migracao-ultima-carteira');
+     END IF;
+   END $do$;`,
   // Regra fixa por REGIÃO: amarra uma direção à macro (UF) ou micro-região (cidade).
   `CREATE TABLE IF NOT EXISTS holiday_region_rules (
      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
