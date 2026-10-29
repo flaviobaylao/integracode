@@ -1173,7 +1173,7 @@ export default function ExtratoCliente() {
       ) : null}
 
       {detalheLinha ? (
-        <DetalheModal linha={detalheLinha} onClose={() => setDetalheLinha(null)} />
+        <DetalheModal linha={detalheLinha} onClose={() => setDetalheLinha(null)} cliente={extrato?.customer} />
       ) : null}
     </div>
   );
@@ -1217,7 +1217,207 @@ function DetInfo(props: { label: string; value: ReactNode }) {
   );
 }
 
-function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void }) {
+// ============================================================================
+// ESPELHO DA NOTA — layout para conferência, SEM NENHUM EFEITO FISCAL.
+// ----------------------------------------------------------------------------
+// Decisão do Flavio (29/out/2026). Regras que este código respeita, e que quem
+// mexer aqui precisa manter:
+//
+//   • NÃO emite nada. Não chama a SEFAZ, não gera NF-e, não cria título, não
+//     grava nada. É só uma folha montada no navegador com dados JÁ existentes
+//     na tela — zero requisições de rede.
+//   • NÃO é DANFE e não substitui documento fiscal. Não tem chave de acesso,
+//     não tem código de barras, não tem protocolo de autorização — de propósito,
+//     para que não possa ser confundido com o documento oficial.
+//   • A marca d'água "ESPELHO SEM VALOR FISCAL" é repetida no fundo e o aviso
+//     aparece no topo E no rodapé, para que sobreviva a uma fotocópia e a um
+//     recorte de página.
+// ============================================================================
+function escaparHtml(v: any): string {
+  return String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)
+  );
+}
+
+const STATUS_TITULO: Record<string, string> = {
+  a_vencer: "A vencer",
+  vencida: "Vencida",
+  recebida: "Recebida",
+  cancelada: "Cancelada",
+  pdd: "PDD",
+};
+
+function montarEspelhoHtml(d: DetalheNota, linha: Linha, cliente: any): string {
+  const e = escaparHtml;
+  const moeda = (v?: number | null) => fmtBRL(v);
+  const data = (v?: string | null) => fmtData(v);
+  const produtos = d.produtos || [];
+  const parcelas = d.parcelas || [];
+  const pagamentos = d.pagamentos || [];
+  const doc = cliente?.document ? fmtDoc(cliente.document) : "—";
+  const local = [cliente?.city, cliente?.state].filter(Boolean).join("/") || "—";
+  const emitidoEm = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+
+  const linhasProdutos = produtos.length
+    ? produtos
+        .map(
+          (p) => `<tr>
+            <td>${e(p.nome)}</td>
+            <td class="num">${e(p.quantidade)}${p.unidade ? " " + e(p.unidade) : ""}</td>
+            <td class="num">${e(moeda(p.unitPrice))}</td>
+            <td class="num">${e(moeda(p.totalPrice))}</td>
+          </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="4" class="vazio">Sem itens registrados para esta nota.</td></tr>`;
+
+  const linhasParcelas = parcelas.length
+    ? parcelas
+        .map(
+          (t) => `<tr>
+            <td>${e(t.titulo || "—")}</td>
+            <td>${e(data(t.vencimento))}</td>
+            <td class="num">${e(moeda(t.valor))}</td>
+            <td class="num">${e(moeda(t.pago))}</td>
+            <td>${e(t.formaPagamento || "—")}</td>
+            <td>${e(t.status ? STATUS_TITULO[String(t.status)] || t.status : "—")}</td>
+          </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="6" class="vazio">Sem parcelas registradas.</td></tr>`;
+
+  const blocoPagamentos = pagamentos.length
+    ? `<h2>Pagamentos recebidos</h2>
+       <table>
+         <thead><tr><th>Data</th><th class="num">Valor</th><th>Forma</th><th>Conta</th><th>Referência</th></tr></thead>
+         <tbody>${pagamentos
+           .map(
+             (pg) => `<tr>
+               <td>${e(data(pg.data))}</td>
+               <td class="num">${e(moeda(pg.valor))}</td>
+               <td>${e(pg.formaPagamento || "—")}</td>
+               <td>${e(pg.conta || "—")}</td>
+               <td>${e(pg.referencia || "—")}</td>
+             </tr>`
+           )
+           .join("")}</tbody>
+       </table>`
+    : "";
+
+  return `<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<title>Espelho da Nota ${e(d.nf)} — sem valor fiscal</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body { font: 12px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #111; margin: 0; position: relative; }
+  .marca { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+           display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: 28px 44px; overflow: hidden; }
+  .marca span { transform: rotate(-30deg); font-size: 30px; font-weight: 800; letter-spacing: 2px;
+                color: rgba(200, 30, 30, 0.13); white-space: nowrap; }
+  .folha { position: relative; z-index: 1; }
+  .aviso { border: 2px solid #c81e1e; color: #c81e1e; background: #fff5f5; font-weight: 700;
+           text-align: center; padding: 7px; letter-spacing: .5px; margin-bottom: 12px; }
+  .aviso small { display: block; font-weight: 500; letter-spacing: 0; margin-top: 3px; }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: #555;
+       border-bottom: 1px solid #ccc; padding-bottom: 3px; margin: 16px 0 6px; }
+  .topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .grade { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px 14px; }
+  .campo { border: 1px solid #ddd; border-radius: 4px; padding: 5px 7px; }
+  .campo b { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: #777; font-weight: 600; }
+  .campo span { font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th, td { border: 1px solid #ddd; padding: 4px 6px; text-align: left; vertical-align: top; }
+  th { background: #f3f4f6; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .vazio { color: #888; font-style: italic; text-align: center; }
+  .totais { margin-top: 8px; display: flex; justify-content: flex-end; gap: 22px; font-size: 13px; }
+  .totais b { color: #555; font-weight: 600; }
+  .rodape { margin-top: 18px; border-top: 1px solid #ccc; padding-top: 7px; font-size: 10.5px; color: #666; }
+  .rodape strong { color: #c81e1e; }
+  @media print { .naoimprime { display: none !important; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  .barra { text-align: center; margin-bottom: 10px; }
+  .barra button { font: inherit; padding: 7px 16px; border: 1px solid #333; background: #111; color: #fff; border-radius: 5px; cursor: pointer; }
+</style></head>
+<body>
+  <div class="marca">${Array.from({ length: 24 }).map(() => "<span>ESPELHO SEM VALOR FISCAL</span>").join("")}</div>
+  <div class="folha">
+    <div class="barra naoimprime"><button onclick="window.print()">Imprimir / salvar em PDF</button></div>
+    <div class="aviso">
+      ESPELHO DO ORIGINAL — DOCUMENTO SEM VALOR FISCAL
+      <small>Reprodução para conferência interna. Não é DANFE, não foi transmitido à SEFAZ e não gera cobrança.</small>
+    </div>
+    <div class="topo">
+      <div>
+        <h1>Nota ${e(d.nf)}</h1>
+        <div style="color:#666">${e(linha.tipoMovimento || "Venda")}${d.situacao ? " · " + e(d.situacao) : ""}</div>
+      </div>
+      <div style="text-align:right;color:#666;font-size:11px">
+        Espelho gerado em ${e(emitidoEm)}<br>INTEGRA 2.0 — Honest Sucos
+      </div>
+    </div>
+
+    <h2>Cliente</h2>
+    <div class="grade">
+      <div class="campo" style="grid-column: span 2"><b>Nome</b><span>${e(cliente?.name || "—")}</span></div>
+      <div class="campo"><b>CNPJ / CPF</b><span>${e(doc)}</span></div>
+      <div class="campo"><b>Cidade / UF</b><span>${e(local)}</span></div>
+      <div class="campo" style="grid-column: span 2"><b>Endereço</b><span>${e(cliente?.address || "—")}</span></div>
+      <div class="campo"><b>Telefone</b><span>${e(cliente?.phone || "—")}</span></div>
+      <div class="campo"><b>Vendedor</b><span>${e(d.vendedor || cliente?.sellerName || "—")}</span></div>
+    </div>
+
+    <h2>Dados da nota</h2>
+    <div class="grade">
+      <div class="campo"><b>Emissão</b><span>${e(data(d.emissao))}</span></div>
+      <div class="campo"><b>Vencimento</b><span>${e(data(d.vencimento))}</span></div>
+      <div class="campo"><b>Pedido</b><span>${e(d.pedido || "—")}</span></div>
+      <div class="campo"><b>Parcelas</b><span>${e(d.parcelasQtd)}</span></div>
+      <div class="campo"><b>Valor total</b><span>${e(moeda(d.valorTotal))}</span></div>
+      <div class="campo"><b>Pago</b><span>${e(moeda(d.pago))}</span></div>
+      <div class="campo"><b>Saldo</b><span>${e(moeda(d.saldo))}</span></div>
+      <div class="campo"><b>Implantado por</b><span>${e(d.implantadoPor || "—")}</span></div>
+    </div>
+
+    <h2>Produtos faturados</h2>
+    <table>
+      <thead><tr><th>Produto</th><th class="num">Qtd.</th><th class="num">Preço unit.</th><th class="num">Total</th></tr></thead>
+      <tbody>${linhasProdutos}</tbody>
+    </table>
+    <div class="totais"><span><b>Valor total da nota:</b> ${e(moeda(d.valorTotal))}</span></div>
+
+    <h2>Parcelas / títulos</h2>
+    <table>
+      <thead><tr><th>Título</th><th>Vencimento</th><th class="num">Valor</th><th class="num">Pago</th><th>Forma</th><th>Status</th></tr></thead>
+      <tbody>${linhasParcelas}</tbody>
+    </table>
+
+    ${blocoPagamentos}
+
+    <div class="rodape">
+      <strong>ESPELHO SEM VALOR FISCAL.</strong> Este documento é uma reprodução de tela do INTEGRA 2.0, destinada a
+      conferência interna e atendimento ao cliente. Não possui chave de acesso, protocolo de autorização nem validade
+      perante a SEFAZ, não substitui a DANFE nem qualquer documento fiscal, e sua emissão não gerou faturamento,
+      título ou cobrança.
+    </div>
+  </div>
+</body></html>`;
+}
+
+/** Abre o espelho numa aba nova. Só monta HTML — nenhuma chamada ao servidor. */
+function abrirEspelho(d: DetalheNota, linha: Linha, cliente: any) {
+  const w = window.open("", "_blank");
+  if (!w) {
+    alert("O navegador bloqueou a janela do espelho. Libere os pop-ups deste site e tente de novo.");
+    return;
+  }
+  w.document.open();
+  w.document.write(montarEspelhoHtml(d, linha, cliente));
+  w.document.close();
+}
+
+function DetalheModal({ linha, onClose, cliente }: { linha: Linha; onClose: () => void; cliente?: any }) {
   const d = linha.detalhe as any;
   const isNota = linha.tipo === "NF";
 
@@ -1302,15 +1502,28 @@ function DetalheModal({ linha, onClose }: { linha: Linha; onClose: () => void })
               </span>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none px-2"
-            data-testid="button-fechar-detalhe"
-            aria-label="Fechar"
-          >
-            ×
-          </button>
+          <div className="flex items-center gap-1">
+            {isNota && dNota ? (
+              <button
+                type="button"
+                onClick={() => abrirEspelho(dNota, linha, cliente)}
+                title="Abre um layout da nota para conferência. Não emite nada: sem SEFAZ, sem faturamento, sem cobrança."
+                className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                data-testid="button-espelho-nota"
+              >
+                <i className="fas fa-print text-[11px]" /> Espelho da NF
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none px-2"
+              data-testid="button-fechar-detalhe"
+              aria-label="Fechar"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
