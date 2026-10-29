@@ -386,8 +386,9 @@ export default function CustomerManagement() {
     
     // Filtro por positivação
     const matchesPositivation = positivationFilter === 'all' ||
-                               (positivationFilter === 'yes' && customer.isPositivatedThisMonth) ||
-                               (positivationFilter === 'no' && !customer.isPositivatedThisMonth);
+                               (positivationFilter === 'yes' && customer.isPositivatedThisMonth === true) ||
+                               // 🔒 Quarentena (isPositivatedThisMonth = null) não conta como "não positivado".
+                               (positivationFilter === 'no' && (customer as any).isPositivatedThisMonth === false);
     
     const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller((customer as any).sellerName || customer.sellerId));
     const matchesSegment = multiMatch(segmentMulti, customer.segmentoPrincipal || '(Sem segmento)');
@@ -750,6 +751,7 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Situação</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Motivo</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600" title="Último vendedor que atendia o cliente (registrado na inativação)">Última carteira</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Ações</th>
                 </tr>
               </thead>
@@ -819,7 +821,9 @@ export default function CustomerManagement() {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        {customer.isPositivatedThisMonth ? (
+                        {(customer as any).emQuarentena ? (
+                          <span className="font-semibold text-gray-500" title="Início do fornecimento futuro: não entra na positivação até a data de início">QUARENTENA</span>
+                        ) : customer.isPositivatedThisMonth ? (
                           <span className="font-semibold text-green-600">SIM</span>
                         ) : (
                           <span className="font-semibold text-red-600">NÃO</span>
@@ -852,6 +856,19 @@ export default function CustomerManagement() {
                         {(customer.isActive === false || (customer as any).isExcluded) && (customer as any).statusReason ? (
                           <span className="text-xs text-gray-600 block max-w-[220px] truncate" title={(customer as any).statusReason} data-testid={`motivo-${customer.id}`}>
                             {(customer as any).statusReason}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        {(customer as any).lastSellerName ? (
+                          <span
+                            className="text-xs text-gray-700 block max-w-[160px] truncate"
+                            title={`Último vendedor: ${(customer as any).lastSellerName}${(customer as any).lastSellerAt ? ` (até ${new Date((customer as any).lastSellerAt).toLocaleDateString('pt-BR')})` : ''}`}
+                            data-testid={`ultima-carteira-${customer.id}`}
+                          >
+                            {(customer as any).lastSellerName}
                           </span>
                         ) : (
                           <span className="text-xs text-gray-300">—</span>
@@ -927,7 +944,7 @@ export default function CustomerManagement() {
                     </tr>
                     {historyOpenId === customer.id && (
                       <tr className="bg-gray-50">
-                        <td colSpan={10} className="px-6 py-1">
+                        <td colSpan={11} className="px-6 py-1">
                           <CustomerHistoryBox customerId={customer.id} />
                         </td>
                       </tr>
@@ -936,7 +953,7 @@ export default function CustomerManagement() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={10} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={11} className="px-6 py-12 text-center text-gray-500">
                       Nenhum cliente encontrado
                       {/* A busca acha o cliente, mas ele está INATIVO e o filtro padrão é "Ativo". */}
                       {statusFilter === 'active' && searchTerm.trim() && (() => {
