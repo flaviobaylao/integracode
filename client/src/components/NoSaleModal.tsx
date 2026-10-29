@@ -40,7 +40,18 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
   const motivo = MOTIVOS.find((m) => m.value === reason);
   // Foto obrigatória só para cliente PRESENCIAL; no atendimento VIRTUAL a foto é opcional.
   const ehVirtual = (card as any)?.customer?.virtualService === true;
-  const exigeFoto = !!motivo?.foto && !ehVirtual;
+  // 📷 Se a foto da visita JÁ foi tirada no check-in de HOJE, não se pede a mesma foto outra vez.
+  // Cards permanentes são reaproveitados e guardam o último check-in, por isso o recorte pelo dia
+  // em Brasília: só a foto de hoje representa esta visita.
+  const mesmoDiaBR = (t: any) => {
+    if (!t) return false;
+    try {
+      const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
+      return f.format(new Date(t)) === f.format(new Date());
+    } catch { return false; }
+  };
+  const temFotoCheckIn = !!String((card as any)?.checkInPhotoUrl || '').trim() && mesmoDiaBR((card as any)?.checkInTime);
+  const exigeFoto = !!motivo?.foto && !ehVirtual && !temFotoCheckIn;
   const exigeObs = !!motivo?.obs;
   const podeConfirmar = !!reason && (!exigeFoto || !!photo) && (!exigeObs || !!notes.trim());
 
@@ -157,6 +168,7 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
                 Motivo selecionado: {motivo.label}
                 {exigeFoto ? " — foto obrigatória" : exigeObs ? " — observação obrigatória" : ""}
                 {motivo.foto && ehVirtual ? " — cliente virtual: foto opcional" : ""}
+                {motivo.foto && !ehVirtual && temFotoCheckIn ? " — foto já registrada no check-in de hoje: opcional" : ""}
               </p>
             </div>
           )}
@@ -164,6 +176,9 @@ export default function NoSaleModal({ isOpen, onClose, card }: NoSaleModalProps)
           {motivo?.foto && (
             <div className="rounded-md border p-3 space-y-2">
               <span className="text-sm font-medium flex items-center gap-1"><Camera className="w-4 h-4" /> Foto {exigeFoto ? "(obrigatória)" : "(opcional)"}</span>
+              {!exigeFoto && temFotoCheckIn && !photoPreview && (
+                <p className="text-xs text-green-700 dark:text-green-400">✓ A foto do check-in de hoje já foi registrada — só anexe outra se quiser.</p>
+              )}
               {photoPreview ? (
                 <div className="space-y-2">
                   <img src={photoPreview} alt="Foto da não venda" className="w-full max-h-48 object-contain rounded border" />
