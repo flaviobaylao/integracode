@@ -25963,7 +25963,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           else if (temCoord) {
             // Mesmo ponto: só com distância MUITO curta. Antes era 45 m e escondia o vizinho de porta
             // (loja ao lado de um cliente). Nomes diferentes a mais de 12 m = estabelecimentos diferentes.
-            if (d < 12) casou = true;
+            // Lojas vizinhas no mesmo prédio recebem quase a mesma coordenada do Google, e a do cadastro
+            // vem do GPS do check-in (±10 m) → sem o nome bater, só casa se for praticamente o mesmo ponto.
+            if (d < 5) casou = true;
             else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'forte' && d < 300) || (m === 'fraco' && d < 120); }
           } else if (e.bairro && bairroP && e.bairro === bairroP) {
             casou = _nomeCasa(nnome, tkP, e) === 'forte';                     // sem coordenada: nome + bairro
