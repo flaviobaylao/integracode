@@ -25716,6 +25716,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
+  // Palavras que aparecem em nomes de bairro/cidade (clientes e leads) — não servem p/ identificar um lugar.
+  let __palBairroCache: { at: number; set: Set<string> } | null = null;
+  async function _palavrasDeBairro(): Promise<Set<string>> {
+    if (__palBairroCache && Date.now() - __palBairroCache.at < 6 * 3600 * 1000) return __palBairroCache.set;
+    const set = new Set<string>(['bueno', 'marista', 'oeste', 'sul', 'norte', 'leste', 'central', 'centro', 'nova', 'novo', 'sao', 'santa', 'santo', 'goiania', 'goias', 'aparecida', 'anapolis', 'brasilia', 'campinas', 'aeroporto', 'universitario', 'coimbra', 'pedro', 'ludovico', 'planalto', 'america', 'sudoeste', 'nordeste', 'noroeste', 'sudeste', 'park', 'parque', 'jardim', 'vila', 'setor', 'residencial', 'bairro']);
+    try {
+      const r: any = await db.execute(sql`SELECT DISTINCT neighborhood AS b FROM customers WHERE COALESCE(TRIM(neighborhood),'') <> ''
+        UNION SELECT DISTINCT neighborhood FROM leads WHERE COALESCE(TRIM(neighborhood),'') <> ''
+        UNION SELECT DISTINCT city FROM customers WHERE COALESCE(TRIM(city),'') <> ''`);
+      for (const row of (r?.rows || []) as any[]) {
+        for (const t of String(row.b || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ')) if (t.length >= 3) set.add(t);
+      }
+    } catch (_e) {}
+    __palBairroCache = { at: Date.now(), set };
+    return set;
+  }
+
   // 📞 Telefone de um Novo ponto, SOB DEMANDA (botão "Ver telefone"). O radar segue na faixa Pro
   // (barata); só este toque usa Place Details Enterprise (US$ 20/1.000, 1.000 grátis/mês), pedindo
   // APENAS o telefone. Cache permanente por placeId (90 dias): o mesmo ponto nunca é cobrado 2x.
@@ -25893,7 +25910,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'emporio', 'bar', 'bares', 'pizzaria', 'pizza', 'pizzas', 'sorveteria', 'sorvetes', 'acai', 'acaiteria', 'cafe', 'cafeteria', 'coffee', 'hamburgueria', 'burger', 'burguer', 'sanduicheria', 'sanduiches', 'espetinho', 'espetaria',
         'churrascaria', 'grill', 'food', 'foods', 'bistro', 'gourmet', 'cozinha', 'marmitaria', 'marmitex', 'self', 'service', 'delivery', 'express', 'sucos', 'suco', 'casa', 'loja', 'center', 'shopping', 'store', 'shop',
         'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del']);
-      const _toks = (s: any) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3 && !_GENERICAS.has(t));
+      // Palavras de nomes de BAIRRO/cidade também não identificam ("Pamonharia 85 Bueno" × "Bolos do Sítio
+      // Setor Bueno" não é o mesmo lugar) — vêm dos bairros cadastrados (cache de 6 h).
+      const _palBairro = await _palavrasDeBairro();
+      const _toks = (s: any) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3 && !_GENERICAS.has(t) && !_palBairro.has(t));
       const hav = (aLa: number, aLo: number, bLa: number, bLo: number) => {
         const R = 6371000, dLa = ((bLa - aLa) * Math.PI) / 180, dLo = ((bLo - aLo) * Math.PI) / 180;
         const s = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
@@ -25902,7 +25922,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existNorm = exist.map((e) => {
         const nomes = (e.nomes || []).filter((x: any) => String(x || '').trim());
         return { ns: nomes.map((x: any) => norm(x)).filter((x: string) => x.length >= 4), tk: new Set<string>(nomes.flatMap((x: any) => _toks(x))), tel: e.tel || '', bairro: e.bairro || '',
-          soTelefone: !!e.soTelefone, la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, disponivel: !!e.disponivel, leadId: e.leadId || null };
+          soTelefone: !!e.soTelefone, la: Number(e.la), lo: Number(e.lo), discarded: !!e.discarded, disponivel: !!e.disponivel, leadId: e.leadId || null,
+          rotulo: String(nomes[0] || '') + (e.leadId ? ' (lead)' : ' (cliente)') };
       });
       // Nome do Google × nomes do cadastro: 'forte' = igual/contido ou 2+ palavras próprias em comum;
       // 'fraco' = 1 palavra própria (4+ letras) em comum.
@@ -25918,6 +25939,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // "secundário" quando casou por um tipo secundário do lugar (afrouxa o filtro).
       const segSet = new Set(segmentos);
       const novos: any[] = [];
+      const _ocultosCad: any[] = [];   // pontos escondidos por já serem cadastro (diagnóstico)
       for (const p of places) {
         const pLat = p.location?.latitude, pLng = p.location?.longitude;
         const nome = (p.displayName && p.displayName.text) || '';
@@ -25938,7 +25960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           else if (e.soTelefone) casou = false;                               // entrada só p/ telefone
           else if (temCoord) {
             if (d < 45) casou = true;                                         // mesmo ponto
-            else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'forte' && d < 300) || (m === 'fraco' && d < 150); }
+            else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'forte' && d < 300) || (m === 'fraco' && d < 120); }
           } else if (e.bairro && bairroP && e.bairro === bairroP) {
             casou = _nomeCasa(nnome, tkP, e) === 'forte';                     // sem coordenada: nome + bairro
           }
@@ -25948,7 +25970,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else if (e.discarded) {
             if (d < resgDist) { resgDist = d; resgatavel = { leadId: e.leadId }; }
           } else {
-            bloqueado = true; break;
+            bloqueado = true; _ocultosCad.push({ nome, cadastro: e.rotulo, distancia: Math.round(d) }); break;
           }
         }
         if (bloqueado) continue;
@@ -26011,7 +26033,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       novos.sort((a, b) => (a.match === 'primario' ? 0 : 1) - (b.match === 'primario' ? 0 : 1) || (a.distancia ?? 9999) - (b.distancia ?? 9999));
       const nPrim = novos.filter((n) => n.match === 'primario').length;
       return res.json({ ok: true, total: novos.length, primarios: nPrim, secundarios: novos.length - nPrim, fromCache: !billable, raio, segmentos, resultados: novos,
-        filtroBairros: _bairrosCfg.length > 0, bairrosFiltro: _bairrosCfg.length, ocultosForaDaRegiao: foraDaRegiao + semBairro, ocultosSemBairro: semBairro, notaMin, ocultosNota });
+        filtroBairros: _bairrosCfg.length > 0, bairrosFiltro: _bairrosCfg.length,
+        ocultosCadastro: _ocultosCad.length, ...(req.body?.debug ? { ocultosCadastroLista: _ocultosCad } : {}), ocultosForaDaRegiao: foraDaRegiao + semBairro, ocultosSemBairro: semBairro, notaMin, ocultosNota });
     } catch (e: any) { console.error('[radar] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
