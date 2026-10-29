@@ -1343,12 +1343,20 @@ function montarEspelhoHtml(d: DetalheNota, linha: Linha, cliente: any, fiscal?: 
 <html lang="pt-BR"><head><meta charset="utf-8">
 <title>Espelho da NF ${e(n?.invoice_number || d.nf)} — sem valor fiscal</title>
 <style>
-  @page { size: A4 portrait; margin: 6mm; }
+  /* Folha A4 retrato. As margens de impressão ficam no @page; na tela a .folha
+     reproduz a mesma caixa (210mm de largura com o mesmo recuo interno), para
+     que o que se vê seja igual ao que sai na impressora. */
+  @page { size: A4 portrait; margin: 8mm 7mm 10mm; }
   * { box-sizing: border-box; }
   body { font: 7.6px/1.25 Arial, Helvetica, sans-serif; color: #000; margin: 0; background: #fff; }
-  .folha { position: relative; z-index: 1;
+  .folha { position: relative; z-index: 1; width: 210mm; margin: 0 auto; padding: 8mm 7mm 10mm;
+           background-color: #fff;
            background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='470' height='300'%3E%3Ctext x='235' y='160' fill='%23000000' fill-opacity='0.055' font-family='Arial,Helvetica,sans-serif' font-size='30' font-weight='bold' letter-spacing='3' text-anchor='middle' transform='rotate(-24 235 160)'%3EESPELHO SEM VALOR FISCAL%3C/text%3E%3C/svg%3E");
            background-repeat: repeat; background-position: center top; }
+  @media screen {
+    body { background: #e8e8e8; padding: 8mm 4mm; }
+    .folha { box-shadow: 0 1px 8px rgba(0,0,0,.28); min-height: 297mm; }
+  }
   table { border-collapse: collapse; width: 100%; }
   .bx { border: .6px solid #000; }
   .bx td, .bx th { border: .6px solid #000; padding: 1px 3px; vertical-align: top; }
@@ -1364,7 +1372,9 @@ function montarEspelhoHtml(d: DetalheNota, linha: Linha, cliente: any, fiscal?: 
   .danfe-tit { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
   .danfe-sub { font-size: 5.8px; line-height: 1.15; }
   .chavebox { border: .6px solid #000; padding: 2px 4px; text-align: center; }
-  .chave { font-family: "Courier New", monospace; font-size: 9px; font-weight: 700; letter-spacing: .3px; word-break: break-all; }
+  /* A chave tem 44 dígitos em 11 grupos: o corpo cabe numa linha só na largura útil da folha. */
+  .chave { font-family: "Courier New", monospace; font-size: 7.4px; font-weight: 700; letter-spacing: .15px;
+           white-space: nowrap; }
   .semcodigo { border: .6px dashed #777; color: #555; font-size: 6.4px; letter-spacing: 1px;
                text-align: center; padding: 5px 2px; margin-bottom: 1px; text-transform: uppercase; }
   .sec { font-size: 6.4px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
@@ -1380,11 +1390,14 @@ function montarEspelhoHtml(d: DetalheNota, linha: Linha, cliente: any, fiscal?: 
   .barra { text-align: center; margin-bottom: 2mm; }
   .barra button { font: 12px Arial; padding: 6px 14px; border: 1px solid #333; background: #111; color: #fff; border-radius: 4px; cursor: pointer; }
   @media print { .naoimprime { display: none !important; }
+    body { background: #fff; padding: 0; }
+    /* Na impressão quem dá a margem é o @page: a folha ocupa a área útil inteira. */
+    .folha { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
     body, .folha { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 </style></head>
 <body>
+  <div class="barra naoimprime"><button onclick="window.print()">Imprimir / salvar em PDF</button></div>
   <div class="folha">
-    <div class="barra naoimprime"><button onclick="window.print()">Imprimir / salvar em PDF</button></div>
     <div class="avisoTopo">Espelho do original · documento sem valor fiscal · não é DANFE</div>
 
     <!-- CANHOTO -->
