@@ -925,7 +925,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   return (
     <>
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-full max-w-[95vw] lg:max-w-6xl h-[95vh] lg:max-h-[90vh] overflow-hidden p-3 lg:p-6">
+      {/* Na confirmação o modal vira coluna flex: a lista rola e os botões (Voltar/Rascunho/Checkout/Confirmar)
+          ficam SEMPRE visíveis. Antes a altura somada passava da janela e o overflow-hidden cortava a 2ª linha de
+          botões — nos rascunhos (linha extra "Último rascunho salvo em") o "Confirmar e Finalizar" sumia. */}
+      <DialogContent className={`w-full max-w-[95vw] lg:max-w-6xl h-[95vh] lg:max-h-[90vh] overflow-hidden p-3 lg:p-6 ${showConfirmation ? 'flex flex-col' : ''}`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base lg:text-lg">
             <ShoppingCart className="h-4 w-4 lg:h-5 lg:w-5" />
@@ -937,8 +940,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
         {showConfirmation ? (
           // Tela de Confirmação com ScrollArea
-          <div className="flex flex-col h-full">
-            <ScrollArea className="flex-1 pr-4 max-h-[calc(95vh-200px)]">
+          <div className="flex flex-col flex-1 min-h-0">
+            <ScrollArea className="flex-1 min-h-0 pr-4">
               <div className="space-y-4">
                 <Card>
                   <CardHeader>
@@ -1031,7 +1034,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
             </ScrollArea>
 
             {/* Botões de Ação */}
-            <div className="flex flex-col gap-3 pt-4 border-t bg-white">
+            <div className="flex flex-col gap-3 pt-4 border-t bg-white shrink-0">
               <div className="grid grid-cols-2 gap-3">
                 <Button 
                   variant="outline" 
