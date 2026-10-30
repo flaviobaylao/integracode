@@ -1632,6 +1632,26 @@ async function resetStaleLocks(today: string): Promise<void> {
   } catch (e) { console.error('[resetStaleLocks]', (e as any)?.message); }
 }
 
+// CAPTURA DE ATENDIMENTO (substitui a trava): a captura usa as colunas locked/locked_by/locked_date.
+// Libera automaticamente: capturas de dias anteriores sempre; as de hoje às 18h (BRT).
+// Depois de liberada, o cliente volta a aparecer para os demais telemarketings.
+async function releaseExpiredCaptures(): Promise<void> {
+  try {
+    await ensureRepescagemLockCol();
+    const today = brTodayStr();
+    const now = new Date();
+    const localBR = new Date(now.getTime() + (-180 - now.getTimezoneOffset()) * 60000);
+    const hourBR = localBR.getUTCHours();
+    if (hourBR >= 18) {
+      // Após 18h: libera TODAS as capturas (encerramento do dia).
+      await db.execute(sql`UPDATE repescagem_assignments SET locked = false, locked_by = null, locked_date = null, updated_at = now() WHERE locked = true`);
+    } else {
+      // Antes das 18h: libera só as de dias anteriores.
+      await db.execute(sql`UPDATE repescagem_assignments SET locked = false, locked_by = null, locked_date = null, updated_at = now() WHERE locked = true AND (locked_date IS NULL OR locked_date <> ${today})`);
+    }
+  } catch (e) { console.error('[releaseExpiredCaptures]', (e as any)?.message); }
+}
+
 export async function closeAndExpireRepescagem(date: string): Promise<any> {
   await ensureRepescagemOrderCol();
   const inRoute = await db.select().from(repescagemAssignments)
@@ -2037,15 +2057,34 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, id));
       if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
       const a = rows[0];
-      // DESTRAVAR: só o dono da trava (locked_by) ou um admin.
-      if (!locked && (a as any).locked && (a as any).lockedDate === today && (a as any).lockedBy && (a as any).lockedBy !== actor?.id && !isAdmin) {
-        return res.status(403).json({ message: 'Só quem travou ou um admin pode destravar esta linha.' });
+      const capturadoHoje = !!(a as any).locked && (a as any).lockedDate === today;
+      const dono = (a as any).lockedBy || null;
+      // LIBERAR: só quem capturou (locked_by) ou um admin.
+      if (!locked && capturadoHoje && dono && dono !== actor?.id && !isAdmin) {
+        return res.status(403).json({ message: 'Só quem capturou ou um admin pode liberar este cliente.' });
       }
-      // Aplica em todas as linhas do MESMO cliente hoje (pending + in_route), p/ UI e rota baterem.
-      await db.execute(sql`UPDATE repescagem_assignments
-        SET locked = ${locked}, locked_date = ${locked ? today : null}, locked_by = ${locked ? (actor?.id || null) : null}, updated_at = now()
-        WHERE customer_id = ${a.customerId} AND (status = 'pending' OR (status = 'in_route' AND draw_date = ${today}))`);
-      res.json({ ok: true, assignmentId: id, locked });
+      // CAPTURAR: não pode roubar um cliente já capturado por outro atendente (admin pode).
+      if (locked && capturadoHoje && dono && dono !== actor?.id && !isAdmin) {
+        return res.status(403).json({ message: 'Cliente já capturado por outro atendente.' });
+      }
+      if (locked) {
+        // CAPTURA: reatribui o cliente ao capturador e trava nele no dia (não some p/ ele; some p/ os demais).
+        await db.execute(sql`UPDATE repescagem_assignments
+          SET assigned_user_id = ${actor?.id || null}, locked = true, locked_date = ${today}, locked_by = ${actor?.id || null}, updated_at = now()
+          WHERE customer_id = ${a.customerId} AND (status = 'pending' OR (status = 'in_route' AND draw_date = ${today}))`);
+        try {
+          await db.insert(repescagemAssignmentHistory).values({
+            assignmentId: id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: actor?.id || null,
+            action: 'reassigned', reason: 'Captura de atendimento (telemarketing)',
+          });
+        } catch { /* histórico best-effort */ }
+      } else {
+        // LIBERAR: apenas remove a captura (mantém a atribuição atual); volta a aparecer p/ os demais.
+        await db.execute(sql`UPDATE repescagem_assignments
+          SET locked = false, locked_date = null, locked_by = null, updated_at = now()
+          WHERE customer_id = ${a.customerId} AND (status = 'pending' OR (status = 'in_route' AND draw_date = ${today}))`);
+      }
+      res.json({ ok: true, assignmentId: id, locked, capturedBy: locked ? (actor?.id || null) : null });
     } catch (e: any) {
       console.error('POST /api/repescagem/assignments/:id/lock', e);
       res.status(500).json({ message: e?.message || 'erro' });
@@ -2642,6 +2681,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // A lista abaixo reflete o estado atual do banco; o proximo load ja traz o reconcile.
       maybeReconcile((req as any).currentUser?.id);
 
+      // Libera capturas expiradas (dias anteriores + hoje após 18h) antes de montar a lista.
+      await releaseExpiredCaptures();
+
       const pending = await db.select().from(repescagemAssignments)
         .where(eq(repescagemAssignments.status, 'pending'));
 
@@ -2727,6 +2769,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           unassigned: false,
           locked: isLocked,
           lockedBy,
+          capturedByName: lockedBy ? (userNameById.get(lockedBy) || null) : null,
           canUnlock,
           ia: iaPorCliente.get(p.customerId) || null,
         };
@@ -2793,7 +2836,13 @@ export function registerRepescagemRoutes(app: Express, opts: {
 
       result.sort((a, b) => b.lastRedDate.localeCompare(a.lastRedDate));
 
-      res.json(result);
+      // CAPTURA: esconde dos DEMAIS telemarketings os clientes capturados por outro. O capturador
+      // continua vendo o seu, e o admin vê tudo (com selo "capturado por X").
+      const visible = isAdmin
+        ? result
+        : result.filter(r => !(r.locked && r.lockedBy && r.lockedBy !== actor?.id));
+
+      res.json(visible);
     } catch (e: any) {
       console.error('GET /api/repescagem/assignments', e);
       res.status(500).json({ message: e?.message || 'erro' });
