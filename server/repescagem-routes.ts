@@ -2278,18 +2278,23 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const date = String(req.query.date || '').trim();
       if (!sellerId || !date) return res.status(400).json({ message: 'sellerId e date obrigatórios' });
       if (user.role === 'vendedor' && sellerId !== user.id) return res.status(403).json({ message: 'Acesso negado' });
+      const isAdmin = user.role === 'admin';
+      const today = brTodayStr();
 
       // Garante que o sorteio do dia já rodou (antes só disparava ao abrir a página de Repescagem).
       // Sem isto, se ninguém abrisse a página de Repescagem, a rota do dia não recebia repescagem.
       maybeAutoDraw();
       // Fecha os atendidos do dia (throttled) para que saiam da lista de cards.
       maybeAutoCloseRepescagem();
+      // Libera capturas expiradas (dias anteriores + hoje após 18h) antes de montar os cards.
+      await releaseExpiredCaptures();
 
       // CARD DUPLO: mostra a repescagem do dia tanto para o ATENDENTE que recebeu
       // (assigned_user_id = sellerId) quanto para o DONO da carteira do cliente
       // (customers.seller_id = sellerId), mesmo que atribuída a outro habilitado.
       const rowsRes: any = await db.execute(sql`
-        SELECT ra.id, ra.customer_id, ra.assigned_user_id, ra.phase, c.seller_id AS owner_seller_id
+        SELECT ra.id, ra.customer_id, ra.assigned_user_id, ra.phase, c.seller_id AS owner_seller_id,
+               ra.locked, ra.locked_by, ra.locked_date
         FROM repescagem_assignments ra
         JOIN customers c ON c.id = ra.customer_id
         WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
@@ -2299,7 +2304,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const seenRowIds = new Set<string>();
       const rows = ((rowsRes.rows || []) as any[])
         .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; })
-        .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string, ownerSellerId: (r.owner_seller_id as string) || null }));
+        .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string, ownerSellerId: (r.owner_seller_id as string) || null,
+          captured: !!r.locked && r.locked_date === today, capturedBy: (!!r.locked && r.locked_date === today) ? (r.locked_by || null) : null }));
       if (rows.length === 0) return res.json([]);
       const cids = Array.from(new Set(rows.map(r => r.customerId)));
       // FASE 4 — "quem colocar o pedido fica com a venda": mapeia o vendedor que IMPLANTOU
@@ -2322,6 +2328,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // Nomes de quem recebeu (para o dono ver "em repescagem com X") + de quem colocou o pedido.
       const nameIds = Array.from(new Set([
         ...(rows.map(r => r.assignedUserId).filter(Boolean) as string[]),
+        ...(rows.map(r => r.capturedBy).filter(Boolean) as string[]),
         ...Array.from(orderWinnerByCustomer.values()),
       ]));
       const assigneeUsers = nameIds.length ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName }).from(users).where(inArray(users.id, nameIds)) : [];
@@ -2407,8 +2414,13 @@ export function registerRepescagemRoutes(app: Express, opts: {
           orderWinnerName: orderWinnerByCustomer.get(r.customerId) ? (assigneeNameById.get(orderWinnerByCustomer.get(r.customerId)!) || null) : null,
           // inativo = houve pedido do cliente hoje, mas não foi o dono desta rota (sellerId) quem colocou.
           inactive: !!orderWinnerByCustomer.get(r.customerId) && orderWinnerByCustomer.get(r.customerId) !== sellerId,
+          // CAPTURA DE ATENDIMENTO: quem capturou fica com o card; some para os demais telemarketings.
+          captured: r.captured,
+          capturedBy: r.capturedBy,
+          capturedByName: r.capturedBy ? (assigneeNameById.get(r.capturedBy) || null) : null,
+          canRelease: isAdmin || (!!r.capturedBy && r.capturedBy === user.id),
         };
-      }));
+      }).filter((it: any) => isAdmin || !(it.captured && it.capturedBy && it.capturedBy !== user.id)));
     } catch (e: any) {
       console.error('GET /api/repescagem/route-overlay', e);
       res.status(500).json({ message: e?.message || 'erro' });
