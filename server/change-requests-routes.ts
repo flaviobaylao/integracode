@@ -283,6 +283,8 @@ export async function registrarReportInbox(p: {
   sempre?: boolean;        // true = registra mesmo sem texto (usa o motivo como texto). Ex.: Não Venda.
   fotoUrl?: string | null; // foto anexada pelo vendedor (exibida no Inbox)
   salesCardId?: string | null; // card da visita (Rota do Dia) — de onde sai a foto do check-in
+  origem?: string | null;      // de onde veio (justificativas): 'fechar_rota' | 'pendencia' | 'checkin'
+  dataVisita?: string | null;  // dia da visita justificada (YYYY-MM-DD)
 }): Promise<void> {
   try {
     let texto = String(p?.texto || "").trim();
@@ -319,6 +321,8 @@ export async function registrarReportInbox(p: {
     const details: any = { reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000) };
     if (p.fotoUrl) details.fotoUrl = String(p.fotoUrl).slice(0, 500);
     if (p.salesCardId) details.salesCardId = String(p.salesCardId);
+    if (p.origem) details.origem = String(p.origem).slice(0, 40);
+    if (p.dataVisita && /^\d{4}-\d{2}-\d{2}$/.test(String(p.dataVisita))) details.dataVisita = String(p.dataVisita);
     const seedMsg = {
       id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
       text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
