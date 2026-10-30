@@ -953,6 +953,9 @@ export default function SolicitacoesAlteracao() {
   // dia. As datas são comparadas no fuso de Brasília, igual ao que o card mostra.
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
+  // 30/out/2026 — Filtro pelo TIPO da solicitação de alteração (Periodicidade, Dia de Rota,
+  // Área de vendas…). "report" mostra só os reports; um tipo mostra só as solicitações que o têm.
+  const [filtroTipo, setFiltroTipo] = useState("");
 
   // ✅ Seleção em lote + "Limpar caixa de pendentes": marca solicitações e as resolve
   // (status "lido") de uma vez — elas saem de Pendentes e vão para Resolvidas.
@@ -1008,9 +1011,17 @@ export default function SolicitacoesAlteracao() {
   const matchNome = (nome) => !q || String(nome || "").toLowerCase().includes(q);
   const matchVend = (nome?: string) => !filtroVendedor || String(nome || "") === filtroVendedor;
   const matchVendSug = (s: any) => !filtroVendedor || s.from_name === filtroVendedor || s.to_name === filtroVendedor;
-  const pendingF = pending.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && dentroDoPeriodo(r.createdAt));
-  const resolvedF = resolved.filter((r) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && dentroDoPeriodo(r.createdAt));
-  const sugestoesF = sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s) && dentroDoPeriodo(s.created_at || s.createdAt));
+  const ehReport = (r: any) => r?.kind === "report";
+  const matchTipo = (r: any) => {
+    if (!filtroTipo) return true;
+    if (filtroTipo === "report") return ehReport(r);
+    return !ehReport(r) && Array.isArray(r?.types) && r.types.includes(filtroTipo);
+  };
+  const baseOk = (r: any) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && dentroDoPeriodo(r.createdAt);
+  const pendingF = pending.filter((r) => baseOk(r) && matchTipo(r));
+  const resolvedF = resolved.filter((r) => baseOk(r) && matchTipo(r));
+  // Sugestões de carteira não têm tipo de solicitação: somem quando há um tipo escolhido.
+  const sugestoesF = filtroTipo ? [] : sugestoes.filter((s) => matchNome(s.customer_name || s.customer_id) && matchVendSug(s) && dentroDoPeriodo(s.created_at || s.createdAt));
 
   // Seleção em lote (escopada à lista de pendentes já filtrada).
   const selectedIds = pendingF.filter((r) => selected.has(r.id)).map((r) => r.id);
@@ -1020,6 +1031,16 @@ export default function SolicitacoesAlteracao() {
   // Aba controlada: o painel congelado precisa saber qual aba está aberta para mostrar (ou não)
   // a barra de seleção em lote, que agora vive fora do TabsContent.
   const [tab, setTab] = useState("pendentes");
+  // Contagem por tipo na aba aberta (já respeitando busca, vendedor e datas).
+  const contagemTipo = (() => {
+    const lista = (tab === "pendentes" ? pending : resolved).filter(baseOk);
+    const c: Record<string, number> = { report: 0 };
+    for (const r of lista) {
+      if (ehReport(r)) { c.report++; continue; }
+      for (const t of (Array.isArray(r.types) ? r.types : [])) c[t] = (c[t] || 0) + 1;
+    }
+    return c;
+  })();
   const limparCaixa = () => {
     if (selectedIds.length === 0) return;
     if (window.confirm(`Limpar ${selectedIds.length} solicitação(ões) da caixa de pendentes? Elas vão para Resolvidas (marcadas como lidas).`)) bulkClear.mutate(selectedIds);
@@ -1059,6 +1080,19 @@ export default function SolicitacoesAlteracao() {
           <option value="">Todos os vendedores</option>
           {vendedores.map((v) => <option key={v} value={v}>{v}</option>)}
         </select>
+        <select
+          value={filtroTipo}
+          onChange={(e) => setFiltroTipo(e.target.value)}
+          className="border rounded-lg px-3 py-2 text-sm bg-white max-w-[240px]"
+          title="Filtrar pelo tipo de solicitação de alteração"
+          data-testid="select-filtro-tipo"
+        >
+          <option value="">Todos os tipos</option>
+          {Object.keys(TYPE_LABEL).map((t) => (
+            <option key={t} value={t}>{TYPE_LABEL[t]}{contagemTipo[t] ? ` (${contagemTipo[t]})` : ""}</option>
+          ))}
+          <option value="report">Reports{contagemTipo.report ? ` (${contagemTipo.report})` : ""}</option>
+        </select>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-muted-foreground shrink-0">De</span>
           <input
@@ -1081,8 +1115,8 @@ export default function SolicitacoesAlteracao() {
             data-testid="input-data-ate"
           />
         </div>
-        {(filtroVendedor || dataDe || dataAte) && (
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setDataDe(""); setDataAte(""); }}>
+        {(filtroVendedor || filtroTipo || dataDe || dataAte) && (
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setFiltroTipo(""); setDataDe(""); setDataAte(""); }}>
             Limpar filtros
           </Button>
         )}
