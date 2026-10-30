@@ -330,7 +330,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const closed = !!statusData?.closed;
 
   const salvarJust = useMutation({
-    mutationFn: async (c: NaoVisitado) => apiRequest("POST", "/api/vendedor/justificativas", { date: today, customerId: c.customerId, sellerId, reason: draftReason, notes: draftNote || null }),
+    mutationFn: async (c: NaoVisitado) => apiRequest("POST", "/api/vendedor/justificativas", { date: today, customerId: c.customerId, sellerId, reason: draftReason, notes: draftNote.trim() || null, origem: "fechar_rota" }),
     onSuccess: (_r, c) => {
       setJustified((j) => ({ ...j, [c.customerId]: { reason: draftReason, note: draftNote } }));
       setOpenId(null); setDraftReason(""); setDraftNote("");
@@ -347,7 +347,8 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
     onError: (e: any) => toast({ title: "Não foi possível fechar", description: e?.message || "Verifique as pendências.", variant: "destructive" }),
   });
 
-  const canSave = !!draftReason && ((draftReason !== "outro" && draftReason !== "debito" && draftReason !== "remarcou") || !!draftNote.trim());
+  // 30/out/2026 — descrição OBRIGATÓRIA em qualquer motivo (mín. 5 caracteres).
+  const canSave = !!draftReason && draftNote.trim().length >= 5;
 
   return (
     <div className={embedded ? "" : "p-4 md:p-6 max-w-3xl mx-auto"}>
@@ -456,7 +457,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                         </div>
                         </>
                       )}
-                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{debtMode ? "Situação do débito (obrigatória)" : `Observação ${(draftReason === "outro" || draftReason === "debito" || draftReason === "remarcou") ? "(obrigatória)" : "(opcional)"}`}</div><button type="button" onClick={toggleGravacao} disabled={voz.transcribing} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border disabled:opacity-60 ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {voz.transcribing ? "Transcrevendo…" : gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
+                      <div className="flex items-center justify-between mt-3"><div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{debtMode ? "Situação do débito (obrigatória)" : "Descrição do motivo (obrigatória)"}</div><button type="button" onClick={toggleGravacao} disabled={voz.transcribing} className={`text-[11px] flex items-center gap-1 px-2 py-1 rounded-full border disabled:opacity-60 ${gravando ? "bg-red-50 border-red-300 text-red-700 animate-pulse" : "bg-white border-gray-200 text-gray-600"}`}><Mic className="w-3 h-3" /> {voz.transcribing ? "Transcrevendo…" : gravando ? "Gravando… toque p/ parar" : "Gravar áudio"}</button></div>
                       <textarea className="mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-white text-gray-900 placeholder:text-gray-500" rows={2} placeholder={debtMode ? "Ex.: cliente vai quitar até sexta / negociado em 2x" : "Ex.: passei 17h e estava fechado"} value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
                       <div className="flex gap-2 mt-2">
                         <button className="flex-1 bg-gray-100 text-gray-600 rounded-lg py-2 text-sm font-semibold" onClick={() => setOpenId(null)}>Cancelar</button>
