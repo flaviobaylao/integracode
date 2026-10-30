@@ -26,6 +26,9 @@ import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock, XCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
+// Cronogramas de parcelamento prontos (dias de cada parcela) — mesmo conjunto do CustomerEditModal
+const INSTALLMENT_PRESETS = ["7/14", "7/14/21", "14/21", "28/35", "21/28/35"];
+
 interface CustomerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -119,6 +122,8 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   const [cnpjData, setCnpjData] = useState<CNPJData | null>(null);
   const [cnpjDuplicate, setCnpjDuplicate] = useState<{ id: string; nome: string; vendedor: string; isActive: boolean } | null>(null);
   const [reactivating, setReactivating] = useState(false);
+  // Parcelamento: modo "Personalizado" ativo no seletor de cronograma
+  const [installmentCustom, setInstallmentCustom] = useState(false);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const [motivoInativacao, setMotivoInativacao] = useState("");
@@ -210,6 +215,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       boletoDays: null,
       collectionDiscount: null,
       paymentInstallments: null,
+      installmentSchedule: null,
       isActive: true,
       latitude: '',
       longitude: '',
@@ -270,6 +276,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         boletoDays: (customer as any).boletoDays ?? null,
         collectionDiscount: (customer as any).collectionDiscount ?? null,
         paymentInstallments: (customer as any).paymentInstallments ?? null,
+        installmentSchedule: (customer as any).installmentSchedule || null,
         isActive: customer.isActive !== undefined ? customer.isActive : true,
         latitude: (customer as any).latitude || '',
         longitude: (customer as any).longitude || '',
@@ -314,6 +321,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       boletoDays: null,
       collectionDiscount: null,
       paymentInstallments: null,
+      installmentSchedule: null,
         isActive: true,
         latitude: '',
         longitude: '',
@@ -596,7 +604,18 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
     inactivateCustomerMutation.mutate();
   };
 
+  useEffect(() => {
+    const s = String((customer as any)?.installmentSchedule || '');
+    setInstallmentCustom(!!s && !INSTALLMENT_PRESETS.includes(s));
+  }, [customer]);
+
   const onSubmit = async (data: InsertCustomer) => {
+    // Cronograma de parcelas: normaliza ("28 / 35" -> "28/35") e deriva o nº de parcelas
+    {
+      const n = String((data as any).installmentSchedule || '').split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650);
+      (data as any).installmentSchedule = n.length ? n.join('/') : null;
+      if (n.length) (data as any).paymentInstallments = n.length;
+    }
     // IE obrigatória no cadastro de NOVO cliente PJ (igual ao 1.0): antes de
     // salvar sem IE, tenta a verificação gratuita (CNPJ.ws/SEFAZ); se o CNPJ
     // tem IE ativa, preenche e segue; se não achar, bloqueia e pede IE ou
@@ -1788,23 +1807,52 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                     />
                     <FormField
                       control={form.control}
-                      name="paymentInstallments"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-sm">Parcelamento (nº de parcelas)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              min={1}
-                              value={field.value ?? ''}
-                              onChange={(e) => field.onChange(e.target.value === '' ? null : Number(e.target.value))}
-                              placeholder="1"
-                              data-testid="input-payment-installments"
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
+                      name={"installmentSchedule" as any}
+                      render={({ field }) => {
+                        const s = String((field.value as any) || '');
+                        const sel = installmentCustom ? '__custom__' : (!s ? '__none__' : (INSTALLMENT_PRESETS.includes(s) ? s : '__custom__'));
+                        return (
+                          <FormItem>
+                            <FormLabel className="text-sm">Parcelamento</FormLabel>
+                            <Select
+                              value={sel}
+                              onValueChange={(v) => {
+                                if (v === '__none__') { setInstallmentCustom(false); field.onChange(null); }
+                                else if (v === '__custom__') { setInstallmentCustom(true); }
+                                else { setInstallmentCustom(false); field.onChange(v); }
+                              }}
+                            >
+                              <FormControl>
+                                <SelectTrigger data-testid="select-installment-schedule">
+                                  <SelectValue placeholder="À vista / 1x" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="__none__">À vista / 1x (sem parcelamento)</SelectItem>
+                                <SelectItem value="7/14">7-14 dias (2x)</SelectItem>
+                                <SelectItem value="7/14/21">7-14-21 dias (3x)</SelectItem>
+                                <SelectItem value="14/21">14-21 dias (2x)</SelectItem>
+                                <SelectItem value="28/35">28-35 dias (2x)</SelectItem>
+                                <SelectItem value="21/28/35">21-28-35 dias (3x)</SelectItem>
+                                <SelectItem value="__custom__">Personalizado…</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {sel === '__custom__' && (
+                              <Input
+                                className="mt-2"
+                                value={s}
+                                onChange={(e) => { setInstallmentCustom(true); field.onChange(e.target.value); }}
+                                placeholder="Ex.: 28/35 (dias de cada parcela)"
+                                data-testid="input-installment-schedule-custom"
+                              />
+                            )}
+                            <FormDescription className="text-xs">
+                              Cada número = dias até o vencimento de cada parcela; o valor é dividido igualmente. Quando definido, o "Prazo (dias)" é ignorado.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
                     />
                     <FormField
                       control={form.control}
