@@ -58,6 +58,7 @@ type Assignment = {
   unassigned?: boolean;
   locked?: boolean;
   lockedBy?: string | null;
+  capturedByName?: string | null;
   canUnlock?: boolean;
   ia?: { contatoEm: string | null; respondeu: boolean; pedido: boolean } | null;
 };
@@ -250,19 +251,20 @@ export default function Repescagem() {
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao atribuir', variant: 'destructive' }),
   });
 
-  // Travar / destravar uma linha (admin).
+  // Capturar / liberar um cliente. Capturar reatribui ao capturador e some para os demais
+  // telemarketings até: liberar, registrar pedido, ou às 18h (liberação automática do dia).
   const toggleLock = useMutation({
     mutationFn: async ({ assignmentId, locked }: { assignmentId: string; locked: boolean }) =>
       apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked }),
-    onSuccess: () => { invalidateDistribution(); refetch(); },
-    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao travar', variant: 'destructive' }),
+    onSuccess: (_d, v) => { invalidateDistribution(); refetch(); toast({ title: v.locked ? 'Atendimento capturado' : 'Captura liberada', description: v.locked ? 'O cliente é seu e some para os demais até você liberar, registrar pedido ou às 18h.' : 'O cliente volta a aparecer para os demais.' }); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' }),
   });
 
-  // Travar / destravar TODAS as linhas do dia (admin) — cadeado do cabeçalho.
+  // Liberar TODAS as capturas do dia (admin) — botão do cabeçalho.
   const toggleLockAll = useMutation({
     mutationFn: async (locked: boolean) => apiRequest('POST', '/api/repescagem/assignments/lock-all', { locked }),
-    onSuccess: (_d, locked) => { invalidateDistribution(); refetch(); toast({ title: locked ? 'Tudo travado' : 'Tudo destravado', description: locked ? 'Nenhuma linha será redistribuída hoje.' : 'As linhas voltam a ser redistribuídas.' }); },
-    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao travar todos', variant: 'destructive' }),
+    onSuccess: () => { invalidateDistribution(); refetch(); toast({ title: 'Capturas liberadas', description: 'Todos os clientes voltam a aparecer para os demais.' }); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao liberar capturas', variant: 'destructive' }),
   });
 
   const cityOptions = useMemo(() => {
@@ -903,18 +905,18 @@ export default function Repescagem() {
                         Atendente
                         <span className={`text-[10px] leading-none ${sortKey === 'atendente' ? 'text-orange-600' : 'text-gray-400'}`}>{sortIndicator('atendente')}</span>
                         {isAdmin && (() => {
-                          const lockable = filteredAssignments.filter(a => !a.unassigned && a.assignmentId);
-                          const allLocked = lockable.length > 0 && lockable.every(a => a.locked);
+                          const anyCaptured = filteredAssignments.some(a => a.locked);
+                          if (!anyCaptured) return null;
                           return (
                             <button
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); toggleLockAll.mutate(!allLocked); }}
+                              onClick={(e) => { e.stopPropagation(); toggleLockAll.mutate(false); }}
                               disabled={toggleLockAll.isPending}
-                              title={allLocked ? 'Destravar todas as linhas' : 'Travar todas as linhas (não sofrem redistribuição hoje)'}
-                              className="ml-1 text-gray-500 hover:text-orange-600"
-                              data-testid="button-lock-all"
+                              title="Liberar todas as capturas do dia"
+                              className="ml-1 text-orange-600 hover:text-orange-700"
+                              data-testid="button-release-all"
                             >
-                              {allLocked ? <Lock className="h-3.5 w-3.5 text-orange-600" /> : <LockOpen className="h-3.5 w-3.5" />}
+                              <LockOpen className="h-3.5 w-3.5" />
                             </button>
                           );
                         })()}
@@ -1005,16 +1007,25 @@ export default function Repescagem() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            <button
-                              type="button"
-                              onClick={() => { if (a.locked && !a.canUnlock) return; toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked }); }}
-                              disabled={toggleLock.isPending || (!!a.locked && !a.canUnlock)}
-                              title={a.locked ? (a.canUnlock ? 'Travado — clique para destravar' : 'Travado por outro usuário (só ele ou um admin destrava)') : 'Destravado — clique para travar (só você ou um admin destrava)'}
-                              className={a.locked ? (a.canUnlock ? 'text-orange-600' : 'text-gray-400 cursor-not-allowed') : 'text-gray-400 hover:text-orange-600'}
-                              data-testid={`button-lock-${a.customerId}`}
-                            >
-                              {a.locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
-                            </button>
+                            {a.assignmentId && (
+                              <div className="inline-flex flex-col items-start gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => { if (a.locked && !a.canUnlock) return; toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked }); }}
+                                  disabled={toggleLock.isPending || (!!a.locked && !a.canUnlock)}
+                                  title={a.locked
+                                    ? (a.canUnlock ? 'Capturado por você — clique para liberar' : `Capturado por ${a.capturedByName || 'outro atendente'}`)
+                                    : 'Capturar atendimento (fica só com você; some para os demais até liberar, registrar pedido ou às 18h)'}
+                                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] whitespace-nowrap ${a.locked ? (a.canUnlock ? 'border-orange-300 text-orange-700 hover:bg-orange-50' : 'border-gray-200 text-gray-400 cursor-not-allowed') : 'border-blue-300 text-blue-700 hover:bg-blue-50'}`}
+                                  data-testid={`button-capture-${a.customerId}`}
+                                >
+                                  {a.locked ? <><LockOpen className="h-3.5 w-3.5" /> Liberar</> : <><Lock className="h-3.5 w-3.5" /> Capturar</>}
+                                </button>
+                                {a.locked && a.lockedBy && a.lockedBy !== user?.id && (
+                                  <span className="text-[10px] text-gray-500">capturado por {a.capturedByName || 'outro'}</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </td>
