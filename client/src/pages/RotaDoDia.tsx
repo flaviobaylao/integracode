@@ -421,6 +421,18 @@ export default function RotaDoDia() {
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao remover', variant: 'destructive' }),
   });
 
+  // Capturar / liberar atendimento de um card de repescagem na rota do dia.
+  const toggleCaptureMutation = useMutation({
+    mutationFn: async ({ assignmentId, locked }: { assignmentId: string; locked: boolean }) =>
+      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked }),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
+      toast({ title: v.locked ? 'Atendimento capturado' : 'Captura liberada', description: v.locked ? 'O cliente é seu e some para os demais até liberar, registrar pedido ou às 18h.' : 'O cliente volta a aparecer para os demais.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' }),
+  });
+
   // Buscar pedidos do dia e débitos para os clientes da rota
   interface CustomerInfoResponse {
     orders: Record<string, { cardNumber: string | null; omieOrderId: string | null; saleValue?: number | string | null }[]>;
@@ -2359,6 +2371,18 @@ export default function RotaDoDia() {
                           data-testid={`button-repescagem-central-${r.customerId}`}
                         >
                           <MessageCircle className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {r.assignmentId && (
+                        <Button
+                          size="icon" variant="ghost"
+                          className={`h-8 w-8 ${r.captured ? (r.canRelease ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950' : 'text-gray-400 cursor-not-allowed') : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950'}`}
+                          onClick={(e) => { e.stopPropagation(); if (r.captured && !r.canRelease) return; toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: !r.captured }); }}
+                          disabled={toggleCaptureMutation.isPending || (r.captured && !r.canRelease)}
+                          title={r.captured ? (r.canRelease ? 'Capturado por você — clique para liberar' : `Capturado por ${r.capturedByName || 'outro atendente'}`) : 'Capturar atendimento (fica só com você; some para os demais até liberar, registrar pedido ou às 18h)'}
+                          data-testid={`button-repescagem-capture-${r.customerId}`}
+                        >
+                          <Target className="h-4 w-4" />
                         </Button>
                       )}
                       {r.customerId && (
