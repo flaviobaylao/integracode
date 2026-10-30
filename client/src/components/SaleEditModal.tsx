@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PaymentLinkDialog from "./PaymentLinkDialog";
-import TrocaAnteriorAviso from "./TrocaAnteriorAviso";
+import { TrocaRecorrenciaCard } from "./TrocaRecorrencia";
 import TrocaPreviaDesconto from "./TrocaPreviaDesconto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +86,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // temperatura lida no display do refrigerador. Vencido = comercial, com desconto
   // da comissao sobre o valor trocado.
   const [trocaMotivo, setTrocaMotivo] = useState('');
+  // Recorrência (30/10/2026): da 2ª troca do mesmo motivo em 60 dias, ação com o cliente obrigatória.
+  const [trocaAcao, setTrocaAcao] = useState('');
+  const [trocaExigeAcao, setTrocaExigeAcao] = useState(false);
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -158,6 +161,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       setNotes(card.notes || '');
       setTrocaPhotos([]);
       setTrocaMotivo('');
+      setTrocaAcao('');
+      setTrocaExigeAcao(false);
       setGravandoObs(false);
       setRouteDay(card.routeDay || '');
       setRecurrenceType(card.recurrenceType || '');
@@ -695,6 +700,14 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       return;
     }
     // 🔒 TRAVA Troca: foto dos produtos obrigatória.
+    if (operationType === 'troca' && trocaMotivo && trocaExigeAcao && !trocaAcao) {
+      toast({
+        title: 'Ação com o cliente obrigatória',
+        description: 'Este cliente já teve troca pelo mesmo motivo nos últimos 60 dias. Selecione a ação feita com o cliente.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (operationType === 'troca' && trocaPhotos.length === 0) {
       toast({
         title: 'Foto obrigatória na Troca',
@@ -776,7 +789,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ motivo: trocaMotivo }),
+            body: JSON.stringify({ motivo: trocaMotivo, acaoCliente: trocaExigeAcao ? trocaAcao : undefined }),
           });
           if (!_r.ok) throw new Error((await _r.json().catch(() => ({})))?.message || 'Falha ao registrar o motivo');
           const _d = await _r.json();
@@ -1818,7 +1831,14 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     </Select>
                   </div>
                   {trocaMotivo && (
-                    <TrocaAnteriorAviso customerId={(card as any)?.customerId} motivo={trocaMotivo} />
+                    <TrocaRecorrenciaCard
+                      customerId={(card as any)?.customerId}
+                      motivo={trocaMotivo}
+                      valorTroca={calculateTotal()}
+                      acao={trocaAcao}
+                      onAcao={setTrocaAcao}
+                      onExigeAcao={setTrocaExigeAcao}
+                    />
                   )}
                   {/* Foto exigida por motivo (25/10/2026): a temperatura não é digitada —
                       no fermentado a prova é a foto do display do refrigerador. */}

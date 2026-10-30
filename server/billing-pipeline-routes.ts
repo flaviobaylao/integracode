@@ -2149,6 +2149,16 @@ export function registerBillingPipelineRoutes(app: Express) {
           }
         }
       } catch (e: any) { console.warn('[BILLING-PIPELINE] enriquecimento de fotos da troca (segue):', e?.message); }
+      // Recorrência das trocas (selo no card), só para trocas ainda não entregues.
+      try {
+        const trocas = (items as any[]).filter(i => i.salesCardId && String(i.operationType || '').toLowerCase() === 'troca'
+          && !['entregue', 'lixeira'].includes(String(i.stage || '')));
+        if (trocas.length) {
+          const { recorrenciaPorCards } = await import('./troca-registros-routes.js');
+          const m = await recorrenciaPorCards(trocas.map((i: any) => String(i.salesCardId)));
+          for (const it of trocas) { const r = m.get(String(it.salesCardId)); if (r) (it as any).trocaRecorrencia = r; }
+        }
+      } catch (e: any) { console.warn('[BILLING-PIPELINE] recorrencia troca (segue):', e?.message); }
       res.json(items);
     } catch (error: any) {
       console.error('❌ [BILLING-PIPELINE] Error fetching items:', error);

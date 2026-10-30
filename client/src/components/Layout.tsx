@@ -31,7 +31,7 @@ const MENU_CARD: Record<string, string> = {
   "driver-management": "Motoristas", "delivery-reports": "Relatórios de Entregas", "temperatura-entregas": "Temperatura das Entregas",
   products: "Produtos", "hotsite-pricing": "Preços de Venda", "hotsite-orders": "Pedidos do Site", canais: "Canais",
   "gestao-debito-vendas": "Débito e Variação de Vendas", "painel-atendimento": "Painel de Atendimento",
-  estoque: "Gestão de Estoque", "auditoria-estoque": "Auditoria de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores", "fornecedores-criticos": "Fornecedores Críticos", comodatos: "Contratos de Comodato",
+  estoque: "Gestão de Estoque", "auditoria-estoque": "Auditoria de Estoque", cupons: "Cupons de Desconto", fornecedores: "Fornecedores", "fornecedores-criticos": "Fornecedores Críticos", "trocas-recorrentes": "Trocas Recorrentes", comodatos: "Contratos de Comodato",
   billings: "Faturamentos", "fiscal-invoices": "Faturamento NF-e", "inutilizacao-nf": "Inutilização de NF", contabilidade: "Contabilidade", "contabilidade-fiscal": "Fiscal", "contabilidade-contabil": "Contábil", "billing-pipeline": "Pipeline Faturamento",
   "recuperacao-faturamento": "Recuperação de Faturamento",
   "fin-receivables": "Contas a Receber", "fin-payables": "Contas a Pagar", "fin-overdue": "Débitos Vencidos",
@@ -527,6 +527,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'gestao-produtos', label: 'Produtos Comercializados', icon: 'fas fa-boxes', available: canAccessReports, badge: null },
         { id: 'gestao-debito-vendas', label: 'Débito e Variação de Vendas', icon: 'fas fa-wallet', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
         { id: 'painel-atendimento', label: 'Painel de Atendimento', icon: 'fas fa-gauge-high', available: canAccessPainelAtendimento, badge: null },
+        // Trocas recorrentes (30/out/2026): mesmo cliente + mesmo motivo em 60 dias.
+        { id: 'trocas-recorrentes', label: 'Trocas Recorrentes', icon: 'fas fa-rotate', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
       ],
     },
     {
@@ -599,7 +601,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
-  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque', 'recebimento-estoque'];
+  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque', 'recebimento-estoque', 'trocas-recorrentes'];
   // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
   // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
   // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
@@ -696,7 +698,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
       return;
     }
 
-    const routePages = ['chamados', 'viagens', 'reembolsos', 'resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'fornecedores-criticos', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'temperaturas', 'qualidade-agua', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque', 'abertura-estoque', 'recebimento-estoque'];
+    const routePages = ['chamados', 'viagens', 'reembolsos', 'resumo-recebiveis', 'extrato-cliente', 'fechamento-config', 'fechar-rota', 'execucao-rota', 'radar-churn', 'fila-resgate', 'programa-indicacao', 'justificativas', 'sales-schedule', 'billings', 'fiscal-invoices', 'inutilizacao-nf', 'contabilidade', 'contabilidade-fiscal', 'contabilidade-contabil', 'billing-pipeline', 'estoque', 'financeiro', 'industria', 'sales-goals', 'blocked-orders', 'overdue-debts', 'visit-routes', 'rota-do-dia', 'km-vendedores', 'rota-entrega', 'routes-management', 'delivery-routes', 'entregas-do-dia', 'fluxo-entregas', 'temperatura-entregas', 'gestao-produtos', 'gestao-debito-vendas', 'painel-atendimento', 'mapa-clientes', 'clientes-ativos', 'clientes-virtuais-hoje', 'check-in-photos', 'check-in-audit', 'rh', 'hotsite-pricing', 'hotsite-orders', 'canais', 'leads', 'consulta-local', 'whatsapp', 'telemarketing', 'validacao-rotas', 'central-atendimento', 'vendas-digitais', 'sdr-digital', 'relatorios', 'relatorios-ia', 'relatorios-graficos', 'gestao-carteiras', 'radar-compras', 'cenarios-fiscais', 'telefones-clientes', 'tabela-precos', 'precos-grade', 'cupons', 'fornecedores', 'fornecedores-criticos', 'recuperacao-faturamento', 'conciliacao-bancaria', 'auditoria-cobrancas', 'automacoes-comunicacao', 'painel-comunicacao', 'cielo', 'industria-dados', 'temperaturas', 'qualidade-agua', 'todas-as-contas', 'fluxo-caixa', 'conferencia-pagamentos', 'conferencia-recebimentos', 'comodatos', 'dashboard-financeiro', 'auditoria-financeira', 'lixeira-financeira', 'auditoria-estoque', 'abertura-estoque', 'recebimento-estoque', 'trocas-recorrentes'];
 
     if (itemId === 'empresas-grupo') {
       navigate('/admin/empresas');
