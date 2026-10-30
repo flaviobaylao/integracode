@@ -84,8 +84,13 @@ export function ensureTrocaSchema(): Promise<void> {
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS regra_versao integer",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_do_vendedor boolean",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS acao_cliente varchar",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS origem varchar",
+        "CREATE TABLE IF NOT EXISTS troca_migracoes (nome varchar PRIMARY KEY, feito_em timestamptz DEFAULT now(), resultado text)",
       ]) await db.execute(sql.raw(ix)).catch(() => {});
       await recalcularRegraRegistrante().catch((e) => console.error("[TROCA] recalculo:", e?.message || e));
+      // Trocas que já estavam no pipeline/bloqueados antes do motivo existir: registra uma vez
+      // (em segundo plano, para não atrasar a primeira requisição).
+      setTimeout(() => { backfillTrocasPipeline().catch((e) => console.error("[TROCA] backfill:", e?.message || e)); }, 5000);
     })().catch((e) => {
       schemaReady = null;
       throw e;
@@ -233,6 +238,91 @@ async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: stri
     nfSellerId: vendedorId,
     nfSellerName: vendedorNome,
   };
+}
+
+/**
+ * Motivo deduzido do texto que o vendedor escreveu (observações), para trocas registradas
+ * antes de 23/10/2026, quando o card ainda não tinha a lista de motivos. Sem palavra-chave
+ * reconhecível, devolve null e a troca fica sem registro.
+ */
+export function motivoPorTexto(texto: string | null | undefined): MotivoTroca | null {
+  const t = normalizar(texto);
+  if (!t) return null;
+  if (/ferment|estufad|azed|\bgas\b|gaseific|estourad|inchad/.test(t)) return "fermentado";
+  if (/vencid|venceu|vencimento|validade|vencend|fora do prazo/.test(t)) return "vencido";
+  if (/lacre/.test(t)) return "lacre";
+  if (/tampa|vazand|vazament|vazou/.test(t)) return "tampa";
+  if (/amassad|avaria|avariad|rotulo|deformad|quebrad|furad|danificad/.test(t)) return "avaria";
+  return null;
+}
+
+/**
+ * BACKFILL (30/10/2026): cria registro de troca para os pedidos de troca dos últimos 120 dias
+ * (pipeline e bloqueados) que não têm registro, com o motivo deduzido das observações.
+ * Assim os cards que já estão no pipeline mostram motivo e recorrência. Não gera desconto de
+ * comissão (desconto 0, origem 'backfill'). Roda uma vez (troca_migracoes).
+ */
+export async function backfillTrocasPipeline(): Promise<{ criados: number; semMotivo: number; jaTinham: number } | null> {
+  const NOME = "backfill_pipeline_v1";
+  const ja: any = await db.execute(sql`SELECT 1 FROM troca_migracoes WHERE nome = ${NOME}`);
+  if (ja.rows?.length) return null;
+  const r: any = await db.execute(sql`
+    SELECT * FROM (
+      SELECT DISTINCT ON (x.sales_card_id, x.dia) x.* FROM (
+        SELECT bp.sales_card_id, bp.customer_id, bp.customer_name, bp.seller_id, bp.sale_value AS valor, bp.products,
+               COALESCE(NULLIF(bp.notes, ''), sc.notes) AS notas, bp.created_at,
+               (bp.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS dia
+        FROM billing_pipeline bp LEFT JOIN sales_cards sc ON sc.id = bp.sales_card_id
+        WHERE LOWER(COALESCE(bp.operation_type, '')) = 'troca' AND bp.stage <> 'lixeira'
+          AND bp.created_at >= now() - interval '120 days'
+        UNION ALL
+        SELECT bo.sales_card_id, bo.customer_id,
+               COALESCE(NULLIF(cu.fantasy_name, ''), NULLIF(cu.company_name, ''), cu.name) AS customer_name,
+               bo.seller_id, bo.total_amount AS valor, bo.products, sc.notes AS notas, bo.created_at,
+               (bo.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS dia
+        FROM blocked_orders bo
+        LEFT JOIN sales_cards sc ON sc.id = bo.sales_card_id
+        LEFT JOIN customers cu ON cu.id = bo.customer_id
+        WHERE bo.operation_type::text = 'troca' AND bo.status::text IN ('blocked', 'released')
+          AND bo.created_at >= now() - interval '120 days'
+      ) x ORDER BY x.sales_card_id, x.dia, x.created_at
+    ) y ORDER BY y.created_at`);
+  let criados = 0, semMotivo = 0, jaTinham = 0;
+  for (const o of (r.rows || []) as any[]) {
+    try {
+      // Já tem registro deste pedido (no próprio card ou no card de origem, no mesmo dia)?
+      const ex: any = await db.execute(sql`
+        SELECT 1 FROM troca_registros t
+        WHERE (t.sales_card_id = ${o.sales_card_id}
+               OR t.sales_card_id = (SELECT parent_card_id FROM sales_cards WHERE id = ${o.sales_card_id}))
+          AND ABS(EXTRACT(EPOCH FROM (t.created_at - ${new Date(o.created_at).toISOString()}::timestamptz))) < 86400
+        LIMIT 1`);
+      if (ex.rows?.length) { jaTinham++; continue; }
+      const motivo = motivoPorTexto(o.notas);
+      if (!motivo) { semMotivo++; continue; }
+      const prods = Array.isArray(o.products) ? o.products : [];
+      const itens = prods.map((p: any) => ({
+        produtoId: String(p.id ?? ""), produto: String(p.name ?? ""), quantidade: n(p.quantity),
+        precoUnit: n(p.unitPrice), fontePreco: "pedido", valor: r2(n(p.quantity) * n(p.unitPrice)),
+      }));
+      const valor = n(o.valor) || r2(itens.reduce((s: number, i: any) => s + i.valor, 0));
+      const ym = ymBrasil(new Date(o.created_at));
+      await db.execute(sql`
+        INSERT INTO troca_registros
+          (sales_card_id, customer_id, customer_name, card_seller_id, motivo, categoria, valor_troca, itens,
+           nf_seller_id, comissao_pct, desconto, ym, observacao, created_by, created_at, regra_versao, origem)
+        VALUES (${o.sales_card_id}, ${o.customer_id}, ${o.customer_name}, ${o.seller_id}, ${motivo},
+           ${motivo === "vencido" ? "comercial" : "qualidade"}, ${valor}, ${JSON.stringify(itens)}::jsonb,
+           ${o.seller_id}, 0, 0, ${ym}, ${o.notas || null}, 'backfill', ${new Date(o.created_at).toISOString()}::timestamptz, 2, 'backfill')`);
+      criados++;
+    } catch (e: any) {
+      console.error("[TROCA] backfill item", o.sales_card_id, e?.message || e);
+    }
+  }
+  const resultado = JSON.stringify({ criados, semMotivo, jaTinham, total: (r.rows || []).length });
+  await db.execute(sql`INSERT INTO troca_migracoes (nome, resultado) VALUES (${NOME}, ${resultado}) ON CONFLICT (nome) DO NOTHING`);
+  console.log(`[TROCA] backfill do pipeline: ${resultado}`);
+  return { criados, semMotivo, jaTinham };
 }
 
 /** Recalcula pela regra de 26/10 os registros de vencido gravados antes dela. Idempotente. */
@@ -442,6 +532,8 @@ export async function recorrenciaPorCards(cardIds: string[]): Promise<Map<string
 }
 
 export function registerTrocaRegistrosRoutes(app: Express) {
+  // Garante o esquema (e o registro retroativo das trocas do pipeline) logo após o boot.
+  setTimeout(() => { ensureTrocaSchema().catch((e) => console.error("[TROCA] schema no boot:", e?.message || e)); }, 20000);
   // Grava o motivo da troca do card (chamado pelo card de vendas ao finalizar).
   // PRÉVIA do desconto (card de vendas, antes de finalizar): mesma conta do registro,
   // com os produtos que estão na tela (ainda não gravados no card). Não grava nada.
@@ -574,7 +666,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
                nf_numero, to_char(nf_data, 'YYYY-MM-DD') AS nf_data, nf_seller_id, nf_seller_name,
                comissao_pct, desconto, ym, created_at
         FROM troca_registros
-        WHERE ym = ${ym}
+        WHERE ym = ${ym} AND COALESCE(origem, '') <> 'backfill'
           AND (${soVencido} = false OR motivo = 'vencido')
           AND (${equipe} = true OR nf_seller_id = ${uid} OR card_seller_id = ${uid})
         ORDER BY created_at DESC`);
@@ -760,6 +852,18 @@ export function registerTrocaRegistrosRoutes(app: Express) {
     } catch (e: any) {
       console.error("[TROCA] recorrentes:", e?.message || e);
       res.status(500).json({ message: "Falha ao listar trocas recorrentes" });
+    }
+  });
+
+  // Resultado do registro retroativo das trocas que já estavam no pipeline (admin).
+  app.get("/api/trocas/backfill-status", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const r: any = await db.execute(sql`SELECT nome, feito_em, resultado FROM troca_migracoes ORDER BY feito_em DESC`);
+      const c: any = await db.execute(sql`SELECT motivo, COUNT(*)::int AS qtd FROM troca_registros WHERE origem = 'backfill' GROUP BY motivo ORDER BY 2 DESC`);
+      res.json({ migracoes: r.rows || [], porMotivo: c.rows || [] });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "falha" });
     }
   });
 }
