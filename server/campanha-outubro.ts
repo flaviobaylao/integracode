@@ -33,7 +33,20 @@ function todayBrt(): string {
 function campaignActive(): boolean { return todayBrt().slice(0, 7) === CAMPAIGN_YM; }
 
 // Carteira doc -> vendedor (dono da carteira) — identico ao dashboard-history.
-const CARTEIRA_SELLER = "(SELECT DISTINCT ON (doc) doc, seller FROM (SELECT regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc, NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') AS seller FROM customers c JOIN users u ON (u.omie_vendor_code=c.seller_id OR u.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id=c.seller_id) WHERE regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> '') s ORDER BY doc) cs";
+// Traz tambem o ID do usuario: o credito do novo cliente e gravado por ID, nao por nome
+// (ver NOME_VENDEDOR abaixo).
+const CARTEIRA_SELLER = "(SELECT DISTINCT ON (doc) doc, seller, uid FROM (SELECT regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc, NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') AS seller, u.id AS uid FROM customers c JOIN users u ON (u.omie_vendor_code=c.seller_id OR u.omie_vendor_code=replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id=c.seller_id) WHERE regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> '') s ORDER BY doc) cs";
+
+// Nome do vendedor de um cadastro da campanha: SEMPRE o nome ATUAL do usuario dono do
+// credito (seller_user_id); so cai no texto congelado quando o registro nao tem usuario.
+// Sem isso, corrigir o cadastro do vendedor (ex.: "Carlos T." -> "Carlos T") deixava os
+// cadastros antigos orfaos — o painel so soma nomes que batem com um usuario ativo, entao
+// os novos clientes ja aprovados sumiam da tela e do bonus.
+const NOME_VENDEDOR = "COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'')||' '||COALESCE(u.last_name,'')),''), cnc.seller_name)";
+
+// Chave de comparacao de nomes: minusculas, so letras/numeros. Faz "Carlos T." casar com
+// "Carlos T" no reparo dos registros antigos.
+const CHAVE_NOME = (col: string) => "lower(regexp_replace(" + col + ",'[^a-zA-Z0-9]','','g'))";
 
 const PURO_EXCL =
   " AND NOT (UPPER(COALESCE(c.name,'')||' '||COALESCE(c.fantasy_name,'')) LIKE '%PURO%' AND UPPER(COALESCE(c.name,'')||' '||COALESCE(c.fantasy_name,'')) LIKE '%PRODUTOS NATURAIS%')" +
@@ -59,6 +72,20 @@ export async function ensureCampaignTable(): Promise<void> {
     created_at timestamptz DEFAULT now()
   )`);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS ux_campaign_ym_doc ON campaign_new_clients (campaign_ym, doc)`);
+  // Dono do credito por ID (o nome e so rotulo). seller_name continua gravado para os
+  // casos sem usuario correspondente e para auditoria do que foi creditado na epoca.
+  await db.execute(sql`ALTER TABLE campaign_new_clients ADD COLUMN IF NOT EXISTS seller_user_id varchar`);
+  // Reparo dos registros gravados antes da coluna existir: casa o nome congelado com o
+  // usuario, ignorando pontuacao e caixa. So casa quando a chave aponta para UM unico
+  // usuario — havendo homonimos, o registro fica sem ID (e segue pelo nome, como antes).
+  await db.execute(sql.raw(
+    "UPDATE campaign_new_clients cnc SET seller_user_id = m.uid FROM (" +
+    "  SELECT k, MIN(id) AS uid, COUNT(*) AS n FROM (" +
+    "    SELECT id, " + CHAVE_NOME("COALESCE(first_name,'')||COALESCE(last_name,'')") + " AS k FROM users" +
+    "  ) x WHERE k <> '' GROUP BY k" +
+    ") m WHERE cnc.seller_user_id IS NULL AND m.n = 1 AND " + CHAVE_NOME("cnc.seller_name") + " = m.k"
+  ));
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_campaign_ym_user ON campaign_new_clients (campaign_ym, seller_user_id)`);
   _ensured = true;
 }
 
@@ -86,9 +113,10 @@ export async function detectNovos(ym: string): Promise<number> {
   );
   const cust: Record<string, { id: string; nome: string; regiao: string }> = {};
   for (const r of custs) { const d = String(r.doc); if (d && !(d in cust)) cust[d] = { id: String(r.id), nome: String(r.nome || ""), regiao: String(r.regiao || "") }; }
-  const carteira = await rawq("SELECT doc, seller FROM " + CARTEIRA_SELLER);
+  const carteira = await rawq("SELECT doc, seller, uid FROM " + CARTEIRA_SELLER);
   const docSeller: Record<string, string> = {};
-  for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) docSeller[d] = String(r.seller || ""); }
+  const docUid: Record<string, string> = {};
+  for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) { docSeller[d] = String(r.seller || ""); docUid[d] = String(r.uid || ""); } }
 
   let n = 0;
   for (const r of novos) {
@@ -103,10 +131,12 @@ export async function detectNovos(ym: string): Promise<number> {
     const nomeE = c.nome.replace(/'/g, "''");
     const regE = c.regiao.replace(/'/g, "''");
     const sellE = seller.replace(/'/g, "''");
+    const uid = (docUid[doc] || "").replace(/'/g, "");
+    const uidSql = uid ? "'" + uid + "'" : "NULL";
     await db.execute(sql.raw(
-      "INSERT INTO campaign_new_clients (campaign_ym, doc, customer_id, customer_name, seller_name, region, order_value, first_order_date, status)" +
-      " VALUES ('" + ym + "', '" + docE + "', '" + c.id + "', '" + nomeE + "', '" + sellE + "', '" + regE + "', " + val + ", '" + fd + "'::date, 'pendente')" +
-      " ON CONFLICT (campaign_ym, doc) DO UPDATE SET customer_name = EXCLUDED.customer_name, seller_name = EXCLUDED.seller_name, region = EXCLUDED.region, order_value = EXCLUDED.order_value, first_order_date = EXCLUDED.first_order_date" +
+      "INSERT INTO campaign_new_clients (campaign_ym, doc, customer_id, customer_name, seller_name, seller_user_id, region, order_value, first_order_date, status)" +
+      " VALUES ('" + ym + "', '" + docE + "', '" + c.id + "', '" + nomeE + "', '" + sellE + "', " + uidSql + ", '" + regE + "', " + val + ", '" + fd + "'::date, 'pendente')" +
+      " ON CONFLICT (campaign_ym, doc) DO UPDATE SET customer_name = EXCLUDED.customer_name, seller_name = EXCLUDED.seller_name, seller_user_id = EXCLUDED.seller_user_id, region = EXCLUDED.region, order_value = EXCLUDED.order_value, first_order_date = EXCLUDED.first_order_date" +
       " WHERE campaign_new_clients.status = 'pendente'"
     ));
     n++;
@@ -174,7 +204,11 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   // Novos clientes da campanha por vendedor (aptos / em validacao).
   const novosAptos: Record<string, number> = {};
   const emValidacao: Record<string, number> = {};
-  const crows = await rawq("SELECT seller_name, status, COUNT(*)::int AS n FROM campaign_new_clients WHERE campaign_ym = '" + ym + "' GROUP BY 1, 2");
+  const crows = await rawq(
+    "SELECT " + NOME_VENDEDOR + " AS seller_name, cnc.status, COUNT(*)::int AS n" +
+    " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
+    " WHERE cnc.campaign_ym = '" + ym + "' GROUP BY 1, 2"
+  );
   for (const r of crows) {
     const s = String(r.seller_name || ""); if (!s) continue;
     if (String(r.status) === "aprovado") novosAptos[s] = (novosAptos[s] || 0) + (Number(r.n) || 0);
@@ -229,9 +263,10 @@ export async function listNovos(seller: string, ym: string = CAMPAIGN_YM): Promi
   await ensureCampaignTable();
   const s = seller.replace(/'/g, "''");
   const rows = await rawq(
-    "SELECT customer_name, region, order_value, first_order_date::text AS first_order_date, status" +
-    " FROM campaign_new_clients WHERE campaign_ym = '" + ym + "' AND seller_name = '" + s + "' AND status = 'aprovado'" +
-    " ORDER BY first_order_date NULLS LAST, customer_name"
+    "SELECT cnc.customer_name, cnc.region, cnc.order_value, cnc.first_order_date::text AS first_order_date, cnc.status" +
+    " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
+    " WHERE cnc.campaign_ym = '" + ym + "' AND " + NOME_VENDEDOR + " = '" + s + "' AND cnc.status = 'aprovado'" +
+    " ORDER BY cnc.first_order_date NULLS LAST, cnc.customer_name"
   );
   return rows.map((r) => ({ cliente: r.customer_name, regiao: r.region, pedido: Number(r.order_value) || 0, data: r.first_order_date || "", status: r.status }));
 }
@@ -239,8 +274,10 @@ export async function listNovos(seller: string, ym: string = CAMPAIGN_YM): Promi
 export async function inboxPendentes(ym: string = CAMPAIGN_YM): Promise<any[]> {
   await ensureCampaignTable();
   const rows = await rawq(
-    "SELECT id, customer_name, seller_name, region, order_value, first_order_date::text AS first_order_date, status, justification" +
-    " FROM campaign_new_clients WHERE campaign_ym = '" + ym + "' ORDER BY (status='pendente') DESC, first_order_date DESC NULLS LAST"
+    "SELECT cnc.id, cnc.customer_name, " + NOME_VENDEDOR + " AS seller_name, cnc.region, cnc.order_value," +
+    " cnc.first_order_date::text AS first_order_date, cnc.status, cnc.justification" +
+    " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
+    " WHERE cnc.campaign_ym = '" + ym + "' ORDER BY (cnc.status='pendente') DESC, cnc.first_order_date DESC NULLS LAST"
   );
   return rows.map((r) => ({ id: String(r.id), cliente: r.customer_name, vendedor: r.seller_name, regiao: r.region, pedido: Number(r.order_value) || 0, data: r.first_order_date || "", status: r.status, justificativa: r.justification || "" })).filter((x) => !excluido(x.vendedor));
 }
@@ -263,10 +300,11 @@ export async function rotaAvisos(seller: string, ym: string = CAMPAIGN_YM): Prom
   await ensureCampaignTable();
   const s = seller.replace(/'/g, "''");
   const rows = await rawq(
-    "SELECT customer_name, status, justification, decided_at::text AS decided_at" +
-    " FROM campaign_new_clients WHERE campaign_ym = '" + ym + "' AND seller_name = '" + s + "' AND status IN ('aprovado','rejeitado')" +
-    " AND decided_at >= now() - INTERVAL '7 days'" +
-    " ORDER BY decided_at DESC NULLS LAST"
+    "SELECT cnc.customer_name, cnc.status, cnc.justification, cnc.decided_at::text AS decided_at" +
+    " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
+    " WHERE cnc.campaign_ym = '" + ym + "' AND " + NOME_VENDEDOR + " = '" + s + "' AND cnc.status IN ('aprovado','rejeitado')" +
+    " AND cnc.decided_at >= now() - INTERVAL '7 days'" +
+    " ORDER BY cnc.decided_at DESC NULLS LAST"
   );
   return rows.map((r) => ({ cliente: r.customer_name, status: r.status, justificativa: r.justification || "", quando: r.decided_at || "" }));
 }
