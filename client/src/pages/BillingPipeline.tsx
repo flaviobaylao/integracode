@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import PaymentLinkDialog from '@/components/PaymentLinkDialog';
-import TrocaAnteriorAviso from '@/components/TrocaAnteriorAviso';
+import { TrocaRecorrenciaPedido } from '@/components/TrocaRecorrencia';
 import PedidoGynServDialog from '@/components/PedidoGynServDialog';
 import DescontoBoletoBox from '@/components/DescontoBoletoBox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,6 +74,7 @@ interface BillingPipelineItem {
   notes: string | null;
   trocaPhotoUrl?: string | null; // 1ª foto da troca (compatibilidade)
   trocaPhotoUrls?: string[];     // todas as fotos dos produtos anexadas na troca (até 3)
+  trocaRecorrencia?: { motivoLabel: string; n: number; ordinal: string; janelaDias: number; exigeObsAdmin?: boolean } | null;
   omieInstanceId: string | null;
   omieInstanceName: string | null;
   scheduledBillingDate: string | null;
@@ -867,7 +868,8 @@ export default function BillingPipeline() {
   });
 
   const releaseBlockedMutation = useMutation({
-    mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/release', { orderIds }),
+    mutationFn: async (vars: string[] | { orderIds: string[]; observacoes?: Record<string, string> }) =>
+      await apiRequest('POST', '/api/blocked-orders/release', Array.isArray(vars) ? { orderIds: vars } : vars),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
@@ -877,6 +879,23 @@ export default function BillingPipeline() {
     },
     onError: (error: any) => { toast({ title: 'Erro ao liberar', description: error.message, variant: 'destructive' }); }
   });
+
+  // Troca recorrente (3ª ou mais do mesmo motivo em 60 dias): pede a observação do admin antes de liberar.
+  const liberarBloqueados = (ids: string[]) => {
+    const observacoes: Record<string, string> = {};
+    for (const id of ids) {
+      const b: any = (blockedOrders as any[]).find((x: any) => x.id === id);
+      const rec = b?.trocaRecorrencia;
+      if (rec && rec.n >= 3) {
+        const nome = b?.customer?.fantasyName || b?.customer?.name || 'cliente';
+        const obs = window.prompt(`${nome}: ${rec.ordinal} troca por ${rec.motivoLabel} em ${rec.janelaDias} dias.\nEscreva a observação para liberar (obrigatória):`, '');
+        if (obs === null) return;
+        if (!obs.trim()) { toast({ title: 'Observação obrigatória', description: `Troca recorrente de ${nome}: informe a observação para liberar.`, variant: 'destructive' }); return; }
+        observacoes[id] = obs.trim();
+      }
+    }
+    releaseBlockedMutation.mutate({ orderIds: ids, observacoes });
+  };
 
   const rejectBlockedMutation = useMutation({
     mutationFn: async (orderIds: string[]) => await apiRequest('POST', '/api/blocked-orders/reject', { orderIds }),
@@ -998,6 +1017,7 @@ export default function BillingPipeline() {
           notes: ([b.sellerNotes, b.blockDetails].filter((x: any) => x && String(x).trim()).join('\n\n')) || b.blockReason || null,
           trocaPhotoUrl: b.trocaPhotoUrl ?? null,
           trocaPhotoUrls: Array.isArray(b.trocaPhotoUrls) ? b.trocaPhotoUrls : (b.trocaPhotoUrl ? [b.trocaPhotoUrl] : []),
+          trocaRecorrencia: b.trocaRecorrencia ?? null,
           omieInstanceId: null,
           omieInstanceName: null,
           stageHistory: [],
@@ -1236,7 +1256,7 @@ export default function BillingPipeline() {
     // Card da coluna 'Bloqueados' nao e item do pipeline: avancar = LIBERAR (release), nao PATCH /stage.
     if (item.stage === 'bloqueado') {
       if (direction === 'forward') {
-        if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento?`)) releaseBlockedMutation.mutate([item.id]);
+        if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento?`)) liberarBloqueados([item.id]);
       }
       return;
     }
@@ -1270,7 +1290,7 @@ export default function BillingPipeline() {
     // Card da coluna 'Bloqueados' nao e item do pipeline: alterar a etapa = LIBERAR (release).
     // O pedido liberado entra na etapa "Pedido" e dali pode ser movido normalmente.
     if (item.stage === 'bloqueado') {
-      if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento? Ele entrara na etapa "Pedido".`)) releaseBlockedMutation.mutate([item.id]);
+      if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento? Ele entrara na etapa "Pedido".`)) liberarBloqueados([item.id]);
       return;
     }
     // Mover para "Bloqueados" NAO e mudanca de stage: e BLOQUEAR (tabela blocked_orders via /block).
@@ -2279,7 +2299,7 @@ export default function BillingPipeline() {
                     <div className="text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg">
                       <p className="whitespace-pre-line">{detailItem.notes}</p>
                       {String(detailItem.operationType || '').toLowerCase() === 'troca' && detailItem.salesCardId && (
-                        <TrocaAnteriorAviso salesCardId={detailItem.salesCardId} className="mt-3 text-sm font-semibold text-red-600" />
+                        <TrocaRecorrenciaPedido salesCardId={detailItem.salesCardId} />
                       )}
                     </div>
                   )}
@@ -2650,7 +2670,7 @@ export default function BillingPipeline() {
                 const allIds = Array.from(selectedIds);
                 const blockedIds = allIds.filter(id => blockedSet.has(id));
                 const pipelineIds = allIds.filter(id => !blockedSet.has(id));
-                if (blockedIds.length) releaseBlockedMutation.mutate(blockedIds);
+                if (blockedIds.length) liberarBloqueados(blockedIds);
                 if (pipelineIds.length) {
                   batchStageMutation.mutate({ ids: pipelineIds, stage: batchStageTarget });
                 } else {
@@ -2969,6 +2989,7 @@ function KanbanCard({
             return (
               <Badge variant="outline" className={`text-[10px] ${operationBadgeClass(cat)}`}>
                 {CATEGORY_LABELS[cat] || OPERATION_LABELS[cat] || cat}
+                {cat === 'troca' && item.trocaRecorrencia ? ` · ${item.trocaRecorrencia.motivoLabel}${item.trocaRecorrencia.n >= 2 ? ` · ${item.trocaRecorrencia.ordinal} em ${item.trocaRecorrencia.janelaDias} dias` : ''}` : ''}
               </Badge>
             );
           })()}

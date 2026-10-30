@@ -83,6 +83,7 @@ export function ensureTrocaSchema(): Promise<void> {
         // sem DEFAULT: linhas antigas ficam NULL (= regra 1) e são recalculadas abaixo.
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS regra_versao integer",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_do_vendedor boolean",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS acao_cliente varchar",
       ]) await db.execute(sql.raw(ix)).catch(() => {});
       await recalcularRegraRegistrante().catch((e) => console.error("[TROCA] recalculo:", e?.message || e));
     })().catch((e) => {
@@ -281,6 +282,165 @@ function podeVerEquipe(req: any): boolean {
   return ["admin", "coordinator", "administrative"].includes(req.currentUser?.role);
 }
 
+// ============================================================================
+// RECORRÊNCIA DE TROCAS (30/10/2026) — mesmo cliente + mesmo motivo numa janela.
+//   1ª na janela = normal · 2ª = alerta (vendedor informa a "Ação com o cliente")
+//   3ª ou mais  = liberação no pipeline só por admin, com observação obrigatória.
+//   A partir da 2ª, abre chamado para o gestor comercial.
+// ============================================================================
+export const JANELA_RECORRENCIA_DIAS = 60;
+export const ACOES_CLIENTE = [
+  "Orientei o armazenamento (−2 a 5 °C)",
+  "Conferi o refrigerador do cliente",
+  "Reduzi a quantidade do pedido",
+  "Troquei o mix de sabores",
+  "Outra (descrita nas observações)",
+];
+const DESTINOS_CHAMADO_RECORRENCIA = ["flavio", "cinthia"];
+const JANELA_MS = JANELA_RECORRENCIA_DIAS * 86400000;
+const dataBr = (d: any) => (d ? new Date(d).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }) : null);
+const ordinal = (k: number) => `${k}ª`;
+
+/** Última compra do cliente: última NF de venda autorizada (data e valor). */
+async function ultimaCompraCliente(customerId: string | null): Promise<{ data: string | null; valor: number; nf: string | null } | null> {
+  if (!customerId) return null;
+  const esc = (v: string) => String(v).replace(/'/g, "''");
+  try {
+    const r: any = await db.execute(sql.raw(`
+      SELECT fi.invoice_number, fi.total_invoice, to_char((${nfData("fi")})::date, 'YYYY-MM-DD') AS data
+      FROM ${nfVendaFrom("fi")}
+      WHERE ${nfVendaWhere("fi")}
+        AND (fi.customer_id = '${esc(customerId)}'
+             OR (NULLIF(regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g'),'') IS NOT NULL
+                 AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') IN (
+                   SELECT regexp_replace(COALESCE(c.cnpj, c.cpf, ''),'[^0-9]','','g')
+                   FROM customers c WHERE c.id = '${esc(customerId)}')))
+      ORDER BY ${nfData("fi")} DESC LIMIT 1`));
+    const x = r.rows?.[0];
+    if (!x) return null;
+    return { data: x.data ? String(x.data).split("-").reverse().join("/") : null, valor: n(x.total_invoice), nf: x.invoice_number != null ? String(x.invoice_number) : null };
+  } catch (e: any) {
+    console.error("[TROCA] ultima compra:", e?.message || e);
+    return null;
+  }
+}
+
+/** Trocas do cliente pelo motivo, ANTES de `ate` (exclui `excluirId`), mais recentes primeiro. */
+async function trocasDoMotivo(customerId: string, motivo: string, ate: Date, excluirId: string | null) {
+  const r: any = await db.execute(sql`
+    SELECT id, created_at, valor_troca, itens, acao_cliente FROM troca_registros
+    WHERE customer_id = ${customerId} AND motivo = ${motivo}
+      AND created_at <= ${ate.toISOString()}::timestamptz
+      AND id <> ${excluirId || ""}
+    ORDER BY created_at DESC LIMIT 50`);
+  return (r.rows || []) as any[];
+}
+
+/** Resumo de recorrência para uma troca que acontece em `ate`. */
+async function resumoRecorrencia(customerId: string, motivo: string, ate: Date, excluirId: string | null) {
+  const ant = await trocasDoMotivo(customerId, motivo, ate, excluirId);
+  const naJanela = ant.filter((x) => ate.getTime() - new Date(x.created_at).getTime() <= JANELA_MS).length;
+  const nOrdem = naJanela + 1; // esta troca inclusa
+  const ultima = ant[0] || null;
+  return {
+    motivo,
+    motivoLabel: MOTIVO_LABEL[motivo as MotivoTroca] || motivo,
+    janelaDias: JANELA_RECORRENCIA_DIAS,
+    n: nOrdem,
+    ordinal: ordinal(nOrdem),
+    nivel: nOrdem >= 3 ? "alta" : nOrdem === 2 ? "atencao" : "normal",
+    exigeAcao: nOrdem >= 2,
+    exigeObsAdmin: nOrdem >= 3,
+    ultimaData: ultima ? dataBr(ultima.created_at) : null,
+    hist: ant.slice(0, 3).map((x) => ({
+      data: dataBr(x.created_at),
+      valor: n(x.valor_troca),
+      itens: (Array.isArray(x.itens) ? x.itens : []).map((i: any) => `${n(i.quantidade)} × ${i.produto}`).join(" · "),
+      acao: x.acao_cliente || null,
+    })),
+  };
+}
+
+/** Registro de troca correspondente a um card (card-filho resolve para o card de origem). */
+async function registroDoCard(cardId: string): Promise<any | null> {
+  const sc: any = await db.execute(sql`SELECT id, parent_card_id, created_at FROM sales_cards WHERE id = ${cardId} LIMIT 1`);
+  const card = sc.rows?.[0];
+  if (!card) return null;
+  const ids = [String(card.id)];
+  if (card.parent_card_id) ids.push(String(card.parent_card_id));
+  const limite = card.parent_card_id && card.created_at ? new Date(new Date(card.created_at).getTime() + 30 * 60000).toISOString() : null;
+  const a: any = limite
+    ? await db.execute(sql`
+        SELECT * FROM troca_registros
+        WHERE sales_card_id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)}) AND created_at <= ${limite}::timestamptz
+        ORDER BY created_at DESC LIMIT 1`)
+    : await db.execute(sql`
+        SELECT * FROM troca_registros
+        WHERE sales_card_id IN (${sql.join(ids.map((x) => sql`${x}`), sql`, `)})
+        ORDER BY created_at DESC LIMIT 1`);
+  return a.rows?.[0] || null;
+}
+
+/** Recorrência por card (selo do pipeline / bloqueados e trava de liberação).
+ *  Em lote (3 consultas no total), porque roda a cada carga do pipeline. */
+export async function recorrenciaPorCards(cardIds: string[]): Promise<Map<string, any>> {
+  const out = new Map<string, any>();
+  const ids = Array.from(new Set(cardIds.filter(Boolean).map(String)));
+  if (!ids.length) return out;
+  try {
+    await ensureTrocaSchema();
+    const lst = (xs: string[]) => sql.join(xs.map((x) => sql`${x}`), sql`, `);
+    const sc: any = await db.execute(sql`SELECT id, parent_card_id, created_at FROM sales_cards WHERE id IN (${lst(ids)})`);
+    const cards = new Map<string, any>((sc.rows || []).map((c: any) => [String(c.id), c]));
+    const todos = new Set<string>(ids);
+    for (const c of Array.from(cards.values())) if (c.parent_card_id) todos.add(String(c.parent_card_id));
+    const rg: any = await db.execute(sql`SELECT * FROM troca_registros WHERE sales_card_id IN (${lst(Array.from(todos))}) ORDER BY created_at DESC`);
+    const porCard = new Map<string, any[]>();
+    for (const r of rg.rows || []) { const k = String(r.sales_card_id); (porCard.get(k) || porCard.set(k, []).get(k)!).push(r); }
+    const atual = new Map<string, any>();
+    for (const id of ids) {
+      const c = cards.get(id);
+      if (!c) continue;
+      let cand = [...(porCard.get(id) || []), ...(c.parent_card_id ? porCard.get(String(c.parent_card_id)) || [] : [])];
+      if (c.parent_card_id && c.created_at) {
+        const lim = new Date(c.created_at).getTime() + 30 * 60000;
+        cand = cand.filter((r) => new Date(r.created_at).getTime() <= lim);
+      }
+      cand.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      if (cand[0]?.customer_id) atual.set(id, cand[0]);
+    }
+    if (!atual.size) return out;
+    const clientes = Array.from(new Set(Array.from(atual.values()).map((r) => String(r.customer_id))));
+    const hs: any = await db.execute(sql`
+      SELECT id, customer_id, motivo, created_at FROM troca_registros
+      WHERE customer_id IN (${lst(clientes)}) AND created_at >= now() - interval '400 days'`);
+    const hist = (hs.rows || []) as any[];
+    for (const [id, reg] of Array.from(atual.entries())) {
+      const t = new Date(reg.created_at).getTime();
+      const ant = hist
+        .filter((h) => String(h.customer_id) === String(reg.customer_id) && h.motivo === reg.motivo && String(h.id) !== String(reg.id) && new Date(h.created_at).getTime() <= t)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const nOrdem = ant.filter((h) => t - new Date(h.created_at).getTime() <= JANELA_MS).length + 1;
+      out.set(id, {
+        motivo: reg.motivo,
+        motivoLabel: MOTIVO_LABEL[reg.motivo as MotivoTroca] || reg.motivo,
+        janelaDias: JANELA_RECORRENCIA_DIAS,
+        n: nOrdem,
+        ordinal: ordinal(nOrdem),
+        nivel: nOrdem >= 3 ? "alta" : nOrdem === 2 ? "atencao" : "normal",
+        exigeObsAdmin: nOrdem >= 3,
+        ultimaData: ant[0] ? dataBr(ant[0].created_at) : null,
+        acao: reg.acao_cliente || null,
+        registroId: reg.id,
+        customerId: reg.customer_id,
+      });
+    }
+  } catch (e: any) {
+    console.error("[TROCA] recorrencia por cards:", e?.message || e);
+  }
+  return out;
+}
+
 export function registerTrocaRegistrosRoutes(app: Express) {
   // Grava o motivo da troca do card (chamado pelo card de vendas ao finalizar).
   // PRÉVIA do desconto (card de vendas, antes de finalizar): mesma conta do registro,
@@ -324,6 +484,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       if (!card) return res.status(404).json({ message: "Card não encontrado" });
 
       const user = req.currentUser;
+      const acaoCliente = String(req.body?.acaoCliente || "").trim().slice(0, 200) || null;
       const calc = await calcularTroca(card, motivo, user?.id ? String(user.id) : null);
       const categoria = motivo === "vencido" ? "comercial" : "qualidade";
       const ym = ymBrasil();
@@ -346,6 +507,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
             nf_numero = ${calc.nfNumero}, nf_data = ${calc.nfData}, nf_seller_id = ${calc.nfSellerId},
             nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct},
             desconto = ${calc.desconto}, observacao = ${card.notes || null}, nf_do_vendedor = ${calc.nfDoVendedor},
+            acao_cliente = COALESCE(${acaoCliente}, acao_cliente),
             regra_versao = 2, created_by = COALESCE(created_by, ${user?.id || null}), updated_at = now()
           WHERE id = ${recenteId}`);
       } else {
@@ -353,11 +515,37 @@ export function registerTrocaRegistrosRoutes(app: Express) {
           INSERT INTO troca_registros
             (sales_card_id, customer_id, customer_name, card_seller_id, motivo, categoria, temperatura_c,
              valor_troca, itens, nf_id, nf_numero, nf_data, nf_seller_id, nf_seller_name,
-             comissao_pct, desconto, ym, observacao, created_by, nf_do_vendedor, regra_versao)
+             comissao_pct, desconto, ym, observacao, created_by, nf_do_vendedor, regra_versao, acao_cliente)
           VALUES (${id}, ${card.customer_id}, ${card.customer_name}, ${card.seller_id}, ${motivo}, ${categoria}, ${temperatura},
              ${calc.valorTroca}, ${JSON.stringify(calc.itens)}::jsonb, ${calc.nfId}, ${calc.nfNumero}, ${calc.nfData},
-             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null}, ${calc.nfDoVendedor}, 2)`);
+             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null}, ${calc.nfDoVendedor}, 2, ${acaoCliente})`);
       }
+
+      // Recorrência: a partir da 2ª troca do mesmo motivo na janela, chamado ao gestor comercial
+      // (só no registro novo — reenvio do mesmo pedido não abre outro).
+      let recorrencia: any = null;
+      try {
+        recorrencia = card.customer_id ? await resumoRecorrencia(String(card.customer_id), motivo, new Date(), recenteId ? String(recenteId) : null) : null;
+        if (recorrencia && recorrencia.n >= 2 && !recenteId) {
+          const { abrirChamadoSistema } = await import("./chamados-routes");
+          const ult = await ultimaCompraCliente(card.customer_id);
+          const quem = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || "vendedor";
+          const linhas = [
+            `${recorrencia.ordinal} troca por ${recorrencia.motivoLabel} em ${JANELA_RECORRENCIA_DIAS} dias — cliente ${card.customer_name || ""}.`,
+            `Data última troca: ${recorrencia.ultimaData || "—"}.`,
+            `Esta troca: R$ ${calc.valorTroca.toFixed(2).replace(".", ",")}${ult ? ` · última compra ${ult.data}: R$ ${ult.valor.toFixed(2).replace(".", ",")}` : ""}.`,
+            `Vendedor: ${quem} · ação com o cliente: ${acaoCliente || "não informada"}.`,
+            recorrencia.n >= 3 ? "Liberação no pipeline só por admin, com observação." : "",
+          ].filter(Boolean);
+          await abrirChamadoSistema({
+            destinoKeys: DESTINOS_CHAMADO_RECORRENCIA,
+            assunto: `NOTIFICACAO - TROCA RECORRENTE - ${String(card.customer_name || "CLIENTE").toUpperCase()} - ${recorrencia.motivoLabel.toUpperCase()}`,
+            descricao: linhas.join("\n"),
+            prioridade: recorrencia.n >= 3 ? "Urgente" : "Normal",
+            autor: user?.id ? { id: String(user.id), nome: quem, role: String(user.role || "") } : null,
+          });
+        }
+      } catch (e: any) { console.error("[TROCA] chamado recorrencia:", e?.message || e); }
 
       // Auditoria junto das fotos da troca.
       try {
@@ -365,7 +553,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
           VALUES (gen_random_uuid(), ${id}, 'troca_motivo', ${`${MOTIVO_LABEL[motivo]}${temperatura != null ? ` ${temperatura}°C` : ""} | desconto R$ ${calc.desconto.toFixed(2)}`}, now())`);
       } catch { /* auditoria nao bloqueia */ }
 
-      return res.json({ ok: true, motivo, categoria, ...calc, anterior });
+      return res.json({ ok: true, motivo, categoria, ...calc, anterior, recorrencia });
     } catch (e: any) {
       console.error("[TROCA] motivo:", e?.message || e);
       return res.status(500).json({ message: "Falha ao registrar o motivo da troca" });
@@ -497,6 +685,81 @@ export function registerTrocaRegistrosRoutes(app: Express) {
     } catch (e: any) {
       console.error("[TROCA] cliente:", e?.message || e);
       res.status(500).json({ message: "Falha ao listar trocas do cliente" });
+    }
+  });
+
+  // Recorrência da troca (30/10/2026).
+  //  ?customerId=&motivo=  → card de vendas, antes de finalizar (esta troca conta como a próxima)
+  //  ?salesCardId=         → pedido no pipeline / bloqueados
+  app.get("/api/trocas/recorrencia", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const salesCardId = String(req.query?.salesCardId || "").trim();
+      if (salesCardId) {
+        const reg = await registroDoCard(salesCardId);
+        if (!reg || !reg.customer_id) return res.json({ recorrencia: null });
+        const r = await resumoRecorrencia(String(reg.customer_id), String(reg.motivo), new Date(reg.created_at), String(reg.id));
+        const ultimaCompra = await ultimaCompraCliente(String(reg.customer_id));
+        return res.json({ recorrencia: { ...r, acao: reg.acao_cliente || null, valorTroca: n(reg.valor_troca), customerId: reg.customer_id, ultimaCompra } });
+      }
+      const customerId = String(req.query?.customerId || "").trim();
+      const motivo = String(req.query?.motivo || "").toLowerCase();
+      if (!customerId || !MOTIVOS_TROCA.includes(motivo as MotivoTroca)) return res.json({ recorrencia: null });
+      const r = await resumoRecorrencia(customerId, motivo, new Date(), null);
+      const ultimaCompra = await ultimaCompraCliente(customerId);
+      return res.json({ recorrencia: { ...r, customerId, ultimaCompra }, acoes: ACOES_CLIENTE });
+    } catch (e: any) {
+      console.error("[TROCA] recorrencia:", e?.message || e);
+      res.status(500).json({ message: "Falha ao consultar a recorrência da troca" });
+    }
+  });
+
+  // Clientes com troca recorrente: mesmo cliente + mesmo motivo com 2+ trocas na janela.
+  app.get("/api/trocas/recorrentes", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const dias = Math.min(365, Math.max(7, parseInt(String(req.query?.dias || JANELA_RECORRENCIA_DIAS), 10) || JANELA_RECORRENCIA_DIAS));
+      const equipe = podeVerEquipe(req);
+      const uid = String(req.currentUser?.id || "");
+      const r: any = await db.execute(sql`
+        SELECT t.customer_id, MAX(t.customer_name) AS customer_name, t.motivo,
+               COUNT(*)::int AS qtd, SUM(t.valor_troca) AS valor,
+               MIN(t.created_at) AS primeira, MAX(t.created_at) AS ultima,
+               (ARRAY_AGG(COALESCE(t.nf_seller_name, '') ORDER BY t.created_at DESC))[1] AS vendedor,
+               (ARRAY_AGG(t.nf_seller_id ORDER BY t.created_at DESC))[1] AS vendedor_id,
+               (ARRAY_AGG(t.acao_cliente ORDER BY t.created_at DESC))[1] AS acao
+        FROM troca_registros t
+        WHERE t.created_at >= now() - make_interval(days => ${dias}::int) AND t.customer_id IS NOT NULL
+        GROUP BY t.customer_id, t.motivo
+        HAVING COUNT(*) >= 2
+        ORDER BY COUNT(*) DESC, MAX(t.created_at) DESC`);
+      let lista = (r.rows || []) as any[];
+      if (!equipe) lista = lista.filter((x) => String(x.vendedor_id || "") === uid);
+      const out = [];
+      for (const x of lista) {
+        const qtd = Number(x.qtd) || 0;
+        const intervalo = qtd > 1 ? Math.round((new Date(x.ultima).getTime() - new Date(x.primeira).getTime()) / 86400000 / (qtd - 1)) : null;
+        const ult = await ultimaCompraCliente(String(x.customer_id));
+        out.push({
+          customerId: x.customer_id,
+          cliente: x.customer_name,
+          motivo: x.motivo,
+          motivoLabel: MOTIVO_LABEL[x.motivo as MotivoTroca] || x.motivo,
+          qtd,
+          ordinal: ordinal(qtd),
+          nivel: qtd >= 3 ? "alta" : "atencao",
+          intervaloDias: intervalo,
+          ultima: dataBr(x.ultima),
+          valorTrocado: n(x.valor),
+          ultimaCompra: ult,
+          vendedor: x.vendedor || null,
+          acao: x.acao || null,
+        });
+      }
+      res.json({ dias, clientes: out });
+    } catch (e: any) {
+      console.error("[TROCA] recorrentes:", e?.message || e);
+      res.status(500).json({ message: "Falha ao listar trocas recorrentes" });
     }
   });
 }

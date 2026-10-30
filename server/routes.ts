@@ -11341,6 +11341,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const par = parentById.get(String(scid));
         return (par && trocaPhotosById.get(String(par))) || [];
       };
+      // Recorrência das trocas (selo "Troca · Motivo · 2ª em 60 dias" no card bloqueado).
+      let recPorCard = new Map<string, any>();
+      try {
+        const { recorrenciaPorCards } = await import('./troca-registros-routes.js');
+        recPorCard = await recorrenciaPorCards(blockedOrdersData.filter((o: any) => String(o.operationType || '').toLowerCase() === 'troca').map((o: any) => String(o.salesCardId)));
+      } catch (e: any) { console.warn('[BLOCKED] recorrencia troca:', e?.message); }
       // Buscar dados relacionados (cliente e vendedor)
       const enrichedOrders = await Promise.all(
         blockedOrdersData.map(async (order) => {
@@ -11356,6 +11362,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // `trocaPhotoUrl` fica por compatibilidade (primeira foto); a lista completa vai em `trocaPhotoUrls`.
             trocaPhotoUrl: fotosDoCard(order.salesCardId)[0] || null,
             trocaPhotoUrls: fotosDoCard(order.salesCardId),
+            trocaRecorrencia: recPorCard.get(String(order.salesCardId)) || null,
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
@@ -11385,6 +11392,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // (O fluxo antigo dependia do Omie, descontinuado; por isso 'liberar' falhava com 503.)
     try {
       const { orderIds } = req.body;
+      // Troca recorrente (3ª ou mais do mesmo motivo em 60 dias): só admin libera, com observação
+      // (política de trocas, 30/10/2026). observacoes = { [orderId]: texto }.
+      const observacoes: Record<string, string> = (req.body?.observacoes && typeof req.body.observacoes === 'object') ? req.body.observacoes : {};
       const userId = req.currentUser.id;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ message: 'Lista de IDs de pedidos e obrigatoria' });
@@ -11404,6 +11414,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (order.status !== 'blocked') { errors.push(`Pedido ja processado (status: ${order.status})`); continue; }
           salesCard = await storage.getSalesCard(order.salesCardId);
           if (!salesCard) { errors.push(`Sales card ${order.salesCardId} nao encontrado`); continue; }
+          let _obsRecorrente = '';
+          if (String((order as any).operationType || '').toLowerCase() === 'troca') {
+            try {
+              const { recorrenciaPorCards } = await import('./troca-registros-routes.js');
+              const _rec = (await recorrenciaPorCards([String(order.salesCardId)])).get(String(order.salesCardId));
+              if (_rec && _rec.n >= 3) {
+                const _nm = salesCard?.customer?.fantasyName || salesCard?.customer?.name || 'Cliente';
+                const _obs = String(observacoes[String(orderId)] || '').trim();
+                if (req.currentUser?.role !== 'admin') { errors.push(`${_nm}: troca recorrente (${_rec.ordinal} por ${_rec.motivoLabel} em ${_rec.janelaDias} dias) — só o admin libera`); continue; }
+                if (!_obs) { errors.push(`${_nm}: troca recorrente (${_rec.ordinal} por ${_rec.motivoLabel} em ${_rec.janelaDias} dias) — informe a observação para liberar`); continue; }
+                const _quem = [req.currentUser?.firstName, req.currentUser?.lastName].filter(Boolean).join(' ') || req.currentUser?.email || 'admin';
+                _obsRecorrente = `\n\nLiberação de troca recorrente (${_rec.ordinal} por ${_rec.motivoLabel}) — ${_quem}, ${formatBrazilDateTime(new Date())}: ${_obs}`;
+              }
+            } catch (e: any) { console.warn('[RELEASE-BLOCKED] recorrencia troca:', e?.message); }
+          }
           // O card recorrente pode ter "virado" e estar VAZIO (sem valor/produtos) no momento da
           // liberacao — nesse caso o autoSend pulava por "sem venda" e o pedido SUMIA. A fonte
           // imutavel do pedido e o snapshot em blocked_orders (total_amount + products), gravado no
@@ -11453,7 +11478,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue;
           }
           await db.update(blockedOrders).set({ status: 'released', releasedAt: agora(), releasedBy: userId }).where(eq(blockedOrders.id, orderId));
-          try { await storage.updateSalesCard(order.salesCardId, { notes: (salesCard.notes || '') + `\n\nLiberado para faturamento: ${formatBrazilDateTime(new Date())}` }); } catch {}
+          try { await storage.updateSalesCard(order.salesCardId, { notes: (salesCard.notes || '') + `\n\nLiberado para faturamento: ${formatBrazilDateTime(new Date())}` + _obsRecorrente }); } catch {}
           // HISTÓRICO DO CARD: registra QUEM liberou e QUANDO (dia/hora BRT) no stage_history, para
           // aparecer no "Histórico de Etapas" do card (evento 'liberado' = "Liberado de Bloqueados").
           if (pipelineItemId) {
