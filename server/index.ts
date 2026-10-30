@@ -2529,6 +2529,14 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       const reason = JUSTIF_MOTIVOS.includes(String(b.reason)) ? String(b.reason) : null;
       const notes = b.notes != null ? String(b.notes).slice(0, 500) : null;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !customerId || !seller || !reason) return res.status(400).json({ error: 'date, customerId, sellerId e reason (motivo valido) obrigatorios' });
+      // 30/out/2026 — Descrição OBRIGATÓRIA em toda justificativa (exceto "removido", ação do admin):
+      // o motivo sozinho não explica nada; todo report de não-visita chega ao Inbox com o porquê.
+      if (reason !== 'removido' && !(notes && notes.trim())) return res.status(400).json({ error: 'Descreva o motivo da justificativa.' });
+      // Origem da justificativa (vai no selo do report no Inbox): Fechar Rota (dia corrente),
+      // pendência do dia anterior (tela Justificativas) ou check-in (débito explicado na visita).
+      const hojeBR = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      const origemIn = String(b.origem || '');
+      const origem = ['fechar_rota', 'pendencia', 'checkin'].includes(origemIn) ? origemIn : (date < hojeBR ? 'pendencia' : 'fechar_rota');
       await db.execute(sql`INSERT INTO visit_justifications (visit_date, customer_id, seller_id, reason, notes, created_by) VALUES (${date}, ${customerId}, ${seller}, ${reason}, ${notes}, ${seller}) ON CONFLICT (visit_date, customer_id, seller_id) DO UPDATE SET reason = EXCLUDED.reason, notes = EXCLUDED.notes`);
       // 🗂️ REPORT → INBOX: justificativa de não-visita / prestação de contas de débito com
       // observação ESCRITA vira report no Inbox (motivo + texto).
@@ -2542,6 +2550,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
             reportKind: reason === 'debito' ? 'debito' : 'justificativa',
             motivo: JUSTIF_LABEL[reason] || reason,
             texto: String(notes || ''),
+            origem, dataVisita: date,
           });
         }
       } catch (_e: any) { console.warn('[REPORT-INBOX] justificativa:', _e?.message); }
