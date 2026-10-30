@@ -652,7 +652,7 @@ export default function CustomerEditModal({
         collectionDiscount: (customer as any).collectionDiscount ?? "",
         paymentInstallments: (customer as any).paymentInstallments ?? "",
         installmentSchedule: (customer as any).installmentSchedule || "",
-        installmentCustom: (() => { const s = String((customer as any).installmentSchedule || ""); return (!!s && !["7/14","7/14/21","14/21","21/28/35"].includes(s)) as any; })(),
+        installmentCustom: (() => { const s = String((customer as any).installmentSchedule || ""); return (!!s && !["7/14","7/14/21","14/21","28/35","21/28/35"].includes(s)) as any; })(),
         notificationEmail: (customer as any).notificationEmail || "",
         sendDanfeEmail: !!(customer as any).sendDanfeEmail,
         sendXmlEmail: !!(customer as any).sendXmlEmail,
@@ -1267,7 +1267,7 @@ export default function CustomerEditModal({
                 <div>
                   <Label className="text-sm">Parcelamento</Label>
                   <Select
-                    value={(() => { const s = String((formData as any).installmentSchedule || ""); const P = ["7/14","7/14/21","14/21","21/28/35"]; if ((formData as any).installmentCustom) return "__custom__"; if (!s) return "__none__"; return P.includes(s) ? s : "__custom__"; })()}
+                    value={(() => { const s = String((formData as any).installmentSchedule || ""); const P = ["7/14","7/14/21","14/21","28/35","21/28/35"]; if ((formData as any).installmentCustom) return "__custom__"; if (!s) return "__none__"; return P.includes(s) ? s : "__custom__"; })()}
                     onValueChange={(v) => setFormData(prev => {
                       if (v === "__none__") return { ...prev, installmentSchedule: "", installmentCustom: false } as any;
                       if (v === "__custom__") return { ...prev, installmentCustom: true } as any;
@@ -1282,11 +1282,12 @@ export default function CustomerEditModal({
                       <SelectItem value="7/14">7-14 dias (2x)</SelectItem>
                       <SelectItem value="7/14/21">7-14-21 dias (3x)</SelectItem>
                       <SelectItem value="14/21">14-21 dias (2x)</SelectItem>
+                      <SelectItem value="28/35">28-35 dias (2x)</SelectItem>
                       <SelectItem value="21/28/35">21-28-35 dias (3x)</SelectItem>
                       <SelectItem value="__custom__">Personalizado…</SelectItem>
                     </SelectContent>
                   </Select>
-                  {((formData as any).installmentCustom || (() => { const s = String((formData as any).installmentSchedule || ""); const P = ["7/14","7/14/21","14/21","21/28/35"]; return !!s && !P.includes(s); })()) && (
+                  {((formData as any).installmentCustom || (() => { const s = String((formData as any).installmentSchedule || ""); const P = ["7/14","7/14/21","14/21","28/35","21/28/35"]; return !!s && !P.includes(s); })()) && (
                     <Input
                       className="mt-2"
                       value={(formData as any).installmentSchedule}
