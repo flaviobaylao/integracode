@@ -98,9 +98,12 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               </ul>
             </div>
             <div>
-              <p className="font-semibold mb-1">Travas</p>
+              <p className="font-semibold mb-1">Captura de atendimento (telemarketing)</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li><b>Sem trava automática</b> (nem no sorteio/roteamento especial, nem ao trocar o atendente). O cadeado manual existe, mas só age se alguém clicar.</li>
+                <li>Cada cliente em repescagem tem o botão <b>"Capturar"</b>. Ao capturar, o cliente <b>fica com você</b> (é reatribuído a você) e <b>some da lista dos demais telemarketings</b>, evitando dois atendentes ligarem para o mesmo cliente.</li>
+                <li>O cliente <b>volta a aparecer para os demais</b> quando o capturador: clica em <b>Liberar</b>, <b>registra um pedido</b> (o cliente sai da repescagem), ou <b>automaticamente às 18h</b> (encerramento do dia).</li>
+                <li>O <b>capturador</b> continua vendo o cliente (com o botão Liberar); o <b>admin vê tudo</b>, com o selo "capturado por…", e pode liberar.</li>
+                <li><b>Sem trava/redistribuição automática</b> no sorteio: o cliente só fica preso a um atendente quando é capturado.</li>
               </ul>
             </div>
             <div>
