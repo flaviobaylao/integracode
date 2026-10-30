@@ -1678,6 +1678,15 @@ export async function closeAndExpireRepescagem(date: string): Promise<any> {
         AND COALESCE(operation_type,'venda') = 'venda'
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
     for (const r of implOrders.rows as any[]) { if (r.seller_id) orderBySeller.add(`${r.customer_id}|${r.seller_id}`); }
+    // Vendedor que IMPLANTOU o pedido, por cliente — a migração vai para QUEM VENDEU.
+    const vendaSellerByCustomer = new Map<string, string>();
+    for (const r of implOrders.rows as any[]) { if (r.seller_id && !vendaSellerByCustomer.has(r.customer_id)) vendaSellerByCustomer.set(r.customer_id, r.seller_id); }
+    // Periodicidade por cliente — define o limiar de quedas no mês p/ migrar (mensal=1ª, semanal/quinzenal=2ª).
+    const periodicityByCustomer = new Map<string, string>();
+    try {
+      const pr: any = await db.execute(sql`SELECT id, visit_periodicity FROM customers WHERE id = ANY(string_to_array(${arr}, ','))`);
+      for (const r of ((pr.rows || pr) as any[])) periodicityByCustomer.set(r.id, String(r.visit_periodicity || 'semanal'));
+    } catch (e) { console.error('[repescagem][periodicity]', (e as any)?.message); }
 
     for (const a of inRoute) {
       if (!attendedBy.has(a.customerId)) continue;
@@ -1692,29 +1701,27 @@ export async function closeAndExpireRepescagem(date: string): Promise<any> {
         assignmentId: a.id, customerId: a.customerId, fromUserId: a.assignedUserId, toUserId: by,
         action: 'completed', reason: 'Atendido (registro de atendimento ou pedido)',
       });
-      // MIGRAÇÃO AUTOMÁTICA DE CARTEIRA (repescagem): se o cliente cair em repescagem em DOIS
-      // CICLOS CONSECUTIVOS e for atendido COM VENDA pelo MESMO atendente nos dois, a carteira
-      // migra IMEDIATAMENTE para esse atendente. O ciclo ATUAL acabou de fechar com venda por
-      // migSeller; basta o ciclo IMEDIATAMENTE ANTERIOR (maior last_red_date < o atual) também
-      // ter sido fechado COM VENDA (closed_by_order) pelo MESMO migSeller. Se o anterior foi de
-      // outro usuário (ex.: A e depois B) ou sem venda, NÃO migra.
-      const migSeller = a.assignedUserId;
-      if (migSeller && hadOrder && !REPESCAGEM_EXCLUDED_USER_IDS.has(migSeller)) {
-        const prev: any = await db.execute(sql`
-          SELECT 1 FROM repescagem_assignments
+      // MIGRAÇÃO DE CARTEIRA (formato por quedas no mês) — vale para TODOS os clientes:
+      //  • Conta as QUEDAS em repescagem no MÊS da queda atual (distintas last_red_date no mês).
+      //  • Limiar por periodicidade: MENSAL/bimestral = 1ª queda | SEMANAL/QUINZENAL = 2ª queda.
+      //  • Ao atingir o limiar E a queda-gatilho ter fechado COM VENDA, a carteira migra
+      //    IMEDIATAMENTE para QUEM VENDEU (quem implantou o pedido — externo OU telemarketing).
+      //  • Não exige mesmo atendente nem ciclos consecutivos. A comissão já vai p/ quem implanta.
+      const vendaSeller = vendaSellerByCustomer.get(a.customerId) || null;
+      if (vendaSeller && !REPESCAGEM_EXCLUDED_USER_IDS.has(vendaSeller)) {
+        const per = String(periodicityByCustomer.get(a.customerId) || 'semanal').toLowerCase();
+        const limiar = (per.indexOf('mens') >= 0 || per.indexOf('bime') >= 0) ? 1 : 2;
+        const monthStart = `${String(a.lastRedDate).slice(0, 7)}-01`;
+        const cnt: any = await db.execute(sql`
+          SELECT COUNT(DISTINCT last_red_date)::int AS n FROM repescagem_assignments
           WHERE customer_id = ${a.customerId}
-            AND assigned_user_id = ${migSeller}
-            AND closed_by_order = true
-            AND last_red_date = (
-              SELECT MAX(last_red_date) FROM repescagem_assignments
-              WHERE customer_id = ${a.customerId} AND last_red_date < ${a.lastRedDate}
-            )
-          LIMIT 1`);
-        const consecutivoMesmoUsuario = ((prev.rows || prev) as any[]).length > 0;
-        if (consecutivoMesmoUsuario) {
+            AND last_red_date >= ${monthStart}
+            AND last_red_date <= ${a.lastRedDate}`);
+        const quedasNoMes = Number(((cnt.rows || cnt)[0] as any)?.n || 0);
+        if (quedasNoMes >= limiar) {
           const cur: any = await db.execute(sql`SELECT seller_id FROM customers WHERE id = ${a.customerId} LIMIT 1`);
           const curSeller = ((cur.rows || cur)[0] as any)?.seller_id || null;
-          if (curSeller !== migSeller) {
+          if (curSeller !== vendaSeller) {
             try {
               const nameOf = async (uid: string | null): Promise<string> => {
                 if (!uid) return '—';
@@ -1722,13 +1729,15 @@ export async function closeAndExpireRepescagem(date: string): Promise<any> {
                 const r = (u.rows || u)[0]; return r ? (`${r.first_name || ''} ${r.last_name || ''}`.trim() || uid) : uid;
               };
               const fromName = await nameOf(curSeller);
-              const toName = await nameOf(migSeller);
-              await storage.updateCustomer(a.customerId, { sellerId: migSeller } as any);
+              const toName = await nameOf(vendaSeller);
+              const ord = limiar === 1 ? '1ª' : `${quedasNoMes}ª`;
+              const ocorr = `Migração automática: ${ord} queda em repescagem no mês (${per}) com venda de ${toName}`;
+              await storage.updateCustomer(a.customerId, { sellerId: vendaSeller } as any);
               await ensureCarteiraMigrations();
               await db.execute(sql`INSERT INTO carteira_migrations (customer_id, from_seller_id, to_seller_id, ocorrencia, status, decided_by, decided_at)
-                VALUES (${a.customerId}, ${curSeller}, ${migSeller}, ${'Migração automática: 2 ciclos consecutivos em repescagem com venda do mesmo atendente'}, 'aprovada', 'sistema', now())`);
-              await logCustomerNote({ customerId: a.customerId, label: 'Migração de carteira (repescagem)', text: `Cliente migrado automaticamente de ${fromName} para ${toName} após 2 ciclos consecutivos em repescagem com venda do mesmo atendente.`, actor: { id: 'system', name: 'Sistema (Repescagem)' } as any, source: 'repescagem' });
-              await db.insert(repescagemAssignmentHistory).values({ assignmentId: a.id, customerId: a.customerId, fromUserId: curSeller, toUserId: migSeller, action: 'reassigned', reason: 'Migração automática de carteira (2 ciclos consecutivos + venda do mesmo atendente)' });
+                VALUES (${a.customerId}, ${curSeller}, ${vendaSeller}, ${ocorr}, 'aprovada', 'sistema', now())`);
+              await logCustomerNote({ customerId: a.customerId, label: 'Migração de carteira (repescagem)', text: `Cliente migrado de ${fromName} para ${toName}: ${ord} queda em repescagem no mês (${per}) com venda.`, actor: { id: 'system', name: 'Sistema (Repescagem)' } as any, source: 'repescagem' });
+              await db.insert(repescagemAssignmentHistory).values({ assignmentId: a.id, customerId: a.customerId, fromUserId: curSeller, toUserId: vendaSeller, action: 'reassigned', reason: `Migração de carteira (${ord} queda no mês + venda)` });
             } catch (e) { console.error('[repescagem][migracao-auto]', (e as any)?.message); }
           }
         }
