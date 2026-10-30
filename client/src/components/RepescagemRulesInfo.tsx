@@ -78,10 +78,12 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               </ul>
             </div>
             <div>
-              <p className="font-semibold mb-1">Migração de carteira (2 ciclos consecutivos com venda)</p>
+              <p className="font-semibold mb-1">Migração de carteira (por quedas no mês, com venda)</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>Se o cliente cair em repescagem e for atendido <b>com venda</b> pelo <b>mesmo atendente</b> em <b>dois ciclos consecutivos</b>, a carteira do cliente <b>migra automaticamente</b> para esse atendente, na hora do 2º fechamento com venda.</li>
-                <li>Conta só <b>venda</b> (pedido implantado), não atendimento sem pedido. Precisa ser o <b>mesmo</b> usuário nas duas vezes <b>seguidas</b>: se foi A numa vez e B na outra (ex.: A depois B), <b>não migra</b>.</li>
+                <li>Conta as <b>quedas em repescagem dentro do mês vigente</b> (zera a cada mês). Ao atingir o limiar, se a queda foi <b>fechada com venda</b>, a carteira <b>migra na hora para quem vendeu</b> (quem implantou o pedido). Vale para <b>todos os clientes</b>.</li>
+                <li><b>Semanal/quinzenal:</b> migra na <b>2ª queda</b> do mês. Na 1ª queda, a venda/comissão vai para quem atendeu, mas o cliente <b>fica na carteira atual</b> (ainda não migra).</li>
+                <li><b>Mensal (e bimestral):</b> migra já na <b>1ª queda</b> do mês — quem vender leva o cliente.</li>
+                <li>Migra para <b>quem vendeu</b>, seja <b>vendedor externo ou telemarketing</b>. <b>Não precisa</b> ser o mesmo atendente das vezes anteriores nem quedas consecutivas. Atendimento <b>sem</b> venda tira o cliente da lista, mas <b>não migra</b>.</li>
                 <li>A migração fica registrada no <b>histórico do cliente</b> e no histórico de migrações de carteira.</li>
               </ul>
             </div>
