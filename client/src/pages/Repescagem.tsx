@@ -19,6 +19,8 @@ import WhatsAppIconLink from '@/components/WhatsAppIconLink';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import RepescagemRulesInfo from '@/components/RepescagemRulesInfo';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { queryClient, apiRequest } from '@/lib/queryClient';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -122,6 +124,8 @@ export default function Repescagem() {
   // Selecao multipla (por customerId) + alteracao em massa de atendente.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAttendant, setBulkAttendant] = useState<string>('');
+  // Rascunho local das carteiras por atendente (multi-seleção antes de aplicar).
+  const [carteiraDraft, setCarteiraDraft] = useState<Record<string, string[]>>({});
 
   const { data: attendants = [], isLoading: loadingAttendants } = useQuery<Attendant[]>({
     queryKey: ['/api/repescagem/attendants'],
@@ -459,6 +463,11 @@ export default function Repescagem() {
                   const active = isExt || sel.length > 0;
                   const covById = new Map((a.coverage || []).map(c => [c.sellerId, c]));
                   const available = carteiras.filter(c => !sel.includes(c.sellerId));
+                  // Rascunho local da multi-seleção (cai de volta para o salvo quando não editado).
+                  const draft = carteiraDraft[a.userId] ?? sel;
+                  const dirty = draft.length !== sel.length || draft.some(x => !sel.includes(x));
+                  const setDraft = (next: string[]) => setCarteiraDraft(d => ({ ...d, [a.userId]: next }));
+                  const clearDraft = () => setCarteiraDraft(d => { const n = { ...d }; delete n[a.userId]; return n; });
                   return (
                   <div
                     key={a.userId}
@@ -530,22 +539,64 @@ export default function Repescagem() {
                       )}
                     </div>
                     <div className="mt-2">
-                      <Select
-                        value=""
-                        onValueChange={(v) => { if (v) saveCarteiras.mutate({ userId: a.userId, carteiras: Array.from(new Set([...sel, v])) }); }}
-                        disabled={saveCarteiras.isPending || available.length === 0}
-                      >
-                        <SelectTrigger className="h-7 w-full text-xs" data-testid={`carteira-add-${a.userId}`}>
-                          <SelectValue placeholder={available.length === 0 ? 'Todas as carteiras adicionadas' : '+ adicionar carteira…'} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {available.map(c => (
-                            <SelectItem key={c.sellerId} value={c.sellerId}>
-                              {c.name}{c.sellerId === a.userId ? ' (própria)' : ''}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Popover onOpenChange={(open) => { if (!open) clearDraft(); }}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 w-full justify-start text-xs font-normal text-muted-foreground"
+                            disabled={carteiras.length === 0}
+                            data-testid={`carteira-add-${a.userId}`}
+                          >
+                            + adicionar / remover carteiras{sel.length > 0 ? ` (${sel.length})` : ''}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-72 p-2" align="start">
+                          <div className="flex items-center justify-between gap-2 pb-2 mb-1 border-b">
+                            <span className="text-[11px] font-semibold text-muted-foreground">Carteiras que {a.name} atende</span>
+                            <div className="flex items-center gap-1 text-[11px]">
+                              <button type="button" className="text-blue-600 hover:underline"
+                                onClick={() => setDraft(carteiras.map(c => c.sellerId))} data-testid={`carteira-all-${a.userId}`}>Marcar todos</button>
+                              <span className="text-gray-300">·</span>
+                              <button type="button" className="text-blue-600 hover:underline"
+                                onClick={() => setDraft([])} data-testid={`carteira-none-${a.userId}`}>Desmarcar todos</button>
+                            </div>
+                          </div>
+                          <ScrollArea className="max-h-56">
+                            <div className="space-y-0.5 pr-2">
+                              {carteiras.map(c => {
+                                const checked = draft.includes(c.sellerId);
+                                return (
+                                  <label key={c.sellerId}
+                                    className="flex items-center gap-2 rounded px-1 py-1 text-xs cursor-pointer hover:bg-muted"
+                                    data-testid={`carteira-opt-${a.userId}-${c.sellerId}`}>
+                                    <Checkbox
+                                      checked={checked}
+                                      onCheckedChange={(v) => setDraft(v
+                                        ? Array.from(new Set([...draft, c.sellerId]))
+                                        : draft.filter(x => x !== c.sellerId))}
+                                    />
+                                    <span>{c.name}{c.sellerId === a.userId ? ' (própria)' : ''}</span>
+                                  </label>
+                                );
+                              })}
+                              {carteiras.length === 0 && <span className="text-[11px] text-gray-400 px-1">Nenhuma carteira disponível.</span>}
+                            </div>
+                          </ScrollArea>
+                          <div className="flex items-center justify-between gap-2 pt-2 mt-1 border-t">
+                            <span className="text-[11px] text-muted-foreground">{draft.length} selecionada(s)</span>
+                            <Button
+                              size="sm"
+                              className="h-6 text-[11px]"
+                              disabled={!dirty || saveCarteiras.isPending}
+                              onClick={() => saveCarteiras.mutate({ userId: a.userId, carteiras: draft }, { onSuccess: clearDraft })}
+                              data-testid={`carteira-apply-${a.userId}`}
+                            >
+                              {saveCarteiras.isPending ? 'Salvando…' : 'Aplicar'}
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </div>
                   );
