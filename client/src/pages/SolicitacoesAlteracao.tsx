@@ -283,6 +283,19 @@ function EnviarParaAgenda({ r, compacto }: { r: any; compacto?: boolean }) {
   );
 }
 
+// 🏷️ Origem do report no selo (30/out/2026). Justificativas: Fechar Rota (no fim do dia),
+// Pendência de DD/MM (tela Justificativas, dia anterior) ou Check-in (débito explicado na visita).
+const ORIGEM_REPORT: Record<string, string> = { fechar_rota: "Fechar Rota", pendencia: "Pendência", checkin: "Check-in" };
+function origemDoReport(rd: any): string {
+  const o = String(rd?.origem || "");
+  if (!o) return "";
+  const base = ORIGEM_REPORT[o] || o;
+  const dv = String(rd?.dataVisita || "");
+  const dm = /^\d{4}-\d{2}-\d{2}$/.test(dv) ? `${dv.slice(8, 10)}/${dv.slice(5, 7)}` : "";
+  if (o === "pendencia") return dm ? `Pendência de ${dm}` : base;
+  return dm && o === "fechar_rota" ? `${base} ${dm}` : base;
+}
+
 function Detalhes({ details }: { details: any }) {
   if (!details || Object.keys(details).length === 0) return null;
   return (
@@ -558,7 +571,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
             {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
-            {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
+            {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300" title="Tipo e origem do report">Report · {rd.reportLabel || "Registro"}{origemDoReport(rd) ? ` · ${origemDoReport(rd)}` : ""}</Badge>}
             {/* 🔁 Voltou ao Inbox porque o vendedor respondeu à réplica do admin */}
             {isReport && Array.isArray(r.messages) && r.messages.length > 0 && r.messages[r.messages.length - 1]?.role === "seller" && r.messages[r.messages.length - 1]?.kind === "reply" && (
               <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300"><Reply className="h-3 w-3 mr-1" /> Tréplica do vendedor</Badge>
@@ -827,7 +840,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
             {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
-            {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300">Report · {rd.reportLabel || "Registro"}</Badge>}
+            {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300" title="Tipo e origem do report">Report · {rd.reportLabel || "Registro"}{origemDoReport(rd) ? ` · ${origemDoReport(rd)}` : ""}</Badge>}
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
             <span>{fmtDate(r.createdAt)}</span>
           </div>
