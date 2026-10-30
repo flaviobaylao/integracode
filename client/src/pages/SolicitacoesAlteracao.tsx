@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
@@ -26,7 +28,7 @@ import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { AnexosPicker, prepararAnexos, arquivosDoColar, type AnexoNovo } from "@/components/change-request/Anexos";
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus, ChevronDown } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -955,7 +957,9 @@ export default function SolicitacoesAlteracao() {
   const [dataAte, setDataAte] = useState("");
   // 30/out/2026 — Filtro pelo TIPO da solicitação de alteração (Periodicidade, Dia de Rota,
   // Área de vendas…). "report" mostra só os reports; um tipo mostra só as solicitações que o têm.
-  const [filtroTipo, setFiltroTipo] = useState("");
+  // Múltipla escolha (30/out/2026): vale o card que bater com QUALQUER um dos marcados.
+  const [filtroTipos, setFiltroTipos] = useState<string[]>([]);
+  const filtroTipo = filtroTipos.length > 0;
 
   // ✅ Seleção em lote + "Limpar caixa de pendentes": marca solicitações e as resolve
   // (status "lido") de uma vez — elas saem de Pendentes e vão para Resolvidas.
@@ -1013,9 +1017,9 @@ export default function SolicitacoesAlteracao() {
   const matchVendSug = (s: any) => !filtroVendedor || s.from_name === filtroVendedor || s.to_name === filtroVendedor;
   const ehReport = (r: any) => r?.kind === "report";
   const matchTipo = (r: any) => {
-    if (!filtroTipo) return true;
-    if (filtroTipo === "report") return ehReport(r);
-    return !ehReport(r) && Array.isArray(r?.types) && r.types.includes(filtroTipo);
+    if (filtroTipos.length === 0) return true;
+    if (ehReport(r)) return filtroTipos.includes("report");
+    return Array.isArray(r?.types) && r.types.some((t: string) => filtroTipos.includes(t));
   };
   const baseOk = (r: any) => matchNome(r.entityName || r.entityId) && matchVend(r.requestedByName) && dentroDoPeriodo(r.createdAt);
   const pendingF = pending.filter((r) => baseOk(r) && matchTipo(r));
@@ -1080,19 +1084,42 @@ export default function SolicitacoesAlteracao() {
           <option value="">Todos os vendedores</option>
           {vendedores.map((v) => <option key={v} value={v}>{v}</option>)}
         </select>
-        <select
-          value={filtroTipo}
-          onChange={(e) => setFiltroTipo(e.target.value)}
-          className="border rounded-lg px-3 py-2 text-sm bg-white max-w-[240px]"
-          title="Filtrar pelo tipo de solicitação de alteração"
-          data-testid="select-filtro-tipo"
-        >
-          <option value="">Todos os tipos</option>
-          {Object.keys(TYPE_LABEL).map((t) => (
-            <option key={t} value={t}>{TYPE_LABEL[t]}{contagemTipo[t] ? ` (${contagemTipo[t]})` : ""}</option>
-          ))}
-          <option value="report">Reports{contagemTipo.report ? ` (${contagemTipo.report})` : ""}</option>
-        </select>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button"
+              className="border rounded-lg px-3 py-2 text-sm bg-white max-w-[240px] flex items-center justify-between gap-2 text-left"
+              title="Filtrar pelo tipo de solicitação de alteração (pode marcar vários)"
+              data-testid="select-filtro-tipo">
+              <span className="truncate">
+                {filtroTipos.length === 0 ? "Todos os tipos"
+                  : filtroTipos.length === 1 ? (filtroTipos[0] === "report" ? "Reports" : (TYPE_LABEL[filtroTipos[0]] || filtroTipos[0]))
+                  : `${filtroTipos.length} tipos`}
+              </span>
+              <ChevronDown className="h-4 w-4 opacity-60 shrink-0" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-64 p-2">
+            <div className="max-h-80 overflow-y-auto space-y-0.5">
+              {[...Object.keys(TYPE_LABEL), "report"].map((t) => {
+                const marcado = filtroTipos.includes(t);
+                const rot = t === "report" ? "Reports" : TYPE_LABEL[t];
+                return (
+                  <label key={t} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer hover:bg-muted" data-testid={`filtro-tipo-${t}`}>
+                    <Checkbox checked={marcado}
+                      onCheckedChange={(v) => setFiltroTipos((p) => v ? (p.includes(t) ? p : [...p, t]) : p.filter((x) => x !== t))} />
+                    <span className="flex-1">{rot}</span>
+                    {contagemTipo[t] ? <span className="text-xs text-muted-foreground">{contagemTipo[t]}</span> : null}
+                  </label>
+                );
+              })}
+            </div>
+            {filtroTipos.length > 0 && (
+              <button type="button" className="mt-1 w-full text-xs text-muted-foreground hover:underline py-1" onClick={() => setFiltroTipos([])}>
+                Limpar tipos
+              </button>
+            )}
+          </PopoverContent>
+        </Popover>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-muted-foreground shrink-0">De</span>
           <input
@@ -1116,7 +1143,7 @@ export default function SolicitacoesAlteracao() {
           />
         </div>
         {(filtroVendedor || filtroTipo || dataDe || dataAte) && (
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setFiltroTipo(""); setDataDe(""); setDataAte(""); }}>
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground w-fit" onClick={() => { setFiltroVendedor(""); setFiltroTipos([]); setDataDe(""); setDataAte(""); }}>
             Limpar filtros
           </Button>
         )}
