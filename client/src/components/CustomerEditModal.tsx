@@ -135,6 +135,7 @@ export default function CustomerEditModal({
     cpf: "",
     cnpj: "",
     stateRegistration: "",
+    icmsCsosn: "102", // CSOSN da NF-e (Simples): 102 padrao, 101 com permissao de credito
     email: "",
     phone: "",
     particularidades: "",
@@ -625,6 +626,7 @@ export default function CustomerEditModal({
         cpf: customer.cpf || "",
         cnpj: customer.cnpj || "",
         stateRegistration: (customer as any).stateRegistration || (customer as any).state_registration || "",
+        icmsCsosn: (customer as any).icmsCsosn || (customer as any).icms_csosn || "102",
         email: customer.email || "",
         phone: formatPhone(customer.phone || ""),
         particularidades: (customer as any).particularidades || "",
@@ -814,6 +816,22 @@ export default function CustomerEditModal({
                   {ieLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Buscar IE'}
                 </Button>
               </div>
+            </div>
+            <div>
+              <Label>CSOSN (NF-e / Simples Nacional)</Label>
+              <Select
+                value={(formData as any).icmsCsosn || "102"}
+                onValueChange={(v) => setFormData(prev => ({ ...prev, icmsCsosn: v } as any))}
+              >
+                <SelectTrigger data-testid="select-icms-csosn">
+                  <SelectValue placeholder="Selecione o CSOSN" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="102">102 - Sem permissão de crédito (padrão)</SelectItem>
+                  <SelectItem value="101">101 - Com permissão de crédito de ICMS</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500 mt-1">Use 101 só para cliente contribuinte (com IE); para cliente sem IE a SEFAZ rejeita a nota. Aplica-se às notas da Indústria (Simples).</p>
             </div>
           </div>
 
