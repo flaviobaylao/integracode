@@ -104,13 +104,18 @@ export default function Justificativas() {
       alert("Escolha um motivo.");
       return;
     }
+    // 30/out/2026 — descrição OBRIGATÓRIA para justificar o motivo (mín. 5 caracteres).
+    if (String(notes[key] || "").trim().length < 5) {
+      alert("Descreva o motivo da justificativa (mínimo 5 caracteres).");
+      return;
+    }
     setSavingId(key);
     try {
       const r = await fetch(`/api/vendedor/justificativas`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ date, customerId: cid, sellerId: sid, reason, notes: notes[key] || "" }),
+        body: JSON.stringify({ date, customerId: cid, sellerId: sid, reason, notes: String(notes[key] || "").trim(), origem: "pendencia" }),
       });
       if (!r.ok) throw new Error("save");
       setNonce((n) => n + 1);
@@ -201,13 +206,14 @@ export default function Justificativas() {
         </label>
         <input
           className="border rounded px-2 py-1 text-sm md:w-56"
-          placeholder="Observação (opcional)"
+          placeholder="Descrição do motivo (obrigatória)"
           value={notes[key] || ""}
           onChange={(e) => setNotes((n) => ({ ...n, [key]: e.target.value }))}
         />
         <Button
           size="sm"
-          disabled={savingId === key}
+          disabled={savingId === key || !sel[key] || String(notes[key] || "").trim().length < 5}
+          title="Escolha o motivo e descreva (mín. 5 caracteres)"
           onClick={() => salvar(p.customerId, sid)}
         >
           {savingId === key ? "Salvando…" : "Justificar"}
