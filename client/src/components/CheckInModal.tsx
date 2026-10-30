@@ -330,7 +330,7 @@ export default function CheckInModal({
           await fetch('/api/vendedor/justificativas', {
             method: 'POST', credentials: 'include',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ date: getBrazilDateISO(), customerId, sellerId, reason: 'debito', notes: debtNote.trim() }),
+            body: JSON.stringify({ date: getBrazilDateISO(), customerId, sellerId, reason: 'debito', notes: debtNote.trim(), origem: 'checkin' }),
           });
         } catch { /* não bloqueia o check-in */ }
       }
