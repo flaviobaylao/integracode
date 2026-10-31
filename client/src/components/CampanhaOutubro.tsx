@@ -86,7 +86,7 @@ function Bar({ pct, ok }: { pct: number; ok: boolean }) {
 }
 
 export default function CampanhaOutubro() {
-  const { data, isLoading } = useQuery<Resp>({ queryKey: ["/api/campanha/outubro"] });
+  const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<Resp>({ queryKey: ["/api/campanha/outubro"], refetchInterval: 5 * 60_000 });
   const [modalSeller, setModalSeller] = useState<string | null>(null);
 
   const sellers = data?.sellers || [];
@@ -106,6 +106,10 @@ export default function CampanhaOutubro() {
           </div>
           <div className="flex flex-col items-end gap-1.5 text-xs">
             <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-gray-600">Período: <b className="text-gray-800">01–31/out</b></span>
+            <span className="flex items-center gap-2 text-[11px] text-gray-500">
+              {dataUpdatedAt ? "Atualizado às " + new Date(dataUpdatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}
+              <button type="button" onClick={() => refetch()} disabled={isFetching} className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60" data-testid="campanha-atualizar">{isFetching ? "Atualizando…" : "Atualizar"}</button>
+            </span>
             {data && !data.ativo && <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">Fora do mês da campanha</span>}
           </div>
         </div>
