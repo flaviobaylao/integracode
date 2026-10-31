@@ -57,6 +57,14 @@ function ensureTable(): Promise<void> {
         created_at timestamp DEFAULT now()
       )`);
       await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_paf_item ON personal_agenda_files (item_id)`);
+      // Nome dado pelo usuario a cada cor (ex.: #2a78d6 = "Visitas")
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS personal_agenda_color_names (
+        user_id varchar NOT NULL,
+        color varchar NOT NULL,
+        name varchar NOT NULL,
+        updated_at timestamp DEFAULT now(),
+        PRIMARY KEY (user_id, color)
+      )`);
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;
@@ -245,12 +253,36 @@ export function registerAgenda(app: Express) {
     const uid = await guard(req, res); if (!uid) return;
     try {
       const r: any = await db.execute(sql`
-        SELECT COALESCE(color, ${COR_PADRAO}) AS color, count(*)::int AS n
-        FROM personal_agenda_items WHERE user_id = ${uid}
-        GROUP BY 1 ORDER BY n DESC, 1`);
-      res.json(r.rows || []);
+        WITH usadas AS (
+          SELECT COALESCE(color, ${COR_PADRAO}) AS color, count(*)::int AS n
+          FROM personal_agenda_items WHERE user_id = ${uid} GROUP BY 1
+        )
+        SELECT u.color, u.n, cn.name
+        FROM usadas u
+        LEFT JOIN personal_agenda_color_names cn ON cn.user_id = ${uid} AND cn.color = u.color
+        ORDER BY u.n DESC, u.color`);
+      res.json((r.rows || []).map((x: any) => ({ color: x.color, n: Number(x.n || 0), name: x.name || null })));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Erro" });
+    }
+  });
+
+  // Renomear uma cor (nome vazio apaga o apelido e volta a mostrar o codigo)
+  app.put("/api/agenda/colors/:color", authenticateUser, async (req: Request, res: Response) => {
+    const uid = await guard(req, res); if (!uid) return;
+    try {
+      const color = corValida("#" + String(req.params.color || "").replace(/^#/, ""));
+      const name = String(req.body?.name ?? "").trim().slice(0, 60);
+      if (!name) {
+        await db.execute(sql`DELETE FROM personal_agenda_color_names WHERE user_id = ${uid} AND color = ${color}`);
+        return res.json({ color, name: null });
+      }
+      await db.execute(sql`
+        INSERT INTO personal_agenda_color_names (user_id, color, name, updated_at) VALUES (${uid}, ${color}, ${name}, now())
+        ON CONFLICT (user_id, color) DO UPDATE SET name = EXCLUDED.name, updated_at = now()`);
+      res.json({ color, name });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Erro ao renomear cor" });
     }
   });
 

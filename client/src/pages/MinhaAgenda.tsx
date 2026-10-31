@@ -150,9 +150,17 @@ export default function MinhaAgenda() {
         extendedProps: { cli: c },
       }));
   }, [clientes, busca, corVend, ehAdmin]);
-  const { data: cores = [] } = useQuery<{ color: string; n: number }[]>({
+  const { data: cores = [] } = useQuery<{ color: string; n: number; name: string | null }[]>({
     queryKey: ["/api/agenda/colors"],
     queryFn: () => apiRequest("GET", "/api/agenda/colors"),
+  });
+  const nomeCor = useMemo(() => { const m: Record<string, string> = {}; cores.forEach((c) => { if (c.name) m[c.color] = c.name; }); return m; }, [cores]);
+  const [renomeando, setRenomeando] = useState<string | null>(null);
+  const [novoNome, setNovoNome] = useState("");
+  const renomear = useMutation({
+    mutationFn: ({ color, name }: { color: string; name: string }) => apiRequest("PUT", `/api/agenda/colors/${color.replace("#", "")}`, { name }),
+    onSuccess: () => { setRenomeando(null); queryClient.invalidateQueries({ queryKey: ["/api/agenda/colors"] }); },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Não foi possível renomear", variant: "destructive" }),
   });
 
   const invalidar = () => {
@@ -345,12 +353,22 @@ export default function MinhaAgenda() {
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Cores</div>
             {cores.length === 0 && <div className="text-xs text-muted-foreground">Crie o primeiro evento para ver as cores aqui.</div>}
             {cores.map((c) => (
-              <label key={c.color} className="flex items-center gap-2 py-1 text-sm cursor-pointer">
+              <div key={c.color} className="flex items-center gap-2 py-1 text-sm group">
                 <Checkbox checked={!ocultas.has(c.color)} onCheckedChange={(v) => setOcultas((s) => { const n = new Set(s); v ? n.delete(c.color) : n.add(c.color); return n; })} />
                 <span className="h-3 w-3 rounded-sm flex-none" style={{ background: c.color }} />
-                <span className="flex-1">{c.color}</span>
+                {renomeando === c.color ? (
+                  <input autoFocus value={novoNome} onChange={(e) => setNovoNome(e.target.value)} placeholder={c.color}
+                    onKeyDown={(e) => { if (e.key === "Enter") renomear.mutate({ color: c.color, name: novoNome }); if (e.key === "Escape") setRenomeando(null); }}
+                    onBlur={() => renomear.mutate({ color: c.color, name: novoNome })}
+                    className="flex-1 min-w-0 h-7 rounded border bg-background px-1.5 text-sm" data-testid="agenda-cor-nome" />
+                ) : (
+                  <>
+                    <span className="flex-1 truncate cursor-text" title={c.name ? c.color : "Clique para dar um nome"} onClick={() => { setRenomeando(c.color); setNovoNome(c.name || ""); }}>{c.name || c.color}</span>
+                    <button type="button" className="h-6 w-6 rounded hover:bg-muted items-center justify-center hidden group-hover:flex" title="Renomear cor" onClick={() => { setRenomeando(c.color); setNovoNome(c.name || ""); }}><Pencil className="h-3 w-3" /></button>
+                  </>
+                )}
                 <span className="text-xs text-muted-foreground">{c.n}</span>
-              </label>
+              </div>
             ))}
           </div>
           )}
@@ -465,7 +483,7 @@ export default function MinhaAgenda() {
 
       {modal && (
         <EventoModal
-          draft={modal.draft} mode={modal.mode} cores={cores.map((c) => c.color)}
+          draft={modal.draft} mode={modal.mode} cores={cores.map((c) => c.color)} nomeCor={nomeCor}
           onClose={() => setModal(null)}
           onDelete={modal.mode === "edit" && modal.draft.id ? () => { excluir.mutate(modal.draft.id!); setModal(null); } : undefined}
           onSave={(d, pendentes) => {
@@ -487,8 +505,8 @@ export default function MinhaAgenda() {
   );
 }
 
-function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
-  draft: Draft; mode: "new" | "edit" | "dup"; cores: string[];
+function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }: {
+  draft: Draft; mode: "new" | "edit" | "dup"; cores: string[]; nomeCor: Record<string, string>;
   onClose: () => void; onSave: (d: any, pendentes: File[]) => void; onDelete?: () => void;
 }) {
   const [titulo, setTitulo] = useState(draft.title || "");
@@ -629,9 +647,10 @@ function EventoModal({ draft, mode, cores, onClose, onSave, onDelete }: {
           <div className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Cor
             <div className="flex items-center gap-1.5 flex-wrap">
               {paleta.map((c) => (
-                <button key={c} type="button" title={c} onClick={() => setCor(c)} className="h-6 w-6 rounded-full border-2" style={{ background: c, borderColor: cor === c ? "hsl(var(--foreground))" : "transparent" }} />
+                <button key={c} type="button" title={nomeCor[c] || c} onClick={() => setCor(c)} className="h-6 w-6 rounded-full border-2" style={{ background: c, borderColor: cor === c ? "hsl(var(--foreground))" : "transparent" }} />
               ))}
               <input id="agenda-f-cor" type="color" value={cor} onChange={(e) => setCor(e.target.value)} className="h-7 w-9 p-0.5 border rounded cursor-pointer bg-transparent" title="Cor personalizada" />
+              <span className="text-xs text-foreground ml-1">{nomeCor[cor] || cor}</span>
             </div>
           </div>
           <div className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Anexos
