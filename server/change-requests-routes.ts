@@ -683,16 +683,20 @@ export function registerChangeRequestsRoutes(app: Express) {
   app.get("/api/change-requests", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
     await ensureTables();
     const status = String(req.query.status || "pending");
+    // 🚫 31/out/2026 — Report de cliente INATIVO não aparece no Inbox (nem conta no badge).
+    // É filtro na leitura, sem apagar nada: se o cliente for reativado, os reports dele voltam.
+    const semInativo = sql`NOT (change_requests.kind = 'report' AND change_requests.entity_type = 'customer' AND EXISTS (
+      SELECT 1 FROM customers ci WHERE ci.id::text = COALESCE(change_requests.customer_id, change_requests.entity_id)::text AND ci.is_active = false))`;
     let rows;
     if (status === "pending") {
-      rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE status = 'pending' ORDER BY created_at DESC LIMIT 500`));
+      rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE status = 'pending' AND ${semInativo} ORDER BY created_at DESC LIMIT 500`));
     } else if (status === "resolved") {
-      rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE status <> 'pending' ORDER BY resolved_at DESC NULLS LAST, created_at DESC LIMIT 500`));
+      rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE status <> 'pending' AND ${semInativo} ORDER BY resolved_at DESC NULLS LAST, created_at DESC LIMIT 500`));
     } else {
-      rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests ORDER BY (status = 'pending') DESC, created_at DESC LIMIT 500`));
+      rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE ${semInativo} ORDER BY (status = 'pending') DESC, created_at DESC LIMIT 500`));
     }
     // Contagem de pendentes (para o badge do menu).
-    const cnt = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM change_requests WHERE status = 'pending'`));
+    const cnt = rowsOf(await db.execute(sql`SELECT COUNT(*)::int AS n FROM change_requests WHERE status = 'pending' AND ${semInativo}`));
     const mapped = rows.map(mapRow);
     let fotoErro = ""; // diagnóstico da foto do check-in (aparece na resposta só se a consulta falhar)
     // 📲 Enriquece cada card: telefone (cliente/lead) + flag de REPESCAGEM (assignment pendente).
