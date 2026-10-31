@@ -242,8 +242,11 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     faturamento[seller] = (faturamento[seller] || 0) + v;
     (posDocs[seller] = posDocs[seller] || new Set<string>()).add(doc);
   }
+  // Positivacao = clientes da carteira ATUAL do vendedor (a base do %) que compraram ENQUANTO
+  // eram dele. Quem so passou pela carteira numa delegacao ja devolvida nao entra na conta
+  // (senao o % passa de 100%: numerador com clientes que nao estao na base).
   const positivados: Record<string, number> = {};
-  for (const s of Object.keys(posDocs)) positivados[s] = posDocs[s].size;
+  for (const s of Object.keys(posDocs)) { let n = 0; posDocs[s].forEach((doc) => { if (docSeller[doc] === s) n++; }); positivados[s] = n; }
 
   // Metas de faturamento (sales_goals) do mes/ano, por nome do vendedor.
   const metas: Record<string, number> = {};
