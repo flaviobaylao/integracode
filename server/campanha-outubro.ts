@@ -93,6 +93,51 @@ export async function ensureCampaignTable(): Promise<void> {
 
 // Detecta candidatos a novo cliente do mes e faz upsert como "pendente"
 // (mantendo decisoes ja tomadas). Novo = 1a NF-e de venda da base caindo no mes.
+// ---------------------------------------------------------------------------
+// DELEGACAO DE CARTEIRA: durante uma delegacao (transferencia/rateio) o sistema troca o
+// dono do cliente (customers.seller_id) para o delegado, e devolve ao titular no fim.
+// A campanha NAO pode usar so o dono ATUAL: cada venda conta para quem era o dono da
+// carteira NA DATA DA VENDA. Ex.: carteira do Cleber delegada ao Radilton em 08/10 ->
+// vendas de 01 a 07/10 desses clientes sao do Cleber; a partir de 08/10, do Radilton.
+// Janela [ini, fim): fim = fim da delegacao ou a revogacao, o que vier primeiro.
+// ---------------------------------------------------------------------------
+type JanelaDeleg = { ini: string; fim: string; para: string; paraId: string; de: string; deId: string };
+const USER_NOME = (col: string) => "(SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.id = " + col + " OR u.omie_vendor_code = " + col + " OR u.omie_vendor_code = replace(COALESCE(" + col + ",''),'omie-vendor-','') LIMIT 1)";
+const USER_ID = (col: string) => "(SELECT u.id FROM users u WHERE u.id = " + col + " OR u.omie_vendor_code = " + col + " OR u.omie_vendor_code = replace(COALESCE(" + col + ",''),'omie-vendor-','') LIMIT 1)";
+const FIM_DELEG = "(CASE WHEN d.revoked_at IS NOT NULL AND d.revoked_at < d.ends_at THEN d.revoked_at ELSE d.ends_at END)";
+
+async function janelasDelegacao(ym: string): Promise<Record<string, JanelaDeleg[]>> {
+  const ini = ym + "-01";
+  const out: Record<string, JanelaDeleg[]> = {};
+  try {
+    const rows = await rawq(
+      "SELECT regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc, d.starts_at::date::text AS ini, " + FIM_DELEG + "::date::text AS fim," +
+      " " + USER_NOME("dc.to_user_id") + " AS para, " + USER_ID("dc.to_user_id") + " AS para_id," +
+      " " + USER_NOME("d.from_user_id") + " AS de, " + USER_ID("d.from_user_id") + " AS de_id" +
+      " FROM delegation_customers dc JOIN delegations d ON d.id = dc.delegation_id JOIN customers c ON c.id = dc.customer_id" +
+      " WHERE d.type::text IN ('carteira_transferencia','carteira_rateio')" +
+      " AND d.starts_at::date < ('" + ini + "'::date + INTERVAL '1 month') AND " + FIM_DELEG + "::date > '" + ini + "'::date" +
+      " AND regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> ''"
+    );
+    for (const r of rows) {
+      const w: JanelaDeleg = { ini: String(r.ini || "").slice(0, 10), fim: String(r.fim || "").slice(0, 10), para: String(r.para || ""), paraId: String(r.para_id || ""), de: String(r.de || ""), deId: String(r.de_id || "") };
+      if (!w.ini || !w.fim || w.fim <= w.ini) continue; // revogada antes de comecar
+      (out[String(r.doc)] = out[String(r.doc)] || []).push(w);
+    }
+  } catch (e) { /* sem tabelas de delegacao: segue pelo dono atual */ }
+  return out;
+}
+
+// Dono do cliente na data d (YYYY-MM-DD). Sem delegacao no mes -> dono atual (fallback).
+function donoNaData(janelas: JanelaDeleg[] | undefined, d: string, atual: { nome: string; id: string }): { nome: string; id: string } {
+  if (!janelas || !janelas.length) return atual;
+  for (const w of janelas) if (d >= w.ini && d < w.fim) return w.para ? { nome: w.para, id: w.paraId } : atual;
+  // Fora das janelas: titular (quem delegou). Antes da delegacao -> a proxima; depois -> a ultima.
+  const prox = janelas.filter((w) => w.ini > d).sort((a, b) => a.ini.localeCompare(b.ini))[0];
+  const ref = prox || janelas.slice().sort((a, b) => b.fim.localeCompare(a.fim))[0];
+  return ref && ref.de ? { nome: ref.de, id: ref.deId } : atual;
+}
+
 export async function detectNovos(ym: string): Promise<number> {
   await ensureCampaignTable();
   const dcol = nfData("fi");
@@ -119,21 +164,24 @@ export async function detectNovos(ym: string): Promise<number> {
   const docSeller: Record<string, string> = {};
   const docUid: Record<string, string> = {};
   for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) { docSeller[d] = String(r.seller || ""); docUid[d] = String(r.uid || ""); } }
+  const janelas = await janelasDelegacao(ym);
 
   let n = 0;
   for (const r of novos) {
     const doc = String(r.doc);
     const c = cust[doc];
     if (!c) continue; // sem cadastro (ou excluido por PURO) — ignora
-    const seller = docSeller[doc] || "";
+    const fd = String(r.first_d).slice(0, 10);
+    // Credito do novo cliente: dono da carteira NA DATA da 1a compra (respeita delegacao).
+    const dono = donoNaData(janelas[doc], fd, { nome: docSeller[doc] || "", id: docUid[doc] || "" });
+    const seller = dono.nome || "";
     if (excluido(seller)) continue; // conta fora da campanha
     const val = Math.round((Number(r.dayv) || 0) * 100) / 100;
-    const fd = String(r.first_d).slice(0, 10);
     const docE = doc.replace(/'/g, "");
     const nomeE = c.nome.replace(/'/g, "''");
     const regE = c.regiao.replace(/'/g, "''");
     const sellE = seller.replace(/'/g, "''");
-    const uid = (docUid[doc] || "").replace(/'/g, "");
+    const uid = (dono.id || "").replace(/'/g, "");
     const uidSql = uid ? "'" + uid + "'" : "NULL";
     await db.execute(sql.raw(
       "INSERT INTO campaign_new_clients (campaign_ym, doc, customer_id, customer_name, seller_name, seller_user_id, region, order_value, first_order_date, status)" +
@@ -178,19 +226,24 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   // Faturamento do mes por documento (NF-e de venda).
   const dcol = nfData("fi");
   const fat = await rawq(
-    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, COALESCE(SUM(fi.total_invoice),0) AS v" +
+    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, " + dcol + "::date::text AS d, COALESCE(SUM(fi.total_invoice),0) AS v" +
     " FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") +
     " AND " + dcol + "::date >= '" + ini + "'::date AND " + dcol + "::date < ('" + ini + "'::date + INTERVAL '1 month')" +
-    " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1"
+    " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2"
   );
+  // Cada venda conta para o dono da carteira NA DATA da NF-e (respeita delegacoes).
+  const janelas = await janelasDelegacao(ym);
   const faturamento: Record<string, number> = {};
-  const positivados: Record<string, number> = {};
+  const posDocs: Record<string, Set<string>> = {};
   for (const r of fat) {
-    const doc = String(r.doc); const seller = docSeller[doc]; if (!seller) continue;
+    const doc = String(r.doc); const atual = docSeller[doc]; if (!atual) continue;
     const v = Number(r.v) || 0; if (v <= 0) continue;
+    const seller = donoNaData(janelas[doc], String(r.d).slice(0, 10), { nome: atual, id: "" }).nome || atual;
     faturamento[seller] = (faturamento[seller] || 0) + v;
-    positivados[seller] = (positivados[seller] || 0) + 1;
+    (posDocs[seller] = posDocs[seller] || new Set<string>()).add(doc);
   }
+  const positivados: Record<string, number> = {};
+  for (const s of Object.keys(posDocs)) positivados[s] = posDocs[s].size;
 
   // Metas de faturamento (sales_goals) do mes/ano, por nome do vendedor.
   const metas: Record<string, number> = {};
@@ -225,6 +278,7 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   Object.keys(carteiraCount).forEach((s) => names.add(s));
   Object.keys(novosAptos).forEach((s) => names.add(s));
   Object.keys(emValidacao).forEach((s) => names.add(s));
+  Object.keys(faturamento).forEach((s) => names.add(s));
 
   let sellers: CampaignSeller[] = [];
   for (const seller of names) {
