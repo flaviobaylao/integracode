@@ -22,8 +22,10 @@ const BONUS_POS = 500;         // R$ por 90% de positivacao
 const BONUS_META = 500;        // R$ por bater a meta de faturamento
 
 // Contas fora da campanha (canais digitais, contas institucionais e excecoes do gestor).
-const EXCLUIDOS = new Set(["hotsite", "instagram", "honest colaboradores", "honest admin", "honest fornecedores", "maria e.", "natalia b."]);
-function excluido(nome: string): boolean { return EXCLUIDOS.has(String(nome || "").trim().toLowerCase()); }
+// A comparacao ignora pontuacao, acentos, espacos e caixa ("Maria E." = "Maria E").
+const chaveExcl = (s: string) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const EXCLUIDOS = new Set(["hotsite", "instagram", "honest colaboradores", "honest admin", "honest fornecedores", "maria e.", "natalia b.", "vinicius leal", "wellington s"].map(chaveExcl));
+function excluido(nome: string): boolean { return EXCLUIDOS.has(chaveExcl(nome)); }
 
 const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
