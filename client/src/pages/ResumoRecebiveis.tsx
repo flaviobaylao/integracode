@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -41,6 +42,11 @@ const PAPEL_COR: Record<string, string> = {
   telemarketing: "bg-amber-100 text-amber-800",
   administrative: "bg-blue-100 text-blue-800",
   motorista: "bg-orange-100 text-orange-800",
+};
+
+// Tipos do lançamento avulso. Débito já chega negativo do servidor.
+const TIPO_LANC: Record<string, string> = {
+  bonus: "Bônus", credito: "Crédito", debito: "Débito",
 };
 
 const ACAO_COR: Record<string, string> = {
@@ -307,21 +313,30 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
     ),
   },
   bonus: {
-    titulo: "Bônus",
+    titulo: "Bônus e lançamentos",
     corpo: (
       <>
         <p className="mb-2">
-          Soma dos <strong>lançamentos manuais</strong> do mês, feitos pelo admin na aba "Bônus e
-          lançamentos". É a única rubrica digitada direto no valor — as outras vêm dos módulos que as
-          calculam.
+          Saldo dos <strong>lançamentos avulsos</strong> do mês, feitos pelo admin em Configurações →
+          Bônus e lançamentos. É a única rubrica digitada direto no valor — as outras vêm dos módulos
+          que as calculam.
+        </p>
+        <Formula>
+          bônus (+) &nbsp;·&nbsp; crédito (+) &nbsp;·&nbsp; débito (−)
+        </Formula>
+        <p className="mb-2">
+          Serve para o que não cabe em comissão, fixo, km ou campanha: prêmio pontual, acerto a mais,
+          devolução de desconto — e também desconto, no <strong>débito</strong>, que entra negativo e
+          reduz o total do mês.
         </p>
         <p className="mb-2">
-          Serve para o que não cabe em comissão, fixo, km ou campanha: prêmio pontual, acerto,
-          devolução de desconto.
+          Vale para <strong>qualquer colaborador da planilha</strong>: não é preciso marcar nada no
+          cadastro antes de lançar. O débito <strong>exige justificativa</strong>, porque é dinheiro
+          saindo da folha de alguém.
         </p>
         <p className="text-muted-foreground">
-          Passe o mouse no valor para ver a descrição de cada lançamento. Mês fechado não aceita
-          lançamento novo.
+          O "i" ao lado do valor abre cada lançamento com a sua justificativa; o mesmo texto aparece
+          ao passar o mouse. Mês fechado não aceita lançamento novo.
         </p>
       </>
     ),
@@ -455,7 +470,7 @@ interface Colab {
   descontoTroca?: number | null; descontoTrocaAplicado?: number | null;
   campanhas: Record<string, number | null>;
   bonus: number | null;
-  lancamentos: Array<{ id: string; descricao: string; valor: number }>;
+  lancamentos: Array<{ id: string; descricao: string; valor: number; tipo?: string; justificativa?: string }>;
   kmRodado: number; kmTarifa: number; kmRegiao?: string; kmTarifaPropria?: boolean; kmValor: number | null; totalMes: number;
   // Só vem para admin. Informativo: não entra no totalMes.
   reembolsos?: { despesas: number; km: number; viagens: number; total: number } | null;
@@ -799,9 +814,50 @@ export default function ResumoRecebiveis() {
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(c.campanhas?.[k.id] ?? null)}</td>
                       ))}
+                      {/* Lançamento avulso não tem regra que o explique: a justificativa
+                          tem de estar a um hover ou a um clique do valor, senão o número
+                          vira um "de onde saiu isto?" na conferência da folha. */}
                       <td className="px-3 py-2 text-right"
-                        title={c.lancamentos?.length ? c.lancamentos.map((l) => `${l.descricao}: ${brl(l.valor)}`).join(" · ") : ""}>
-                        {brl(c.bonus)}
+                        title={(c.lancamentos || []).map((l) =>
+                          `${TIPO_LANC[l.tipo || "bonus"] || "Bônus"} ${brl(l.valor)} — ${l.descricao}${l.justificativa ? `\n   ${l.justificativa}` : ""}`
+                        ).join("\n")}>
+                        <span className={(c.bonus || 0) < 0 ? "text-red-600" : ""}>{brl(c.bonus)}</span>
+                        {!!c.lancamentos?.length && (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button type="button" aria-label="Ver os lançamentos e as justificativas"
+                                className="ml-1 align-middle text-muted-foreground hover:text-foreground">
+                                <Info className="inline h-3.5 w-3.5" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[22rem] text-xs leading-relaxed text-left" align="end">
+                              <p className="font-semibold mb-1.5">
+                                {c.lancamentos.length} lançamento{c.lancamentos.length > 1 ? "s" : ""} em {nomeDoMes(ym)}
+                              </p>
+                              <ul className="space-y-2">
+                                {c.lancamentos.map((l) => (
+                                  <li key={l.id}>
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <span className="font-medium">
+                                        {TIPO_LANC[l.tipo || "bonus"] || "Bônus"} · {l.descricao}
+                                      </span>
+                                      <span className={`shrink-0 font-semibold ${l.valor < 0 ? "text-red-600" : ""}`}>
+                                        {brl(l.valor)}
+                                      </span>
+                                    </div>
+                                    {l.justificativa
+                                      ? <p className="text-muted-foreground">{l.justificativa}</p>
+                                      : <p className="text-muted-foreground italic">Sem justificativa registrada.</p>}
+                                  </li>
+                                ))}
+                              </ul>
+                              <p className="mt-2 border-t pt-1.5 text-muted-foreground">
+                                Débito entra negativo e reduz o total do mês. Lançado em Configurações →
+                                Bônus e lançamentos.
+                              </p>
+                            </PopoverContent>
+                          </Popover>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right"
                         title={`${kmTxt(c.kmRodado)} a ${brl(c.kmTarifa)}/km`}>
@@ -1047,12 +1103,16 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   });
 
   // --- bônus avulso
-  const [bon, setBon] = useState<any>({ userId: "", descricao: "", valor: "" });
+  const [bon, setBon] = useState<any>({ userId: "", tipo: "bonus", descricao: "", valor: "", justificativa: "" });
   const lancarBonus = useMutation({
     mutationFn: () => apiRequest("POST", "/api/resumo-recebiveis/bonus", {
-      userId: bon.userId, ym, descricao: bon.descricao, valor: num(bon.valor),
+      userId: bon.userId, ym, tipo: bon.tipo, descricao: bon.descricao,
+      valor: num(bon.valor), justificativa: bon.justificativa,
     }),
-    onSuccess: () => { toast({ title: "Bônus lançado" }); setBon({ ...bon, descricao: "", valor: "" }); invalidar(); },
+    onSuccess: (r: any) => {
+      toast({ title: r?.message || "Lançamento feito" });
+      setBon({ ...bon, descricao: "", valor: "", justificativa: "" }); invalidar();
+    },
     onError: (e: any) => toast({ title: "Falha ao lançar", description: e?.message, variant: "destructive" }),
   });
   const removerBonus = useMutation({
@@ -1060,7 +1120,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     onSuccess: () => { toast({ title: "Lançamento removido" }); invalidar(); },
   });
 
-  const comBonus = colabs.filter((c) => c.config?.usaBonus === true);
+  // (comBonus saiu: o lançamento avulso não depende mais da flag "Bônus manual".)
   const campanhasManuais = campanhas.filter((c) => c.origem === "manual");
   const lancamentos = colabs.flatMap((c) => (c.lancamentos || []).map((l) => ({ ...l, colaborador: c.nome })));
 
@@ -1605,10 +1665,11 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
             </div>
 
             <div>
-              <h3 className="text-sm font-semibold mb-1">Bônus avulso — {nomeDoMes(ym)}</h3>
+              <h3 className="text-sm font-semibold mb-1">Lançamento avulso — {nomeDoMes(ym)}</h3>
               <p className="text-xs text-muted-foreground mb-2">
-                Só aparece para quem está com <strong>Bônus manual</strong> marcado na aba Colaboradores.
-                {comBonus.length === 0 && " Nenhum colaborador está marcado hoje."}
+                Para o que não cabe em nenhuma regra: um prêmio, um acerto a mais ou um desconto.
+                Vale para <strong>qualquer colaborador da planilha</strong> — não é preciso marcar nada
+                antes no cadastro. O <strong>débito entra negativo</strong> e reduz o total do mês.
               </p>
               <div className="rounded-lg border bg-muted/30 p-3 grid grid-cols-1 md:grid-cols-4 gap-3 min-w-0">
                 <div className="min-w-0">
@@ -1616,11 +1677,24 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                   <Select value={bon.userId} onValueChange={(v) => setBon({ ...bon, userId: v })}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
-                      {comBonus.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+                      {(cfgData?.colaboradores || []).map((c: any) => (
+                        <SelectItem key={c.id} value={c.id}>{c.nome} · {PAPEL_LABEL[c.role] || c.role}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="min-w-0 md:col-span-2">
+                <div className="min-w-0">
+                  <Label className="text-xs">Tipo</Label>
+                  <Select value={bon.tipo} onValueChange={(v) => setBon({ ...bon, tipo: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="bonus">Bônus (soma)</SelectItem>
+                      <SelectItem value="credito">Crédito (soma)</SelectItem>
+                      <SelectItem value="debito">Débito (subtrai)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0">
                   <Label className="text-xs">Descrição</Label>
                   <Input className="mt-1" maxLength={300} value={bon.descricao}
                     onChange={(e) => setBon({ ...bon, descricao: e.target.value })}
@@ -1630,12 +1704,26 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                   <Label className="text-xs">Valor (R$)</Label>
                   <Input className="mt-1" inputMode="decimal" placeholder="0,00"
                     value={bon.valor} onChange={(e) => setBon({ ...bon, valor: e.target.value })} />
+                  {bon.tipo === "debito" && (
+                    <p className="mt-1 text-[11px] text-red-600">Informe positivo; entra como −{brl(num(bon.valor))}.</p>
+                  )}
+                </div>
+                <div className="min-w-0 md:col-span-4">
+                  <Label className="text-xs">
+                    Justificativa{bon.tipo === "debito" ? " (obrigatória no débito)" : ""}
+                  </Label>
+                  <Textarea className="mt-1 resize-none" rows={2} maxLength={2000}
+                    value={bon.justificativa}
+                    onChange={(e) => setBon({ ...bon, justificativa: e.target.value })}
+                    placeholder="Por que este lançamento existe. Aparece no 'i' da célula e no histórico." />
                 </div>
                 <div className="md:col-span-4 flex justify-end">
-                  <Button size="sm" disabled={!bon.userId || !bon.descricao.trim() || lancarBonus.isPending}
+                  <Button size="sm"
+                    disabled={!bon.userId || !bon.descricao.trim() || !(num(bon.valor) > 0)
+                      || (bon.tipo === "debito" && !bon.justificativa.trim()) || lancarBonus.isPending}
                     onClick={() => lancarBonus.mutate()}>
                     {lancarBonus.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
-                    Lançar bônus
+                    Lançar {bon.tipo === "debito" ? "débito" : bon.tipo === "credito" ? "crédito" : "bônus"}
                   </Button>
                 </div>
               </div>
@@ -1646,9 +1734,16 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     <div key={l.id} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm min-w-0">
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-medium">{l.colaborador}</div>
-                        <div className="truncate text-xs text-muted-foreground">{l.descricao}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {TIPO_LANC[l.tipo || "bonus"] || "Bônus"} · {l.descricao}
+                        </div>
+                        {l.justificativa && (
+                          <div className="truncate text-[11px] text-muted-foreground italic" title={l.justificativa}>
+                            {l.justificativa}
+                          </div>
+                        )}
                       </div>
-                      <span className="shrink-0 font-medium">{brl(l.valor)}</span>
+                      <span className={`shrink-0 font-medium ${l.valor < 0 ? "text-red-600" : ""}`}>{brl(l.valor)}</span>
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0 text-red-600"
                         onClick={() => removerBonus.mutate(l.id)}>
                         <Trash2 className="h-3.5 w-3.5" />
