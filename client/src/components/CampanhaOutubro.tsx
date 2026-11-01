@@ -12,9 +12,17 @@ type Seller = {
   positivacao: number; faturamento: number; meta: number;
   bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number;
 };
+// Premissa da campanha no mês: o bloco de planejamento e a coluna da tabela
+// nascem daqui. Vem do servidor (catálogo + o que foi gravado para o mês).
+export type Premissa = {
+  chave: string; label: string; descricao: string;
+  gatilhoLabel: string; gatilhoSufixo: string; base: string;
+  ativa: boolean; modo: "valor" | "percentual"; valor: number; gatilho: number;
+};
+
 type Resp = {
-  asOf: string; ym: string; ativo: boolean; meses?: string[];
-  premissas: { bonusNovo: number; posMeta: number; bonusPos: number; bonusMeta: number; pedidoMin: number };
+  asOf: string; ym: string; ativo: boolean; meses?: string[]; admin?: boolean;
+  premissas: Premissa[];
   sellers: Seller[];
   totais: { novosAptos: number; emValidacao: number; bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number; comPositivacao: number; comMeta: number; vendedores: number };
 };
@@ -114,8 +122,23 @@ export default function CampanhaOutubro() {
 
   const sellers = data?.sellers || [];
   const t = data?.totais;
-  const posMeta = data?.premissas?.posMeta ?? 90;
+  const premissas: Premissa[] = Array.isArray(data?.premissas) ? data!.premissas : [];
+  const acha = (c: string) => premissas.find((p) => p.chave === c);
+  const pNovos = acha("novos"), pPos = acha("positivacao"), pMeta = acha("meta");
+  const posMeta = pPos?.gatilho ?? 90;
+  const metaPct = pMeta?.gatilho ?? 100;
   const multi = sellers.length > 1;
+  const admin = data?.admin === true;
+  // Quantas colunas a tabela tem de fato — muda com as premissas ligadas.
+  const nCols = 2 + (pNovos?.ativa ? 2 : 0) + (pPos?.ativa ? 2 : 0) + (pMeta?.ativa ? 2 : 0);
+
+  const salvarPremissa = async (p: Premissa, mudanca: Partial<Premissa>) => {
+    const novo = { ...p, ...mudanca };
+    await apiRequest("POST", "/api/campanha/outubro/premissa", {
+      ym, chave: p.chave, ativa: novo.ativa, modo: novo.modo, valor: novo.valor, gatilho: novo.gatilho,
+    });
+    refetch();
+  };
 
   return (
     <div className="space-y-5">
@@ -146,94 +169,166 @@ export default function CampanhaOutubro() {
         </div>
       </div>
 
-      {/* PLANEJAMENTO */}
+      {/* PLANEJAMENTO — um bloco por premissa, direto do catálogo do servidor.
+          Premissa nova aparece aqui sozinha, com liga/desliga e edição. */}
       <div>
-        <div className="mb-2 flex items-baseline gap-2"><h3 className="text-base font-semibold text-gray-800">Planejamento</h3><span className="text-xs text-gray-400">as três formas de ganhar no mês</span></div>
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.4fr_1fr]">
-          <div className="rounded-xl border border-gray-200 bg-white p-4 lg:row-span-2">
-            <div className="text-xl font-extrabold tracking-tight text-gray-800">{brl(30)}</div>
-            <div className="text-sm font-semibold text-gray-700">por novo cliente</div>
-            <div className="text-xs text-gray-500">Venda faturada e recebida.</div>
-            <div className="mt-3 border-t border-dashed border-gray-200 pt-3">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Regras do novo cliente</div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {REGRAS.map((r) => (
-                  <span key={r} className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] text-gray-600"><Check />{r}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="rounded-xl border border-gray-200 bg-white p-4">
-            <div className="text-xl font-extrabold tracking-tight text-gray-800">{brl(500)}</div>
-            <div className="text-sm font-semibold text-gray-700">positivação de {posMeta}%</div>
-            <div className="text-xs text-gray-500">{posMeta}% da carteira positivada no mês.</div>
-          </div>
-          <div className="rounded-xl border border-gray-200 bg-white p-4">
-            <div className="text-xl font-extrabold tracking-tight text-gray-800">{brl(500)}</div>
-            <div className="text-sm font-semibold text-gray-700">meta de faturamento</div>
-            <div className="text-xs text-gray-500">Meta do mês cumprida.</div>
-          </div>
+        <div className="mb-2 flex items-baseline gap-2">
+          <h3 className="text-base font-semibold text-gray-800">Planejamento</h3>
+          <span className="text-xs text-gray-400">
+            {admin ? "ligue, desligue e edite o que vale neste mês" : "as formas de ganhar no mês"}
+          </span>
         </div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          {premissas.map((p) => (
+            <div key={p.chave}
+              className={`rounded-xl border p-4 ${p.ativa ? "border-gray-200 bg-white" : "border-dashed border-gray-300 bg-gray-50"}`}
+              data-testid={`premissa-${p.chave}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className={`text-xl font-extrabold tracking-tight ${p.ativa ? "text-gray-800" : "text-gray-400 line-through"}`}>
+                  {p.modo === "percentual" ? `${String(p.valor).replace(".", ",")}%` : brl(p.valor)}
+                </div>
+                {admin && (
+                  <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-gray-500">
+                    <input type="checkbox" checked={p.ativa} className="h-3.5 w-3.5 accent-emerald-600"
+                      onChange={(e) => salvarPremissa(p, { ativa: e.target.checked })}
+                      data-testid={`premissa-ativa-${p.chave}`} />
+                    {p.ativa ? "no mês" : "fora"}
+                  </label>
+                )}
+              </div>
+              <div className={`text-sm font-semibold ${p.ativa ? "text-gray-700" : "text-gray-400"}`}>
+                {p.chave === "positivacao" ? `positivação de ${p.gatilho}%` : p.label}
+              </div>
+              <div className="text-xs text-gray-500">
+                {p.modo === "percentual" ? <>sobre o {p.base}.</> : p.descricao}
+              </div>
+
+              {admin && (
+                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-dashed border-gray-200 pt-3">
+                  <label className="text-[11px] text-gray-500">
+                    Prêmio
+                    <input type="text" inputMode="decimal" defaultValue={String(p.valor).replace(".", ",")}
+                      key={`v-${p.chave}-${p.valor}`}
+                      onBlur={(e) => {
+                        const v = Number(e.target.value.replace(",", ".")) || 0;
+                        if (v !== p.valor) salvarPremissa(p, { valor: v });
+                      }}
+                      className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
+                      data-testid={`premissa-valor-${p.chave}`} />
+                  </label>
+                  <label className="text-[11px] text-gray-500">
+                    Em
+                    <select value={p.modo} onChange={(e) => salvarPremissa(p, { modo: e.target.value as any })}
+                      className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
+                      data-testid={`premissa-modo-${p.chave}`}>
+                      <option value="valor">R$ (valor real)</option>
+                      <option value="percentual">% (percentual)</option>
+                    </select>
+                  </label>
+                  <label className="col-span-2 text-[11px] text-gray-500">
+                    {p.gatilhoLabel} ({p.gatilhoSufixo})
+                    <input type="text" inputMode="decimal" defaultValue={String(p.gatilho).replace(".", ",")}
+                      key={`g-${p.chave}-${p.gatilho}`}
+                      onBlur={(e) => {
+                        const v = Number(e.target.value.replace(",", ".")) || 0;
+                        if (v !== p.gatilho) salvarPremissa(p, { gatilho: v });
+                      }}
+                      className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
+                      data-testid={`premissa-gatilho-${p.chave}`} />
+                  </label>
+                  <p className="col-span-2 text-[10px] leading-relaxed text-gray-400">
+                    Em <b>%</b>, o prêmio é calculado sobre o {p.base}. Vale só para{" "}
+                    <b>{nomeDoMes(ym)}</b> — os outros meses ficam como estão.
+                  </p>
+                </div>
+              )}
+
+              {p.chave === "novos" && p.ativa && (
+                <div className="mt-3 border-t border-dashed border-gray-200 pt-3">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Regras do novo cliente</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {[`Pedido mín. ${brl(p.gatilho)}`, ...REGRAS].map((r) => (
+                      <span key={r} className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] text-gray-600"><Check />{r}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {!premissas.some((p) => p.ativa) && (
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+            Nenhuma premissa está valendo em {nomeDoMes(ym)}: a campanha não paga nada no mês e a
+            tabela fica só com os nomes.
+          </p>
+        )}
       </div>
 
       {/* TABELA */}
       <div>
-        <div className="mb-2 flex items-baseline gap-2"><h3 className="text-base font-semibold text-gray-800">Acompanhamento {multi ? "por vendedor" : "— seu desempenho"}</h3><span className="text-xs text-gray-400">progresso nas três premissas e bônus previsto</span></div>
+        <div className="mb-2 flex items-baseline gap-2"><h3 className="text-base font-semibold text-gray-800">Acompanhamento {multi ? "por vendedor" : "— seu desempenho"}</h3><span className="text-xs text-gray-400">progresso nas premissas do mês e bônus previsto</span></div>
         <Card>
           <CardContent className="overflow-x-auto p-0">
             {isLoading ? <div className="p-6 text-sm text-gray-500">Carregando…</div> : (
               <table className="w-full min-w-[820px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
+                    {/* Premissa desligada no mês não tem coluna. */}
                     <th className="px-3 py-2.5 font-semibold">Vendedor</th>
-                    <th className="px-3 py-2.5 text-center font-semibold">Novos (aptos / validação)</th>
-                    <th className="px-3 py-2.5 text-center font-semibold">Bônus novos</th>
-                    <th className="px-3 py-2.5 font-semibold">Positivação (meta {posMeta}%)</th>
-                    <th className="px-3 py-2.5 font-semibold">Faturamento (realizado / meta)</th>
-                    <th className="px-3 py-2.5 text-center font-semibold">Bônus positiv.</th>
-                    <th className="px-3 py-2.5 text-center font-semibold">Bônus meta</th>
+                    {pNovos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Novos (aptos / validação)</th>}
+                    {pNovos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus novos</th>}
+                    {pPos?.ativa && <th className="px-3 py-2.5 font-semibold">Positivação (meta {posMeta}%)</th>}
+                    {pMeta?.ativa && <th className="px-3 py-2.5 font-semibold">Faturamento (realizado / meta)</th>}
+                    {pPos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus positiv.</th>}
+                    {pMeta?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus meta</th>}
                     <th className="px-3 py-2.5 text-center font-semibold">Bônus previsto</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sellers.map((s) => {
-                    const metaOk = s.meta > 0 && s.faturamento >= s.meta;
+                    const metaOk = s.meta > 0 && s.faturamento >= (s.meta * metaPct) / 100;
                     const fatPct = s.meta > 0 ? Math.round((s.faturamento / s.meta) * 100) : 0;
                     const posOk = s.positivacao >= posMeta;
                     return (
                       <tr key={s.seller} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                         <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap">{s.seller}</td>
-                        <td className="px-3 py-2.5 text-center">
-                          <button onClick={() => setModalSeller(s.seller)} className="font-bold text-emerald-700 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600" title="Ver lista dos novos clientes">{s.novosAptos}</button>
-                          <span className="text-gray-400"> / {s.emValidacao} em validação</span>
-                        </td>
-                        <td className="px-3 py-2.5 text-center font-semibold tabular-nums">{brl(s.bonusNovos)}</td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center justify-between gap-2"><span className="font-medium tabular-nums">{s.positivacao}%</span>{posOk && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">+R$500</span>}</div>
-                          <Bar pct={s.positivacao} ok={posOk} />
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center justify-between gap-2"><span className="font-medium tabular-nums">{fatPct}%</span><span className="text-[11px] tabular-nums text-gray-400">{brl(s.faturamento)} / {s.meta > 0 ? brl(s.meta) : "—"}</span></div>
-                          <Bar pct={fatPct} ok={metaOk} />
-                        </td>
-                        <td className="px-3 py-2.5 text-center">{s.bonusPos ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">R$ 500</span> : <span className="text-gray-300">—</span>}</td>
-                        <td className="px-3 py-2.5 text-center">{s.bonusMeta ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">R$ 500</span> : <span className="text-gray-300">—</span>}</td>
+                        {pNovos?.ativa && (
+                          <td className="px-3 py-2.5 text-center">
+                            <button onClick={() => setModalSeller(s.seller)} className="font-bold text-emerald-700 underline decoration-emerald-300 underline-offset-2 hover:decoration-emerald-600" title="Ver lista dos novos clientes">{s.novosAptos}</button>
+                            <span className="text-gray-400"> / {s.emValidacao} em validação</span>
+                          </td>
+                        )}
+                        {pNovos?.ativa && <td className="px-3 py-2.5 text-center font-semibold tabular-nums">{brl(s.bonusNovos)}</td>}
+                        {pPos?.ativa && (
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center justify-between gap-2"><span className="font-medium tabular-nums">{s.positivacao}%</span>{posOk && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">+{brl(s.bonusPos)}</span>}</div>
+                            <Bar pct={s.positivacao} ok={posOk} />
+                          </td>
+                        )}
+                        {pMeta?.ativa && (
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center justify-between gap-2"><span className="font-medium tabular-nums">{fatPct}%</span><span className="text-[11px] tabular-nums text-gray-400">{brl(s.faturamento)} / {s.meta > 0 ? brl(s.meta) : "—"}</span></div>
+                            <Bar pct={fatPct} ok={metaOk} />
+                          </td>
+                        )}
+                        {pPos?.ativa && <td className="px-3 py-2.5 text-center">{s.bonusPos ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{brl(s.bonusPos)}</span> : <span className="text-gray-300">—</span>}</td>}
+                        {pMeta?.ativa && <td className="px-3 py-2.5 text-center">{s.bonusMeta ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{brl(s.bonusMeta)}</span> : <span className="text-gray-300">—</span>}</td>}
                         <td className="px-3 py-2.5 text-center font-bold tabular-nums text-emerald-700">{brl(s.bonusTotal)}</td>
                       </tr>
                     );
                   })}
-                  {!sellers.length && <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-500">Sem dados da campanha ainda.</td></tr>}
+                  {!sellers.length && <tr><td colSpan={nCols} className="px-3 py-6 text-center text-sm text-gray-500">Sem dados da campanha ainda.</td></tr>}
                 </tbody>
                 {multi && t && (
                   <tfoot>
                     <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
                       <td className="px-3 py-2.5">Equipe ({t.vendedores})</td>
-                      <td className="px-3 py-2.5 text-center tabular-nums">{t.novosAptos} / {t.emValidacao}</td>
-                      <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusNovos)}</td>
-                      <td className="px-3 py-2.5 text-gray-500">{t.comPositivacao} de {t.vendedores} com {posMeta}%</td>
-                      <td className="px-3 py-2.5 text-gray-500">{t.comMeta} de {t.vendedores} na meta</td>
-                      <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusPos)}</td>
-                      <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusMeta)}</td>
+                      {pNovos?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{t.novosAptos} / {t.emValidacao}</td>}
+                      {pNovos?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusNovos)}</td>}
+                      {pPos?.ativa && <td className="px-3 py-2.5 text-gray-500">{t.comPositivacao} de {t.vendedores} com {posMeta}%</td>}
+                      {pMeta?.ativa && <td className="px-3 py-2.5 text-gray-500">{t.comMeta} de {t.vendedores} na meta</td>}
+                      {pPos?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusPos)}</td>}
+                      {pMeta?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusMeta)}</td>}
                       <td className="px-3 py-2.5 text-center tabular-nums text-emerald-700">{brl(t.bonusTotal)}</td>
                     </tr>
                   </tfoot>
@@ -259,9 +354,9 @@ export default function CampanhaOutubro() {
                     {t.bonusMeta > 0 && <div className="flex items-center justify-center bg-violet-500 text-[11px] font-semibold text-white" style={{ width: (t.bonusMeta / t.bonusTotal * 100) + "%" }}>{t.bonusMeta / t.bonusTotal > 0.12 ? brl(t.bonusMeta) : ""}</div>}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-600">
-                    <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />Novos clientes</span>
-                    <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-700" />Positivação</span>
-                    <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-violet-500" />Meta</span>
+                    {t.bonusNovos > 0 && <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />Novos clientes</span>}
+                    {t.bonusPos > 0 && <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-700" />Positivação</span>}
+                    {t.bonusMeta > 0 && <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-violet-500" />Meta</span>}
                   </div>
                 </>
               ) : <p className="mt-2 text-sm text-gray-500">Ainda sem bônus previsto no mês.</p>}
