@@ -31,8 +31,9 @@ function brl(n: number): string {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+// O pedido mínimo saiu daqui: virou o gatilho editável da premissa e já entra
+// na lista pelo valor do mês. Mantê-lo fixo mostrava "Pedido mín." duas vezes.
 const REGRAS = [
-  "Pedido mín. R$ 300,00",
   "Só em regiões já atendidas",
   "Dentro do raio logístico",
   "Cliente consistente e validado",
