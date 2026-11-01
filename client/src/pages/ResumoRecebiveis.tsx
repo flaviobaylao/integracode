@@ -259,9 +259,48 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
         <PorFuncao quem="Coordenação de vendas">
           fixo livre e percentual sobre o faturamento total da equipe — aqui o fixo não abate.
         </PorFuncao>
+        <p className="mb-2">
+          Por último sai o <strong>desconto por troca</strong> de vencimento, que tem coluna própria
+          ao lado — o valor desta coluna já vem com ele abatido.
+        </p>
+        <Formula>
+          comissão paga = apurado − fixo (quando a regra vale) − desconto por troca &nbsp;(piso zero)
+        </Formula>
         <p className="text-muted-foreground">
           Quando o fixo engole parte da comissão, o valor apurado aparece em miúdo embaixo do valor
           pago: um zero aqui é comissão ainda dentro do fixo, não erro de apuração.
+        </p>
+      </>
+    ),
+  },
+  descontoTroca: {
+    titulo: "Desc. Trocas — já abatido na comissão",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Troca por <strong>vencimento</strong> é aceita como decisão comercial, mas a comissão sobre
+          o valor trocado volta: o vendedor recebeu comissão de uma venda que não se sustentou.
+        </p>
+        <Formula>
+          valor da troca × % de comissão do vendedor<br />
+          valor da troca = qtd trocada × preço da última NF dele para aquele cliente
+        </Formula>
+        <p className="mb-2">
+          Apurado no módulo de Trocas e creditado a <strong>quem registrou</strong> o pedido de
+          troca, no mês em que a troca aconteceu.
+        </p>
+        <p className="mb-2">
+          Troca por <strong>qualidade</strong> — fermentado, lacre, tampa, avaria — fica registrada
+          para a análise de lote e <strong>não desconta nada</strong>.
+        </p>
+        <p className="mb-2">
+          A coluna aparece em negativo e <strong>já está abatida na Comissão Mês</strong>: não some
+          de novo no total, senão o desconto conta duas vezes.
+        </p>
+        <p className="text-muted-foreground">
+          A comissão tem piso zero. Se o desconto for maior que a comissão do mês, o que sobra{" "}
+          <strong>não</strong> vira dívida nem passa para o mês seguinte — o tooltip da célula avisa
+          quando isso acontece.
         </p>
       </>
     ),
@@ -411,6 +450,8 @@ interface Colab {
   atingimentoPct: number; comissao: number | null;
   // Comissão apurada antes de abater o fixo mensal, e quanto o fixo engoliu.
   comissaoBruta?: number | null; comissaoAbatida?: number | null;
+  // Troca por vencimento: já sai da comissão, não soma de novo no total.
+  descontoTroca?: number | null; descontoTrocaAplicado?: number | null;
   campanhas: Record<string, number | null>;
   bonus: number | null;
   lancamentos: Array<{ id: string; descricao: string; valor: number }>;
@@ -626,6 +667,7 @@ export default function ResumoRecebiveis() {
                     <Th col="meta" ajuda={AJUDA.meta}>Meta</Th>
                     <Th col="faturamento" ajuda={AJUDA.faturamento}>Faturamento</Th>
                     <Th col="comissao" ajuda={AJUDA.comissao}>Comissão Mês</Th>
+                    <Th col="descontoTroca" ajuda={AJUDA.descontoTroca}>Desc. Trocas</Th>
                     {campanhas.map((c) => (
                       <Th key={c.id} col={`camp:${c.id}`} ajuda={ajudaCampanha(c)}>{c.nome}</Th>
                     ))}
@@ -677,6 +719,9 @@ export default function ResumoRecebiveis() {
                           (c.comissaoAbatida || 0) > 0
                             ? `Comissão a partir do fixo: apurado ${brl(c.comissaoBruta)} − fixo ${brl(c.fixoMensal)} = ${brl(c.comissao)}`
                             : "",
+                          (c.descontoTroca || 0) > 0
+                            ? `Já abatido ${brl(c.descontoTroca)} de desconto por troca de vencimento`
+                            : "",
                         ].filter(Boolean).join("\n")}>
                         {brl(c.comissao)}
                         {/* O fixo adianta a comissão: sem esta linha, um zero aqui parece erro
@@ -686,6 +731,15 @@ export default function ResumoRecebiveis() {
                             {brl(c.comissaoBruta)} − fixo
                           </div>
                         )}
+                      </td>
+                      <td className="px-3 py-2 text-right"
+                        title={!c.descontoTroca ? "Nenhuma troca por vencimento no mês"
+                          : (c.descontoTroca > (c.descontoTrocaAplicado || 0)
+                            ? `Troca por vencimento: ${brl(c.descontoTroca)}. A comissão do mês absorveu ${brl(c.descontoTrocaAplicado)} — o resto não passa para o mês seguinte.`
+                            : `Troca por vencimento: ${brl(c.descontoTroca)}, já abatidos na Comissão Mês`)}>
+                        {c.descontoTroca
+                          ? <span className="text-red-600">−{brl(c.descontoTroca)}</span>
+                          : brl(c.descontoTroca ?? null)}
                       </td>
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(c.campanhas?.[k.id] ?? null)}</td>
@@ -722,6 +776,9 @@ export default function ResumoRecebiveis() {
                         {brl(totais.faturamento)}
                       </td>
                       <td className="px-3 py-2 text-right">{brl(totais.comissao)}</td>
+                      <td className="px-3 py-2 text-right text-red-600">
+                        {totais.descontoTroca ? `−${brl(totais.descontoTroca)}` : brl(0)}
+                      </td>
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(totais.campanhas?.[k.id] || 0)}</td>
                       ))}
