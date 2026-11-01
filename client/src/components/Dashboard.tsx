@@ -444,7 +444,9 @@ export default function Dashboard() {
         <button type="button" onClick={() => setHistView("historico")} className={tabCls("historico", histView)}>Histórico</button>
         <button type="button" onClick={() => setHistView("diario")} className={tabCls("diario", histView)}>Histórico Diário</button>
         <button type="button" onClick={() => setHistView("clientes")} className={tabCls("clientes", histView)}>Variação de Vendas</button>
-        <button type="button" onClick={() => setHistView("campanha")} className={tabCls("campanha", histView)}>Campanha de Outubro</button>
+        {/* A campanha saiu daqui em 31/out/2026: virou aba de Metas de Vendas, com
+            seletor de mês. O caso "campanha" fica no estado só para não quebrar um
+            link antigo que abra o painel nesse modo. */}
         {isAdmin && <button type="button" onClick={() => setHistView("producao")} className={tabCls("producao", histView)}>Produção &amp; Faturamento</button>}
       </div>
       {histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "campanha" ? <CampanhaOutubro /> : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>

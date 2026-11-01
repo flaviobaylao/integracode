@@ -13,7 +13,7 @@ type Seller = {
   bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number;
 };
 type Resp = {
-  asOf: string; ym: string; ativo: boolean;
+  asOf: string; ym: string; ativo: boolean; meses?: string[];
   premissas: { bonusNovo: number; posMeta: number; bonusPos: number; bonusMeta: number; pedidoMin: number };
   sellers: Seller[];
   totais: { novosAptos: number; emValidacao: number; bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number; comPositivacao: number; comMeta: number; vendedores: number };
@@ -35,16 +35,16 @@ function Check() {
   return <svg className="h-3 w-3 shrink-0 text-emerald-600" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
-function NovosModal({ seller, onClose }: { seller: string; onClose: () => void }) {
+function NovosModal({ seller, ym, onClose }: { seller: string; ym: string; onClose: () => void }) {
   const [rows, setRows] = useState<any[] | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
     let alive = true;
-    apiRequest("GET", "/api/campanha/outubro/novos?seller=" + encodeURIComponent(seller))
+    apiRequest("GET", "/api/campanha/outubro/novos?ym=" + ym + "&seller=" + encodeURIComponent(seller))
       .then((r) => { if (alive) setRows(r.rows || []); })
       .catch((e) => { if (alive) setErr(e?.message || "Erro ao carregar"); });
     return () => { alive = false; };
-  }, [seller]);
+  }, [seller, ym]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[82vh] overflow-auto rounded-xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -85,9 +85,32 @@ function Bar({ pct, ok }: { pct: number; ok: boolean }) {
   );
 }
 
+// Mes no fuso de Brasilia — o mes do servidor, nao o do navegador de quem olha.
+function mesCorrente(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" })
+    .format(new Date()).slice(0, 7);
+}
+function nomeDoMes(ym: string): string {
+  const [a, m] = String(ym).split("-").map(Number);
+  const nome = new Date(Date.UTC(a, (m || 1) - 1, 1))
+    .toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+  return nome.charAt(0).toUpperCase() + nome.slice(1);
+}
+function ultimoDia(ym: string): number {
+  const [a, m] = String(ym).split("-").map(Number);
+  return new Date(Date.UTC(a, m, 0)).getUTCDate();
+}
+
 export default function CampanhaOutubro() {
-  const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<Resp>({ queryKey: ["/api/campanha/outubro"], refetchInterval: 5 * 60_000 });
+  const [ym, setYm] = useState(mesCorrente);
+  const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<Resp>({
+    queryKey: ["/api/campanha/outubro", ym],
+    // queryFn explicita: a padrao junta a chave com "/" e viraria .../2026-11.
+    queryFn: () => apiRequest("GET", "/api/campanha/outubro?ym=" + ym),
+    refetchInterval: 5 * 60_000,
+  });
   const [modalSeller, setModalSeller] = useState<string | null>(null);
+  const meses = data?.meses?.length ? data.meses : [ym];
 
   const sellers = data?.sellers || [];
   const t = data?.totais;
@@ -101,16 +124,24 @@ export default function CampanhaOutubro() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">honest · campanha de vendas</div>
-            <h2 className="mt-1 text-2xl font-bold tracking-tight text-gray-800">Campanha de Outubro</h2>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-gray-800">Campanha de {nomeDoMes(ym)}</h2>
             <p className="mt-1 max-w-2xl text-sm text-gray-600">Bonificação por novos clientes, positivação e meta de faturamento — por vendedor.</p>
           </div>
           <div className="flex flex-col items-end gap-1.5 text-xs">
-            <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-gray-600">Período: <b className="text-gray-800">01–31/out</b></span>
+            {/* Mês considerado na apuração: tudo nesta aba segue este seletor. */}
+            <select value={ym} onChange={(e) => setYm(e.target.value)}
+              className="rounded-md border border-emerald-200 bg-white px-2.5 py-1.5 text-sm font-semibold text-emerald-800"
+              data-testid="campanha-mes">
+              {meses.map((m) => <option key={m} value={m}>{nomeDoMes(m)}</option>)}
+            </select>
+            <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-gray-600">
+              Período: <b className="text-gray-800">01–{ultimoDia(ym)}/{ym.slice(5)}</b>
+            </span>
             <span className="flex items-center gap-2 text-[11px] text-gray-500">
               {dataUpdatedAt ? "Atualizado às " + new Date(dataUpdatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""}
               <button type="button" onClick={() => refetch()} disabled={isFetching} className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60" data-testid="campanha-atualizar">{isFetching ? "Atualizando…" : "Atualizar"}</button>
             </span>
-            {data && !data.ativo && <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">Fora do mês da campanha</span>}
+            {data && !data.ativo && <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">Mês encerrado — retrato do período</span>}
           </div>
         </div>
       </div>
@@ -241,7 +272,7 @@ export default function CampanhaOutubro() {
 
       <p className="pt-1 text-center text-xs text-gray-400">Dados do faturamento (NF-e), da carteira e dos pedidos do mês. Os novos clientes são validados no Inbox para contarem na campanha.</p>
 
-      {modalSeller && <NovosModal seller={modalSeller} onClose={() => setModalSeller(null)} />}
+      {modalSeller && <NovosModal seller={modalSeller} ym={ym} onClose={() => setModalSeller(null)} />}
     </div>
   );
 }
