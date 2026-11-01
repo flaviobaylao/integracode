@@ -1407,7 +1407,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         : abateFixo === false ? " · comissão cheia, sem abater o fixo"
         : "";
       await auditar(req, "Remuneração",
-        `Vigência a partir de ${vig}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra}${abateTexto} · rubricas: ${rubricas}`,
+        `${b.editando === true ? "Alterada a vigência de" : "Vigência a partir de"} ${vig}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra}${abateTexto} · rubricas: ${rubricas}`,
         alvo, b);
 
       res.json({ message: "Configuração salva", id: r.rows?.[0]?.id });
