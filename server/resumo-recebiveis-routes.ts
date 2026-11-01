@@ -39,7 +39,7 @@ import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
-import { sqlFaturamentoPorVendedor } from "./faturamento-oficial";
+import { sqlFaturamentoPorVendedor, sqlFaturamentoPeriodo } from "./faturamento-oficial";
 import { computeCampaign } from "./campanha-outubro";
 import ExcelJS from "exceljs";
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from "@shared/comissao-entrega";
@@ -142,9 +142,15 @@ function calcularComissao(cfg: Cfg, faturamento: number, meta: number): number {
     return (faturamento * aliquotaDaFaixa(cfg.faixaTipo, atingimento)) / 100;
   }
   if (cfg.comissaoTipo === "escalonado") {
-    const faixa = (cfg.comissaoFaixas || [])
-      .filter((f) => faturamento >= f.de && (f.ate === null || faturamento <= f.ate))
-      .sort((a, b) => b.de - a.de)[0];
+    // BURACO ENTRE FAIXAS (01/nov/2026): faixas cadastradas como 0–299.000 e
+    // 300.000–399.000 deixam 299.000,01 a 299.999,99 sem faixa nenhuma, e a
+    // comissão caía para ZERO justamente no melhor mês. Agora, quando o valor não
+    // cai em nenhum intervalo fechado, vale a MAIOR faixa cujo piso ele já passou
+    // — que é o que qualquer escalonamento quer dizer.
+    const candidatas = (cfg.comissaoFaixas || [])
+      .filter((f) => faturamento >= f.de)
+      .sort((a, b) => b.de - a.de);
+    const faixa = candidatas.find((f) => f.ate === null || faturamento <= f.ate) || candidatas[0];
     return faixa ? (faturamento * faixa.pct) / 100 : 0;
   }
   if (cfg.comissaoProporcionalMeta) {
@@ -607,6 +613,20 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         console.error("[RESUMO-RECEB] faturamento:", e?.message || e);
       }
 
+      // 2b. Faturamento TOTAL do mês (01/nov/2026) — toda NF-e de venda, sem recorte
+      // por vendedor. É o que vale para a COORDENAÇÃO: antes somávamos as linhas da
+      // planilha, o que deixava de fora a venda de quem não está na lista (canais
+      // digitais, contas de sistema, vendedor inativo, nota sem vendedor) e de quem
+      // está com a rubrica de faturamento desligada. O percentual da coordenação é
+      // sobre o faturamento da empresa, não sobre o de quem tem meta cadastrada.
+      let fatTotalMes = 0;
+      try {
+        const t: any = await db.execute(sql.raw(sqlFaturamentoPeriodo(ini, fim)));
+        fatTotalMes = n(t.rows?.[0]?.v);
+      } catch (e: any) {
+        console.error("[RESUMO-RECEB] faturamento total:", e?.message || e);
+      }
+
       // 3. Metas do mês
       const metaMap: Record<string, number> = {};
       const mt: any = await db.execute(sql`
@@ -827,22 +847,35 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           kmValor,
           // Fora do totalMes de propósito: informação, não recebível.
           reembolsos,
+          // Preenchidos abaixo, só para quem consolida: como o faturamento da
+          // empresa se reparte entre as linhas visíveis e o que veio de fora.
+          faturamentoLinhas: null as number | null,
+          faturamentoForaDaLista: null as number | null,
           totalMes: total,
         };
       });
 
-      // Consolidador (ex.: a gestora): a meta e o faturamento dele são a SOMA
-      // de todo mundo. Some os demais, nunca outro consolidador, senão o número
-      // se multiplicaria a cada gestor cadastrado.
+      // Consolidador (a coordenação de vendas): a META é a soma das metas da
+      // equipe — some os demais, nunca outro consolidador, senão o número se
+      // multiplicaria a cada gestor cadastrado. Já o FATURAMENTO é o da EMPRESA
+      // INTEIRA (fatTotalMes), não a soma das linhas: a coordenação responde por
+      // tudo que saiu em NF-e no mês, inclusive a venda de quem não aparece na
+      // planilha. O rodapé continua somando só as linhas visíveis, para a conta
+      // da tela continuar fechando — por isso os dois números podem divergir.
       const base = colaboradores.filter((c) => !c.config?.consolidaTotais);
       const metaEquipe = base.reduce((s, c) => s + (c.meta || 0), 0);
-      const fatEquipe = base.reduce((s, c) => s + (c.faturamento || 0), 0);
+      const fatLinhas = base.reduce((s, c) => s + (c.faturamento || 0), 0);
+      const fatEquipe = fatTotalMes;
       for (const c of colaboradores) {
         if (!c.config?.consolidaTotais) continue;
         if (c.config.usaMeta) c.meta = metaEquipe;
         if (c.config.usaFaturamento) c.faturamento = fatEquipe;
         c.atingimentoPct = metaEquipe > 0 ? (fatEquipe / metaEquipe) * 100 : 0;
         c.consolidador = true;
+        // Para a tela explicar a diferença entre o faturamento da empresa e a
+        // soma das linhas visíveis, em vez de parecer erro de conta.
+        c.faturamentoLinhas = fatLinhas;
+        c.faturamentoForaDaLista = Math.max(0, fatTotalMes - fatLinhas);
         if (c.config.usaComissao) {
           // Coordenador de vendas: percentual sobre o faturamento total e fixo livre —
           // abateComissaoNoFixo() já devolve false para quem consolida, então bruta = líquida.
@@ -862,7 +895,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         fixoMensal: soma((c) => c.fixoMensal || 0),
         ajudaCusto: soma((c) => c.ajudaCusto || 0),
         meta: somaBase((c) => c.meta || 0),
+        // Rodapé = soma das linhas visíveis (a conta da tela precisa fechar).
+        // faturamentoEmpresa é o total do mês, que é o que a coordenação recebe.
         faturamento: somaBase((c) => c.faturamento || 0),
+        faturamentoEmpresa: fatTotalMes,
         comissao: soma((c) => c.comissao || 0),
         bonus: soma((c) => c.bonus || 0),
         kmRodado: soma((c) => c.kmRodado || 0),
