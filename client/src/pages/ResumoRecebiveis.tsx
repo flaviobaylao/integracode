@@ -196,8 +196,15 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
           cadastro do cliente — quem registrou a venda leva o faturamento dela.
         </p>
         <PorFuncao quem="Coordenação de vendas">
-          soma o faturamento da equipe inteira.
+          o faturamento da <strong>empresa inteira</strong> no mês — toda NF-e de venda, não só a de
+          quem aparece na planilha. Entra também a venda de canal digital, de conta de sistema, de
+          vendedor fora da lista e a nota sem vendedor atribuído.
         </PorFuncao>
+        <p className="mb-2">
+          Por isso a linha da coordenação pode ser <strong>maior</strong> que o TOTAL do rodapé: o
+          rodapé soma só as linhas visíveis, para a conta da tela fechar. Passe o mouse na célula
+          dela para ver a diferença separada.
+        </p>
         <p className="text-muted-foreground">
           Passe o mouse no valor da linha para ver o percentual de atingimento da meta.
         </p>
@@ -401,6 +408,9 @@ interface Colab {
   // Só vem para admin. Informativo: não entra no totalMes.
   reembolsos?: { despesas: number; km: number; viagens: number; total: number } | null;
   consolidador?: boolean;
+  // Só no consolidador: como o faturamento da empresa se divide entre as linhas
+  // visíveis e o que veio de fora da planilha.
+  faturamentoLinhas?: number | null; faturamentoForaDaLista?: number | null;
   entregaValorEntregue?: number | null; entregaSemanas?: number | null;
 }
 
@@ -633,8 +643,20 @@ export default function ResumoRecebiveis() {
                       <td className="px-3 py-2 text-right">{brl(c.ajudaCusto)}</td>
                       <td className="px-3 py-2 text-right">{brl(c.meta)}</td>
                       <td className="px-3 py-2 text-right"
-                        title={c.meta ? `Atingimento ${c.atingimentoPct.toFixed(1)}% da meta` : ""}>
+                        title={[
+                          c.meta ? `Atingimento ${c.atingimentoPct.toFixed(1)}% da meta` : "",
+                          c.consolidador && c.faturamentoLinhas != null
+                            ? `Faturamento da empresa no mês: ${brl(c.faturamentoLinhas)} da equipe listada + ${brl(c.faturamentoForaDaLista)} de fora da lista (canais, contas de sistema, nota sem vendedor)`
+                            : "",
+                        ].filter(Boolean).join("\n")}>
                         {brl(c.faturamento)}
+                        {/* A coordenação recebe sobre o total da empresa, que é maior que a
+                            soma das linhas: sem este rótulo, parece erro de conta. */}
+                        {c.consolidador && (c.faturamentoForaDaLista || 0) > 0 && (
+                          <div className="text-[10px] font-normal text-muted-foreground whitespace-nowrap">
+                            empresa inteira
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right"
                         title={[
@@ -688,7 +710,12 @@ export default function ResumoRecebiveis() {
                       <td className="px-3 py-2 text-right">{brl(totais.fixoMensal)}</td>
                       <td className="px-3 py-2 text-right">{brl(totais.ajudaCusto)}</td>
                       <td className="px-3 py-2 text-right">{brl(totais.meta)}</td>
-                      <td className="px-3 py-2 text-right">{brl(totais.faturamento)}</td>
+                      <td className="px-3 py-2 text-right"
+                        title={totais.faturamentoEmpresa !== undefined
+                          ? `Soma das linhas acima. A empresa faturou ${brl(totais.faturamentoEmpresa)} no mês — é esse total que a coordenação recebe.`
+                          : ""}>
+                        {brl(totais.faturamento)}
+                      </td>
                       <td className="px-3 py-2 text-right">{brl(totais.comissao)}</td>
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(totais.campanhas?.[k.id] || 0)}</td>
