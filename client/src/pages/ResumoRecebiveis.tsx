@@ -94,6 +94,8 @@ interface Colab {
   config: any;
   fixoMensal: number | null; ajudaCusto: number | null; meta: number | null; faturamento: number | null;
   atingimentoPct: number; comissao: number | null;
+  // Comissão apurada antes de abater o fixo mensal, e quanto o fixo engoliu.
+  comissaoBruta?: number | null; comissaoAbatida?: number | null;
   campanhas: Record<string, number | null>;
   bonus: number | null;
   lancamentos: Array<{ id: string; descricao: string; valor: number }>;
@@ -271,16 +273,28 @@ export default function ResumoRecebiveis() {
                         {brl(c.faturamento)}
                       </td>
                       <td className="px-3 py-2 text-right"
-                        title={c.config?.comissaoTipo === "entrega"
-                          ? `Comissão de entrega — ${c.entregaSemanas || 0} semana(s), ${brl(c.entregaValorEntregue || 0)} entregues`
-                          : c.config?.comissaoTipo === "escalonado"
-                          ? (c.config.comissaoFaixas || []).map((f: any) => `${brl(f.de)}${f.ate === null ? "+" : ` a ${brl(f.ate)}`} = ${f.pct}%`).join(" · ")
-                          : c.config?.comissaoTipo === "faixa"
-                          ? "Faixa por atingimento"
-                          : c.config?.comissaoTipo === "fixo"
-                            ? `${c.config.comissaoPct}%${c.config.comissaoDescontoFixo > 0 ? ` − ${brl(c.config.comissaoDescontoFixo)}` : ""}${c.config.comissaoProporcionalMeta ? " proporcional à meta" : ""}`
-                            : "Sem regra de comissão"}>
+                        title={[
+                          c.config?.comissaoTipo === "entrega"
+                            ? `Comissão de entrega — ${c.entregaSemanas || 0} semana(s), ${brl(c.entregaValorEntregue || 0)} entregues`
+                            : c.config?.comissaoTipo === "escalonado"
+                            ? (c.config.comissaoFaixas || []).map((f: any) => `${brl(f.de)}${f.ate === null ? "+" : ` a ${brl(f.ate)}`} = ${f.pct}%`).join(" · ")
+                            : c.config?.comissaoTipo === "faixa"
+                            ? "Faixa por atingimento"
+                            : c.config?.comissaoTipo === "fixo"
+                              ? `${c.config.comissaoPct}%${c.config.comissaoDescontoFixo > 0 ? ` − ${brl(c.config.comissaoDescontoFixo)}` : ""}${c.config.comissaoProporcionalMeta ? " proporcional à meta" : ""}`
+                              : "Sem regra de comissão",
+                          (c.comissaoAbatida || 0) > 0
+                            ? `Comissão a partir do fixo: apurado ${brl(c.comissaoBruta)} − fixo ${brl(c.fixoMensal)} = ${brl(c.comissao)}`
+                            : "",
+                        ].filter(Boolean).join("\n")}>
                         {brl(c.comissao)}
+                        {/* O fixo adianta a comissão: sem esta linha, um zero aqui parece erro
+                            de apuração em vez de comissão ainda dentro do fixo. */}
+                        {(c.comissaoAbatida || 0) > 0 && (
+                          <div className="text-[10px] font-normal text-muted-foreground whitespace-nowrap">
+                            {brl(c.comissaoBruta)} − fixo
+                          </div>
+                        )}
                       </td>
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(c.campanhas?.[k.id] ?? null)}</td>
@@ -365,6 +379,8 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     faixaTipo: "telemarketing",
     usaFixo: true, usaAjudaCusto: false, usaMeta: true, usaFaturamento: true, usaComissao: true,
     usaKm: true, usaCampanhas: true, usaBonus: false, consolidaTotais: false, observacao: "",
+    // null = segue o padrão do tipo de vendedor (PJ abate, os demais não).
+    comissaoAbateFixo: null as boolean | null,
   };
   const [form, setForm] = useState<any>(vazio);
   const [buscaPart, setBuscaPart] = useState("");
@@ -394,12 +410,22 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   };
   const num = (v: any) => Number(String(v).replace(",", ".")) || 0;
 
+  // Comissão a partir do fixo mensal: padrão ligado para VENDEDOR PJ, desligado para
+  // os demais, e sempre desligado para quem consolida a equipe (coordenação de vendas
+  // tem fixo livre). O seletor mostra o valor que vai ser gravado, nunca um estado
+  // "indefinido" que o admin não consegue ler.
+  const colabSelecionado: any = (cfgData?.colaboradores || []).find((c: any) => c.id === form.userId);
+  const abatePadrao = String(colabSelecionado?.seller_type || "") === "vendedor_pj";
+  const abateFixo: boolean = form.consolidaTotais ? false
+    : typeof form.comissaoAbateFixo === "boolean" ? form.comissaoAbateFixo : abatePadrao;
+
   const salvarCfg = useMutation({
     mutationFn: () => apiRequest("POST", "/api/resumo-recebiveis/config", {
       userId: form.userId, vigenciaData: form.vigenciaData,
       fixoMensal: num(form.fixoMensal), ajudaCusto: num(form.ajudaCusto), comissaoTipo: form.comissaoTipo,
       comissaoPct: num(form.comissaoPct), comissaoDescontoFixo: num(form.comissaoDescontoFixo),
-      comissaoProporcionalMeta: form.comissaoProporcionalMeta, faixaTipo: form.faixaTipo,
+      comissaoProporcionalMeta: form.comissaoProporcionalMeta, comissaoAbateFixo: abateFixo,
+      faixaTipo: form.faixaTipo,
       comissaoFaixas: (form.comissaoFaixas || [])
         .filter((f: any) => String(f.pct).trim() !== "")
         .map((f: any) => ({ de: num(f.de), ate: String(f.ate).trim() === "" ? null : num(f.ate), pct: num(f.pct) })),
@@ -681,6 +707,54 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                         <SelectItem value="vendedor_clt">Externo CLT</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                )}
+                {form.comissaoTipo !== "nenhum" && (
+                  <div className="min-w-0 md:col-span-4 rounded-md border p-2">
+                    <div className="flex items-center gap-1.5">
+                      <Switch checked={abateFixo} disabled={form.consolidaTotais}
+                        onCheckedChange={(v) => set("comissaoAbateFixo", v)} />
+                      <span className="text-xs font-medium">Comissão a partir do fixo mensal</span>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button type="button" aria-label="O que é comissão a partir do fixo mensal"
+                            className="shrink-0 text-muted-foreground hover:text-foreground">
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-96 text-xs leading-relaxed" align="start">
+                          <p className="font-medium mb-1">O fixo adianta a comissão</p>
+                          <p className="mb-2">
+                            Ligado, o fixo mensal é tratado como adiantamento: o colaborador só recebe
+                            comissão no que ela <strong>passar</strong> do fixo.
+                          </p>
+                          <div className="rounded bg-muted p-2 font-mono text-[10px] mb-2">
+                            comissão paga = apurado − fixo mensal (piso zero)
+                          </div>
+                          <p className="mb-2">
+                            Exemplo — fixo R$ 3.000 e 8% sobre R$ 40.000:<br />
+                            apurado R$ 3.200 − fixo R$ 3.000 = <strong>R$ 200</strong> de comissão,
+                            e o total do mês continua R$ 3.200.
+                          </p>
+                          <p className="mb-2">
+                            <strong>Ajuda de custo não abate.</strong> Quem recebe só ajuda de custo, sem
+                            fixo, leva o percentual cheio sobre o faturamento — ela é reembolso de
+                            despesa, não remuneração.
+                          </p>
+                          <p className="text-muted-foreground">
+                            Padrão ligado para vendedor PJ. Coordenação de vendas (quem consolida os
+                            totais da equipe) tem fixo livre: lá a regra não vale e o seletor fica travado.
+                          </p>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {form.consolidaTotais
+                        ? "Coordenação de vendas: fixo livre e percentual sobre o faturamento total da equipe."
+                        : abateFixo
+                        ? "Só entra na folha o que a comissão passar do fixo mensal. Sem fixo cadastrado, o percentual sai cheio."
+                        : "A comissão é paga cheia, somada ao fixo mensal."}
+                    </p>
                   </div>
                 )}
                 <div className="min-w-0 md:col-span-2">
