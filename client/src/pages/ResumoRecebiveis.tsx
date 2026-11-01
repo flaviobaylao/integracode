@@ -10,7 +10,7 @@
 //
 // Backend: server/resumo-recebiveis-routes.ts
 // ============================================================================
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone, Lock, Unlock,
+  ArrowUpAZ, ArrowDownZA, ChevronsUpDown,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -88,6 +89,303 @@ const nomeDoMes = (ym: string) => {
     .replace(/^./, (c) => c.toUpperCase());
 };
 
+// ---------------------------------------------------------------------------
+// COMO CADA COLUNA É CALCULADA, por função. O conteúdo fica aqui e não na
+// tabela para o cabeçalho não virar um muro de texto — cada coluna abre o seu
+// no "i". Se a regra mudar no servidor, mude aqui junto: é esta tela que o
+// colaborador abre para entender o próprio pagamento.
+// ---------------------------------------------------------------------------
+const Formula = ({ children }: { children: any }) => (
+  <div className="rounded bg-muted p-2 font-mono text-[10px] leading-relaxed my-1.5">{children}</div>
+);
+const PorFuncao = ({ quem, children }: { quem: string; children: any }) => (
+  <p className="mb-1"><strong>{quem}:</strong> {children}</p>
+);
+
+const AJUDA: Record<string, { titulo: string; corpo: any }> = {
+  nome: {
+    titulo: "Quem aparece na lista",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Colaboradores <strong>ativos</strong> com papel de vendas (externo, interno, administrativo
+          e motorista), mais quem o admin incluiu à mão na aba Participantes.
+        </p>
+        <p className="mb-2">
+          A etiqueta embaixo do nome é a função. <strong>Consolidado</strong> marca a coordenação de
+          vendas: meta e faturamento dela são a soma da equipe inteira.
+        </p>
+        <p className="text-muted-foreground">
+          Cada colaborador só enxerga a própria linha; o admin vê todas.
+        </p>
+      </>
+    ),
+  },
+  fixoMensal: {
+    titulo: "Fixo Mensal",
+    corpo: (
+      <>
+        <p className="mb-2">
+          <strong>Não é calculado</strong> — é cadastro. O admin informa em Configurações, com
+          vigência por data: vale sempre a última vigência iniciada até o mês apurado. Entra cheio,
+          sem proporcional por dias trabalhados.
+        </p>
+        <PorFuncao quem="Externo PJ">
+          o fixo é <strong>adiantamento da comissão</strong>: só se paga comissão no que ela passar do fixo.
+        </PorFuncao>
+        <PorFuncao quem="Externo CLT, Interno e Motorista">
+          somado normalmente, sem abater nada.
+        </PorFuncao>
+        <PorFuncao quem="Coordenação de vendas">
+          fixo livre — nunca abate a comissão.
+        </PorFuncao>
+        <p className="text-muted-foreground">
+          O sistema nunca guardou folha de pagamento: fixo em branco quer dizer não preenchido, não
+          "sem salário".
+        </p>
+      </>
+    ),
+  },
+  ajudaCusto: {
+    titulo: "Ajuda de Custo",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Valor de cadastro, informado em Configurações. Só aparece para quem tem o seletor de ajuda
+          de custo ligado; nos demais fica <strong>—</strong>.
+        </p>
+        <p className="mb-2">
+          É <strong>reembolso de despesa</strong>, não remuneração, e por isso <strong>nunca abate a
+          comissão</strong>.
+        </p>
+        <PorFuncao quem="Externo PJ sem fixo mensal">
+          recebe ajuda de custo <em>e</em> o percentual cheio sobre o faturamento.
+        </PorFuncao>
+      </>
+    ),
+  },
+  meta: {
+    titulo: "Meta",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Buscada no módulo <strong>Metas de Vendas</strong>, na meta de faturamento cadastrada para
+          o mês e o ano. Não é digitada aqui.
+        </p>
+        <PorFuncao quem="Coordenação de vendas">
+          a meta é a <strong>soma das metas de toda a equipe</strong> (os outros consolidadores ficam
+          de fora, senão o número se multiplicaria).
+        </PorFuncao>
+        <p className="text-muted-foreground">
+          Serve de base para a comissão por faixa de atingimento e para a opção "proporcional à meta".
+          Sem meta cadastrada, essas duas regras saem zero.
+        </p>
+      </>
+    ),
+  },
+  faturamento: {
+    titulo: "Faturamento",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Mesma fonte do Dashboard: <strong>NF-e de venda autorizada</strong> com emissão dentro do
+          mês. Devolução, remessa e bonificação não entram.
+        </p>
+        <p className="mb-2">
+          O valor é creditado a <strong>quem implantou o pedido</strong>, e não ao vendedor do
+          cadastro do cliente — quem registrou a venda leva o faturamento dela.
+        </p>
+        <PorFuncao quem="Coordenação de vendas">
+          soma o faturamento da equipe inteira.
+        </PorFuncao>
+        <p className="text-muted-foreground">
+          Passe o mouse no valor da linha para ver o percentual de atingimento da meta.
+        </p>
+      </>
+    ),
+  },
+  comissao: {
+    titulo: "Comissão Mês",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Cada colaborador tem <strong>uma</strong> regra, escolhida em Configurações. Passe o mouse
+          no valor da linha para ver qual regra está valendo para ele.
+        </p>
+        <p className="font-medium mb-1">1. Percentual fixo</p>
+        <Formula>
+          faturamento × % − desconto fixo &nbsp;(piso zero)<br />
+          proporcional à meta: (meta × % − desconto) × (faturamento ÷ meta)
+        </Formula>
+        <p className="font-medium mb-1 mt-2">2. Faixa por atingimento da meta</p>
+        <p className="mb-1">
+          A alíquota da faixa incide sobre o <strong>faturamento inteiro</strong>, não só sobre o que
+          passou do piso.
+        </p>
+        <Formula>
+          Interno &nbsp;&nbsp;&nbsp;&lt;90% 1,5% · 90% 2% · 100% 3% · 110% 3,5% · 120% 4%<br />
+          Externo PJ &nbsp;&lt;85% 3,5% · 85% 4,5% · 100% 6% · 110% 6,5% · 120% 7,5%<br />
+          Externo CLT &lt;85% 0,8% · 85% 1,5% · 100% 2,5% · 110% 3,5% · 120% 4,5%
+        </Formula>
+        <p className="font-medium mb-1 mt-2">3. Escalonado por faturamento</p>
+        <p className="mb-1">
+          Faixa pelo <strong>valor</strong> faturado, não pelo percentual da meta — é a regra da
+          coordenação de vendas. A alíquota também incide sobre o faturamento inteiro.
+        </p>
+        <Formula>
+          até R$ 299.999,99 = 2% · R$ 300.000 a R$ 399.999,99 = 2,2% · R$ 400.000+ = 2,5%
+        </Formula>
+        <p className="font-medium mb-1 mt-2">4. Por entrega</p>
+        <p className="mb-2">
+          Percentual sobre o valor entregue por <strong>todos</strong> os participantes na semana
+          (segunda a domingo), rateado pelos pontos de cada um (dias entregues × peso). O mês leva as
+          semanas que <strong>terminaram</strong> nele.
+        </p>
+        <p className="font-medium mb-1 mt-2">E aí, o fixo entra na conta</p>
+        <PorFuncao quem="Externo PJ com fixo mensal">
+          o fixo adianta a comissão — paga-se só o que ela passar dele. Apurou R$ 3.200 com fixo de
+          R$ 3.000? Entram R$ 200 nesta coluna, e o total do mês segue R$ 3.200.
+        </PorFuncao>
+        <PorFuncao quem="Externo PJ só com ajuda de custo">
+          percentual cheio sobre o faturamento bruto.
+        </PorFuncao>
+        <PorFuncao quem="Coordenação de vendas">
+          fixo livre e percentual sobre o faturamento total da equipe — aqui o fixo não abate.
+        </PorFuncao>
+        <p className="text-muted-foreground">
+          Quando o fixo engole parte da comissão, o valor apurado aparece em miúdo embaixo do valor
+          pago: um zero aqui é comissão ainda dentro do fixo, não erro de apuração.
+        </p>
+      </>
+    ),
+  },
+  bonus: {
+    titulo: "Bônus",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Soma dos <strong>lançamentos manuais</strong> do mês, feitos pelo admin na aba "Bônus e
+          lançamentos". É a única rubrica digitada direto no valor — as outras vêm dos módulos que as
+          calculam.
+        </p>
+        <p className="mb-2">
+          Serve para o que não cabe em comissão, fixo, km ou campanha: prêmio pontual, acerto,
+          devolução de desconto.
+        </p>
+        <p className="text-muted-foreground">
+          Passe o mouse no valor para ver a descrição de cada lançamento. Mês fechado não aceita
+          lançamento novo.
+        </p>
+      </>
+    ),
+  },
+  kmValor: {
+    titulo: "Km",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Quilometragem do mês vinda do módulo <strong>Kilometragem Vendedores</strong>, multiplicada
+          pela tarifa por km.
+        </p>
+        <Formula>km rodado no mês × tarifa por km</Formula>
+        <p className="mb-2">
+          A tarifa é a da <strong>região</strong> do colaborador (GO, DF ou PSN), salvo quando ele tem
+          tarifa própria cadastrada — aí vale a dele.
+        </p>
+        <p className="text-muted-foreground">
+          Passe o mouse no valor para ver quantos km e qual tarifa entraram na conta.
+        </p>
+      </>
+    ),
+  },
+  reembolsos: {
+    titulo: "Reembolsos — não soma no total",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Esta coluna <strong>não entra no Total Mês</strong>. Ela não é recebível: é informação de
+          quanto a empresa <strong>devolveu</strong> ao colaborador no mês, para enxergar o custo dele
+          além da remuneração.
+        </p>
+        <p className="mb-1">Soma três fontes, de qualquer função — externo, interno, coordenação, motorista:</p>
+        <Formula>
+          módulo Reembolsos (despesa paga do próprio bolso)<br />
+          + quilometragem do mês (km rodado × tarifa)<br />
+          + Programação de Viagens (o que a viagem custou)
+        </Formula>
+        <p className="mb-2">
+          Pedido recusado ou cancelado fica de fora: não virou dinheiro. A data considerada é a do
+          <strong> fato</strong> — a despesa, o início da viagem —, não a do pagamento, para o número
+          responder "quanto se gastou com ele neste mês".
+        </p>
+        <p className="mb-2">
+          A quilometragem aparece aqui <em>e</em> na coluna Km, de propósito: lá é o que se{" "}
+          <strong>paga</strong> a ele e soma no total; aqui é o que se <strong>gastou</strong>,
+          inclusive de quem está com a rubrica Km desligada e aparece com — naquela coluna.
+        </p>
+        <p className="text-muted-foreground">
+          Visível só para administradores. O colaborador não vê esta coluna.
+        </p>
+      </>
+    ),
+  },
+  totalMes: {
+    titulo: "Total Mês",
+    corpo: (
+      <>
+        <p className="mb-2">Soma de tudo que está habilitado para aquele colaborador:</p>
+        <Formula>
+          fixo + ajuda de custo + comissão + campanhas + bônus + km
+        </Formula>
+        <p className="mb-2">
+          A comissão entra <strong>já abatida do fixo</strong> quando a regra do PJ se aplica — por
+          isso o total não dobra o valor do fixo.
+        </p>
+        <p className="text-muted-foreground">
+          Célula com <strong>—</strong> é rubrica desligada e não soma. Na linha TOTAL, meta e
+          faturamento ignoram a coordenação de vendas, que já é a soma da equipe.
+        </p>
+      </>
+    ),
+  },
+};
+
+const ajudaCampanha = (c: { nome: string; origem: string; observacao?: string }) => ({
+  titulo: c.nome,
+  corpo: c.origem === "campanha" ? (
+    <>
+      <p className="mb-2">
+        Puxado direto do módulo <strong>Campanha</strong>, que apura sozinho. Ninguém digita este
+        valor aqui.
+      </p>
+      <Formula>
+        R$ 30 por novo cliente apto<br />
+        + R$ 500 se a positivação da carteira chegar a 90% no mês<br />
+        + R$ 500 se bater a meta de faturamento
+      </Formula>
+      <p className="mb-2">
+        <strong>Novo cliente apto</strong> = cliente inédito na base cuja 1ª NF-e de venda cai no mês,
+        com 1º pedido de pelo menos R$ 300, creditado ao dono da carteira e <strong>aprovado</strong>{" "}
+        pelo admin no Inbox. Enquanto está pendente conta como "em validação" e não paga.
+      </p>
+      <p className="text-muted-foreground">
+        Vale para quem tem carteira: externo e interno. Motorista e administrativo não participam.
+      </p>
+    </>
+  ) : (
+    <>
+      <p className="mb-2">
+        Campanha de valor <strong>informado</strong>: o admin lança o valor de cada colaborador em
+        Configurações, na aba Campanhas. Não há apuração automática.
+      </p>
+      {c.observacao && <p className="mb-2">{c.observacao}</p>}
+      <p className="text-muted-foreground">
+        A coluna só aparece nos meses de vigência da campanha.
+      </p>
+    </>
+  ),
+});
+
 interface Campanha { id: string; nome: string; origem: string; ym_inicio: string; ym_fim: string | null; observacao?: string; }
 interface Colab {
   id: string; nome: string; role: string; sellerType: string | null;
@@ -100,6 +398,8 @@ interface Colab {
   bonus: number | null;
   lancamentos: Array<{ id: string; descricao: string; valor: number }>;
   kmRodado: number; kmTarifa: number; kmRegiao?: string; kmTarifaPropria?: boolean; kmValor: number | null; totalMes: number;
+  // Só vem para admin. Informativo: não entra no totalMes.
+  reembolsos?: { despesas: number; km: number; viagens: number; total: number } | null;
   consolidador?: boolean;
   entregaValorEntregue?: number | null; entregaSemanas?: number | null;
 }
@@ -131,6 +431,70 @@ export default function ResumoRecebiveis() {
   const colabs = data?.colaboradores || [];
   const campanhas = data?.campanhas || [];
   const totais = data?.totais;
+
+  // Ordenação por qualquer coluna: 1º clique A→Z, 2º Z→A, 3º volta à ordem do
+  // servidor (por função e nome). Vazio ("—") sempre no fim, nos dois sentidos:
+  // rubrica desligada não é "o menor valor", é ausência de valor.
+  const [ordem, setOrdem] = useState<{ col: string; dir: "asc" | "desc" } | null>(null);
+  const valorDe = (c: Colab, col: string): string | number | null => {
+    if (col === "nome") return c.nome;
+    if (col.startsWith("camp:")) return c.campanhas?.[col.slice(5)] ?? null;
+    if (col === "reembolsos") return c.reembolsos?.total ?? null;
+    return (c as any)[col] ?? null;
+  };
+  const colabsOrdenados = useMemo(() => {
+    if (!ordem) return colabs;
+    const f = ordem.dir === "asc" ? 1 : -1;
+    return [...colabs].sort((a, b) => {
+      const va = valorDe(a, ordem.col);
+      const vb = valorDe(b, ordem.col);
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      if (typeof va === "string" || typeof vb === "string") {
+        return String(va).localeCompare(String(vb), "pt-BR") * f;
+      }
+      return ((va as number) - (vb as number)) * f;
+    });
+  }, [colabs, ordem]);
+
+  // Cabeçalho: congelado no topo, clicável para ordenar e com o "i" que explica
+  // como a coluna é calculada em cada função.
+  const Th = ({ col, ajuda, children, primeira }: {
+    col: string; ajuda?: { titulo: string; corpo: any }; children: any; primeira?: boolean;
+  }) => {
+    const ativa = ordem?.col === col;
+    return (
+      <th className={`px-3 py-2 font-semibold whitespace-nowrap bg-muted sticky top-0 ${
+        primeira ? "text-left left-0 z-30 min-w-[190px]" : "text-right z-20"}`}>
+        <div className={`flex items-center gap-1 ${primeira ? "" : "justify-end"}`}>
+          <button type="button" className="inline-flex items-center gap-1 hover:text-emerald-700"
+            title={ativa ? (ordem!.dir === "asc" ? "Ordenado A→Z — clique para Z→A" : "Ordenado Z→A — clique para voltar") : "Ordenar A→Z"}
+            onClick={() => setOrdem((o) => o?.col !== col ? { col, dir: "asc" } : o.dir === "asc" ? { col, dir: "desc" } : null)}
+            data-testid={`ordenar-${col}`}>
+            <span>{children}</span>
+            {ativa
+              ? (ordem!.dir === "asc" ? <ArrowUpAZ className="h-3.5 w-3.5 text-emerald-700" /> : <ArrowDownZA className="h-3.5 w-3.5 text-emerald-700" />)
+              : <ChevronsUpDown className="h-3 w-3 opacity-30" />}
+          </button>
+          {ajuda && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" aria-label={`Como é calculado: ${ajuda.titulo}`}
+                  className="shrink-0 text-muted-foreground hover:text-foreground">
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[22rem] text-xs leading-relaxed font-normal text-left" align="end">
+                <p className="font-semibold mb-1.5">{ajuda.titulo}</p>
+                {ajuda.corpo}
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
+      </th>
+    );
+  };
   const semFixo = colabs.filter((c) => c.config?.usaFixo !== false && !c.fixoMensal).length;
 
   // O arquivo é gerado no servidor: a lib do front não escreve congelamento de
@@ -231,28 +595,28 @@ export default function ResumoRecebiveis() {
               Nenhum colaborador ativo para este mês.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            // Rolagem no container (não na página): é o que faz o cabeçalho congelar.
+            <div className="overflow-auto max-h-[72vh]">
               <table className="w-full text-sm border-collapse">
                 <thead>
-                  <tr className="bg-muted/60">
-                    <th className="text-left px-3 py-2 font-semibold sticky left-0 bg-muted/60 min-w-[190px]">Colaborador</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Fixo Mensal</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Ajuda de Custo</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Meta</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Faturamento</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Comissão Mês</th>
+                  <tr>
+                    <Th col="nome" ajuda={AJUDA.nome} primeira>Colaborador</Th>
+                    <Th col="fixoMensal" ajuda={AJUDA.fixoMensal}>Fixo Mensal</Th>
+                    <Th col="ajudaCusto" ajuda={AJUDA.ajudaCusto}>Ajuda de Custo</Th>
+                    <Th col="meta" ajuda={AJUDA.meta}>Meta</Th>
+                    <Th col="faturamento" ajuda={AJUDA.faturamento}>Faturamento</Th>
+                    <Th col="comissao" ajuda={AJUDA.comissao}>Comissão Mês</Th>
                     {campanhas.map((c) => (
-                      <th key={c.id} className="text-right px-3 py-2 font-semibold whitespace-nowrap" title={c.observacao || ""}>
-                        {c.nome}
-                      </th>
+                      <Th key={c.id} col={`camp:${c.id}`} ajuda={ajudaCampanha(c)}>{c.nome}</Th>
                     ))}
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Bônus</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Km</th>
-                    <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Total Mês</th>
+                    <Th col="bonus" ajuda={AJUDA.bonus}>Bônus</Th>
+                    <Th col="kmValor" ajuda={AJUDA.kmValor}>Km</Th>
+                    <Th col="totalMes" ajuda={AJUDA.totalMes}>Total Mês</Th>
+                    {admin && <Th col="reembolsos" ajuda={AJUDA.reembolsos}>Reembolsos</Th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {colabs.map((c) => (
+                  {colabsOrdenados.map((c) => (
                     <tr key={c.id} className="border-t hover:bg-muted/30" data-testid={`linha-${c.id}`}>
                       <td className="px-3 py-2 sticky left-0 bg-background">
                         <div className="font-medium leading-tight">{c.nome}</div>
@@ -308,6 +672,14 @@ export default function ResumoRecebiveis() {
                         {brl(c.kmValor)}
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-emerald-700">{brl(c.totalMes)}</td>
+                      {admin && (
+                        <td className="px-3 py-2 text-right text-muted-foreground"
+                          title={c.reembolsos
+                            ? `Despesas ${brl(c.reembolsos.despesas)} · Km ${brl(c.reembolsos.km)} · Viagens ${brl(c.reembolsos.viagens)} — fora do total do mês`
+                            : ""}>
+                          {brl(c.reembolsos?.total ?? null)}
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {totais && colabs.length > 1 && (
@@ -324,6 +696,12 @@ export default function ResumoRecebiveis() {
                       <td className="px-3 py-2 text-right">{brl(totais.bonus)}</td>
                       <td className="px-3 py-2 text-right">{brl(totais.kmValor)}</td>
                       <td className="px-3 py-2 text-right text-emerald-700">{brl(totais.totalMes)}</td>
+                      {admin && (
+                        <td className="px-3 py-2 text-right font-normal text-muted-foreground"
+                          title="Soma dos reembolsos do mês — fora do total a pagar">
+                          {brl(totais.reembolsos ?? null)}
+                        </td>
+                      )}
                     </tr>
                   )}
                 </tbody>

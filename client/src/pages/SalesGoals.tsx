@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SalesGoalsDashboard from "@/components/SalesGoalsDashboard";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
+import CampanhaOutubro from "@/components/CampanhaOutubro";
 import type { User as SchemaUser } from "@shared/schema";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
@@ -35,15 +36,34 @@ export default function SalesGoalsPage() {
           <BackToDashboardButton />
         </div>
 
-        {canManageGoals ? (
-          <SalesGoalsManagement user={userForComponents} />
-        ) : (
-          <Card>
-            <CardContent className="p-6">
-              <SalesGoalsDashboard user={userForComponents} />
-            </CardContent>
-          </Card>
-        )}
+        {/* A campanha mora aqui desde 31/out/2026 (antes era aba do Painel): é o
+            mesmo assunto das metas — meta, positivação e novos clientes do mês. */}
+        <Tabs defaultValue="metas">
+          <TabsList className="mb-4">
+            <TabsTrigger value="metas" data-testid="tab-metas">Metas de Faturamento</TabsTrigger>
+            <TabsTrigger value="campanha" data-testid="tab-campanha">Campanha</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="metas">
+            {canManageGoals ? (
+              <SalesGoalsManagement user={userForComponents} />
+            ) : (
+              <Card>
+                <CardContent className="p-6">
+                  <SalesGoalsDashboard user={userForComponents} />
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="campanha">
+            <Card>
+              <CardContent className="p-4 md:p-6">
+                <CampanhaOutubro />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
