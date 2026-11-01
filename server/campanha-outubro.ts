@@ -14,7 +14,10 @@ import { nfVendaWhere, nfVendaFrom, nfData } from "./faturamento-oficial";
 // Escopo por papel: admin ve tudo; vendedor ve apenas o seu (scopeSellerName).
 // ============================================================================
 
-const CAMPAIGN_YM = "2026-10"; // mes vigente da campanha
+// Mes da PRIMEIRA campanha. Desde 31/out/2026 o mes e escolhido na tela (seletor
+// dentro de Metas de Vendas) e viaja em ?ym=; este valor so serve de piso para a
+// lista de meses oferecidos.
+const CAMPAIGN_YM = "2026-10";
 const PEDIDO_MIN = 300;        // pedido minimo para contar como novo da campanha
 const POS_META = 90;           // % de positivacao para o bonus
 const BONUS_NOVO = 30;         // R$ por novo cliente apto
@@ -32,7 +35,26 @@ const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as a
 function todayBrt(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
-function campaignActive(): boolean { return todayBrt().slice(0, 7) === CAMPAIGN_YM; }
+function mesAtual(): string { return todayBrt().slice(0, 7); }
+function campaignActive(ym: string): boolean { return ym === mesAtual(); }
+/** Mes pedido na query, ou o mes corrente. Mes invalido cai no corrente. */
+function mesDaQuery(req: any): string {
+  const q = String((req?.query || {}).ym || "");
+  return /^\d{4}-\d{2}$/.test(q) ? q : mesAtual();
+}
+/** Meses que o seletor oferece: do mes da 1a campanha ate o mes corrente. */
+function mesesDaCampanha(): string[] {
+  const fim = mesAtual();
+  const out: string[] = [];
+  let [a, m] = CAMPAIGN_YM.split("-").map(Number);
+  for (let i = 0; i < 120; i++) {
+    const ym = `${a}-${String(m).padStart(2, "0")}`;
+    out.push(ym);
+    if (ym >= fim) break;
+    m += 1; if (m > 12) { m = 1; a += 1; }
+  }
+  return out.reverse();
+}
 
 // Carteira doc -> vendedor (dono da carteira) — identico ao dashboard-history.
 // Traz tambem o ID do usuario: o credito do novo cliente e gravado por ID, nao por nome
@@ -355,13 +377,17 @@ export async function decidir(id: string, acao: "aprovar" | "rejeitar", justific
 }
 
 // Avisos (replica) para a rota do dia do vendedor: cadastros ja decididos.
-export async function rotaAvisos(seller: string, ym: string = CAMPAIGN_YM): Promise<any[]> {
+// SEM recorte por mes de campanha de proposito: quem decide o que aparece e a
+// janela de 7 dias. Filtrar pelo mes corrente escondia, nos primeiros dias do mes
+// seguinte, as decisoes tomadas sobre o mes que acabou — justamente quando o
+// vendedor precisa ver o retorno do cadastro que mandou.
+export async function rotaAvisos(seller: string): Promise<any[]> {
   await ensureCampaignTable();
   const s = seller.replace(/'/g, "''");
   const rows = await rawq(
     "SELECT cnc.customer_name, cnc.status, cnc.justification, cnc.decided_at::text AS decided_at" +
     " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
-    " WHERE cnc.campaign_ym = '" + ym + "' AND " + NOME_VENDEDOR + " = '" + s + "' AND cnc.status IN ('aprovado','rejeitado')" +
+    " WHERE " + NOME_VENDEDOR + " = '" + s + "' AND cnc.status IN ('aprovado','rejeitado')" +
     " AND cnc.decided_at >= now() - INTERVAL '7 days'" +
     " ORDER BY cnc.decided_at DESC NULLS LAST"
   );
@@ -396,10 +422,15 @@ export function registerCampanhaRoutes(app: Express): void {
     try {
       const { role, name } = await resolveUser(req);
       if (!role) return res.status(401).json({ error: "unauthorized" });
-      if (role !== "admin" && !name) return res.json({ asOf: "", ym: CAMPAIGN_YM, premissas: {}, sellers: [], totais: null, ativo: campaignActive() });
-      if (campaignActive()) { try { await detectNovos(CAMPAIGN_YM); } catch (e) {} }
-      const r = await computeCampaign(role === "admin" ? undefined : name);
-      res.json({ ...r, ativo: campaignActive() });
+      const ym = mesDaQuery(req);
+      const meses = mesesDaCampanha();
+      if (role !== "admin" && !name) return res.json({ asOf: "", ym, meses, premissas: {}, sellers: [], totais: null, ativo: campaignActive(ym) });
+      // Detecta tambem em mes passado: o upsert so mexe em quem esta 'pendente',
+      // entao reabrir um mes antigo nao desfaz aprovacao nem rejeicao. Mes futuro
+      // nao tem o que detectar.
+      if (ym <= mesAtual()) { try { await detectNovos(ym); } catch (e) {} }
+      const r = await computeCampaign(role === "admin" ? undefined : name, ym);
+      res.json({ ...r, meses, ativo: campaignActive(ym) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
@@ -411,7 +442,7 @@ export function registerCampanhaRoutes(app: Express): void {
       let seller = String((req.query as any).seller || "");
       if (role !== "admin") seller = name; // vendedor so ve o seu
       if (!seller) return res.json({ sellers: [], rows: [] });
-      const rows = await listNovos(seller);
+      const rows = await listNovos(seller, mesDaQuery(req));
       res.json({ seller, rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
@@ -421,9 +452,10 @@ export function registerCampanhaRoutes(app: Express): void {
     try {
       const { role } = await resolveUser(req);
       if (role !== "admin") return res.status(403).json({ error: "forbidden" });
-      if (campaignActive()) { try { await detectNovos(CAMPAIGN_YM); } catch (e) {} }
-      const rows = await inboxPendentes();
-      res.json({ ativo: campaignActive(), rows });
+      const ym = mesDaQuery(req);
+      if (ym <= mesAtual()) { try { await detectNovos(ym); } catch (e) {} }
+      const rows = await inboxPendentes(ym);
+      res.json({ ativo: campaignActive(ym), ym, meses: mesesDaCampanha(), rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 

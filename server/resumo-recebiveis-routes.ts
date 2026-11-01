@@ -647,6 +647,44 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         return rg === "DF" ? rateDF : rg === "PSN" ? ratePSN : rateGO;
       };
 
+      // 4a-bis. REEMBOLSOS (31/out/2026) — coluna de INFORMAÇÃO, só para admin e
+      // NUNCA somada ao Total Mês: é o que a empresa devolveu ao colaborador no
+      // mês, para enxergar o custo dele além da remuneração. Três fontes:
+      //   · módulo Reembolsos — despesa paga do próprio bolso (gelo, café, material)
+      //   · quilometragem — km rodado × tarifa, mesmo para quem está com a rubrica
+      //     Km desligada (ali vira "—", aqui o gasto apareceu do mesmo jeito)
+      //   · Programação de Viagens — o que a viagem custou de fato
+      // Recusado e cancelado ficam de fora: não viraram dinheiro.
+      // A data é a do FATO (despesa / início da viagem), não a do pagamento, para
+      // o número responder "quanto se gastou com ele NESTE mês".
+      const reembMap: Record<string, { despesas: number; viagens: number }> = {};
+      const reembDe = (id: string) => {
+        if (!reembMap[id]) reembMap[id] = { despesas: 0, viagens: 0 };
+        return reembMap[id];
+      };
+      try {
+        const r: any = await db.execute(sql`
+          SELECT solicitante_id AS uid, COALESCE(SUM(COALESCE(valor_aprovado, valor)), 0) AS v
+          FROM reembolsos
+          WHERE status IN ('aprovado', 'lancado', 'pago')
+            AND data_despesa >= ${ini}::date AND data_despesa < ${fim}::date
+          GROUP BY 1`);
+        for (const x of r.rows || []) reembDe(String(x.uid)).despesas = n(x.v);
+      } catch (e: any) {
+        console.error("[RESUMO-RECEB] reembolsos:", e?.message || e);
+      }
+      try {
+        const r: any = await db.execute(sql`
+          SELECT vendedor_id AS uid, COALESCE(SUM(COALESCE(valor_real, valor_aprovado, 0)), 0) AS v
+          FROM viagens
+          WHERE status IN ('aprovado', 'pago', 'prestado', 'encerrado')
+            AND data_ini >= ${ini}::date AND data_ini < ${fim}::date
+          GROUP BY 1`);
+        for (const x of r.rows || []) reembDe(String(x.uid)).viagens = n(x.v);
+      } catch (e: any) {
+        console.error("[RESUMO-RECEB] viagens:", e?.message || e);
+      }
+
       // 4b. Comissão de entrega, para quem é pago por entrega.
       const precisaEntrega = Object.values(cfgMapPre).some((c: any) => c?.comissaoTipo === "entrega");
       const entregaMap = precisaEntrega ? await comissaoEntregaDoMes(ym) : {};
@@ -748,6 +786,15 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         const kmRodado = kmMap[id] || 0;
         const tarifa = tarifaDe(id);
         const kmValor = cfg.usaKm ? kmRodado * tarifa : null;
+        // O km entra nos reembolsos mesmo com a rubrica desligada: a coluna Km diz
+        // o que se PAGA, a de reembolsos diz o que se GASTOU.
+        const rb = reembMap[id] || { despesas: 0, viagens: 0 };
+        const reembolsos = {
+          despesas: rb.despesas,
+          km: kmRodado * tarifa,
+          viagens: rb.viagens,
+          total: rb.despesas + kmRodado * tarifa + rb.viagens,
+        };
 
         const porCampanha: Record<string, number | null> = {};
         for (const c of campanhas) {
@@ -778,6 +825,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           kmRodado, kmTarifa: tarifa, kmRegiao: String(kmRegioes[id] || "GO").toUpperCase(),
           kmTarifaPropria: Object.prototype.hasOwnProperty.call(kmRates, id),
           kmValor,
+          // Fora do totalMes de propósito: informação, não recebível.
+          reembolsos,
           totalMes: total,
         };
       });
@@ -818,6 +867,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         bonus: soma((c) => c.bonus || 0),
         kmRodado: soma((c) => c.kmRodado || 0),
         kmValor: soma((c) => c.kmValor || 0),
+        reembolsos: soma((c) => c.reembolsos?.total || 0),
         totalMes: soma((c) => c.totalMes || 0),
         campanhas: Object.fromEntries(
           campanhas.map((c) => [c.id, soma((x) => x.campanhas?.[c.id] || 0)])
@@ -852,7 +902,11 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       };
 
       if (!admin) {
-        payload.colaboradores = (payload.colaboradores || []).filter((c: any) => c.id === eu.id);
+        // Reembolso é número de custo: fica só com o admin, nem sai do servidor
+        // para a tela do colaborador.
+        payload.colaboradores = (payload.colaboradores || [])
+          .filter((c: any) => c.id === eu.id)
+          .map((c: any) => { const { reembolsos, ...resto } = c; return resto; });
         payload.totais = null;
       }
       res.json(payload);
@@ -887,8 +941,11 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         administrative: "Administrativo", motorista: "Motorista",
       };
 
+      // Reembolsos é a última coluna e só existe para admin: vem DEPOIS do total
+      // justamente por não entrar nele.
       const cab = ["Colaborador", "Função", "Fixo Mensal", "Ajuda de Custo", "Meta", "Faturamento",
-        "Comissão Mês", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês"];
+        "Comissão Mês", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês",
+        ...(admin ? ["Reembolsos (não soma)"] : [])];
 
       const wb = new ExcelJS.Workbook();
       wb.creator = "Integra 2.0 — Honest Sucos";
@@ -909,6 +966,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           cel(c.fixoMensal), cel(c.ajudaCusto), cel(c.meta), cel(c.faturamento), cel(c.comissao),
           ...campanhas.map((k) => cel(c.campanhas?.[k.id] ?? null)),
           cel(c.bonus), Number(c.kmRodado || 0), cel(c.kmValor), Number(c.totalMes || 0),
+          ...(admin ? [Number(c.reembolsos?.total || 0)] : []),
         ]);
       }
       if (totais && colaboradores.length > 1) {
@@ -916,17 +974,20 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           "TOTAL", "", totais.fixoMensal, totais.ajudaCusto, totais.meta, totais.faturamento,
           totais.comissao, ...campanhas.map((k) => totais.campanhas?.[k.id] || 0),
           totais.bonus, totais.kmRodado, totais.kmValor, totais.totalMes,
+          ...(admin ? [Number(totais.reembolsos || 0)] : []),
         ]);
       }
 
+      const colKmRodado = cab.indexOf("Km rodado") + 1;
       const ultima = ws.rowCount;
       ws.eachRow((row, i) => {
         row.alignment = { wrapText: true, vertical: "middle" };
         row.font = { size: 10, bold: i === 1 || (!!totais && colaboradores.length > 1 && i === ultima) };
         row.eachCell((cell, col) => {
           cell.alignment = { wrapText: true, vertical: "middle", horizontal: col <= 2 ? "left" : "right" };
-          // Km rodado é distância, não dinheiro.
-          if (i > 1 && col >= 3 && col !== cab.length - 1 && typeof cell.value === "number") {
+          // Km rodado é distância, não dinheiro. (Era cab.length - 1, que com a
+          // coluna de reembolsos — e já antes dela — caía no "Km R$".)
+          if (i > 1 && col >= 3 && col !== colKmRodado && typeof cell.value === "number") {
             cell.numFmt = 'R$ #,##0.00';
           }
         });
