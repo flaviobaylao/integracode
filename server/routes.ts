@@ -5824,6 +5824,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const results: any[] = [];
 
+      // REGRA DE COMISSÃO (01/nov/2026): vem do cadastro do Resumo Recebíveis
+      // (collab_remuneracao_config), não mais de uma lista de nomes fixada no
+      // código do front. Era por isso que Wellington e Wilson apareciam com "—":
+      // não estavam na lista, embora tivessem regra cadastrada. Aqui vai só a
+      // REGRA; o abatimento do fixo e o desconto de troca continuam só na folha,
+      // no Resumo Recebíveis — esta tela projeta comissão, não paga.
+      const regrasRecebiveis: Record<string, any> = {};
+      try {
+        // Primeiro dia do mês SEGUINTE. Calculado aqui porque _ny/_nm só são
+        // declarados mais abaixo — usá-los antes dá ReferenceError (TDZ do const).
+        const _yR = targetMonth === 12 ? targetYear + 1 : targetYear;
+        const _mR = targetMonth === 12 ? 1 : targetMonth + 1;
+        const _fimRegra = `${_yR}-${String(_mR).padStart(2, '0')}-01`;
+        const _rr: any = await db.execute(sql`
+          SELECT DISTINCT ON (user_id) user_id, comissao_tipo, comissao_pct,
+                 comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo,
+                 comissao_faixas, usa_comissao, vigencia_data
+          FROM collab_remuneracao_config
+          WHERE vigencia_data < ${_fimRegra}::date
+          ORDER BY user_id, vigencia_data DESC`);
+        for (const r of _rr.rows || []) {
+          const num = (v: any) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+          regrasRecebiveis[String(r.user_id)] = {
+            tipo: r.usa_comissao === false ? 'nenhum' : String(r.comissao_tipo || 'nenhum'),
+            pct: num(r.comissao_pct),
+            descontoFixo: num(r.comissao_desconto_fixo),
+            proporcionalMeta: r.comissao_proporcional_meta === true,
+            faixaTipo: r.faixa_tipo || null,
+            faixas: Array.isArray(r.comissao_faixas) ? r.comissao_faixas : [],
+            vigenciaData: r.vigencia_data ? String(r.vigencia_data).slice(0, 10) : null,
+          };
+        }
+      } catch (e: any) {
+        console.error('[COMMISSION] regra do Resumo Recebíveis:', e?.message || e);
+      }
+
       // Ft. Atual = faturamento realizado a partir das NOTAS FISCAIS (fiscal_invoices):
       // autorizadas, CFOP de venda (5101/5102/5405/6101/6102), deduplicadas por chave de acesso, e
       // atribuidas ao vendedor pelo card de venda e, na falta, pelo vendedor que registrou o pedido (billing_pipeline).
@@ -5915,6 +5951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             commissionRate: commission.rate,
             commissionTier: commission.tier,
             commissionTierLabel: commission.tierLabel,
+            regraRecebiveis: regrasRecebiveis[String(seller.id)] || null,
           });
         } catch (sellerError: any) {
           console.error(`⚠️ [COMMISSION] Error processing seller ${seller.id}:`, sellerError.message);
