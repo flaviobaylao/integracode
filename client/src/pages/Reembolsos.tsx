@@ -406,9 +406,37 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
         <CardContent className="grid gap-4">
           {atual === 0 && (<>
             <Resumo /><Comprovantes />
-            {r.status === "cancelado" && <p className="text-sm text-gray-700">Pedido cancelado pelo solicitante.</p>}
+            {r.status === "cancelado" && (
+              <p className="text-sm text-gray-700">
+                Pedido cancelado.{r.motivoRecusa ? ` Motivo: ${r.motivoRecusa}` : ""}
+              </p>
+            )}
             {souSolicitante && r.status === "aguardando" && (
               <div><Button variant="outline" className="text-red-700" disabled={busy} onClick={() => { if (window.confirm(`Cancelar o pedido ${r.codigo}?`)) acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/cancelar`), "Pedido cancelado"); }}>Cancelar pedido</Button></div>
+            )}
+            {/* Cancelamento administrativo: desfaz um pedido JÁ decidido (teste,
+                duplicidade, acerto desfeito). Não apaga — tira o efeito e deixa o
+                rastro de quem cancelou e por quê. */}
+            {cfg.aprovador && r.status !== "cancelado" && r.status !== "aguardando" && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                <p className="mb-2 text-xs text-red-900">
+                  Cancelar um pedido já <strong>{r.status}</strong> tira ele dos números (inclusive do
+                  Resumo Recebíveis) e mantém o histórico. O motivo fica registrado.
+                </p>
+                <Button variant="outline" className="text-red-700" disabled={busy}
+                  data-testid="cancelar-admin"
+                  onClick={() => {
+                    const motivo = window.prompt(`Por que cancelar o pedido ${r.codigo}?`);
+                    if (motivo && motivo.trim().length >= 3) {
+                      acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/cancelar-admin`, { motivo: motivo.trim() }),
+                        "Pedido cancelado");
+                    } else if (motivo !== null) {
+                      alert("Escreva o motivo do cancelamento.");
+                    }
+                  }}>
+                  Cancelar pedido (admin)
+                </Button>
+              </div>
             )}
           </>)}
 
