@@ -381,9 +381,10 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
           responder "quanto se gastou com ele neste mês".
         </p>
         <p className="mb-2">
-          A quilometragem aparece aqui <em>e</em> na coluna Km, de propósito: lá é o que se{" "}
-          <strong>paga</strong> a ele e soma no total; aqui é o que se <strong>gastou</strong>,
-          inclusive de quem está com a rubrica Km desligada e aparece com — naquela coluna.
+          A quilometragem só entra aqui quando a <strong>rubrica Km está ligada</strong> para a
+          pessoa — é o mesmo valor da coluna Km. Com a rubrica desligada a empresa não paga aquele
+          km, então não há gasto: a distância continua sendo medida na Rota do Dia, mas não vira
+          dinheiro em lugar nenhum.
         </p>
         <p className="text-muted-foreground">
           Visível só para administradores. O colaborador não vê esta coluna.
