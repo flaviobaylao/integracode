@@ -85,6 +85,7 @@ type Cfg = {
   comissaoPct: number;
   comissaoDescontoFixo: number;
   comissaoProporcionalMeta: boolean;
+  comissaoAbateFixo: boolean | null;
   faixaTipo: string;
   usaFixo: boolean;
   usaAjudaCusto: boolean;
@@ -108,6 +109,7 @@ const CFG_PADRAO: Cfg = {
   comissaoPct: 0,
   comissaoDescontoFixo: 0,
   comissaoProporcionalMeta: false,
+  comissaoAbateFixo: null,
   faixaTipo: FAIXA_PADRAO,
   usaFixo: true,
   usaAjudaCusto: false,
@@ -153,6 +155,21 @@ function calcularComissao(cfg: Cfg, faturamento: number, meta: number): number {
   return Math.max(0, (faturamento * cfg.comissaoPct) / 100 - cfg.comissaoDescontoFixo);
 }
 
+// COMISSÃO A PARTIR DO FIXO MENSAL (regra do Flavio em 30/out/2026).
+// O vendedor PJ que recebe fixo mensal tem nele um adiantamento da comissão: só
+// recebe o que a comissão passar do fixo. Quem não tem fixo — só ajuda de custo —
+// leva o percentual cheio sobre o faturamento (a ajuda de custo NUNCA abate, é
+// reembolso de despesa, não remuneração).
+// O coordenador de vendas fica de fora: fixo livre e percentual sobre o faturamento
+// total da equipe. Aqui ele é quem consolida os totais, e o `return false` abaixo
+// garante que ligar o seletor por engano na tela não mexa na folha dele.
+// null = ninguém decidiu na tela ainda -> vale o padrão do tipo de vendedor.
+function abateComissaoNoFixo(cfg: Cfg, sellerType: string | null | undefined): boolean {
+  if (cfg.consolidaTotais) return false;
+  if (typeof cfg.comissaoAbateFixo === "boolean") return cfg.comissaoAbateFixo;
+  return String(sellerType || "") === "vendedor_pj";
+}
+
 let schemaReady: Promise<void> | null = null;
 export function ensureResumoRecebiveisSchema(): Promise<void> {
   if (!schemaReady) {
@@ -188,6 +205,10 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "consolida_totais boolean NOT NULL DEFAULT false",
         "comissao_faixas jsonb",
         "vigencia_data date",
+        // Sem DEFAULT de propósito: NULL quer dizer "a tela nunca decidiu", e aí
+        // vale o padrão por tipo de vendedor (ver abateComissaoNoFixo). Um DEFAULT
+        // aqui apagaria essa diferença e obrigaria um seed que atropelaria escolhas.
+        "comissao_abate_fixo boolean",
       ]) {
         await db.execute(sql.raw(
           `ALTER TABLE collab_remuneracao_config ADD COLUMN IF NOT EXISTS ${col}`
@@ -668,7 +689,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const cfgMap: Record<string, Cfg> = {};
       const cf: any = await db.execute(sql`
         SELECT DISTINCT ON (user_id) user_id, vigencia_data, fixo_mensal, ajuda_custo, comissao_tipo,
-               comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta,
+               comissao_pct, comissao_desconto_fixo, comissao_proporcional_meta, comissao_abate_fixo,
                faixa_tipo, incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento,
                usa_comissao, usa_km, usa_campanhas, usa_bonus, consolida_totais,
                comissao_faixas, observacao
@@ -686,6 +707,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           comissaoPct: n(r.comissao_pct),
           comissaoDescontoFixo: n(r.comissao_desconto_fixo),
           comissaoProporcionalMeta: r.comissao_proporcional_meta === true,
+          comissaoAbateFixo: typeof r.comissao_abate_fixo === "boolean" ? r.comissao_abate_fixo : null,
           faixaTipo: r.faixa_tipo || FAIXA_PADRAO,
           usaFixo: r.usa_fixo !== false,
           usaAjudaCusto: r.usa_ajuda_custo === true,
@@ -715,9 +737,13 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         // Comissão de entrega vem pronta do rateio semanal; as demais saem da
         // regra do colaborador sobre o faturamento.
         const ent = entregaMap[chaveEntregador(u.email, nome)] || null;
-        const comissao = !cfg.usaComissao ? null
+        const comissaoBruta = !cfg.usaComissao ? null
           : cfg.comissaoTipo === "entrega" ? (ent?.valor || 0)
           : calcularComissao(cfg, fatMap[id] || 0, metaMap[id] || 0);
+        // O fixo mensal adianta a comissão do vendedor PJ: só se paga o que passar dele.
+        const abateFixo = abateComissaoNoFixo(cfg, u.seller_type) ? (fixo || 0) : 0;
+        const comissaoAbatida = comissaoBruta === null ? null : Math.min(abateFixo, comissaoBruta);
+        const comissao = comissaoBruta === null ? null : Math.max(0, comissaoBruta - abateFixo);
 
         const kmRodado = kmMap[id] || 0;
         const tarifa = tarifaDe(id);
@@ -744,7 +770,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           config: cfg,
           fixoMensal: fixo, ajudaCusto, meta, faturamento,
           atingimentoPct: metaMap[id] > 0 ? ((fatMap[id] || 0) / metaMap[id]) * 100 : 0,
-          comissao,
+          comissao, comissaoBruta, comissaoAbatida,
           campanhas: porCampanha,
           bonus, lancamentos,
           entregaValorEntregue: ent?.entregue ?? null,
@@ -769,7 +795,11 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         c.atingimentoPct = metaEquipe > 0 ? (fatEquipe / metaEquipe) * 100 : 0;
         c.consolidador = true;
         if (c.config.usaComissao) {
+          // Coordenador de vendas: percentual sobre o faturamento total e fixo livre —
+          // abateComissaoNoFixo() já devolve false para quem consolida, então bruta = líquida.
           c.comissao = calcularComissao(c.config as Cfg, fatEquipe, metaEquipe);
+          c.comissaoBruta = c.comissao;
+          c.comissaoAbatida = 0;
           c.totalMes = (c.fixoMensal || 0) + (c.ajudaCusto || 0) + (c.comissao || 0) +
             (c.kmValor || 0) + (c.bonus || 0) +
             campanhas.reduce((s, k) => s + (c.campanhas?.[k.id] || 0), 0);
@@ -978,7 +1008,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       await ensureResumoRecebiveisSchema();
       const r: any = await db.execute(sql`
         SELECT c.id, c.user_id, c.vigencia_data, c.fixo_mensal, c.ajuda_custo, c.comissao_tipo, c.comissao_pct,
-               c.comissao_desconto_fixo, c.comissao_proporcional_meta, c.faixa_tipo,
+               c.comissao_desconto_fixo, c.comissao_proporcional_meta, c.comissao_abate_fixo, c.faixa_tipo,
                c.incluir_no_resumo, c.usa_fixo, c.usa_ajuda_custo, c.usa_meta, c.usa_faturamento, c.usa_comissao,
                c.usa_km, c.usa_campanhas, c.usa_bonus, c.consolida_totais, c.comissao_faixas,
                c.observacao, c.created_at,
@@ -1039,16 +1069,19 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         : [];
       const faixa = FAIXAS[String(b.faixaTipo)] ? String(b.faixaTipo) : FAIXA_PADRAO;
       const bool = (v: any, padrao: boolean) => (typeof v === "boolean" ? v : padrao);
+      // Só grava decisão quando a tela manda um booleano; qualquer outra coisa deixa
+      // NULL para continuar valendo o padrão por tipo de vendedor.
+      const abateFixo: boolean | null = typeof b.comissaoAbateFixo === "boolean" ? b.comissaoAbateFixo : null;
 
       const r: any = await db.execute(sql`
         INSERT INTO collab_remuneracao_config
           (user_id, vigencia_ym, fixo_mensal, ajuda_custo, comissao_tipo, comissao_pct,
-           comissao_desconto_fixo, comissao_proporcional_meta, faixa_tipo, paga_km,
+           comissao_desconto_fixo, comissao_proporcional_meta, comissao_abate_fixo, faixa_tipo, paga_km,
            incluir_no_resumo, usa_fixo, usa_ajuda_custo, usa_meta, usa_faturamento, usa_comissao,
            usa_km, usa_campanhas, usa_bonus, consolida_totais, comissao_faixas, observacao, created_by,
            vigencia_data)
         VALUES (${b.userId}, ${vig.slice(0, 7)}, ${n(b.fixoMensal)}, ${n(b.ajudaCusto)}, ${tipo}, ${n(b.comissaoPct)},
-                ${n(b.comissaoDescontoFixo)}, ${b.comissaoProporcionalMeta === true}, ${faixa},
+                ${n(b.comissaoDescontoFixo)}, ${b.comissaoProporcionalMeta === true}, ${abateFixo}, ${faixa},
                 ${bool(b.usaKm, true)},
                 ${bool(b.incluirNoResumo, true)}, ${bool(b.usaFixo, true)}, ${b.usaAjudaCusto === true}, ${bool(b.usaMeta, true)},
                 ${bool(b.usaFaturamento, true)}, ${bool(b.usaComissao, true)}, ${bool(b.usaKm, true)},
@@ -1063,6 +1096,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           comissao_pct = EXCLUDED.comissao_pct,
           comissao_desconto_fixo = EXCLUDED.comissao_desconto_fixo,
           comissao_proporcional_meta = EXCLUDED.comissao_proporcional_meta,
+          comissao_abate_fixo = EXCLUDED.comissao_abate_fixo,
           faixa_tipo = EXCLUDED.faixa_tipo,
           paga_km = EXCLUDED.paga_km,
           incluir_no_resumo = EXCLUDED.incluir_no_resumo,
@@ -1093,8 +1127,12 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         : tipo === "faixa" ? `faixa (${faixa})`
         : tipo === "fixo" ? `${n(b.comissaoPct)}%${n(b.comissaoDescontoFixo) > 0 ? ` menos ${dinheiro(n(b.comissaoDescontoFixo))}` : ""}${b.comissaoProporcionalMeta === true ? ", proporcional à meta" : ""}`
         : "sem comissão";
+      const abateTexto = b.consolidaTotais === true ? " · fixo livre (coordenação: não abate)"
+        : abateFixo === true ? " · comissão a partir do fixo mensal"
+        : abateFixo === false ? " · comissão cheia, sem abater o fixo"
+        : "";
       await auditar(req, "Remuneração",
-        `Vigência a partir de ${vig}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra} · rubricas: ${rubricas}`,
+        `Vigência a partir de ${vig}: fixo ${dinheiro(n(b.fixoMensal))} · ajuda de custo ${b.usaAjudaCusto === true ? dinheiro(n(b.ajudaCusto)) : "não recebe"} · comissão ${regra}${abateTexto} · rubricas: ${rubricas}`,
         alvo, b);
 
       res.json({ message: "Configuração salva", id: r.rows?.[0]?.id });
