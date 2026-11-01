@@ -319,6 +319,10 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_collab_cfg_user_data ON collab_remuneracao_config (user_id, vigencia_data)",
         "CREATE INDEX IF NOT EXISTS idx_resumo_auditoria_quando ON resumo_auditoria (quando DESC)",
         "CREATE INDEX IF NOT EXISTS idx_collab_bonus_ym ON collab_bonus_lancamentos (ym, user_id)",
+        // Lançamento avulso (01/nov/2026): além de bônus, crédito e DÉBITO — este
+        // entra negativo. A justificativa é texto livre e aparece no "i" da célula.
+        "ALTER TABLE collab_bonus_lancamentos ADD COLUMN IF NOT EXISTS tipo varchar NOT NULL DEFAULT 'bonus'",
+        "ALTER TABLE collab_bonus_lancamentos ADD COLUMN IF NOT EXISTS justificativa text",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_camp_valor ON resumo_campanha_valores (campanha_id, user_id, ym)",
         "CREATE INDEX IF NOT EXISTS idx_camp_valor_ym ON resumo_campanha_valores (ym)",
       ]) await db.execute(sql.raw(ix)).catch(() => {});
@@ -783,14 +787,21 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         }
       }
 
-      // 6. Bônus avulso
-      const lancMap: Record<string, Array<{ id: string; descricao: string; valor: number }>> = {};
+      // 6. Lançamentos avulsos: bônus, crédito e DÉBITO (este entra negativo).
+      const lancMap: Record<string, Array<{ id: string; descricao: string; valor: number; tipo: string; justificativa: string }>> = {};
       const lc: any = await db.execute(sql`
-        SELECT id, user_id, descricao, valor FROM collab_bonus_lancamentos
+        SELECT id, user_id, descricao, valor, COALESCE(tipo, 'bonus') AS tipo, justificativa
+        FROM collab_bonus_lancamentos
         WHERE ym = ${ym} AND user_id = ANY(${arraySql(ids)}) ORDER BY created_at`);
       for (const r of lc.rows || []) {
         const k = String(r.user_id);
-        (lancMap[k] = lancMap[k] || []).push({ id: r.id, descricao: r.descricao, valor: n(r.valor) });
+        const tipo = String(r.tipo || "bonus");
+        // Débito sai do total: guardo já com o sinal, para a soma ser direta e a
+        // tela não precisar saber a regra do sinal em cada lugar.
+        const valor = tipo === "debito" ? -Math.abs(n(r.valor)) : Math.abs(n(r.valor));
+        (lancMap[k] = lancMap[k] || []).push({
+          id: r.id, descricao: r.descricao, valor, tipo, justificativa: r.justificativa || "",
+        });
       }
 
       // 7. Configuração vigente: a linha mais recente com vigência <= ym
@@ -882,8 +893,13 @@ export function registerResumoRecebiveisRoutes(app: Express) {
             : (valorManual[`${c.id}|${id}`] ?? 0);
         }
 
-        const lancamentos = cfg.usaBonus ? (lancMap[id] || []) : [];
-        const bonus = cfg.usaBonus ? lancamentos.reduce((s, l) => s + l.valor, 0) : null;
+        // LANÇAMENTO AVULSO MANDA MAIS QUE A FLAG (01/nov/2026): se o admin lançou
+        // algo no mês, aquilo entra — antes o valor sumia quando "Bônus manual"
+        // estava desligado, e ninguém entendia por que o lançamento não aparecia.
+        // A flag passa a servir só para a coluna existir sem lançamento nenhum.
+        const lancamentos = lancMap[id] || [];
+        const bonus = (cfg.usaBonus || lancamentos.length)
+          ? lancamentos.reduce((s, l) => s + l.valor, 0) : null;
 
         const total =
           (fixo || 0) + (ajudaCusto || 0) + (comissao || 0) + (kmValor || 0) + (bonus || 0) +
@@ -1616,24 +1632,31 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const b = req.body || {};
       if (!b.userId || !ymValido(b.ym)) return res.status(400).json({ message: "Colaborador e mês são obrigatórios" });
       const descricao = String(b.descricao || "").trim().slice(0, 300);
-      if (!descricao) return res.status(400).json({ message: "Descreva o bônus" });
+      if (!descricao) return res.status(400).json({ message: "Descreva o lançamento" });
       if (await mesFechado(b.ym)) return res.status(400).json({ message: `${b.ym} está fechado; reabra o mês para alterar` });
 
-      const cf: any = await db.execute(sql`
-        SELECT usa_bonus FROM collab_remuneracao_config
-        WHERE user_id = ${b.userId} AND vigencia_data <= (${b.ym} || '-01')::date + INTERVAL '1 month'
-        ORDER BY vigencia_data DESC LIMIT 1`);
-      if (cf.rows?.[0]?.usa_bonus !== true) {
-        return res.status(400).json({ message: "Ative 'Bônus manual' para este colaborador na Configuração" });
+      // Sem exigir a flag "Bônus manual" (01/nov/2026): o lançamento avulso é a
+      // via para o que não cabe em nenhuma regra, e travá-lo numa configuração
+      // prévia obrigava a mexer no cadastro só para lançar um acerto pontual.
+      const TIPOS: Record<string, string> = { bonus: "Bônus", credito: "Crédito", debito: "Débito" };
+      const tipo = TIPOS[String(b.tipo || "bonus")] ? String(b.tipo) : "bonus";
+      const justificativa = String(b.justificativa || "").trim().slice(0, 2000);
+      if (tipo === "debito" && !justificativa) {
+        return res.status(400).json({ message: "Débito exige justificativa — é desconto na folha de alguém" });
       }
+      const valor = Math.abs(n(b.valor));
+      if (!(valor > 0)) return res.status(400).json({ message: "Informe um valor maior que zero" });
 
       const r: any = await db.execute(sql`
-        INSERT INTO collab_bonus_lancamentos (user_id, ym, descricao, valor, created_by)
-        VALUES (${b.userId}, ${b.ym}, ${descricao}, ${n(b.valor)}, ${req.currentUser?.id || null})
+        INSERT INTO collab_bonus_lancamentos (user_id, ym, descricao, valor, tipo, justificativa, created_by)
+        VALUES (${b.userId}, ${b.ym}, ${descricao}, ${valor}, ${tipo}, ${justificativa || null},
+                ${req.currentUser?.id || null})
         RETURNING id`);
       const alvo = await nomeDoUsuario(String(b.userId));
-      await auditar(req, "Bônus", `${dinheiro(n(b.valor))} em ${b.ym} — ${descricao}`, alvo, b);
-      res.json({ message: "Bônus lançado", id: r.rows?.[0]?.id });
+      await auditar(req, "Bônus",
+        `${TIPOS[tipo]} de ${dinheiro(valor)} em ${b.ym} — ${descricao}${justificativa ? ` · justificativa: ${justificativa}` : ""}`,
+        alvo, b);
+      res.json({ message: `${TIPOS[tipo]} lançado`, id: r.rows?.[0]?.id });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] bonus criar:", e?.message || e);
       res.status(500).json({ message: "Falha ao lançar o bônus" });
