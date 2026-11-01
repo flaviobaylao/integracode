@@ -25,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone, Lock, Unlock,
-  ArrowUpAZ, ArrowDownZA, ChevronsUpDown, Pencil,
+  ArrowUpAZ, ArrowDownZA, ChevronsUpDown, Pencil, RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -492,7 +492,7 @@ export default function ResumoRecebiveis() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ ym: string; admin: boolean; campanhas: Campanha[]; colaboradores: Colab[]; totais: any; fechado: boolean; fechadoEm: string | null; fechadoPor: string | null; podeFechar: boolean }>({
+  const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<{ ym: string; admin: boolean; campanhas: Campanha[]; colaboradores: Colab[]; totais: any; fechado: boolean; fechadoEm: string | null; fechadoPor: string | null; podeFechar: boolean }>({
     queryKey: ["/api/resumo-recebiveis", ym],
     queryFn: () => apiRequest("GET", `/api/resumo-recebiveis?ym=${ym}`),
   });
@@ -621,6 +621,22 @@ export default function ResumoRecebiveis() {
               <Unlock className="h-4 w-4 mr-1" /> Reabrir
             </Button>
           )}
+          {/* ATUALIZAR (01/nov/2026). Mês aberto é reapurado do zero a cada leitura:
+              mudou um parâmetro em qualquer módulo — meta, km, comissão, trocas,
+              campanha — este botão traz o número novo sem esperar o cache expirar.
+              Mês FECHADO não reapura nada: o servidor devolve o retrato congelado,
+              e o botão fica travado para não dar a entender que mexeria nele. */}
+          <Button variant="outline" size="sm" onClick={() => refetch()}
+            disabled={fechado || isFetching}
+            title={fechado
+              ? "Mês fechado: os valores são o retrato do fechamento e não se reapuram"
+              : "Reapura o mês com os parâmetros que estão valendo agora"}
+            data-testid="button-atualizar">
+            {isFetching
+              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              : <RefreshCw className="h-4 w-4 mr-1" />}
+            {isFetching ? "Atualizando…" : "Atualizar"}
+          </Button>
           {admin && !fechado && (
             <Button variant="outline" size="sm" onClick={() => setAbrirGestor(true)} data-testid="button-gestor">
               <Settings2 className="h-4 w-4 mr-1" /> Configurações
@@ -659,11 +675,19 @@ export default function ResumoRecebiveis() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center justify-between flex-wrap gap-2">
             <span>{nomeDoMes(ym)}</span>
-            {totais && (
-              <span className="text-sm font-normal text-muted-foreground">
-                Total a pagar: <strong className="text-foreground">{brl(totais.totalMes)}</strong>
-              </span>
-            )}
+            <span className="flex items-center gap-3 text-sm font-normal text-muted-foreground">
+              {/* Sem o carimbo, não dá para saber se o número na tela é de agora
+                  ou de antes da alteração que acabou de ser feita. */}
+              {!!dataUpdatedAt && (
+                <span className="text-xs">
+                  {fechado ? "Fechado · retrato congelado" : "Apurado às "}
+                  {!fechado && new Date(dataUpdatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+              {totais && (
+                <span>Total a pagar: <strong className="text-foreground">{brl(totais.totalMes)}</strong></span>
+              )}
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
