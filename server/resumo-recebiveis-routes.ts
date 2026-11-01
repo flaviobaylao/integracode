@@ -41,6 +41,7 @@ import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import { sqlFaturamentoPorVendedor, sqlFaturamentoPeriodo } from "./faturamento-oficial";
 import { computeCampaign } from "./campanha-outubro";
+import { descontosTrocaPorVendedor } from "./troca-registros-routes";
 import ExcelJS from "exceljs";
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from "@shared/comissao-entrega";
 
@@ -727,6 +728,18 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         console.error("[RESUMO-RECEB] viagens:", e?.message || e);
       }
 
+      // 4a-ter. DESCONTO POR TROCA (01/nov/2026). A troca por VENCIMENTO é aceita
+      // como decisão comercial, mas a comissão sobre o valor trocado volta: o
+      // módulo de trocas já apura o desconto por vendedor (valor trocado × % de
+      // comissão dele). Troca por qualidade — fermentado, lacre, tampa, avaria —
+      // fica registrada e NÃO desconta nada.
+      let trocaMap: Record<string, number> = {};
+      try {
+        trocaMap = await descontosTrocaPorVendedor(ym);
+      } catch (e: any) {
+        console.error("[RESUMO-RECEB] descontos de troca:", e?.message || e);
+      }
+
       // 4b. Comissão de entrega, para quem é pago por entrega.
       const precisaEntrega = Object.values(cfgMapPre).some((c: any) => c?.comissaoTipo === "entrega");
       const entregaMap = precisaEntrega ? await comissaoEntregaDoMes(ym) : {};
@@ -823,7 +836,15 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         // O fixo mensal adianta a comissão do vendedor PJ: só se paga o que passar dele.
         const abateFixo = abateComissaoNoFixo(cfg, u.seller_type) ? (fixo || 0) : 0;
         const comissaoAbatida = comissaoBruta === null ? null : Math.min(abateFixo, comissaoBruta);
-        const comissao = comissaoBruta === null ? null : Math.max(0, comissaoBruta - abateFixo);
+        // Desconto de troca por vencimento: sai da comissão, nunca do fixo nem do km.
+        const descontoTroca = !cfg.usaComissao ? null : (trocaMap[id] || 0);
+        const comissao = comissaoBruta === null ? null
+          : Math.max(0, comissaoBruta - abateFixo - (descontoTroca || 0));
+        // Quanto do desconto a comissão do mês conseguiu absorver. O que sobra NÃO
+        // vira dívida nem passa para o mês seguinte — some, e a tela precisa dizer
+        // isso, senão o número do módulo de trocas nunca bate com o da folha.
+        const descontoTrocaAplicado = descontoTroca === null ? null
+          : Math.min(descontoTroca, Math.max(0, (comissaoBruta || 0) - abateFixo));
 
         const kmRodado = kmMap[id] || 0;
         const tarifa = tarifaDe(id);
@@ -859,7 +880,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           config: cfg,
           fixoMensal: fixo, ajudaCusto, meta, faturamento,
           atingimentoPct: metaMap[id] > 0 ? ((fatMap[id] || 0) / metaMap[id]) * 100 : 0,
-          comissao, comissaoBruta, comissaoAbatida,
+          comissao, comissaoBruta, comissaoAbatida, descontoTroca, descontoTrocaAplicado,
           campanhas: porCampanha,
           bonus, lancamentos,
           entregaValorEntregue: ent?.entregue ?? null,
@@ -901,9 +922,12 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         if (c.config.usaComissao) {
           // Coordenador de vendas: percentual sobre o faturamento total e fixo livre —
           // abateComissaoNoFixo() já devolve false para quem consolida, então bruta = líquida.
-          c.comissao = calcularComissao(c.config as Cfg, fatEquipe, metaEquipe);
-          c.comissaoBruta = c.comissao;
+          c.comissaoBruta = calcularComissao(c.config as Cfg, fatEquipe, metaEquipe);
           c.comissaoAbatida = 0;
+          // Desconto de troca também vale para quem consolida, se houver no nome dele.
+          const dt = c.descontoTroca || 0;
+          c.comissao = Math.max(0, c.comissaoBruta - dt);
+          c.descontoTrocaAplicado = Math.min(dt, c.comissaoBruta);
           c.totalMes = (c.fixoMensal || 0) + (c.ajudaCusto || 0) + (c.comissao || 0) +
             (c.kmValor || 0) + (c.bonus || 0) +
             campanhas.reduce((s, k) => s + (c.campanhas?.[k.id] || 0), 0);
@@ -922,6 +946,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         faturamento: somaBase((c) => c.faturamento || 0),
         faturamentoEmpresa: fatTotalMes,
         comissao: soma((c) => c.comissao || 0),
+        // Já descontado dentro da comissão: não entra de novo no total.
+        descontoTroca: soma((c) => c.descontoTroca || 0),
         bonus: soma((c) => c.bonus || 0),
         kmRodado: soma((c) => c.kmRodado || 0),
         kmValor: soma((c) => c.kmValor || 0),
@@ -1002,7 +1028,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       // Reembolsos é a última coluna e só existe para admin: vem DEPOIS do total
       // justamente por não entrar nele.
       const cab = ["Colaborador", "Função", "Fixo Mensal", "Ajuda de Custo", "Meta", "Faturamento",
-        "Comissão Mês", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês",
+        "Comissão Mês", "Desc. Trocas", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês",
         ...(admin ? ["Reembolsos (não soma)"] : [])];
 
       const wb = new ExcelJS.Workbook();
@@ -1022,6 +1048,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         ws.addRow([
           c.nome, PAPEL[c.role] || c.role,
           cel(c.fixoMensal), cel(c.ajudaCusto), cel(c.meta), cel(c.faturamento), cel(c.comissao),
+          // Negativo: é o que saiu da comissão, já abatido na coluna anterior.
+          c.descontoTroca ? -Number(c.descontoTroca) : cel(c.descontoTroca ?? null),
           ...campanhas.map((k) => cel(c.campanhas?.[k.id] ?? null)),
           cel(c.bonus), Number(c.kmRodado || 0), cel(c.kmValor), Number(c.totalMes || 0),
           ...(admin ? [Number(c.reembolsos?.total || 0)] : []),
@@ -1030,7 +1058,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (totais && colaboradores.length > 1) {
         ws.addRow([
           "TOTAL", "", totais.fixoMensal, totais.ajudaCusto, totais.meta, totais.faturamento,
-          totais.comissao, ...campanhas.map((k) => totais.campanhas?.[k.id] || 0),
+          totais.comissao, totais.descontoTroca ? -Number(totais.descontoTroca) : 0,
+          ...campanhas.map((k) => totais.campanhas?.[k.id] || 0),
           totais.bonus, totais.kmRodado, totais.kmValor, totais.totalMes,
           ...(admin ? [Number(totais.reembolsos || 0)] : []),
         ]);
