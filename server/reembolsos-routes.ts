@@ -324,6 +324,52 @@ export function registerReembolsos(app: Express) {
     res.json(saida(await carregar(r.id)));
   });
 
+  // CANCELAMENTO ADMINISTRATIVO (01/nov/2026). O cancelamento comum só vale
+  // enquanto o pedido aguarda, e só para quem pediu — não havia como tirar do ar
+  // um pedido já aprovado, lançado ou pago (um teste, um lançamento em duplicata,
+  // um acerto desfeito). Cancelar em vez de APAGAR de propósito: registro
+  // financeiro não some, perde o efeito e mantém o rastro de quem desfez e por quê.
+  // O pedido cancelado sai dos números — o Resumo Recebíveis só conta aprovado,
+  // lançado e pago.
+  app.post("/api/reembolsos/:id/cancelar-admin", authenticateUser, async (req, res) => {
+    const u = await guard(req, res); if (!u) return;
+    if (!ehAprovador(u)) return res.status(403).json({ message: "Só Admin cancela um reembolso já decidido" });
+    const r = await carregar(req.params.id);
+    if (!r) return res.status(404).json({ message: "Reembolso não encontrado" });
+    if (r.status === "cancelado") return res.status(400).json({ message: "Este reembolso já está cancelado" });
+    const motivo = String((req.body as any)?.motivo || "").trim().slice(0, 1000);
+    if (motivo.length < 3) return res.status(400).json({ message: "Escreva o motivo do cancelamento" });
+
+    // Conta a pagar ainda viva: cancelar aqui deixaria o financeiro pagando algo
+    // que o módulo diz não existir. O Financeiro trata a conta primeiro.
+    if (r.payable_id) {
+      const p: any = await db.execute(sql`
+        SELECT id, status, deleted_at FROM payables WHERE id = ${r.payable_id} LIMIT 1`);
+      const conta = rows(p)[0];
+      if (conta && !conta.deleted_at) {
+        return res.status(400).json({
+          message: "Este reembolso tem conta a pagar ativa. Baixe ou exclua a conta no Financeiro antes de cancelar.",
+        });
+      }
+    }
+
+    await db.execute(sql`
+      UPDATE reembolsos SET status = 'cancelado', motivo_recusa = ${motivo},
+        aprovador_id = ${String(u.id)}, aprovador_nome = ${nomeDe(u)}, updated_at = now()
+      WHERE id = ${r.id}`);
+    await evento(r.id, nomeDe(u), `Cancelado pelo administrador (estava "${r.status}"): ${motivo}`);
+    try {
+      const { logFinancialAudit } = await import("./financial-audit");
+      await logFinancialAudit({
+        req, action: "update" as any, entity: "reembolso", entityId: r.id,
+        amount: num(r.valor_aprovado ?? r.valor),
+        note: `CANCELAMENTO ADMIN: ${codigo(r.numero)} estava "${r.status}" — ${motivo}`,
+      });
+    } catch {}
+    await fecharChamados(r.id, "aprovar", `🚫 Cancelado pelo administrador — ${motivo}`, u);
+    res.json(saida(await carregar(r.id)));
+  });
+
   // 1 CLIQUE: cria a Conta a Pagar com os dados do reembolso + comprovantes anexados
   app.post("/api/reembolsos/:id/lancar", authenticateUser, async (req: any, res) => {
     const u = await guard(req, res); if (!u) return;
