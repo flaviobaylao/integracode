@@ -24,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone, Lock, Unlock,
-  ArrowUpAZ, ArrowDownZA, ChevronsUpDown,
+  ArrowUpAZ, ArrowDownZA, ChevronsUpDown, Pencil,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -943,7 +943,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
 
   const salvarCfg = useMutation({
     mutationFn: () => apiRequest("POST", "/api/resumo-recebiveis/config", {
-      userId: form.userId, vigenciaData: form.vigenciaData,
+      userId: form.userId, vigenciaData: form.vigenciaData, editando: !!editandoId,
       fixoMensal: num(form.fixoMensal), ajudaCusto: num(form.ajudaCusto), comissaoTipo: form.comissaoTipo,
       comissaoPct: num(form.comissaoPct), comissaoDescontoFixo: num(form.comissaoDescontoFixo),
       comissaoProporcionalMeta: form.comissaoProporcionalMeta, comissaoAbateFixo: abateFixo,
@@ -955,7 +955,10 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
       usaComissao: form.usaComissao, usaKm: form.usaKm, usaCampanhas: form.usaCampanhas,
       usaBonus: form.usaBonus, consolidaTotais: form.consolidaTotais, observacao: form.observacao,
     }),
-    onSuccess: () => { toast({ title: "Configuração salva" }); setForm(vazio); invalidar(); },
+    onSuccess: () => {
+      toast({ title: editandoId ? "Configuração atualizada" : "Configuração salva" });
+      setEditandoId(null); setForm(vazio); invalidar();
+    },
     onError: (e: any) => toast({ title: "Falha ao salvar", description: e?.message, variant: "destructive" }),
   });
   const removerCfg = useMutation({
@@ -969,6 +972,44 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     onSuccess: (r: any) => { toast({ title: r?.message || "Participação atualizada" }); invalidar(); },
     onError: (e: any) => toast({ title: "Falha ao alterar", description: e?.message, variant: "destructive" }),
   });
+
+  // EDITAR UMA VIGÊNCIA JÁ GRAVADA (01/nov/2026). Antes só dava para criar outra
+  // e apagar a antiga — mudar um percentual virava três cliques e o risco de
+  // deixar duas vigências no mesmo dia. Carregar a linha no formulário e salvar
+  // com a MESMA data cai no ON CONFLICT (user_id, vigencia_data) e atualiza.
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const editarCfg = (c: any) => {
+    setEditandoId(String(c.id));
+    setForm({
+      userId: String(c.user_id),
+      vigenciaData: String(c.vigencia_data || "").slice(0, 10),
+      fixoMensal: String(Number(c.fixo_mensal) || ""),
+      ajudaCusto: String(Number(c.ajuda_custo) || ""),
+      comissaoTipo: c.comissao_tipo || "nenhum",
+      comissaoPct: String(Number(c.comissao_pct) || ""),
+      comissaoDescontoFixo: String(Number(c.comissao_desconto_fixo) || ""),
+      comissaoProporcionalMeta: c.comissao_proporcional_meta === true,
+      comissaoAbateFixo: typeof c.comissao_abate_fixo === "boolean" ? c.comissao_abate_fixo : null,
+      comissaoFaixas: (c.comissao_faixas || []).length
+        ? (c.comissao_faixas || []).map((f: any) => ({
+            de: String(f.de ?? ""), ate: f.ate === null || f.ate === undefined ? "" : String(f.ate), pct: String(f.pct ?? ""),
+          }))
+        : [{ de: "0", ate: "", pct: "" }],
+      faixaTipo: c.faixa_tipo || "telemarketing",
+      incluirNoResumo: c.incluir_no_resumo !== false,
+      usaFixo: c.usa_fixo !== false,
+      usaAjudaCusto: c.usa_ajuda_custo === true,
+      usaMeta: c.usa_meta !== false,
+      usaFaturamento: c.usa_faturamento !== false,
+      usaComissao: c.usa_comissao !== false,
+      usaKm: c.usa_km !== false,
+      usaCampanhas: c.usa_campanhas !== false,
+      usaBonus: c.usa_bonus === true,
+      consolidaTotais: c.consolida_totais === true,
+      observacao: c.observacao || "",
+    });
+  };
+  const cancelarEdicao = () => { setEditandoId(null); setForm(vazio); };
 
   const agruparGrupo = useMutation({
     mutationFn: (v: { grupo: string; agrupar: boolean }) =>
@@ -1065,7 +1106,9 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 min-w-0">
                 <div className="min-w-0 md:col-span-3">
                   <Label className="text-xs">Colaborador</Label>
-                  <Select value={form.userId} onValueChange={(v) => set("userId", v)}>
+                  {/* Travado durante a edição: trocar de pessoa aqui criaria uma
+                      vigência para outra, deixando a que se queria corrigir intacta. */}
+                  <Select value={form.userId} onValueChange={(v) => set("userId", v)} disabled={!!editandoId}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       {(cfgData?.colaboradores || []).map((c: any) => (
@@ -1340,10 +1383,20 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 );
               })()}
 
-              <div className="flex justify-end">
+              <div className="flex items-center justify-end gap-2">
+                {editandoId && (
+                  <>
+                    <span className="mr-auto text-xs text-amber-700">
+                      Editando a vigência de <strong>{dataBR(form.vigenciaData)}</strong>. Salvar com esta
+                      mesma data <strong>substitui</strong> a linha; mudar a data cria outra vigência e a
+                      antiga continua valendo até ela.
+                    </span>
+                    <Button size="sm" variant="outline" onClick={cancelarEdicao}>Cancelar</Button>
+                  </>
+                )}
                 <Button size="sm" disabled={!form.userId || salvarCfg.isPending} onClick={() => salvarCfg.mutate()}>
                   {salvarCfg.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
-                  Salvar vigência
+                  {editandoId ? "Salvar alterações" : "Salvar vigência"}
                 </Button>
               </div>
             </div>
@@ -1363,7 +1416,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 </thead>
                 <tbody>
                   {(cfgData?.configs || []).map((c: any) => (
-                    <tr key={c.id} className="border-t">
+                    <tr key={c.id} className={`border-t ${editandoId === String(c.id) ? "bg-amber-50" : ""}`}>
                       <td className="px-2 py-1.5">
                         {c.nome}
                       </td>
@@ -1384,8 +1437,16 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                           c.usa_comissao && "com.", c.usa_km && "km", c.usa_campanhas && "camp.",
                           c.usa_bonus && "bônus", c.consolida_totais && "consolida"].filter(Boolean).join(" · ") || "nenhuma"}
                       </td>
-                      <td className="px-2 py-1.5 text-right">
+                      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                        {/* Editar carrega a linha no formulário acima; salvar com a
+                            mesma vigência substitui, sem precisar apagar e refazer. */}
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-700"
+                          title="Editar esta vigência" aria-label={`Editar a vigência de ${c.nome}`}
+                          onClick={() => editarCfg(c)} data-testid={`editar-cfg-${c.id}`}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-600"
+                          title="Excluir esta vigência" aria-label={`Excluir a vigência de ${c.nome}`}
                           onClick={() => removerCfg.mutate(c.id)}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
