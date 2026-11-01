@@ -649,14 +649,9 @@ export default function ResumoRecebiveis() {
                             ? `Faturamento da empresa no mês: ${brl(c.faturamentoLinhas)} da equipe listada + ${brl(c.faturamentoForaDaLista)} de fora da lista (canais, contas de sistema, nota sem vendedor)`
                             : "",
                         ].filter(Boolean).join("\n")}>
+                        {/* Sem rótulo embaixo do valor: a explicação de que a coordenação
+                            recebe sobre o total da empresa fica no "i" da coluna. */}
                         {brl(c.faturamento)}
-                        {/* A coordenação recebe sobre o total da empresa, que é maior que a
-                            soma das linhas: sem este rótulo, parece erro de conta. */}
-                        {c.consolidador && (c.faturamentoForaDaLista || 0) > 0 && (
-                          <div className="text-[10px] font-normal text-muted-foreground whitespace-nowrap">
-                            empresa inteira
-                          </div>
-                        )}
                       </td>
                       <td className="px-3 py-2 text-right"
                         title={[
