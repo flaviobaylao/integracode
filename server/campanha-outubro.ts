@@ -18,11 +18,91 @@ import { nfVendaWhere, nfVendaFrom, nfData } from "./faturamento-oficial";
 // dentro de Metas de Vendas) e viaja em ?ym=; este valor so serve de piso para a
 // lista de meses oferecidos.
 const CAMPAIGN_YM = "2026-10";
-const PEDIDO_MIN = 300;        // pedido minimo para contar como novo da campanha
-const POS_META = 90;           // % de positivacao para o bonus
-const BONUS_NOVO = 30;         // R$ por novo cliente apto
-const BONUS_POS = 500;         // R$ por 90% de positivacao
-const BONUS_META = 500;        // R$ por bater a meta de faturamento
+
+// ============================================================================
+// PREMISSAS DA CAMPANHA — ligadas/desligadas e com o valor editado POR MÊS
+// (01/nov/2026). Antes eram constantes no código: mudar o prêmio ou tirar uma
+// premissa do mês exigia deploy, e o histórico de meses passados passava a ser
+// recalculado com a regra nova. Agora cada mês guarda a sua configuração.
+//
+// `modo` diz como o prêmio é lido:
+//   valor      -> R$ fixos (R$ 500 por bater a meta)
+//   percentual -> % sobre a BASE da premissa (ver `base` de cada uma)
+// `gatilho` é a condição para ganhar — o que varia por premissa.
+// Premissa DESLIGADA não paga e a coluna dela some da tabela.
+//
+// Para criar uma premissa nova, basta acrescentar uma linha neste catálogo e
+// tratar a chave em bonusDaPremissa(): a tela monta os blocos e as colunas a
+// partir daqui, sem mexer no front.
+// ============================================================================
+type ModoPremissa = "valor" | "percentual";
+type Premissa = {
+  chave: string; label: string; descricao: string;
+  gatilhoLabel: string; gatilhoSufixo: string; base: string;
+  ativa: boolean; modo: ModoPremissa; valor: number; gatilho: number;
+};
+const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho"> & {
+  ativaPadrao: boolean; modoPadrao: ModoPremissa; valorPadrao: number; gatilhoPadrao: number;
+}> = [
+  {
+    chave: "novos", label: "por novo cliente", descricao: "Venda faturada e recebida.",
+    gatilhoLabel: "Pedido mínimo", gatilhoSufixo: "R$",
+    base: "valor do 1º pedido de cada novo cliente apto",
+    ativaPadrao: true, modoPadrao: "valor", valorPadrao: 30, gatilhoPadrao: 300,
+  },
+  {
+    chave: "positivacao", label: "positivação da carteira", descricao: "Parte da carteira positivada no mês.",
+    gatilhoLabel: "Positivação exigida", gatilhoSufixo: "%",
+    base: "faturamento do vendedor no mês",
+    ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 90,
+  },
+  {
+    chave: "meta", label: "meta de faturamento", descricao: "Meta do mês cumprida.",
+    gatilhoLabel: "Atingimento exigido", gatilhoSufixo: "%",
+    base: "faturamento do vendedor no mês",
+    ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 100,
+  },
+];
+
+let _premissasOk = false;
+async function ensurePremissas(): Promise<void> {
+  if (_premissasOk) return;
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS campanha_premissas (
+    ym varchar(7) NOT NULL,
+    chave varchar NOT NULL,
+    ativa boolean NOT NULL DEFAULT true,
+    modo varchar NOT NULL DEFAULT 'valor',
+    valor numeric NOT NULL DEFAULT 0,
+    gatilho numeric NOT NULL DEFAULT 0,
+    updated_by varchar, updated_at timestamptz DEFAULT now(),
+    PRIMARY KEY (ym, chave)
+  )`);
+  _premissasOk = true;
+}
+
+/** Premissas vigentes no mes: o que esta gravado, com o catalogo de padrao. */
+export async function premissasDoMes(ym: string): Promise<Premissa[]> {
+  await ensurePremissas();
+  const gravadas: Record<string, any> = {};
+  try {
+    const r: any = await db.execute(sql`
+      SELECT chave, ativa, modo, valor, gatilho FROM campanha_premissas WHERE ym = ${ym}`);
+    for (const x of r.rows || []) gravadas[String(x.chave)] = x;
+  } catch (e: any) { console.error("[CAMPANHA] premissas:", e?.message || e); }
+  return CATALOGO_PREMISSAS.map((c) => {
+    const g = gravadas[c.chave];
+    const num = (v: any, p: number) => { const x = Number(v); return Number.isFinite(x) ? x : p; };
+    return {
+      chave: c.chave, label: c.label, descricao: c.descricao,
+      gatilhoLabel: c.gatilhoLabel, gatilhoSufixo: c.gatilhoSufixo, base: c.base,
+      ativa: g ? g.ativa !== false : c.ativaPadrao,
+      modo: (g && g.modo === "percentual" ? "percentual" : g ? "valor" : c.modoPadrao) as ModoPremissa,
+      valor: g ? num(g.valor, c.valorPadrao) : c.valorPadrao,
+      gatilho: g ? num(g.gatilho, c.gatilhoPadrao) : c.gatilhoPadrao,
+    };
+  });
+}
+const achaPremissa = (ps: Premissa[], chave: string) => ps.find((p) => p.chave === chave);
 
 // Contas fora da campanha (canais digitais, contas institucionais e excecoes do gestor).
 // A comparacao ignora pontuacao, acentos, espacos e caixa ("Maria E." = "Maria E").
@@ -171,7 +251,10 @@ export async function detectNovos(ym: string): Promise<number> {
     " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2" +
     ") q ORDER BY doc, d"
   );
-  const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= PEDIDO_MIN);
+  // Pedido minimo e premissa do mes: muda na tela, nao no codigo.
+  const pNovos = achaPremissa(await premissasDoMes(ym), "novos");
+  const pedidoMin = pNovos ? pNovos.gatilho : 300;
+  const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= pedidoMin);
   if (!novos.length) return 0;
   // Dados do cliente (nome, regiao, id) e vendedor da carteira.
   const custs = await rawq(
@@ -284,16 +367,31 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   // Novos clientes da campanha por vendedor (aptos / em validacao).
   const novosAptos: Record<string, number> = {};
   const emValidacao: Record<string, number> = {};
+  // Soma dos 1os pedidos dos aptos — base do bonus quando a premissa de novos
+  // clientes esta em PERCENTUAL (ex.: 10% sobre o primeiro pedido).
+  const valorNovos: Record<string, number> = {};
   const crows = await rawq(
-    "SELECT " + NOME_VENDEDOR + " AS seller_name, cnc.status, COUNT(*)::int AS n" +
+    "SELECT " + NOME_VENDEDOR + " AS seller_name, cnc.status, COUNT(*)::int AS n," +
+    " COALESCE(SUM(cnc.order_value), 0) AS valor" +
     " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
     " WHERE cnc.campaign_ym = '" + ym + "' GROUP BY 1, 2"
   );
   for (const r of crows) {
     const s = String(r.seller_name || ""); if (!s) continue;
-    if (String(r.status) === "aprovado") novosAptos[s] = (novosAptos[s] || 0) + (Number(r.n) || 0);
-    else if (String(r.status) === "pendente") emValidacao[s] = (emValidacao[s] || 0) + (Number(r.n) || 0);
+    if (String(r.status) === "aprovado") {
+      novosAptos[s] = (novosAptos[s] || 0) + (Number(r.n) || 0);
+      valorNovos[s] = (valorNovos[s] || 0) + (Number(r.valor) || 0);
+    } else if (String(r.status) === "pendente") emValidacao[s] = (emValidacao[s] || 0) + (Number(r.n) || 0);
   }
+
+  // Premissas do mes: o que paga, quanto e com que condicao.
+  const premissas = await premissasDoMes(ym);
+  const pNovos = achaPremissa(premissas, "novos");
+  const pPos = achaPremissa(premissas, "positivacao");
+  const pMeta = achaPremissa(premissas, "meta");
+  const posMeta = pPos?.gatilho ?? 90;
+  const metaPct = pMeta?.gatilho ?? 100;
+  const bateuMeta = (fat: number, meta: number) => meta > 0 && fat >= (meta * metaPct) / 100;
 
   // Participam da campanha apenas usuarios ativos com papel vendedor/telemarketing.
   const vendRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role::text IN ('vendedor','telemarketing') AND is_active IS TRUE");
@@ -315,9 +413,17 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     const fatv = Math.round((faturamento[seller] || 0) * 100) / 100;
     const meta = Math.round((metas[seller] || 0) * 100) / 100;
     const aptos = novosAptos[seller] || 0;
-    const bonusNovos = aptos * BONUS_NOVO;
-    const bonusPos = positivacao >= POS_META ? BONUS_POS : 0;
-    const bonusMeta = meta > 0 && fatv >= meta ? BONUS_META : 0;
+    // Premissa desligada nao paga — e a coluna some da tela.
+    // VALOR: R$ fixos (por cliente, ou de uma vez ao bater a condicao).
+    // PERCENTUAL: % sobre a BASE da premissa — nos novos clientes, o 1o pedido
+    // de cada apto; nas outras duas, o faturamento do vendedor no mes.
+    const bonusNovos = !pNovos?.ativa ? 0
+      : pNovos.modo === "percentual" ? ((valorNovos[seller] || 0) * pNovos.valor) / 100
+      : aptos * pNovos.valor;
+    const bonusPos = !pPos?.ativa || positivacao < posMeta ? 0
+      : pPos.modo === "percentual" ? (fatv * pPos.valor) / 100 : pPos.valor;
+    const bonusMeta = !pMeta?.ativa || !bateuMeta(fatv, meta) ? 0
+      : pMeta.modo === "percentual" ? (fatv * pMeta.valor) / 100 : pMeta.valor;
     sellers.push({
       seller, novosAptos: aptos, emValidacao: emValidacao[seller] || 0, carteira: cartN, positivados: pos,
       positivacao, faturamento: fatv, meta, bonusNovos, bonusPos, bonusMeta, bonusTotal: bonusNovos + bonusPos + bonusMeta,
@@ -332,12 +438,12 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     bonusPos: sellers.reduce((a, s) => a + s.bonusPos, 0),
     bonusMeta: sellers.reduce((a, s) => a + s.bonusMeta, 0),
     bonusTotal: sellers.reduce((a, s) => a + s.bonusTotal, 0),
-    comPositivacao: sellers.filter((s) => s.positivacao >= POS_META).length,
-    comMeta: sellers.filter((s) => s.meta > 0 && s.faturamento >= s.meta).length,
+    comPositivacao: sellers.filter((s) => s.positivacao >= posMeta).length,
+    comMeta: sellers.filter((s) => bateuMeta(s.faturamento, s.meta)).length,
     vendedores: sellers.length,
   };
 
-  return { asOf, ym, premissas: { bonusNovo: BONUS_NOVO, posMeta: POS_META, bonusPos: BONUS_POS, bonusMeta: BONUS_META, pedidoMin: PEDIDO_MIN }, sellers, totais };
+  return { asOf, ym, premissas, sellers, totais };
 }
 
 export async function listNovos(seller: string, ym: string = CAMPAIGN_YM): Promise<any[]> {
@@ -424,13 +530,38 @@ export function registerCampanhaRoutes(app: Express): void {
       if (!role) return res.status(401).json({ error: "unauthorized" });
       const ym = mesDaQuery(req);
       const meses = mesesDaCampanha();
-      if (role !== "admin" && !name) return res.json({ asOf: "", ym, meses, premissas: {}, sellers: [], totais: null, ativo: campaignActive(ym) });
+      if (role !== "admin" && !name) return res.json({ asOf: "", ym, meses, premissas: await premissasDoMes(ym), sellers: [], totais: null, ativo: campaignActive(ym), admin: false });
       // Detecta tambem em mes passado: o upsert so mexe em quem esta 'pendente',
       // entao reabrir um mes antigo nao desfaz aprovacao nem rejeicao. Mes futuro
       // nao tem o que detectar.
       if (ym <= mesAtual()) { try { await detectNovos(ym); } catch (e) {} }
       const r = await computeCampaign(role === "admin" ? undefined : name, ym);
-      res.json({ ...r, meses, ativo: campaignActive(ym) });
+      res.json({ ...r, meses, ativo: campaignActive(ym), admin: role === "admin" });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
+
+  // Liga/desliga e edita uma premissa do mes (somente admin).
+  app.post("/api/campanha/outubro/premissa", async (req, res) => {
+    try {
+      const { role } = await resolveUser(req);
+      if (role !== "admin") return res.status(403).json({ error: "forbidden" });
+      await ensurePremissas();
+      const b = (req.body || {}) as any;
+      const ym = /^\d{4}-\d{2}$/.test(String(b.ym || "")) ? String(b.ym) : mesAtual();
+      const chave = String(b.chave || "");
+      if (!CATALOGO_PREMISSAS.some((c) => c.chave === chave)) {
+        return res.status(400).json({ error: "premissa desconhecida" });
+      }
+      const num = (v: any) => { const x = Number(String(v ?? "").replace(",", ".")); return Number.isFinite(x) && x >= 0 ? x : 0; };
+      const modo = String(b.modo) === "percentual" ? "percentual" : "valor";
+      await db.execute(sql`
+        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, updated_by, updated_at)
+        VALUES (${ym}, ${chave}, ${b.ativa !== false}, ${modo}, ${num(b.valor)}, ${num(b.gatilho)},
+                ${String((req as any)?.session?.userId || "") || null}, now())
+        ON CONFLICT (ym, chave) DO UPDATE SET
+          ativa = EXCLUDED.ativa, modo = EXCLUDED.modo, valor = EXCLUDED.valor,
+          gatilho = EXCLUDED.gatilho, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      res.json({ ok: true, premissas: await premissasDoMes(ym) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
