@@ -15,7 +15,11 @@ export default defineConfig(async () => {
           includeAssets: ["icons/icon.svg", "icons/*.png"],
           workbox: {
             globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-            maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+            // O bundle do app passou de 6 MiB em 31/out/2026 e o build QUEBRA quando
+            // um asset estoura este teto — não é só um aviso de precache. Subido para
+            // 10 MiB para dar folga; o certo mesmo é code-splitting (ver o aviso de
+            // chunk > 3000 kB no build).
+            maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
             runtimeCaching: [
               {
                 urlPattern: /^\/api\//,
