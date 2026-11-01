@@ -32,10 +32,50 @@
 //   atual/meta e Projecao usa projetado/meta.
 // -----------------------------------------------------------------------------
 
+export type FaixaValor = { de: number; ate: number | null; pct: number };
+
 export type RegraComissao =
   | { tipo: 'fixo'; pct: number; descontoFixo?: number; proporcionalAMeta?: boolean }
-  | { tipo: 'faixa' }
+  | { tipo: 'faixa'; faixaTipo?: string }
+  | { tipo: 'escalonado'; faixas: FaixaValor[] }
+  | { tipo: 'entrega' }
   | null;
+
+// -----------------------------------------------------------------------------
+// ORIGEM DA REGRA (01/nov/2026): o cadastro do RESUMO RECEBÍVEIS.
+// A lista por primeiro nome abaixo virou só fallback para mês antigo, quando
+// ainda não havia cadastro. Ela não acompanhava a equipe: quem entrasse depois
+// (Wellington, Wilson, Virginia, Amanda) aparecia com "—" mesmo tendo regra,
+// e quem mudasse de percentual continuava com o do código (o Gilmar estava 7%
+// aqui e 8% no cadastro).
+// -----------------------------------------------------------------------------
+
+/** Config vigente que o backend manda em `regraRecebiveis` de cada vendedor. */
+export interface RegraRecebiveis {
+  tipo: 'fixo' | 'faixa' | 'escalonado' | 'entrega' | 'nenhum';
+  pct: number;
+  descontoFixo: number;
+  proporcionalMeta: boolean;
+  faixaTipo: string | null;
+  faixas: FaixaValor[];
+  vigenciaData: string | null;
+}
+
+/** Traduz a config do Resumo Recebíveis na regra que esta tela usa. */
+export function regraDoCadastro(cfg: RegraRecebiveis | null | undefined): RegraComissao {
+  if (!cfg) return null;
+  if (cfg.tipo === 'fixo') {
+    return {
+      tipo: 'fixo', pct: Number(cfg.pct) || 0,
+      descontoFixo: Number(cfg.descontoFixo) || 0,
+      proporcionalAMeta: cfg.proporcionalMeta === true,
+    };
+  }
+  if (cfg.tipo === 'faixa') return { tipo: 'faixa', faixaTipo: cfg.faixaTipo || TIPO_FAIXA_PADRAO };
+  if (cfg.tipo === 'escalonado') return { tipo: 'escalonado', faixas: cfg.faixas || [] };
+  if (cfg.tipo === 'entrega') return { tipo: 'entrega' };
+  return null; // 'nenhum' -> a tela mostra "—"
+}
 
 /** Faixas vindas do backend: thresholds em % de atingimento -> rates em %. */
 export interface FaixaComissao {
@@ -95,9 +135,20 @@ export function calcularComissao(
 ): number | null {
   if (!regra) return null;
   const valor = Number(base) || 0;
+  // Comissão por entrega sai do rateio semanal das entregas, não da meta: não há
+  // o que projetar aqui. A tela mostra "—" e diz onde ver o valor.
+  if (regra.tipo === 'entrega') return null;
   if (regra.tipo === 'faixa') {
     const pct = aliquotaDaFaixa(faixa, atingimentoPct);
     return (valor * pct) / 100;
+  }
+  if (regra.tipo === 'escalonado') {
+    // Faixa pelo VALOR faturado, e a alíquota incide sobre o valor inteiro.
+    // Mesmo tratamento de buraco entre faixas do servidor: sem intervalo fechado
+    // que sirva, vale a maior faixa cujo piso o valor já passou.
+    const candidatas = (regra.faixas || []).filter((f) => valor >= f.de).sort((a, b) => b.de - a.de);
+    const f = candidatas.find((x) => x.ate === null || valor <= x.ate) || candidatas[0];
+    return f ? (valor * f.pct) / 100 : 0;
   }
   if (regra.proporcionalAMeta) {
     // A comissao da META e a referencia; as demais colunas sao uma fatia dela,
@@ -121,12 +172,15 @@ export type ModoComissao = 'faixa' | 'fixo' | 'nenhum';
 
 export function modoComissao(regra: RegraComissao): ModoComissao {
   if (!regra) return 'nenhum';
+  if (regra.tipo === 'entrega') return 'nenhum';
   return regra.tipo === 'faixa' ? 'faixa' : 'fixo';
 }
 
 /** Rotulo curto da regra, para colunas de resumo. */
 export function rotuloRegraCurto(regra: RegraComissao): string {
   if (!regra) return '—';
+  if (regra.tipo === 'entrega') return 'Por entrega';
+  if (regra.tipo === 'escalonado') return 'Escalonado';
   if (regra.tipo === 'faixa') return 'Faixas';
   const pct = `${regra.pct.toString().replace('.', ',')}%`;
   if (regra.descontoFixo) {
@@ -137,7 +191,15 @@ export function rotuloRegraCurto(regra: RegraComissao): string {
 
 /** Texto curto da regra, para o title/tooltip da coluna. */
 export function descricaoRegra(regra: RegraComissao): string {
-  if (!regra) return 'Sem regra de comissao definida para este vendedor';
+  if (!regra) return 'Sem regra de comissao no cadastro do Resumo Recebiveis';
+  if (regra.tipo === 'entrega') {
+    return 'Comissao por entrega (rateio semanal) — nao se projeta por meta; o valor esta no Resumo Recebiveis';
+  }
+  if (regra.tipo === 'escalonado') {
+    return 'Escalonado por faturamento: '
+      + (regra.faixas || []).map((f) =>
+        `R$ ${f.de.toLocaleString('pt-BR')}${f.ate === null ? '+' : ` a R$ ${f.ate.toLocaleString('pt-BR')}`} = ${f.pct}%`).join(' · ');
+  }
   if (regra.tipo === 'faixa') return 'Segue as Faixas de Comissao do tipo (Vendas Internas)';
   const base = `${regra.pct.toString().replace('.', ',')}% sobre o valor`;
   if (!regra.descontoFixo) return base;
