@@ -221,6 +221,17 @@ export function ensureResumoRecebiveisSchema(): Promise<void> {
           `ALTER TABLE collab_remuneracao_config ADD COLUMN IF NOT EXISTS ${col}`
         )).catch(() => {});
       }
+
+      // Como cada GRUPO aparece na planilha (01/nov/2026): nominal (uma linha por
+      // pessoa) ou agrupado (uma linha só com o nome do grupo, somando tudo).
+      // Sem registro = nominal, que é como sempre foi.
+      await db.execute(sql.raw(
+        "CREATE TABLE IF NOT EXISTS resumo_grupos (" +
+        "grupo varchar PRIMARY KEY, " +
+        "agrupar boolean NOT NULL DEFAULT false, " +
+        "updated_by varchar, updated_at timestamptz DEFAULT now())"
+      ));
+
       // A vigência passou de mês para DATA (28/out/2026). Quem já estava
       // cadastrado vira o dia 1º do mês que tinha — mesmo efeito de antes.
       await db.execute(sql.raw(
@@ -629,9 +640,13 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
       // 2. Faturamento — mesma fonte do Dashboard
       const fatMap: Record<string, number> = {};
+      const fatNome: Record<string, string> = {}; // só para explicar o que sobrou
       try {
         const f: any = await db.execute(sql.raw(sqlFaturamentoPorVendedor(ini, fim)));
-        for (const r of f.rows || []) fatMap[String(r.vendedor_id)] = n(r.faturamento);
+        for (const r of f.rows || []) {
+          fatMap[String(r.vendedor_id)] = n(r.faturamento);
+          fatNome[String(r.vendedor_id)] = String(r.vendedor || "Sem vendedor");
+        }
       } catch (e: any) {
         console.error("[RESUMO-RECEB] faturamento:", e?.message || e);
       }
@@ -934,6 +949,105 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         }
       }
 
+      // ---------------------------------------------------------------------
+      // GRUPOS NA PLANILHA (01/nov/2026). Cada grupo pode aparecer nominal (uma
+      // linha por pessoa, como sempre foi) ou AGRUPADO: uma linha só com o nome
+      // do grupo, somando tudo. Serve para canal de venda e conta de sistema —
+      // o que importa ali é o bloco, não o nome de cada conta.
+      // ---------------------------------------------------------------------
+      const agrupar: Record<string, boolean> = {};
+      try {
+        const g: any = await db.execute(sql`SELECT grupo, agrupar FROM resumo_grupos`);
+        for (const r of g.rows || []) agrupar[String(r.grupo)] = r.agrupar === true;
+      } catch (e: any) {
+        console.error("[RESUMO-RECEB] grupos:", e?.message || e);
+      }
+
+      // FATURAMENTO SEM DONO NA PLANILHA: o que saiu em NF-e e não está em
+      // nenhuma linha — nota sem vendedor, venda de quem não participa do resumo
+      // e venda de quem está com a rubrica de faturamento desligada. Vai para a
+      // linha "Outros", com a composição detalhada para o "i" da tela: sem isso o
+      // valor apareceria do nada e ninguém saberia de onde veio.
+      const comLinha = new Set(colaboradores.filter((c) => c.faturamento !== null).map((c) => String(c.id)));
+      const orfaoPartes: Array<{ nome: string; valor: number; motivo: string }> = [];
+      for (const [vid, valor] of Object.entries(fatMap)) {
+        if (!valor || comLinha.has(vid)) continue;
+        const naPlanilha = colaboradores.some((c) => String(c.id) === vid);
+        orfaoPartes.push({
+          nome: fatNome[vid] || vid,
+          valor,
+          motivo: vid === "sem-vendedor" ? "nota sem vendedor atribuído"
+            : naPlanilha ? "está na planilha com a rubrica Faturamento desligada"
+            : "não participa do resumo",
+        });
+      }
+      orfaoPartes.sort((a, b) => b.valor - a.valor);
+      const orfaoTotal = orfaoPartes.reduce((s, p) => s + p.valor, 0);
+
+      // Funde as linhas de um grupo numa só. Consolidador nunca entra: ele é a
+      // coordenação, e some-lo apagaria o papel dele.
+      const LABEL_GRUPO: Record<string, string> = {
+        vendedores: "Vendedores", motoristas: "Motoristas",
+        administrativos: "Administrativos", canais: "Canais", outros: "Outros",
+      };
+      const fundir = (grupo: string, membros: any[], extraFaturamento: number, partes: any[]) => {
+        const somaG = (f: (c: any) => number) => membros.reduce((s, c) => s + f(c), 0);
+        const temFat = membros.some((c) => c.faturamento !== null) || extraFaturamento > 0;
+        const meta = membros.some((c) => c.meta !== null) ? somaG((c) => c.meta || 0) : null;
+        const fat = temFat ? somaG((c) => c.faturamento || 0) + extraFaturamento : null;
+        return {
+          id: `grupo:${grupo}`, nome: LABEL_GRUPO[grupo] || grupo, role: grupo,
+          sellerType: null, consolidador: false, agrupado: true, grupo,
+          membros: membros.length, membrosNomes: membros.map((c) => c.nome),
+          faturamentoSemDono: extraFaturamento || 0, faturamentoSemDonoPartes: partes,
+          config: { comissaoTipo: "nenhum" },
+          fixoMensal: membros.some((c) => c.fixoMensal !== null) ? somaG((c) => c.fixoMensal || 0) : null,
+          ajudaCusto: membros.some((c) => c.ajudaCusto !== null) ? somaG((c) => c.ajudaCusto || 0) : null,
+          meta, faturamento: fat,
+          atingimentoPct: meta && meta > 0 ? ((fat || 0) / meta) * 100 : 0,
+          comissao: membros.some((c) => c.comissao !== null) ? somaG((c) => c.comissao || 0) : null,
+          comissaoBruta: somaG((c) => c.comissaoBruta || 0),
+          comissaoAbatida: somaG((c) => c.comissaoAbatida || 0),
+          descontoTroca: somaG((c) => c.descontoTroca || 0),
+          descontoTrocaAplicado: somaG((c) => c.descontoTrocaAplicado || 0),
+          campanhas: Object.fromEntries(campanhas.map((k) => [k.id, somaG((c) => c.campanhas?.[k.id] || 0)])),
+          bonus: membros.some((c) => c.bonus !== null) ? somaG((c) => c.bonus || 0) : null,
+          lancamentos: membros.flatMap((c) => c.lancamentos || []),
+          entregaValorEntregue: null, entregaSemanas: null,
+          kmRodado: somaG((c) => c.kmRodado || 0), kmTarifa: 0, kmRegiao: "", kmTarifaPropria: false,
+          kmValor: membros.some((c) => c.kmValor !== null) ? somaG((c) => c.kmValor || 0) : null,
+          reembolsos: {
+            despesas: somaG((c) => c.reembolsos?.despesas || 0),
+            km: somaG((c) => c.reembolsos?.km || 0),
+            viagens: somaG((c) => c.reembolsos?.viagens || 0),
+            total: somaG((c) => c.reembolsos?.total || 0),
+          },
+          faturamentoLinhas: null, faturamentoForaDaLista: null,
+          totalMes: somaG((c) => c.totalMes || 0),
+        };
+      };
+
+      let exibidos: any[] = [];
+      {
+        const feitos = new Set<string>();
+        for (const c of colaboradores) {
+          const g = c.consolidador ? "" : grupoDoParticipante(c.nome, c.role);
+          const colapsa = !!g && agrupar[g] === true;
+          if (!colapsa) { exibidos.push(c); continue; }
+          if (feitos.has(g)) continue;
+          feitos.add(g);
+          const membros = colaboradores.filter(
+            (x) => !x.consolidador && grupoDoParticipante(x.nome, x.role) === g);
+          exibidos.push(fundir(g, membros, g === "outros" ? orfaoTotal : 0, g === "outros" ? orfaoPartes : []));
+        }
+        // Faturamento sem dono existe e "Outros" não foi agrupado: a linha aparece
+        // assim mesmo, só com ele. O dinheiro saiu em NF-e; esconder não é opção.
+        if (orfaoTotal > 0 && agrupar.outros !== true) {
+          exibidos.push(fundir("outros", [], orfaoTotal, orfaoPartes));
+        }
+      }
+      const colaboradoresExibidos = exibidos;
+
       const soma = (f: (c: any) => number) => colaboradores.reduce((s, c) => s + f(c), 0);
       // Meta e faturamento do rodapé ignoram o consolidador: ele já é a soma.
       const somaBase = (f: (c: any) => number) => base.reduce((s, c) => s + f(c), 0);
@@ -941,9 +1055,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         fixoMensal: soma((c) => c.fixoMensal || 0),
         ajudaCusto: soma((c) => c.ajudaCusto || 0),
         meta: somaBase((c) => c.meta || 0),
-        // Rodapé = soma das linhas visíveis (a conta da tela precisa fechar).
-        // faturamentoEmpresa é o total do mês, que é o que a coordenação recebe.
-        faturamento: somaBase((c) => c.faturamento || 0),
+        // Com a linha "Outros" recolhendo o faturamento sem dono, o rodapé volta a
+        // ser a soma do que está na tela E bate com o total da empresa — que é o
+        // que a coordenação recebe. Os dois números deixam de divergir.
+        faturamento: somaBase((c) => c.faturamento || 0) + orfaoTotal,
         faturamentoEmpresa: fatTotalMes,
         comissao: soma((c) => c.comissao || 0),
         // Já descontado dentro da comissão: não entra de novo no total.
@@ -958,7 +1073,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         ),
       };
 
-      return { ym, campanhas, colaboradores, totais };
+      // `nominais` guarda a lista SEM agrupamento: o colaborador precisa achar a
+      // própria linha mesmo que o grupo dele esteja recolhido na visão do admin.
+      return { ym, campanhas, colaboradores: colaboradoresExibidos, nominais: colaboradores, totais };
   }
   // -------------------------------------------------------------------------
   // A planilha do mês. Mês fechado devolve o retrato congelado, não recalcula.
@@ -986,13 +1103,16 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       };
 
       if (!admin) {
+        // A própria linha sai da lista NOMINAL: se o grupo dele estiver recolhido
+        // na visão do admin, ele ainda tem de se ver.
         // Reembolso é número de custo: fica só com o admin, nem sai do servidor
         // para a tela do colaborador.
-        payload.colaboradores = (payload.colaboradores || [])
+        payload.colaboradores = ((payload.nominais || payload.colaboradores) || [])
           .filter((c: any) => c.id === eu.id)
           .map((c: any) => { const { reembolsos, ...resto } = c; return resto; });
         payload.totais = null;
       }
+      delete payload.nominais;
       res.json(payload);
     } catch (e: any) {
       console.error("[RESUMO-RECEB] planilha:", e?.message || e);
@@ -1018,7 +1138,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const campanhas: any[] = dados.campanhas || [];
       let colaboradores: any[] = dados.colaboradores || [];
       const totais = admin ? dados.totais : null;
-      if (!admin) colaboradores = colaboradores.filter((c: any) => c.id === eu.id);
+      // Igual à tela: o colaborador exporta a própria linha, da lista nominal.
+      if (!admin) colaboradores = (dados.nominais || colaboradores).filter((c: any) => c.id === eu.id);
 
       const PAPEL: Record<string, string> = {
         vendedor: "Externo", telemarketing: "Interno",
@@ -1188,7 +1309,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const participantes = (todos.rows || []).map((p: any) => ({
         ...p, grupo: grupoDoParticipante(p.nome, p.role),
       }));
-      res.json({ configs: r.rows || [], colaboradores: colabs.rows || [], participantes });
+      const g: any = await db.execute(sql`SELECT grupo, agrupar FROM resumo_grupos`);
+      const grupos: Record<string, boolean> = {};
+      for (const row of g.rows || []) grupos[String(row.grupo)] = row.agrupar === true;
+      res.json({ configs: r.rows || [], colaboradores: colabs.rows || [], participantes, grupos });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] config listar:", e?.message || e);
       res.status(500).json({ message: "Falha ao listar as configurações" });
@@ -1354,6 +1478,34 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     } catch (e: any) {
       console.error("[RESUMO-RECEB] participacao:", e?.message || e);
       res.status(500).json({ message: "Falha ao alterar a participação" });
+    }
+  });
+
+  // Como o grupo aparece na planilha: nominal ou agrupado numa linha só.
+  app.post("/api/resumo-recebiveis/grupo", authenticateUser, async (req: any, res) => {
+    try {
+      if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
+      await ensureResumoRecebiveisSchema();
+      const b = req.body || {};
+      const grupo = String(b.grupo || "");
+      if (!["vendedores", "motoristas", "administrativos", "canais", "outros"].includes(grupo)) {
+        return res.status(400).json({ message: "Grupo inválido" });
+      }
+      const agrupar = b.agrupar === true;
+      await db.execute(sql`
+        INSERT INTO resumo_grupos (grupo, agrupar, updated_by, updated_at)
+        VALUES (${grupo}, ${agrupar}, ${req.currentUser?.id || null}, now())
+        ON CONFLICT (grupo) DO UPDATE SET
+          agrupar = EXCLUDED.agrupar, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      await auditar(req, "Participação",
+        agrupar
+          ? `Grupo ${grupo}: passa a aparecer AGRUPADO numa linha só, somando os valores`
+          : `Grupo ${grupo}: volta a aparecer com uma linha por pessoa`,
+        grupo, b);
+      res.json({ message: agrupar ? "Grupo agrupado na planilha" : "Grupo volta a aparecer por pessoa" });
+    } catch (e: any) {
+      console.error("[RESUMO-RECEB] grupo:", e?.message || e);
+      res.status(500).json({ message: "Falha ao alterar o grupo" });
     }
   });
 
