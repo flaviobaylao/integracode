@@ -875,14 +875,20 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         const kmRodado = kmMap[id] || 0;
         const tarifa = tarifaDe(id);
         const kmValor = cfg.usaKm ? kmRodado * tarifa : null;
-        // O km entra nos reembolsos mesmo com a rubrica desligada: a coluna Km diz
-        // o que se PAGA, a de reembolsos diz o que se GASTOU.
+        // Km só entra nos reembolsos quando a rubrica está LIGADA (corrigido em
+        // 01/nov/2026). A versão anterior somava o km de todo mundo, dizendo que
+        // "Km é o que se paga e reembolso é o que se gasta" — mas com a rubrica
+        // desligada a empresa não paga aquele km, então não houve gasto nenhum.
+        // O resultado era um custo inflado com dinheiro que nunca saiu: os quatro
+        // vendedores sem km contratado apareciam com centenas de reais de
+        // "reembolso" que eram só a distância que o GPS mediu na Rota do Dia.
         const rb = reembMap[id] || { despesas: 0, viagens: 0 };
+        const kmReembolso = kmValor || 0;
         const reembolsos = {
           despesas: rb.despesas,
-          km: kmRodado * tarifa,
+          km: kmReembolso,
           viagens: rb.viagens,
-          total: rb.despesas + kmRodado * tarifa + rb.viagens,
+          total: rb.despesas + kmReembolso + rb.viagens,
         };
 
         const porCampanha: Record<string, number | null> = {};
