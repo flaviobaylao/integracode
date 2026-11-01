@@ -393,6 +393,16 @@ const ajudaCampanha = (c: { nome: string; origem: string; observacao?: string })
   ),
 });
 
+// Seções da aba Participantes, nesta ordem. O grupo de cada pessoa vem pronto do
+// servidor (grupoDoParticipante), para a regra não existir em dois lugares.
+const GRUPOS_PARTICIPANTE: Array<{ k: string; label: string; ajuda: string }> = [
+  { k: "vendedores", label: "Vendedores", ajuda: "externos e internos" },
+  { k: "motoristas", label: "Motoristas", ajuda: "entrega" },
+  { k: "administrativos", label: "Administrativos", ajuda: "administração e coordenação" },
+  { k: "canais", label: "Canais", ajuda: "loja, redes e contas de sistema — não são pessoas" },
+  { k: "outros", label: "Outros", ajuda: "todo o restante" },
+];
+
 interface Campanha { id: string; nome: string; origem: string; ym_inicio: string; ym_fim: string | null; observacao?: string; }
 interface Colab {
   id: string; nome: string; role: string; sellerType: string | null;
@@ -1479,31 +1489,50 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
             </p>
             <Input className="h-8" placeholder="Buscar por nome ou e-mail…"
               value={buscaPart} onChange={(e) => setBuscaPart(e.target.value)} />
-            <div className="space-y-1">
-              {(cfgData?.participantes || []).filter((p: any) => {
-                const t = buscaPart.trim().toLowerCase();
-                if (!t) return true;
-                return String(p.nome || "").toLowerCase().includes(t) || String(p.email || "").toLowerCase().includes(t);
-              }).map((p: any) => (
-                <div key={p.id}
-                  className={`flex items-center gap-3 rounded-md border px-3 py-1.5 text-sm min-w-0 ${p.incluir ? "" : "bg-muted/40"}`}>
-                  <Switch checked={p.incluir !== false}
-                    onCheckedChange={(v) => participacao.mutate({ userId: p.id, incluir: v })} />
-                  <div className="min-w-0 flex-1">
-                    <div className={`truncate font-medium ${p.incluir ? "" : "text-muted-foreground line-through"}`}>
-                      {p.nome}
+            {(() => {
+              const t = buscaPart.trim().toLowerCase();
+              const lista = (cfgData?.participantes || []).filter((p: any) => !t
+                || String(p.nome || "").toLowerCase().includes(t)
+                || String(p.email || "").toLowerCase().includes(t));
+              // Cada um continua com o seu liga/desliga; o grupo só organiza a
+              // lista, que vinha com canal, motorista e sistema no meio da equipe.
+              return GRUPOS_PARTICIPANTE.map(({ k, label, ajuda }) => {
+                const doGrupo = lista.filter((p: any) => (p.grupo || "outros") === k);
+                if (!doGrupo.length) return null;
+                const dentro = doGrupo.filter((p: any) => p.incluir !== false).length;
+                return (
+                  <div key={k} className="space-y-1 pt-2">
+                    <div className="flex items-baseline justify-between gap-2 border-b pb-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {label} <span className="font-normal normal-case">· {ajuda}</span>
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {dentro} de {doGrupo.length} na planilha
+                      </span>
                     </div>
-                    <div className="truncate text-xs text-muted-foreground">{p.email || "—"}</div>
+                    {doGrupo.map((p: any) => (
+                      <div key={p.id}
+                        className={`flex items-center gap-3 rounded-md border px-3 py-1.5 text-sm min-w-0 ${p.incluir ? "" : "bg-muted/40"}`}>
+                        <Switch checked={p.incluir !== false}
+                          onCheckedChange={(v) => participacao.mutate({ userId: p.id, incluir: v })} />
+                        <div className="min-w-0 flex-1">
+                          <div className={`truncate font-medium ${p.incluir ? "" : "text-muted-foreground line-through"}`}>
+                            {p.nome}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">{p.email || "—"}</div>
+                        </div>
+                        <Badge className={`${PAPEL_COR[p.role] || "bg-slate-100 text-slate-700"} shrink-0`}>
+                          {PAPEL_LABEL[p.role] || p.role}
+                        </Badge>
+                        {!p.papel_de_vendas && p.incluir && (
+                          <Badge className="bg-emerald-100 text-emerald-800 shrink-0">incluído à mão</Badge>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  <Badge className={`${PAPEL_COR[p.role] || "bg-slate-100 text-slate-700"} shrink-0`}>
-                    {PAPEL_LABEL[p.role] || p.role}
-                  </Badge>
-                  {!p.papel_de_vendas && p.incluir && (
-                    <Badge className="bg-emerald-100 text-emerald-800 shrink-0">incluído à mão</Badge>
-                  )}
-                </div>
-              ))}
-            </div>
+                );
+              });
+            })()}
           </TabsContent>
           {/* ---------------- HISTÓRICO ---------------- */}
           <TabsContent value="historico" className="space-y-2">
