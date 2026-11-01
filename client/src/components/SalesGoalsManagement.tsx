@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { sortSellersByType } from "@/lib/sellerOrder";
-import { regraDoVendedor, calcularComissao, descricaoRegra, TIPO_FAIXA_PADRAO, type FaixaComissao } from "@/lib/comissaoMetas";
+import { regraDoVendedor, regraDoCadastro, calcularComissao, descricaoRegra, TIPO_FAIXA_PADRAO, type FaixaComissao, type RegraRecebiveis } from "@/lib/comissaoMetas";
 import { usePermissions } from "@/lib/permissions";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,9 @@ interface CommissionDashboardData {
     revenueByInstance: Record<string, number>;
     revenueProjected: number;
     achievementPct: number;
+    // Regra vigente no cadastro do Resumo Recebíveis — é dela que saem as
+    // colunas de comissão desde 01/11/2026.
+    regraRecebiveis?: RegraRecebiveis | null;
   }>;
   telemarketing?: {
     sellerId: string;
@@ -299,11 +302,16 @@ function MetasEComissao({ user }: SalesGoalsManagementProps) {
   const totalProjected = goalsVisiveis.reduce((s, g) => s + (metricsMap[g.sellerId]?.projected || 0), 0);
   // Totais das colunas de comissao. Somam apenas quem TEM regra definida —
   // vendedor sem regra entra como "—" na linha e nao contamina o rodape.
+  // A regra vem do cadastro do Resumo Recebíveis; a lista por primeiro nome só
+  // atende mês antigo, de antes do cadastro existir.
+  const regraDe = (sellerId: string) => {
+    const cfg = (dashboardData?.sellers || []).find((s: any) => s.sellerId === sellerId)?.regraRecebiveis;
+    return cfg ? regraDoCadastro(cfg) : regraDoVendedor(getSellerName(sellerId));
+  };
   const totaisComissao = goalsVisiveis.reduce((acc, g) => {
-    const nome = getSellerName(g.sellerId);
-    const regra = regraDoVendedor(nome);
+    const regra = regraDe(g.sellerId);
     if (!regra) return acc;
-    const faixa = dashboardData?.commissionTiers?.[TIPO_FAIXA_PADRAO];
+    const faixa = dashboardData?.commissionTiers?.[(regra as any).faixaTipo || TIPO_FAIXA_PADRAO];
     const meta = parseFloat(g.revenueGoal?.toString() || '0');
     const at = metricsMap[g.sellerId]?.actual || 0;
     const pj = metricsMap[g.sellerId]?.projected || 0;
@@ -383,51 +391,32 @@ function MetasEComissao({ user }: SalesGoalsManagementProps) {
                       <strong>Comissão</strong> usa a meta, <strong>Comissão Conquistada</strong> usa o
                       faturamento atual e <strong>Projeção da Comissão</strong> usa a projeção do mês.
                     </p>
-                    <ul className="space-y-2">
-                      <li className="flex gap-2">
-                        <span className="font-medium w-40 shrink-0">Gilmar</span>
-                        <span>7% sobre o valor da coluna.</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-medium w-40 shrink-0">Carlos e Jhonatan</span>
-                        <span>8% sobre o valor da coluna.</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-medium w-40 shrink-0">Radilton e Cleber</span>
-                        <span>4,5% sobre o valor da coluna.</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-medium w-40 shrink-0">Robson, Natália e Maria Eduarda</span>
-                        <span>
-                          Faixas de Comissão de Vendas Internas — a alíquota acompanha o % de
-                          atingimento da própria coluna
-                          {(() => {
-                            const t = dashboardData?.commissionTiers?.telemarketing;
-                            if (!t?.thresholds?.length) return '.';
-                            const partes = t.thresholds.map((th, i) => {
-                              const prox = t.thresholds[i + 1];
-                              const faixa = prox ? `${th}–${prox - 0.01}%` : `${th}%+`;
-                              return `${faixa}: ${String(t.rates[i]).replace('.', ',')}%`;
-                            });
-                            return ` (${partes.join(' · ')}).`;
-                          })()}
-                          {' '}São os <strong>únicos</strong> que seguem faixas; todos os demais têm
-                          percentual fixo.
-                        </span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-medium w-40 shrink-0">Letícia</span>
-                        <span>
-                          4% <strong>da meta</strong> menos R$ 1.400,00 — a diferença entre o fixo dela
-                          (R$ 3.200) e a base de um administrativo (R$ 1.800). Ela recebe só o que
-                          excede essa diferença. As outras duas colunas são proporcionais ao
-                          atingimento: comissão da meta × (valor da coluna ÷ meta).
-                        </span>
-                      </li>
+                    {/* A lista é montada do CADASTRO (Resumo Recebíveis → Configurações),
+                        não de nomes escritos aqui: era assim que a tela ficava para trás
+                        quando entrava alguém novo ou mudava um percentual. */}
+                    <p className="text-xs mb-2">
+                      A regra de cada um vem do cadastro em <strong>Resumo Recebíveis →
+                      Configurações</strong>. Mudou lá, muda aqui.
+                    </p>
+                    <ul className="space-y-1.5 max-h-72 overflow-auto">
+                      {goalsVisiveis.map((g) => {
+                        const r = regraDe(g.sellerId);
+                        return (
+                          <li key={g.id} className="flex gap-2">
+                            <span className="font-medium w-40 shrink-0">{getSellerName(g.sellerId)}</span>
+                            <span className={r ? "" : "text-muted-foreground"}>{descricaoRegra(r)}</span>
+                          </li>
+                        );
+                      })}
                     </ul>
                     <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">
-                      Quem não está nesta lista aparece com <strong>—</strong>: não há regra definida,
-                      e a tela não arbitra um valor. Resultado negativo vira R$ 0,00.
+                      Quem aparece com <strong>—</strong> está sem regra no cadastro, ou é pago por
+                      entrega (rateio semanal, que não se projeta por meta). A tela não arbitra um
+                      valor. Resultado negativo vira R$ 0,00.
+                      <br /><br />
+                      Estes números são a comissão <strong>bruta</strong> pela regra. O abatimento do
+                      fixo mensal do PJ e o desconto por troca de vencimento entram só na folha, no
+                      Resumo Recebíveis.
                     </p>
                   </PopoverContent>
                 </Popover>
@@ -472,10 +461,10 @@ function MetasEComissao({ user }: SalesGoalsManagementProps) {
                     const achievement = goalValue > 0 ? (projected / goalValue) * 100 : 0;
                     // ── COMISSAO (regra em @/lib/comissaoMetas). Cada coluna usa a sua propria
                     // base; nas faixas, a aliquota segue o atingimento daquela coluna.
-                    const regra = regraDoVendedor(getSellerName(goal.sellerId));
-                    // Quem segue faixas usa SEMPRE a tabela de Vendas Internas (telemarketing),
-                    // mesmo que esteja cadastrado como Externo CLT/PJ.
-                    const faixa = dashboardData?.commissionTiers?.[TIPO_FAIXA_PADRAO];
+                    const regra = regraDe(goal.sellerId);
+                    // A tabela de faixas é a cadastrada no Resumo Recebíveis; sem ela,
+                    // vale a de Vendas Internas, como era antes.
+                    const faixa = dashboardData?.commissionTiers?.[(regra as any)?.faixaTipo || TIPO_FAIXA_PADRAO];
                     const atingAtual = goalValue > 0 ? (actual / goalValue) * 100 : 0;
                     const comissaoMeta = calcularComissao(regra, goalValue, 100, faixa, goalValue);
                     const comissaoAtual = calcularComissao(regra, actual, atingAtual, faixa, goalValue);
