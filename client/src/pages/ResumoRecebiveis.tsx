@@ -201,9 +201,10 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
           vendedor fora da lista e a nota sem vendedor atribuído.
         </PorFuncao>
         <p className="mb-2">
-          Por isso a linha da coordenação pode ser <strong>maior</strong> que o TOTAL do rodapé: o
-          rodapé soma só as linhas visíveis, para a conta da tela fechar. Passe o mouse na célula
-          dela para ver a diferença separada.
+          O que não cai em linha nenhuma — nota sem vendedor, venda de quem não participa do resumo,
+          venda de quem está com esta rubrica desligada — vai para a linha <strong>Outros</strong>,
+          com a composição no "i" dela. Por isso o TOTAL do rodapé fecha com o total da empresa e
+          com a linha da coordenação.
         </p>
         <p className="text-muted-foreground">
           Passe o mouse no valor da linha para ver o percentual de atingimento da meta.
@@ -459,6 +460,10 @@ interface Colab {
   // Só vem para admin. Informativo: não entra no totalMes.
   reembolsos?: { despesas: number; km: number; viagens: number; total: number } | null;
   consolidador?: boolean;
+  // Linha de grupo (Canais, Outros…): soma das pessoas do grupo numa linha só.
+  agrupado?: boolean; grupo?: string; membros?: number; membrosNomes?: string[];
+  faturamentoSemDono?: number;
+  faturamentoSemDonoPartes?: Array<{ nome: string; valor: number; motivo: string }>;
   // Só no consolidador: como o faturamento da empresa se divide entre as linhas
   // visíveis e o que veio de fora da planilha.
   faturamentoLinhas?: number | null; faturamentoForaDaLista?: number | null;
@@ -681,10 +686,60 @@ export default function ResumoRecebiveis() {
                   {colabsOrdenados.map((c) => (
                     <tr key={c.id} className="border-t hover:bg-muted/30" data-testid={`linha-${c.id}`}>
                       <td className="px-3 py-2 sticky left-0 bg-background">
-                        <div className="font-medium leading-tight">{c.nome}</div>
-                        <Badge className={`${PAPEL_COR[c.role] || "bg-slate-100 text-slate-700"} mt-0.5`}>
-                          {PAPEL_LABEL[c.role] || c.role}
-                        </Badge>
+                        <div className="flex items-center gap-1 font-medium leading-tight">
+                          {c.nome}
+                          {/* Linha de grupo: o "i" conta o que está somado ali, já
+                              que os nomes deixaram de aparecer. */}
+                          {c.agrupado && (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button type="button" aria-label={`O que está somado em ${c.nome}`}
+                                  className="shrink-0 text-muted-foreground hover:text-foreground">
+                                  <Info className="h-3.5 w-3.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-[22rem] text-xs leading-relaxed" align="start">
+                                <p className="font-semibold mb-1.5">{c.nome} — linha agrupada</p>
+                                <p className="mb-2">
+                                  O grupo está configurado para aparecer <strong>somado numa linha só</strong>,
+                                  sem o nome de cada um. Troque em Configurações → Participantes.
+                                </p>
+                                {!!c.membros && (
+                                  <>
+                                    <p className="font-medium mb-1">{c.membros} na planilha</p>
+                                    <p className="mb-2 text-muted-foreground">{(c.membrosNomes || []).join(" · ")}</p>
+                                  </>
+                                )}
+                                {!!c.faturamentoSemDono && (
+                                  <>
+                                    <p className="font-medium mb-1">
+                                      Faturamento sem dono na planilha: {brl(c.faturamentoSemDono)}
+                                    </p>
+                                    <p className="mb-1 text-muted-foreground">
+                                      Saiu em NF-e no mês e não cai em nenhuma linha:
+                                    </p>
+                                    <ul className="mb-2 space-y-0.5">
+                                      {(c.faturamentoSemDonoPartes || []).map((p, i) => (
+                                        <li key={i}>
+                                          <strong>{brl(p.valor)}</strong> — {p.nome} <span className="text-muted-foreground">({p.motivo})</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </>
+                                )}
+                              </PopoverContent>
+                            </Popover>
+                          )}
+                        </div>
+                        {c.agrupado ? (
+                          <Badge className="bg-slate-200 text-slate-700 mt-0.5">
+                            grupo{c.membros ? ` · ${c.membros}` : ""}
+                          </Badge>
+                        ) : (
+                          <Badge className={`${PAPEL_COR[c.role] || "bg-slate-100 text-slate-700"} mt-0.5`}>
+                            {PAPEL_LABEL[c.role] || c.role}
+                          </Badge>
+                        )}
                         {c.consolidador && (
                           <Badge className="bg-slate-800 text-white ml-1" title="Meta e faturamento somam a equipe inteira">
                             consolidado
@@ -853,7 +908,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
   const [buscaPart, setBuscaPart] = useState("");
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
-  const { data: cfgData } = useQuery<{ configs: any[]; colaboradores: any[]; participantes: any[] }>({
+  const { data: cfgData } = useQuery<{ configs: any[]; colaboradores: any[]; participantes: any[]; grupos?: Record<string, boolean> }>({
     queryKey: ["/api/resumo-recebiveis/config"],
     queryFn: () => apiRequest("GET", "/api/resumo-recebiveis/config"),
     enabled: open,
@@ -912,6 +967,13 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
     mutationFn: (v: { userId: string; incluir: boolean }) =>
       apiRequest("POST", "/api/resumo-recebiveis/participacao", v),
     onSuccess: (r: any) => { toast({ title: r?.message || "Participação atualizada" }); invalidar(); },
+    onError: (e: any) => toast({ title: "Falha ao alterar", description: e?.message, variant: "destructive" }),
+  });
+
+  const agruparGrupo = useMutation({
+    mutationFn: (v: { grupo: string; agrupar: boolean }) =>
+      apiRequest("POST", "/api/resumo-recebiveis/grupo", v),
+    onSuccess: (r: any) => { toast({ title: r?.message || "Grupo atualizado" }); invalidar(); },
     onError: (e: any) => toast({ title: "Falha ao alterar", description: e?.message, variant: "destructive" }),
   });
 
@@ -1559,12 +1621,50 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                 const dentro = doGrupo.filter((p: any) => p.incluir !== false).length;
                 return (
                   <div key={k} className="space-y-1 pt-2">
-                    <div className="flex items-baseline justify-between gap-2 border-b pb-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-1">
                       <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {label} <span className="font-normal normal-case">· {ajuda}</span>
                       </span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                      <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                         {dentro} de {doGrupo.length} na planilha
+                        <span className="flex items-center gap-1 rounded-md border px-2 py-0.5">
+                          <Switch checked={cfgData?.grupos?.[k] === true}
+                            onCheckedChange={(v) => agruparGrupo.mutate({ grupo: k, agrupar: v })} />
+                          <span>Agrupar numa linha</span>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button type="button" aria-label={`O que faz agrupar ${label}`}
+                                className="shrink-0 text-muted-foreground hover:text-foreground">
+                                <Info className="h-3.5 w-3.5" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-80 text-xs leading-relaxed" align="end">
+                              <p className="font-medium mb-1">Agrupar {label} numa linha</p>
+                              <p className="mb-2">
+                                Ligado, a planilha mostra <strong>só a palavra {label}</strong>, com os valores
+                                de todos somados — o nome de cada um some da lista. Desligado, cada pessoa
+                                tem a sua linha, como sempre foi.
+                              </p>
+                              {k === "outros" ? (
+                                <p className="mb-2">
+                                  A linha <strong>Outros</strong> ainda recolhe o faturamento que não cai em
+                                  linha nenhuma: nota sem vendedor, venda de quem não participa do resumo e
+                                  venda de quem está com a rubrica Faturamento desligada. Havendo esse valor,
+                                  a linha aparece mesmo com o agrupamento desligado — o dinheiro saiu em NF-e
+                                  e esconder não é opção. O "i" da linha mostra a composição.
+                                </p>
+                              ) : (
+                                <p className="mb-2">
+                                  Ligar não muda nenhum valor: muda só como a planilha mostra. O total do mês
+                                  continua o mesmo.
+                                </p>
+                              )}
+                              <p className="text-muted-foreground">
+                                Quem está desligado no seu botão continua fora da planilha, agrupado ou não.
+                              </p>
+                            </PopoverContent>
+                          </Popover>
+                        </span>
                       </span>
                     </div>
                     {doGrupo.map((p: any) => (
