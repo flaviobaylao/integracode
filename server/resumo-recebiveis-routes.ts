@@ -385,6 +385,28 @@ const FORA_DO_RESUMO = [
   "motorista teste",
 ];
 
+// Contas de CANAL: não são pessoas, são por onde a venda entra (loja, redes) ou
+// contas de sistema. Casam pelo NOME porque o cadastro não as distingue — todas
+// estão gravadas com papel de vendedor ou de interno, e por isso se misturavam
+// à equipe na aba Participantes.
+const CONTAS_DE_CANAL = [
+  "hotsite", "instagram",
+  "honest admin", "honest colaboradores", "honest fornecedores",
+];
+
+// Grupos da aba Participantes (01/nov/2026). Cada pessoa continua com o seu
+// liga/desliga; o grupo só organiza a lista, que vinha solta com todo usuário
+// ativo do sistema misturado.
+export type GrupoParticipante = "vendedores" | "motoristas" | "administrativos" | "canais" | "outros";
+function grupoDoParticipante(nome: any, role: any): GrupoParticipante {
+  if (CONTAS_DE_CANAL.includes(String(nome || "").trim().toLowerCase())) return "canais";
+  const r = String(role || "");
+  if (r === "vendedor" || r === "telemarketing") return "vendedores";
+  if (r === "motorista") return "motoristas";
+  if (r === "administrative" || r === "coordinator" || r === "admin") return "administrativos";
+  return "outros";
+}
+
 // Pessoas que participam do resumo mesmo não tendo papel de vendas — a marcação
 // explícita vale mais que o papel. Apontadas pelo Flavio em 25/10/2026.
 const DENTRO_DO_RESUMO = ["lanucy machado", "cinthia marques"];
@@ -1134,7 +1156,10 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         LEFT JOIN resumo_participantes p ON p.user_id = u.id
         WHERE u.is_active = true
         ORDER BY u.role, u.first_name, u.last_name`);
-      res.json({ configs: r.rows || [], colaboradores: colabs.rows || [], participantes: todos.rows || [] });
+      const participantes = (todos.rows || []).map((p: any) => ({
+        ...p, grupo: grupoDoParticipante(p.nome, p.role),
+      }));
+      res.json({ configs: r.rows || [], colaboradores: colabs.rows || [], participantes });
     } catch (e: any) {
       console.error("[RESUMO-RECEB] config listar:", e?.message || e);
       res.status(500).json({ message: "Falha ao listar as configurações" });
