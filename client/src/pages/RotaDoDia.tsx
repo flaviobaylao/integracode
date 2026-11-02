@@ -2901,6 +2901,18 @@ export default function RotaDoDia() {
                                 </Badge>
                               )}
                               </>)}
+                              {/* 📷 Miniatura da foto do LEAD (cadastro) — visível mesmo recolhido */}
+                              {isLead && (visit as any).leadHasPhoto && (
+                                <img
+                                  src={`/api/leads/${(visit as any).entityId || (visit as any).leadId}/photo`}
+                                  alt="Foto do lead"
+                                  loading="lazy"
+                                  className="h-7 w-7 rounded object-cover border border-gray-200 dark:border-gray-700 cursor-pointer"
+                                  onClick={(e) => handlePhotoClick(`/api/leads/${(visit as any).entityId || (visit as any).leadId}/photo`, e)}
+                                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                                  data-testid={`lead-foto-mini-${(visit as any).entityId || (visit as any).leadId}`}
+                                />
+                              )}
                               {/* 📷 Foto do check-in registrada — visível mesmo com o card recolhido (clientes e leads) */}
                               {checkInCheckpoint && checkInCheckpoint.photoUrl && (
                                 <span title="Foto do check-in registrada (toque para ver)" className="inline-flex">
@@ -2930,8 +2942,21 @@ export default function RotaDoDia() {
                               const lng = lv.customerLongitude != null ? Number(lv.customerLongitude) : NaN;
                               const temCoord = Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
                               const local = [lv.leadNeighborhood, lv.leadCity || customerInfo?.cities?.[lv.entityId || lv.leadId]].filter(Boolean).join(' - ');
+                              const fotoUrl = lv.leadHasPhoto ? `/api/leads/${lv.entityId || lv.leadId}/photo` : null;
                               return (
                                 <div className="text-xs text-gray-600 dark:text-gray-300 mb-2 space-y-0.5" data-testid={`lead-info-${lv.entityId || lv.leadId}`}>
+                                  {/* 📷 Prévia da foto do lead (cadastro) — toque para ampliar */}
+                                  {fotoUrl && (
+                                    <img
+                                      src={fotoUrl}
+                                      alt={`Foto de ${lv.customerName || 'lead'}`}
+                                      loading="lazy"
+                                      className="w-full max-w-xs max-h-40 object-cover rounded-md border border-gray-200 dark:border-gray-700 mb-1.5 cursor-pointer"
+                                      onClick={(e) => handlePhotoClick(fotoUrl, e)}
+                                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                                      data-testid={`lead-foto-${lv.entityId || lv.leadId}`}
+                                    />
+                                  )}
                                   <p className="flex items-center gap-1">
                                     <MapPin className="h-3 w-3 text-gray-400" />
                                     <span className="font-medium">Setor/Bairro:</span> {local || 'não informado'}
