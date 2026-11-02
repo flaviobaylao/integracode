@@ -378,8 +378,6 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'abertura-estoque', label: 'Abertura de Estoque do Dia', icon: 'fas fa-clipboard-check', available: canAccessReports || canAccessIndustria || podeAbrirEstoque, badge: null },
         // Recebimento de Transferências (22/out/2026): conferência física + desbloqueio dos lotes que entraram pela NF-e IND→GYN.
         { id: 'recebimento-estoque', label: 'Recebimento de Transferências', icon: 'fas fa-truck-ramp-box', available: canAccessReports || canAccessIndustria || podeReceberLote, badge: null },
-        // Gestão de Trocas (01/nov/2026): conferência das NF de troca no CD e validação da Indústria.
-        { id: 'gestao-trocas', label: 'Gestão de Trocas', icon: 'fas fa-right-left', available: canAccessReports || canAccessIndustria || podeReceberLote, badge: null },
         { id: 'radar-compras', label: 'Compras', icon: 'fas fa-cart-shopping', available: canAccessReports, badge: null },
         // Cupons de Desconto passou a viver dentro de Canais > Hotsite (04/ago/2026).
         // A rota /cupons continua valendo para links salvos.
@@ -531,6 +529,8 @@ export default function Layout({ children, activeView, setActiveView, user }: La
         { id: 'painel-atendimento', label: 'Painel de Atendimento', icon: 'fas fa-gauge-high', available: canAccessPainelAtendimento, badge: null },
         // Trocas recorrentes (30/out/2026): mesmo cliente + mesmo motivo em 60 dias.
         { id: 'trocas-recorrentes', label: 'Trocas Recorrentes', icon: 'fas fa-rotate', available: canAccessReports || isVendedor || isTelemarketing, badge: null },
+        // Gestão de Trocas (01/nov/2026): conferência das NF de troca no CD e validação da Indústria.
+        { id: 'gestao-trocas', label: 'Gestão de Trocas', icon: 'fas fa-right-left', available: canAccessReports || canAccessIndustria || podeReceberLote, badge: null },
       ],
     },
     {
