@@ -26183,7 +26183,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const encontrados: any[] = [];
       try {
         const cu: any = await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, name AS razao, company_name, address, neighborhood, phone, is_active, latitude::float AS la, longitude::float AS lo FROM customers WHERE (is_supplier IS NOT TRUE) AND COALESCE(NULLIF(fantasy_name,''), name) IS NOT NULL LIMIT 8000`);
-        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone, status, next_contact_date, latitude::float AS la, longitude::float AS lo, (SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = leads.id) AS ocorrencias FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
+        // (leads não têm coluna address — a consulta antiga quebrava aqui e a busca por foto nunca achava nada)
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, COALESCE(city, '') AS address, neighborhood, phone, status, next_contact_date, latitude::float AS la, longitude::float AS lo, (SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = leads.id) AS ocorrencias FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
         const _hojeFoto = dataCalendario(hojeBR());
         const _atrasoFoto = (r: any): number => {
           if (!r.next_contact_date || !['scheduled', 'pending', 'visited'].includes(String(r.status))) return 0;
