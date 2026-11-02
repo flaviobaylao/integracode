@@ -3274,6 +3274,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // Rotas /api/resumo-recebiveis*.
   try { registerResumoRecebiveisRoutes(app); } catch (e) { console.error('[resumo-receb]', e); }
   try { registerTrocaRegistrosRoutes(app); } catch (e) { console.error('[troca-registros]', e); }
+  try { const { registerGestaoTrocasRoutes } = await import('./gestao-trocas-routes'); registerGestaoTrocasRoutes(app); } catch (e: any) { console.error('[gestao-trocas]', e?.message || e); }
 
   // Check-list da industria (modelos + execucoes com foto, responsavel e
   // conforme/nao conforme) e cadastro dos funcionarios da industria - 09/set/2026.
