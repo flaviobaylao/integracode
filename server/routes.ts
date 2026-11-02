@@ -25785,7 +25785,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     'churrascaria', 'grill', 'food', 'foods', 'bistro', 'gourmet', 'cozinha', 'marmitaria', 'marmitex', 'self', 'service', 'delivery', 'express', 'sucos', 'suco', 'casa', 'loja', 'center', 'shopping', 'store', 'shop',
     'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del',
     'consultoria', 'assessoria', 'produtos', 'naturais', 'bebidas', 'bolos', 'bolo', 'quitandas', 'quitanda', 'salgados', 'salgaderia', 'pamonharia', 'pastelaria', 'pastel', 'sushi', 'temakeria', 'hortifruti', 'sacolao', 'acougue',
-    'clinica', 'studio', 'estudio', 'espaco', 'beleza', 'saude', 'farmacia', 'drogaria', 'pet', 'shop', 'boutique', 'kids', 'infantil', 'educacao', 'educacional', 'centro', 'instituto', 'grupo', 'rede', 'unid']);
+    'clinica', 'studio', 'estudio', 'espaco', 'beleza', 'saude', 'farmacia', 'drogaria', 'pet', 'shop', 'boutique', 'kids', 'infantil', 'educacao', 'educacional', 'centro', 'instituto', 'grupo', 'rede', 'unid',
+    'super', 'hiper', 'mini', 'mega', 'market', 'mercadinho', 'mercadao', 'armazem', 'deposito', 'sorvete']);
   // Tokens distintivos de um nome (sem genéricas e sem palavras de bairro)
   function _toksNome(sv: any, palBairro: Set<string>): string[] {
     return String(sv || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3 && !_GENERICAS_NOMES.has(t) && !palBairro.has(t));
@@ -26163,6 +26164,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try { await db.execute(sql`INSERT INTO places_usage (feature, user_id, user_name, billable, results, lat, lng) VALUES ('foto', ${uid}, ${uname}, ${billable}, 0, NULL, NULL)`); } catch (_e) {}
 
       const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+      // Marca d'água de prints do Street View ("© 2026 Google") não é texto da fachada.
+      texto = String(texto || '').replace(/©\s*\d{4}\s*google/gi, ' ').replace(/\bgoogle\b/gi, ' ').replace(/[ \t]+\n/g, '\n').trim();
       const normTxt = norm(texto);
       const linhas = String(texto || '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length >= 2).slice(0, 12);
       if (!normTxt) return res.json({ ok: true, texto: '', linhas: [], total: 0, encontrados: [] });
@@ -26175,6 +26178,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _temPos = isFinite(_fLat) && isFinite(_fLng) && _fLat !== 0;
       const _palB = await _palavrasDeBairro();
       const _tokTxt = new Set(_toksNome(texto, _palB));
+      // todas as palavras da foto (inclusive genéricas), p/ casamento parcial por palavra inteira
+      const _palTxt = new Set(String(texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3));
       const _havF = (aLa: number, aLo: number, bLa: number, bLo: number) => {
         const R = 6371000, dLa = ((bLa - aLa) * Math.PI) / 180, dLo = ((bLo - aLo) * Math.PI) / 180;
         const x = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
@@ -26201,15 +26206,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (nn.length >= 4 && normTxt.includes(nn)) { score = Math.max(score, 1000 + nn.length); continue; }  // nome inteiro na foto
             const tk = Array.from(new Set(_toksNome(nm, _palB)));
             if (!tk.length) continue;
-            const hit = tk.filter((t) => _tokTxt.has(t) || (t.length >= 5 && normTxt.includes(t)));
-            // todas as palavras próprias do nome estão na fachada (1 só vale se tiver 5+ letras), ou 2+ delas
-            if (hit.length === tk.length && (tk.length >= 2 || tk[0].length >= 5)) score = Math.max(score, 500 + hit.length * 10);
+            // Só PALAVRA INTEIRA conta: "super" dentro de "supermercado" não é a marca "SUPER ZÉ".
+            const hit = tk.filter((t) => _tokTxt.has(t) && !/^\d+$/.test(t));
+            // todas as palavras próprias do nome estão na fachada, ou 2+ delas
+            if (hit.length && hit.length === tk.length) score = Math.max(score, 500 + hit.length * 10);
             else if (hit.length >= 2) score = Math.max(score, 200 + hit.length * 10);
             else if (hit.length === 1) {
               // "MAX SUSHI" × "MAX SUSHI GYN SHOPPING": só 1 palavra própria bateu (max), mas contando as
               // genéricas (sushi) a fachada cobre metade do nome → casa com força menor (a distância desempata).
               const todas = Array.from(new Set(String(nm).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3)));
-              const hitTodas = todas.filter((t) => normTxt.includes(t));
+              const hitTodas = todas.filter((t) => _palTxt.has(t));
               if (hitTodas.length >= 2 && hitTodas.length * 2 >= todas.length) score = Math.max(score, 100 + hitTodas.length * 10);
             }
           }
