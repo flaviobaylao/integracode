@@ -26205,6 +26205,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // todas as palavras próprias do nome estão na fachada (1 só vale se tiver 5+ letras), ou 2+ delas
             if (hit.length === tk.length && (tk.length >= 2 || tk[0].length >= 5)) score = Math.max(score, 500 + hit.length * 10);
             else if (hit.length >= 2) score = Math.max(score, 200 + hit.length * 10);
+            else if (hit.length === 1) {
+              // "MAX SUSHI" × "MAX SUSHI GYN SHOPPING": só 1 palavra própria bateu (max), mas contando as
+              // genéricas (sushi) a fachada cobre metade do nome → casa com força menor (a distância desempata).
+              const todas = Array.from(new Set(String(nm).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3)));
+              const hitTodas = todas.filter((t) => normTxt.includes(t));
+              if (hitTodas.length >= 2 && hitTodas.length * 2 >= todas.length) score = Math.max(score, 100 + hitTodas.length * 10);
+            }
           }
           if (!score) return;
           const _dAtr = tipo === 'lead' ? _atrasoFoto(r) : 0;
