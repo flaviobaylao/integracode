@@ -92,6 +92,7 @@ import PagamentoClientes from "@/pages/PagamentoClientes";
 import DashboardFinanceiro from "@/pages/DashboardFinanceiro";
 import AuditoriaFinanceira from "@/pages/AuditoriaFinanceira";
 import AuditoriaEstoque from "@/pages/AuditoriaEstoque";
+import CarrinhosLoja from "@/pages/CarrinhosLoja";
 import AberturaEstoque from "@/pages/AberturaEstoque";
 import RecebimentoEstoque from "@/pages/RecebimentoEstoque";
 import GestaoTrocas from "@/pages/GestaoTrocas";
@@ -392,6 +393,7 @@ function Router() {
       <Route path="/dashboard-financeiro" component={DashboardFinanceiro} />
           <Route path="/auditoria-financeira" component={AuditoriaFinanceira} />
           <Route path="/auditoria-estoque" component={AuditoriaEstoque} />
+          <Route path="/carrinhos-loja" component={CarrinhosLoja} />
           <Route path="/abertura-estoque" component={AberturaEstoque} />
           <Route path="/recebimento-estoque" component={RecebimentoEstoque} />
           <Route path="/gestao-trocas" component={GestaoTrocas} />
