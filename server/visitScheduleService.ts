@@ -264,6 +264,8 @@ async function __flagCadastroIncompletoInbox(c: any, faltando: string[]): Promis
         SELECT 1 FROM change_requests
         WHERE entity_type = 'customer' AND entity_id = ${cid} AND status = 'pending'
       )
+        -- 02/nov/2026: cliente INATIVO não gera solicitação automática no Inbox.
+        AND EXISTS (SELECT 1 FROM customers WHERE id = ${cid} AND is_active = true)
     `);
   } catch (e: any) {
     // Corrida com o índice único parcial OU tabela ainda não criada → ignora silenciosamente.
