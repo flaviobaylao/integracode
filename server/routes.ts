@@ -26212,14 +26212,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
         for (const r of (cu?.rows || []) as any[]) push(r, (r.is_active === false ? 'cliente_inativo' : 'cliente'));
         for (const r of (le?.rows || []) as any[]) push(r, 'lead');
-      } catch (_e) {}
+      } catch (e: any) { console.error('[foto] casamento com cadastro falhou:', e?.message || e); (res as any).__erroMatch = String(e?.message || e); }
       // Ordem: quem está mais perto do vendedor primeiro (mesma marca em vários pontos → o daqui);
       // sem posição, pela força do casamento.
       const _faixa = (d: number | null) => d == null ? 3 : d <= 300 ? 0 : d <= 2000 ? 1 : 2;
       encontrados.sort((a, b) => (_faixa(a.distancia) - _faixa(b.distancia)) || (b.score - a.score) || ((a.distancia ?? 1e9) - (b.distancia ?? 1e9)));
       const top = encontrados.slice(0, 10);
       await __enriquecerClientesConsulta(top); // WhatsApp + último pedido nos cards de cliente
-      return res.json({ ok: true, texto, linhas, total: top.length, encontrados: top });
+      return res.json({ ok: true, texto, linhas, total: top.length, encontrados: top, ...((res as any).__erroMatch ? { erroMatch: (res as any).__erroMatch } : {}) });
     } catch (e: any) { console.error('[foto] erro:', e); return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
