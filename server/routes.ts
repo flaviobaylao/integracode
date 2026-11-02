@@ -19036,6 +19036,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               leadCity: lead.city || null,
               observation: lead.observation || null,
               leadGooglePlace: leadGoogleById.get(String(lead.id)) || null,
+              // 📷 Foto do lead (cadastro/check-in): só a flag; a imagem vem sob demanda em GET /api/leads/:id/photo
+              leadHasPhoto: !!(lead.photo && String(lead.photo).length > 20),
             };
           }
         })
@@ -26405,6 +26407,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // 🕑 Histórico de ocorrências do lead (para o "relógio" ao lado do nome): resumo do lead
   // (criação, agendamento, atraso em dias) + linha do tempo unindo prospecções e registros/visitas.
+  // 📷 Foto do lead como imagem (prévia no card da Rota do Dia). A coluna leads.photo guarda data URL
+  // (cadastro/FotoPicker) ou um caminho/URL (check-in antigo) — serve os dois.
+  app.get('/api/leads/:id/photo', authenticateUser, async (req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT photo FROM leads WHERE id = ${String(req.params.id)} LIMIT 1`);
+      const photo = String(((r?.rows || []) as any[])[0]?.photo || '');
+      if (!photo) return res.status(404).end();
+      if (photo.startsWith('data:')) {
+        const m = photo.match(/^data:([^;,]+)(;base64)?,(.*)$/s);
+        if (!m) return res.status(415).end();
+        const buf = m[2] ? Buffer.from(m[3], 'base64') : Buffer.from(decodeURIComponent(m[3]), 'utf8');
+        res.setHeader('Content-Type', m[1] || 'image/jpeg');
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        return res.end(buf);
+      }
+      return res.redirect(photo);
+    } catch (e: any) { return res.status(500).json({ message: String(e?.message || e) }); }
+  });
+
   app.get('/api/leads/:id/ocorrencias', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
