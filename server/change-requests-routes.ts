@@ -683,9 +683,10 @@ export function registerChangeRequestsRoutes(app: Express) {
   app.get("/api/change-requests", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
     await ensureTables();
     const status = String(req.query.status || "pending");
-    // 🚫 31/out/2026 — Report de cliente INATIVO não aparece no Inbox (nem conta no badge).
-    // É filtro na leitura, sem apagar nada: se o cliente for reativado, os reports dele voltam.
-    const semInativo = sql`NOT (change_requests.kind = 'report' AND change_requests.entity_type = 'customer' AND EXISTS (
+    // 🚫 31/out/2026 — Cliente INATIVO não aparece no Inbox (nem conta no badge): reports e,
+    // desde 02/nov/2026, também as solicitações (inclusive as automáticas de cadastro incompleto).
+    // É filtro na leitura, sem apagar nada: se o cliente for reativado, os cards dele voltam.
+    const semInativo = sql`NOT (change_requests.entity_type = 'customer' AND EXISTS (
       SELECT 1 FROM customers ci WHERE ci.id::text = COALESCE(change_requests.customer_id, change_requests.entity_id)::text AND ci.is_active = false))`;
     let rows;
     if (status === "pending") {
