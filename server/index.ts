@@ -958,6 +958,9 @@ run();
   registerReconciliation(app);
   initConferenciaAlerta(app); // Etapa 5 — alerta diario dos furos de gravidade alta
   initAuditoriaEstoque(app); // Auditoria de movimentações de estoque (20/out/2026): rotas + cron horário + alerta 07:40
+  // Carrinhos da Loja (02/nov/2026): presença na loja, carrinho abandonado, aviso à equipe e recuperação por WhatsApp.
+  // Rotas /api/public/carrinho/* (loja) e /api/carrinhos-loja* (Integra) + varredura a cada 5 min.
+  try { const { registerCarrinhoLojaRoutes } = await import('./carrinho-loja'); registerCarrinhoLojaRoutes(app); } catch (e: any) { console.error('[carrinho-loja]', e?.message || e); }
   registerChargeGuarantee(app);
   registerCobrancaExtincao(app);
   registerAgenda(app);
