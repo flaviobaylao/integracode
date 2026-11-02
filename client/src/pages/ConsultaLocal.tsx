@@ -84,6 +84,7 @@ type FotoMatch = DadosCliente & {
   ocorrencias?: number;
   atrasado?: boolean;
   diasAtraso?: number;
+  distancia?: number | null;  // metros até a posição do vendedor (quando há GPS)
   score: number;
 };
 
@@ -536,7 +537,7 @@ export default function ConsultaLocal() {
     setFotoEncontrados([]);
     try {
       const b64 = await fileParaBase64Reduzido(file);
-      const data: any = await apiRequest("POST", "/api/consulta-local/foto", { imageBase64: b64 });
+      const data: any = await apiRequest("POST", "/api/consulta-local/foto", { imageBase64: b64, lat: coords?.lat, lng: coords?.lng });
       if (data && data.ok) {
         setFotoTexto(String(data.texto || ""));
         setFotoEncontrados(Array.isArray(data.encontrados) ? data.encontrados : []);
@@ -552,7 +553,7 @@ export default function ConsultaLocal() {
       setFotoFase("erro");
       setFotoMsg(String((e && e.message) || e));
     }
-  }, []);
+  }, [coords]);
 
   const enviarFotoPonto = useCallback(async (placeId: string, leadId: string, f: File) => {
     setFotoPonto((m) => ({ ...m, [placeId]: "enviando" }));
@@ -748,6 +749,7 @@ export default function ConsultaLocal() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <span className="font-semibold leading-tight break-words">{m.nome}</span>
+                              {m.distancia != null && <Badge variant="secondary" className="shrink-0 whitespace-nowrap">{m.distancia >= 1000 ? `${(m.distancia / 1000).toFixed(1).replace(".", ",")} km` : `${m.distancia} m`}</Badge>}
                               {m.tipo === "lead" && m.id && ((m.ocorrencias || 0) > 0 || m.atrasado) && (
                                 <HistoricoOcorrencias leadId={m.id} nome={m.nome} atrasado={m.atrasado} diasAtraso={m.diasAtraso} />
                               )}
