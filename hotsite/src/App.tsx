@@ -17,6 +17,8 @@ import { api } from './utils/api';
 import { capturarOrigem, origemDoPedido } from './utils/origem';
 // Central de Marketing: eventos do Pixel. No-op se o Pixel nao foi injetado.
 import { pixel, pixelUmaVez, conteudos } from './utils/pixel';
+// 🛒 Carrinhos da Loja (02/nov/2026): presença, carrinho abandonado e link de recuperação.
+import { sincronizarCarrinho, iniciarPresenca, marcarConvertido, buscarCarrinhoSalvo, informarContato, type EtapaLoja } from './utils/carrinho';
 // Aviso de cobertura de entrega (provisoria) — mostrado na vitrine, antes do carrinho.
 import { TITULO_AVISO_COBERTURA, TEXTO_AVISO_COBERTURA } from './utils/entrega';
 import { useRef, useMemo } from 'react';
@@ -26,7 +28,7 @@ import type { Product, CartItem, Customer } from './types';
 type View = 'catalog' | 'checkout' | 'pix' | 'card' | 'success';
 
 function HotsiteContent() {
-  const { isSelectionComplete, priceTable, reset } = useCustomerType();
+  const { isSelectionComplete, priceTable, reset, category } = useCustomerType();
   const [view, setView] = useState<View>('catalog');
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -62,6 +64,9 @@ function HotsiteContent() {
   // endereço. Sem parâmetro na URL, não faz nada — visita direta continua igual.
   useEffect(() => { capturarOrigem(); }, []);
 
+  // 🛒 Carrinhos da Loja: "estou aqui" a cada 60 s (alimenta o "na loja agora" do Integra).
+  useEffect(() => iniciarPresenca(), []);
+
   // 🎯 Pixel: o carrinho é esvaziado ANTES da tela de sucesso aparecer, nos quatro
   // caminhos (pedido direto, PIX, cartão, Google Pay). Guardar a última foto do
   // carrinho aqui evita ter que instrumentar os quatro — e evita que um deles
@@ -81,6 +86,14 @@ function HotsiteContent() {
       value: foto.valor,
       currency: 'BRL',
     });
+  }, [view, orderNumber]);
+
+  // 🛒 Pedido concluído: o Integra marca o carrinho como convertido (uma vez por pedido).
+  const convertidoRef = useRef('');
+  useEffect(() => {
+    if (view !== 'success' || !orderNumber || convertidoRef.current === orderNumber) return;
+    convertidoRef.current = orderNumber;
+    marcarConvertido(orderNumber);
   }, [view, orderNumber]);
 
   // Contagem regressiva da expiração do PIX (1s)
@@ -116,6 +129,26 @@ function HotsiteContent() {
   // Carregar produtos ao iniciar
   useEffect(() => {
     loadProducts();
+    // 🛒 Link da mensagem de recuperação (?carrinho=<token>): devolve o carrinho guardado
+    // no Integra e abre o carrinho. Tira o parâmetro da barra de endereço.
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const tk = q.get('carrinho');
+      if (tk) {
+        const u = new URL(window.location.href);
+        u.searchParams.delete('carrinho');
+        window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
+        buscarCarrinhoSalvo(tk).then((itens) => {
+          if (!itens || !itens.length) return;
+          setCart(itens.map((item: any) => ({
+            id: item.id, name: item.n || '', description: null, details: null, price: Number(item.p) || 0,
+            retailPrice: null, wholesalePrice: null, resaleGoianiaPrice: null, resaleInteriorPrice: null,
+            resaleBrasiliaPrice: null, imageUrl: null, stock: 999, quantity: Number(item.q) || 1,
+          })));
+          setIsCartOpen(true);
+        });
+      }
+    } catch { /* link quebrado não pode derrubar a loja */ }
     // Carregar carrinho do localStorage (formato compacto: apenas id, name, price, quantity)
     const savedCart = localStorage.getItem('honest-cart');
     if (savedCart) {
@@ -172,6 +205,18 @@ function HotsiteContent() {
       }
     }
   }, [cart]);
+
+  // 🛒 Carrinhos da Loja: estado do carrinho/etapa para o Integra (agrupado em 1,5 s).
+  // Na tela de sucesso não sincroniza: o carrinho já foi esvaziado e quem fala é marcarConvertido.
+  useEffect(() => {
+    if (view === 'success') return;
+    const etapa: EtapaLoja =
+      view === 'checkout' ? 'checkout'
+      : view === 'pix' ? 'pix'
+      : view === 'card' ? 'cartao'
+      : (isCartOpen || cart.length) ? 'carrinho' : 'catalogo';
+    sincronizarCarrinho({ itens: cart, etapa, tipoCliente: category || null, tabela: priceTable || null });
+  }, [cart, view, isCartOpen, category, priceTable]);
 
   const loadProducts = async () => {
     try {
@@ -598,6 +643,7 @@ function HotsiteContent() {
         isProcessing={isProcessing}
         code={referralCode}
         onCodeChange={setReferralCode}
+        onContato={informarContato}
       />
     );
   }
