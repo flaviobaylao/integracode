@@ -609,7 +609,8 @@ export default function ConsultaLocal() {
   };
 
   const carregando = fase === "localizando" || fase === "buscando";
-  const primeiraLinha = (fotoTexto || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] || "";
+  // Mostra TUDO que foi lido da fachada (não só a 1ª linha), p/ o vendedor entender o resultado.
+  const primeiraLinha = (fotoTexto || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).slice(0, 6).join(" · ");
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -734,6 +735,9 @@ export default function ConsultaLocal() {
                   <HelpCircle className="h-9 w-9 mx-auto text-amber-500" />
                   <p className="font-medium">Nenhum cadastro encontrado</p>
                   <p className="text-muted-foreground">Não achei esse nome nos leads/clientes do Integra. Pode ser um ponto novo — confira pela aba <strong>Novos pontos</strong> ou cadastre como lead.</p>
+                  {primeiraLinha.replace(/[^A-Za-zÀ-ú]/g, "").length < 4 && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400">A leitura pegou pouco texto. Tente de novo mais perto, com o letreiro inteiro e reto na foto.</p>
+                  )}
                 </CardContent>
               </Card>
             ) : (
