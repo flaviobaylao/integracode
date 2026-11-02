@@ -78,6 +78,12 @@ const brl = (v: number | null | undefined) =>
 const kmTxt = (v: number) =>
   `${(Number(v) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} km`;
 
+// Primeiro mês do resumo (01/nov/2026). Antes disso não há folha apurável: não
+// existe configuração de remuneração com vigência anterior, e o que a tela
+// mostrasse ali seria uma conta feita com as regras de hoje sobre um passado que
+// nunca foi fechado assim.
+export const PRIMEIRO_MES = "2026-01";
+
 function mesesDisponiveis(): string[] {
   const out: string[] = [];
   const hoje = new Date();
@@ -85,7 +91,7 @@ function mesesDisponiveis(): string[] {
     const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
     out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
-  return Array.from(new Set(out)).sort().reverse();
+  return Array.from(new Set(out)).filter((m) => m >= PRIMEIRO_MES).sort().reverse();
 }
 const nomeDoMes = (ym: string) => {
   if (!ym) return "—";
@@ -487,7 +493,10 @@ interface Colab {
 }
 
 export default function ResumoRecebiveis() {
-  const [ym, setYm] = useState(() => new Date().toISOString().slice(0, 7));
+  const [ym, setYm] = useState(() => {
+    const atual = new Date().toISOString().slice(0, 7);
+    return atual < PRIMEIRO_MES ? PRIMEIRO_MES : atual;
+  });
   const [abrirGestor, setAbrirGestor] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
