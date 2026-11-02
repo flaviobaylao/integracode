@@ -66,6 +66,16 @@ const n = (v: any) => {
 };
 const ymValido = (s: any) => /^\d{4}-\d{2}$/.test(String(s || ""));
 
+// PRIMEIRO MÊS DO RESUMO (01/nov/2026). Antes de janeiro/2026 não há folha
+// apurável: nenhuma configuração de remuneração tem vigência anterior, então
+// apurar ali seria aplicar as regras de HOJE sobre um passado que nunca foi
+// fechado assim — um número convincente e errado. A tela só oferece daqui para
+// a frente; esta guarda cobre quem chamar a API direto.
+const PRIMEIRO_MES = "2026-01";
+const ymNoEscopo = (s: any) => ymValido(s) && String(s) >= PRIMEIRO_MES;
+const foraDoEscopo = (ym: string) =>
+  `O resumo começa em ${PRIMEIRO_MES.split("-").reverse().join("/")}; ${ym} está fora do período apurável.`;
+
 function limitesDoMes(ym: string) {
   const [a, m] = ym.split("-").map(Number);
   const prox = m === 12 ? `${a + 1}-01-01` : `${a}-${String(m + 1).padStart(2, "0")}-01`;
@@ -1106,6 +1116,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     try {
       await ensureResumoRecebiveisSchema();
       const ym = ymValido(req.query?.ym) ? String(req.query.ym) : new Date().toISOString().slice(0, 7);
+      if (!ymNoEscopo(ym)) return res.status(400).json({ message: foraDoEscopo(ym) });
       const admin = ehAdmin(req);
       const eu = req.currentUser;
 
@@ -1152,6 +1163,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
     try {
       await ensureResumoRecebiveisSchema();
       const ym = ymValido(req.query?.ym) ? String(req.query.ym) : new Date().toISOString().slice(0, 7);
+      if (!ymNoEscopo(ym)) return res.status(400).json({ message: foraDoEscopo(ym) });
       const admin = ehAdmin(req);
       const eu = req.currentUser;
 
@@ -1250,7 +1262,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
       const ym = String(req.body?.ym || "");
-      if (!ymValido(ym)) return res.status(400).json({ message: "Mês inválido" });
+      if (!ymNoEscopo(ym)) return res.status(400).json({ message: foraDoEscopo(String(ym)) });
       if (ym >= new Date().toISOString().slice(0, 7)) {
         return res.status(400).json({ message: "Só dá para fechar um mês que já terminou" });
       }
@@ -1278,7 +1290,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       if (!ehAdmin(req)) return res.status(403).json({ message: "Access denied" });
       await ensureResumoRecebiveisSchema();
       const ym = String(req.body?.ym || "");
-      if (!ymValido(ym)) return res.status(400).json({ message: "Mês inválido" });
+      if (!ymNoEscopo(ym)) return res.status(400).json({ message: foraDoEscopo(String(ym)) });
       const r: any = await db.execute(sql`DELETE FROM resumo_fechamentos WHERE ym = ${ym} RETURNING ym`);
       if (!r.rows?.length) return res.status(404).json({ message: "Este mês não está fechado" });
       await auditar(req, "Fechamento", `Mês ${ym} REABERTO — o resultado voltou a ser recalculado`, null, { ym });
@@ -1609,6 +1621,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       await ensureResumoRecebiveisSchema();
       const b = req.body || {};
       if (!b.userId || !ymValido(b.ym)) return res.status(400).json({ message: "Colaborador e mês são obrigatórios" });
+      if (!ymNoEscopo(b.ym)) return res.status(400).json({ message: foraDoEscopo(String(b.ym)) });
       if (await mesFechado(b.ym)) return res.status(400).json({ message: `${b.ym} está fechado; reabra o mês para alterar` });
       await db.execute(sql`
         INSERT INTO resumo_campanha_valores (campanha_id, user_id, ym, valor, observacao, created_by)
@@ -1637,6 +1650,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       await ensureResumoRecebiveisSchema();
       const b = req.body || {};
       if (!b.userId || !ymValido(b.ym)) return res.status(400).json({ message: "Colaborador e mês são obrigatórios" });
+      if (!ymNoEscopo(b.ym)) return res.status(400).json({ message: foraDoEscopo(String(b.ym)) });
       const descricao = String(b.descricao || "").trim().slice(0, 300);
       if (!descricao) return res.status(400).json({ message: "Descreva o lançamento" });
       if (await mesFechado(b.ym)) return res.status(400).json({ message: `${b.ym} está fechado; reabra o mês para alterar` });
