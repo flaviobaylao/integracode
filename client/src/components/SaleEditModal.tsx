@@ -796,7 +796,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           if (trocaMotivo === 'vencido' && Number(_d?.desconto) > 0) {
             toast({
               title: 'Troca por vencimento registrada',
-              description: `Valor da troca R$ ${Number(_d.valorTroca).toFixed(2).replace('.', ',')} — desconto de comissão R$ ${Number(_d.desconto).toFixed(2).replace('.', ',')} (${Number(_d.pct).toFixed(2).replace('.', ',')}%).`,
+              description: `Valor da troca R$ ${Number(_d.valorTroca).toFixed(2).replace('.', ',')} — desconto previsto de R$ ${Number(_d.desconto).toFixed(2).replace('.', ',')} (${Number(_d.pct).toFixed(2).replace('.', ',')}%), lançado quando a NF de troca for faturada.`,
             });
           }
         } catch (e: any) {
