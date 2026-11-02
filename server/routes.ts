@@ -25778,6 +25778,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (e: any) { return res.status(500).json({ ok: false, message: String(e?.message || e) }); }
   });
 
+  // Palavras que não identificam um estabelecimento (tipo de negócio, forma jurídica, conectivos, lugar)
+  const _GENERICAS_NOMES = new Set<string>(['ltda', 'eireli', 'epp', 'mei', 'cia', 'sa', 'comercio', 'comercial', 'industria', 'servicos', 'alimentos', 'alimentacao', 'distribuidora', 'atacado', 'atacadista', 'varejo',
+    'restaurante', 'restaurant', 'lanchonete', 'lanches', 'lanche', 'padaria', 'panificadora', 'panificacao', 'confeitaria', 'doceria', 'doces', 'supermercado', 'supermercados', 'mercado', 'minimercado', 'mercearia', 'conveniencia',
+    'emporio', 'bar', 'bares', 'pizzaria', 'pizza', 'pizzas', 'sorveteria', 'sorvetes', 'acai', 'acaiteria', 'cafe', 'cafeteria', 'coffee', 'hamburgueria', 'burger', 'burguer', 'sanduicheria', 'sanduiches', 'espetinho', 'espetaria',
+    'churrascaria', 'grill', 'food', 'foods', 'bistro', 'gourmet', 'cozinha', 'marmitaria', 'marmitex', 'self', 'service', 'delivery', 'express', 'sucos', 'suco', 'casa', 'loja', 'center', 'shopping', 'store', 'shop',
+    'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del',
+    'consultoria', 'assessoria', 'produtos', 'naturais', 'bebidas', 'bolos', 'bolo', 'quitandas', 'quitanda', 'salgados', 'salgaderia', 'pamonharia', 'pastelaria', 'pastel', 'sushi', 'temakeria', 'hortifruti', 'sacolao', 'acougue',
+    'clinica', 'studio', 'estudio', 'espaco', 'beleza', 'saude', 'farmacia', 'drogaria', 'pet', 'shop', 'boutique', 'kids', 'infantil', 'educacao', 'educacional', 'centro', 'instituto', 'grupo', 'rede', 'unid']);
+  // Tokens distintivos de um nome (sem genéricas e sem palavras de bairro)
+  function _toksNome(sv: any, palBairro: Set<string>): string[] {
+    return String(sv || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3 && !_GENERICAS_NOMES.has(t) && !palBairro.has(t));
+  }
   // Palavras que aparecem em nomes de bairro/cidade (clientes e leads) — não servem p/ identificar um lugar.
   let __palBairroCache: { at: number; set: Set<string> } | null = null;
   async function _palavrasDeBairro(): Promise<Set<string>> {
@@ -25967,17 +25979,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (_e) { console.error('[radar] dedup cadastro:', (_e as any)?.message || _e); }
       const norm = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
       // Palavras que não identificam o estabelecimento (tipo de negócio, forma jurídica, conectivos)
-      const _GENERICAS = new Set(['ltda', 'eireli', 'epp', 'mei', 'cia', 'sa', 'comercio', 'comercial', 'industria', 'servicos', 'alimentos', 'alimentacao', 'distribuidora', 'atacado', 'atacadista', 'varejo',
-        'restaurante', 'restaurant', 'lanchonete', 'lanches', 'lanche', 'padaria', 'panificadora', 'panificacao', 'confeitaria', 'doceria', 'doces', 'supermercado', 'supermercados', 'mercado', 'minimercado', 'mercearia', 'conveniencia',
-        'emporio', 'bar', 'bares', 'pizzaria', 'pizza', 'pizzas', 'sorveteria', 'sorvetes', 'acai', 'acaiteria', 'cafe', 'cafeteria', 'coffee', 'hamburgueria', 'burger', 'burguer', 'sanduicheria', 'sanduiches', 'espetinho', 'espetaria',
-        'churrascaria', 'grill', 'food', 'foods', 'bistro', 'gourmet', 'cozinha', 'marmitaria', 'marmitex', 'self', 'service', 'delivery', 'express', 'sucos', 'suco', 'casa', 'loja', 'center', 'shopping', 'store', 'shop',
-        'academia', 'fitness', 'escola', 'colegio', 'hotel', 'pousada', 'goiania', 'goias', 'setor', 'jardim', 'vila', 'parque', 'residencial', 'bairro', 'centro', 'unidade', 'filial', 'matriz', 'the', 'and', 'dos', 'das', 'del',
-        'consultoria', 'assessoria', 'produtos', 'naturais', 'bebidas', 'bolos', 'bolo', 'quitandas', 'quitanda', 'salgados', 'salgaderia', 'pamonharia', 'pastelaria', 'pastel', 'sushi', 'temakeria', 'hortifruti', 'sacolao', 'acougue',
-        'clinica', 'studio', 'estudio', 'espaco', 'beleza', 'saude', 'farmacia', 'drogaria', 'pet', 'shop', 'boutique', 'kids', 'infantil', 'educacao', 'educacional', 'centro', 'instituto', 'grupo', 'rede', 'unid']);
+      const _GENERICAS = _GENERICAS_NOMES;
       // Palavras de nomes de BAIRRO/cidade também não identificam ("Pamonharia 85 Bueno" × "Bolos do Sítio
       // Setor Bueno" não é o mesmo lugar) — vêm dos bairros cadastrados (cache de 6 h).
       const _palBairro = await _palavrasDeBairro();
-      const _toks = (s: any) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter((t) => t.length >= 3 && !_GENERICAS.has(t) && !_palBairro.has(t));
+      const _toks = (sv: any) => _toksNome(sv, _palBairro);
       const hav = (aLa: number, aLo: number, bLa: number, bLo: number) => {
         const R = 6371000, dLa = ((bLa - aLa) * Math.PI) / 180, dLo = ((bLo - aLo) * Math.PI) / 180;
         const s = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
@@ -26161,11 +26167,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const linhas = String(texto || '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length >= 2).slice(0, 12);
       if (!normTxt) return res.json({ ok: true, texto: '', linhas: [], total: 0, encontrados: [] });
 
-      // busca no Integra: nome de lead/cliente contido no texto lido da foto
+      // busca no Integra: nome de lead/cliente contido no texto lido da foto.
+      // ✅ 02/11: a fachada mostra só a marca ("TOSHCA ARABIAN"), mas o cadastro tem o nome completo
+      // ("TOSHCA ARABIAN GOIANIA SHOPPING"). Agora casa pelas PALAVRAS DISTINTIVAS do nome (ignora
+      // Ltda/Restaurante/bairro…) e ordena pela distância da posição do vendedor (lat/lng enviados).
+      const _fLat = Number(req.body?.lat), _fLng = Number(req.body?.lng);
+      const _temPos = isFinite(_fLat) && isFinite(_fLng) && _fLat !== 0;
+      const _palB = await _palavrasDeBairro();
+      const _tokTxt = new Set(_toksNome(texto, _palB));
+      const _havF = (aLa: number, aLo: number, bLa: number, bLo: number) => {
+        const R = 6371000, dLa = ((bLa - aLa) * Math.PI) / 180, dLo = ((bLo - aLo) * Math.PI) / 180;
+        const x = Math.sin(dLa / 2) ** 2 + Math.cos((aLa * Math.PI) / 180) * Math.cos((bLa * Math.PI) / 180) * Math.sin(dLo / 2) ** 2;
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+      };
       const encontrados: any[] = [];
       try {
-        const cu: any = await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, address, neighborhood, phone, is_active FROM customers WHERE (is_supplier IS NOT TRUE) AND COALESCE(NULLIF(fantasy_name,''), name) IS NOT NULL LIMIT 8000`);
-        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone, status, next_contact_date, (SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = leads.id) AS ocorrencias FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
+        const cu: any = await db.execute(sql`SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, name AS razao, company_name, address, neighborhood, phone, is_active, latitude::float AS la, longitude::float AS lo FROM customers WHERE (is_supplier IS NOT TRUE) AND COALESCE(NULLIF(fantasy_name,''), name) IS NOT NULL LIMIT 8000`);
+        const le: any = await db.execute(sql`SELECT id, fantasy_name AS nome, address, neighborhood, phone, status, next_contact_date, latitude::float AS la, longitude::float AS lo, (SELECT COUNT(*) FROM lead_visits lv WHERE lv.lead_id = leads.id) AS ocorrencias FROM leads WHERE fantasy_name IS NOT NULL LIMIT 8000`);
         const _hojeFoto = dataCalendario(hojeBR());
         const _atrasoFoto = (r: any): number => {
           if (!r.next_contact_date || !['scheduled', 'pending', 'visited'].includes(String(r.status))) return 0;
@@ -26175,15 +26193,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return diff > 0 ? diff : 0;
         };
         const push = (r: any, tipo: string) => {
-          const nn = norm(r.nome);
-          if (nn.length < 4) return;
+          const nomes = [r.nome, r.razao, r.company_name].filter((x: any) => String(x || '').trim());
+          let score = 0;
+          for (const nm of nomes) {
+            const nn = norm(nm);
+            if (nn.length >= 4 && normTxt.includes(nn)) { score = Math.max(score, 1000 + nn.length); continue; }  // nome inteiro na foto
+            const tk = Array.from(new Set(_toksNome(nm, _palB)));
+            if (!tk.length) continue;
+            const hit = tk.filter((t) => _tokTxt.has(t) || (t.length >= 5 && normTxt.includes(t)));
+            // todas as palavras próprias do nome estão na fachada (1 só vale se tiver 5+ letras), ou 2+ delas
+            if (hit.length === tk.length && (tk.length >= 2 || tk[0].length >= 5)) score = Math.max(score, 500 + hit.length * 10);
+            else if (hit.length >= 2) score = Math.max(score, 200 + hit.length * 10);
+          }
+          if (!score) return;
           const _dAtr = tipo === 'lead' ? _atrasoFoto(r) : 0;
-          if (normTxt.includes(nn)) encontrados.push({ tipo, id: r.id || null, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, descartado: tipo === 'lead' && r.status === 'discarded', ocorrencias: tipo === 'lead' ? Number(r.ocorrencias || 0) : 0, atrasado: _dAtr > 0, diasAtraso: _dAtr, score: nn.length });
+          const dist = (_temPos && isFinite(Number(r.la)) && isFinite(Number(r.lo))) ? Math.round(_havF(_fLat, _fLng, Number(r.la), Number(r.lo))) : null;
+          encontrados.push({ tipo, id: r.id || null, nome: r.nome, endereco: r.address || '', bairro: r.neighborhood || '', telefone: r.phone || '', ativo: r.is_active !== false, descartado: tipo === 'lead' && r.status === 'discarded', ocorrencias: tipo === 'lead' ? Number(r.ocorrencias || 0) : 0, atrasado: _dAtr > 0, diasAtraso: _dAtr, distancia: dist, score });
         };
         for (const r of (cu?.rows || []) as any[]) push(r, (r.is_active === false ? 'cliente_inativo' : 'cliente'));
         for (const r of (le?.rows || []) as any[]) push(r, 'lead');
       } catch (_e) {}
-      encontrados.sort((a, b) => b.score - a.score);
+      // Ordem: quem está mais perto do vendedor primeiro (mesma marca em vários pontos → o daqui);
+      // sem posição, pela força do casamento.
+      const _faixa = (d: number | null) => d == null ? 3 : d <= 300 ? 0 : d <= 2000 ? 1 : 2;
+      encontrados.sort((a, b) => (_faixa(a.distancia) - _faixa(b.distancia)) || (b.score - a.score) || ((a.distancia ?? 1e9) - (b.distancia ?? 1e9)));
       const top = encontrados.slice(0, 10);
       await __enriquecerClientesConsulta(top); // WhatsApp + último pedido nos cards de cliente
       return res.json({ ok: true, texto, linhas, total: top.length, encontrados: top });
