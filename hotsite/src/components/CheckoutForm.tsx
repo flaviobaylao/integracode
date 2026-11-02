@@ -22,6 +22,8 @@ interface CheckoutFormProps {
   cartItems: CartItem[];
   total: number;
   onSubmit: (customer: Customer, paymentMethod: 'pix' | 'card' | 'boleto') => void;
+  // 🛒 Carrinhos da Loja: avisa o Integra quando o WhatsApp digitado já é válido.
+  onContato?: (c: { nome?: string; telefone?: string; email?: string }) => void;
   onBack: () => void;
   isProcessing: boolean;
   // VIGIA CUPOM: o codigo mora no App (vai junto no pedido); aqui so entra a UI.
@@ -29,7 +31,7 @@ interface CheckoutFormProps {
   onCodeChange: (value: string) => void;
 }
 
-export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isProcessing, code, onCodeChange }: CheckoutFormProps) {
+export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isProcessing, code, onCodeChange, onContato }: CheckoutFormProps) {
   const { category } = useCustomerType();
   
   // Determinar tipo de cliente baseado na categoria selecionada
@@ -45,6 +47,19 @@ export default function CheckoutForm({ cartItems, total, onSubmit, onBack, isPro
   });
   
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card' | 'boleto'>('pix');
+
+  // 🛒 Carrinhos da Loja: assim que o WhatsApp tem 10+ dígitos, o contato vai para o
+  // Integra (é a partir daqui que um carrinho largado pode ser recuperado). 1,2 s de folga
+  // para não mandar a cada tecla.
+  useEffect(() => {
+    if (!onContato) return;
+    const tel = (formData.phone || '').replace(/\D/g, '');
+    if (tel.length < 10) return;
+    const t = setTimeout(() => {
+      try { onContato({ nome: formData.name, telefone: tel, email: formData.email || '' }); } catch { /* ok */ }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [formData.phone, formData.name, formData.email, onContato]);
 
   // CARTAO SOB CHAVE GERAL (03/ago/2026): a opcao so aparece se o servidor disser que o
   // cartao esta habilitado (/api/public/orders/card/config -> enabled). Enquanto a credencial
