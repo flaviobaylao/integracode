@@ -43,7 +43,6 @@ import { calculateDistance, formatDistance, calculateRouteDistance } from "@/lib
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
 import { ChangeRequestControl, useChangeRequestStates, useReportStates, ReportReplyControl, InboxPendenciasBox, crKey, isModalidadeOnlyRequest } from "@/components/change-request/ChangeRequestControl";
-import CampanhaRotaAvisos from "@/components/CampanhaRotaAvisos";
 import type { SalesCardWithRelations } from "@shared/schema";
 import EditablePhoneField from "@/components/EditablePhoneField";
 import { safeParseWeekdays } from "@/lib/weekdayParser";
@@ -2484,7 +2483,7 @@ export default function RotaDoDia() {
             <InboxPendenciasBox sellerId={selectedSellerId} date={selectedDate} excludeKeys={rotaKeysTodos} canRemove={isAdmin} />
           )}
           {/* 🏆 Campanha de Outubro: réplica do admin sobre os cadastros de novos clientes. */}
-          {selectedSellerId && <CampanhaRotaAvisos sellerId={selectedSellerId} />}
+          {/* Avisos da Campanha de Outubro removidos da Rota do Dia (nov/2026, pedido do Flavio). */}
 
           <Card>
             <CardHeader>
