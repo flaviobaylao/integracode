@@ -16,6 +16,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2, GripVertical, Crosshair, Hand, LockOpen } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
+
+// Celular no padrão BR: "5562993130382" / "62993130382" -> "(62) 99313-0382". Fora do padrão, devolve como veio.
+function formatarCelularBR(v: any): string {
+  const raw = String(v ?? '').trim();
+  let d = raw.replace(/\D/g, '');
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return raw;
+}
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
 import { formatInTimeZone } from "date-fns-tz";
@@ -2290,7 +2300,7 @@ export default function RotaDoDia() {
                         )}
                         {!r.isOwnerCopy && (r as any).ownerSellerName ? (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#8a6d3b] text-white" title="Vendedor titular da carteira deste cliente">
-                            Vendedor: {(r as any).ownerSellerName}{(r as any).ownerSellerPhone ? ` • ${(r as any).ownerSellerPhone}` : ''}
+                            Vendedor: {(r as any).ownerSellerName}{(r as any).ownerSellerPhone ? ` • ${formatarCelularBR((r as any).ownerSellerPhone)}` : ''}
                           </span>
                         ) : null}
                         {r.captured && (
