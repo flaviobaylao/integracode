@@ -292,6 +292,19 @@ export async function registrarReportInbox(p: {
     if (!texto) return; // ➜ só vai pro Inbox se o vendedor escreveu algo (ou se 'sempre')
     if (!p?.entityId) return;
     await ensureTables();
+    // 🛒 03/nov/2026 — Atendimento virtual de cliente que JÁ teve pedido hoje não vira report
+    // (o Inbox também esconde os que ganharem pedido depois, no mesmo dia).
+    if (p.reportKind === "atendimento_virtual" && p.entityType === "customer") {
+      try {
+        const cid = String(p.customerId || p.entityId);
+        const tem = rowsOf(await db.execute(sql`
+          SELECT 1 FROM billing_pipeline
+           WHERE customer_id::text = ${cid} AND COALESCE(sale_value, 0) > 0
+             AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+           LIMIT 1`));
+        if (tem.length > 0) return;
+      } catch {}
+    }
     // Descobre nomes (cliente/lead e vendedor) quando não vieram prontos.
     let entityName: string | null = null;
     try {
@@ -687,7 +700,14 @@ export function registerChangeRequestsRoutes(app: Express) {
     // desde 02/nov/2026, também as solicitações (inclusive as automáticas de cadastro incompleto).
     // É filtro na leitura, sem apagar nada: se o cliente for reativado, os cards dele voltam.
     const semInativo = sql`NOT (change_requests.entity_type = 'customer' AND EXISTS (
-      SELECT 1 FROM customers ci WHERE ci.id::text = COALESCE(change_requests.customer_id, change_requests.entity_id)::text AND ci.is_active = false))`;
+      SELECT 1 FROM customers ci WHERE ci.id::text = COALESCE(change_requests.customer_id, change_requests.entity_id)::text AND ci.is_active = false))
+      -- 🛒 03/nov/2026 — Report de ATENDIMENTO VIRTUAL some quando o cliente teve PEDIDO no mesmo dia
+      -- (qualquer tipo marcado: "Registro — Venda realizada" etc. é ruído para o admin).
+      AND NOT (change_requests.kind = 'report' AND change_requests.details->>'reportKind' = 'atendimento_virtual' AND EXISTS (
+        SELECT 1 FROM billing_pipeline bpv
+         WHERE bpv.customer_id::text = COALESCE(change_requests.customer_id, change_requests.entity_id)::text
+           AND COALESCE(bpv.sale_value, 0) > 0
+           AND (bpv.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (change_requests.created_at AT TIME ZONE 'America/Sao_Paulo')::date))`;
     let rows;
     if (status === "pending") {
       rows = rowsOf(await db.execute(sql`SELECT * FROM change_requests WHERE status = 'pending' AND ${semInativo} ORDER BY created_at DESC LIMIT 500`));
